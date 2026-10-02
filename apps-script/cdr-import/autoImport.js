@@ -234,6 +234,34 @@ function bulkTimeLimitMs_() {
   return Math.min(Math.max(n, 60000), 40 * 60000);
 }
 
+// CR-5 (broad-scan 2026-10-01): a CROSS-PROJECT "bulk in progress" marker.
+// cdr-report's nightly historical sort (runHistoricalSortCheck_) runs in
+// another project, so this chain's script lock cannot hold it off -- and a
+// sort landing between deleteHistoricalRowsForDate's date-column read and its
+// block deletes would delete OTHER dates' rows. The marker is spreadsheet-level
+// DeveloperMetadata on the CDR Report workbook (DOCUMENT visibility, the one
+// store both projects can see), set while an invocation holds the bulk lock and
+// removed when it ends -- a pause included. The sort skips while it is fresh;
+// a marker older than HISTORICAL_SORT_BULK_MAX_AGE_MIN_ (cdr-report) is a
+// killed run's leftover and is ignored. Best-effort both ways: a workbook
+// without the API (the test harness) simply has no marker.
+// cross-file-pins.test.js holds the key equal in both projects.
+var BULK_IN_PROGRESS_KEY_ = 'cdrImport.bulkInProgress';
+function bulkMarkerClear_(ss) {
+  try {
+    if (!ss || typeof ss.createDeveloperMetadataFinder !== 'function') return;
+    ss.createDeveloperMetadataFinder().withKey(BULK_IN_PROGRESS_KEY_).find()
+      .forEach(function (m) { m.remove(); });
+  } catch (e) { console.warn('bulkMarkerClear_: ' + (e && e.message ? e.message : e)); }
+}
+function bulkMarkerSet_(ss) {
+  try {
+    if (!ss || typeof ss.addDeveloperMetadata !== 'function') return;
+    bulkMarkerClear_(ss);
+    ss.addDeveloperMetadata(BULK_IN_PROGRESS_KEY_, new Date().toISOString());
+  } catch (e) { console.warn('bulkMarkerSet_: ' + (e && e.message ? e.message : e)); }
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -260,6 +288,7 @@ function processBulkQueue() {
       + "Wait for it to finish, then click 'Resume Bulk Processing'.", ui.ButtonSet.OK);
     return;
   }
+  let bulkMarkerSS = null;   // CR-5: cleared in the finally below
   try {
 
   const batchStartTime = Date.now();
@@ -288,6 +317,8 @@ function processBulkQueue() {
     ui.alert("Critical Error", "Could not open Target Spreadsheet. Aborting.", ui.ButtonSet.OK);
     return;
   }
+  bulkMarkerSS = targetSS;
+  bulkMarkerSet_(targetSS);   // CR-5
 
   const histDateCache = {
     cdr:   buildHistoryDateSet(targetSS, "CDR Historical Data"),
@@ -383,6 +414,7 @@ function processBulkQueue() {
   props.deleteProperty("bulkReport");
 
   } finally {
+    bulkMarkerClear_(bulkMarkerSS);   // CR-5 -- a pause ends the marker too
     bulkLock.releaseLock();   // F-17 -- also runs on the pause/stop returns
   }
 }
@@ -517,7 +549,9 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // logged "rows were already cleared / data may be lost" failures (and the
     // DQE email) for deletions that never happened. A guard now fires only
     // when force AND that sheet's date rows were really deleted.
-    const forceDeleted = { qcd: false, csr: false, dqe: false };
+    // CR-9: CDR Historical joins -- its live reader is cdr-report's Custom
+    // Report Builder (Q Path has NO reader, so it stays unguarded).
+    const forceDeleted = { qcd: false, csr: false, dqe: false, cdr: false };
 
     // P-1 (broad-scan 2026-09-17): every write that does NOT depend on the
     // five-sheet delete runs BEFORE it -- the Raw Data staging rewrite and the
@@ -554,6 +588,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       forceDeleted.qcd = !!existsInQCD;
       forceDeleted.csr = !!existsInCSR;
       forceDeleted.dqe = !!existsInDQE;
+      forceDeleted.cdr = !!existsInCDR;   // CR-9
       if (existsInCDR) {
         const obcHD = targetSS.getSheetByName("CDR Historical Data");
         if (obcHD) { deleteHistoricalRowsForDate(obcHD, dateObj, 3); if (histDateCache) histDateCache.cdr.delete(dateKey); }
@@ -618,6 +653,8 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         force && forceDeleted.qcd, (queued && queued.byType && queued.byType.QCD) || 0);
       guardForceRebuildLoss_(targetSS, 'bulkBackfill:CSR', dateObj,
         force && forceDeleted.csr, (queued && queued.byType && queued.byType.CSR_TRANSFER) || 0);
+      guardForceRebuildLoss_(targetSS, 'bulkBackfill:CDR', dateObj,   // CR-9
+        force && forceDeleted.cdr, (queued && queued.byType && queued.byType.CDR) || 0);
 
       if (willBuildDQE) {
         const dqeHD = targetSS.getSheetByName("DQE Historical Data");
@@ -817,15 +854,20 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // dashboard isn't left silently serving stale data. Best-effort:
     // any failure in the notify path is itself swallowed so it can't
     // mask the underlying error.
-    try {
-      notifyImportFailure_({
-        context:       specificDateStr || 'latest',
-        force:         !!force,
-        silent:        !!silent,
-        err:           e,
-      });
-    } catch (notifyErr) {
-      console.error('notifyImportFailure_ itself failed: ' + (notifyErr && notifyErr.message ? notifyErr.message : notifyErr));
+    // PIPE-1 (broad-scan 2026-10-01): the pending-import loop retries a failing
+    // date on later runs; only its FIRST failure emails (`noFailureEmail` on the
+    // retries). The Pipeline Health row above is written every time.
+    if (!(opts && opts.noFailureEmail)) {
+      try {
+        notifyImportFailure_({
+          context:       specificDateStr || 'latest',
+          force:         !!force,
+          silent:        !!silent,
+          err:           e,
+        });
+      } catch (notifyErr) {
+        console.error('notifyImportFailure_ itself failed: ' + (notifyErr && notifyErr.message ? notifyErr.message : notifyErr));
+      }
     }
     if (silent) { throw e; }
     else {
@@ -1324,9 +1366,19 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
   // Pending Archive clear below runs. Combined with the idempotent
   // dedup above, a re-run after a partial failure is safe.
   try {
-    if (cdrRows.length > 0      && obcHD) {
-      obcHD.getRange(obcHD.getLastRow() + 1, 1, cdrRows.length, 26).setValues(cdrRows);
+    // PIPE-3 (broad-scan 2026-10-01): ALL FOUR sheet appends land before ANY
+    // Neon connection is opened. The CDR mirror used to run straight after the
+    // CDR append, ahead of Q Path / QCD / CSR -- every one of which had already
+    // been force-deleted for these dates -- so a hung JDBC connect killed at the
+    // execution ceiling (which skips every catch) left the whole bulk range with
+    // no QCD / CSR history and no failure row. The daily path got this ordering
+    // in ING-2; the mirrors below are unchanged, just moved after the appends.
+    if (cdrRows.length > 0   && obcHD)   obcHD.getRange(obcHD.getLastRow()     + 1, 1, cdrRows.length,   26).setValues(cdrRows);
+    if (qPathRows.length > 0 && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathRows.length, 11).setValues(qPathRows);
+    if (qcdRows.length > 0   && qcdHD)   qcdHD.getRange(qcdHD.getLastRow()     + 1, 1, qcdRows.length,   12).setValues(qcdRows);
+    if (csrRows.length > 0   && csrHD)   csrHD.getRange(csrHD.getLastRow()     + 1, 1, csrRows.length,   18).setValues(csrRows);
 
+    if (cdrRows.length > 0 && obcHD) {
       // F-18: mirror the bulk-archived CDR rows to Neon (the daily path
       // already does; the bulk path silently left call_history_dept /
       // call_history_phones stale after a force-rebuild changed a date's
@@ -1367,11 +1419,8 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
           'mirror error: ' + (neonCdrErr && neonCdrErr.message ? neonCdrErr.message : neonCdrErr));
       }
     }
-    if (qPathRows.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathRows.length,    11).setValues(qPathRows);
 
     if (qcdRows.length > 0 && qcdHD) {
-      qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdRows.length, 12).setValues(qcdRows);
-
       // Mirror to Neon (Phase 3)
       try {
         var neonQcdRows = qcdRows.map(function(r) {
@@ -1407,8 +1456,6 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
           'mirror error: ' + (neonErr && neonErr.message ? neonErr.message : neonErr));
       }
     }
-
-    if (csrRows.length > 0 && csrHD)   csrHD.getRange(csrHD.getLastRow()     + 1, 1, csrRows.length, 18).setValues(csrRows);
   } catch (writeErr) {
     try {
       appendToAuditLog(targetSS, "processBatchArchive",
@@ -1918,7 +1965,7 @@ function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipC
   // P26: which sheets the caller's force-delete ACTUALLY cleared. Defaults to
   // all-true so a caller that doesn't pass it keeps the old (over-eager but
   // safe-direction) guard behavior.
-  const fdel = forceDeleted || { qcd: true, csr: true, dqe: true };
+  const fdel = forceDeleted || { qcd: true, csr: true, dqe: true, cdr: true };
   const summaryLog = [];
   const salesHD    = targetSS.getSheetByName("Q Path Historical Data");
   const obcHD      = targetSS.getSheetByName("CDR Historical Data");
@@ -2117,6 +2164,10 @@ if (!skipCDR && obcHD) {
     });
     }
   }
+  // CR-9 (broad-scan 2026-10-01): CDR Historical has a LIVE reader --
+  // cdr-report's Custom Report Builder -- so a force rebuild that
+  // wrote zero rows after deleting the date must surface (the M2 convention).
+  guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CDR', dateObj, force && fdel.cdr, cdrCount);
 }
 
 // 2. Q Path History
@@ -2615,14 +2666,18 @@ if (!skipCDR && obcHD) {
         try {
           logPipelineHealthWithFallback_(targetSS, {
             step: 'processIntegratedHistory:Inbound',
-            status: 'success',
+            // PC-10: rows written WITHOUT caller_hash are a degraded capture
+            // (callbacks + insurer labels blind) -- a failure the Health page
+            // and PipelineWatch can see, not a quiet success.
+            status: inboundRes.hashless ? 'failure' : 'success',
             rows: inboundRes.inserted,
             durationMs: Date.now() - inboundStart,
             // C-6: partial unparsed drops ride the success row's notes (the
             // F9 unparsedStartCount discipline) so a creeping format drift is
             // visible before it reaches the all-unparsed refusal above.
             notes: dateObj.toDateString() + ((inboundRes.unparsedDropped || 0) > 0
-              ? ' | ' + inboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : ''),
+              ? ' | ' + inboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : '')
+              + perCallHashlessNote_(inboundRes),
           });
         } catch (logErr) { /* best-effort */ }
       }
@@ -2749,11 +2804,12 @@ if (!skipCDR && obcHD) {
         try {
           logPipelineHealthWithFallback_(targetSS, {
             step: 'processIntegratedHistory:Outbound',
-            status: 'success',
+            status: outboundRes.hashless ? 'failure' : 'success',   // PC-10
             rows: outboundRes.inserted,
             durationMs: Date.now() - outboundStart,
             notes: dateObj.toDateString() + ((outboundRes.unparsedDropped || 0) > 0
-              ? ' | ' + outboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : ''),
+              ? ' | ' + outboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : '')
+              + perCallHashlessNote_(outboundRes),
           });
         } catch (logErr) { /* best-effort */ }
       }
@@ -2990,32 +3046,78 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
 // ING-4: catch-up import of every unprocessed Call_Legs sheet
 // -------------------------------------------------------------------------
 
-// Only sheets dated within this many days of the NEWEST Call_Legs sheet are
-// candidates -- the retention prune keeps ~14 days, and `lastSheets` holds the
-// last 60 processed names, so anything older is either processed or a
-// deliberately held recovery tab (Operator State #43) the operator imports by
-// hand.
+// Only sheets dated within this many days of TODAY are candidates -- the
+// retention prune keeps ~14 days, and `lastSheets` holds the last 60 processed
+// names, so anything older is either processed or a deliberately held recovery
+// tab (Operator State #43) the operator imports by hand.
+// PIPE-2 (broad-scan 2026-10-01): the window used to end at the NEWEST tab
+// name, so one future-dated or mistyped tab (Call_Legs_2026-10-30 uploaded on
+// 09-30) pushed every real date below the floor and the import went silently
+// quiet ("MISSING"). It now ends at TODAY, and a tab dated after today is never
+// a candidate (nor an anchor).
 var PENDING_IMPORT_WINDOW_DAYS_ = 14;
 var PENDING_IMPORT_HANDLER_ = 'runPendingImportCatchUp_';
+
+// PIPE-1 (broad-scan 2026-10-01): a date whose import returns "ERROR: ..." was
+// never remembered, so the oldest-first loop retried the SAME date up to 31
+// times per trigger (31 failure rows + 31 emails on the shared mail quota) and
+// never reached a newer date until the bad tab aged out -- one header-only
+// Call_Legs tab stopped all ingest for up to 14 days. Now a failing date is
+// skipped for the rest of the run, its attempts are counted in the
+// PENDING_IMPORT_FAILURES ledger ({iso: {n, at, err}}), only its FIRST failure
+// emails, and after PENDING_IMPORT_MAX_ATTEMPTS_ runs it is PARKED: no longer
+// retried automatically, announced once by an `autoImport:parked` FAILURE row
+// (Health flags it; PipelineWatch pushes it). The operator fixes the tab
+// (re-upload) and runs Manual Processing for that date, or deletes the tab; the
+// ledger entry clears itself once the tab is gone or processed, and an
+// `autoImport:parked` SUCCESS row is logged when no parked date remains.
+var PENDING_IMPORT_FAILS_PROP_ = 'PENDING_IMPORT_FAILURES';
+var PENDING_IMPORT_MAX_ATTEMPTS_ = 3;
+
+/** Today in the script TZ ('YYYY-MM-DD'); a seam for the unit suite. */
+function pendingImportTodayIso_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function pendingImportFailsRead_() {
+  try {
+    const m = JSON.parse(PropertiesService.getScriptProperties().getProperty(PENDING_IMPORT_FAILS_PROP_) || '{}');
+    return (m && typeof m === 'object') ? m : {};
+  } catch (e) { return {}; }
+}
+function pendingImportFailsWrite_(map) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (Object.keys(map).length) props.setProperty(PENDING_IMPORT_FAILS_PROP_, JSON.stringify(map));
+    else props.deleteProperty(PENDING_IMPORT_FAILS_PROP_);
+  } catch (e) {
+    console.warn('pendingImportFailsWrite_ failed (non-fatal): ' + (e && e.message ? e.message : e));
+  }
+}
+function pendingImportParked_(map, iso) {
+  return !!(map[iso] && Number(map[iso].n) >= PENDING_IMPORT_MAX_ATTEMPTS_);
+}
 
 /**
  * PURE (unit-tested). Given every sheet NAME in the source workbook and the
  * `lastSheets` memo, returns the unprocessed Call_Legs dates ('YYYY-MM-DD'),
- * OLDEST first, limited to the window ending at the newest Call_Legs date.
+ * OLDEST first, limited to the window ending at `todayIso` (PIPE-2; omitted =
+ * the newest tab's date, the pre-PIPE-2 anchor kept only for that default).
+ * A tab dated after `todayIso` is never returned.
  */
-function pendingCallLegsDates_(sheetNames, lastKnown, windowDays) {
+function pendingCallLegsDates_(sheetNames, lastKnown, windowDays, todayIso) {
   var re = /^Call_Legs_(\d{4}-\d{2}-\d{2})$/i;
   var known = {};
   (lastKnown || []).forEach(function (n) { known[String(n)] = true; });
   var dates = [];
   (sheetNames || []).forEach(function (n) {
     var m = String(n).match(re);
-    if (m) dates.push({ name: String(n), iso: m[1] });
+    if (m && !(todayIso && m[1] > todayIso)) dates.push({ name: String(n), iso: m[1] });
   });
   if (!dates.length) return [];
   dates.sort(function (a, b) { return a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0; });
-  var newest = dates[dates.length - 1].iso;
-  var p = newest.split('-').map(Number);
+  var anchor = todayIso || dates[dates.length - 1].iso;
+  var p = anchor.split('-').map(Number);
   var floor = new Date(Date.UTC(p[0], p[1] - 1, p[2] - (Number(windowDays) || PENDING_IMPORT_WINDOW_DAYS_)));
   var floorIso = floor.getUTCFullYear() + '-' + ('0' + (floor.getUTCMonth() + 1)).slice(-2)
     + '-' + ('0' + floor.getUTCDate()).slice(-2);
@@ -3029,19 +3131,32 @@ function pendingCallLegsDates_(sheetNames, lastKnown, windowDays) {
  * before each so a date another run finished is not repeated. Stops starting
  * new dates once another one would not fit the bulk time budget
  * (bulkTimeLimitMs_, Operator State #70) and schedules a one-shot catch-up for
- * the rest. Returns the LAST outcome (the onChange toast reads it).
+ * the rest. A date that fails is skipped for the rest of the run and, after
+ * PENDING_IMPORT_MAX_ATTEMPTS_ runs, parked (PIPE-1). Returns the LAST outcome
+ * (the onChange toast reads it).
  */
 function processPendingImports_() {
   const t0 = Date.now();
   const budget = bulkTimeLimitMs_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const todayIso = pendingImportTodayIso_();
   let last = 'MISSING';
   let lastMs = 0;
   const done = [];
+  const failedThisRun = {};
+  const fails = pendingImportFailsRead_();
+  const parkedBefore = Object.keys(fails).some(function (k) { return pendingImportParked_(fails, k); });
+  let failsChanged = false;
   for (let guard = 0; guard < 31; guard++) {
     const lastKnown = JSON.parse(PropertiesService.getScriptProperties().getProperty('lastSheets') || '[]');
-    const pending = pendingCallLegsDates_(ss.getSheets().map(function (sh) { return sh.getName(); }),
-                                          lastKnown, PENDING_IMPORT_WINDOW_DAYS_);
+    const names = ss.getSheets().map(function (sh) { return sh.getName(); });
+    // Ledger self-cleaning: an entry whose tab is gone or now processed is done.
+    Object.keys(fails).forEach(function (iso) {
+      const name = 'Call_Legs_' + iso;
+      if (names.indexOf(name) === -1 || lastKnown.indexOf(name) !== -1) { delete fails[iso]; failsChanged = true; }
+    });
+    const pending = pendingCallLegsDates_(names, lastKnown, PENDING_IMPORT_WINDOW_DAYS_, todayIso)
+      .filter(function (iso) { return !failedThisRun[iso] && !pendingImportParked_(fails, iso); });
     if (!pending.length) break;
     if (done.length && (Date.now() - t0) + lastMs * 1.5 > budget) {
       console.log('processPendingImports_: ' + pending.length + ' date(s) still pending ('
@@ -3050,18 +3165,61 @@ function processPendingImports_() {
       break;
     }
     const iso = pending[0];
+    const prior = fails[iso] ? (Number(fails[iso].n) || 0) : 0;
     const s0 = Date.now();
-    last = processNewImport(false, iso, false, null, null, { noAlert: true });
+    last = processNewImport(false, iso, false, null, null, { noAlert: true, noFailureEmail: prior > 0 });
     lastMs = Date.now() - s0;
     done.push(iso + '=' + String(last).split(' ')[0]);
+    if (String(last).indexOf('ERROR') === 0) {
+      failedThisRun[iso] = true;
+      fails[iso] = { n: prior + 1, at: new Date().toISOString(), err: String(last).slice(0, 200) };
+      failsChanged = true;
+      if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
+      continue;
+    }
+    if (fails[iso]) { delete fails[iso]; failsChanged = true; }
     // A date that was ALREADY IN HISTORY (imported by a path that did not
     // record `lastSheets`) or whose sheet vanished must not be retried forever.
     if (last === 'ALREADY IN HISTORY' || last === 'MISSING' || last === 'ALREADY PROCESSED') {
       rememberProcessedSheet_('Call_Legs_' + iso);
     }
   }
+  if (failsChanged) {
+    pendingImportFailsWrite_(fails);
+    const parkedNow = Object.keys(fails).some(function (k) { return pendingImportParked_(fails, k); });
+    if (parkedBefore && !parkedNow) {
+      try {
+        logPipelineHealthWithFallback_(null, {
+          step: 'autoImport:parked', status: 'success', rows: 0, durationMs: 0,
+          notes: 'no parked Call_Legs date remains (PIPE-1)',
+        });
+      } catch (logErr) { /* best-effort */ }
+    }
+  }
   if (done.length > 1) console.log('processPendingImports_: imported ' + done.join(', '));
   return last;
+}
+
+/** PC-10: the per-call writers' "no HMAC_SECRET" note for their Pipeline Health row ('' when hashed). */
+function perCallHashlessNote_(res) {
+  return (res && res.hashless)
+    ? ' | WRITTEN WITHOUT phone hashes: HMAC_SECRET is not set in cdr-import -- callbacks and insurer '
+      + 'labels are blind; set it to match the dashboard (Operator State #17) and re-import the date'
+    : '';
+}
+
+/** PIPE-1: one FAILURE row when a date is parked -- Health flags it, PipelineWatch pushes it. */
+function pendingImportLogParked_(iso, entry) {
+  console.warn('processPendingImports_: Call_Legs_' + iso + ' PARKED after ' + entry.n
+    + ' failed imports -- ' + entry.err);
+  try {
+    logPipelineHealthWithFallback_(null, {
+      step: 'autoImport:parked', status: 'failure', rows: null, durationMs: 0,
+      notes: iso + ' | parked after ' + entry.n + ' failed imports, no longer retried automatically: '
+        + entry.err + ' -- fix or re-upload Call_Legs_' + iso + ' and run Manual Processing for that date, '
+        + 'or delete the tab (Operator State #43)',
+    });
+  } catch (logErr) { /* best-effort */ }
 }
 
 /** Adds a sheet name to the `lastSheets` memo (same cap as processNewImport's F2 write). */

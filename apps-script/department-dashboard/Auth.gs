@@ -223,7 +223,7 @@ function getAccessEntries_(normalizedEmail) {
   // '__none__' for the TTL (a false denial for up to 60 s and a spurious
   // "Access changed" sign-in notice). A-6 closed that by taking the SCRIPT
   // LOCK here -- but that lock is project-wide and long jobs hold it (the
-  // 8 AM alerts run holds it across its whole compute-and-send loop, exactly
+  // 8 AM alerts run held it across its whole compute-and-send loop until EN-2, exactly
   // when managers sign in), so every uncached sign-in waited up to 10 s and,
   // failing the lock, was not cached, so every RPC in the page paid again
   // (S2B-2, broad-scan 2026-09-23).
@@ -350,37 +350,9 @@ function agentRoleEnabled_() {
  * currently in cols X-AG) is ignored.
  */
 function getAllDepartments_() {
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.ROSTER);
-  if (!sheet) return [];
-
-  const lastCol = sheet.getLastColumn();
-  if (lastCol < ROSTER.DEPT_FIRST_COL) return [];
-
-  const headerRow = sheet
-    .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
-              1, lastCol - ROSTER.DEPT_FIRST_COL + 1)
-    .getValues()[0];
-
-  const depts = [];
-  for (let i = 0; i < headerRow.length; i++) {
-    const v = String(headerRow[i] || '').trim();
-    if (!v) break; // first blank ends the dept block
-    depts.push(v);
-  }
-  return depts;
-}
-
-/**
- * Editor-only helper: clears a cached access lookup for a given email.
- * Useful if you just added someone to Access Control and don't want to
- * wait the 60s TTL. Run from the Apps Script editor.
- */
-function invalidateAuthCache_(email) {
-  const normalized = (email || '').toLowerCase().trim();
-  if (!normalized) return;
-  CacheService.getScriptCache().remove('access:' + normalized);
-  Logger.log('Cleared auth cache for %s', normalized);
+  // DL-7: from the per-execution roster block (Data.gs::rosterDeptBlock_); a
+  // copy, so a caller's push/splice can never reach the memo.
+  return rosterDeptBlock_().depts.slice();
 }
 
 // -- Access Control admin editor (C1) ------------------------------------
@@ -890,6 +862,17 @@ function notifyLoginEvent_(email, user) {
   if (!emailLower) return;   // no identity resolved -- nothing meaningful to report
 
   var outcomeKey = loginNotifyOutcomeKey_(user);
+  // ESC-D7 (broad-scan 2026-10-01): a Dept Config read that ERRORED this
+  // execution makes resolveUser_ fail closed -- a parent manager's sub-queue
+  // depts drop out (INV-38) -- so the outcome key shifts and the admins got
+  // an "Access changed" email, then a second one when the next request read
+  // the config again. Nothing about the grant changed. Decide nothing this
+  // time (the store is untouched, so the next request re-decides); a DENIED
+  // attempt does not depend on the config and is still reported.
+  if (outcomeKey !== 'denied' && typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    Logger.log('notifyLoginEvent_: Dept Config read errored -- outcome for %s not compared this request.', emailLower);
+    return;
+  }
   var d = loginNotifyDecide_(props.getProperty('LOGIN_NOTIFY_SEEN'), emailLower, outcomeKey);
   if (!d.notify) return;
 

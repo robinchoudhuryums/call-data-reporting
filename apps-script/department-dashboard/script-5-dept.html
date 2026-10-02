@@ -3644,7 +3644,7 @@
     var from = $('from-date') ? $('from-date').value : '';
     var to = $('to-date') ? $('to-date').value : '';
     if (!dept || !from || !to) {
-      showToast('Pick a department and date range first', 'error');
+      showToast('Pick a department and date range first', 'error', 4000);   // CL-4: input, not a failure
       return;
     }
     showToast('Sending…');
@@ -3810,7 +3810,7 @@
    */
   function copyTableForSheet_() {
     var grid = deptTableGrid_();
-    if (!grid) { showToast('Nothing to copy yet — load the table first.', 'error'); return; }
+    if (!grid) { showToast('Nothing to copy yet — load the table first.', 'error', 4000); return; }   // CL-4: input
     var text = deptGridToTsv_(grid);
     var ok = function () {
       showToast('Copied ' + grid.rows.length + ' row'

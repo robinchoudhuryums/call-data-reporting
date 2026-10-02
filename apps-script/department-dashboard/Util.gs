@@ -75,6 +75,19 @@ function assertDeptAccess_(user, dept) {
 }
 
 /**
+ * AC-1 (broad-scan 2026-10-01): the NON-THROWING twin of assertDeptAccess_,
+ * for callers that widen a request on the user's behalf (a parent dept's
+ * sub-queues) rather than serve one the user named. Such a caller must DROP a
+ * dept the user cannot reach -- never throw: when a Dept Config read fails,
+ * resolveUser_ correctly fails closed (no sub-queue expansion) while
+ * subQueueChildMap_ still serves the seed edges, and the throw locked every
+ * Sales / CSR / Power manager out of My Department until a read succeeded.
+ */
+function userCanAccessDept_(user, dept) {
+  try { assertDeptAccess_(user, dept); return true; } catch (e) { return false; }
+}
+
+/**
  * Phase A (agent role) deny wall for surfaces WITHOUT a dept argument --
  * company-wide reads (Overview, YTD trend, all-dept QCD) and the escalation
  * entry points, which predate the agent role and must not silently include
@@ -114,6 +127,61 @@ function assertReportRangeCap_(from, to, maxDays, label) {
   if (reportRangeDays_(from, to) > cap) {
     throw new Error((label || 'Range') + ' is capped at ' + cap + ' days.');
   }
+}
+
+/**
+ * DL-4 (broad-scan 2026-10-01): SEC-1 capped the prior window's LENGTH but not
+ * its DISTANCE. The reports read one span covering both windows
+ * ([priorFrom, to]), so a two-day prior in 2000 plus a current window ending
+ * yesterday read 26 years of history -- the cost SEC-1 exists to bound, with a
+ * fresh cache key per prior window. The longest legitimate combination is a
+ * maximal window with a year-over-year prior, so the COMBINED span is capped at
+ * REPORT_MAX_RANGE_DAYS + 366.
+ */
+var REPORT_MAX_SPAN_DAYS = REPORT_MAX_RANGE_DAYS + 366;
+
+/** DL-4: throws when the window plus its comparison window span too much history. */
+function assertReportSpanCap_(from, to, priorFrom, priorTo) {
+  var lo = priorFrom < from ? priorFrom : from;
+  var hi = priorTo > to ? priorTo : to;
+  if (reportRangeDays_(lo, hi) > REPORT_MAX_SPAN_DAYS) {
+    throw new Error('The comparison window is too far from the report window: together they may span at most '
+      + REPORT_MAX_SPAN_DAYS + ' days.');
+  }
+}
+
+// EN-1 (broad-scan 2026-10-01): an installable trigger belongs to the account
+// that ran the installer, and getProjectTriggers() lists only the CALLER's
+// triggers. The UI-wired installers run as the deployer (executeAs:
+// USER_DEPLOYING), but four are EDITOR-run (pipeline watch, DQE silence,
+// sheet coverage, Neon retention): a second admin running one from the editor
+// created a trigger the Health page -- which runs as the deployer -- cannot
+// see ("NO trigger installed but flag=true") and the deployer's uninstall
+// cannot remove (a duplicate on reinstall). Those installers record WHO
+// installed each handler here; Health names a foreign owner instead.
+function recordTriggerInstaller_(handler, installed) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var map = {};
+    try { map = JSON.parse(props.getProperty('TRIGGER_INSTALLERS') || '{}') || {}; } catch (e) { map = {}; }
+    if (installed) {
+      var who = '';
+      try { who = String(Session.getEffectiveUser().getEmail() || ''); } catch (e) { who = ''; }
+      map[handler] = who || '(unknown)';
+    } else {
+      delete map[handler];
+    }
+    props.setProperty('TRIGGER_INSTALLERS', JSON.stringify(map));
+  } catch (e) {
+    Logger.log('recordTriggerInstaller_ (%s): not recorded: %s', handler, (e && e.message) || e);
+  }
+}
+
+/** EN-1: { handler: installer email } as recorded by recordTriggerInstaller_. */
+function readTriggerInstallers_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('TRIGGER_INSTALLERS') || '{}') || {};
+  } catch (e) { return {}; }
 }
 
 // -- Report-usage telemetry --------------------------------------------------
@@ -646,11 +714,16 @@ function buildTeamInsights_(curr, prev, opts) {
  * throwing, because a picker that fails to open is worse than one missing a
  * group the manager may not need.
  */
-function computeSubQueuePickerGroups_(dept, from, to) {
+function computeSubQueuePickerGroups_(dept, from, to, user) {
   if (typeof subQueueChildMap_ !== 'function') return [];
   let children;
   try { children = subQueueChildMap_()[dept] || []; }
   catch (e) { return []; }
+  // AC-1: only the sub-queues this viewer can actually reach. With a Dept
+  // Config read failure the child map is the seed constant while the user's
+  // departments are the fail-closed assigned list -- the groups must follow
+  // the user, or the picker offers agents the report call will then refuse.
+  if (user) children = children.filter(function (c) { return userCanAccessDept_(user, c); });
   const out = [];
   children.forEach(function (child) {
     try {

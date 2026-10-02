@@ -310,6 +310,7 @@ function installNeonRetentionTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('NEON_RETENTION_ENABLED', 'true');
   installNeonRetentionTrigger_();
+  recordTriggerInstaller_('runNeonRetentionWeekly_', true);   // EN-1
   return logStatusReturn_(getNeonRetentionStatus_());
 }
 
@@ -317,6 +318,7 @@ function installNeonRetentionTrigger() {
 function uninstallNeonRetentionTrigger() {
   assertAdmin_();
   uninstallNeonRetentionTrigger_();
+  recordTriggerInstaller_('runNeonRetentionWeekly_', false);   // EN-1
   PropertiesService.getScriptProperties().deleteProperty('NEON_RETENTION_ENABLED');
   return logStatusReturn_(getNeonRetentionStatus_());
 }

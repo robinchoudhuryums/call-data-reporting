@@ -80,3 +80,46 @@ test('memo: success never trips it; unset NEON_HOST never trips it', function ()
   assert.equal(h.ctx.NEON_CONN_DOWN_MEMO_, null, 'unconfigured != unreachable');
   assert.equal(install.attempts, 0);
 });
+
+// DL-3 (broad-scan 2026-10-01): no dashboard Neon read bounded its statements,
+// so a lock wait ran to the execution ceiling, whose kill skips the sheet
+// fallback. The factory now hands back a wrapper that bounds every statement.
+test('DL-3: every statement from getDashboardNeonConn_ carries setQueryTimeout (default 120 s, override per caller)', function () {
+  const timeouts = [];
+  const stmt = function () { return { setQueryTimeout: function (s) { timeouts.push(s); } }; };
+  const raw = { prepareStatement: stmt, createStatement: stmt, setAutoCommit: function () {},
+                commit: function () {}, rollback: function () {}, close: function () { raw.closed = true; } };
+  h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
+  h.ctx.NEON_CONN_DOWN_MEMO_ = null;
+  h.ctx.Jdbc = { getConnection: function () { return raw; } };
+  const conn = h.call('getDashboardNeonConn_');
+  assert.ok(conn.__neonTimed, 'the wrapper, not the raw connection');
+  conn.prepareStatement('SELECT 1');
+  conn.createStatement();
+  assert.deepEqual(timeouts, [120, 120]);
+  conn.close();
+  assert.equal(raw.closed, true, 'close reaches the real connection');
+  h.call('getDashboardNeonConn_', { queryTimeoutS: 240 }).createStatement();
+  assert.equal(timeouts[2], 240);
+  // A driver without setQueryTimeout (older shims) is not an error.
+  h.ctx.Jdbc = { getConnection: function () { return { prepareStatement: function () { return {}; }, close: function () {} }; } };
+  assert.doesNotThrow(function () { h.call('getDashboardNeonConn_').prepareStatement('x'); });
+});
+
+test('DL-3: the wrapper forwards every method the dashboard calls on a connection -- a seventh fails here first', function () {
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  const forwarded = ['prepareStatement', 'createStatement', 'setAutoCommit', 'commit', 'rollback', 'close'];
+  const used = {};
+  fs.readdirSync(dash).filter(function (f) { return /\.gs$/.test(f); }).forEach(function (f) {
+    const src = fs.readFileSync(path.join(dash, f), 'utf8');
+    const re = /\b(?:conn|sharedNeonConn)\.([A-Za-z_]+)\(/g;
+    let m;
+    while ((m = re.exec(src)) !== null) used[m[1]] = f;
+  });
+  const unforwarded = Object.keys(used).filter(function (k) { return forwarded.indexOf(k) === -1; });
+  assert.deepEqual(unforwarded, [], 'add these to neonTimedConn_ (NeonRead.gs): '
+    + unforwarded.map(function (k) { return k + ' (' + used[k] + ')'; }).join(', '));
+  const src = fs.readFileSync(path.join(dash, 'NeonBackup.gs'), 'utf8');
+  assert.match(src, /getDashboardNeonConn_\(\{ queryTimeoutS: NB_QUERY_TIMEOUT_S_ \}\)/, 'the backup asks for its longer bound');
+});

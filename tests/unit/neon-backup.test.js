@@ -306,3 +306,70 @@ test('restoreNeonBackupFile: previews by default, then inserts ON CONFLICT DO NO
   assert.equal(h.call('nbRestoreTableFor_', 'escalation_activity-2026-09.jsonl'), 'escalation_activity');
   assert.equal(h.call('nbRestoreTableFor_', 'pg_shadow-2026-09.jsonl'), null, 'allowlisted tables only');
 });
+
+// ── BU-1 / BU-2 / BU-3 (broad-scan 2026-10-01) ─────────────────────────────
+
+test('BU-1: an unopenable NEON_BACKUP_SS_ID is a FAILED run -- never a fresh workbook that orphans the history', function () {
+  installSheets();
+  h.state.props.NEON_BACKUP_SS_ID = 'gone-or-not-mine';   // openById throws for an unknown id
+  inbound = days('2026-09-01', '2026-09-03');
+  const r = runAt('2026-09-26');
+  assert.match(r, /^FAILED: the backup workbook NEON_BACKUP_SS_ID=gone-or-not-mine could not be opened/);
+  assert.match(r, /NOT recreating it/);
+  assert.equal(h.state.createdSpreadsheets.length, 0, 'pre-BU-1 a new empty workbook was created here');
+  assert.equal(h.state.props.NEON_BACKUP_SS_ID, 'gone-or-not-mine', 'the property still points at the history');
+  // The retention prune stays held (ENG-2 reads the same outcome).
+  assert.match(h.call('neonRetentionBackupGate_', { getProperty: function (k) { return h.state.props[k]; } }, now) || '',
+    /did not finish clean/);
+  // No id yet: the first run still creates the workbook, as before.
+  installSheets();
+  inbound = days('2026-09-01', '2026-09-03');
+  assert.match(runAt('2026-09-26'), /^ok \|/);
+  assert.equal(h.state.createdSpreadsheets.length, 1);
+});
+
+test('BU-2: a workbook past the warn line records WARN, not ok -- Health goes amber and retention holds', function () {
+  installSheets();
+  inbound = days('2026-09-01', '2026-09-03');
+  const realPct = h.ctx.NB_SHEETS_WARN_PCT_;
+  h.ctx.NB_SHEETS_WARN_PCT_ = 0;   // any fill level crosses it
+  try {
+    const r = runAt('2026-09-26');
+    assert.match(r, /^WARN \| store sheets/);
+    assert.match(r, /WARNING backup workbook at \d+% of the 10M-cell cap/);
+    assert.match(h.call('neonRetentionBackupGate_', { getProperty: function (k) { return h.state.props[k]; } }, now) || '',
+      /did not finish clean/, 'pre-BU-2 the `ok` prefix let the per-call prune run');
+  } finally { h.ctx.NB_SHEETS_WARN_PCT_ = realPct; }
+});
+
+test('BU-3: a run cut at its budget records PARTIAL, writes the NEWEST months first, and the next run finishes', function () {
+  install();
+  inbound = days('2026-05-01', '2026-09-25');   // five months to seed
+  const realBudget = h.ctx.NB_RUN_BUDGET_MS_;
+  const realFetch = h.ctx.nbFetchMonthChunks_;
+  let clock = new RealDate('2026-09-26T11:00:00Z').getTime();
+  class TickDate extends RealDate {
+    constructor() { if (arguments.length) super(...arguments); else super(clock); }
+    static now() { return clock; }
+  }
+  h.ctx.NB_RUN_BUDGET_MS_ = 150000;
+  h.ctx.nbFetchMonthChunks_ = function () { clock += 60000; return realFetch.apply(null, arguments); };   // a month costs a minute
+  h.ctx.Date = TickDate;
+  now = clock;
+  try {
+    h.call('runNeonBackup_');
+    const r = h.state.props.NEON_BACKUP_LAST_RESULT;
+    assert.match(r, /^PARTIAL \|/);
+    assert.match(r, /inbound_calls partial \(3 month file\(s\) written, 0 closed skipped, 2 older month\(s\) not reached -- run budget\)/);
+    assert.ok(files['inbound_calls-2026-09.jsonl'] && files['inbound_calls-2026-07.jsonl'], 'the newest months were written');
+    assert.ok(!files['inbound_calls-2026-05.jsonl'], 'the oldest are what the budget left');
+    assert.match(r, /outbound_calls not reached \(run budget\)/);
+  } finally { h.ctx.Date = RealDate; h.ctx.nbFetchMonthChunks_ = realFetch; h.ctx.NB_RUN_BUDGET_MS_ = realBudget; }
+  // Next run: closed months already written skip fast, the rest complete.
+  h.ctx.NB_RUN_BUDGET_MS_ = 10 * 60 * 1000;
+  try {
+    const r2 = runAt('2026-09-26');
+    assert.match(r2, /^ok \|/);
+    assert.ok(files['inbound_calls-2026-05.jsonl'], 'the resumed run reached the oldest month');
+  } finally { h.ctx.NB_RUN_BUDGET_MS_ = realBudget; }
+});

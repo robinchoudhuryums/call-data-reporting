@@ -72,6 +72,9 @@ var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
 // can read ok while a column the verbs read is missing (ESC-DDL2:
 // escalations-hardening.test.js fails on one that is not).
 var ESC_REQUIRED_COLUMNS_ = ['group_id', 'removed_by', 'removed_at', 'removed_reason', 'status_before_removal'];
+// ESC-D1 (broad-scan 2026-10-01): escalation_activity's own added columns --
+// checked by the esc-schema Health row exactly like the list above.
+var ESC_REQUIRED_ACTIVITY_COLUMNS_ = ['department'];
 var ESC_GROUP_DEPT_INDEX_ = 'idx_escalations_group_dept';
 
 // ESC-L1: the OTHER copies of a linked escalation, as [{department, status}]
@@ -109,7 +112,10 @@ var ESC_MAX_ROWS = 500;
 // tenancy), conditional on Apps Script being a covered service; see
 // docs/operator-state.md #24(c) before widening what the snapshot stores.
 var ESC_SNAPSHOT_MAX_ROWS = 150;      // open rows kept (newest first)
-var ESC_SNAPSHOT_CHUNK_CHARS = 8000;  // under the ~9KB per-property cap
+// ESC-D6 (broad-scan 2026-10-01): measured in UTF-8 BYTES -- the ~9KB
+// per-property cap is bytes, and 8000 CHARS of accented names / emoji in a
+// comment can be ~24KB. escChunkUtf8_ never splits a surrogate pair.
+var ESC_SNAPSHOT_CHUNK_BYTES = 8000;  // under the ~9KB per-property cap
 var ESC_SNAPSHOT_MAX_CHUNKS = 6;      // hard ceiling ~48KB of the 500KB store
 var ESC_SNAPSHOT_REFRESH_MIN = 30;    // at most one refresh query per this
 // ESC-S1 (2026-09-30, owner ask): the ACTIVITY THREADS of the snapshot's open
@@ -122,6 +128,35 @@ var ESC_SNAPSHOT_REFRESH_MIN = 30;    // at most one refresh query per this
 var ESC_SNAPSHOT_ACT_MAX_CHUNKS = 6;  // ~48KB, beside the rows' ~48KB
 var ESC_SNAPSHOT_ACT_DETAIL = 600;    // chars of each entry's detail kept
 
+/** ESC-D6: UTF-8 byte length of a JS string (surrogate pair = 4 bytes). */
+function escUtf8Len_(str) {
+  var n = 0;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+
+/** ESC-D6: splits `str` into pieces of at most `maxBytes` UTF-8 bytes each,
+ *  never between the two halves of a surrogate pair. Pure. */
+function escChunkUtf8_(str, maxBytes) {
+  var out = [], start = 0, bytes = 0;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    var pair = c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length;
+    var w = c < 0x80 ? 1 : c < 0x800 ? 2 : pair ? 4 : 3;
+    if (bytes + w > maxBytes) { out.push(str.slice(start, i)); start = i; bytes = 0; }
+    bytes += w;
+    if (pair) i++;
+  }
+  if (start < str.length) out.push(str.slice(start));
+  return out;
+}
+
 /**
  * Pure: rows -> { chunks, count, truncated }. Drops TAIL rows (the list is
  * newest-first) until the serialized form fits the chunk ceiling, so the
@@ -132,14 +167,12 @@ function escSnapshotChunk_(rows) {
   rows = (rows || []).slice(0, ESC_SNAPSHOT_MAX_ROWS);
   var truncated = false;
   var json = JSON.stringify(rows);
-  while (json.length > ESC_SNAPSHOT_CHUNK_CHARS * ESC_SNAPSHOT_MAX_CHUNKS && rows.length) {
+  var chunks = escChunkUtf8_(json, ESC_SNAPSHOT_CHUNK_BYTES);
+  while (chunks.length > ESC_SNAPSHOT_MAX_CHUNKS && rows.length) {
     rows = rows.slice(0, rows.length - 1);
     truncated = true;
     json = JSON.stringify(rows);
-  }
-  var chunks = [];
-  for (var i = 0; i < json.length; i += ESC_SNAPSHOT_CHUNK_CHARS) {
-    chunks.push(json.slice(i, i + ESC_SNAPSHOT_CHUNK_CHARS));
+    chunks = escChunkUtf8_(json, ESC_SNAPSHOT_CHUNK_BYTES);
   }
   return { chunks: chunks, count: rows.length,
            truncated: truncated || (rows.length >= ESC_SNAPSHOT_MAX_ROWS) };
@@ -162,7 +195,12 @@ function escSnapshotStore_(rows) {
       at: new Date().toISOString(), chunks: packed.chunks.length,
       count: packed.count, truncated: packed.truncated,
     }));
-  } catch (e) { /* best-effort -- a failed snapshot must never cost the live read */ }
+  } catch (e) {
+    // Best-effort -- a failed snapshot must never cost the live read. ESC-D6:
+    // but say so; an empty catch hid an over-cap write (the store keeps the
+    // PREVIOUS snapshot, which then ages silently).
+    Logger.log('escSnapshotStore_: snapshot NOT stored: ' + (e && e.message ? e.message : e));
+  }
 }
 
 /** { rows, at, truncated } or null (absent / torn / unparseable). */
@@ -259,7 +297,7 @@ function escSnapshotActRefresh_(conn, rows) {
       + 'SELECT a.escalation_id AS e, e.group_id AS g, a.action, a.actor, a.at::text AS at, '
       + 'left(a.detail, ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS detail, '
       + '(length(a.detail) > ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS cut, '
-      + "e.department, (e.status = 'removed') AS removed "
+      + "COALESCE(a.department, e.department) AS department, (e.status = 'removed') AS removed "   // ESC-D1
       + 'FROM escalation_activity a JOIN escalations e ON e.id = a.escalation_id WHERE '
       + where.join(' OR ') + ') t';
     var stmt = conn.prepareStatement(sql);
@@ -291,7 +329,9 @@ function escSnapshotActPack_(rows, entries) {
       d: x.detail == null ? null : x.detail, c: x.cut ? 1 : 0,
       dp: x.g ? (x.department || null) : null, r: (x.g && x.removed) ? 1 : 0 });
   });
-  var cap = ESC_SNAPSHOT_CHUNK_CHARS * ESC_SNAPSHOT_ACT_MAX_CHUNKS;
+  // ESC-D6: a BYTE budget. A chunk boundary strands at most 3 bytes (a
+  // multi-byte character never splits), so N chunks always hold N*(B-3).
+  var cap = ESC_SNAPSHOT_ACT_MAX_CHUNKS * (ESC_SNAPSHOT_CHUNK_BYTES - 3);
   var threads = {}, size = 2, count = 0, truncated = false, seen = {};
   (rows || []).forEach(function (r) {
     if (!r) return;
@@ -299,7 +339,7 @@ function escSnapshotActPack_(rows, entries) {
     if (seen[k]) return;
     seen[k] = true;
     var list = byKey[k] || [];
-    var add = JSON.stringify(k).length + JSON.stringify(list).length + 2;
+    var add = escUtf8Len_(JSON.stringify(k)) + escUtf8Len_(JSON.stringify(list)) + 2;
     if (size + add > cap) { truncated = true; return; }
     threads[k] = list;
     size += add;
@@ -313,15 +353,19 @@ function escSnapshotActStore_(packed) {
   try {
     var props = PropertiesService.getScriptProperties();
     var json = JSON.stringify(packed.threads || {});
-    var chunks = [];
-    for (var i = 0; i < json.length; i += ESC_SNAPSHOT_CHUNK_CHARS) chunks.push(json.slice(i, i + ESC_SNAPSHOT_CHUNK_CHARS));
-    if (chunks.length > ESC_SNAPSHOT_ACT_MAX_CHUNKS) return;   // cannot happen past the packer; never overflow the store
+    var chunks = escChunkUtf8_(json, ESC_SNAPSHOT_CHUNK_BYTES);   // ESC-D6
+    if (chunks.length > ESC_SNAPSHOT_ACT_MAX_CHUNKS) {   // cannot happen past the packer; never overflow the store
+      Logger.log('escSnapshotActStore_: ' + chunks.length + ' chunks exceed the ceiling -- threads NOT stored.');
+      return;
+    }
     for (var c = 0; c < chunks.length; c++) props.setProperty('ESC_SNAPSHOT_ACT_' + (c + 1), chunks[c]);
     for (var j = chunks.length + 1; j <= ESC_SNAPSHOT_ACT_MAX_CHUNKS; j++) props.deleteProperty('ESC_SNAPSHOT_ACT_' + j);
     props.setProperty('ESC_SNAPSHOT_ACT_META', JSON.stringify({
       at: new Date().toISOString(), chunks: chunks.length, threads: packed.count || 0, truncated: !!packed.truncated,
     }));
-  } catch (e) { /* best-effort */ }
+  } catch (e) {
+    Logger.log('escSnapshotActStore_: threads NOT stored: ' + (e && e.message ? e.message : e));   // ESC-D6
+  }
 }
 
 /** ESC-S1: { threads, at, truncated } or null (absent / torn / unparseable). */
@@ -345,7 +389,7 @@ function escSnapshotActLoad_() {
 /**
  * ESC-S1: getEscalationActivity's outage path. Authorizes EXACTLY like the
  * live path -- against the requested copy's department, found in the ROWS
- * snapshot (L9: a denial returns the not-found shape) -- then serves that
+ * snapshot (L9: a denial returns the offline not-found shape, ESC-D5) -- then serves that
  * row's thread from the thread snapshot, marked `snapshotAsOf`. A row the
  * snapshot does not hold (a closed or removed copy) or a thread that did not
  * fit keeps the plain unavailable shape (+ `snapshotMissing` for the latter).
@@ -354,7 +398,11 @@ function escSnapshotActServe_(user, id) {
   var snap = escSnapshotLoad_();
   var row = snap ? snap.rows.filter(function (r) { return r && String(r.id) === String(id); })[0] : null;
   if (!row) return { available: false, rows: [] };
-  try { escAssertRowAccess_(user, row.department); } catch (denied) { return { available: true, rows: [] }; }
+  // ESC-D5 (broad-scan 2026-10-01): a denial returns EXACTLY the not-in-
+  // snapshot shape above. It returned the live path's {available:true} instead,
+  // so offline a manager probing ids could tell "exists in another dept"
+  // (true) from "no such id" (false) -- the L9 leak, on the outage path.
+  try { escAssertRowAccess_(user, row.department); } catch (denied) { return { available: false, rows: [] }; }
   var act = escSnapshotActLoad_();
   var k = row.group_id ? String(row.group_id) : String(row.id);
   var list = act && act.threads && Object.prototype.hasOwnProperty.call(act.threads, k) ? act.threads[k] : null;
@@ -591,7 +639,7 @@ function getEscalationsBadge() {
 function getEscalations(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
 
   // Single-dept managers are pinned to their own dept; admins + all-dept
   // managers (#1) may pick a dept or 'ALL'. Tier C: a MULTI-dept manager may
@@ -633,7 +681,7 @@ function getEscalations(req) {
   var status = String(req.status || 'pending').toLowerCase().trim();
   if (['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'removed', 'all'].indexOf(status) === -1) status = 'pending';
 
-  var conn = getDashboardNeonConn_();
+  var conn = escTimed_(getDashboardNeonConn_());   // ESC-D2: bounded statements
   if (!conn) {
     // E2: Neon down/unconfigured -- serve the read-only snapshot if one
     // exists (scoped identically; the client banners on meta.snapshotAsOf).
@@ -642,7 +690,7 @@ function getEscalations(req) {
     return { available: false, rows: [], meta: { department: metaDept, status: status } };
   }
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var where = [];
     var params = [];
     var dw = escDeptWhere_();
@@ -749,14 +797,14 @@ function getEscalations(req) {
 function getEscalationActivity(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
 
-  var conn = getDashboardNeonConn_();
+  var conn = escTimed_(getDashboardNeonConn_());   // ESC-D2: bounded statements
   if (!conn) return escSnapshotActServe_(user, id);   // ESC-S1: the offline thread
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) return { available: true, rows: [] };
     // L9: an access denial must be INDISTINGUISHABLE from not-found, else a
@@ -777,7 +825,8 @@ function getEscalationActivity(req) {
     // single-row query (no department tag).
     var sql = meta.groupId
       ? "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
-        + "SELECT a.action, a.actor, a.at::text AS at, a.detail, e.department, "
+        + "SELECT a.action, a.actor, a.at::text AS at, a.detail, "
+        + "COALESCE(a.department, e.department) AS department, "
         + "(e.status = 'removed') AS removed, (a.escalation_id = ?) AS own "
         + "FROM escalation_activity a JOIN escalations e ON e.id = a.escalation_id "
         + "WHERE e.group_id = ?) t"
@@ -843,13 +892,11 @@ function createEscalation(req) {
   });
   var rec = recs[0];
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);            // DDL auto-commits before the txn opens
+    escEnsureTableOnce_(conn);            // DDL auto-commits before the txn opens
     conn.setAutoCommit(false); txn = true;
     // NULLIF(?, '') so a blank optional field stores NULL without needing
     // JDBC setObject(null) (unreliable in Apps Script) and without binding
@@ -943,18 +990,28 @@ function updateEscalation(req) {
   };
   var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     escAssertNotRemoved_(meta);        // ESC-L2
     if (meta.status !== ESC_STATUS_PENDING) {
       throw new Error('Only a pending escalation can be edited.');
+    }
+    // ESC-D3 (broad-scan 2026-10-01): the edit lands on EVERY copy, so the
+    // pending-only guard must hold for every copy too -- it checked only the
+    // clicked one, and editing a pending sibling rewrote a copy another
+    // department had already started or resolved. Removed copies are exempt:
+    // they are read-only history that the owner ruled the edit still reaches.
+    if (meta.groupId) {
+      var notPending = escGroupNotPendingDepts_(conn, meta.groupId, id);
+      if (notPending.length) {
+        throw new Error('Only a pending escalation can be edited, and a linked copy is no longer pending: '
+          + notPending.join(', ') + '. The edit would rewrite that copy too.');
+      }
     }
     // ESC-L2 (owner decision 2): the shared fields are ONE record across a
     // linked group, so an edit lands on EVERY copy (removed ones included --
@@ -1023,15 +1080,13 @@ function moveEscalation(req) {
   var note = escClean_(req.note);
   var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   var notifyRec = null;
   var from = null;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var row = escRowFull_(conn, id);
     if (!row) throw new Error('Escalation not found.');
     from = row.department;
@@ -1100,15 +1155,13 @@ function linkEscalationDepartment(req) {
   var note = escClean_(req.note);
   var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   var notifyRec = null, others = [];
   var newId = Utilities.getUuid(), groupId = null;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var row = escRowFull_(conn, id);
     if (!row) throw new Error('Escalation not found.');
     escAssertNotRemoved_(row);
@@ -1187,14 +1240,12 @@ function restoreEscalationDepartment(req) {
   var note = escClean_(req.note);
   var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   var notifyRec = null, others = [], dept = null, back = null;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var row = escRowFull_(conn, id);
     if (!row) throw new Error('Escalation not found.');
     dept = row.department;
@@ -1261,14 +1312,12 @@ function removeEscalationDepartment(req) {
   if (!reason) throw new Error('A reason for removing this department is required (it goes into the thread).');
   var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   var dept = null;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     dept = meta.department;
@@ -1318,20 +1367,18 @@ function removeEscalationDepartment(req) {
 function resolveEscalation(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
   var resolution = escClean_(req.resolution);
   if (!resolution) throw new Error('A resolution note (what action was taken) is required to mark this resolved.');
   var comments = escClean_(req.comments);
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     // Authorize against the row's OWN department (never trust a dept from req).
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
@@ -1404,19 +1451,17 @@ function resolveEscalation(req) {
 function reopenEscalation(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
   var reason = escClean_(req.reason);
   if (!reason) throw new Error('A reason for reopening is required.');
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
@@ -1462,18 +1507,16 @@ function reopenEscalation(req) {
 function startEscalation(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
   var note = escClean_(req.note);
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
@@ -1517,18 +1560,16 @@ function startEscalation(req) {
 function approveEscalation(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   var notifyRec = null;   // §1: populated on success, fired after the lock releases
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var row = escRowFull_(conn, id);
     if (!row) throw new Error('Escalation not found.');
     escAssertRowAccess_(user, row.department);   // F-45: row dept = data, not input
@@ -1618,19 +1659,17 @@ function approveEscalation(req) {
 function rejectEscalation(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
   var reason = escClean_(req.reason);
   if (!reason) throw new Error('A reason for rejecting is required.');
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
@@ -1668,7 +1707,7 @@ function rejectEscalation(req) {
 function updateEscalationComment(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
   var comments = escClean_(req.comments);
@@ -1677,13 +1716,11 @@ function updateEscalationComment(req) {
   // not a supported operation -- the activity trail is append-only.
   if (!comments) throw new Error('A comment is required.');
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     var dept = meta.department;
@@ -1747,13 +1784,11 @@ function deleteEscalation(req) {
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) {
       Logger.log('deleteEscalation: %s -- no row with id %s; nothing deleted', user.email, id);
@@ -1764,8 +1799,21 @@ function deleteEscalation(req) {
     // `allLinked: true` deletes EVERY copy of the group + their trails, in
     // the same single transaction.
     var all = !!req.allLinked && !!meta.groupId;
-    var depts = all ? escGroupDepts_(conn, meta.groupId) : [meta.department];
-    if (all && depts.indexOf(meta.department) === -1) depts.push(meta.department);   // a removed source copy
+    // ESC-D4 (broad-scan 2026-10-01): deleting the LAST active copy of a group
+    // that still holds REMOVED copies would leave a group with no active copy
+    // -- the state Remove's own last-active guard exists to prevent. Refuse
+    // and point at "delete all linked copies". (A removed copy, or a copy with
+    // an active sibling, deletes alone as before.)
+    if (!all && meta.groupId && meta.status !== ESC_STATUS_REMOVED
+        && escGroupActiveOthers_(conn, meta.groupId, id) === 0
+        && escGroupSize_(conn, meta.groupId) > 1) {
+      throw new Error('This is the last active copy of a linked escalation; the other copies were removed. '
+        + 'Delete all linked copies instead.');
+    }
+    // ESC-D4: the audit names EVERY deleted copy's department -- removed ones
+    // included (the not-removed list undercounted a delete-all).
+    var depts = all ? escGroupDepts_(conn, meta.groupId, /*includeRemoved=*/true) : [meta.department];
+    if (all && depts.indexOf(meta.department) === -1) depts.push(meta.department);   // belt and braces
     var n = all ? escGroupSize_(conn, meta.groupId) : 1;
     conn.setAutoCommit(false); txn = true;
     var a = conn.prepareStatement(all
@@ -1802,29 +1850,27 @@ function deleteEscalation(req) {
  */
 function backfillEscalationActivity() {
   assertAdmin_();
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('Another escalation write is in progress — retry in a moment.');
-  var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 30000);
   var txn = false;
   try {
-    escEnsureTable_(conn);
+    escEnsureTableOnce_(conn);
     conn.setAutoCommit(false); txn = true;
     // 'created' seed for any escalation with NO activity at all.
     var s1 = conn.createStatement();
     var created = s1.executeUpdate(
-      "INSERT INTO escalation_activity (id, escalation_id, action, actor, at, detail) "
+      "INSERT INTO escalation_activity (id, escalation_id, action, actor, at, detail, department) "
       + "SELECT md5(random()::text || e.id || 'c'), e.id, 'created', e.created_by, "
-      + "COALESCE(e.created_at, now()), e.reason "
+      + "COALESCE(e.created_at, now()), e.reason, e.department "
       + "FROM escalations e "
       + "WHERE NOT EXISTS (SELECT 1 FROM escalation_activity a WHERE a.escalation_id = e.id)");
     s1.close();
     // 'resolved' seed for resolved escalations missing one.
     var s2 = conn.createStatement();
     var resolved = s2.executeUpdate(
-      "INSERT INTO escalation_activity (id, escalation_id, action, actor, at, detail) "
+      "INSERT INTO escalation_activity (id, escalation_id, action, actor, at, detail, department) "
       + "SELECT md5(random()::text || e.id || 'r'), e.id, 'resolved', e.resolved_by, "
-      + "COALESCE(e.resolved_at, now()), e.resolution "
+      + "COALESCE(e.resolved_at, now()), e.resolution, e.department "
       + "FROM escalations e "
       + "WHERE e.resolved_at IS NOT NULL "
       + "AND NOT EXISTS (SELECT 1 FROM escalation_activity a WHERE a.escalation_id = e.id AND a.action = 'resolved')");
@@ -1882,16 +1928,6 @@ function escAssertRowAccess_(user, rowDept) {
   // whose stored dept no longer matches a current roster header.
 }
 
-function escRowDepartment_(conn, id) {
-  var stmt = conn.prepareStatement('SELECT department FROM escalations WHERE id = ?');
-  stmt.setString(1, id);
-  var rs = stmt.executeQuery();
-  var dept = rs.next() ? rs.getString('department') : null;
-  rs.close(); stmt.close();
-  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(String(dept || '').length + 8, 'escalations');   // OD-3
-  return dept;
-}
-
 /** Reads { status, department, groupId } for an escalation; null if absent.
  *  Every caller runs escEnsureTable_ first, so group_id always exists. */
 function escRowMeta_(conn, id) {
@@ -1929,14 +1965,32 @@ function escGroupActiveOthers_(conn, groupId, exceptId) {
   return n;
 }
 
-/** ESC-L2: the departments of a group's NOT-removed copies, sorted. */
-function escGroupDepts_(conn, groupId) {
+/** ESC-L2: the departments of a group's NOT-removed copies, sorted.
+ *  ESC-D4: `includeRemoved` lists EVERY copy's dept (the delete-all audit). */
+function escGroupDepts_(conn, groupId, includeRemoved) {
   var stmt = conn.prepareStatement(
-    "SELECT department FROM escalations WHERE group_id = ? AND status <> 'removed' ORDER BY department");
+    "SELECT department FROM escalations WHERE group_id = ?"
+    + (includeRemoved ? '' : " AND status <> 'removed'") + ' ORDER BY department');
   stmt.setString(1, groupId);
   var rs = stmt.executeQuery();
   var out = [];
   while (rs.next()) out.push(String(rs.getString('department') || ''));
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(out).length, 'escalations');   // OD-3
+  return out;
+}
+
+/** ESC-D3: the OTHER copies of a group that are neither pending nor removed,
+ *  as "Dept (status)" labels -- the copies a shared-field edit must not rewrite. */
+function escGroupNotPendingDepts_(conn, groupId, exceptId) {
+  var stmt = conn.prepareStatement(
+    "SELECT department, status FROM escalations WHERE group_id = ? AND id <> ? "
+    + "AND status NOT IN ('pending', 'removed') ORDER BY department");
+  stmt.setString(1, groupId);
+  stmt.setString(2, exceptId);
+  var rs = stmt.executeQuery();
+  var out = [];
+  while (rs.next()) out.push(String(rs.getString('department') || '') + ' (' + String(rs.getString('status') || '') + ')');
   rs.close(); stmt.close();
   if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(out).length, 'escalations');   // OD-3
   return out;
@@ -2019,16 +2073,25 @@ function escNormalizeReviewFields_(row) {
  * Appends one immutable row to the append-only activity trail (§5). MUST be
  * called inside an open transaction (the caller commits) so the activity row
  * lands atomically with its primary write. No commit here.
+ *
+ * ESC-D1 (broad-scan 2026-10-01): the row records the copy's department AT
+ * WRITE TIME (read in the same statement, inside the caller's transaction).
+ * The thread used to tag every entry with the copy's CURRENT department, so
+ * after a Move every earlier comment, start and resolve by CSR read as written
+ * by the new department -- in exactly the dispute workflow Move exists for. A
+ * `reassigned` entry is written after the UPDATE, so it carries the new dept
+ * (its detail names both).
  */
 function escAppendActivity_(conn, escId, action, actor, detail) {
   var stmt = conn.prepareStatement(
-    'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail) '
-    + "VALUES (?, ?, ?, ?, NULLIF(?, ''))");
+    'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail, department) '
+    + "VALUES (?, ?, ?, ?, NULLIF(?, ''), (SELECT department FROM escalations WHERE id = ?))");
   stmt.setString(1, Utilities.getUuid());
   stmt.setString(2, escId);
   stmt.setString(3, action);
   stmt.setString(4, (actor || '').toLowerCase());
   stmt.setString(5, escClean_(detail || ''));
+  stmt.setString(6, escId);
   stmt.execute();
   stmt.close();
 }
@@ -2271,14 +2334,18 @@ function escSchemaRead_(conn) {
     + "'cols', COALESCE((SELECT json_agg(column_name::text) FROM information_schema.columns "
     +   "WHERE table_schema = current_schema() AND table_name = 'escalations'), '[]'::json), "
     + "'idx', COALESCE((SELECT json_agg(indexname::text) FROM pg_indexes "
-    +   "WHERE schemaname = current_schema() AND tablename = 'escalations'), '[]'::json))::text AS j";
+    +   "WHERE schemaname = current_schema() AND tablename = 'escalations'), '[]'::json), "
+    // ESC-D1: escalation_activity's columns too.
+    + "'acols', COALESCE((SELECT json_agg(column_name::text) FROM information_schema.columns "
+    +   "WHERE table_schema = current_schema() AND table_name = 'escalation_activity'), '[]'::json))::text AS j";
   var stmt = conn.createStatement();
   var rs = stmt.executeQuery(sql);
   var json = rs.next() ? rs.getString('j') : '';
   rs.close(); stmt.close();
   if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');   // OD-3
   var parsed = JSON.parse(json || '{}') || {};
-  return { columns: (parsed.cols || []).map(String), indexes: (parsed.idx || []).map(String) };
+  return { columns: (parsed.cols || []).map(String), indexes: (parsed.idx || []).map(String),
+           activityColumns: (parsed.acols || []).map(String) };
 }
 
 /**
@@ -2295,24 +2362,113 @@ function escSchemaVerdict_(read) {
              hint: 'It is created on the first escalation write.' };
   }
   var missing = ESC_REQUIRED_COLUMNS_.filter(function (c) { return cols.indexOf(c) === -1; });
+  // ESC-D1: the activity table's columns (only once that table exists -- an
+  // install with escalations but no trail yet creates it on the next write).
+  var acols = (read && read.activityColumns) || [];
+  if (acols.length) {
+    ESC_REQUIRED_ACTIVITY_COLUMNS_.forEach(function (c) {
+      if (acols.indexOf(c) === -1) missing.push('escalation_activity.' + c);
+    });
+  }
   if (missing.length) {
     return { status: 'warn', value: 'missing column(s): ' + missing.join(', '),
       hint: 'The linked-copy migration in escEnsureTable_ has not taken effect, so EVERY escalation save and '
         + 'live Activity fail with "column ... does not exist". Each escalation write retries it and logs the '
         + 'cause ("escEnsureTable_: ..." in the Apps Script executions log); if it keeps failing, run the '
-        + 'ALTER TABLE escalations ADD COLUMN ... statements in the Neon console as the table owner (Operator State #24).' };
+        + 'ALTER TABLE escalations / escalation_activity ADD COLUMN ... statements in the Neon console as the table owner (Operator State #24).' };
   }
   if (idx.indexOf(ESC_GROUP_DEPT_INDEX_) === -1) {
     return { status: 'warn', value: 'one-copy-per-department index missing (' + ESC_GROUP_DEPT_INDEX_ + ')',
       hint: 'The database is not enforcing one copy per department in a linked group (the code still refuses '
         + 'one). The build fails when duplicates already exist -- find them with SELECT group_id, department, '
         + 'count(*) FROM escalations WHERE group_id IS NOT NULL GROUP BY 1, 2 HAVING count(*) > 1, delete or '
-        + 'remove the extras, and the next escalation write builds it (INV-55; Operator State #24).' };
+        + 'remove the extras, and an escalation write builds it within the hour (the AC-5 schema-check flag; INV-55; Operator State #24).' };
   }
   return { status: 'ok', value: 'linked-copy columns + one-copy-per-department index present', hint: '' };
 }
 
+
+// AC-5 (broad-scan 2026-10-01): escEnsureTable_ ran on EVERY escalation call
+// -- each list load and each card expand -- ~11 DDL round trips, five of them
+// `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, which takes an ACCESS EXCLUSIVE
+// lock even when the column exists, from a manager-callable READ. The verbs and
+// readers now go through this memo: once per execution, and once per
+// ESC_SCHEMA_TTL_S_ across executions via a cache flag whose key carries
+// ESC_REQUIRED_COLUMNS_ (adding a column re-runs the DDL immediately). The flag
+// is set only when the load-bearing DDL (the columns + the activity table)
+// succeeded; a failed unique-index build (duplicate copies) does not block it
+// -- the Health page's esc-schema row reports that index. escEnsureTable_
+// itself still runs everything on every call (its own suites pin that).
+var ESC_SCHEMA_TTL_S_ = 3600;
+var ESC_SCHEMA_ENSURED_ = false;
+// v2 (ESC-D1): + the activity table's columns -- escAppendActivity_ writes
+// `department`, so a pre-deploy v1 flag must not skip the ADD COLUMN for an hour.
+function escSchemaCacheKey_() {
+  return 'escSchema:v2:' + ESC_REQUIRED_COLUMNS_.join(',') + '|' + ESC_REQUIRED_ACTIVITY_COLUMNS_.join(',');
+}
+function escEnsureTableOnce_(conn) {
+  if (ESC_SCHEMA_ENSURED_) return;
+  var cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+  try { if (cache && cache.get(escSchemaCacheKey_())) { ESC_SCHEMA_ENSURED_ = true; return; } } catch (e) { /* recheck */ }
+  var res = escEnsureTable_(conn) || {};
+  if (res.columnsOk !== false && res.activityOk !== false) {
+    ESC_SCHEMA_ENSURED_ = true;
+    try { if (cache) cache.put(escSchemaCacheKey_(), '1', ESC_SCHEMA_TTL_S_); } catch (e) { /* best-effort */ }
+  }
+}
+
+// ESC-D2 (broad-scan 2026-10-01): every escalation statement is BOUNDED. The
+// connect itself cannot be (Apps Script's JDBC refuses connectTimeout & co --
+// see getDashboardNeonConn_), but a statement can, via setQueryTimeout; this
+// wrapper sets it on every statement the escalation paths create, so a lock
+// wait or a cold compute fails in ESC_QUERY_TIMEOUT_S_ instead of running to
+// the execution ceiling. Forwards exactly the six methods those paths use.
+var ESC_QUERY_TIMEOUT_S_ = 30;
+function escTimed_(conn) {
+  if (!conn || conn.__escTimed) return conn;
+  var bound = function (stmt) {
+    try { if (stmt && typeof stmt.setQueryTimeout === 'function') stmt.setQueryTimeout(ESC_QUERY_TIMEOUT_S_); } catch (e) { /* best-effort */ }
+    return stmt;
+  };
+  return {
+    __escTimed: true,
+    prepareStatement: function (sql) { return bound(conn.prepareStatement(sql)); },
+    createStatement: function () { return bound(conn.createStatement()); },
+    setAutoCommit: function (v) { return conn.setAutoCommit(v); },
+    commit: function () { return conn.commit(); },
+    rollback: function () { return conn.rollback(); },
+    close: function () { return conn.close(); },
+  };
+}
+
+// ESC-D2: a write verb opens its connection and ensures the schema BEFORE it
+// takes the project-wide script lock. The old order (lock, then connect, then
+// ~11 DDL statements) held the lock across an UNBOUNDED connect: one hung
+// connect froze the alerts / digest / coaching runs and every admin save until
+// the execution was killed.
+function escOpenWriteConn_() {
+  var conn = escTimed_(getDashboardNeonConn_());
+  if (!conn) throw new Error('Escalations storage (Neon) is not configured/reachable.');
+  try {
+    escEnsureTableOnce_(conn);   // DDL auto-commits; every verb opens its txn later
+  } catch (e) {
+    try { conn.close(); } catch (ce) {}
+    throw new Error('Escalations storage schema check failed. ' + (e && e.message ? e.message : ''));
+  }
+  return conn;
+}
+function escTakeWriteLock_(conn, waitMs) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(waitMs)) {
+    try { conn.close(); } catch (ce) {}
+    throw new Error('Another escalation write is in progress — retry in a moment.');
+  }
+  return lock;
+}
+
 function escEnsureTable_(conn) {
+  var columnsOk = true, activityOk = true;   // AC-5: what escEnsureTableOnce_ may cache
   var ddl = conn.createStatement();
   ddl.execute(
     'CREATE TABLE IF NOT EXISTS escalations ('
@@ -2354,10 +2510,11 @@ function escEnsureTable_(conn) {
     // Every verb now reads these columns, so a failure here breaks the whole
     // write path with "column ... does not exist"; the log line names the
     // cause and the Health page's esc-schema row (escSchemaVerdict_) shows it.
+    columnsOk = false;
     Logger.log('escEnsureTable_: linked-copy column DDL failed: ' + (grpErr && grpErr.message ? grpErr.message : grpErr));
   }
   // ESC-U1 (reflect 207-211): the DATABASE enforces one copy per department
-  // per linked group (INV-57) -- the verbs' checks stay as the readable
+  // per linked group (INV-55) -- the verbs' checks stay as the readable
   // refusals; this makes a slipped check impossible. Partial (standalone rows
   // carry NULL group_id) and non-concurrent, so a build that hits existing
   // duplicates rolls back whole instead of leaving an invalid index. Its own
@@ -2387,7 +2544,34 @@ function escEnsureTable_(conn) {
     var aidx = conn.createStatement();
     aidx.execute('CREATE INDEX IF NOT EXISTS idx_escalation_activity_eid ON escalation_activity (escalation_id, at)');
     aidx.close();
-  } catch (actErr) { /* best-effort */ }
+    // ESC-D1: the department the entry was written under (escAppendActivity_).
+    var adep = conn.createStatement();
+    adep.execute('ALTER TABLE escalation_activity ADD COLUMN IF NOT EXISTS department text');
+    adep.close();
+  } catch (actErr) {
+    activityOk = false;
+    Logger.log('escEnsureTable_: activity table DDL failed: ' + (actErr && actErr.message ? actErr.message : actErr));
+  }
+  // ESC-D1 backfill, idempotent (only NULL rows; ~free once filled): an entry
+  // written before the column existed takes the dept its copy had THEN -- the
+  // `from` side of the earliest LATER `reassigned` entry ("<from> → <to>",
+  // moveEscalation's detail) -- or, with no later move, the copy's current
+  // dept. Its own try: a failed backfill only leaves the read-time fallback.
+  if (activityOk) {
+    try {
+      var bf = conn.createStatement();
+      bf.execute("UPDATE escalation_activity a SET department = COALESCE("
+        + "(SELECT split_part(r.detail, ' \u2192 ', 1) FROM escalation_activity r "
+        + "WHERE r.escalation_id = a.escalation_id AND r.action = 'reassigned' AND r.at > a.at "
+        + "ORDER BY r.at ASC LIMIT 1), "
+        + "(SELECT e.department FROM escalations e WHERE e.id = a.escalation_id)) "
+        + "WHERE a.department IS NULL");
+      bf.close();
+    } catch (bfErr) {
+      Logger.log('escEnsureTable_: activity department backfill failed: ' + (bfErr && bfErr.message ? bfErr.message : bfErr));
+    }
+  }
+  return { columnsOk: columnsOk, activityOk: activityOk };
 }
 
 /** Trim + length-cap a free-text field; '' for null/blank. */

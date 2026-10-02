@@ -531,6 +531,57 @@ test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, n
   }
 });
 
+// ---- AC-1 (broad-scan 2026-10-01): a fail-closed user is served, not locked out --
+
+test('AC-1: a manager whose sub-queue access failed closed gets the OWN-dept view, not a throw', function () {
+  const ctx = hData.ctx;
+  const saved = {};
+  ['resolveUser_', 'subQueueChildMap_', 'computeSummary_', 'getOverviewParentMap_',
+   'logReportUsage_', 'reportFreshnessTag_', 'getRosterForDepartment_'].forEach(function (k) { saved[k] = ctx[k]; });
+  try {
+    hData.state.userEmail = 'm@x.com';
+    hData.state.props.SPREADSHEET_ID = 'fake';
+    hData.state.cache.clear();
+    // The A-7 shape: the Dept Config read errored, so resolveUser_ did NOT
+    // expand (departments = the assigned list) while the child map still
+    // serves the seed edge. The REAL assertDeptAccess_ runs (not stubbed).
+    let departments = ['Parent'];
+    ctx.resolveUser_ = function () { return { role: 'manager', email: 'm@x.com', department: 'Parent', departments: departments.slice() }; };
+    ctx.subQueueChildMap_ = function () { return { Parent: ['Child'] }; };
+    ctx.getOverviewParentMap_ = function () { return { Child: 'Parent' }; };
+    ctx.logReportUsage_ = function () {};
+    ctx.reportFreshnessTag_ = function () { return 'na'; };
+    ctx.getRosterForDepartment_ = function () { return { names: ['P'], byAgent: {}, allExtensions: {} }; };
+    ctx.computeSummary_ = function (d) {
+      return part(d, [{ agent: d + '-agent', matchedViaRoster: true }], { totalRung: 1, rosterAgentCount: 1, daysActive: 1 });
+    };
+    const req = { department: 'Parent', from: '2026-09-01', to: '2026-09-02' };
+    const r = hData.call('getDepartmentSummary', req);
+    deepEqual(Array.from(r.meta.deptsShown), ['Parent'], 'served the own-dept view (pre-fix: "Not authorized for this department.")');
+    assert.equal(r.meta.subScope, 'own');
+    deepEqual(Array.from(r.meta.subQueues), [], 'the unreachable child is not advertised either');
+
+    // Control: once access is healthy again the combined view comes back.
+    departments = ['Parent', 'Child'];
+    hData.state.cache.clear();
+    const r2 = hData.call('getDepartmentSummary', req);
+    deepEqual(Array.from(r2.meta.deptsShown), ['Parent', 'Child']);
+    assert.equal(r2.meta.subScope, 'all');
+  } finally {
+    Object.keys(saved).forEach(function (k) { ctx[k] = saved[k]; });
+    hData.state.cache.clear();
+  }
+});
+
+test('AC-1: the picker groups follow the VIEWER, not the raw child map', function () {
+  installPicker({ Sales: ['PAP'] }, { PAP: ['P1'] }, { PAP: { agents: ['P1'], floaters: [] } });
+  const failedClosed = { role: 'manager', department: 'Sales', departments: ['Sales'] };
+  deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08', failedClosed), [],
+    'a sub-queue the report call would refuse is not offered in the picker');
+  const healthy = { role: 'manager', department: 'Sales', departments: ['Sales', 'PAP'] };
+  assert.equal(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08', healthy).length, 1);
+});
+
 // ---- D-3 (broad-scan 2026-09-17): duration means weighted by NON-ZERO counts --
 
 test('D-3: combined duration means weight each dept by the agents that CONTRIBUTED (avgNonzero_\'s denominator), not roster size', function () {

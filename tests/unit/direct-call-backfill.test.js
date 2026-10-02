@@ -353,3 +353,45 @@ test('R39: size-packed under the JDBC cap; an oversize tuple alone falls back to
   assert.equal(bound[0].binds[3].length, 30999);
   assert.equal(inline.reduce(function (n, e) { return n + tuplesOf(e.sql).length; }, 0), 2, 'A and B inline');
 });
+
+// ── IG-2 (broad-scan 2026-10-01): the resume pointer is fingerprinted (T-8) ──
+
+function displayGrid(rows) {
+  return rows.map(function (r) { return r.map(function (v) { return String(v); }); });
+}
+
+test('IG-2: a fingerprinted pointer resumes only while the sheet is unchanged', function () {
+  const props = h.ctx.PropertiesService.getScriptProperties();
+  const data = displayGrid(SHEET_ROWS);
+  h.call('dcResumeWrite_', props, 2, data);
+  const st = JSON.parse(h.state.props.DIRECT_UPSERT_RESUME);
+  assert.equal(st.index, 2);
+  assert.equal(st.rowCount, 3);
+  assert.equal(h.call('dcResumeRead_', props, data), 2, 'unchanged sheet -> resume where it stopped');
+
+  // A force re-import deleted 03/09's two rows and appended its rebuild at the
+  // END: same row count, but a different row now sits at index 2. The old bare
+  // index resumed at 2 and the rows that slid under the pointer were never upserted.
+  const reshuffled = displayGrid([SHEET_ROWS[2], SHEET_ROWS[0], SHEET_ROWS[1]]);
+  assert.equal(h.call('dcResumeRead_', props, reshuffled), 0, 'row at the pointer changed -> restart');
+  assert.equal(h.call('dcResumeRead_', props, data.slice(0, 2)), 0, 'row count changed -> restart');
+
+  h.state.props.DIRECT_UPSERT_RESUME = '2';
+  assert.equal(h.call('dcResumeRead_', props, data), 0, 'a legacy bare index has no fingerprint -> restart');
+  delete h.state.props.DIRECT_UPSERT_RESUME;
+});
+
+test('IG-2: backfillDirectCallToNeon honours a valid pointer and restarts on a stale one', function () {
+  install(SHEET_ROWS);
+  const props = h.ctx.PropertiesService.getScriptProperties();
+  h.call('dcResumeWrite_', props, 2, displayGrid(SHEET_ROWS));
+  let cap = { executed: [], prepared: [], commits: 0, rollbacks: 0, closes: 0, ddl: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  assert.equal(h.call('backfillDirectCallToNeon').upserted, 1, 'resumed at index 2: one row left');
+  assert.equal(h.state.props.DIRECT_UPSERT_RESUME, undefined, 'cleared on completion');
+
+  install(SHEET_ROWS.slice(0, 2));   // the sheet shrank since the pointer was written
+  h.state.props.DIRECT_UPSERT_RESUME = JSON.stringify({ index: 1, rowCount: 3, key: 'x' });
+  cap = { executed: [], prepared: [], commits: 0, rollbacks: 0, closes: 0, ddl: 0 };
+  assert.equal(h.call('backfillDirectCallToNeon').upserted, 2, 'stale pointer -> every row from the top');
+});

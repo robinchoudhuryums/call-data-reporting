@@ -26,7 +26,9 @@ quietly verify the client against a different Chart.js than production ships.
 - `drive-smoke.js` — boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
   class: laid out and visible but entirely uniform pixels), and horizontal page
-  overflow.
+  overflow -- at 1440 px AND, in a separate fresh boot, at 360 px (CL-9), where
+  a failure names the elements that reach past the viewport. `drive-agent.js`
+  runs the same 360 px check on the agent app's two tabs.
 - `drive-f13.js` — the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.

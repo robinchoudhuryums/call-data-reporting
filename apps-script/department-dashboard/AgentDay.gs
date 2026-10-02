@@ -167,6 +167,13 @@ function agentDayInboundRole_(journey, agentName) {
   for (var i = 0; i < journey.length; i++) {
     var ev = journey[i];
     if (!ev || ev.name !== agentName) continue;
+    // PC-3 (broad-scan 2026-10-01): `transfer:true` events are CROSS-REFERENCED
+    // provenance (inboundCalls.js: the R11-N append and the internal record's
+    // synthetic origin head -- "not an in-call leg"). The origin head names the
+    // agent who ANSWERED the customer and transferred, so without this skip that
+    // agent's day listed the customer call AND the internal transfer record as
+    // answered, and talkSec counted the same conversation twice.
+    if (ev.transfer) continue;
     var role = (ev.kind === 'answer' || (typeof ev.talk === 'number' && ev.talk > 0))
       ? 'answered' : (ev.missed ? 'missed' : 'rang');
     var cand = {

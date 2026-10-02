@@ -29,7 +29,12 @@ explicit offset) so the host cannot move it, and assert shape only on a bare
 date string -- see the Batch 4 bare-number pin in `neon-write-mapping.test.js`.
 `scripts/deploy.sh` runs its gate under `TZ=America/Chicago` for the same
 reason: a red gate blocks the `clasp push` entirely, so the developer's locale
-must not be what decides whether a deploy is allowed.
+must not be what decides whether a deploy is allowed. **HT-1 (broad-scan
+2026-10-01): `npm test` and `npm run ci` pin it too** (`TZ=${CI_TZ:-America/Chicago}`,
+the same `CI_TZ` override deploy.sh honours), so the npm entry points are green
+on any host; a bare `node --test` still runs in the host zone, which is how the
+table above is measured. The R38 `force-delete-rows` pins (added after that
+measurement) were red on a UTC host until their fixtures moved to NOON.
 
 Node-based unit tests for the **Department Dashboard** Apps Script
 code. Zero dependencies — uses Node's built-in `node:test` + `node:assert`
@@ -64,7 +69,9 @@ deploy. It is **not** a full Apps Script emulator — see Limitations.
 ```
 tests/
   harness/
-    formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware)
+    formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware).
+                    A Java-pattern TOKENIZER (HT-4): quoted literals honoured,
+                    an unmodelled letter THROWS rather than passing through.
     fakeSheet.js    in-memory SpreadsheetApp fakes; supports a separate
                     { values, displays } grid so duration columns can
                     model getValue() ≠ getDisplayValue() (INV-02).
@@ -73,10 +80,19 @@ tests/
                     class -- set `_maxColumns` when a test wants a narrow
                     sheet), and setNumberFormat RECORDS onto
                     sheet._numberFormats so the plain-text coercion
-                    protections are assertable. Never loosen the fake to
-                    make a fixture fit -- widen the fixture.
+                    protections are assertable. setValues is SHAPE-strict
+                    (HT-2: rows x cols must match the range, every row, with
+                    Sheets' own messages -- `assertSetValuesShape` is exported
+                    for a suite's own range double) and a write updates a
+                    fixture's display grid. Never loosen the fake to make a
+                    fixture fit -- widen the fixture.
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
-    shim.js         mock Apps Script globals + a `state` handle to drive them
+    shim.js         mock Apps Script globals + a `state` handle to drive them.
+                    Models the platform LIMITS (HT-3/HT-5): cache keys > 250
+                    chars and values > 100 KB throw (state.cacheLimitHits);
+                    properties > 9 KB / a store > 500 KB throw; triggers are a
+                    live set (state.triggers, 20-trigger cap); the script lock
+                    has real held state (state.lockHeld, hasLock()).
     loadGas.js      loads .gs files into one vm context (shared global scope)
   unit/                       (the directory is canonical; every suite is
                                named somewhere in this map — ENFORCED by
@@ -87,6 +103,10 @@ tests/
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
+    diagnostics-tools.test.js Diagnostics.gs: CH-1 -- the editor-run tools are public (the Run dropdown hides `_` names) and each refuses a non-admin before reading
+    harness-strictness.test.js  the fakes' platform limits themselves (HT-2/3/4/5): setValues shape + display update, cache caps, formatDate tokens, triggers / lock / property limits -- loosening a fake fails here
+    deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (DEP-1), CI on Node 22 (HT-6)
+    workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
     individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
@@ -141,12 +161,21 @@ tests/
                               call-path drill's sheet fallback: source
                               parity, both auth arms, miss reasons),
                               neon-conn-memo (the per-execution
-                              unreachable memo), inbound-calls /
+                              unreachable memo; DL-3: the factory's
+                              statement-timeout wrapper + its
+                              forwarded-method sweep), inbound-calls /
                               outbound-calls (the two per-call captures:
                               builder gates + authoritative/P-1/hash pins,
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
+                              percall-agent-canon (PC-1: the ONE INV-24
+                              canonicalizer shared by the DQE build and
+                              the capture writers, capture-time rewrite
+                              of agent names but never queue / masked /
+                              IVR journey nodes, and the editor-run Neon
+                              rewrite -- preview writes nothing, apply
+                              binds exactly the mapped pairs),
                               sheet-space (R47: the workbook 10M-cell
                               cap -- the planner REFUSES rather than
                               truncating a named range, the vetted per-tab
@@ -281,10 +310,12 @@ tests/
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
                               setup (INV-12), alert-recipients (EML-1: ALL managers opt-in only), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
+                              client-correctness (broad-scan 2026-10-01 Batch 7: THEME keys exist (CL-1), per-day Insights deltas on unequal windows (CL-2), AC/DC save status survives the reload (CL-15), share/digest links carry their window into the dept controls (CL-17), the per-step boot guard (CL-18), sticky error toasts (CL-4), the heatmap error state (CL-6), View-as gates (CL-16), agent-app presets never anchor on today (CL-14), the IR Generate release (CL-7), the share-link copy (CL-5), the partial subscriber save (CL-22); Batch 8: escalation focus restore (CL-3, rendered in drive-admin), the remove/restore-dept in-flight guard (CL-21), the agent-app tabs pattern + history guard (CL-13, rendered in drive-agent), null-safe escapeHtml + the escaped alert status (CL-12), the #/dev hash via google.script.url (CL-19), the deleted dead helpers (CL-10), the qcd-hero-sub font + lang="en" (CL-8 / CL-11)),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
                               pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up),
                               cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
+                              cdr-report-neon-timeout (CR-6: getNeonConn()'s statement-timeout wrapper + the forwarded-method sweep; the dashboard twin is in neon-conn-memo, DL-3),
                               neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),
                               agent-role / agent-home (the deny wall +
                               the no-teammate-identity payload pin),
@@ -570,7 +601,7 @@ it; `h.consts.NAME` reads a captured constant; `h.ctx` is the raw context
 drives the shim (current user email, script properties, cache, the fake
 spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
 
-### Two gotchas the harness imposes
+### Three gotchas the harness imposes
 
 1. **Top-level `const`/`let` are not global properties.** Apps Script's
    flat scope means files see each other's `function` and `var`
@@ -588,6 +619,18 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
    prototype-agnostic. Primitive comparisons (`assert.equal`, `.match`,
    `.throws`) are fine as-is. (The harness shares the host `Date` into the
    vm so `instanceof Date` works in both directions.)
+
+3. **One `h.call` / `h.fn` invocation = one Apps Script EXECUTION (DL-7).**
+   `openSpreadsheet_` and the roster block are memoized per execution, so the
+   wrapper calls `resetWorkbookMemos_()` before every entry point -- the same
+   boundary the platform draws between two `google.script.run` calls. Swapping
+   `h.state.spreadsheet` between two `h.call`s therefore just works. Calling
+   one `.gs` function from INSIDE another (or through `h.ctx.fn(...)`, which
+   bypasses the wrapper) stays in the same execution and sees the memo -- which
+   is the production behaviour. A new dashboard write to `DO NOT EDIT!` must
+   call `bustRosterMemo_()` after it, or a read later in the same execution
+   serves the pre-write roster (`workbook-memo.test.js` pins the one writer,
+   `appendRosterEntry_`).
 
 ## Limitations (and the roadmap this Phase-1 harness leaves open)
 

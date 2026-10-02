@@ -339,6 +339,29 @@ test('OUTBOUND fallback ADMITS a manager whose own-dept internal record links th
   assert.equal(res.call.callId, '111');
 });
 
+test('PC-8: an ALL-departments manager gets the Neon path\'s rule on the fallback -- a link is still required', function () {
+  // Pre-PC-8 this arm treated allDepts as admin and skipped the check, so
+  // during a Neon outage the company view could open ANY outbound call by id.
+  const ALL = { role: 'manager', department: null, departments: ['CSR', 'Sales'], allDepts: true, email: 'a@x.com' };
+  installOb({
+    user: ALL,
+    sheet: fakeExportSheet([exRow({ date: '2026-08-19', id: '900' })]),
+    obSheet: fakeExportSheet([obRow({ date: '2026-08-19', id: '111' })], { cols: 12 }),
+  });
+  let res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
+  assert.equal(res.found, false);
+  assert.equal(res.reason, 'not-entitled', 'no internal record links the call -> refused, as on Neon');
+
+  installOb({
+    user: ALL,
+    sheet: fakeExportSheet([exRow({ date: '2026-08-19', id: '900', internal: true, entryQueue: 'A_Q_Sales',
+                                    relatedId: '111', relatedKind: 'outbound' })]),
+    obSheet: fakeExportSheet([obRow({ date: '2026-08-19', id: '111' })], { cols: 12 }),
+  });
+  res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
+  assert.equal(res.found, true, 'company view (blank dept): ANY linking record entitles -- the empty predicate');
+});
+
 test('OUTBOUND fallback: a missing Outbound tab is unavailable, never a false miss', function () {
   installOb({ obSheet: null });
   const res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
@@ -387,4 +410,33 @@ test('PCR-2 follow-on: auth arm 1 matches final_dept against the dept\'s Final D
     assert.equal(res.found, true, 'the org-chart label settles arm 1');
     assert.equal(install.missedGateCalls.length, 0, 'without consulting the F-4 gate');
   } finally { h.ctx.getFinalDeptLabels_ = saved; }
+});
+
+// PC-5 (broad-scan 2026-10-01): the sheet fallback carries the same third arm.
+test('PC-5 (fallback): a manager reaches the customer call their own internal transfer record links to', function () {
+  const BILLING = { role: 'manager', department: 'Billing', departments: ['Billing'], email: 'b@x.com' };
+  install({
+    user: BILLING,
+    sheet: fakeExportSheet([
+      exRow({ date: '2026-08-19', id: 'C1', entryQueue: 'A_Q_CSR', disposition: 'answered' }),
+      exRow({ date: '2026-08-19', id: 'T1', entryQueue: 'A_Q_Billing', internal: true,
+              relatedId: 'C1', relatedKind: 'inbound' }),
+    ]),
+  });
+  h.ctx.queuesForDept_ = function (d) { return d === 'Billing' ? ['A_Q_Billing'] : ['A_Q_CustomerSuccess']; };
+  h.ctx.getInboundQueueAliases_ = function () { return []; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Billing']; };
+  const res = drill({ callId: 'C1', date: '2026-08-19', department: 'Billing' });
+  assert.equal(res.found, true, 'pre-PC-5: reason-less miss');
+  assert.equal(res.call.callId, 'C1');
+
+  install({
+    user: BILLING,
+    sheet: fakeExportSheet([exRow({ date: '2026-08-19', id: 'C1', entryQueue: 'A_Q_CSR' })]),
+  });
+  h.ctx.queuesForDept_ = function (d) { return d === 'Billing' ? ['A_Q_Billing'] : ['A_Q_CustomerSuccess']; };
+  h.ctx.getInboundQueueAliases_ = function () { return []; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Billing']; };
+  const res2 = drill({ callId: 'C1', date: '2026-08-19', department: 'Billing' });
+  assert.equal(res2.found, false, 'no link -> refused');
 });

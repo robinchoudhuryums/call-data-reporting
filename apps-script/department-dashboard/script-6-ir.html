@@ -993,6 +993,9 @@
     if (p) p.value = 'custom';
   }
 
+  // CL-7: the reportReqSeq_.ir token of the newest GENERATE run (the edit
+  // popover's Apply takes tokens from the same counter but never sets this).
+  var irGenerateTok_ = 0;
   function runIrReport() {
     irSetFormError('');
     const dept = getRequestedDept();
@@ -1040,18 +1043,29 @@
     else if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
+    irGenerateTok_ = __rtok;             // CL-7
     const __sig = reportSig_(req);   // D1b keep-last-good key
     reportSwrPaint_('ir', __sig, irRenderReport, 'ir-results-status');   // SWR: instant repeat-paint
+    // CL-7 (broad-scan 2026-10-01): a superseded response must still give the
+    // Generate button back when the request that superseded it was NOT another
+    // Generate (the edit popover's Apply bumps the same token, and its handlers
+    // only restore their own button -- so Generate sat on "Loading…" forever).
+    // P29 stands: a newer GENERATE run owns the button, so this one leaves it.
+    const releaseIfSuperseded = function () {
+      if (__rtok === reportReqSeq_.ir) return false;
+      if (__rtok === irGenerateTok_) { btn.disabled = false; btn.textContent = originalLabel; }
+      return true;
+    };
     google.script.run
       .withSuccessHandler(function (data) {
-        if (__rtok !== reportReqSeq_.ir) return;   // superseded by a newer request (P29: check before restoring the button)
+        if (releaseIfSuperseded()) return;   // superseded by a newer request (P29: check before restoring the button)
         btn.disabled = false;
         btn.textContent = originalLabel;
         reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
-        if (__rtok !== reportReqSeq_.ir) return;   // P29
+        if (releaseIfSuperseded()) return;   // P29 / CL-7
         btn.disabled = false;
         btn.textContent = originalLabel;
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
@@ -2528,7 +2542,7 @@
   function irEmailToAgent_() {
     const agents = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
     if (agents.length !== 1) {
-      showToast('Select a single agent to email their report.', 'error');
+      showToast('Select a single agent to email their report.', 'error', 4000);   // CL-4: input
       return;
     }
     const agentName = String(agents[0]);

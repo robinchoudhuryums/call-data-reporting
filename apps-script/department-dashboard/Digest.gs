@@ -290,6 +290,15 @@ function digestGatedAttempt_(cadence, now, source) {
     return { decision: fresh ? 'send' : 'send-stale', latest: latest };
   } catch (e) {
     Logger.log('digestGatedAttempt_(%s) failed: %s', cadence, e);
+    // EN-4 (broad-scan 2026-10-01): a throw recorded NOTHING, so the previous
+    // run's "ok" stayed in DIGEST_LAST_RESULT_<cadence> and the Health page's
+    // out-digest row read green until STALE (4 / 9 / 35 days) while that
+    // window's digests were never sent. Record it, like Alerts' FAILED (threw).
+    try {
+      digestRecordResult_(PropertiesService.getScriptProperties(), cadence,
+        'FAILED (threw): ' + ((e && e.message) ? e.message : String(e))
+        + ' -- no ' + cadence + ' digests sent; re-run by hand before the next scheduled run. At ' + now);
+    } catch (pe) { /* best-effort */ }
     notifyDigestFailure_(cadence, e);
     return { decision: 'error' };
   }
@@ -348,8 +357,9 @@ function sendDigestsForCadence_(cadence, runOpts) {
   var digestLock = LockService.getScriptLock();
   if (!digestLock.tryLock(15000)) {
     Logger.log('sendDigestsForCadence_(%s): another run holds the script lock — skipping.', cadence);
-    // F-49: a whole cadence's digests are dropped here (e.g. the alerts
-    // run holding the shared lock through its send window) -- notify the
+    // F-49: a whole cadence's digests are dropped here (e.g. a long admin
+    // write; the alerts run no longer holds the lock across its sends since
+    // EN-2, broad-scan 2026-10-01) -- notify the
     // admins so the "digest didn't arrive -> check admin inbox" runbook
     // (Operator State #12d) actually finds something.
     // O-5 (broad-scan 2026-09-17): ALSO record it -- the previous day's
@@ -1422,7 +1432,11 @@ function notifyDigestFailure_(cadence, err) {
         stepsTitle: 'What to check',
         steps: [{ head: 'Digest Config rows.', body: 'A malformed row (unknown dept, bad cadence) fails the whole run before any send.' },
                 { head: 'Execution log.', body: 'Apps Script → Executions → ' + appEsc_(fnName) + ' for the full trace.' },
-                { head: 'Re-run.', body: 'The run-claim marker is NOT set on a throw, so the next scheduled run retries; or run it from the editor now.' }],
+                // EN-4: the old text promised "the next scheduled run retries" -- it does
+                // not: that run computes the NEXT window, so this one's digests were lost.
+                { head: 'Re-run.', body: 'The next scheduled run does NOT retry this window -- it assesses the next one. Run '
+                  + appEsc_(fnName) + ' from the editor once the cause is fixed and before the next scheduled run; '
+                  + 'the run-claim marker is not set on a throw, so nothing is sent twice.' }],
         mono: { title: 'Stack', text: (err && err.stack) ? err.stack : '(no stack)' },
         ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Digest Config',
         footerHtml: 'Sent when a whole digest run aborts (cfg read / window compute). Operator State #12 has the seven checks.',

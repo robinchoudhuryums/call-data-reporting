@@ -329,3 +329,33 @@ test('SEC-1: reportRangeDays_ is inclusive and DST-proof; assertReportRangeCap_ 
     /Prior range is capped at 366 days/);
   assert.doesNotThrow(function () { h.call('assertReportRangeCap_', '2025-01-01', '2025-12-31', 366); });
 });
+
+// DL-4 (broad-scan 2026-10-01): the prior window's DISTANCE is capped too. The
+// reports read one span covering both windows, so a short prior years back
+// read every day between -- SEC-1 bounded only its length.
+test('DL-4: assertReportSpanCap_ bounds the COMBINED span of window + prior, and every custom-prior site calls it', function () {
+  assert.equal(h.ctx.REPORT_MAX_SPAN_DAYS, 731 + 366);
+  // A maximal window with a year-over-year prior is the longest legitimate pair.
+  assert.doesNotThrow(function () { h.call('assertReportSpanCap_', '2024-10-01', '2026-09-30', '2023-10-01', '2025-09-30'); });
+  // The adjacent prior of a month is trivially fine; so is a prior AFTER the window.
+  assert.doesNotThrow(function () { h.call('assertReportSpanCap_', '2026-09-01', '2026-09-30', '2026-08-01', '2026-08-31'); });
+  assert.doesNotThrow(function () { h.call('assertReportSpanCap_', '2026-01-01', '2026-01-31', '2026-09-01', '2026-09-30'); });
+  // The abuse shape: a two-day prior 26 years back.
+  assert.throws(function () { h.call('assertReportSpanCap_', '2026-09-01', '2026-09-30', '2000-01-01', '2000-01-02'); },
+    /too far from the report window/);
+  assert.throws(function () { h.call('assertReportSpanCap_', '2026-09-01', '2026-09-30', '2023-09-01', '2023-09-30'); },
+    /at most 1097 days/);
+
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  let sites = 0;
+  ['IndividualReport.gs', 'InsightsReport.gs'].forEach(function (f) {
+    const lines = fs.readFileSync(path.join(dash, f), 'utf8').split('\n');
+    lines.forEach(function (l, i) {
+      if (l.indexOf("'Prior range'") === -1) return;
+      sites++;
+      assert.match(lines[i + 1], /assertReportSpanCap_\(/, f + ':' + (i + 2) + ' -- a prior-range cap without the DL-4 span cap');
+    });
+  });
+  assert.equal(sites, 3, 'IR + Insights on-screen + Insights email');
+});

@@ -60,6 +60,16 @@
     // caller-only email rides the Export button for its "Sending…" feedback.
     const qadExportBtn = $('qcd-alldept-export-btn');
     const qadExportMenu = $('qcd-alldept-export-menu');
+    // CL-4: the send outcomes land in the report's own status line too, so a
+    // failure is still on screen after the toast is dismissed.
+    const qadSetStatus_ = function (kind, msg) {
+      const el = $('qcd-alldept-status');
+      if (!el) return;
+      if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+      el.className = 'status status-' + kind;
+      el.textContent = msg;
+      el.style.display = '';
+    };
     const qadEmailSelf = function () {
       const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
       if (!meta || !meta.from || !meta.to || !qadExportBtn) return;
@@ -69,10 +79,12 @@
       google.script.run
         .withSuccessHandler(function (res) {
           qadExportBtn.disabled = false; qadExportBtn.innerHTML = prev;
+          qadSetStatus_(null);
           showToast('Report emailed to ' + ((res && res.to) || 'you') + '.');
         })
         .withFailureHandler(function (err) {
           qadExportBtn.disabled = false; qadExportBtn.innerHTML = prev;
+          qadSetStatus_('error', 'Email failed: ' + (err && err.message ? err.message : String(err)));
           showToast('Email failed: ' + (err && err.message ? err.message : String(err)), 'error');
         })
         .sendQcdAllDeptEmail({ from: meta.from, to: meta.to });
@@ -152,14 +164,17 @@
             // ENG-8: a run that reached nobody is not a send -- say which
             // failure it was, as an error toast, instead of "Sent … to 0".
             if (res && res.noRecipients) {
+              qadSetStatus_('error', 'Not sent: ' + day + ' has no active subscribers.');
               showToast('Not sent: ' + day + ' has no active subscribers — add one under Alerts → Report Subscribers.', 'error');
               return;
             }
             if (res && res.allFailed) {
+              qadSetStatus_('error', 'Send FAILED for all ' + failed + ' subscriber' + (failed === 1 ? '' : 's') + ' — nothing went out.');
               showToast('Send FAILED for all ' + failed + ' subscriber' + (failed === 1 ? '' : 's')
                 + ' — nothing went out (' + ((res.failed[0] && res.failed[0].error) || 'see the Apps Script log') + ').', 'error');
               return;
             }
+            qadSetStatus_(failed ? 'error' : null, failed ? (failed + ' subscriber' + (failed === 1 ? '' : 's') + ' failed for ' + day + ' — see the Apps Script log.') : '');
             showToast('Sent ' + day + ' to ' + ((res && res.count) || 0) + ' subscriber'
               + (res && res.count === 1 ? '' : 's')
               + (failed ? ' (' + failed + ' failed — admins notified via the modal log)' : '')
@@ -167,6 +182,7 @@
           })
           .withFailureHandler(function (err) {
             blastBtn.disabled = false; blastBtn.textContent = prev;
+            qadSetStatus_('error', 'Send failed: ' + (err && err.message ? err.message : String(err)));
             showToast('Send failed: ' + (err && err.message ? err.message : String(err)), 'error');
           })
           .sendQcdAllDeptToSubscribers({ date: day, force: alreadySent });
@@ -1118,17 +1134,29 @@
     });
     // `#/dev` is the no-chord entry point: the whole point of this feature is
     // that a diagnostic does not need its own button in the header.
+    // CL-19: read the hash through google.script.url -- the page runs in Apps
+    // Script's sandbox IFRAME, whose own window.location never carries the
+    // parent URL's #fragment (the router's getLocation read, script-4). The
+    // bare window.location stays as the fallback outside Apps Script.
+    var openIfDevHash_ = function (hash) {
+      if (String(hash || '').indexOf('/dev') !== -1) devToggle_(true);
+    };
     try {
-      if (String(window.location.hash || '').indexOf('/dev') !== -1) devToggle_(true);
+      if (typeof google !== 'undefined' && google.script && google.script.url
+          && typeof google.script.url.getLocation === 'function') {
+        google.script.url.getLocation(function (loc) { openIfDevHash_(loc && loc.hash); });
+      } else {
+        openIfDevHash_(window.location.hash);
+      }
     } catch (e) {}
     if (DEV_.on) devToggle_(true);           // restore a persisted open state
   }
 
   // Wait for DOM, then go.
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { init(); devInstallToggle_(); });
+    document.addEventListener('DOMContentLoaded', function () { bootInit_(); devInstallToggle_(); });   // CL-18
   } else {
-    init();
+    bootInit_();
     devInstallToggle_();
   }
 </script>

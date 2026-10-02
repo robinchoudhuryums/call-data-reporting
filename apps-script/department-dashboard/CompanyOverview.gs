@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v25` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v26` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -92,7 +92,9 @@
 // v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
 // v22 (6b): each dept carries a per-day `trendChartAnswered` series (DQE
 // answered COUNT) feeding the chart's new Answered calls metric view.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v25';
+// v26 (QO-1, broad-scan 2026-10-01): qcd.violationsMtd is month-to-date through
+// the LATEST QCD date (the D-8 rule), not through today.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v26';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -342,6 +344,7 @@ function getCompanyOverview(req) {
   // in the Health page's per-user rollup. The dept column keeps the scope
   // that was viewed (matches the YTD endpoint, UI-3).
   if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', realUser, !!cached);
+  if (cached) if (typeof noteReportCache_ === 'function') noteReportCache_('hit');   // DL-9 (a corrupt entry recomputes and may then also write)
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
@@ -994,7 +997,7 @@ function getCompanyOverview(req) {
         json.length, Math.round(json.length / OVERVIEW_CACHE_MAX_BYTES * 100),
         OVERVIEW_CACHE_MAX_BYTES, depts.length);
     }
-    try { cache.put(ovCacheKey, json, REPORT_CACHE_TTL_SECONDS); }
+    try { cache.put(ovCacheKey, json, REPORT_CACHE_TTL_SECONDS); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
     catch (e) {
       Logger.log('CompanyOverview cache put FAILED at %s bytes (%s depts): %s '
         + '-- the Overview is now UNCACHED: every request pays the full compute. '
@@ -1039,7 +1042,10 @@ function getOverviewChartTrend(req) {
   const cache = CacheService.getScriptCache();
   const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
-                 + ':' + ((typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung');   // DD-2
+                 + ':' + ((typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung')   // DD-2
+                 // DL-5: + every dept's roster -- each dept line is its roster's
+                 // agents, and a roster edit does not move latestDate.
+                 + ':' + ((typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na');
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -1607,8 +1613,29 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     const _readTo = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
     const _mtdStartWin = mtdStartIso_(_readTo);
     const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
-    const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
+    let grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
     if (!grid || grid.missing || grid.empty) return out;
+
+    const tz = ssTZ || TZ;
+    // QO-1 (broad-scan 2026-10-01): "MTD" is month-to-date through the LATEST
+    // QCD DATE in the data, not through today -- the D-8 rule My Department and
+    // the emails already follow. Anchored on today, the 1st of every month
+    // showed the previous month's latest day beside a green "0 viol MTD".
+    // The latest date's month can start before the read window (the 1st, with
+    // a 30-day chart window), so re-read from that month's 1st when it does;
+    // on the sheet path readQcdGrid_ is the memoized whole sheet, so this is free.
+    let qcdLatestIso = '';
+    for (let li = 0; li < grid.values.length; li++) {
+      const lr = grid.values[li];
+      if (String(lr[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
+      const ld = rowDateIso_(lr[QCD_HISTORICAL_COLS.DATE - 1], tz);
+      if (ld && ld <= _readTo && ld > qcdLatestIso) qcdLatestIso = ld;
+    }
+    const mtdStart = qcdLatestIso ? mtdStartIso_(qcdLatestIso) : _mtdStartWin;
+    if (mtdStart < _readFrom) {
+      const wider = readQcdGrid_(mtdStart, _readTo);
+      if (wider && !wider.missing && !wider.empty) grid = wider;
+    }
 
     // Build queue -> [depts] lookup from each dept's effective DIRECT
     // queue list (Dept Config sheet overriding the DEPT_QCD_QUEUES
@@ -1633,16 +1660,15 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // tile. The QCD Report's "Include sub-queues" toggle is now the
     // place to see the combined view.
 
-    const tz = ssTZ || TZ;
     const values = grid.values;
 
     // First pass: track the latest date per dept (so we can grab
     // the right "latest day" totals in a second pass).
     const latestDateByDept = {};   // dept -> isoDate
-    // Month-to-date cutoff: 1st of the current month -- a script-TZ calendar
-    // string (D-1; see mtdStartIso_), NOT a script-midnight instant formatted
-    // in `tz`, which is the SPREADSHEET's zone and read a day early Mar-Nov.
-    const mtdStart = mtdStartIso_();
+    // Month-to-date cutoff (`mtdStart`, above): the 1st of the latest QCD
+    // date's month (QO-1) -- a script-TZ calendar string (D-1; see
+    // mtdStartIso_), NOT a script-midnight instant formatted in `tz`, which is
+    // the SPREADSHEET's zone and read a day early Mar-Nov.
 
     // Single pass accumulating both latestDay and MTD violations.
     const acc = {};   // dept -> { latestDay: {date, total, abandoned, violations}, mtdViolations }
@@ -1698,8 +1724,9 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
           acc[dept] = a;
         }
 
-        // MTD violations: any row dated >= mtdStart contributes.
-        if (dateIso >= mtdStart) a.mtdViolations += violations;
+        // MTD violations: rows from the 1st of the latest QCD date's month
+        // through that date (QO-1) contribute.
+        if (dateIso >= mtdStart && (!qcdLatestIso || dateIso <= qcdLatestIso)) a.mtdViolations += violations;
 
         // Per-day (in-window) abandoned series for the Overview trend chart's
         // Abandoned calls / Abandoned % metric views. Only window rows

@@ -425,6 +425,45 @@ test('Batch 6: DQE gate — a real matching range reports clean + the compared c
   h.ctx.sheetFetchDqeRows_ = realSheetFetch2; h.ctx.neonFetchDqeRows_ = realNeonFetch2;
 });
 
+// DL-1 / DL-2 (broad-scan 2026-10-01): the gate counts ROWS per key and diffs
+// the queue split. A sheet that holds the same agent-day twice collapsed to one
+// map entry and read CLEAN while the sheet path summed both rows; a stale Neon
+// split (COALESCE keeps it) was fetched and never compared.
+function dqeGateRow_(over) {
+  return Object.assign({ dateIso: '2026-03-09', agent: 'Sonia', totalUnique: 1, totalRung: 2,
+    totalMissed: 0, totalAnswered: 2, tttSec: 903, attSec: 181, avgAbdWaitSec: 0,
+    csrAvgAbdWaitSec: 0, queueExt: '103', slots: new Array(19).fill(''),
+    abandonedParentIds: '', abandonedMissedTimes: '', queueSplit: '' }, over || {});
+}
+function dqeGateWith_(sheetRows, neonRows) {
+  install('sheet');
+  h.state.props.DQE_PARITY_FROM = '2026-03-09';
+  h.state.props.DQE_PARITY_TO = '2026-03-09';
+  const rs = h.ctx.sheetFetchDqeRows_, rn = h.ctx.neonFetchDqeRows_;
+  h.ctx.sheetFetchDqeRows_ = function () { return sheetRows; };
+  h.ctx.neonFetchDqeRows_ = function () { return neonRows; };
+  try { return dqeParityRun_(); } finally { h.ctx.sheetFetchDqeRows_ = rs; h.ctx.neonFetchDqeRows_ = rn; }
+}
+
+test('DL-1: a DUPLICATED sheet agent-day is NOT clean, even when every value matches', function () {
+  const r = dqeGateWith_([dqeGateRow_(), dqeGateRow_()], [dqeGateRow_()]);
+  assert.equal(r.verdict.clean, false, 'the sheet path would sum both rows; Neon holds one');
+  assert.equal(r.verdict.duplicates, 1);
+  assert.match(r.log, /2026-03-09\|Sonia \(sheet x2\)/);
+  assert.doesNotMatch(r.log, /PARITY CLEAN/);
+});
+
+test('DL-2: a differing queue split is a value mismatch', function () {
+  const r = dqeGateWith_([dqeGateRow_({ queueSplit: '{"A_Q_CSR":{"u":1}}' })],
+                         [dqeGateRow_({ queueSplit: '{"A_Q_CSR":{"u":2}}' })]);
+  assert.equal(r.verdict.clean, false);
+  assert.equal(r.verdict.mismatches, 1);
+  assert.match(r.log, /queueSplit sheet=/);
+  const ok = dqeGateWith_([dqeGateRow_({ queueSplit: '{}' })], [dqeGateRow_({ queueSplit: '{}' })]);
+  assert.equal(ok.verdict.clean, true);
+  assert.equal(ok.verdict.duplicates, 0);
+});
+
 // --- L1/L2 (broad-scan 2026-08-27): the outage-empty CACHE-PUT corner --------
 // computeSummary_ (the My Department table) and getCompanyOverview were the
 // two readers missing the R8-C1/B-3 discipline: on the neon path with the

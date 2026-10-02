@@ -1479,30 +1479,6 @@
     insRenderTrendChart_(data);
   }
 
-  // A1: among the valenced volume/rate metrics, the one that moved MOST
-  // unfavorably (per-working-day-adjusted, matching the trend pill's
-  // classification). Returns { label, arrow } or null when nothing moved
-  // the wrong way. Valence: % answered / answered up = good; missed up = bad.
-  function insWorstMover_(metrics, meta) {
-    var adj = insPerDayMetrics_(metrics || {}, meta) || {};
-    var defs = [
-      { key: 'pct',      label: '% answered', inverse: false },
-      { key: 'answered', label: 'answered',   inverse: false },
-      { key: 'missed',   label: 'missed',     inverse: true  },
-    ];
-    var worst = null;
-    defs.forEach(function (d) {
-      var st = adj[d.key];
-      if (!st || st.deltaPct == null) return;
-      var dp = Number(st.deltaPct) || 0;
-      var badness = d.inverse ? dp : -dp;   // > 0 = an unfavorable move
-      if (badness <= 0.05) return;
-      if (!worst || badness > worst.badness) {
-        worst = { badness: badness, label: d.label, arrow: d.inverse ? '▲' : '▼' };
-      }
-    });
-    return worst ? { label: worst.label, arrow: worst.arrow } : null;
-  }
 
   // I2: the needs-attention chips are now folded INTO the headline banner (one
   // "here's who's behind" surface instead of a separate strip). One chip per
@@ -3503,17 +3479,27 @@
   }
 
   // Delta badge mirroring dsKpiTile_'s logic for the per-agent card grid.
-  function insDeltaBadge_(stat, valence, priorLabel) {
+  // CL-2: `perDayKind` ('volume' | 'time') marks a length-DEPENDENT metric.
+  // When the two windows differ in length (meta.lengthMismatch) such a badge
+  // compares PER DAY -- the same basis as the subline under it
+  // (insMetricPerDay_) and the CSV's /day columns -- because a raw 30-day vs
+  // 7-day total reads as "+300%" and colours good. Rates never take this path.
+  function insDeltaBadge_(stat, valence, priorLabel, meta, perDayKind) {
     const s = stat || { deltaPct: 0, type: 'volume' };
     const isPct = s.type === 'pctPoints';
-    const dp = Number(s.deltaPct || 0);
+    let dp = Number(s.deltaPct || 0);
+    const perDay = insPerDayDeltaPct_(s, meta, perDayKind);
+    if (perDay != null) dp = perDay;
     // #11e: explain the chip on hover -- what it compares against + the color
     // convention. CR-parity: when the caller passes priorLabel, the prior
     // window's exact value leads the tooltip (Compare Ranges showed P1
     // explicitly; here it rides the hover so the card stays compact).
     const priorBit = priorLabel ? 'Prior window: ' + priorLabel + '. ' : '';
-    const baseTitle = 'Change vs the same-length prior period (the "Comparing against…" window in the '
-      + 'results header). Green = the change is good for this metric, orange = worse.';
+    const baseTitle = (perDay != null
+        ? 'Change PER DAY vs the prior period, which is a different length ('
+          + meta.currentDays + ' vs ' + meta.priorDays + ' days), so raw totals are not compared. '
+        : 'Change vs the prior period (the "Comparing against…" window in the results header). ')
+      + 'Green = the change is good for this metric, orange = worse.';
     if (Math.abs(dp) < 0.05) {
       return '<span class="pr-delta pr-delta-neu" title="'
            + escapeHtml(priorBit + 'No meaningful change vs the prior period. ' + baseTitle) + '">–</span>';
@@ -3523,7 +3509,8 @@
     else if (valence === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
     const arrow = dp > 0 ? '▲' : '▼';
     const suffix = isPct ? ' pts' : '%';
-    const title = priorBit + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + ' vs the prior period. ' + baseTitle;
+    const title = priorBit + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+      + (perDay != null ? ' per day' : '') + ' vs the prior period. ' + baseTitle;
     return '<span class="pr-delta ' + cls + '" title="' + escapeHtml(title) + '">'
          + '<span class="pr-delta-arrow">' + arrow + '</span> '
          + Math.abs(dp).toFixed(1) + suffix + '</span>';
@@ -4227,6 +4214,7 @@
     // a low bar that's still above the team marker is good. A small prior-
     // period delta chip keeps the trend visible too.
     const cbar = function (lbl, key, cls, isPct, deltaValence) {
+      const perDayKind = isPct ? null : 'volume';
       const st = mm[key] || {};
       const val  = Number(st.val)  || 0;
       const tAvg = Number(ta[key]) || 0;
@@ -4246,8 +4234,10 @@
            +   '</span>'
            +   '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
            +   '<span class="ins-cbar-delta">' + insDeltaBadge_(st, deltaValence,
-                 st.prev == null ? '' : (isPct ? (Number(st.prev) || 0).toFixed(1) + '%' : fmtNumber(Number(st.prev) || 0))) + '</span>'
-           + '</div>';
+                 st.prev == null ? '' : (isPct ? (Number(st.prev) || 0).toFixed(1) + '%' : fmtNumber(Number(st.prev) || 0)),
+                 meta, perDayKind) + '</span>'
+           + '</div>'
+           + insMetricPerDay_(st, perDayKind, meta);
     };
     const primary = '<div class="ins-card-bars2">'
       +   cbar('% Ans',    'pct',      'ins-cbar-pct', true,  'pos')
@@ -4256,7 +4246,8 @@
       + '</div>';
 
     // Secondary (collapsible): Rung / ATT / TTT numbers + deltas.
-    const secDefs = [['Rung', 'rung', 'pos'], ['ATT', 'att', 'neu'], ['TTT', 'ttt', 'neu']];
+    // [label, key, valence, per-day kind] -- ATT is per call, so length-independent.
+    const secDefs = [['Rung', 'rung', 'pos', 'volume'], ['ATT', 'att', 'neu', null], ['TTT', 'ttt', 'neu', 'time']];
     const secondary = secDefs.map(function (m) {
       const st = mm[m[1]] || { formatted: '-' };
       const priorLbl = st.prev == null ? ''
@@ -4265,7 +4256,8 @@
       return '<div class="ins-metric">'
            +   '<div class="ins-metric-label">' + m[0] + '</div>'
            +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
-           +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2], priorLbl) + '</div>'
+           +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2], priorLbl, meta, m[3]) + '</div>'
+           +   insMetricPerDay_(st, m[3], meta)
            + '</div>';
     }).join('');
 
@@ -4288,6 +4280,21 @@
    * windows differ in length (meta.lengthMismatch): "cur/day vs
    * prior/day". Rates (% Ans, ATT) are already length-independent.
    */
+  // CL-2: the per-day % change for a length-dependent metric when the windows
+  // differ in length; null when the raw delta is the right comparison (equal
+  // lengths, a rate, or a missing value / day count).
+  function insPerDayDeltaPct_(st, meta, kind) {
+    if (!meta || !meta.lengthMismatch) return null;
+    if (kind !== 'volume' && kind !== 'time') return null;
+    if (!st || st.val == null || st.prev == null) return null;
+    if (!(meta.currentDays > 0) || !(meta.priorDays > 0)) return null;
+    const cur = Number(st.val) / meta.currentDays;
+    const pri = Number(st.prev) / meta.priorDays;
+    if (!isFinite(cur) || !isFinite(pri)) return null;
+    if (pri === 0) return cur === 0 ? 0 : 100;   // deltaBlock_'s zero-prior rule
+    return (cur - pri) / pri * 100;
+  }
+
   function insMetricPerDay_(st, kind, meta) {
     if (!meta || !meta.lengthMismatch) return '';
     if (kind !== 'volume' && kind !== 'time') return '';
@@ -4310,14 +4317,6 @@
     el.style.display = '';
   }
 
-  function insSetExportMenuOpen_(open) {
-    const btn  = $('ins-export-btn');
-    const menu = $('ins-export-menu');
-    if (!btn || !menu) return;
-    menu.style.display = open ? '' : 'none';
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    btn.classList.toggle('open', open);
-  }
 
   // P15: while an export action (email send / image capture) is pending.
   // The busy-state button this fed (#ins-export-btn) was retired in R16c when
@@ -4394,7 +4393,7 @@
   }
 
   function insCopyImage_() {
-    if (insExportBusy_) { showToast('Still working on the previous export…', 'error'); return; }
+    if (insExportBusy_) { showToast('Still working on the previous export…', 'error', 4000); return; }
     const restore = insBtnFeedback_('Capturing…', 0);
     insBuildCanvas_(function (canvas) {
       canvas.toBlob(function (blob) {
@@ -4458,7 +4457,7 @@
   }
   function insApplyViewState_(state) {
     if (!state) return;
-    try { SHARE_STATE_['/report/insights'].apply(state); } catch (e) {}
+    try { SHARE_STATE_['/report/insights'].apply(state, { keepDeptWindow: true }); } catch (e) {}
     // The provider's pending-selection hook fires on the NEXT roster render;
     // when the picker is already rendered, apply the selection directly. A
     // view with NO agents param is an agent-free (whole-department) snapshot
@@ -4487,18 +4486,35 @@
     } catch (e) { /* bare route */ }
     const url = baseUrl + '#/report/insights' + suffix;
     const ok = function () { showToast('Share link copied. Recipients see only departments they can access.', 'success'); };
-    const fail = function () { showToast('Copy blocked by the browser — link: ' + url, 'error'); };
+    // CL-4 / CL-5: when the browser refuses the copy, hand the link over in a
+    // dialog with the text pre-selected (Ctrl/Cmd+C) -- a URL inside a toast
+    // that vanished in 3 s could not be copied by hand either.
+    const fail = function () {
+      dsPrompt_({
+        title: 'Copy this link',
+        message: 'The browser blocked the automatic copy. The link is selected below — copy it with Ctrl+C (Cmd+C on a Mac).',
+        label: 'Share link',
+        value: url,
+        confirmLabel: 'Done',
+      }).then(function () {});
+      setTimeout(function () { const i = $('ds-prompt-input'); if (i) { i.focus(); i.select(); } }, 0);
+    };
+    // CL-5: the legacy path reports success only when execCommand says it
+    // copied -- it returns false (without throwing) when the copy is refused.
+    const legacyCopy = function () {
+      let copied = false;
+      const ta = document.createElement('textarea');
+      ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      try { ta.select(); copied = document.execCommand('copy') === true; }
+      catch (e) { copied = false; }
+      finally { if (ta.parentNode) ta.parentNode.removeChild(ta); }
+      if (copied) ok(); else fail();
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(ok, fail);
+      navigator.clipboard.writeText(url).then(ok, legacyCopy);   // CL-5: a rejection tries the legacy path first
     } else {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        ok();
-      } catch (e) { fail(); }
+      legacyCopy();
     }
   }
   function insRenderViewsMenu_() {
@@ -4530,9 +4546,9 @@
   function insSaveCurrentView_() {
     const nameEl = $('ins-views-name');
     const name = String((nameEl && nameEl.value) || '').trim();
-    if (!name) { showToast('Name the view first.', 'error'); return; }
+    if (!name) { showToast('Name the view first.', 'error', 4000); return; }   // CL-4: input-only toasts stay transient
     const state = insCurrentViewState_();
-    if (!state) { showToast('Generate a report first.', 'error'); return; }
+    if (!state) { showToast('Generate a report first.', 'error', 4000); return; }
     const views = insViewsLoad_().filter(function (v) { return v.name !== name; });
     views.unshift({ name: name, state: state });
     insViewsStore_(views);
@@ -4541,9 +4557,9 @@
   }
 
   function insEmailReport_() {
-    if (insExportBusy_) { showToast('Still working on the previous export…', 'error'); return; }
+    if (insExportBusy_) { showToast('Still working on the previous export…', 'error', 4000); return; }
     if (!insLastData || !insLastData.meta) {
-      showToast('Generate a report first.', 'error');
+      showToast('Generate a report first.', 'error', 4000);
       return;
     }
     const m = insLastData.meta;

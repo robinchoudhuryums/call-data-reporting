@@ -76,6 +76,20 @@ re-anchoring inbound makes brand-prefixed queues invisible again. Two
 subsystems, two rules. **Diagnosing a suspected miss:** `entry_queue IS NULL`
 is NOT by itself a signal -- see Operator State #38 for the runbook.
 
+
+**Agent names are stored ROSTER-canonical (PC-1/PC-2, broad-scan 2026-10-01).**
+Both capture writers run `icCanonicalizeRecordAgents_` over `firstAgent` /
+`originAgent` / `agentName` and every non-queue journey entry, through the SAME
+`canonicalizeAgentNameWith_` the DQE build uses (INV-24: alias override, exact,
+then a UNIQUE strip/flatten match; ambiguous and unknown stay as captured). The
+roster + `Agent Alias Overrides` are read once per execution
+(`icAgentCanonicalizer_`); a failed read is the identity, never a failed
+capture. Rows captured before the deploy are rewritten by the editor-run
+`rewritePerCallAgentNames` -- Operator State #72. `origin_agent` is also never
+taken from a leg whose caller is an EXTERNAL number (PC-7). A run with
+`HMAC_SECRET` unset writes NULL caller hashes, so the step's Pipeline Health
+row is now a `failure` naming it (PC-10, Operator State #17), not a success.
+
 ### Internal-transfer journey enrichment (R11-N)
 
 **Internal-transfer journey enrichment (R11-N) -- inbound capture.**
@@ -230,6 +244,13 @@ journey-fallback.test.js. The journey carries no
 caller identity; the client reuses the Caller Lookup renderers
 (`clChainHtml_` / `clJourneyRowHtml_`) in a `#call-journey-overlay`.
 
+
+**The related-call link is an entitlement arm (PC-5).** A manager may drill an
+OUTBOUND call when an internal record links to it (`related_call_id`), and a
+blank-dept fallback request is no longer refused before the link check (PC-8);
+both the Neon path (`inboundLinkEntitled_`) and the sheet fallback (cols
+16/20/21) re-derive it server-side.
+
 ### Insurer labels and the Inbound report gate
 
 **Insurer labels, and the Inbound report's TEMPORARY admin-only gate.**
@@ -279,7 +300,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v15`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v16`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -287,6 +308,15 @@ convention, 30 min wider at the start on purpose. Do NOT add the work-window
 clause on top of it.** `tests/unit/inbound-window-scope.test.js` pins both
 exemptions plus a count-based guard that every `FROM inbound_calls c`
 sub-select carries the window.
+
+
+**The CSR family floors at 06:00 here too (PC-9, owner ruling).** The window
+start is per ENTRY queue: `inboundWindowStartSql_` emits a CASE over
+`inboundEarlyQueueSet_` -- `DASHBOARD_EARLY_WINDOW.queues` plus the CANONICAL
+side of any Dept Config `raw=canonical` pair for them, since capture rewrites
+`entry_queue` (R8-N) -- and the sheet fallbacks use its JS twin
+`inboundWindowStartFor_`. Every other queue keeps 06:30. Pinned by
+`cross-file-pins.test.js` (R49 block) and `inbound-window-scope.test.js`.
 
 ### Dept attribution contract
 
@@ -493,7 +523,7 @@ block (never the rows' sum). The FIRST callback decides own vs other, with a
 (`outbound-callback-dept.test.js`); S48 is the walk. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
-`outboundReport:v5` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v6` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) `calledBackConnectedPct`, the CONNECTED callback rate
@@ -652,6 +682,12 @@ R11-B11 impact score); single-dept view keeps the flat table; the CSV
 stays flat with its Dept column. See
 `docs/direct-extension-metrics-design.md`.
 
+
+**Direction and "answered" (PC-4).** An `Outgoing` leg placed by the agent on a
+call that has an `Incoming` leg is the agent's own talk on that INBOUND call,
+credited to it -- never a separate outbound event; and a direct call counts as
+answered only with talk > 0. Pinned by `direct-call-metrics.test.js`.
+
 ### CSR transfer detail
 
 **CSR transfer detail reads an APPEND-ONLY, never-sorted sheet.**
@@ -723,3 +759,7 @@ are NOT cached (the Caller Lookup model) and the Neon read is labelled
 in `script-10-escalations.html` and reuses them. Pinned by
 `tests/unit/agent-day.test.js`; the modal is opened and driven by
 `drive-admin.js` on every `npm run ci:ui`.
+
+A transfer leg in the inbound role is NOT counted again (PC-3): the transferred
+call is cross-referenced from its own record, so counting the leg too showed
+the call twice. Pinned by `agent-day.test.js`.

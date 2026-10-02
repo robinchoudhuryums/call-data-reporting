@@ -325,3 +325,35 @@ test('PCR-3: pendingTail includes an abandon exactly N days old, on both paths, 
       'one day later it is outside the window');
   } finally { h.ctx.obTodayIso_ = realToday; }
 });
+
+// PC-6 (broad-scan 2026-10-01): the Outbound Calls tab must carry an UNKNOWN
+// ring as a blank -- the export used to COALESCE it to 0, which this fallback
+// classifies as a "brief" (misdial) ring while the Neon path calls it unknown.
+test('PC-6: the export keeps a NULL ring blank, and the fallback reads blank as unknown', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script',
+    'cdr-report', 'outboundCallsExport.js'), 'utf8');
+  assert.ok(!/COALESCE\(o\.ring_seconds\s*,\s*0\)/.test(src), 'a NULL ring must not be exported as 0');
+  assert.ok(/COALESCE\(o\.ring_seconds::text\s*,\s*''\)/.test(src));
+  assert.equal(h.call('outboundClassifyRing_', ''), 'unknown');
+  assert.equal(h.call('outboundClassifyRing_', '0'), 'brief', 'which is exactly what the old export produced');
+});
+
+// PC-9 (broad-scan 2026-10-01): the sheet fallback floors the window per ENTRY
+// queue like the SQL's inboundWindowStartSql_ -- 06:00 for the CSR family
+// (R49), 06:30 for everything else.
+test('PC-9: the fallback counts a 06:10 CSR-family abandon, but not a 06:10 one on another queue or a 05:55 one', function () {
+  const extra = [
+    ibRow('2026-08-10', 'hashE', 'abandoned', 'A_Q_CSR', '06:10:00'),      // counted (early family)
+    ibRow('2026-08-10', 'hashF', 'abandoned', 'A_Q_CSR', '05:55:00'),      // before even the early floor
+    ibRow('2026-08-10', 'hashG', 'abandoned', 'A_Q_Billing', '06:10:00'),  // in dept, NOT early family
+  ];
+  install({ conn: null });
+  h.ctx.inboundQueuesForDept_ = function () { return ['A_Q_CSR', 'A_Q_Billing']; };
+  const base = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).callback.abandonedTotal;
+  Array.prototype.push.apply(IB_ROWS, extra);
+  try {
+    h.state.cache.clear();
+    const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
+    assert.equal(fb.callback.abandonedTotal, base + 1, 'only the 06:10 A_Q_CSR abandon joins the denominator');
+  } finally { IB_ROWS.splice(IB_ROWS.length - extra.length, extra.length); }
+});

@@ -27,8 +27,8 @@ function grid(cells) {
 }
 
 test('deletes split blocks of the target date, keeps the rest in order, returns the count', function () {
-  const target = new Date(2026, 7, 20);
-  const other = new Date(2026, 7, 21);
+  const target = new Date(2026, 7, 20, 12);
+  const other = new Date(2026, 7, 21, 12);
   // rows 2..9: T T O O T O T T  -> blocks [2,2] [6,1] [8,2]
   const sheet = makeFakeSheet('CDR Historical Data',
     grid([target, target, other, other, target, other, target, target]));
@@ -37,7 +37,7 @@ test('deletes split blocks of the target date, keeps the rest in order, returns 
   sheet.deleteRows = function (r, n) { calls.push([r, n]); return inner.call(this, r, n); };
   sheet._maxRows = 50;
 
-  const removed = del(sheet, new Date(2026, 7, 20), DATE_COL);
+  const removed = del(sheet, new Date(2026, 7, 20, 12), DATE_COL);
 
   assert.equal(removed, 5, 'the removed count keeps its meaning');
   assert.deepEqual(calls, [[8, 2], [6, 1], [2, 2]], 'contiguous blocks, deleted bottom-up');
@@ -49,26 +49,26 @@ test('deletes split blocks of the target date, keeps the rest in order, returns 
 
 test('text date cells match through parseHistoryDateCell_ exactly like the old full-row scan', function () {
   const sheet = makeFakeSheet('QCD Historical Data',
-    grid(['8/20/2026', '2026-08-20', new Date(2026, 7, 20), '8/21/2026', '', 'garbage']));
-  const removed = del(sheet, new Date(2026, 7, 20), DATE_COL);
+    grid(['8/20/2026', '2026-08-20', new Date(2026, 7, 20, 12), '8/21/2026', '', 'garbage']));
+  const removed = del(sheet, new Date(2026, 7, 20, 12), DATE_COL);
   assert.equal(removed, 3, 'M/D/YYYY, ISO and Date cells all match; blank/garbage never do');
   assert.deepEqual(sheet._data.slice(1).map(function (r) { return r[2]; }), ['8/21/2026', '', 'garbage']);
 });
 
 test('no match: returns 0 and touches nothing (a NON-force empty date is a no-op, F5)', function () {
-  const sheet = makeFakeSheet('DQE Historical Data', grid([new Date(2026, 7, 21), '8/22/2026']));
+  const sheet = makeFakeSheet('DQE Historical Data', grid([new Date(2026, 7, 21, 12), '8/22/2026']));
   sheet.deleteRows = function () { throw new Error('must not delete'); };
   sheet.insertRowsAfter = function () { throw new Error('must not pad'); };
-  assert.equal(del(sheet, new Date(2026, 7, 20), DATE_COL), 0);
-  assert.equal(del(makeFakeSheet('Empty', [['A', 'B', 'Date', 'D']]), new Date(2026, 7, 20), DATE_COL), 0);
+  assert.equal(del(sheet, new Date(2026, 7, 20, 12), DATE_COL), 0);
+  assert.equal(del(makeFakeSheet('Empty', [['A', 'B', 'Date', 'D']]), new Date(2026, 7, 20, 12), DATE_COL), 0);
 });
 
 test('reads only the date column, never the full grid', function () {
   const sheet = makeFakeSheet('CSR Transfer Historical Data',
-    grid([new Date(2026, 7, 20), new Date(2026, 7, 21)]));
+    grid([new Date(2026, 7, 20, 12), new Date(2026, 7, 21, 12)]));
   const reads = [];
   const inner = sheet.getRange;
   sheet.getRange = function (r, c, nr, nc) { reads.push([r, c, nr, nc]); return inner.call(this, r, c, nr, nc); };
-  del(sheet, new Date(2026, 7, 20), DATE_COL);
+  del(sheet, new Date(2026, 7, 20, 12), DATE_COL);
   assert.deepEqual(reads, [[2, DATE_COL, 2, 1]], 'one single-column read');
 });

@@ -114,3 +114,85 @@ test('R-3: single-dept managers stay pinned (no widening leak)', function () {
     h.call('getCallJourney', { callId: 'PA', date: '2026-06-22', department: 'Sales' });
   }, /Not authorized for this department/);
 });
+
+// ── PC-5 (broad-scan 2026-10-01): the link is the capability, inbound kind too ──
+// The receiving dept's internal transfer record carries related_call_id = the
+// CUSTOMER call; its "view that call's path" link failed both arms (the customer
+// call sits in the ORIGIN dept's queues, not in the receiving Missed report).
+
+// A fake conn that routes on the SQL text. `linkers(predicated)` answers the
+// related_call_id probe; the to_jsonb lookup answers with `callJson` only when
+// UNSCOPED (the scoped lookup misses, as the real queue-name space does).
+function routingConn(opts) {
+  return {
+    prepareStatement: function (sql) {
+      let rows = [];
+      if (/related_call_id = \?/.test(sql)) {
+        rows = (opts.linkers(/entry_queue/.test(sql)) || []).map(function (id) { return { linker: id }; });
+      } else if (/to_jsonb\(c\)/.test(sql)) {
+        rows = /entry_queue/.test(sql) ? [] : [{ j: opts.callJson }];
+      } else if (/MIN\(call_date\)/.test(sql)) {
+        rows = [{ min_d: '2026-01-01', day_has: 'true' }];
+      }
+      let i = -1;
+      return {
+        setString: function () {},
+        executeQuery: function () {
+          return { next: function () { i++; return i < rows.length; },
+                   getString: function (k) { return rows[i][k]; },
+                   getBoolean: function (k) { return !!rows[i][k]; }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+function withJourney(user, conn, fn) {
+  const saved = { resolveUser_: h.ctx.resolveUser_, getDashboardNeonConn_: h.ctx.getDashboardNeonConn_,
+                  getAllDepartments_: h.ctx.getAllDepartments_, assertManagerOrAdmin_: h.ctx.assertManagerOrAdmin_,
+                  inboundQueuesForDept_: h.ctx.inboundQueuesForDept_, inboundDeptFinalLabels_: h.ctx.inboundDeptFinalLabels_,
+                  isIsoDate_: h.ctx.isIsoDate_ };
+  h.ctx.resolveUser_ = function () { return user; };
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Billing']; };
+  h.ctx.assertManagerOrAdmin_ = function () {};
+  h.ctx.inboundQueuesForDept_ = function (d) { return d === 'Billing' ? ['A_Q_Billing'] : ['A_Q_CSR']; };
+  h.ctx.inboundDeptFinalLabels_ = function (d) { return [String(d).toLowerCase()]; };
+  h.ctx.isIsoDate_ = function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s)); };
+  try { return fn(); } finally { Object.keys(saved).forEach(function (k) { h.ctx[k] = saved[k]; }); }
+}
+
+const BILLING_MGR = { role: 'manager', department: 'Billing', departments: ['Billing'], email: 'b@x.com' };
+const CUSTOMER_CALL = JSON.stringify({ call_date: '2026-06-22', call_id: 'C1', disposition: 'answered',
+  entry_queue: 'A_Q_CSR', journey: [] });
+
+test('PC-5: the receiving dept\'s manager reaches the customer call their own transfer record links to', function () {
+  stubMissedReport({ agents: [], queueOnly: [] });   // not in Billing's Missed report
+  const res = withJourney(BILLING_MGR, routingConn({
+    callJson: CUSTOMER_CALL,
+    linkers: function (predicated) { return predicated ? ['T1'] : ['T1']; },   // T1 is Billing's own record
+  }), function () { return h.call('getCallJourney', { callId: 'C1', date: '2026-06-22', department: 'Billing' }); });
+  assert.equal(res.found, true, 'pre-PC-5: a reason-less "not found" dead end');
+  assert.ok(res.call, 'the call is served (its shape is callerLookupShapeCall_\'s, pinned elsewhere)');
+});
+
+test('PC-5: no drillable link -> still refused, reason-less (the SEC-7 rule holds)', function () {
+  stubMissedReport({ agents: [], queueOnly: [] });
+  const res = withJourney(BILLING_MGR, routingConn({
+    callJson: CUSTOMER_CALL,
+    linkers: function () { return []; },
+  }), function () { return h.call('getCallJourney', { callId: 'C1', date: '2026-06-22', department: 'Billing' }); });
+  assert.equal(res.found, false);
+  assert.equal(res.reason, undefined, 'a gate-closed manager learns nothing about the call');
+});
+
+test('PC-5: a link reachable only through the manager\'s Missed report (arm 2) also entitles', function () {
+  stubMissedReport({ agents: [], queueOnly: [{ queue: 'A_Q_Billing', entries: [{ parentId: 'T9' }] }] });
+  const res = withJourney(BILLING_MGR, routingConn({
+    callJson: CUSTOMER_CALL,
+    linkers: function (predicated) { return predicated ? [] : ['T9']; },
+  }), function () { return h.call('getCallJourney', { callId: 'C1', date: '2026-06-22', department: 'Billing' }); });
+  assert.equal(res.found, true);
+});

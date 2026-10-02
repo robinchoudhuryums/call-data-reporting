@@ -246,7 +246,7 @@ const DQE_SHEET_ONLY_ALLOWED = {
   // to compare the two).
   'NeonRead.gs': 'the DAL / the sheet arm it dispatches to',
   // Editor-run diagnostics that deliberately inspect the SHEET's cells --
-  // dumpCell_ / diagnoseTimes_ exist to show what the spreadsheet holds and
+  // dumpCell / diagnoseTimes exist to show what the spreadsheet holds and
   // how it coerces, which is meaningless against Neon.
   'Diagnostics.gs': 'sheet-cell diagnostics; reading Neon would defeat their purpose',
   // Admin-gated live-wiring probe: opens the sheet BY LITERAL to report
@@ -1048,6 +1048,24 @@ test('S1/INV-06 (R49): the CSR-family early floor and its queue list agree acros
   assert.equal(ampmSecs(dispC[4], dispC[5], dispC[6]), pipe.end + pipe.toCst, 'early display END (CST) drifted');
   assert.deepEqual(qList(blk[1], 'queues:'), buildQs,
     'the dashboard early-queue LIST drifted from the build');
+
+  // PC-9 (broad-scan 2026-10-01): the inbound/outbound QUERY mirror. Its early
+  // start must equal the build's floor, and its queue set must be DERIVED from
+  // DASHBOARD_EARLY_WINDOW.queues (pinned equal to the build just above) rather
+  // than kept as a seventh list.
+  const inbBlk = /const INBOUND_WORK_WINDOW_PST = Object\.freeze\(\{([\s\S]*?)\}\);/.exec(configGs);
+  assert.ok(inbBlk, 'INBOUND_WORK_WINDOW_PST not found / reshaped -- update this pin');
+  const inbEarly = /earlyStart:\s*'(\d{2}):(\d{2}):(\d{2})'/.exec(inbBlk[1]);
+  assert.ok(inbEarly, 'INBOUND_WORK_WINDOW_PST.earlyStart not found -- the R49 floor is missing from the query mirror');
+  assert.equal((+inbEarly[1]) * 3600 + (+inbEarly[2]) * 60 + (+inbEarly[3]), early,
+    'INBOUND_WORK_WINDOW_PST.earlyStart != DQE_EARLY_WINDOW_START');
+  const inbRpt = read('apps-script/department-dashboard/InboundReport.gs');
+  assert.match(inbRpt, /function inboundEarlyQueueSet_\(\)[\s\S]{0,200}DASHBOARD_EARLY_WINDOW\.queues/,
+    'inboundEarlyQueueSet_ must derive from DASHBOARD_EARLY_WINDOW.queues');
+  assert.match(inbRpt, /c\.call_start >= " \+ inboundWindowStartSql_\(\)/,
+    'the inbound window clause must floor through inboundWindowStartSql_, not a flat start');
+  assert.match(read('apps-script/department-dashboard/OutboundReport.gs'), /inboundWindowStartFor_\(row\[10\], earlySet\)/,
+    'the Outbound sheet fallback must floor per entry queue (inboundWindowStartFor_)');
 
   // The FIFTH mirror, qcdDqeDiagnostic.js (cdr-import, same project as the
   // build), takes the floor from the build's helper rather than keeping a copy

@@ -12,8 +12,9 @@
 # e.g.  scripts/bite.sh "dup-name pin" apps-script/department-dashboard/Util.gs \
 #         "s += '\nfunction assertAdmin_() {}\n'" "declared in two files"
 #
-# It ends in `git checkout -- <file>`, which is why the FIRST thing it does is
-# refuse a file with uncommitted changes: that restore reverts the file to HEAD
+# It ends in `git checkout -- <file>` (an EXIT trap, so Ctrl-C restores too),
+# which is why the FIRST thing it does is refuse a file with uncommitted
+# changes: that restore reverts the file to HEAD
 # and takes any unsaved work in it with you (team-tools paid for that lesson
 # four times before the guard).
 set -uo pipefail
@@ -52,6 +53,16 @@ case "$mutation" in
     exit 2 ;;
 esac
 
+# DEP-1 (broad-scan 2026-10-01): restore on EVERY exit, not just the normal
+# one. The suite takes ~10 s, and a Ctrl-C during it used to leave the mutated
+# COMMITTED file in the tree -- a broken file that looks like work in progress.
+# Armed only after the dirty-file guard above, so it can never revert real
+# edits; INT/TERM exit through the EXIT trap with the conventional codes.
+restore() { git checkout -- "$file" 2>/dev/null || echo "  WARN: could not restore $file -- check git status" >&2; }
+trap restore EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 python3 -c "
 import io, sys
 p = '$file'
@@ -76,5 +87,4 @@ else
   grep -E "^# (pass|fail)" <<<"$out"
   rc=1
 fi
-git checkout -- "$file"
-exit $rc
+exit $rc   # the EXIT trap restores the file

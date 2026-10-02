@@ -235,6 +235,7 @@
         if (__tok !== escLoadSeq_) return;   // superseded by a newer load
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escRenderList_(resp || {});
+        escRestoreFocus_();   // CL-3
         // F10: refresh the nav badge / Overview strip after every list load --
         // and every mutation reloads the list, so resolving the last escalation
         // now clears the badge instead of leaving a stale count for the session.
@@ -815,8 +816,54 @@
     }
   }
 
+  // CL-3 (broad-scan 2026-10-01): every mutation reloads the list, and the
+  // re-render destroyed the focused control -- a keyboard / screen-reader user
+  // was dropped to <body> after each action. The click records WHAT was acted
+  // on; escRestoreFocus_ (after the next render) puts focus back on the same
+  // control when it still exists, else on its card, else -- the card left
+  // the list (resolved out of the filter, moved, deleted) -- on the card now
+  // in its place. It never steals focus from somewhere the user went.
+  var ESC_FOCUS_ACTIONS_ = ['esc-resolve-save', 'esc-comment-save', 'esc-reopen-save', 'esc-approve',
+    'esc-reject-save', 'esc-start', 'esc-move-save', 'esc-delete', 'esc-delete-all', 'esc-remove-dept',
+    'esc-restore-dept', 'esc-link-save'];
+  var escFocusIntent_ = null;
+  function escNoteFocusIntent_(t) {
+    var cls = null;
+    for (var i = 0; i < ESC_FOCUS_ACTIONS_.length; i++) {
+      if (t.classList.contains(ESC_FOCUS_ACTIONS_[i])) { cls = ESC_FOCUS_ACTIONS_[i]; break; }
+    }
+    if (!cls) return;
+    var card = t.closest('.esc-card');
+    var cards = Array.prototype.slice.call(document.querySelectorAll('#esc-list .esc-card'));
+    escFocusIntent_ = { id: t.getAttribute('data-id'), cls: cls,
+                        idx: card ? cards.indexOf(card) : -1, at: Date.now() };
+  }
+  function escRestoreFocus_() {
+    var it = escFocusIntent_;
+    escFocusIntent_ = null;
+    if (!it || Date.now() - it.at > 120000) return;   // a stale intent (cancelled prompt) expires
+    var ae = document.activeElement;
+    if (ae && ae !== document.body && document.contains(ae) && ae.offsetParent !== null) return;
+    var list = $('esc-list');
+    if (!list) return;
+    var target = null;
+    var card = it.id != null ? list.querySelector('.esc-card[data-id="' + escCssId_(it.id) + '"]') : null;
+    if (card) {
+      var same = it.cls ? card.querySelector('.' + it.cls + '[data-id="' + escCssId_(it.id) + '"]') : null;
+      target = (same && !same.disabled && same.offsetParent !== null) ? same : card;
+    } else {
+      var cards = list.querySelectorAll('.esc-card');
+      if (cards.length) target = cards[Math.min(Math.max(it.idx, 0), cards.length - 1)];
+    }
+    if (!target) target = it.fallbackId ? $(it.fallbackId) : null;
+    if (!target) return;
+    if (target.classList && target.classList.contains('esc-card')) target.setAttribute('tabindex', '-1');
+    try { target.focus(); } catch (e) { /* focus is best-effort */ }
+  }
+
   function escOnListClick_(e) {
     const t = e.target;
+    escNoteFocusIntent_(t);   // CL-3
     if (t.classList.contains('esc-resolve-save'))   { escResolve_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-comment-save'))   { escSaveComment_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-reopen-toggle'))  {
@@ -963,10 +1010,14 @@
       validate: function (v) { return v ? '' : 'Enter the reason — it is recorded in the thread.'; },
     }).then(function (reason) {
       if (!reason) return;
+      // CL-21: one department change per row in flight (C2-6 pattern) -- a second
+      // prompt + submit during the round trip sent a second RPC.
+      const busyKey = 'escDept:' + id;
+      if (mutationBusy_(busyKey)) return;
       escRowError_(id, '');
       google.script.run
-        .withSuccessHandler(function () { showToast(dept + ' removed from the escalation', 'success'); escLoad_(); })
-        .withFailureHandler(function (e) { escRowError_(id, (e && e.message ? e.message : String(e))); })
+        .withSuccessHandler(function () { mutationDone_(busyKey); showToast(dept + ' removed from the escalation', 'success'); escLoad_(); })
+        .withFailureHandler(function (e) { mutationDone_(busyKey); escRowError_(id, (e && e.message ? e.message : String(e))); })
         .removeEscalationDepartment({ id: id, reason: reason });
     });
   }
@@ -987,10 +1038,18 @@
       confirmLabel: 'Restore ' + dept,
     }).then(function (note) {
       if (note === null) return;   // cancelled (an empty note is fine)
+      const busyKey = 'escDept:' + id;   // CL-21: shares remove's key -- one change per row
+      if (mutationBusy_(busyKey)) return;
       escRowError_(id, '');
       google.script.run
-        .withSuccessHandler(function () { showToast(dept + ' restored to the escalation', 'success'); escLoad_(); })
-        .withFailureHandler(function (e) { showToast((e && e.message) ? e.message : String(e), 'error'); })
+        .withSuccessHandler(function () { mutationDone_(busyKey); showToast(dept + ' restored to the escalation', 'success'); escLoad_(); })
+        .withFailureHandler(function (e) {
+          mutationDone_(busyKey);
+          // CL-4: on the card as well as the (now sticky) toast.
+          var msg = (e && e.message) ? e.message : String(e);
+          escRowError_(id, 'Restore failed: ' + msg);
+          showToast('Restore failed: ' + msg, 'error');
+        })
         .restoreEscalationDepartment({ id: id, note: note || '' });
     });
   }
@@ -1198,6 +1257,7 @@
     const depts = escSelectedCreateDepts_();
     const reason = $('esc-c-reason') ? $('esc-c-reason').value.trim() : '';
     const editing = !!escEditId_;
+    const editingId = escEditId_;   // CL-3: escResetCreateMode_ clears escEditId_ before the reload lands
     if (!editing && !depts.length) { escSetCreateError_('Pick at least one department.'); return; }
     if (!reason) { escSetCreateError_('Reason for escalation is required.'); return; }
     const btn = $('esc-c-save');
@@ -1222,6 +1282,11 @@
         ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
           if ($(i)) $(i).value = '';
         });
+        // CL-3: the form closes under the focused Save -- land on the edited
+        // card, or (a new escalation) on the "New" button that opened the form.
+        escFocusIntent_ = editing
+          ? { id: editingId, cls: 'esc-edit', idx: -1, at: Date.now(), fallbackId: 'esc-new-btn' }
+          : { id: null, cls: null, idx: -1, at: Date.now(), fallbackId: 'esc-new-btn' };
         const f = $('esc-create'); if (f) f.style.display = 'none';
         escResetCreateMode_();
         if (!editing && $('esc-status')) $('esc-status').value = 'pending';

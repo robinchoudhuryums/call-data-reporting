@@ -12,7 +12,8 @@
  *   3. BLANK chart canvases — a canvas that is laid out and visible but whose
  *      pixels are entirely uniform. This is the R12-1 class (blank missed
  *      chart) and the reason this driver exists.
- *   4. Horizontal document overflow (a layout that pushes the page sideways).
+ *   4. Horizontal document overflow (a layout that pushes the page sideways),
+ *      at desktop width AND at phone width (CL-9).
  *
  * Run: node drive-smoke.js   (after gen-payloads/gen-phase3 + build-harness)
  */
@@ -36,8 +37,8 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
 // keyed by canvas id. Everything else must render actual pixels when visible.
 const BLANK_OK = new Set(['ir-spark-canvas']);
 
-async function bootPage(browser, role) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+async function bootPage(browser, role, viewport) {
+  const page = await browser.newPage({ viewport: viewport || { width: 1440, height: 1000 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + String(e && e.message ? e.message : e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
@@ -122,6 +123,81 @@ async function horizontalOverflow(page) {
   return page.evaluate(() => {
     const d = document.documentElement;
     return d.scrollWidth - d.clientWidth;   // >0 means the page scrolls sideways
+  });
+}
+
+/**
+ * CL-9 (broad-scan 2026-10-01): PHONE WIDTH. Every check above ran at 1440 px,
+ * so the overflow assertion never saw the widths where layouts actually break
+ * (a fixed-width table, a long unbroken label, a min-width control row). The
+ * pass below re-renders every page at PHONE_WIDTH and asserts the page does not
+ * scroll sideways. Two helpers keep that assertion honest:
+ *  - overflowMeasurable: a `overflow-x: hidden|clip` on <html>/<body> would make
+ *    scrollWidth === clientWidth no matter what sticks out, turning the check
+ *    vacuous -- so that is asserted to be absent, not assumed.
+ *  - wideOffenders: when the check fails, name the elements that reach past the
+ *    viewport with no scrolling/clipping ancestor (the ones that cause it), so a
+ *    failure says WHAT is too wide, not just that something is.
+ * 360 px is the narrowest common phone viewport; anything that fits it fits the
+ * wider ones.
+ */
+const PHONE_WIDTH = 360;
+
+/**
+ * The phone pass is its own FRESH boot at PHONE_WIDTH, not the desktop page
+ * resized: by the end of the desktop flows a modal can still be open, and an
+ * open modal both intercepts clicks and scroll-locks <body> (overflow:hidden) --
+ * which is exactly the vacuous state overflowMeasurable exists to refuse. A
+ * phone user also LOADS the page at phone width, so the boot itself is under
+ * test. Errors and unmocked RPCs on this page are asserted here, since the
+ * desktop page's checks cannot see them.
+ */
+async function phonePass(browser, role) {
+  const { page, errors } = await bootPage(browser, role, { width: PHONE_WIDTH, height: 780 });
+  const tag = role + '@' + PHONE_WIDTH;
+  record(tag + ': overflow is measurable (html/body do not clip it)', await overflowMeasurable(page));
+  for (const [name, sel] of [['overview', '#overview-btn'], ['dept', '#my-dept-btn'],
+                             ['escalations', '#escalations-btn']]) {
+    const btn = page.locator(sel);
+    const reachable = (await btn.count()) > 0 && await btn.isVisible();
+    record(tag + ': ' + name + ' tab is reachable', reachable, sel);
+    if (!reachable) continue;
+    await btn.click();
+    await page.waitForTimeout(name === 'dept' ? 4000 : 1800);
+    const over = await horizontalOverflow(page);
+    record(tag + '/' + name + ': no horizontal page overflow', over <= 0,
+      over > 0 ? 'scrollWidth-clientWidth=' + over + ' -- ' + (await wideOffenders(page)).join(', ') : '');
+  }
+  const unmocked = await page.evaluate(() => (window.__HARNESS__ || {}).unmocked || []);
+  const unexpected = unmocked.filter((n) => !UNMOCKED_OK.has(n));
+  record(tag + ': no unexpected unmocked RPCs', unexpected.length === 0, Array.from(new Set(unexpected)).join(', '));
+  const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
+  record(tag + ': no page/console errors', realErrors.length === 0,
+    Array.from(new Set(realErrors)).slice(0, 4).join(' | '));
+  await page.close();
+}
+
+async function overflowMeasurable(page) {
+  return page.evaluate(() => {
+    const clipping = (el) => /hidden|clip/.test(getComputedStyle(el).overflowX);
+    return !clipping(document.documentElement) && !clipping(document.body);
+  });
+}
+
+async function wideOffenders(page) {
+  return page.evaluate(() => {
+    const vw = document.documentElement.clientWidth;
+    const out = [];
+    document.querySelectorAll('body *').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (!r.width || r.right <= vw + 1 || getComputedStyle(el).position === 'fixed') return;
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (/auto|scroll|hidden|clip/.test(getComputedStyle(p).overflowX)) return;   // contained
+      }
+      out.push((el.id ? '#' + el.id : el.tagName.toLowerCase() + '.' + String(el.className).split(' ')[0])
+        + '@' + Math.round(r.right) + 'px');
+    });
+    return out.slice(0, 6);
   });
 }
 
@@ -956,6 +1032,8 @@ async function visibleErrorTones(page) {
       Array.from(new Set(realErrors)).slice(0, 4).join(' | '));
 
     await page.close();
+
+    await phonePass(browser, role);   // CL-9
   }
 
   await browser.close();

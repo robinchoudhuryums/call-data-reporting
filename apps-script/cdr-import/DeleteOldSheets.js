@@ -78,6 +78,25 @@ function holdCallLegsForRecovery() {
   return { held: names.length, until: new Date(until).toISOString(), tabs: names };
 }
 
+// PIPE-2 (broad-scan 2026-10-01): the prune was AGE-ONLY, so a tab that was
+// never imported -- the pending loop stalled on a bad tab (PIPE-1), a
+// future-dated tab hid the real ones, a partial bulk recovery lost its hold --
+// was deleted at 15 days with the day's data never landing anywhere. An
+// over-age tab is now deleted only when the date is PROVEN imported: its name
+// is in the `lastSheets` memo, or its date is in DQE or QCD Historical Data
+// (the memo is capped at 60 names, so history is the authoritative check, read
+// once and only when some over-age tab is not in the memo). A tab that cannot
+// be proven imported is KEPT and named in the prune's Pipeline Health row; if
+// the history read itself fails, every unproven tab is kept and the row is a
+// FAILURE (retention is then not being enforced).
+/** Union of the ISO dates present in DQE (col B) and QCD (col C) Historical Data. */
+function retentionHistoryIsos_() {
+  var target = SpreadsheetApp.openById(getTargetSsId_());
+  var dqe = buildHistoryDateSet(target, 'DQE Historical Data', 2);
+  var qcd = buildHistoryDateSet(target, 'QCD Historical Data', 3);
+  return { has: function (iso) { return dqe.has(iso) || qcd.has(iso); } };
+}
+
 function deleteOldCDRSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
@@ -112,6 +131,21 @@ function deleteOldCDRSheets() {
   var todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
 
   var deleted = 0, kept = 0, held = 0;
+  var unimported = [], historyError = null;   // PIPE-2
+  var lastSheets = {};
+  try {
+    JSON.parse(PropertiesService.getScriptProperties().getProperty('lastSheets') || '[]')
+      .forEach(function (n) { lastSheets[String(n)] = true; });
+  } catch (e) { /* an unreadable memo just means every date is checked against history */ }
+  var historyIsos = null;
+  var provenImported = function (name, iso) {
+    if (lastSheets[name]) return true;
+    if (historyIsos === null && historyError === null) {
+      try { historyIsos = retentionHistoryIsos_(); }
+      catch (e) { historyError = (e && e.message) ? e.message : String(e); }
+    }
+    return historyError === null && historyIsos.has(iso);
+  };
   // ING-5: recovery holds. Expired holds are dropped on the way.
   var holds = retentionHoldRead_(), holdsChanged = false, nowMs = Date.now();
   Object.keys(holds).forEach(function (n) {
@@ -145,6 +179,10 @@ function deleteOldCDRSheets() {
     if (dayDiff > RETENTION_CUTOFF_DAYS && holds[name]) {
       held++;   // ING-5: a recovery tab, kept until its hold expires
       Logger.log('Kept held recovery sheet: ' + name);
+    } else if (dayDiff > RETENTION_CUTOFF_DAYS
+               && !provenImported(name, dateMatch[1] + '-' + dateMatch[2] + '-' + dateMatch[3])) {
+      unimported.push(name);   // PIPE-2: never imported (or unverifiable) -- kept
+      Logger.log('Kept over-age sheet that is not proven imported: ' + name);
     } else if (dayDiff > RETENTION_CUTOFF_DAYS) {
       ss.deleteSheet(sheet);
       deleted++;
@@ -154,9 +192,13 @@ function deleteOldCDRSheets() {
     }
   }
   if (holdsChanged) retentionHoldWrite_(holds);
+  unimported.sort();
   Logger.log('deleteOldCDRSheets: deleted ' + deleted + ', kept ' + kept
-    + (held ? ', held for recovery ' + held : '') + ' (cutoff ' + RETENTION_CUTOFF_DAYS + 'd).');
-  return { deleted: deleted, kept: kept, held: held };
+    + (held ? ', held for recovery ' + held : '')
+    + (unimported.length ? ', kept NOT-imported ' + unimported.length + ' (' + unimported.join(', ') + ')' : '')
+    + (historyError ? ' -- history check FAILED: ' + historyError : '')
+    + ' (cutoff ' + RETENTION_CUTOFF_DAYS + 'd).');
+  return { deleted: deleted, kept: kept, held: held, unimported: unimported, historyError: historyError };
 }
 
 /** Time-trigger handler: prune + a Pipeline Health row per run (C-3). */
@@ -168,12 +210,22 @@ function runRetentionPrune_() {
       if (typeof logPipelineHealthWithFallback_ === 'function') {
         logPipelineHealthWithFallback_(null, {
           step: 'retentionPrune',
-          status: 'success',
+          // PIPE-2: a failed history check means retention is NOT being
+          // enforced (every unproven tab was kept) -- that is a failure. A tab
+          // merely kept because it was never imported is named, not failed:
+          // the stall that caused it already logged its own failure
+          // (autoImport / autoImport:parked).
+          status: res.historyError ? 'failure' : 'success',
           rows: res.deleted,
           durationMs: Date.now() - t0,
           notes: 'deleted ' + res.deleted + ' Call_Legs sheet(s), ' + res.kept
             + ' within the ' + RETENTION_CUTOFF_DAYS + 'd window'
-            + (res.held ? ', ' + res.held + ' held for recovery (ING-5)' : ''),
+            + (res.held ? ', ' + res.held + ' held for recovery (ING-5)' : '')
+            + (res.unimported && res.unimported.length
+              ? ', KEPT ' + res.unimported.length + ' never-imported (PIPE-2): '
+                + res.unimported.join(', ') + ' -- import (Manual Processing) or delete by hand'
+              : '')
+            + (res.historyError ? ' | history check failed, nothing unproven deleted: ' + res.historyError : ''),
         });
       }
     } catch (logErr) { /* best-effort */ }

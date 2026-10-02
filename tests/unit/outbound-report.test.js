@@ -217,7 +217,7 @@ test('outbound SQL: the abandon side reuses the Inbound dept predicate AND the w
   // must carry the clause — a new sub-select without it silently widens.
   const froms = r.sql.split('FROM inbound_calls c').length - 1;
   const windowed = r.sql.split(
-    "c.call_start IS NULL OR (c.call_start >= '06:30:00' AND c.call_start < '15:00:00')").length - 1;
+    "c.call_start IS NULL OR (c.call_start >= (CASE WHEN").length - 1;
   assert.ok(froms >= 2, 'callback + daily both scan inbound_calls');
   assert.equal(windowed, froms,
     'every dept-facing FROM inbound_calls c must be window-scoped — found ' + windowed + '/' + froms);
@@ -249,7 +249,7 @@ test('outbound SQL: company view drops the dept predicate but keeps the window c
   // callback table's row axis), so the pin is on the dept FILTER, not the name.
   assert.ok(!/entry_queue,''\)\)\) IN \(/.test(r.sql), 'no dept scoping in the company view');
   assert.match(r.sql, /'callbackByDept'/, 'CB-1: the company view carries the per-dept table');
-  assert.match(r.sql, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00'/,
+  assert.match(r.sql, /c\.call_start IS NULL OR \(c\.call_start >= \(CASE WHEN/,
     'the work-window ruling applies to the company figure too');
 });
 
@@ -384,7 +384,7 @@ test('outbound v2: getOutboundUncalled lists tracked, un-called-back abandons �
   assert.match(sql, /c\.caller_hash IS NOT NULL AND cb\.delay_sec IS NULL/,
     'tracked + not called back — the KPI\'s own definition');
   assert.match(sql, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
-  assert.match(sql, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00'/,
+  assert.match(sql, /c\.call_start IS NULL OR \(c\.call_start >= \(CASE WHEN/,
     'work-window scoped like the report');
   assert.match(sql, /'a_q_csr'/, 'dept predicate applied');
   assert.match(sql, /o\.callee_hash = c\.caller_hash/);
@@ -497,7 +497,7 @@ test('vetting: clean run — parity across both code paths + both sample verdict
   // The pairs sweep carries the report's own denominator predicates.
   const pairs = conn.sql.join('\n');
   assert.match(pairs, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
-  assert.match(pairs, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00'/);
+  assert.match(pairs, /c\.call_start IS NULL OR \(c\.call_start >= \(CASE WHEN/);
   assert.match(pairs, /c\.caller_hash IS NOT NULL/);
   assert.match(pairs, /o\.callee_hash = c\.caller_hash/);
   assert.match(pairs, /LIMIT 200\)/);

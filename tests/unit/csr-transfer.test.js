@@ -162,6 +162,14 @@ test('P8/P26 wiring: the bulk branch guards QCD+CSR at queue time, gated on forc
     'bulk QCD guard present + forceDeleted-gated');
   assert.match(src, /guardForceRebuildLoss_\(targetSS, 'bulkBackfill:CSR', dateObj,\s*\n?\s*force && forceDeleted\.csr/,
     'bulk CSR guard present + forceDeleted-gated');
+  // CR-9: CDR Historical has a live reader (the Custom Report Builder), so it
+  // is guarded on BOTH paths; Q Path has none and stays unguarded.
+  assert.match(src, /guardForceRebuildLoss_\(targetSS, 'bulkBackfill:CDR', dateObj,[^\n]*\n?\s*force && forceDeleted\.cdr/,
+    'bulk CDR guard present + forceDeleted-gated');
+  assert.match(src, /guardForceRebuildLoss_\(targetSS, 'processIntegratedHistory:CDR', dateObj, force && fdel\.cdr, cdrCount\)/,
+    'daily CDR guard present + forceDeleted-gated');
+  assert.match(src, /forceDeleted\.cdr = !!existsInCDR;/, 'the CDR delete is captured');
+  assert.ok(!/QPath', dateObj/.test(src), 'Q Path has no reader, so no guard');
   assert.match(src, /force: !!\(force && forceDeleted\.dqe\)/,
     'bulk DQE build opts.force carries the forceDeleted gate');
   assert.match(src, /force: !!\(force && fdel\.dqe\)/,
@@ -210,7 +218,7 @@ test('I-6: processNewImport COMPUTES before the force-delete block (a compute th
   const iCompute = src.indexOf('const results = calculateMetricsInMemory(cleanData, configSheet);');
   const iQcd = src.indexOf('results.qcdData = calcQcdReport(cleanData, targetSS);');
   const iCsr = src.indexOf('results.csrData = calcCsrReport(cleanData, targetSS);');
-  const iForce = src.indexOf('const forceDeleted = { qcd: false, csr: false, dqe: false };');
+  const iForce = src.indexOf('const forceDeleted = { qcd: false, csr: false, dqe: false, cdr: false };');   // CR-9 added cdr
   const iSource = src.indexOf('if (sourceData.length < 2) throw new Error("Source sheet empty.");');
   assert.ok(iCompute > 0 && iQcd > 0 && iCsr > 0 && iForce > 0 && iSource > 0, 'anchors present');
   assert.ok(iSource < iCompute, 'P-3: source validated first');
@@ -423,6 +431,21 @@ test('ING-3: a skipped bulk-archive mirror logs a processBatchArchive:<type>:neo
   assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'QCD'/g) || []).length, 2);
 });
 
+// PIPE-3 (broad-scan 2026-10-01): every sheet append precedes every Neon
+// connect in the bulk archive, so a hung connect killed at the execution
+// ceiling cannot leave force-deleted QCD / CSR history unwritten.
+test('PIPE-3: processBatchArchive appends all four history sheets BEFORE either Neon mirror', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const start = src.indexOf('function processBatchArchive(');
+  const body = src.slice(start, src.indexOf('\nfunction ', start + 10));
+  const firstMirror = Math.min(body.indexOf('writeCDRRowsToNeon('), body.indexOf('writeQCDRowsToNeon('));
+  assert.ok(firstMirror > 0, 'both mirrors are still wired');
+  ['obcHD.getRange(', 'salesHD.getRange(', 'qcdHD.getRange(', 'csrHD.getRange('].forEach(function (append) {
+    const at = body.indexOf(append);
+    assert.ok(at > 0 && at < firstMirror, append + ' must run before the first Neon mirror');
+  });
+});
+
 // Follow-on to ING-3: the DAILY inline mirror's Neon-unreachable SKIP now logs
 // the same failure-only :QCD:neon / :CDR:neon row its throw already did (L7).
 test('ING-3 follow-on: a skipped DAILY QCD mirror logs processIntegratedHistory:QCD:neon; silent with no NEON_HOST', function () {
@@ -456,4 +479,17 @@ test('ING-3 follow-on: a skipped DAILY QCD mirror logs processIntegratedHistory:
   }
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
   assert.match(src, /Neon CDR write skipped[^\n]*\n\s*dailyMirrorSkipRow_\(targetSS, 'processIntegratedHistory:CDR:neon'/);
+});
+
+// PC-10 (broad-scan 2026-10-01): a per-call capture written WITHOUT phone
+// hashes is a degraded capture; its Pipeline Health row must say so and name the fix.
+test('PC-10: the hashless note names the missing HMAC_SECRET; a hashed write adds nothing', function () {
+  assert.equal(h.call('perCallHashlessNote_', { inserted: 5 }), '');
+  assert.equal(h.call('perCallHashlessNote_', null), '');
+  const note = h.call('perCallHashlessNote_', { inserted: 5, hashless: true });
+  assert.match(note, /HMAC_SECRET is not set in cdr-import/);
+  assert.match(note, /Operator State #17/);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /status: inboundRes\.hashless \? 'failure' : 'success'/);
+  assert.match(src, /status: outboundRes\.hashless \? 'failure' : 'success'/);
 });

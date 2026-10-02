@@ -83,7 +83,7 @@
 // the COMPANY view (own / other / none per dept, keyed on the FIRST callback's
 // dialer); the callback lateral also gained a call_id tie-break so the "first"
 // callback is deterministic when two dials share a second.
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v5';
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v6';   // v6: PC-9 the callback denominator (inbound abandons) uses the R49 06:00 floor for CSR-family entry queues
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -4044,7 +4044,8 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
     .map(function (l) { return String(l).trim().toLowerCase(); });
 
   var todayIso = obTodayIso_();   // PCR-3: the same "today" the SQL uses
-  var winStart = INBOUND_WORK_WINDOW_PST.start, winEnd = INBOUND_WORK_WINDOW_PST.end;
+  var winEnd = INBOUND_WORK_WINDOW_PST.end;
+  var earlySet = (typeof inboundEarlyQueueSet_ === 'function') ? inboundEarlyQueueSet_() : {};   // PC-9
 
   // One pass over the inbound abandons for a window -> the callback block
   // (+ the per-day series when asked). Mirrors callbackSel/callbackDaily.
@@ -4064,6 +4065,9 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
       if (String(row[16] == null ? '' : row[16]).trim().toUpperCase() === 'TRUE') continue;  // is_internal
       var cs = String(row[15] == null ? '' : row[15]).trim();
       // inboundWindowClause_(true): NULL/absent start counts as IN window.
+      // PC-9: the window starts per ENTRY queue (col 10) -- 06:00 for the CSR family.
+      var winStart = (typeof inboundWindowStartFor_ === 'function')
+        ? inboundWindowStartFor_(row[10], earlySet) : INBOUND_WORK_WINDOW_PST.start;
       if (cs && !(cs >= winStart && cs < winEnd)) continue;
       if (deptFilter && !ihRowInDept_(row, qSet, labels, allLabels)) continue;
 

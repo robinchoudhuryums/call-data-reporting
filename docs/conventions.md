@@ -13,7 +13,7 @@ The canonical work window for DQE metrics:
 | Start | 6:30 AM | 8:30 AM | 9:30 AM |
 | End   | 3:00 PM | 5:00 PM | 6:00 PM |
 
-In code (`buildDQEHistoricalData.gs`):
+In code (`buildDQEHistoricalData.js`):
 
 ```js
 const DQE_WINDOW_START = (6 * 60 + 30) * 60;  // 6:30 AM PST in seconds
@@ -59,7 +59,7 @@ pinned against the pipeline constant by `cross-file-pins.test.js`.
 | Where | Value | Why |
 |---|---|---|
 | Raw Data timestamps | PST (UTC-8 or UTC-7 with DST) | Comes from the external CDR system this way |
-| `DQE Historical Data` display | CST (via `pstToCSTStr` in `buildDQEHistoricalData.gs`) | Internal team's home timezone |
+| `DQE Historical Data` display | CST (via `pstToCSTStr` in `buildDQEHistoricalData.js`) | Internal team's home timezone |
 | Spreadsheet timezone (CDR Report) | "Central Time - Mexico City" (GMT-06:00, no DST) | Historical — see [known-issues.md](known-issues.md) |
 | Script timezone (`appsscript.json`) | `America/Chicago` | Matches the team's home TZ |
 | Dashboard date pickers | Browser-local | Phase 1 default. Phase 3 may add explicit TZ controls. |
@@ -105,7 +105,7 @@ the right edge of the dept block — don't insert a gap.
 
 Cols A-C of the same sheet hold queue metadata (`Call Queue | Extension
 | Call Queue`). This is not currently read by the Department Dashboard
-(extensions come from the roster cells), but `buildDQEHistoricalData.gs`
+(extensions come from the roster cells), but `buildDQEHistoricalData.js`
 may reference it. Don't touch it without checking.
 
 ## Agent name matching
@@ -133,7 +133,7 @@ the exact match stays reliable across CDR feed spelling variations.
   `docs/known-issues.md` → "Roster-driven
   name canonicalization" for details + edge cases.
 - The Department Dashboard surfaces orphans in its Diagnostics panel
-  (and via the `whyNoMatches_` editor diagnostic) — check there first
+  (and via the `whyNoMatches` editor diagnostic) — check there first
   when an expected agent doesn't show up.
 
 When an agent's display name changes (marriage, alias, etc.), update
@@ -510,7 +510,9 @@ version any time the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
 INV-30 (`docs/invariants.md`) is the canonical current-version list. This
-table mirrors it; if the two ever diverge, INV-30 wins.
+table mirrors it; if the two ever diverge, INV-30 wins. Both are checked
+against the code by `cache-version-sync.test.js`, whose `SPECS` list is the
+complete set of prefixes.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
@@ -518,17 +520,30 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
 | `IndividualReport.gs` | `individual:vN:` | `v12` |
-| `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
+| `Util.gs` (`computeActiveAgentsInRange_` -- the active-in-range subset the agent pickers share) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v25` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v26` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v15` |
+| `InboundReport.gs` | `inbound:vN:` | `v16` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
+| `OutboundReport.gs` | `outboundReport:vN:` | `v6` |
+| `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
+| `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
+| `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |
+| `Data.gs` (derived dept queue-ext set, R45) | `deptExts:vN:` | `v1` |
+| `NeonRead.gs` (derived agent/ext pairs) | `neonAgentExts:vN:` | `v1` |
+
+Operational (non-report) keys, versioned the same way and tracked by the same
+test: `orphanFix:init:v1` (OrphanFix.gs) and `deptConfig:init:v1`
+(DeptConfig.gs) -- admin-modal init blobs busted on every write;
+`presence:v1` (SystemHealth.gs) -- the live-presence map; `mailThrottle:v1`
+(Config.gs) -- the per-user report-email throttle; `escSchema:v2`
+(Escalations.gs) -- the escalations DDL memo.
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

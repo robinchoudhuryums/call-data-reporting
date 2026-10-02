@@ -94,7 +94,10 @@ function getMissedCallsReport(req) {
   // Adoption round: + the queue-split scope (S2-0 -- the figures MEAN something
   // different in each mode, so a flip must not serve the other mode's payload).
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'missed:v18:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+  // DL-5: + the roster (D-7's rule) -- the per-agent cards are the roster.
+  // missedReportDataCached_ below builds the SAME key; keep the two in step.
+  const cacheKey = 'missed:v18:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_()
+                 + ':' + rosterSetHash_([dept]);
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -121,6 +124,9 @@ function getMissedCallsReport(req) {
     // a raw alias like CSR's A_Q_CSR (sheet-only) is missing and the
     // queue-only abandoned card under-counts. Serve it, never pin it for 6 h.
     Logger.log('MissedCallsReport: Dept Config read errored -- skipping cache put.');
+  } else if (data.meta && data.meta.enrichmentFailed) {
+    // DL-6: serve the un-enriched cards, never pin them for the 6 h TTL.
+    Logger.log('MissedCallsReport: per-call enrichment failed -- skipping cache put.');
   } else if (json.length <= 100000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('MissedCallsReport cache put failed: %s', e); }
@@ -241,7 +247,8 @@ function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'missed:v18:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+  const cacheKey = 'missed:v18:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_()
+                 + ':' + rosterSetHash_([dept]);   // DL-5
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
@@ -251,7 +258,9 @@ function missedReportDataCached_(dept, from, to) {
     // DATA-2: nor a payload built on constant-only config after a failed
     // Dept Config read (the R8-C4 rule getDepartmentSummary already follows).
     const cfgFailed = typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_();
-    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable) && !cfgFailed) {
+    // DL-6: nor one whose per-call enrichment failed.
+    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable) && !cfgFailed
+        && !(data.meta && data.meta.enrichmentFailed)) {
       cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
     }
   } catch (e) { /* best-effort */ }
@@ -274,14 +283,19 @@ function missedReportDataCached_(dept, from, to) {
 //     join the IN-list (a multi-week range can list hundreds of abandons;
 //     the oldest overflow entries just stay un-enriched).
 // Enriched fields ride the cached payload (the missed: key).
+// DL-6 (broad-scan 2026-10-01): returns 'ok' | 'skipped' (nothing to enrich,
+// or Neon not configured -- the card is complete as it is) | 'failed' (Neon
+// configured but unreachable, or the query threw). A failed enrichment is
+// flagged on the payload (meta.enrichmentFailed) and never cached, so the
+// next open retries instead of serving un-enriched cards for 6 h.
 // ---------------------------------------------------------------------------
 var MISSED_ENRICH_MAX_CALLS_ = 400;
 
 function missedEnrichQueueOnlyFromInbound_(queueOnly) {
   try {
-    if (!queueOnly || !queueOnly.length) return;
-    if (typeof getDashboardNeonConn_ !== 'function') return;
-    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return;
+    if (!queueOnly || !queueOnly.length) return 'skipped';
+    if (typeof getDashboardNeonConn_ !== 'function') return 'skipped';
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return 'skipped';
 
     const pairs = [];
     const seen = {};
@@ -294,10 +308,10 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
         if (pairs.length < MISSED_ENRICH_MAX_CALLS_) pairs.push({ date: e.date, id: e.parentId });
       });
     });
-    if (!pairs.length) return;
+    if (!pairs.length) return 'skipped';
 
     const conn = getDashboardNeonConn_();   // NEO-3: not a DQE read -- no read-health recording
-    if (!conn) return;
+    if (!conn) return 'failed';   // DL-6: configured but unreachable
     try {
       // R8-B5: bind the (date, id) tuples as prepared-statement params --
       // this was the ONE Neon query in the dashboard that inlined
@@ -344,9 +358,11 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
     } finally {
       try { conn.close(); } catch (ce) {}
     }
+    return 'ok';
   } catch (err) {
     Logger.log('missedEnrichQueueOnlyFromInbound_ (best-effort): '
       + (err && err.message ? err.message : err));
+    return 'failed';
   }
 }
 
@@ -476,7 +492,13 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   // and the per-agent cards agree with the narrowed numbers. Off = the empty
   // shape, rows untouched, payload byte-identical (S2-0). Sentinel rows carry
   // no split, so the queue-only abandoned section is never narrowed.
-  let values = null, displays = null, deptQueueExts = null;
+  // DL-8 (broad-scan 2026-10-01): the dept queue-ext set feeds ONLY the legacy
+  // queue/both agent match below; both callers lock scope to 'roster' (and
+  // R6 attributes sentinels by queue NAME), so deriving it -- a Neon DISTINCT
+  // query, or a whole-sheet A..D scan as fallback -- was pure cost. It is
+  // derived only when a non-roster scope can actually read it.
+  const needsQueueExts = scope !== 'roster';
+  let values = null, displays = null, deptQueueExts = needsQueueExts ? null : {};
   let qsInfo = null;
   let dalRows = null;
   if (neonCapable) {
@@ -485,13 +507,13 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       const neonRows = neonFetchDqeRows_(from, to, { includeMissedDetail: true });
       if (neonDqeRowsUsable_(neonRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
         dalRows = neonRows;
-        deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
+        if (needsQueueExts) deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;   // DL-8
         if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('missedCalls', 'neon', _t0, neonRows.length);
       }
     } catch (e) {
       Logger.log('computeMissedCallsReport_: neon read failed, falling back to sheet: '
         + (e && e.message ? e.message : e));
-      dalRows = null; deptQueueExts = null;
+      dalRows = null; deptQueueExts = needsQueueExts ? null : {};
     }
   }
   if (!dalRows) {
@@ -865,8 +887,9 @@ function computeMissedCallsReport_(dept, from, to, scope) {
 
   // R5 (owner): enrich the queue-only abandoned entries with per-call facts
   // from inbound_calls (wait time + insurer label). Best-effort -- a Neon
-  // miss leaves the entries exactly as before.
-  missedEnrichQueueOnlyFromInbound_(queueOnly);
+  // miss leaves the entries exactly as before. DL-6: a FAILED enrichment is
+  // flagged (meta.enrichmentFailed) and the payload is not cached.
+  const enrichment = missedEnrichQueueOnlyFromInbound_(queueOnly);
 
   // Chart labels
   const chartLabels = [];
@@ -911,6 +934,8 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       queueSplitApplied: qsInfo ? qsInfo.applied : 0,
       queueSplitFellOpen: !!(qsInfo && qsInfo.fellOpenUnmatched),
       queueSplitUnmatched: (qsInfo && qsInfo.unmatchedQueues) || [],
+      // DL-6: the queue-only entries' wait / insurer facts could not be read.
+      enrichmentFailed: enrichment === 'failed',
       generatedAt: new Date().toISOString(),
     },
     agents: agents,

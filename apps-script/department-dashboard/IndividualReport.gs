@@ -111,7 +111,7 @@ function getIndividualReportInit(req) {
     activeAgents   = active.agents;
     activeFloaters = active.floaters;
     subQueueGroups = (typeof computeSubQueuePickerGroups_ === 'function')
-      ? computeSubQueuePickerGroups_(dept, from, to) : [];
+      ? computeSubQueuePickerGroups_(dept, from, to, user) : [];   // AC-1: the viewer's reachable sub-queues only
   }
 
   return {
@@ -170,6 +170,7 @@ function getIndividualReport(req) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
     assertReportRangeCap_(priorFrom, priorTo, null, 'Prior range');   // SEC-1
+    assertReportSpanCap_(from, to, priorFrom, priorTo);              // DL-4
   }
 
   const rawAgents = (req && req.agents) || [];
@@ -212,7 +213,11 @@ function getIndividualReport(req) {
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
                  + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
                  + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_()
-                 + ':' + answerRateCacheTag_();   // DD-2: the rate formula is a cache dimension
+                 + ':' + answerRateCacheTag_()   // DD-2: the rate formula is a cache dimension
+                 // DL-5: the roster joins the key (D-7's rule) -- the team average
+                 // and the INV-53 floater split both follow it, and the freshness
+                 // tag does not move on a roster edit.
+                 + ':' + rosterSetHash_([dept]);
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

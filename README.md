@@ -38,15 +38,18 @@ If you're new to this codebase or chasing a bug, start with the docs:
   aggregation rules, scope semantics. The "why are TTT and ATT computed
   this way?" reference.
 
-`CLAUDE.md` holds the rules you must follow when changing code. Four of its
+`CLAUDE.md` holds the rules you must follow when changing code. Six of its
 reference sections live in their own files (it got too big to read); **each is
 still LIVE TRUTH, and CLAUDE.md carries a one-line index for each entry** —
 [`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-55`),
 [`docs/operator-state.md`](docs/operator-state.md) (the numbered operator
 checklist), [`docs/regression-scenarios.md`](docs/regression-scenarios.md)
-(`S1`…`S47`), and
+(`S1`…`S53`),
 [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) (client /
-presentation layer). So "see CLAUDE.md INV-54" below means: find the index line
+presentation layer), [`docs/neon-layer.md`](docs/neon-layer.md) (the Neon
+mirror + read-back layer) and
+[`docs/per-call-capture.md`](docs/per-call-capture.md) (the inbound /
+outbound / direct per-call subsystem). So "see CLAUDE.md INV-54" below means: find the index line
 there, read the full entry in `docs/invariants.md`.
 
 ## Repository layout
@@ -59,10 +62,16 @@ call-data-reporting/
 │   ├── department-dashboard/       ← the web app this repo deploys (top-level clasp pushes from here)
 │   ├── cdr-report/                 ← the CDR Report project (data hub spreadsheet)
 │   │   └── (cd in, then `clasp push -f` to deploy that project)
-│   └── cdr-import/                 ← the CDR Import project (CSV ingester)
-│       └── (cd in, then `clasp push -f` to deploy that project)
+│   ├── cdr-import/                 ← the CDR Import project (CSV ingester)
+│   │   └── (cd in, then `clasp push -f` to deploy that project)
+│   └── dqe-report/                 ← the LEGACY DQE Report project -- FROZEN (INV-22), kept for reference until decommission
 ├── tests/                          ← zero-dep Node regression harness (`node --test`); see tests/README.md
-├── scripts/                        ← repo tooling (e.g. check-duplicated-files.sh, the INV-16 drift guard)
+├── tools/ui-harness/               ← the rendered-UI gate (`npm run ci:ui`, playwright); see its README.md
+├── scripts/                        ← repo tooling (deploy.sh, bite.sh, check-duplicated-files.sh -- the INV-16 guard, module-deps, lint-gas)
+├── .github/workflows/              ← CI: the `test`, `lint` and `ui-harness` jobs
+├── .cycle/                         ← cycle-workflow state (STATE.md, numbered blocks, estimates) -- not deployed
+├── .claude/                        ← Claude Code project settings + commands, incl. the SessionStart INV-16 hook
+├── CLAUDE.md                       ← the rules for changing code (index into docs/)
 ├── package.json                    ← `npm test` → `node --test`; not a deployable package
 ├── .clasp.example.json             ← template; copy to .clasp.json on first checkout
 ├── .clasp.json                     ← per-developer, gitignored (scriptId varies per checkout)
@@ -72,7 +81,8 @@ call-data-reporting/
 
 Each subdirectory under `apps-script/` has its own gitignored
 `.clasp.json` so per-project deploys are independent. The legacy DQE
-Report spreadsheet is being retired and isn't pulled in.
+Report project (`apps-script/dqe-report/`) is frozen while its spreadsheet
+is retired: cleanup deploys only.
 
 ## Running tests
 
@@ -158,6 +168,12 @@ MISSING tool fail the gate rather than skip it, so a fresh clone needs
 `npm ci` and a playwright install (`cd tools/ui-harness && npm i playwright`)
 before it can deploy. `DEPLOY_SKIP_CI=1 scripts/deploy.sh …` skips all three,
 for emergencies only.
+
+The helper accepts the project dir in any spelling (`.`, `./`, an absolute
+path) and normalizes it, so the right build stamp is always written (DEP-2).
+It WARNS when the tree is dirty (uncommitted or untracked files -- `clasp push`
+ships both, and the stamp says `+dirty`) or the branch is not `main`;
+`STRICT_DEPLOY=1` turns either warning into a refusal (DEP-3).
 
 **One-time, in the Apps Script project:**
 

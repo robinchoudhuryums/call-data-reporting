@@ -463,3 +463,37 @@ test('PCR-7: a busy script lock skips the run LOUDLY, before any read or write',
     assert.equal(conn.closed, true, 'the connection is still closed');
   } finally { h.state.lockBusy = false; }
 });
+
+// BU-4 (broad-scan 2026-10-01): a dept whose compute THREW produced no flags,
+// so every open flag in it diffed as "recovered" and the run said `ok`.
+test('BU-4: an errored dept\'s open flags are left untouched (not recovered), and the run is PARTIAL', function () {
+  const conn = installDeliveryStubs_([flag_('CSR', 'Still Bad')],
+    JSON.stringify([{ id: 'id-1', department: 'CSR', agent_name: 'Still Bad' },
+                    { id: 'id-2', department: 'Sales', agent_name: 'Was Flagged' }]));
+  h.ctx.computeCoachingPreview_ = function () {
+    return { available: true, window: { from: '2026-07-07', to: '2026-07-20' }, deptsScanned: 3,
+             flags: [flag_('CSR', 'Still Bad')], errors: [{ dept: 'Sales', error: 'Service Spreadsheets timed out' }], thresholds: {} };
+  };
+  const out = JSON.parse(JSON.stringify(h.call('coachingDeliveryRun_')));
+  assert.match(out.result, /^PARTIAL 0 new, 1 continuing, 0 recovered-open/,
+    'pre-BU-4: "ok 0 new, 1 continuing, 1 recovered-open" -- Sales\' agent read as recovered');
+  assert.match(out.result, /1 dept\(s\) errored, their open flags left untouched: Sales \(first: Service Spreadsheets timed out\)/);
+  assert.equal(out.recoveredCount, 0);
+  const updates = conn.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); });
+  assert.deepEqual(updates.map(function (u) { return u.p[10]; }), ['id-1'], 'the errored dept\'s row is not refreshed either');
+  assert.match(out.result, /^PARTIAL\b/, 'a HEALTH_BAD_PREFIXES_ prefix (system-health.test.js pins PARTIAL bad), not green');
+});
+
+test('BU-4: every dept errored -> FAILED, nothing read, written or emailed', function () {
+  let connOpened = false;
+  installDeliveryStubs_([], '[]');
+  h.ctx.getDashboardNeonConn_ = function () { connOpened = true; return null; };
+  h.ctx.computeCoachingPreview_ = function () {
+    return { available: true, window: { from: '2026-07-07', to: '2026-07-20' }, deptsScanned: 2, flags: [],
+             errors: [{ dept: 'CSR', error: 'boom' }, { dept: 'Sales', error: 'boom' }], thresholds: {} };
+  };
+  const out = JSON.parse(JSON.stringify(h.call('coachingDeliveryRun_')));
+  assert.match(out.result, /^FAILED \(every dept errored -- nothing written, no email\)/);
+  assert.equal(connOpened, false);
+  assert.equal(h.state.sentEmails.length, 0);
+});

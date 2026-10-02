@@ -67,12 +67,14 @@ function installDqeSilenceWatchTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('DQE_SILENCE_WATCH_ENABLED', 'true');
   installDqeSilenceWatchTrigger_();
+  recordTriggerInstaller_('runDqeSilenceWatch_', true);   // EN-1
   return logStatusReturn_(getDqeSilenceWatchStatus_());
 }
 
 function uninstallDqeSilenceWatchTrigger() {
   assertAdmin_();
   uninstallDqeSilenceWatchTrigger_();
+  recordTriggerInstaller_('runDqeSilenceWatch_', false);   // EN-1
   PropertiesService.getScriptProperties().deleteProperty('DQE_SILENCE_WATCH_ENABLED');
   return logStatusReturn_(getDqeSilenceWatchStatus_());
 }

@@ -87,9 +87,59 @@ function record(name, pass, detail) {
   record('history: tab switch back restores My Performance',
     await page.locator('#agent-home-page').isVisible());
 
+  // ---- CL-13: the tabs keyboard pattern ----------------------------------
+  // Arrow keys move selection AND focus (roving tabindex), both panels are
+  // role=tabpanel, and the history panel was already loaded above so the
+  // keyboard switch must not refetch it.
+  await page.locator('#agent-tab-home').focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(300);
+  const kb = await page.evaluate(() => ({
+    focused: document.activeElement && document.activeElement.id,
+    selected: document.getElementById('agent-tab-history').getAttribute('aria-selected'),
+    histTab: document.getElementById('agent-tab-history').getAttribute('tabindex'),
+    homeTab: document.getElementById('agent-tab-home').getAttribute('tabindex'),
+    panels: [...document.querySelectorAll('[role="tabpanel"]')].map((p) => p.id).join(','),
+    histVisible: document.getElementById('agent-history-page').style.display !== 'none',
+  }));
+  record('CL-13: ArrowRight selects and focuses My History (roving tabindex)',
+    kb.focused === 'agent-tab-history' && kb.selected === 'true' && kb.histTab === '0' && kb.homeTab === '-1'
+      && kb.histVisible, JSON.stringify(kb));
+  record('CL-13: both pages are role=tabpanel', kb.panels === 'agent-home-page,agent-history-page', kb.panels);
+  await page.keyboard.press('Home');
+  await page.waitForTimeout(200);
+  record('CL-13: Home returns to My Performance',
+    await page.evaluate(() => document.activeElement && document.activeElement.id === 'agent-tab-home'
+      && document.getElementById('agent-home-page').style.display !== 'none'));
+
   // ---- Phase C: glossary --------------------------------------------------
   record('glossary: fold present with the wait-coverage explanation',
     /before call-capture coverage|call-capture system has/.test(await page.locator('#agent-gloss').textContent()));
+
+  // ---- CL-9: phone width ----------------------------------------------------
+  // The agent app is the surface most likely to be opened on a phone, and the
+  // 1100 px run below never saw one. Resize the SAME page and re-enter both
+  // tabs so each lays out at the narrow width; this runs BEFORE the
+  // cleanliness checks so an error raised at phone width fails them too.
+  // The html/body clip check keeps the overflow assertion from passing
+  // vacuously (see drive-smoke.js, the same helper's rationale).
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.waitForTimeout(500);
+  record('phone@360: overflow is measurable (html/body do not clip it)', await page.evaluate(() =>
+    !/hidden|clip/.test(getComputedStyle(document.documentElement).overflowX)
+    && !/hidden|clip/.test(getComputedStyle(document.body).overflowX)));
+  const phoneOverflow = async () => page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  for (const [tab, pane] of [['#agent-tab-history', '#agent-history-page'], ['#agent-tab-home', '#agent-home-page']]) {
+    await page.locator(tab).click();
+    await page.waitForTimeout(500);
+    const over = await phoneOverflow();
+    record('phone@360: ' + pane + ' renders with no horizontal overflow',
+      (await page.locator(pane).isVisible()) && over <= 1, 'scrollWidth-clientWidth=' + over);
+  }
+  // Back to the desktop size, so the layout check at the end still measures it.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.waitForTimeout(300);
 
   // ---- cleanliness --------------------------------------------------------
   const unmocked = await page.evaluate(() => window.__MOCK_UNMOCKED__ || []);

@@ -12,6 +12,9 @@ const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
 
 const h = loadGas({ project: 'cdr-import', files: ['autoImport.js'] });
+// PIPE-2: the pending window ends at TODAY; pin it so the fixed fixture dates
+// below never age out of the window as the calendar moves.
+h.ctx.pendingImportTodayIso_ = function () { return '2026-09-25'; };
 
 function fakeSource(names) {
   return {
@@ -106,4 +109,92 @@ test('onChange lock-skip: the dropped grid now schedules a catch-up import', fun
     h.state.lockBusy = false;
     h.ctx.logPipelineHealthWithFallback_ = orig;
   }
+});
+
+// ── PIPE-1 / PIPE-2 (broad-scan 2026-10-01) ─────────────────────────────────
+
+test('PIPE-2: the window ends at TODAY -- a future-dated tab is never a candidate and never the anchor', function () {
+  const names = ['Call_Legs_2026-09-29', 'Call_Legs_2026-09-30', 'Call_Legs_2026-10-30'];
+  // The pre-fix shape: the typo'd 10-30 tab (already imported once) anchored the
+  // window, and every real date fell below its floor -> silent "MISSING".
+  assert.deepEqual(Array.from(h.call('pendingCallLegsDates_', names, ['Call_Legs_2026-10-30'], 14)), [],
+    'documents the old newest-tab anchor (the default when no today is passed)');
+  assert.deepEqual(Array.from(h.call('pendingCallLegsDates_', names, ['Call_Legs_2026-10-30'], 14, '2026-09-30')),
+    ['2026-09-29', '2026-09-30'], 'anchored on today: the real dates are pending again');
+  assert.deepEqual(Array.from(h.call('pendingCallLegsDates_', names, [], 14, '2026-09-30')),
+    ['2026-09-29', '2026-09-30'], 'a tab dated after today is not pending');
+  assert.deepEqual(Array.from(h.call('pendingCallLegsDates_', ['Call_Legs_2026-09-10'], [], 14, '2026-09-30')), [],
+    'older than today - 14 days is outside the window');
+});
+
+function withImports(fn, impl) {
+  const orig = h.ctx.processNewImport;
+  const origLog = h.ctx.logPipelineHealthWithFallback_;
+  const rows = [];
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, ev) { rows.push(ev); };
+  h.ctx.processNewImport = impl;
+  try { return fn(rows); } finally {
+    h.ctx.processNewImport = orig;
+    h.ctx.logPipelineHealthWithFallback_ = origLog;
+  }
+}
+function okImport(calls) {
+  return function (force, iso, silent, ss, cache, opts) {
+    calls.push({ iso: iso, noFailureEmail: !!(opts && opts.noFailureEmail) });
+    if (iso === '2026-09-22') return 'ERROR: Source sheet empty.';
+    const known = JSON.parse(h.state.props.lastSheets || '[]');
+    known.push('Call_Legs_' + iso);
+    h.state.props.lastSheets = JSON.stringify(known);
+    return 'DONE: 1s';
+  };
+}
+
+test('PIPE-1: a failing date is tried ONCE per run and no longer blocks the newer dates', function () {
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-22', 'Call_Legs_2026-09-23', 'Call_Legs_2026-09-24']);
+  const calls = [];
+  withImports(function () {
+    const last = h.call('processPendingImports_');
+    assert.deepEqual(calls.map(function (c) { return c.iso; }), ['2026-09-22', '2026-09-23', '2026-09-24'],
+      'one attempt at the bad date, then the newer dates import (pre-fix: 31 attempts at 09-22, nothing else)');
+    assert.equal(last, 'DONE: 1s');
+    assert.equal(calls[0].noFailureEmail, false, 'the FIRST failure of a date emails');
+    const fails = JSON.parse(h.state.props.PENDING_IMPORT_FAILURES);
+    assert.equal(fails['2026-09-22'].n, 1);
+    assert.ok(/Source sheet empty/.test(fails['2026-09-22'].err));
+  }, okImport(calls));
+});
+
+test('PIPE-1: retries do not email; the date is PARKED after the attempt cap, logged once, then left alone', function () {
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-22']);
+  const calls = [];
+  withImports(function (rows) {
+    h.call('processPendingImports_');
+    h.call('processPendingImports_');
+    assert.equal(rows.filter(function (r) { return r.step === 'autoImport:parked'; }).length, 0, 'not parked yet');
+    h.call('processPendingImports_');
+    assert.deepEqual(calls.map(function (c) { return c.noFailureEmail; }), [false, true, true],
+      'one email per failing date, not one per attempt');
+    const parked = rows.filter(function (r) { return r.step === 'autoImport:parked'; });
+    assert.equal(parked.length, 1);
+    assert.equal(parked[0].status, 'failure');
+    assert.ok(/2026-09-22/.test(parked[0].notes) && /Manual Processing/.test(parked[0].notes));
+    h.call('processPendingImports_');
+    assert.equal(calls.length, 3, 'a parked date is not retried automatically');
+  }, okImport(calls));
+});
+
+test('PIPE-1: the ledger clears itself when the parked tab is removed, and says so once', function () {
+  h.state.props = { PENDING_IMPORT_FAILURES: JSON.stringify({ '2026-09-22': { n: 3, at: 'x', err: 'ERROR: x' } }) };
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-23']);   // the bad tab was deleted
+  const calls = [];
+  withImports(function (rows) {
+    h.call('processPendingImports_');
+    assert.equal(h.state.props.PENDING_IMPORT_FAILURES, undefined, 'entry dropped, property deleted');
+    const ok = rows.filter(function (r) { return r.step === 'autoImport:parked'; });
+    assert.equal(ok.length, 1);
+    assert.equal(ok[0].status, 'success', 'Health stops flagging the parked step');
+    assert.deepEqual(calls.map(function (c) { return c.iso; }), ['2026-09-23']);
+  }, okImport(calls));
 });

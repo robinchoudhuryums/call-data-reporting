@@ -78,6 +78,10 @@ function onOpen() {
     .addItem("Preview transfer paths (pick date)…",  "previewInternalTransferPathsForDate")
     .addItem("Preview outbound assist links (pick date)…", "previewOutboundAssistLinksForDate")
     .addItem("Preview call-leg shapes (pick date)…", "previewCallLegShapesForDate")
+    // PC-1 (broad-scan 2026-10-01): stored per-call agent names -> roster-canonical.
+    // Preview is read-only; take a Neon backup before the rewrite (Operator State #72).
+    .addItem("Preview per-call agent-name rewrite",  "previewPerCallAgentNameRewrite")
+    .addItem("Rewrite per-call agent names (Neon)",  "rewritePerCallAgentNames")
     // Read-only row-34 double-count probe (owner request 2026-08-20): scans
     // every surviving Call_Legs_* sheet; results in the execution log.
     .addItem("Preview QCD row-34 overlap",           "previewRow34Overlap")

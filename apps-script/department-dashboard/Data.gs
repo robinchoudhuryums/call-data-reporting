@@ -905,8 +905,21 @@ function getDepartmentSummary(req) {
   // unchanged, and the three parents (Sales / CSR / Power) open combined. The
   // familiar own-dept figure is never lost: it stays on screen as that dept's
   // own subtotal row.
-  const subQueues = (typeof subQueueChildMap_ === 'function')
-    ? ((subQueueChildMap_()[dept]) || []) : [];
+  // AC-1 (broad-scan 2026-10-01): only the sub-queues this viewer can reach.
+  // A transient Dept Config read failure leaves user.departments at the
+  // fail-closed ASSIGNED list (resolveUser_ does not expand) while
+  // subQueueChildMap_ serves the seed edges, so the per-dept assert below
+  // threw and every Sales / CSR / Power manager lost My Department (and the
+  // dept email) until a read succeeded. Dropping an unreachable child serves
+  // the own-dept view instead; it widens nothing (the assert still runs).
+  const subQueues = ((typeof subQueueChildMap_ === 'function')
+    ? ((subQueueChildMap_()[dept]) || []) : [])
+    .filter(function (d) {
+      if (userCanAccessDept_(user, d)) return true;
+      Logger.log('getDepartmentSummary: sub-queue ' + d + ' of ' + dept
+        + ' is not reachable for this viewer -- serving without it (AC-1).');
+      return false;
+    });
   let subScope = String((req && req.subScope) || '').trim();
   if (['own', 'subs', 'all'].indexOf(subScope) === -1) {
     subScope = subQueues.length ? 'all' : 'own';
@@ -975,7 +988,8 @@ function getDepartmentSummary(req) {
   // Orphan Fix modal adds an agent or `DO NOT EDIT!` is edited, so a roster
   // change was invisible to this table for up to the 6 h TTL. One extra
   // roster read per request; the compute reads the same sheet anyway.
-  const rosterHash = hashAgents_(((getRosterForDepartment_(dept) || {}).names) || []);
+  // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
+  const rosterHash = rosterSetHash_(deptSet);
   const cacheKey = 'summary:v22:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_() + ':' + rosterHash;
@@ -985,6 +999,7 @@ function getDepartmentSummary(req) {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
       logReportUsage_('summary', dept, user, true);
+      if (typeof noteReportCache_ === 'function') noteReportCache_('hit');   // DL-9
       return parsed;
     } catch (e) {
       // Corrupted cache entry -- fall through to recompute.
@@ -1046,6 +1061,7 @@ function getDepartmentSummary(req) {
   } else {
     try {
       cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
+      if (typeof noteReportCache_ === 'function') noteReportCache_('write');   // DL-9
     } catch (e) {
       // CacheService values are capped at ~100KB. A single dept's
       // summary is well under that, but log if it ever fails.
@@ -2065,39 +2081,15 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
  */
 function getRosterForDepartment_(dept) {
   const empty = { names: [], byAgent: {}, allExtensions: {} };
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.ROSTER);
-  if (!sheet) return empty;
-
-  const lastCol = sheet.getLastColumn();
-  if (lastCol < ROSTER.DEPT_FIRST_COL) return empty;
-
-  const headerRow = sheet
-    .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
-              1, lastCol - ROSTER.DEPT_FIRST_COL + 1)
-    .getValues()[0];
-
-  let foundCol = -1;
-  for (let i = 0; i < headerRow.length; i++) {
-    const v = String(headerRow[i] || '').trim();
-    if (!v) break; // first blank ends the dept block
-    if (v === dept) { foundCol = ROSTER.DEPT_FIRST_COL + i; break; }
-  }
-  if (foundCol === -1) return empty;
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < ROSTER.DATA_START_ROW) return empty;
-
-  const cells = sheet
-    .getRange(ROSTER.DATA_START_ROW, foundCol,
-              lastRow - ROSTER.DATA_START_ROW + 1, 1)
-    .getValues();
+  const block = rosterDeptBlock_();   // DL-7: one read per execution, not one per call
+  const c = block.depts.indexOf(dept);
+  if (c === -1) return empty;
 
   const names = [];
   const byAgent = {};
   const allExtensions = {};
-  for (let i = 0; i < cells.length; i++) {
-    const parsed = parseRosterCell_(cells[i][0]);
+  for (let i = 0; i < block.cells.length; i++) {
+    const parsed = parseRosterCell_(block.cells[i][c]);
     if (!parsed) continue;
     names.push(parsed.name);
     byAgent[parsed.name] = parsed.extensions.slice();
@@ -2106,6 +2098,47 @@ function getRosterForDepartment_(dept) {
     }
   }
   return { names: names, byAgent: byAgent, allExtensions: allExtensions };
+}
+
+/**
+ * DL-5 (broad-scan 2026-10-01): the ROSTER cache dimension for a SET of depts.
+ * One dept hashes exactly as D-7 always did (hashAgents_ of its names), so the
+ * single-dept keys are unchanged; several depts hash `dept|name` pairs, so a
+ * combined sub-queue view notices a roster edit on ANY dept it shows -- D-7
+ * hashed only the requested (primary) dept's roster.
+ */
+function rosterSetHash_(depts) {
+  const list = depts || [];
+  if (list.length === 1) return hashAgents_((getRosterForDepartment_(list[0]) || {}).names || []);
+  const pairs = [];
+  list.forEach(function (d) {
+    ((getRosterForDepartment_(d) || {}).names || []).forEach(function (n) { pairs.push(d + '|' + n); });
+  });
+  return hashAgents_(pairs);
+}
+
+/**
+ * DL-5: one hash over EVERY dept's roster, for the all-dept payloads (the
+ * Overview YTD chart). The dept block of `DO NOT EDIT!` is read in ONE range --
+ * not one read per dept -- and its `dept|name` pairs hashed. 'na' when the
+ * sheet is missing or unreadable (the key stays valid; it just cannot move).
+ */
+function rosterAllDeptsHash_() {
+  try {
+    const block = rosterDeptBlock_();   // DL-7: the same per-execution read
+    if (!block.depts.length) return 'na';
+    const pairs = [];
+    for (let c = 0; c < block.depts.length; c++) {
+      for (let r = 0; r < block.cells.length; r++) {
+        const parsed = parseRosterCell_(block.cells[r][c]);
+        if (parsed) pairs.push(block.depts[c] + '|' + parsed.name);
+      }
+    }
+    return hashAgents_(pairs);
+  } catch (e) {
+    Logger.log('rosterAllDeptsHash_ failed: ' + (e && e.message ? e.message : e));
+    return 'na';
+  }
 }
 
 /**

@@ -241,8 +241,14 @@ function neonSqlLit_(v) {
   while ((s + '$').indexOf('$' + tag + '$') !== -1) tag += 'x';
   return '$' + tag + '$' + s + '$' + tag + '$';
 }
-function neonSqlInt_(v) { var n = parseInt(v, 10); if (isFinite(n)) return String(n); NEON_COERCED_++; return '0'; }
-function neonSqlNum_(v) { var n = Number(v);        if (isFinite(n)) return String(n); NEON_COERCED_++; return '0'; }
+// PIPE-4 (broad-scan 2026-10-01): an EMPTY cell is not a non-finite value --
+// the CDR build deliberately writes '' for an agent with no outbound-external
+// calls (QR), so every daily mirror used to report "N NON-FINITE value(s)" and
+// the F5 signal could no longer show a real upstream NaN. A blank string still
+// writes 0 (the value is unchanged); it just is not counted.
+function neonSqlBlank_(v) { return typeof v === 'string' && v.trim() === ''; }
+function neonSqlInt_(v) { var n = parseInt(v, 10); if (isFinite(n)) return String(n); if (!neonSqlBlank_(v)) NEON_COERCED_++; return '0'; }
+function neonSqlNum_(v) { var n = Number(v);        if (isFinite(n)) return String(n); if (!neonSqlBlank_(v)) NEON_COERCED_++; return '0'; }
 function neonSqlJson_(v) { return (v === null || v === undefined) ? 'NULL' : (neonSqlLit_(v) + '::jsonb'); }
 function neonSqlDate_(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) throw new Error('neonSqlDate_: ISO date required, got "' + iso + '"');
@@ -545,9 +551,8 @@ function writeQCDRowsToNeon(rows, opts) {
     Logger.log('writeQCDRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
     return { inserted: 0, skipped: rows.length };
   }
-  conn.setAutoCommit(false);
-
   try {
+    conn.setAutoCommit(false);   // PIPE-5: inside the try, so a throw here still reaches the finally's close()
     // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
     if (opts && opts.authoritative) {
       neonAuthoritativeDateDelete_(conn, 'qcd_history',
@@ -685,9 +690,8 @@ function writeCDRRowsToNeon(rows, opts) {
     Logger.log('writeCDRRowsToNeon: HMAC_SECRET not set — name-list JSONB and phone child rows will be skipped.');
   }
 
-  conn.setAutoCommit(false);
-
   try {
+    conn.setAutoCommit(false);   // PIPE-5: inside the try, so a throw here still reaches the finally's close()
     // P-6 (the IMP-5 pattern): authoritative per-date replace. Callers whose
     // payload is provably the COMPLETE CDR set for its date(s) -- the daily
     // inline mirror + the deferred per-date mirror -- pass
@@ -969,8 +973,8 @@ function mirrorCdrPhonesToNeon(rows) {
     Logger.log('mirrorCdrPhonesToNeon: Neon unreachable — skipping ' + rows.length + ' rows.');
     return { phones: 0, skipped: rows.length };
   }
-  conn.setAutoCommit(false);
   try {
+    conn.setAutoCommit(false);   // PIPE-5: inside the try, so a throw here still reaches the finally's close()
     var n = cdrInsertPhoneChildRows_(conn, rows, hmacSecret);
     return { phones: n, skipped: 0 };
   } catch (e) {

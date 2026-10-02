@@ -64,6 +64,14 @@ function icIsTrue_(s) { return String(s == null ? '' : s).trim().toUpperCase() =
 // columns. Mirrors firstAgent's guards: blank/N-A, queue names and
 // phone-shaped values are all rejected (a raw number must never be stored).
 function icOriginAgentName_(leg) {
+  // PC-7 (broad-scan 2026-10-01): an EXTERNAL caller is a customer, not an
+  // employee -- its CALLER_NAME is the customer's CNAM (PHI). The name-shape
+  // guards below only catch a PHONE-shaped name, so an outbound call whose
+  // customer was transferred into a queue (no Incoming leg -> captured as
+  // internal-origin) could store "SMITH JOHN" in origin_agent, which the
+  // receiving dept's managers see. icAnswerLegAgent_ and first_agent already
+  // refuse external parties; this is the same rule at the source.
+  if (leg && icExternalNumber_(leg[IC_COL.CALLER])) return null;
   var n = String((leg && leg[IC_COL.CALLER_NAME]) == null ? '' : leg[IC_COL.CALLER_NAME]).trim();
   if (!n || n.toUpperCase() === 'N/A') return null;
   if (icIsQueueName_(n)) return null;
@@ -903,6 +911,61 @@ function icResetConfigMemos_() {
   IC_DEPT_CONFIG_ROWS_MEMO_ = null;
   IC_QUEUE_CANON_MEMO_ = null;
   IC_KNOWN_QUEUE_NAMES_ = null;
+  IC_AGENT_CANON_MEMO_ = null;   // PC-1: the roster can change between runs
+}
+
+// ── PC-1 (broad-scan 2026-10-01): roster-canonical AGENT names at capture ────
+// The per-call tables stored the RAW CDR agent name while every other surface
+// keys on the roster name the DQE build canonicalizes to (INV-24) -- so a
+// nickname agent ("Roman Robin Paulose" in the feed, "Roman (Robin) Paulose"
+// on the roster, the ~90% orphan shape) vanished from the Outbound report's
+// dept view and its callbacks read "Unrostered", and Agent Day / the agent
+// app matched nothing for them. The writers now run every AGENT name through
+// the SAME canonicalizer the build uses (canonicalizeAgentNameWith_ in
+// buildDQEHistoricalData.js -- one rule, not a fifth mirror). It rewrites only
+// on an alias override or a UNIQUE roster match, so a masked customer name,
+// a queue name or an IVR node is left exactly as it was. Best-effort: with no
+// roster (or the build file absent) it is the identity. Stored history is
+// rewritten by rewritePerCallAgentNames() (editor-run, preview first).
+var IC_AGENT_CANON_MEMO_ = null;
+function icAgentCanonicalizer_() {
+  if (IC_AGENT_CANON_MEMO_) return IC_AGENT_CANON_MEMO_;
+  var fn = function (n) { return n; };
+  try {
+    if (typeof canonicalizeAgentNameWith_ === 'function' && typeof loadRosterCanonicalNames_ === 'function') {
+      var ss = SpreadsheetApp.openById(getTargetSsId_());
+      var rc = ss ? loadRosterCanonicalNames_(ss) : null;
+      if (rc && (Object.keys(rc.canonicalSet || {}).length || Object.keys(rc.aliasMap || {}).length)) {
+        fn = function (n) { return n ? canonicalizeAgentNameWith_(rc, n) : n; };
+      }
+    }
+  } catch (e) {
+    Logger.log('icAgentCanonicalizer_: roster unavailable, agent names stored as captured: '
+      + (e && e.message ? e.message : e));
+  }
+  IC_AGENT_CANON_MEMO_ = fn;
+  return fn;
+}
+/** PC-1: canonicalize the agent names of one journey (queue legs untouched). Returns #changed. */
+function icCanonicalizeJourneyNames_(journey, canon) {
+  var changed = 0;
+  (journey || []).forEach(function (ev) {
+    if (!ev || !ev.name || ev.kind === 'queue') return;
+    var c = canon(ev.name);
+    if (c && c !== ev.name) { ev.name = String(c).slice(0, IC_JOURNEY_NAME_MAX); changed++; }
+  });
+  return changed;
+}
+/** PC-1: canonicalize every agent-name field of built per-call records, in place. */
+function icCanonicalizeRecordAgents_(records) {
+  var canon = icAgentCanonicalizer_();
+  (records || []).forEach(function (r) {
+    if (r.firstAgent) r.firstAgent = String(canon(r.firstAgent)).slice(0, IC_JOURNEY_NAME_MAX);
+    if (r.originAgent) r.originAgent = String(canon(r.originAgent)).slice(0, IC_JOURNEY_NAME_MAX);
+    if (r.agentName) r.agentName = String(canon(r.agentName)).slice(0, IC_JOURNEY_NAME_MAX);
+    icCanonicalizeJourneyNames_(r.journey, canon);
+  });
+  return records;
 }
 
 function icDeptConfigActiveRows_() {
@@ -1030,6 +1093,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
       r.entryQueue = icNormalizeQueue_(r.entryQueue, canonMap);
       r.finalQueue = icNormalizeQueue_(r.finalQueue, canonMap);
     });
+    icCanonicalizeRecordAgents_(records);   // PC-1: roster-canonical agent names
     if (expectedDateIso) {
       var strayCount = 0;
       records = records.filter(function (r) {
@@ -1087,6 +1151,14 @@ function writeInboundCallsToNeon(rawRows, opts) {
     }
 
     var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+    if (!secret) {
+      // PC-10 (broad-scan 2026-10-01): this used to write NULL caller_hash with
+      // NO trace -- every call then reads as anonymous, callback tracking drops
+      // to zero tracked and insurer labels vanish (the outbound twin logged).
+      // The result carries `hashless` so the :Inbound Pipeline Health row says so.
+      Logger.log('writeInboundCallsToNeon: HMAC_SECRET not set — writing with NULL caller_hash '
+        + '(callbacks + insurer labels are blind until it is set; rows heal on re-import).');
+    }
     // C-9: reset the per-run phone-hash memo at this writer's entry too (the
     // A2 discipline writeCDRRowsToNeon follows) -- a warm instance otherwise
     // hashes through whatever cache state the previous execution left, which
@@ -1207,7 +1279,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
       var insertMs = Date.now() - tInsert;
       Logger.log('writeInboundCallsToNeon: wrote ' + records.length + ' inbound-call records | '
         + 'build ' + buildMs + 'ms | insert ' + insertMs + 'ms (' + chunks + ' chunks).');
-      return { inserted: records.length, skipped: 0, unparsedDropped: unparsedDropped };
+      return { inserted: records.length, skipped: 0, unparsedDropped: unparsedDropped, hashless: !secret };
     } catch (e) {
       try { conn.rollback(); } catch (re) {}
       throw e;
@@ -2234,4 +2306,120 @@ function callLegShapeTally_(legs, maps) {
     } else answer.other++;
   });
   return { direct: direct, answer: answer };
+}
+
+// ── PC-1 (broad-scan 2026-10-01): rewrite STORED per-call agent names ────────
+// The capture writers canonicalize agent names from now on (icCanonicalizeRecordAgents_);
+// rows written before that (~400 days of rows, ~90 of journeys) still hold the
+// RAW CDR name. This rewrites them to the roster-canonical name with the SAME
+// canonicalizer. Run PREVIEW first; take a Neon backup (dashboard: Admin ->
+// Health -> Back up now) before APPLY. Idempotent: a rewritten row no longer
+// matches its raw name, so a re-run (or one cut short by the time budget)
+// simply continues. Re-run it after adding an Agent Alias Override that
+// renames a name already captured.
+var PCR_TARGETS_ = [
+  { table: 'outbound_calls', column: 'agent_name' },
+  { table: 'inbound_calls',  column: 'first_agent' },
+  { table: 'inbound_calls',  column: 'origin_agent' },
+];
+var PCR_JOURNEY_TABLES_ = ['inbound_calls', 'outbound_calls'];
+var PCR_QUERY_TIMEOUT_S_ = 120;
+
+/** EDITOR-RUN, read-only: what rewritePerCallAgentNames() WOULD change. */
+function previewPerCallAgentNameRewrite() { return perCallAgentRewrite_(false); }
+/** EDITOR-RUN: rewrite stored raw agent names to roster-canonical (preview + backup first). */
+function rewritePerCallAgentNames() { return perCallAgentRewrite_(true); }
+
+function perCallAgentRewrite_(apply) {
+  var label = apply ? 'rewritePerCallAgentNames' : 'previewPerCallAgentNameRewrite';
+  IC_AGENT_CANON_MEMO_ = null;
+  var canon = icAgentCanonicalizer_();
+  var conn = getReachableNeonConn_();
+  if (!conn) throw new Error(label + ': Neon unreachable (NEON_* Script Properties set?).');
+  var t0 = Date.now(), budget = icBackfillTimeLimitMs_();
+  var out = { apply: !!apply, columns: [], journeys: [], stoppedAtBudget: false };
+  var q = function (sql, binds) {
+    var st = conn.prepareStatement(sql);
+    try { st.setQueryTimeout(PCR_QUERY_TIMEOUT_S_); } catch (e) { /* best-effort */ }
+    (binds || []).forEach(function (b, i) { st.setString(i + 1, b); });
+    return st;
+  };
+  var distinct = function (sql) {
+    var st = q(sql), rs = st.executeQuery(), vals = [];
+    while (rs.next()) { var v = rs.getString(1); if (v) vals.push(v); }
+    rs.close(); st.close();
+    return vals;
+  };
+  var count = function (sql, binds) {
+    var st = q(sql, binds), rs = st.executeQuery(), n = rs.next() ? Number(rs.getString(1)) || 0 : 0;
+    rs.close(); st.close();
+    return n;
+  };
+  var pairsFor = function (names) {
+    var pairs = [];
+    names.forEach(function (raw) {
+      var c = canon(raw);
+      if (c && c !== raw) pairs.push({ raw: raw, canonical: String(c).slice(0, IC_JOURNEY_NAME_MAX) });
+    });
+    return pairs;
+  };
+  var overBudget = function () {
+    if (Date.now() - t0 <= budget) return false;
+    out.stoppedAtBudget = true;
+    return true;
+  };
+  try {
+    conn.setAutoCommit(true);   // each statement stands alone: an interrupted run keeps what it did
+    // 1. The scalar name columns.
+    for (var ti = 0; ti < PCR_TARGETS_.length && !out.stoppedAtBudget; ti++) {
+      var tg = PCR_TARGETS_[ti];
+      var pairs = pairsFor(distinct('SELECT DISTINCT ' + tg.column + ' FROM ' + tg.table
+        + ' WHERE ' + tg.column + ' IS NOT NULL'));
+      for (var pi = 0; pi < pairs.length; pi++) {
+        if (overBudget()) break;
+        var p = pairs[pi], n;
+        if (apply) {
+          var up = q('UPDATE ' + tg.table + ' SET ' + tg.column + ' = ? WHERE ' + tg.column + ' = ?', [p.canonical, p.raw]);
+          n = up.executeUpdate(); up.close();
+        } else {
+          n = count('SELECT count(*)::text FROM ' + tg.table + ' WHERE ' + tg.column + ' = ?', [p.raw]);
+        }
+        out.columns.push({ table: tg.table, column: tg.column, raw: p.raw, canonical: p.canonical, rows: n });
+      }
+    }
+    // 2. The journey JSON (agent legs only -- queue legs keep their names).
+    for (var ji = 0; ji < PCR_JOURNEY_TABLES_.length && !out.stoppedAtBudget; ji++) {
+      var tbl = PCR_JOURNEY_TABLES_[ji];
+      var jpairs = pairsFor(distinct("SELECT DISTINCT e->>'name' FROM " + tbl + ' c, '
+        + "jsonb_array_elements(c.journey::jsonb) e WHERE c.journey IS NOT NULL AND c.journey <> '' "
+        + "AND coalesce(e->>'kind', '') <> 'queue'"));
+      for (var jp = 0; jp < jpairs.length; jp++) {
+        if (overBudget()) break;
+        var jpair = jpairs[jp], jn;
+        var has = "c.journey IS NOT NULL AND c.journey <> '' AND c.journey::jsonb @> jsonb_build_array(jsonb_build_object('name', ?::text))";
+        if (apply) {
+          var ju = q('UPDATE ' + tbl + ' c SET journey = ('
+            + "SELECT jsonb_agg(CASE WHEN x.e->>'name' = ? AND coalesce(x.e->>'kind', '') <> 'queue' "
+            + "THEN jsonb_set(x.e, '{name}', to_jsonb(?::text)) ELSE x.e END ORDER BY x.ord) "
+            + 'FROM jsonb_array_elements(c.journey::jsonb) WITH ORDINALITY AS x(e, ord))::text '
+            + 'WHERE ' + has, [jpair.raw, jpair.canonical, jpair.raw]);
+          jn = ju.executeUpdate(); ju.close();
+        } else {
+          jn = count('SELECT count(*)::text FROM ' + tbl + ' c WHERE ' + has, [jpair.raw]);
+        }
+        out.journeys.push({ table: tbl, raw: jpair.raw, canonical: jpair.canonical, rows: jn });
+      }
+    }
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+  var total = out.columns.concat(out.journeys).reduce(function (a, r) { return a + (r.rows || 0); }, 0);
+  Logger.log(label + ': ' + (apply ? 'rewrote ' : 'would rewrite ') + total + ' row-field(s) across '
+    + (out.columns.length + out.journeys.length) + ' raw->canonical pair(s)'
+    + (out.stoppedAtBudget ? ' -- STOPPED at the time budget; run it again to continue' : '') + '.');
+  out.columns.concat(out.journeys).forEach(function (r) {
+    Logger.log('  ' + r.table + (r.column ? '.' + r.column : '.journey') + ': "' + r.raw + '" -> "'
+      + r.canonical + '" (' + r.rows + ' row' + (r.rows === 1 ? '' : 's') + ')');
+  });
+  return out;
 }

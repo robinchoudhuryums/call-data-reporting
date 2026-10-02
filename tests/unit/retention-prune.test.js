@@ -25,6 +25,11 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 const h = loadGas({ project: 'cdr-import', files: ['DeleteOldSheets.js'] });
+// PIPE-2: an over-age tab is deleted only when PROVEN imported. The age /
+// blast-radius / DST cases below are about the date arithmetic, so they run
+// with every date "in history"; the PIPE-2 block at the end swaps this stub.
+const ALL_IMPORTED = function () { return { has: function () { return true; } }; };
+h.ctx.retentionHistoryIsos_ = ALL_IMPORTED;
 
 // ── Controlling "today" ────────────────────────────────────────────────────
 // deleteOldCDRSheets() reads the wall clock via `new Date()`. loadGas shares
@@ -402,4 +407,114 @@ test('ING-5: a failed write removes the tab the importer created, so a re-run ca
     assert.match(out, /^failed: cell ceiling .*removed/);
     assert.equal(ss.getSheetByName('Call_Legs_2026-08-03'), null, 'no empty tab left behind');
   });
+});
+
+// ── PIPE-2 (broad-scan 2026-10-01): never delete a tab that was not imported ─
+
+function withHistory(stub, fn) {
+  h.ctx.retentionHistoryIsos_ = stub;
+  try { return fn(); } finally { h.ctx.retentionHistoryIsos_ = ALL_IMPORTED; }
+}
+
+test('PIPE-2: an over-age tab whose date is in NEITHER lastSheets nor history is KEPT and named', function () {
+  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_2026-06-02']) };
+  const out = withHistory(function () { return { has: function (iso) { return iso === '2026-06-03'; } }; },
+    function () {
+      return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
+    });
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-06-01'],
+    '06-02 is in the memo and 06-03 is in history (both deleted); 06-01 was never imported');
+  assert.deepEqual(Array.from(out.result.unimported), ['Call_Legs_2026-06-01']);
+  assert.equal(out.result.deleted, 2);
+  delete h.state.props.lastSheets;
+});
+
+test('PIPE-2: history is read only when some over-age tab is missing from the memo', function () {
+  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_2026-06-01']) };
+  let reads = 0;
+  const out = withHistory(function () { reads++; return { has: function () { return false; } }; },
+    function () { return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-08-30']); });
+  assert.equal(reads, 0, 'the common case (every old tab in the memo) costs no history read');
+  assert.equal(out.result.deleted, 1);
+  delete h.state.props.lastSheets;
+});
+
+test('PIPE-2: a failed history read keeps every unproven tab and logs a FAILURE row', function () {
+  h.state.props = {};
+  h.state.spreadsheet = ssWith(['Call_Legs_2026-06-01', 'Call_Legs_2026-08-30']);
+  const rows = withHistory(function () { throw new Error('target unavailable'); }, function () {
+    return captureHealthRows(function () {
+      withToday(2026, 8, 31, function () { h.fn('runRetentionPrune_')(); });
+    });
+  });
+  assert.deepEqual(liveNames(h.state.spreadsheet), ['Call_Legs_2026-06-01', 'Call_Legs_2026-08-30'],
+    'nothing unproven is deleted when the proof cannot be read');
+  assert.equal(rows[0].status, 'failure', 'retention is not being enforced -- say so');
+  assert.match(rows[0].notes, /history check failed/);
+  assert.match(rows[0].notes, /never-imported \(PIPE-2\): Call_Legs_2026-06-01/);
+});
+
+// ── IG-1 (broad-scan 2026-10-01): holds are written PER TAB, not after the loop ──
+
+function runBulkImport(ss, files) {
+  const alerts = [];
+  const saved = { SpreadsheetApp: hi.ctx.SpreadsheetApp, DriveApp: hi.ctx.DriveApp,
+                  MimeType: hi.ctx.MimeType, bulkTimeLimitMs_: hi.ctx.bulkTimeLimitMs_ };
+  const ui = {
+    ButtonSet: { OK: 'OK', OK_CANCEL: 'OK_CANCEL' }, Button: { OK: 'OK' },
+    prompt: function () { return { getSelectedButton: function () { return 'OK'; }, getResponseText: function () { return 'folder-1'; } }; },
+    alert: function (title, msg) { alerts.push({ title: title, msg: msg }); },
+  };
+  hi.ctx.SpreadsheetApp = Object.assign({}, saved.SpreadsheetApp, {
+    getUi: function () { return ui; }, getActiveSpreadsheet: function () { return ss; },
+  });
+  hi.ctx.MimeType = { CSV: 'text/csv' };
+  hi.ctx.bulkTimeLimitMs_ = function () { return 60000; };
+  let i = 0;
+  hi.ctx.DriveApp = { getFolderById: function () {
+    return { getFiles: function () { return {
+      hasNext: function () { return i < files.length; },
+      next: function () { const f = files[i++]; if (f.throwOnNext) throw new Error(f.throwOnNext); return f; },
+    }; } };
+  } };
+  try { withCsv(function () { hi.call('importBulkCSVsFromDrive'); }); }
+  finally { Object.keys(saved).forEach(function (k) { hi.ctx[k] = saved[k]; }); }
+  return alerts;
+}
+function csvFile(name, text) {
+  return { getName: function () { return name; }, getMimeType: function () { return 'text/csv'; },
+           getBlob: function () { return { getDataAsString: function () { return text; } }; } };
+}
+
+test('IG-1: a run that stops partway keeps the holds of the tabs it already imported', function () {
+  hi.state.props = {};
+  const ss = makeFakeSpreadsheet({ sheets: {} });
+  const alerts = runBulkImport(ss, [
+    csvFile('Call_Legs_2026-06-01.csv', 'h1,h2\n'),
+    { throwOnNext: 'Exceeded maximum execution time' },
+  ]);
+  const holds = JSON.parse(hi.state.props.RETENTION_HOLD || '{}');
+  assert.ok(holds['Call_Legs_2026-06-01'] > Date.now(), 'the imported tab is held even though the run died');
+  assert.equal(alerts[0].title, 'Import stopped');
+  assert.doesNotMatch(alerts[0].msg, /Could not access folder/, 'not misreported as a folder error');
+});
+
+test('IG-1: a cell-cap refusal on insertSheet fails THAT file only; the rest import and are held', function () {
+  hi.state.props = {};
+  const ss = makeFakeSpreadsheet({ sheets: { 'Call_Legs_2026-06-03': [['already', 'here']] } });
+  const realInsert = ss.insertSheet.bind(ss);
+  ss.insertSheet = function (name) {
+    if (name === 'Call_Legs_2026-06-01') throw new Error('This action would increase the number of cells above the limit');
+    return realInsert(name);
+  };
+  const alerts = runBulkImport(ss, [
+    csvFile('Call_Legs_2026-06-01.csv', 'h1\n'),
+    csvFile('Call_Legs_2026-06-02.csv', 'h1\n'),
+    csvFile('Call_Legs_2026-06-03.csv', 'h1\n'),   // a re-run: exists with data -> skipped but re-held
+  ]);
+  const holds = JSON.parse(hi.state.props.RETENTION_HOLD || '{}');
+  assert.deepEqual(Object.keys(holds).sort(), ['Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
+  assert.equal(alerts[0].title, 'Import Complete');
+  assert.match(alerts[0].msg, /1 file\(s\) failed .*Call_Legs_2026-06-01\.csv/);
+  assert.equal(ss.getSheetByName('Call_Legs_2026-06-01'), null);
 });

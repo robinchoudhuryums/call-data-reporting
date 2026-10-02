@@ -275,7 +275,9 @@ test('the client treats it as a reference series on PERCENTAGE metrics only', fu
   const ds = ov.slice(ov.indexOf('const companySeries ='), ov.indexOf('// Metric-specific dashed reference baseline'));
   assert.ok(!/IR_CHART_COLORS/.test(ds) && !/colorByDept/.test(ds),
     'the company line takes no categorical dept hue');
-  assert.match(ds, /borderColor: \(THEME && THEME\.text\)/, 'it wears neutral ink');
+  // CL-1: THEME.ink -- THEME has no `text` key, so the old THEME.text fell back
+  // to a hardcoded near-black that vanished on the dark card.
+  assert.match(ds, /borderColor: \(THEME && THEME\.ink\)/, 'it wears neutral ink');
   assert.ok(!/_deptName/.test(ds.replace(/\/\/[^\n]*/g, '')),
     'and carries no _deptName -- the tile-hover and point-click handlers map a dataset to a DEPT');
   // Pinning a dept must not hide the aggregate it is being compared against.

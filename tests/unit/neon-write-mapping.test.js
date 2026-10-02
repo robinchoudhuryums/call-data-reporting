@@ -554,3 +554,30 @@ test('P-9: the DQE writer runs its self-upgrade DDL in AUTOCOMMIT, before the tr
     'every DDL statement precedes setAutoCommit(false): ACCESS EXCLUSIVE is released at once, not held to COMMIT');
   assert.ok(iAuto < iIns && seq.indexOf('COMMIT') > iIns, 'the write itself is still one transaction');
 });
+
+// PIPE-5 (broad-scan 2026-10-01): setAutoCommit(false) sat OUTSIDE the
+// try/finally in these three writers, so a connection dropped right after the
+// reachability probe threw before the finally existed and the connection leaked.
+test('PIPE-5: a throwing setAutoCommit still closes the connection (QCD, CDR, phones)', function () {
+  let closes = 0;
+  const conn = {
+    setAutoCommit: function () { throw new Error('connection reset'); },
+    rollback: function () {}, commit: function () {},
+    close: function () { closes++; },
+    createStatement: function () { return { execute: function () { return true; }, close: function () {} }; },
+    prepareStatement: function () { throw new Error('unreachable in this test'); },
+  };
+  const saved = { conn: h.ctx.getReachableNeonConn_, props: h.state.props };
+  h.ctx.getReachableNeonConn_ = function () { return conn; };
+  h.state.props = Object.assign({}, h.state.props, { HMAC_SECRET: 's', CDR_PHONES_MIRROR: 'on' });
+  const swallow = function (fn) { try { fn(); } catch (e) { /* the writer may rethrow; the close is what matters */ } };
+  try {
+    swallow(function () { h.call('writeQCDRowsToNeon', [{ callDate: '2026-09-01', callQueue: 'A_Q_X', callSource: 'Total Calls' }]); });
+    swallow(function () { h.call('writeCDRRowsToNeon', [{ callDate: '2026-09-01', dept: 'CSR', agentName: 'Anna' }]); });
+    swallow(function () { h.call('mirrorCdrPhonesToNeon', [{ callDate: '2026-09-01', dept: 'CSR', agentName: 'Anna' }]); });
+  } finally {
+    h.ctx.getReachableNeonConn_ = saved.conn;
+    h.state.props = saved.props;
+  }
+  assert.equal(closes, 3, 'each writer closed its connection despite the setAutoCommit throw');
+});

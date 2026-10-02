@@ -106,6 +106,16 @@ When something looks wrong, before assuming a code bug, check:
      list `runDailyDigests_`, `runWeeklyDigests_`, and `runMonthlyDigests_` (or install
      via Alerts modal → Report Subscribers → Install digest triggers).
      Without them, Digest Config rows have no effect.
+   - **Who installed it (EN-1, 2026-10-02):** a trigger belongs to the
+     account that installed it, and `ScriptApp.getProjectTriggers()` lists
+     only the CURRENT account's -- so a trigger another admin installed
+     reads "NO trigger installed" on the Health page while it keeps firing.
+     The four editor-run installers (`installPipelineWatchTrigger`,
+     `installDqeSilenceWatchTrigger`, `installSheetCoverageTrigger`,
+     `installNeonRetentionTrigger`) now record their installer in
+     `TRIGGER_INSTALLERS`, and the Health row for one installed by another
+     account reads warn and names them: have that person run the matching
+     uninstall, then reinstall as the deploying account.
 9. Did the latest push add a new OAuth scope? Open the Apps Script
    editor → Run → any function → grant the new permission. Scope-
    gated calls (trigger install, mail send) otherwise throw
@@ -148,7 +158,10 @@ When something looks wrong, before assuming a code bug, check:
     their digest, check (a) Digest Config row Active=TRUE,
     (b) Cadence is `daily`, `weekly`, or `monthly` (normalized -- other values
     are dropped), (c) digest triggers installed (#8), (d) admin
-    inbox for a `notifyDigestFailure_` email if the run threw,
+    inbox for a `notifyDigestFailure_` email if the run threw -- since EN-4
+    the "Last runs" line / Health row also read `FAILED (threw): …`, and the
+    next SCHEDULED run does not retry that window (it assesses the next one):
+    re-run the cadence's handler from the editor before then,
     (e) the Alerts modal's Manager-digest "Last runs" line (the
     `DIGEST_LAST_RESULT_<cadence>` Script Properties via
     `getDigestsInit.lastResults`) -- a `FAILED-ALL` entry means every send
@@ -305,7 +318,15 @@ When something looks wrong, before assuming a code bug, check:
     likely first experience of anyone running a gate without setting its
     `*_PARITY_FROM/_TO` properties. **Never flip a read-source flag on a result
     carrying `error` or `compared: 0`** -- the CORE-5/F-5 rule the config gates
-    already followed. Pinned by qcd-report.test.js + dal-cutover.test.js. Reversible with no redeploy (set back to `sheet`); cut-over
+    already followed. **Both gates also count ROWS per key (DL-1 / QO-3,
+    broad-scan 2026-10-01; verdict field `duplicates`)**: a sheet holding the
+    same agent-day (or queue-day) twice used to collapse to one map entry and
+    read CLEAN, while the sheet path SUMS both rows -- so the flip would have
+    silently halved those figures. Merge DQE duplicates with
+    `previewDqeDuplicateMerge` / `repairDqeDuplicateMerge` (cdr-report, #56) and
+    force re-import a duplicated QCD date, then re-run. The DQE gate now diffs
+    the queue split too (DL-2: a stale Neon `queue_split`, which COALESCE
+    preserves, was fetched and never compared). Pinned by qcd-report.test.js + dal-cutover.test.js. Reversible with no redeploy (set back to `sheet`); cut-over
     readers also fall back to the sheet on any Neon error. After a bulk
     rebuild (which defers the DQE->Neon mirror via `skipNeon`), run
     `backfillDQEHistoryUpsert()` (cdr-report) to populate/refresh
@@ -515,8 +536,10 @@ When something looks wrong, before assuming a code bug, check:
     Trx / reason) -- a PII surface -- so leave it off until that's signed off.
     Best-effort (never blocks/fails the create); needs `script.send_mail`
     (already present) + `DASHBOARD_URL` for the deep link. (b) **§5 activity
-    trail**: the `escalation_activity` table is auto-created on first write
-    (no setup() change). After deploying, run the admin editor function
+    trail**: the `escalation_activity` table is auto-created by the first
+    escalation call, read OR write (no setup() change) -- every call runs the
+    schema check, bounded to once per execution and once an hour across
+    executions (`escEnsureTableOnce_`, AC-5; DX-12). After deploying, run the admin editor function
     `backfillEscalationActivity()` ONCE to seed `created`/`resolved` rows for
     escalations logged before the trail existed (idempotent, safe to re-run);
     otherwise their Activity timelines render only events that happen post-deploy.
@@ -709,6 +732,19 @@ When something looks wrong, before assuming a code bug, check:
     batches, so it only fills missing rows and never overwrites; both
     properties clear after an apply. Only the backed-up tables are
     restorable (an allowlist).
+    **Three outcome rules (Batch 6, 2026-10-02).** (1) BU-1: when
+    `NEON_BACKUP_SS_ID` is set but the workbook will not open, the run FAILS
+    and names the id -- it no longer silently creates a fresh, empty
+    workbook (which reset the rotation and orphaned the old backups). If the
+    workbook was deleted ON PURPOSE, clear `NEON_BACKUP_SS_ID` and run again;
+    otherwise restore access to it. (2) BU-3: a run has a 5-minute budget and
+    writes the NEWEST months first; a run that stops on the budget records
+    `PARTIAL` (Health warns) naming the months not reached, and the next run
+    picks them up. Every backup statement has a 240 s query timeout. (3)
+    BU-2: a run whose only problem is a warning (e.g. the workbook past 80%
+    of the cell cap) records `WARN`. Both `PARTIAL` and `WARN` hold the
+    retention prune (#57), which runs only after an `ok` backup -- clear the
+    cause, then "Back up now".
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -948,6 +984,13 @@ When something looks wrong, before assuming a code bug, check:
     failure alerts at most once (the watermark advances past every examined
     row); a failed send leaves the watermark un-advanced so the same failures
     retry next run (the OPS-1 "arm only on a confirmed send" discipline).
+    **EN-6 (2026-10-02):** each run also re-reads the 2 hours BEFORE the
+    watermark and alerts on any failure row in it not already emailed
+    (`PIPELINE_WATCH_SEEN`, a pruned `timestamp|step` list) -- a row written
+    by a slow run with an earlier timestamp than one already scanned used to
+    be skipped forever. The first run after this deploy only seeds that list
+    (no re-send of rows already alerted). Failure rows whose timestamp cannot
+    be parsed are now counted in the email instead of dropped.
     Enable by running `installPipelineWatchTrigger()` from the dashboard editor
     (admin; sets `PIPELINE_WATCH_ENABLED=true` + installs the trigger);
     `uninstallPipelineWatchTrigger()` reverses it. Tunable Script Property:
@@ -1442,7 +1485,26 @@ When something looks wrong, before assuming a code bug, check:
     `holdCallLegsForRecovery()` run from the editor** right after, or the
     first prune removes it. Rebuild / backfill the date inside the hold. The
     importer also re-fills an EMPTY leftover tab from an earlier failed import
-    and removes a tab its own failed write created.
+    and removes a tab its own failed write created. Since IG-1 (broad-scan
+    2026-10-01) it holds each tab the moment it is imported (and re-holds one a
+    re-run skips), stops at the bulk time budget, and reports a per-file failure
+    instead of "Could not access folder" -- re-run to continue.
+
+    **Never-imported tabs are KEPT (PIPE-2, broad-scan 2026-10-01).** The prune
+    used to be age-only, so a tab the import never landed (stalled pending loop,
+    future-dated tab, lost hold) was deleted with its day never in history. An
+    over-age tab is now deleted only when PROVEN imported -- its name is in the
+    `lastSheets` memo or its date is in DQE / QCD Historical Data -- and every
+    other one is kept and named in the `retentionPrune` row ("KEPT N
+    never-imported"). **To clear one:** import it (Manual Processing for that
+    date) or delete the tab by hand. If the history check itself fails, nothing
+    unproven is deleted and the row is a FAILURE. Its companion on the import
+    side: a date that fails to import is retried on at most 3 runs (one email),
+    then PARKED with an `autoImport:parked` failure row -- the
+    `PENDING_IMPORT_FAILURES` ledger (cdr-import) holds the attempts; it clears
+    itself once the tab is processed or deleted, and a `success` row on the same
+    step says no parked date remains. The pending window now ends at TODAY, so a
+    future-dated tab can no longer hide the real ones.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1475,7 +1537,7 @@ When something looks wrong, before assuming a code bug, check:
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
     Overview tile's companion surface is the per-dept `dqeSilence`
-    queue-lens badge (`companyOverview:v25`) — the PULL view to this
+    queue-lens badge (`companyOverview:v26`) — the PULL view to this
     engine's PUSH, same detector shape over the trailing 7 chart days.
 
 45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by
@@ -1988,12 +2050,16 @@ When something looks wrong, before assuming a code bug, check:
     sheet are kept (`HR_BACKUP_KEEP_`, CRT-5: the DQE repair chain is five
     applies, so the pre-chain original survives the whole chain; ~6.6M of the
     backup workbook's 10M cells; older ones deleted via `deleteSheet`, so no
-    Drive scope). Previews never back up, and neither does a slot repair that
-    finds nothing coerced. Every DQE apply also re-checks the row identity
-    (row count + date/agent columns) right before its first write and ABORTS
-    with nothing written if the sheet changed since it was read (CRT-7: the
-    daily build runs in another project) -- re-run it outside the build
-    window. The apply log names the tab and
+    Drive scope; since CR-4 the old tabs are pruned to 5 BEFORE the copy, so
+    the workbook never briefly holds 7). Previews never back up, and neither
+    does a slot repair that finds nothing coerced. Every DQE apply also
+    re-checks the row identity (row count + date/agent columns, plus -- CR-2 --
+    a checksum of the columns it rewrites) AFTER the snapshot and right before
+    its first write (CR-1), and ABORTS if the sheet changed since it was read
+    (CRT-7: the daily build runs in another project) -- re-run it outside the
+    build window. The slot repair writes K-AC and AF as two groups, so its
+    abort message names any group already written (CR-3; those writes passed
+    their own re-check and are correct). The apply log names the tab and
     the workbook URL. **Why a separate workbook:** a DQE copy is ~1.1M cells and
     the CDR Report workbook is already large, so in-workbook copies could reach
     the 10M-cell cap; the backup workbook holds its own.
@@ -2072,7 +2138,14 @@ When something looks wrong, before assuming a code bug, check:
     resumes when the backfill clears its pointer. A pointer older than 3 days
     turns into a `STALE-POINTER` failure: an abandoned backfill. Re-run it to
     completion or delete the property. Pointers written before CRT-6 carry no
-    age and never go stale; re-running the backfill once stamps them. The bulk path (`processBatchArchive`) now logs
+    age and never go stale; re-running the backfill once stamps them.
+    **CR-5 (2026-10-02):** every sheet is also skipped (a `success` row,
+    "skipped -- the cdr-import bulk chain is running") while cdr-import's bulk
+    chain holds its run: `processBulkQueue` puts a `cdrImport.bulkInProgress`
+    DeveloperMetadata marker on the CDR Report workbook and removes it when the
+    invocation ends (a pause included), because its force path deletes rows by
+    position and a sort in between would delete other dates. A marker older
+    than 45 minutes is a killed run's leftover and is ignored. The bulk path (`processBatchArchive`) now logs
     its own post-write sort failure under the same step name, so the next
     clean nightly run supersedes it; until the check is installed such a row
     stays flagged in "Recent pipeline step failures", which is correct — the
@@ -2988,3 +3061,30 @@ When something looks wrong, before assuming a code bug, check:
       other carve-out.
     - **It infers nothing and sets nothing.** The labels are the listener's;
       the tool only draws the sample and withholds the key.
+
+72. **Per-call agent-name rewrite (PC-1 / PC-2, broad-scan 2026-10-01;
+    cdr-import CDR Tools menu).** The per-call capture writers now store the
+    ROSTER-canonical agent name (the same INV-24 rule the DQE build applies:
+    alias override, exact roster match, else a UNIQUE strip/flatten paren
+    match; ambiguous and unknown names stay as captured). Rows captured BEFORE
+    the deploy still hold the raw feed name -- a nickname agent ("Roman Robin
+    Paulose" for roster "Roman (Robin) Paulose") reads "Unrostered" in the
+    Outbound report and matches nothing in Agent Day / the agent app until
+    they are rewritten. One-time, after deploying cdr-import:
+    - **Preview first:** CDR Tools -> "Preview per-call agent-name rewrite"
+      (`previewPerCallAgentNameRewrite`). Read-only; the execution log lists
+      every raw -> canonical pair per column (`outbound_calls.agent_name`,
+      `inbound_calls.first_agent` / `origin_agent`) and per journey table,
+      with row counts. Only names that would CHANGE are listed.
+    - **Back up:** dashboard Health page -> "Back up now"
+      (`runNeonBackupNow`, #28) -- both tables are in the backup set.
+    - **Apply:** "Rewrite per-call agent names (Neon)"
+      (`rewritePerCallAgentNames`). Bound `UPDATE ... WHERE col = raw` per
+      pair; journey entries are rewritten in place by name, NEVER a
+      `kind:'queue'` entry. Idempotent, so a run that stops at the
+      `IC_BACKFILL_TIME_LIMIT_MS` budget (#70; `stoppedAtBudget: true` in the
+      log) is simply re-run.
+    - **Re-run after** adding an `Agent Alias Overrides` row or fixing a
+      roster spelling: capture only applies the rule going forward. The
+      `Inbound Calls` / `Outbound Calls` export tabs pick up the rewritten
+      names on their next run (#49 / #50).

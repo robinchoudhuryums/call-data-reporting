@@ -433,3 +433,56 @@ test('F-26: phone masks keep extensions but reduce full numbers to last-4', func
   assert.ok(out.indexOf('…4567') !== -1, 'last-4 kept');
   assert.ok(out.indexOf('101') !== -1, 'extension kept');
 });
+
+// ── PC-4 (broad-scan 2026-10-01): direction by call group, answered needs talk ──
+// outboundCalls.js's rule: a group with ANY Incoming leg is inbound, because an
+// answered inbound call carries the agent's own Outgoing talk leg. The Direct
+// engine guarded that for QUEUE calls only.
+
+test('PC-4: a NON-queue inbound call\'s Outgoing talk leg is not a fake outbound, and its talk counts once', function () {
+  const res = compute(grid([
+    row({ cid: 'DC', start: D + '10:00:00', dir: 'Incoming', talk: '0:04:00', callTime: '0:04:00',
+          caller: '+15551234567', callee: '101', answered: true }),
+    row({ cid: 'DC', start: D + '10:00:02', dir: 'Outgoing', talk: '0:04:00', callTime: '0:04:00',
+          caller: '101', callee: '+15551234567' }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_answered, 1);
+  assert.equal(a.ib_ext_talk_sec, 240);
+  assert.equal(a.ob_ext_total, 0, 'pre-PC-4: ob_ext_total=1, connected, talk 240 counted again');
+  assert.equal(a.ob_ext_talk_sec, 0);
+});
+
+test('PC-4: the S2C-1 shape -- talk ONLY on the agent\'s Outgoing leg -- is an ANSWERED inbound, not a miss', function () {
+  const res = compute(grid([
+    row({ cid: 'DC2', start: D + '10:10:00', dir: 'Incoming', callTime: '0:00:12',
+          caller: '+15551234567', callee: '101' }),
+    row({ cid: 'DC2', start: D + '10:10:12', dir: 'Outgoing', talk: '0:03:00', callTime: '0:03:00',
+          caller: '101', callee: '+15551234567' }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_answered, 1, 'pre-PC-4: ib missed_free=1 plus ob connected=1');
+  assert.equal(a.ib_ext_missed_free, 0);
+  assert.equal(a.ib_ext_talk_sec, 180);
+  assert.equal(a.ob_ext_total, 0);
+});
+
+test('PC-4: an "Answered" leg with ZERO talk is not answered (the inbound capture\'s Talk>0 gate)', function () {
+  const res = compute(grid([
+    row({ cid: 'Z', start: D + '11:00:00', dir: 'Incoming', callTime: '0:00:08',
+          caller: '+15551234567', callee: '101', answered: true }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_answered, 0, 'pre-PC-4: answered with 0 talk, dragging ATT down');
+  assert.equal(a.ib_ext_missed_free, 1);
+});
+
+test('PC-4: a genuine outbound call (no Incoming leg in its group) still counts', function () {
+  const res = compute(grid([
+    row({ cid: 'OB', start: D + '12:00:00', dir: 'Outgoing', talk: '0:02:00', callTime: '0:02:00',
+          caller: '101', callee: '+15559990000' }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ob_ext_total, 1);
+  assert.equal(a.ob_ext_connected, 1);
+});

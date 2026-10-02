@@ -541,6 +541,31 @@ test('R5: >1s duration drift and count differences still FAIL the gate', functio
   assert.match(parityRun_(), /QCD PARITY MISMATCH/, 'counts stay exact');
 });
 
+// QO-3 (broad-scan 2026-10-01): the gate counts ROWS per date|queue|source. A
+// sheet that holds a queue-day twice collapsed to one map entry and read CLEAN,
+// while every sheet-path QCD reader sums both rows.
+test('QO-3: a DUPLICATED sheet queue-day is NOT clean, even when every value matches', function () {
+  installQcd('sheet');
+  h.state.props.QCD_PARITY_FROM = '2026-06-24';
+  h.state.props.QCD_PARITY_TO = '2026-06-24';
+  const row = ['', '', '2026-06-24', 'A_Q_Alpha', 'Total Calls', 10, 10, 0, '0:01:00', '0:00:20', '', 0];
+  const grid = function (n) {
+    const rows = []; for (let i = 0; i < n; i++) rows.push(row.slice());
+    return { values: rows, displays: rows.map(function (r) { return r.map(String); }), ssTZ: 'America/Chicago' };
+  };
+  h.ctx.readQcdSheetData_ = function () { return grid(2); };
+  h.ctx.neonFetchQcdGrid_ = function () { return grid(1); };
+  const log = parityRun_();
+  assert.match(log, /QCD PARITY MISMATCH/);
+  assert.match(log, /2026-06-24\|A_Q_Alpha\|Total Calls \(sheet x2\)/);
+  assert.equal(parityRun_.last.duplicates, 1);
+  assert.equal(parityRun_.last.clean, false);
+  h.ctx.readQcdSheetData_ = function () { return grid(1); };
+  parityRun_();
+  assert.equal(parityRun_.last.clean, true, 'one row each side stays clean');
+  assert.equal(parityRun_.last.duplicates, 0);
+});
+
 // ---- Batch 6: the read-source gates must not pass on ZERO comparisons -------
 // This is what made Batch 6 (flip QCD_READ_SOURCE) unsafe: with no comparable
 // rows on either side -- the in-source default range is a fixed week that ages

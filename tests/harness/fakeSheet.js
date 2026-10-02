@@ -39,6 +39,22 @@ function fakeDisplay_(v, tz) {
   return String(v);
 }
 
+// HT-2: the real Range.setValues shape rule, with Sheets' own messages. Exported
+// so a suite's hand-rolled range double enforces the SAME rule (the
+// dashboard-cdr-core and inbound-export doubles do).
+function assertSetValuesShape(vals, numRows, numCols) {
+  if (!Array.isArray(vals) || vals.length !== numRows) {
+    throw new Error('The number of rows in the data does not match the number of rows in the range. '
+      + 'The data has ' + (Array.isArray(vals) ? vals.length : 0) + ' but the range has ' + numRows + '.');
+  }
+  for (let r = 0; r < vals.length; r++) {
+    if (!Array.isArray(vals[r]) || vals[r].length !== numCols) {
+      throw new Error('The number of columns in the data does not match the number of columns in the range. '
+        + 'The data has ' + (Array.isArray(vals[r]) ? vals[r].length : 0) + ' but the range has ' + numCols + '.');
+    }
+  }
+}
+
 function sliceGrid(grid, startRow, startCol, numRows, numCols) {
   const out = [];
   for (let r = 0; r < numRows; r++) {
@@ -61,7 +77,12 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       return sliceGrid(sheet._data, startRow, startCol, numRows, numCols);
     },
     getValue: function () { return this.getValues()[0][0]; },
-    setValue: function (v) { return this.setValues([[v]]); },
+    // Real setValue writes the ONE value into EVERY cell of the range.
+    setValue: function (v) {
+      const grid = [];
+      for (let r = 0; r < numRows; r++) { const row = []; for (let c = 0; c < numCols; c++) row.push(v); grid.push(row); }
+      return this.setValues(grid);
+    },
     getA1Notation: function () {
       // Single-cell form is all the tests need (appendRosterEntry_).
       let n = startCol, letters = '';
@@ -97,12 +118,25 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       return this.getValues().map(function (row) { return row.map(function () { return 'General'; }); });
     },
     getNumberFormat: function () { return this.getNumberFormats()[0][0]; },
+    // HT-2 (broad-scan 2026-10-01): STRICT, like the real API. The grid must
+    // be exactly the range's rows x columns -- every row, not just the first --
+    // or it throws with Sheets' own message; the old fake wrote any shape, so a
+    // writer whose range and payload disagreed (an off-by-one width, a ragged
+    // row) passed every test and threw in production. The display grid, when
+    // the fixture has one, is UPDATED for the written cells (the value's
+    // default rendering), so a read-back through getDisplayValues sees the
+    // write instead of the fixture's stale text.
     setValues: function (vals) {
+      assertSetValuesShape(vals, numRows, numCols);
+      const tz = (sheet._parent && typeof sheet._parent.getSpreadsheetTimeZone === 'function')
+        ? sheet._parent.getSpreadsheetTimeZone() : null;
       for (let r = 0; r < vals.length; r++) {
         const tgt = startRow - 1 + r;
         if (!sheet._data[tgt]) sheet._data[tgt] = [];
+        if (sheet._displays && !sheet._displays[tgt]) sheet._displays[tgt] = [];
         for (let c = 0; c < vals[r].length; c++) {
           sheet._data[tgt][startCol - 1 + c] = vals[r][c];
+          if (sheet._displays) sheet._displays[tgt][startCol - 1 + c] = fakeDisplay_(vals[r][c], tz);
         }
       }
       return this;
@@ -118,6 +152,20 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       if (!sheet._numberFormats) sheet._numberFormats = [];
       sheet._numberFormats.push({ startRow: startRow, startCol: startCol,
         numRows: numRows, numCols: numCols, format: fmt });
+      return this;
+    },
+    // The per-cell twin (CR-3, broad-scan 2026-10-01): RECORDED the same way,
+    // with the grid on `formats` -- a restore-the-original-formats path is
+    // asserted against it. Shape-checked like the real API (a grid of the
+    // range's size), so a wrong-sized restore throws here as it would live.
+    setNumberFormats: function (grid) {
+      if (!Array.isArray(grid) || grid.length !== numRows
+          || grid.some(function (r) { return !Array.isArray(r) || r.length !== numCols; })) {
+        throw new Error('setNumberFormats: the grid must be ' + numRows + 'x' + numCols);
+      }
+      if (!sheet._numberFormats) sheet._numberFormats = [];
+      sheet._numberFormats.push({ startRow: startRow, startCol: startCol,
+        numRows: numRows, numCols: numCols, format: '(per-cell)', formats: grid });
       return this;
     },
     // Batch 4 / Phase 2: MODELLED, not stubbed (the clearContent discipline).
@@ -169,7 +217,10 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       for (let r = 0; r < numRows; r++) {
         const tgt = startRow - 1 + r;
         if (!sheet._data[tgt]) continue;
-        for (let c = 0; c < numCols; c++) sheet._data[tgt][startCol - 1 + c] = '';
+        for (let c = 0; c < numCols; c++) {
+          sheet._data[tgt][startCol - 1 + c] = '';
+          if (sheet._displays && sheet._displays[tgt]) sheet._displays[tgt][startCol - 1 + c] = '';   // HT-2
+        }
       }
       return this;
     },
@@ -264,7 +315,18 @@ function makeFakeSheet(name, data) {
       }
       return makeFakeRange(this, startRow, startCol, numRows, numCols);
     },
-    appendRow: function (row) { this._data.push(row.slice()); return this; },
+    appendRow: function (row) {
+      // HT-2: keep a fixture's display grid row-aligned with the data, or the
+      // appended row reads back as blanks through getDisplayValues.
+      if (this._displays) {
+        while (this._displays.length < this._data.length) this._displays.push([]);
+        const tz = this._parent && typeof this._parent.getSpreadsheetTimeZone === 'function'
+          ? this._parent.getSpreadsheetTimeZone() : null;
+        this._displays.push(row.map(function (v) { return fakeDisplay_(v, tz); }));
+      }
+      this._data.push(row.slice());
+      return this;
+    },
     // Cosmetic no-ops (Setup.gs).
     setFrozenRows: function () { return this; },
     autoResizeColumns: function () { return this; },
@@ -379,4 +441,4 @@ function makeFakeSpreadsheet(opts) {
   return ss;
 }
 
-module.exports = { makeFakeSpreadsheet, makeFakeSheet };
+module.exports = { makeFakeSpreadsheet, makeFakeSheet, assertSetValuesShape };

@@ -1,6 +1,141 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 12 IMPLEMENTED on the same branch (block 225).**
+  The LAST batch of the 2026-10-01 scan. Code health: CH-1 (the five
+  Diagnostics.gs tools are public + admin-gated, so the Run dropdown shows
+  them), CH-2 (invalidateAuthCache_ deleted), CH-3 (three dead helpers
+  deleted), CR-8 (R46 docblock). Docs: DX-1..5, 7..10, 12 truth pass; DX-6
+  moved seven client-surface KDD bullets to docs/client-ui-conventions.md
+  (CLAUDE.md 90.2% -> 84.8%). 2120/2120 green. **Owner-side:** deploy the
+  dashboard with the earlier batches. **Where I left off:** Batches 1-12 ALL
+  done and pushed on claude/optimistic-lamport-92xm9l, no PR opened; the
+  scan's deferred items (AC-2, PC-12, QO-2, ESC-D8, CL-20, CL-23, CH-4,
+  LEG-2, DX-11) wait on owner rulings; a one-off neon-mirror-tail timing
+  flake is logged in block 225's follow-ons.
+- **2026-10-02 — broad-scan Batch 11 IMPLEMENTED on the same branch (block 224).**
+  Harness strictness + CI: HT-2 (shape-strict setValues + display update),
+  HT-3 (cache key/value caps), HT-4 (formatDate tokenizer, throws on unmodelled
+  letters), HT-5 (live triggers + 20 cap, lock state, property limits), CL-9
+  (360 px overflow pass in drive-smoke + drive-agent), DEP-1 (bite.sh EXIT
+  trap), DEP-2 (deploy.sh dir normalization -- fixed a wrong-stamp case),
+  DEP-3 (dirty/branch warnings, STRICT_DEPLOY, one dirtiness flag), DEP-4
+  (placeholder scriptIds), HT-6 (CI Node 22). No production writer was
+  exposed by the stricter fakes. 2118/2118 + ci:ui green. **Owner-side:**
+  nothing to deploy (tests/tooling only). **Where I left off:** Batches 1-11
+  done and pushed, no PR opened; next suggested Batch 12 (docs and code
+  health: CH-1, ...).
+- **2026-10-02 — broad-scan Batch 10 IMPLEMENTED on the same branch (block 223).**
+  Performance (dashboard): DL-7 (per-execution memo for openSpreadsheet_ and
+  a single-read roster block behind getAllDepartments_ /
+  getRosterForDepartment_ / rosterAllDeptsHash_; appendRosterEntry_ busts it;
+  the harness now treats one h.call/h.fn as one execution) and DL-8 (Missed
+  report derives the dept queue-ext set only for a non-roster scope). 2105/2105 + ci:ui
+  green, lint + UTC run green. **Owner-side:** deploy the dashboard
+  (blocking). **Where I left off:** Batches 1-10 done and pushed, no PR
+  opened; next suggested Batch 11 (harness strictness and CI: HT-2, CL-9,
+  HT-5, HT-3, HT-4, DEP-2, DEP-3, HT-6, DEP-1, DEP-4).
+- **2026-10-02 — broad-scan Batch 9 IMPLEMENTED on the same branch (block 222).**
+  cdr-report repair + report safety: CR-1 (snapshot before the re-verify),
+  CR-2 (rewritten-columns checksum in the fingerprint), CR-3 (slot abort
+  restores formats + honest message), CR-4 (prune before copy), CR-5
+  (cross-project bulk marker the nightly sort honours), CR-9 (INV-52 readers
+  rewritten; CDR Historical force guard; Q Path stays unguarded), CR-7
+  (detect-only col D preview), CR-10 (CRB comparison window in calendar
+  days). 2100/2100 green. **Owner-side:** deploy cdr-report + cdr-import
+  (blocking) and the dashboard. **Where I left off:** Batches 1-9 done and
+  pushed, no PR opened; next suggested Batch 10 (performance: DL-7, DL-8).
+- **2026-10-02 — broad-scan Batch 8 IMPLEMENTED on the same branch (block 221).**
+  Client accessibility + hardening: CL-3 (escalation focus restore, rendered
+  check in drive-admin), CL-21 (remove/restore-dept in-flight guard), CL-13
+  (agent-app tabs pattern + history guard, rendered checks in drive-agent),
+  CL-12 (null-safe escapeHtml, escaped alert status), CL-19 (#/dev via
+  google.script.url), CL-10 (seven dead helpers removed), CL-8 (qcd-hero-sub
+  font), CL-11 (lang="en"). 2090/2090 + ci:ui green. **Owner-side:** deploy
+  the dashboard (blocking); try #/dev once. **Where I left off:** Batches
+  1-8 done and pushed, no PR opened; next suggested Batch 9 (cdr-report
+  repair and report safety: CR-1, CR-5, CR-2, CR-3, CR-9, CR-7, CR-4, CR-10).
+- **2026-10-02 — broad-scan Batch 7 IMPLEMENTED on the same branch (block 220).**
+  Client correctness: CL-2 (per-day Insights card deltas), CL-1 (Company
+  line THEME.ink), CL-15 (AC/DC save status survives reload), CL-17 (share /
+  digest links carry their window into the dept controls), CL-18 (per-step
+  boot guard + notice), CL-4 (sticky error toasts + inline status), CL-6
+  (heatmap error + Retry, no beacon per R19), CL-16 (View-as gates), CL-14
+  (agent presets never anchor on today), CL-7 (IR Generate release), CL-5
+  (share-link copy), CL-22 (partial subscriber save). 2083/2083 + ci:ui
+  green. **Owner-side:** deploy the dashboard (blocking). **Where I left
+  off:** Batches 1-7 done and pushed, no PR opened; next suggested Batch 8
+  (client accessibility + hardening: CL-3, CL-21, CL-13, CL-12, CL-19,
+  CL-10, CL-8, CL-11) -- ci:ui applies.
+- **2026-10-02 — broad-scan Batch 6 IMPLEMENTED on the same branch (block 219).**
+  BU-1 (backup refuses to recreate a set-but-unopenable workbook), DL-3 +
+  CR-6 (per-statement query timeouts via connection wrappers in the dashboard
+  and cdr-report reader factories), BU-4 (coaching FAILED/PARTIAL), BU-3
+  (backup run budget, newest-first, PARTIAL), EN-1 (trigger installer
+  recorded; foreign-owned triggers named on Health), EN-6 (watchdog 2 h
+  lookback + seen store), AC-6 (per-user beacon cap), BU-2 (WARN outcome),
+  EN-8 (recipient validation), EN-7 (denominator wording). 2071/2071 green.
+  **Owner-side:** deploy the dashboard (blocking) + cdr-report; re-run the
+  four editor installers from the deploying account. **Where I left off:**
+  Batches 1-6 done and pushed, no PR opened; next suggested Batch 7 (client
+  correctness: CL-2, CL-1, CL-15, CL-17, CL-18, CL-4, CL-6, CL-16, CL-14,
+  CL-7, CL-5, CL-22) -- client work, so ci:ui applies.
+- **2026-10-01 — broad-scan Batch 5 IMPLEMENTED on the same branch (block 218).**
+  ESC-D1 (activity rows record their dept at write time; move-history
+  backfill; esc-schema checks the new column; escSchema:v2), ESC-D3 (linked
+  edit refused when a sibling moved past pending), AC-3 incl. PC-11 (9 bare
+  role-none gates -> assertManagerOrAdmin_), ESC-D4 (last-active-copy delete
+  guard + full audit), ESC-D5 (offline denial = not-found shape), ESC-D6
+  (byte-measured snapshot chunks, logged failures), ESC-D7 (no spurious
+  sign-in email on a config-read failure). 2053/2053 green. **Owner-side:**
+  deploy the dashboard (blocking), open Escalations once, read esc-schema.
+  **Where I left off:** Batches 1-5 done and pushed, no PR opened; next
+  suggested Batch 6 (backups, timeouts, engine signals: BU-1, DL-3, CR-6,
+  BU-4, BU-3, EN-1, EN-6, AC-6, BU-2, EN-8, EN-7).
+- **2026-10-01 — broad-scan Batch 4 IMPLEMENTED on the same branch (block 217).**
+  DL-1/DL-2/QO-3 (the DQE + QCD parity gates count rows per key and the DQE
+  gate diffs the queue split), QO-1 (Overview MTD chip anchored on the latest
+  QCD date; companyOverview:v26), DL-4 (prior-window distance cap), DL-5
+  (roster hash on individual / missed / overviewChartYtd + the whole combined
+  summary set), DL-6 (Missed enrichment failure flagged, never cached), DL-9
+  (CacheWarm resets sticky flags per payload and counts real cache writes).
+  2041/2041 green. **Owner-side:** deploy the dashboard (blocking). Batches
+  1-3 deploys still owed as listed below. **Where I left off:** Batches 1-4
+  done and pushed, no PR opened; next suggested Batch 5 (escalations
+  integrity: ESC-D1, ESC-D3, AC-3 incl. PC-11, ESC-D4..D7).
+- **2026-10-01 — broad-scan Batch 3 IMPLEMENTED on the same branch (block 216).**
+  PC-1/PC-2 (per-call agent names stored roster-canonical via the shared
+  INV-24 canonicalizer + an editor-run Neon rewrite, Operator State #72),
+  PC-3, PC-4 (Direct direction/answered), PC-5 + PC-8 (journey entitlement),
+  PC-6, PC-7, PC-9 (R49 06:00 floor in the inbound/outbound queries;
+  inbound:v16, outboundReport:v6), PC-10 (hashless capture is a failure row).
+  2026/2026 green. **Owner-side:** deploy cdr-import + the dashboard
+  (blocking) + cdr-report; then run the #72 preview -> backup -> rewrite.
+  Deferred: PC-12, and PC-10's 10-digit phone normalization (hash-space
+  change, needs measurement). **Where I left off:** Batches 1-3 done and
+  pushed, no PR opened; next suggested Batch 4.
+- **2026-10-01 — broad-scan Batch 2 IMPLEMENTED on the same branch (block 215).**
+  AC-1 (fail-closed sub-queue access no longer locks parent managers out),
+  EN-2/AC-4 (alerts no longer hold the script lock across sends; date claim
+  instead), ESC-D2/AC-5 (escalations connect + schema before the lock, 30 s
+  statement timeouts, schema DDL memoized), EN-4, EN-3, EN-5. 2003/2003 green.
+  **Owner-side:** deploy the dashboard (blocking), walk S50-S53, read the
+  out-alerts / out-digest Health rows after the next 8 AM run. Still owed from
+  Batch 1: the cdr-import (+ cdr-report) deploy. **Where I left off:** Batches
+  1-2 done and pushed, no PR opened; next suggested Batch 3 (per-call agent
+  identity: PC-1..PC-10).
+- **2026-10-01 — broad-scan (new) + Batch 1 IMPLEMENTED on branch
+  `claude/optimistic-lamport-92xm9l` (block 214).** A fresh 3-stage broad scan
+  produced ~110 findings in 12 batches (IDs AC/DL/EN/PC/PIPE/IG/CR/CL/HT/DEP/
+  CH/DX/ESC-D/BU/QO -- new prefixes because SEC-/DATA-/OPS-/RPT-/UI- already
+  exist). Batch 1 ("ingest can't stall or silently lose tabs") is DONE and
+  pushed: HT-1, PIPE-1 (failed-import ledger + park after 3, `autoImport:parked`
+  row), PIPE-2 (window ends at today; prune keeps tabs not PROVEN imported),
+  IG-1, PIPE-3, IG-2 + DX-13, PIPE-5, PIPE-4. 1993/1993 green, lint clean.
+  **Owner-side:** deploy cdr-import (blocking) + cdr-report (INV-16 copy);
+  then read the next `retentionPrune` row for "KEPT N never-imported".
+  **Next suggested:** Batch 2 (lock discipline: AC-1, EN-2/AC-4, ESC-D2, AC-5,
+  EN-3/4/5). No PR opened (not requested).
 - **2026-10-01 — WHERE I LEFT OFF.** Everything below is MERGED to main:
   Steps 0/1/2a/2b + ESC-L3/ESC-S1 + the first sync-docs pass as PR #348
   (0dc15c9), and the reflect follow-ups (blocks 212-213) + the second

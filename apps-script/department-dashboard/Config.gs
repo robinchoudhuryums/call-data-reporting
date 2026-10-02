@@ -673,6 +673,12 @@ const DASHBOARD_EARLY_WINDOW = Object.freeze({
 const INBOUND_WORK_WINDOW_PST = Object.freeze({
   start: '06:30:00',
   end:   '15:00:00',
+  // PC-9 (broad-scan 2026-10-01, owner ruling: implement): the R49 floor in
+  // the query mirror. A call whose ENTRY queue is in the CSR family
+  // (DASHBOARD_EARLY_WINDOW.queues, plus the canonical side of any Dept Config
+  // `raw=canonical` pair for them -- capture rewrites entry_queue, R8-N) counts
+  // from 06:00, as DQE has since R49. Per QUEUE, never per dept (R49 rule 1).
+  earlyStart: '06:00:00',
 });
 
 /**
@@ -691,8 +697,55 @@ function getSpreadsheetId_() {
   return id;
 }
 
+// DL-7 (broad-scan 2026-10-01): PER-EXECUTION memos for the two reads almost
+// every request makes before it can even check a cache -- the workbook open and
+// the DO NOT EDIT! roster block. An admin's cache HIT used to pay three-plus
+// openById calls and as many roster reads (the dept set, the access gate per
+// dept, the roster hash), and an Overview compute one open + one roster read
+// PER DEPT. Apps Script globals reset between executions, so neither can
+// outlive the request that filled it; within one, a write to the roster busts
+// it (bustRosterMemo_, appendRosterEntry_). resetWorkbookMemos_ is the
+// execution boundary the test harness calls before every entry point.
+var OPEN_SS_MEMO_ = null;       // { id, ss }
+var ROSTER_BLOCK_MEMO_ = null;  // rosterDeptBlock_()'s { depts, cells }
+function resetWorkbookMemos_() { OPEN_SS_MEMO_ = null; ROSTER_BLOCK_MEMO_ = null; }
+function bustRosterMemo_() { ROSTER_BLOCK_MEMO_ = null; }
+
 function openSpreadsheet_() {
-  return SpreadsheetApp.openById(getSpreadsheetId_());
+  const id = getSpreadsheetId_();
+  if (OPEN_SS_MEMO_ && OPEN_SS_MEMO_.id === id) return OPEN_SS_MEMO_.ss;
+  const ss = SpreadsheetApp.openById(id);
+  OPEN_SS_MEMO_ = { id: id, ss: ss };
+  return ss;
+}
+
+/**
+ * DL-7: the DO NOT EDIT! dept block -- the header names up to the first blank
+ * (the INV-11 layout; the insurance block past the gap is ignored) and the data
+ * cells beneath them -- in ONE range read, memoized per execution
+ * (ROSTER_BLOCK_MEMO_, Config.gs). getAllDepartments_, getRosterForDepartment_
+ * and rosterAllDeptsHash_ all derive from it and return FRESH objects, so the
+ * memo itself is never handed out. `cells[r][c]` is dept `depts[c]`'s row r.
+ */
+function rosterDeptBlock_() {
+  if (ROSTER_BLOCK_MEMO_) return ROSTER_BLOCK_MEMO_;
+  const out = { depts: [], cells: [] };
+  const sheet = openSpreadsheet_().getSheetByName(SHEETS.ROSTER);
+  const lastCol = sheet ? sheet.getLastColumn() : 0;
+  if (sheet && lastCol >= ROSTER.DEPT_FIRST_COL) {
+    const lastRow = Math.max(sheet.getLastRow(), ROSTER.HEADER_ROW);
+    const grid = sheet.getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
+                                lastRow - ROSTER.HEADER_ROW + 1, lastCol - ROSTER.DEPT_FIRST_COL + 1).getValues();
+    const header = grid[0] || [];
+    for (let i = 0; i < header.length; i++) {
+      const v = String(header[i] || '').trim();
+      if (!v) break; // first blank ends the dept block
+      out.depts.push(v);
+    }
+    out.cells = grid.slice(ROSTER.DATA_START_ROW - ROSTER.HEADER_ROW);
+  }
+  ROSTER_BLOCK_MEMO_ = out;
+  return out;
 }
 
 /**
@@ -841,6 +894,24 @@ function noteBestEffortReadFailed_(where, e) {
     where, (e && e.message) ? e.message : e);
 }
 function bestEffortReadFailed_() { return !!BEST_EFFORT_READ_FAILED_; }
+// DL-9 (broad-scan 2026-10-01): both flags above are sticky for the WHOLE
+// execution, which is right for one request and wrong for CacheWarm: one
+// dept's transient QCD throw skipped the put of every dept warmed after it.
+// CacheWarm resets them before each payload it warms.
+function resetExecReadFailureFlags_() {
+  QCD_SNAPSHOT_READ_FAILED_ = false;
+  BEST_EFFORT_READ_FAILED_ = false;
+}
+// DL-9: per-execution tally of the warmed report caches' OUTCOMES -- a put that
+// succeeded ('write') or a serve from an existing entry ('hit'). CacheWarm
+// counted calls that RETURNED as "warmed", including every payload a skip rule
+// above declined to cache. The four endpoints CacheWarm warms (summary,
+// Overview, Insights, the all-dept Queue report) note theirs here.
+var REPORT_CACHE_TALLY_ = { write: 0, hit: 0 };
+function noteReportCache_(kind) {
+  if (kind === 'write' || kind === 'hit') REPORT_CACHE_TALLY_[kind]++;
+}
+function reportCacheTally_() { return { write: REPORT_CACHE_TALLY_.write, hit: REPORT_CACHE_TALLY_.hit }; }
 
 var PROP_REGISTRY_ = Object.freeze({
   secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),
@@ -911,7 +982,10 @@ var PROP_REGISTRY_ = Object.freeze({
     PIPELINE_WATCH_LAST: 'engine', PIPELINE_WATCH_LAST_RESULT: 'engine',
     PIPELINE_WATCH_LAST_TS: 'engine',
     PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',
+    PIPELINE_WATCH_SEEN: 'engine',   // EN-6: emailed failure keys inside the lookback
+    TRIGGER_INSTALLERS: 'engine',    // EN-1: who installed each editor-run engine's trigger
     QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
+    QUEUE_REPORT_FAIL_NOTIFIED: 'engine',   // EN-3: last emailed failure signature (once/day)
     QUEUE_REPORT_LAST_RESULT: 'engine',
     QUEUE_REPORT_LAST: 'engine', QUEUE_REPORT_STARTED: 'engine',   // ENG-5
     QUEUE_REPORT_SENDING: 'engine',   // S2B-8: the in-flight send claim

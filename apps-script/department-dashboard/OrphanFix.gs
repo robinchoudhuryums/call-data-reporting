@@ -47,7 +47,7 @@
  *      row to `Orphan Fix Log` BEFORE returning to the client.
  *      The log is append-only and idempotently created by setup().
  *
- * The downstream cache layers (companyOverview:v25, summary:v22,
+ * The downstream cache layers (companyOverview:v26, summary:v22,
  * individual:v12, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 6 hours (REPORT_CACHE_TTL_SECONDS,
  * R24) after a rename -- though the morning ingest's freshness tag
@@ -703,6 +703,7 @@ function appendRosterEntry_(department, name, exts) {
   // roster every dashboard consumer parses (parseRosterCell_ reads the
   // stored string back unchanged; the apostrophe is formatting only).
   target.setValue(sheetSafeCell_(name + ', ' + exts.join(', ')));
+  bustRosterMemo_();   // DL-7: a later read in THIS execution must see the new entry
   return target.getA1Notation();
 }
 

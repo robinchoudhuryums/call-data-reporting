@@ -180,7 +180,11 @@ function exportOutboundCalls(fromIso, toIso) {
       "o.call_date::text, o.call_id, COALESCE(o.callee_hash,''), " +
       "COALESCE(o.agent_name,''), COALESCE(o.agent_ext,''), COALESCE(o.department,''), " +
       "COALESCE(o.connected, FALSE), COALESCE(o.talk_seconds,0), " +
-      "COALESCE(o.ring_seconds,0), COALESCE(o.attempts,0), " +
+      // PC-6 (broad-scan 2026-10-01): an UNKNOWN ring stays BLANK. COALESCE
+      // to 0 made the sheet fallback classify it as a "brief" (misdial) ring
+      // -- the Neon path reads NULL as unknown -- and Caller Lookup / the
+      // journey fallback showed ringSeconds 0; every reader maps '' to unknown.
+      "COALESCE(o.ring_seconds::text,''), COALESCE(o.attempts,0), " +
       "COALESCE(o.call_start,''), " +
       // Journey only within the retention window -- it is the only HEAVY
       // column, and the 400-day row retention stays cheap without it.

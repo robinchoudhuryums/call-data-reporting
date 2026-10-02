@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
+const { assertSetValuesShape } = require('../harness/fakeSheet');
 
 // The C1 fixture treatment for dashboardCDR.js's generateCustomReportCore_
 // (owner go-ahead 2026-08-20) — the ~480-line end-to-end path (dashboard
@@ -66,8 +67,12 @@ function makeRecordingSheet_(opts) {
       },
       setValue: function (v) { sheet.set(r0, c0, v); return proxy; },
       setValues: function (vals) {
+        assertSetValuesShape(vals, nr, nc);   // HT-2: the real API's shape rule
         for (let r = 0; r < vals.length; r++) {
-          for (let c = 0; c < vals[r].length; c++) sheet.set(r0 + r, c0 + c, vals[r][c]);
+          for (let c = 0; c < vals[r].length; c++) {
+            sheet.set(r0 + r, c0 + c, vals[r][c]);
+            delete displays[(r0 + r) + ',' + (c0 + c)];   // HT-2: a write replaces the rendered text
+          }
         }
         return proxy;
       },
@@ -170,13 +175,15 @@ function runCore_(histRows, durDisplays, inputs) {
 
   // Historical sheet: values grid + a DISPLAY override for the duration
   // column (the F-11 pin: values hold junk, displays hold H:MM:SS).
+  // The overrides go on AFTER the setup writes: a write replaces a cell's
+  // rendered text (HT-2), exactly as it would on a real sheet.
   const displays = {};
-  (durDisplays || []).forEach(function (d, i) {
-    if (d != null) displays[(i + 2) + ',' + DUR_COL] = d;   // data starts row 2
-  });
   const hist = makeRecordingSheet_({ displays: displays });
   hist.getRange(1, 1, 1, HIST_HEADERS.length).setValues([HIST_HEADERS]);
   if (histRows.length) hist.getRange(2, 1, histRows.length, HIST_HEADERS.length).setValues(histRows);
+  (durDisplays || []).forEach(function (d, i) {
+    if (d != null) displays[(i + 2) + ',' + DUR_COL] = d;   // data starts row 2
+  });
 
   h.state.props = {};
   if (inputs.prevDiagCol) h.state.props.CRB_DIAG_COL = String(inputs.prevDiagCol);
@@ -303,6 +310,29 @@ test('core: comparison mode — (C)/(P)/Diff header shape, prev-bucket values, a
   assert.ok(b6 instanceof Date);
   assert.equal(b6.getMonth(), 4);
   assert.equal(b6.getDate(), 31);
+});
+
+// CR-10: the window was extended by the current window's MILLISECOND length,
+// so a window holding the US fall-back (Nov 1 2026: 7 days + 1 h) gave an
+// 8-day comparison. Bites only where the process TZ observes DST -- the suite
+// runs under America/Chicago (npm test / CI); under bare UTC it is vacuous.
+test('CR-10: the comparison window is the same number of CALENDAR days across a DST change', function () {
+  const f = standardRows_();
+  const r = runCore_(f.rows, f.durDisplays, {
+    dept: 'Sales', start: D(2026, 10, 26), end: D(2026, 11, 1),   // 7 days, holds the fall-back
+    compStart: D(2026, 10, 5),
+    cats: { OB_EXT: true },
+  });
+  const b6 = r.dash.get(6, 2);
+  assert.ok(b6 instanceof Date);
+  assert.deepEqual([b6.getMonth(), b6.getDate()], [9, 11], 'Oct 5 + 6 days = Oct 11, not Oct 12');
+  const r2 = runCore_(f.rows, f.durDisplays, {
+    dept: 'Sales', start: D(2026, 10, 5), end: D(2026, 10, 11),
+    compStart: D(2026, 10, 26),                                   // the COMPARISON window holds it
+    cats: { OB_EXT: true },
+  });
+  const b6b = r2.dash.get(6, 2);
+  assert.deepEqual([b6b.getMonth(), b6b.getDate()], [10, 1], 'Oct 26 + 6 days = Nov 1');
 });
 
 test('core: the specificAgent filter narrows to one agent', function () {

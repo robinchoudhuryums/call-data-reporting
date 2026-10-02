@@ -117,6 +117,14 @@ function reviewConn(row, log) {
           log.reads = (log.reads || []).concat([{ sql: sql, params: params.slice() }]);
           const isGroup = sql.indexOf('WHERE group_id = ?') !== -1;
           if (isGroup) log.groupProbes = (log.groupProbes || []).concat([params.slice()]);
+          // ESC-D3: escGroupNotPendingDepts_ answers from row.notPending
+          // ([[dept, status], ...]); absent = every sibling pending.
+          if (isGroup && sql.indexOf('SELECT department, status FROM') === 0) {
+            const np = (row && row.notPending) || [];
+            let k = -1;
+            return { next: function () { return ++k < np.length; },
+              getString: function (c) { return c === 'department' ? np[k][0] : np[k][1]; }, close: function () {} };
+          }
           if (isGroup && sql.indexOf('SELECT department FROM') === 0) {
             const ds = (row && row.groupDepts) || [];
             let i = -1;
@@ -976,7 +984,9 @@ test('ESC-L2: REMOVE refuses a missing reason, a standalone escalation, the LAST
 test('ESC-L2: delete defaults to ONE copy; allLinked deletes every copy + the whole thread in one transaction', function () {
   const usage = [];
   const log = { writes: [] };
-  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3, groupDepts: ['CSR', 'Sales'] }, log);
+  // activeOthers: 2 -- the two siblings are still active (ESC-D4's guard
+  // refuses deleting the LAST active copy alone).
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3, activeOthers: 2, groupDepts: ['CSR', 'Sales'] }, log);
   h.ctx.logReportUsage_ = function (report, dept) { usage.push(dept); };
   const one = JSON.parse(JSON.stringify(h.call('deleteEscalation', { id: 'e1' })));
   assert.equal(one.deleted, 1);
@@ -1157,10 +1167,10 @@ test('ESC-DDL: escSchemaRead_ is one metered read of the live columns + index na
     const conn = { createStatement: function () { return {
       executeQuery: function (sql) { sqlSeen = sql; let d = false;
         return { next: function () { if (d) return false; d = true; return true; },
-          getString: function () { return JSON.stringify({ cols: ['id', 'group_id'], idx: ['escalations_pkey'] }); }, close: function () {} }; },
+          getString: function () { return JSON.stringify({ cols: ['id', 'group_id'], idx: ['escalations_pkey'], acols: ['id', 'department'] }); }, close: function () {} }; },
       close: function () {} }; } };
     const r = JSON.parse(JSON.stringify(h.call('escSchemaRead_', conn)));
-    assert.deepEqual(r, { columns: ['id', 'group_id'], indexes: ['escalations_pkey'] });
+    assert.deepEqual(r, { columns: ['id', 'group_id'], indexes: ['escalations_pkey'], activityColumns: ['id', 'department'] });   // ESC-D1
     assert.match(sqlSeen, /information_schema\.columns/);
     assert.match(sqlSeen, /pg_indexes/);
     assert.equal(metered, 'escalations');
@@ -1171,16 +1181,231 @@ test('ESC-DDL: escSchemaRead_ is one metered read of the live columns + index na
 // Every column escEnsureTable_ adds with ADD COLUMN must be in
 // ESC_REQUIRED_COLUMNS_, or the Health row reads ok while a column the
 // verbs depend on is missing.
-test('ESC-DDL2: every ADD COLUMN in escEnsureTable_ is in ESC_REQUIRED_COLUMNS_', function () {
+test('ESC-DDL2: every ADD COLUMN in escEnsureTable_ is in its table\'s required list', function () {
   const d = ddlConn(null);
   h.call('escEnsureTable_', d.conn);
-  const added = [];
+  const added = { escalations: [], escalation_activity: [] };
   d.ran.forEach(function (q) {
-    const m = /ADD COLUMN IF NOT EXISTS\s+([a-z_][a-z0-9_]*)/i.exec(q);
-    if (m) added.push(m[1]);
+    const m = /ALTER TABLE\s+([a-z_]+)\s+ADD COLUMN IF NOT EXISTS\s+([a-z_][a-z0-9_]*)/i.exec(q);
+    if (m) (added[m[1]] = added[m[1]] || []).push(m[2]);
   });
-  assert.ok(added.length >= 5, 'the sweep saw the migration: ' + added.join(','));
-  const required = Array.from(h.ctx.ESC_REQUIRED_COLUMNS_);
-  const missing = added.filter(function (c) { return required.indexOf(c) === -1; });
-  assert.deepEqual(missing, [], 'add these to ESC_REQUIRED_COLUMNS_ so the esc-schema Health row checks them');
+  assert.ok(added.escalations.length >= 5, 'the sweep saw the migration: ' + added.escalations.join(','));
+  assert.deepEqual(Object.keys(added).sort(), ['escalation_activity', 'escalations'], 'no third table grew a column unchecked');
+  const missing = added.escalations.filter(function (c) { return Array.from(h.ctx.ESC_REQUIRED_COLUMNS_).indexOf(c) === -1; })
+    .concat(added.escalation_activity.filter(function (c) {
+      return Array.from(h.ctx.ESC_REQUIRED_ACTIVITY_COLUMNS_).indexOf(c) === -1; }).map(function (c) { return 'escalation_activity.' + c; }));
+  assert.deepEqual(missing, [], 'add these to ESC_REQUIRED_COLUMNS_ / ESC_REQUIRED_ACTIVITY_COLUMNS_ so the esc-schema Health row checks them');
+});
+
+// ── AC-5 / ESC-D2 (broad-scan 2026-10-01) ──────────────────────────────────
+
+test('AC-5: the schema DDL runs ONCE per execution and is cached across executions; a failed column DDL is never cached', function () {
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  h.state.cache.clear();
+  const d = ddlConn(null);
+  h.call('escEnsureTableOnce_', d.conn);
+  const first = d.ran.length;
+  assert.ok(first >= 8, 'the full DDL ran once');
+  h.call('escEnsureTableOnce_', d.conn);
+  assert.equal(d.ran.length, first, 'pre-fix: every list load and card expand re-ran ~11 statements');
+
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;   // a NEW execution, same cache
+  h.call('escEnsureTableOnce_', d.conn);
+  assert.equal(d.ran.length, first, 'the cache flag spans executions');
+
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  h.state.cache.clear();
+  const bad = ddlConn(/ADD COLUMN IF NOT EXISTS group_id/);
+  h.call('escEnsureTableOnce_', bad.conn);
+  assert.equal(h.ctx.ESC_SCHEMA_ENSURED_, false, 'a failed migration is retried by the next call');
+  const n = bad.ran.length;
+  h.call('escEnsureTableOnce_', bad.conn);
+  assert.ok(bad.ran.length > n);
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  h.state.cache.clear();
+});
+
+test('ESC-D2: escOpenWriteConn_ bounds every statement and never touches the lock; escTakeWriteLock_ closes the conn when busy', function () {
+  const timeouts = [];
+  let closed = 0;
+  const stmt = function () { return { setQueryTimeout: function (s) { timeouts.push(s); }, execute: function () {}, close: function () {} }; };
+  const raw = { prepareStatement: stmt, createStatement: stmt, setAutoCommit: function () {}, commit: function () {},
+                rollback: function () {}, close: function () { closed++; } };
+  const saved = { conn: h.ctx.getDashboardNeonConn_, lock: h.ctx.LockService };
+  let lockTaken = 0;
+  h.ctx.getDashboardNeonConn_ = function () { return raw; };
+  h.ctx.LockService = { getScriptLock: function () { lockTaken++; return { tryLock: function () { return false; }, releaseLock: function () {} }; } };
+  h.ctx.ESC_SCHEMA_ENSURED_ = true;
+  try {
+    const conn = h.call('escOpenWriteConn_');
+    assert.equal(lockTaken, 0, 'the connect and the schema check happen OUTSIDE the script lock');
+    conn.prepareStatement('SELECT 1');
+    conn.createStatement();
+    assert.deepEqual(timeouts, [30, 30], 'every escalation statement carries setQueryTimeout');
+    assert.throws(function () { h.call('escTakeWriteLock_', conn, 15000); }, /Another escalation write is in progress/);
+    assert.equal(closed, 1, 'a busy lock closes the already-open connection');
+    h.ctx.getDashboardNeonConn_ = function () { return null; };
+    assert.throws(function () { h.call('escOpenWriteConn_'); }, /not configured\/reachable/);
+  } finally {
+    h.ctx.getDashboardNeonConn_ = saved.conn;
+    h.ctx.LockService = saved.lock;
+    h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  }
+});
+
+test('ESC-D2: every escalation write verb connects BEFORE it takes the lock (source sweep)', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script',
+    'department-dashboard', 'Escalations.gs'), 'utf8');
+  const opens = src.match(/var conn = escOpenWriteConn_\(\);[^\n]*\n\s*var lock = escTakeWriteLock_\(conn, \d+\);/g) || [];
+  assert.equal(opens.length, 14, 'the 14 write verbs');
+  const bareLocks = (src.match(/LockService\.getScriptLock\(\)/g) || []).length;
+  assert.equal(bareLocks, 1, 'the only getScriptLock is inside escTakeWriteLock_ -- a verb taking the lock '
+    + 'before its connect would hold it across an unbounded JDBC connect again');
+});
+
+// AC-3 (broad-scan 2026-10-01, incl. PC-11): eight escalation entry points and
+// getDeptDayAbandons used the bare `role === 'none'` DENYlist CLAUDE.md forbids
+// -- safe only while every non-manager role happens to carry an empty
+// `departments`. An UNRECOGNIZED role with a dept list is the shape that would
+// have walked through; the allowlist refuses it before any read.
+test('AC-3: an unrecognized role carrying departments reaches none of the nine entry points', function () {
+  const log = { writes: [] };
+  const odd = { email: 'odd@x.com', role: 'auditor', department: 'CSR', departments: ['CSR'] };
+  installReview(odd, { status: 'pending', department: 'CSR', caller: 'c', patientName: 'p',
+    trx: 't', area: '', reason: 'r', source: 'manual' }, log);
+  ['getEscalations', 'getEscalationActivity', 'resolveEscalation', 'reopenEscalation',
+   'startEscalation', 'approveEscalation', 'rejectEscalation', 'updateEscalationComment'].forEach(function (fn) {
+    assert.throws(function () { h.call(fn, { id: 'e1', resolution: 'x', reason: 'x', comment: 'x' }); },
+      /^Error: Not authorized\.$/, fn);
+  });
+  assert.equal((log.reads || []).length, 0, 'refused before any Neon read');
+  assert.equal(log.writes.length, 0);
+
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  assert.doesNotMatch(fs.readFileSync(path.join(dash, 'Escalations.gs'), 'utf8'), /role === 'none'/,
+    'Escalations.gs gates on the allowlist only');
+  const inb = fs.readFileSync(path.join(dash, 'InboundReport.gs'), 'utf8');
+  const body = inb.slice(inb.indexOf('function getDeptDayAbandons('), inb.indexOf('function getDeptDayAbandons(') + 600);
+  assert.match(body, /assertManagerOrAdmin_\(user\)/, 'PC-11: getDeptDayAbandons uses the allowlist');
+  assert.doesNotMatch(body, /role === 'none'/);
+});
+
+// ESC-D3 (broad-scan 2026-10-01): the shared-field edit lands on every copy, so
+// the pending-only guard must hold for every copy, not just the clicked one.
+test('ESC-D3: editing a pending copy is refused when a linked sibling is started or resolved; removed copies do not block', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3,
+                       notPending: [['Power', 'resolved']] }, log);
+  assert.throws(function () { h.call('updateEscalation', { id: 'e1', reason: 'corrected' }); },
+    /a linked copy is no longer pending: Power \(resolved\)/);
+  assert.equal(log.writes.length, 0, 'nothing written');
+  const probe = (log.reads || []).filter(function (r) { return r.sql.indexOf('SELECT department, status FROM') === 0; })[0];
+  assert.ok(probe, 'the sibling statuses were checked');
+  assert.match(probe.sql, /status NOT IN \('pending', 'removed'\)/, 'a removed copy never blocks the edit');
+  assert.deepEqual(Array.from(probe.params), ['g1', 'e1']);
+  // Every sibling pending (or removed): the edit goes through, as before.
+  const log2 = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3 }, log2);
+  h.call('updateEscalation', { id: 'e1', reason: 'corrected' });
+  assert.equal(log2.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; }).length, 1);
+});
+
+// ESC-D4 (broad-scan 2026-10-01): a single-copy delete of the LAST active copy
+// would leave a group holding only removed copies (the state Remove refuses to
+// create); and the delete-all audit listed only the NOT-removed depts.
+test('ESC-D4: deleting the last active copy alone is refused; a removed copy or one with an active sibling deletes alone', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 2, activeOthers: 0 }, log);
+  assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /last active copy.*Delete all linked copies instead/);
+  assert.equal(log.writes.length, 0);
+  // allLinked is the way through.
+  const log2 = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 2, activeOthers: 0, groupDepts: ['CSR', 'Power'] }, log2);
+  h.ctx.logReportUsage_ = function () {};
+  assert.equal(h.call('deleteEscalation', { id: 'e1', allLinked: true }).deleted, 2);
+  // A REMOVED copy deletes alone even when it is the only removed one.
+  const log3 = { writes: [] };
+  installMove(ADMIN, { status: 'removed', department: 'Power', reason: 'r', groupId: 'g1', groupSize: 2, activeOthers: 1 }, log3);
+  assert.equal(h.call('deleteEscalation', { id: 'e1' }).deleted, 1);
+  // A standalone escalation is never refused.
+  const log4 = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r' }, log4);
+  assert.equal(h.call('deleteEscalation', { id: 'e1' }).deleted, 1);
+});
+
+test('ESC-D4: the delete-all audit reads EVERY copy\'s department, removed copies included', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3,
+                       activeOthers: 1, groupDepts: ['CSR', 'Power', 'Sales'] }, log);
+  const usage = [];
+  h.ctx.logReportUsage_ = function (report, dept) { usage.push(dept); };
+  h.call('deleteEscalation', { id: 'e1', allLinked: true });
+  const q = (log.reads || []).filter(function (r) { return r.sql.indexOf('SELECT department FROM escalations WHERE group_id = ?') === 0; })[0];
+  assert.ok(q);
+  assert.doesNotMatch(q.sql, /status <> 'removed'/, 'the audit query keeps removed copies');
+  assert.equal(usage[0], 'CSR + Power + Sales');
+});
+
+// ESC-D1 (broad-scan 2026-10-01): the shared thread tagged every entry with the
+// copy's CURRENT department, so after a Move every earlier comment / start /
+// resolve read as written by the new department. The entry now records the
+// department at WRITE time; old rows are backfilled from the move history.
+test('ESC-D1: every activity row records the copy\'s department at write time, in the same statement', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.call('moveEscalation', { id: 'e1', department: 'Sales', note: 'wrong queue' });
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; });
+  assert.equal(act.length, 1);
+  assert.match(act[0].sql, /\(id, escalation_id, action, actor, detail, department\)/);
+  assert.match(act[0].sql, /\(SELECT department FROM escalations WHERE id = \?\)\)$/);
+  assert.equal(act[0].params[5], 'e1', 'the dept is read for THIS copy, inside the caller\'s transaction');
+  // The move UPDATE precedes the reassigned entry, so that one entry carries the NEW dept.
+  const order = log.writes.map(function (w) { return w.sql.slice(0, 30); });
+  assert.ok(order.indexOf('UPDATE escalations SET departm') < order.findIndex(function (s) { return s.indexOf('INSERT INTO escalation_activit') === 0; }));
+});
+
+test('ESC-D1: the live thread AND the outage snapshot read the RECORDED dept, falling back to the copy\'s only for an unfilled row', function () {
+  const fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
+  const tagged = src.match(/COALESCE\(a\.department, e\.department\) AS department/g) || [];
+  assert.equal(tagged.length, 2, 'getEscalationActivity (linked) + the snapshot thread refresh');
+  assert.doesNotMatch(src, /a\.detail, e\.department,/, 'the live-dept tag is gone from the thread query');
+  assert.doesNotMatch(src, /"e\.department, \(e\.status = 'removed'\) AS removed "/, 'and from the snapshot query');
+});
+
+test('ESC-D1: escEnsureTable_ adds the column and backfills NULL rows from the move history; a failed backfill never fails the schema', function () {
+  const d = ddlConn(null);
+  const res = JSON.parse(JSON.stringify(h.call('escEnsureTable_', d.conn)));
+  assert.ok(d.ran.indexOf('ALTER TABLE escalation_activity ADD COLUMN IF NOT EXISTS department text') !== -1);
+  const bf = d.ran.filter(function (q) { return /^UPDATE escalation_activity a SET department/.test(q); })[0];
+  assert.ok(bf, 'the backfill ran');
+  assert.match(bf, /WHERE a\.department IS NULL$/, 'idempotent: only unfilled rows');
+  assert.match(bf, /r\.action = 'reassigned' AND r\.at > a\.at ORDER BY r\.at ASC LIMIT 1/, 'the dept BEFORE the earliest later move');
+  assert.ok(bf.indexOf("split_part(r.detail, ' → ', 1)") !== -1, 'the <from> side of "<from> → <to>"');
+  assert.equal(res.activityOk, true);
+  const d2 = ddlConn(/^UPDATE escalation_activity/);
+  const res2 = JSON.parse(JSON.stringify(h.call('escEnsureTable_', d2.conn)));
+  assert.equal(res2.activityOk, true, 'the read-time fallback covers an unfilled row');
+  const d3 = ddlConn(/ALTER TABLE escalation_activity/);
+  assert.equal(JSON.parse(JSON.stringify(h.call('escEnsureTable_', d3.conn))).activityOk, false,
+    'a missing column IS load-bearing -- the schema flag is not cached');
+  assert.ok(!d3.ran.some(function (q) { return /^UPDATE escalation_activity/.test(q); }), 'no backfill without the column');
+});
+
+test('ESC-D1: esc-schema warns on a missing activity column; the memo key (v2) carries both lists; the seed backfill tags its rows', function () {
+  const f = h.fn('escSchemaVerdict_');
+  const cols = ['id', 'group_id', 'removed_by', 'removed_at', 'removed_reason', 'status_before_removal'];
+  const idx = ['idx_escalations_group_dept'];
+  const bad = JSON.parse(JSON.stringify(f({ columns: cols, indexes: idx, activityColumns: ['id', 'detail'] })));
+  assert.equal(bad.status, 'warn');
+  assert.match(bad.value, /escalation_activity\.department/);
+  assert.equal(f({ columns: cols, indexes: idx, activityColumns: ['id', 'department'] }).status, 'ok');
+  assert.equal(f({ columns: cols, indexes: idx, activityColumns: [] }).status, 'ok', 'no trail table yet: created on the next write');
+  assert.equal(h.call('escSchemaCacheKey_'),
+    'escSchema:v2:group_id,removed_by,removed_at,removed_reason,status_before_removal|department');
+  const fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
+  const seeds = src.match(/INSERT INTO escalation_activity \(id, escalation_id, action, actor, at, detail, department\)/g) || [];
+  assert.equal(seeds.length, 2, 'backfillEscalationActivity\'s created + resolved seeds carry e.department');
 });

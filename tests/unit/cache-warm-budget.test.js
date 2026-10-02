@@ -23,11 +23,18 @@ function run(opts) {
   h.ctx.getLatestDataDate = function () { return '2026-08-31'; };
   h.ctx.getLatestDataDates = function () { return { qcd: '2026-08-31', dqe: '2026-08-31' }; };
   h.ctx.getAllDepartments_ = function () { return ['A', 'B', 'C', 'D', 'E']; };
-  h.ctx.getCompanyOverview = function () { calls.overview++; clock += opts.overviewMin * MIN; };
-  h.ctx.getDepartmentSummary = function () { calls.summary++; clock += opts.summaryMin * MIN; };
+  // DL-9: a warmed endpoint reports its cache outcome (the real four call
+  // noteReportCache_ at their put / hit sites); a stub that returned used to be
+  // enough to count as "warmed". `opts.outcome(kind)` overrides per endpoint.
+  const note = function (kind) {
+    const o = opts.outcome ? opts.outcome(kind) : 'write';
+    if (o) h.ctx.noteReportCache_(o);
+  };
+  h.ctx.getCompanyOverview = function () { calls.overview++; clock += opts.overviewMin * MIN; note('overview'); };
+  h.ctx.getDepartmentSummary = function () { calls.summary++; clock += opts.summaryMin * MIN; note('summary'); };
   calls.qcdArgs = []; calls.insightsArgs = [];
-  h.ctx.getQcdAllDepartments = function (req) { calls.qcd++; calls.qcdArgs.push(req); clock += MIN; };
-  h.ctx.getInsightsReport = function (req) { calls.insights++; calls.insightsArgs.push(req); clock += (opts.insightsMin == null ? 0.1 : opts.insightsMin) * MIN; };
+  h.ctx.getQcdAllDepartments = function (req) { calls.qcd++; calls.qcdArgs.push(req); clock += MIN; note('qcd'); };
+  h.ctx.getInsightsReport = function (req) { calls.insights++; calls.insightsArgs.push(req); clock += (opts.insightsMin == null ? 0.1 : opts.insightsMin) * MIN; note('insights'); };
   // Batch 8 (S2A-4 / ENG-10): the warm now reads the previous business day
   // and the picker's init endpoint -- stubbed here (Util.gs / IR not loaded).
   h.ctx.prevBusinessDayIso_ = function () { return opts.prevBusiness || '2026-08-31'; };
@@ -85,7 +92,7 @@ test('O-1: a run that warmed nothing and failed something records FAILED-ALL, ne
   assert.ok(h.state.props.CACHE_WARM_LAST, 'still stamped');
   // A PARTIAL failure stays ok -- the caches that did warm are real work.
   h.state.props = {};
-  h.ctx.getCompanyOverview = function () {};
+  h.ctx.getCompanyOverview = function () { h.ctx.noteReportCache_('write'); };
   try { h.call('warmReportCaches_'); } finally { Date.now = realNow; }
   assert.match(h.state.props.CACHE_WARM_LAST_RESULT, /^ok \(1 warmed, \d+ failed/);
 });
@@ -122,3 +129,45 @@ test('S2A-4: the second Insights warm is the chip request -- dept window, the pi
   assert.deepEqual(chip2[0].agents, ['Ann', 'Bo']);
 });
 
+
+// DL-9 (broad-scan 2026-10-01): "warmed" means a cache entry was WRITTEN. A
+// payload a skip rule declined to cache (a degraded read) is "served but not
+// cached", an existing entry is "already cached", and the two sticky
+// per-execution read-failure flags are reset before each payload -- so one
+// dept's transient QCD throw no longer leaves every later dept cold.
+test('DL-9: outcomes are counted from the cache, not from the call returning', function () {
+  const r = run({ overviewMin: 0.1, summaryMin: 0.1, outcome: function (kind) {
+    if (kind === 'overview') return 'hit';
+    if (kind === 'summary') return null;   // returned, skip rule declined the put
+    return 'write';
+  } });
+  assert.match(r.result, /^ok \(11 warmed, 1 already cached, 5 served but not cached, /);
+});
+
+test('DL-9: a run in which every payload was served but none cached is FAILED-ALL', function () {
+  const r = run({ overviewMin: 0.1, summaryMin: 0.1, outcome: function () { return null; } });
+  assert.match(r.result, /^FAILED-ALL \(0 warmed, 17 served but not cached/);
+});
+
+test('DL-9: the sticky read-failure flags are reset before EACH payload', function () {
+  const seen = [];
+  const r = run({ overviewMin: 0.1, summaryMin: 0.1, outcome: function (kind) {
+    if (kind !== 'summary') return 'write';
+    seen.push(h.call('qcdSnapshotReadFailed_'));
+    h.call('noteQcdSnapshotReadFailed_', 'test', new Error('transient'));   // this dept's read throws
+    return null;
+  } });
+  assert.deepEqual(seen, [false, false, false, false, false],
+    'each dept starts clean -- pre-DL-9 the first throw stuck for every later dept');
+  assert.ok(r.result);
+});
+
+test('DL-9: the four warmed endpoints note BOTH a cache write and a cache hit', function () {
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  ['Data.gs', 'CompanyOverview.gs', 'InsightsReport.gs', 'QCDReport.gs'].forEach(function (f) {
+    const src = fs.readFileSync(path.join(dash, f), 'utf8');
+    assert.match(src, /noteReportCache_\('write'\)/, f + ' must note its successful put');
+    assert.match(src, /noteReportCache_\('hit'\)/, f + ' must note its cache hit');
+  });
+});

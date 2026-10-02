@@ -329,45 +329,12 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // roster layout there.
   const ROSTER_CANONICAL = loadRosterCanonicalNames_(rawSheet);
 
-  // Drop the WHOLE parenthetical (parens + contents): catches the
-  // nickname-omitted form "Roman Paulose".
-  function stripParens_(name) {
-    return String(name || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
-  }
-  // Drop ONLY the parenthesis characters, KEEP the contents:
-  // "Roman (Robin) Paulose" -> "Roman Robin Paulose" -- the un-parenthesized
-  // nickname form the feed emits (the ~90% orphan case).
-  function flattenParens_(name) {
-    return String(name || '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
-  }
-
+  // PC-1 (broad-scan 2026-10-01): the algorithm moved to the top-level
+  // canonicalizeAgentNameWith_ (below) so the per-call capture writers apply
+  // the SAME rule -- one canonicalizer, not a fifth hand-mirror of INV-24.
+  // This closure keeps its name and behaviour; pipeline-build.test.js pins it.
   function canonicalizeAgentName(rawName) {
-    if (!rawName) return rawName;
-    // Admin-curated overrides (Agent Alias Overrides sheet) take
-    // precedence over both the roster-exact match and the paren
-    // normalization. Lets an admin rename a typo-orphan like
-    // "Sarah Q. Smith" -> "Sarah Smith" without having to add the orphan
-    // form into the roster cell. Loaded inside ROSTER_CANONICAL.aliasMap.
-    if (ROSTER_CANONICAL.aliasMap && ROSTER_CANONICAL.aliasMap[rawName]) {
-      return ROSTER_CANONICAL.aliasMap[rawName];
-    }
-    if (ROSTER_CANONICAL.canonicalSet[rawName]) return rawName;
-    // Match against BOTH normalized forms of every roster name (strip +
-    // flatten, both registered in strippedMap). Union the candidates and
-    // canonicalize ONLY on a unique roster match; ambiguous (>1) or unknown
-    // (0) names are preserved as-is -- never a wrong guess.
-    const keys = [stripParens_(rawName), flattenParens_(rawName)];
-    const seen = {};
-    const cands = [];
-    for (let k = 0; k < keys.length; k++) {
-      const list = keys[k] && ROSTER_CANONICAL.strippedMap[keys[k]];
-      if (!list) continue;
-      for (let j = 0; j < list.length; j++) {
-        if (!seen[list[j]]) { seen[list[j]] = true; cands.push(list[j]); }
-      }
-    }
-    if (cands.length === 1) return cands[0];
-    return rawName;
+    return canonicalizeAgentNameWith_(ROSTER_CANONICAL, rawName);
   }
 
   function timeToSec(val) {
@@ -1406,6 +1373,58 @@ function logPipelineHealth_(ss, event) {
 }
 
 
+// ── INV-24 canonicalization, shared (PC-1, broad-scan 2026-10-01) ────────────
+// Drop the WHOLE parenthetical (parens + contents): catches the nickname-omitted
+// form "Roman Paulose".
+function dqeStripParens_(name) {
+  return String(name || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+}
+// Drop ONLY the parenthesis characters, KEEP the contents:
+// "Roman (Robin) Paulose" -> "Roman Robin Paulose" -- the un-parenthesized
+// nickname form the feed emits (the ~90% orphan case).
+function dqeFlattenParens_(name) {
+  return String(name || '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The INV-24 rule, against a loadRosterCanonicalNames_() result. Admin-curated
+ * overrides (Agent Alias Overrides) win over both the roster-exact match and
+ * the paren normalization; then an exact roster name is kept; then BOTH
+ * normalized forms (strip + flatten) are matched against every roster name's
+ * keys and the name is rewritten ONLY on a UNIQUE roster match -- ambiguous
+ * (>1) or unknown (0) names are preserved as-is, never a wrong guess. Shared by
+ * buildDQEHistoricalData and (cdr-import) the per-call capture writers.
+ */
+function canonicalizeAgentNameWith_(rosterCanonical, rawName) {
+  if (!rawName || !rosterCanonical) return rawName;
+  // Admin-curated overrides (Agent Alias Overrides sheet) take
+  // precedence over both the roster-exact match and the paren
+  // normalization. Lets an admin rename a typo-orphan like
+  // "Sarah Q. Smith" -> "Sarah Smith" without having to add the orphan
+  // form into the roster cell. Loaded inside ROSTER_CANONICAL.aliasMap.
+  if (rosterCanonical.aliasMap && rosterCanonical.aliasMap[rawName]) {
+    return rosterCanonical.aliasMap[rawName];
+  }
+  if (rosterCanonical.canonicalSet && rosterCanonical.canonicalSet[rawName]) return rawName;
+  // Match against BOTH normalized forms of every roster name (strip +
+  // flatten, both registered in strippedMap). Union the candidates and
+  // canonicalize ONLY on a unique roster match; ambiguous (>1) or unknown
+  // (0) names are preserved as-is -- never a wrong guess.
+  const keys = [dqeStripParens_(rawName), dqeFlattenParens_(rawName)];
+  const seen = {};
+  const cands = [];
+  const map = rosterCanonical.strippedMap || {};
+  for (let k = 0; k < keys.length; k++) {
+    const list = keys[k] && map[keys[k]];
+    if (!list) continue;
+    for (let j = 0; j < list.length; j++) {
+      if (!seen[list[j]]) { seen[list[j]] = true; cands.push(list[j]); }
+    }
+  }
+  if (cands.length === 1) return cands[0];
+  return rawName;
+}
+
 // ── Roster canonical-name loader ──────────────────────────────────────────────
 // Reads the "DO NOT EDIT!" roster sheet (Department Dashboard's
 // roster) from the same spreadsheet that holds Raw Data, builds two
@@ -1426,7 +1445,9 @@ function logPipelineHealth_(ss, event) {
 function loadRosterCanonicalNames_(anySheet) {
   const empty = { canonicalSet: {}, strippedMap: {}, aliasMap: {} };
   try {
-    const ss = anySheet ? anySheet.getParent() : SpreadsheetApp.getActive();
+    // PC-1: a Spreadsheet works too (the per-call writers hold no sheet).
+    const ss = !anySheet ? SpreadsheetApp.getActive()
+      : (typeof anySheet.getSheetByName === 'function' ? anySheet : anySheet.getParent());
     const sheet = ss.getSheetByName('DO NOT EDIT!');
     if (!sheet) return empty;
     const lastRow = sheet.getLastRow();

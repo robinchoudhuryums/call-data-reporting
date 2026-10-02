@@ -132,6 +132,22 @@ test('talk>0 counts as answered even when kind was not stamped "answer"', functi
   assert.equal(r.role, 'answered');
 });
 
+test('PC-3: a transfer-provenance event is not a leg of THIS call, so the transferring agent is not credited twice', function () {
+  // The internal transfer record (inboundCalls.js) is prefixed with the
+  // synthetic origin head naming the agent who ANSWERED the customer call --
+  // `transfer:true, origin:true`, "not an in-call leg". Pre-PC-3 that agent's
+  // day listed the customer call AND this record as answered (talk counted twice).
+  const internalRecord = J([
+    { t: '09:00:00', name: 'A_Q_CSR', kind: 'queue', transfer: true, origin: true },
+    { t: '09:00:30', name: 'Ann Agent', kind: 'answer', talk: 285, transfer: true, origin: true },
+    { t: '09:05:20', name: 'A_Q_Billing', kind: 'queue', abandoned: true },
+  ]);
+  assert.equal(h.ctx.agentDayInboundRole_(internalRecord, 'Ann Agent'), null);
+  // ...while a real leg on the same record still counts.
+  const withRealLeg = internalRecord.concat([{ t: '09:06:00', name: 'Ann Agent', kind: 'leg', missed: true, secs: 9 }]);
+  assert.equal(h.ctx.agentDayInboundRole_(withRealLeg, 'Ann Agent').role, 'missed');
+});
+
 test('a queue leg carrying the agent name is not a touch', function () {
   assert.equal(h.ctx.agentDayInboundRole_(J([
     { t: '09:00:00', name: 'A_Q_CSR', kind: 'queue' },

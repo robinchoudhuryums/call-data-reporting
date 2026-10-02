@@ -8,11 +8,11 @@ Entries are ordered roughly by severity / how often they trip people up.
 
 ---
 
-## Source pipeline: `buildDQEHistoricalData.gs` (CDR Report project)
+## Source pipeline: `buildDQEHistoricalData.js` (CDR Report project)
 
 ### Bug 1: TTT included calls outside the work window
 
-**Status:** Fixed (see `apps-script/cdr-report/buildDQEHistoricalData.gs`).
+**Status:** Fixed (see `apps-script/cdr-report/buildDQEHistoricalData.js`).
 
 **Symptom:** An agent's `Total Answered` in `DQE Historical Data` would
 exclude a call (e.g., one that started at 15:01 PST = 17:01 CST, outside the
@@ -197,6 +197,19 @@ are rebuilt (same runbook as above). Pinned by
 `tests/unit/sheet-repairs-merge.test.js`.
 
 ---
+
+## Coerced queue-extension cells (DQE col D) -- detect-only (CR-7, 2026-10-02)
+
+Col D holds an agent's comma-joined queue extensions and coerces like K-AC /
+AD-AF: without the `@` format, `"103,108"` becomes the NUMBER `103108`, which
+every reader splits on commas into ONE bogus extension -- the real ones drop
+out of the dept's ext set and floater recognition (INV-53) shifts with no
+error. The writers protect col D today; old rows may not be. Run
+`previewDqeQueueExtColumn()` (cdr-report, editor; read-only) to count and date
+them. There is deliberately NO automatic repair: `103108` cannot be split back
+with certainty (103+108 or 1031+08), so the fix is to rebuild the listed dates
+from Raw Data (Operator State #56). A numeric cell of five digits or fewer is
+a lossless single extension and reads correctly.
 
 ## Sheets auto-coercion of DATE-shaped strings (writer-side)
 
@@ -528,11 +541,11 @@ section above).
 Historical data sometimes contains rows where `Agent Name` is a system
 entity ("Sales Voicemails", "A_Q_*" queue names, "Normal Call Menu",
 etc.) instead of a real person. These won't be in any dept roster and
-will appear in the dashboard's `whyNoMatches_` diagnostic under
+will appear in the dashboard's `whyNoMatches` diagnostic under
 "Agents in historical NOT in ANY roster".
 
 These are correct rejections — don't add them to any dept roster.
-`buildDQEHistoricalData.gs` has a `DQE_EXCLUDED_AGENTS` allowlist that
+`buildDQEHistoricalData.js` has a `DQE_EXCLUDED_AGENTS` allowlist that
 *should* drop them upstream; missing entries should be added there, not
 worked around downstream.
 
@@ -884,9 +897,9 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v25` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v26` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v15` |
+| `InboundReport.gs` | `inbound:vN:` | `v16` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
@@ -1751,7 +1764,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v25`) on success. Per-(dept,
+constant -- currently `companyOverview:v26`) on success. Per-(dept,
 range) caches (`summary:v22`, `individual:v12`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
@@ -1802,7 +1815,7 @@ queue-level history for the gap is intact. After a Neon-read cutover,
 finish with `backfillDQEHistoryUpsert()`.
 
 **Detection if it recurs.** The DQE-silence watchdog (Operator State #44)
-and the Overview queue-lens badge (companyOverview:v25) both exist because
+and the Overview queue-lens badge (companyOverview:v26) both exist because
 of this incident — the watchdog would have emailed on day 2. The INBOUND
 capture's recognizer (`icIsQueueName_`) reads leg NAMES, not col W, and was
 unaffected — the two recognizers diverge on purpose (see the CLAUDE.md
