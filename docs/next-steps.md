@@ -496,7 +496,7 @@ became. Sizes: S < 1 h, M 2-4 h.
 | CH-4 | Split selectively (see Batch 15) | |
 | LEG-2 | Option B | Leave the frozen legacy spreadsheet; decommission it. |
 
-### Batch 13 — data rules (cdr-import + cdr-report + dashboard)
+### Batch 13 — data rules (cdr-import + cdr-report + dashboard) — IMPLEMENTED 2026-10-02 (block 226; the repair is dated from 2026-08-01 per the owner)
 - **QO-2 (M).** `>=` in both `autoImport.js` writers (daily + bulk), compared
   in INTEGERS (`abnd * 25 >= total`) so float rounding can never decide a
   boundary row; pin both writers. History: a date-gated repair (preview +
@@ -504,8 +504,7 @@ became. Sizes: S < 1 h, M 2-4 h.
   whose stored counts are exactly 4.00% and whose date is on/after the
   0.05 -> 0.04 switch -- the 5% era keeps its meaning -- then re-mirrors those
   dates' `qcd_history.violations` and bumps `qcdAll` so cached reports move.
-  **Needs from the owner: the date the 4% rule took effect** (the code says
-  only "2026-08").
+  The owner dated the 4% rule to August 2026, so the repair starts 2026-08-01.
 - **DX-11 (S).** Fix the CDT column in `conventions.md` to say the source is
   Pacific local time, so the shift is a constant 2 h all year.
 - **PC-12 (S-M).** Outbound roster attribution accepts the parent's

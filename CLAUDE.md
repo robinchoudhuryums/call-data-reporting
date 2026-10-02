@@ -1035,7 +1035,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `AGENT_EMAIL_DOMAINS` Script Property. The client's job is CONSENT -- a
   `dsConfirm_` naming agent and recipient before the send (or, for an agent
   with no row, a single `dsPrompt_` that collects AND confirms with inline
-  validation), which is what catches a typo the domain gate cannot. Sends are Logger-audited plus a
+  validation), which is what catches a typo the domain gate cannot. **AC-2:
+  the server also refuses unless the request's `agents` list is exactly that
+  agent, and writes the agent's figures into the email ITSELF
+  (`irAgentEmailFigures_`, same IR builder, the request's window); the PNG is
+  a supplement it cannot inspect.** Sends are Logger-audited plus a
   `individual:to-agent` usage row (the INV-01 append-only carve-out); the
   agent's copy names the sender. Pinned by `tests/unit/ir-send-to-agent.test.js`.
 - **Client / presentation-layer conventions live in

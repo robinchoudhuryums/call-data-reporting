@@ -1363,9 +1363,10 @@ behind the removed button.
   dept without sub-queues had none. All four KPI cards center their content.
   The company card is titled "Daily Company Aban %" and tiers on its OWN
   ladder — value green ≤3% / amber 3–4% / red >4%, and the RED tier also
-  tints the card (the Queues-in-viol treatment); the 5% queue-violation line
+  tints the card (the Queues-in-viol treatment); the queue-violation line
+  (4.00% OR MORE since QO-2, 2026-10-02; it was 5% when this was written)
   still drives everything else, so the two thresholds are deliberately
-  different numbers. **R18 (owner): the tally unit is EMAIL-WIDE, and the R16d
+  different rules. **R18 (owner): the tally unit is EMAIL-WIDE, and the R16d
   per-section unit is RETIRED.** Per-section reasoning was that blocks
   compare within a section and cross-dept magnitude is the Total column's
   job — but bar length is pre-attentive and a caption is not, so nobody

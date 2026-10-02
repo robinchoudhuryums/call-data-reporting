@@ -21,7 +21,7 @@ const { loadGas } = require('../harness/loadGas');
 // Plus: the send-to-self path is UNCHANGED when sendToAgent is absent.
 
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'EmailKit.gs', 'IndividualReport.gs'],
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'EmailKit.gs', 'IndividualReport.gs'],   // Data.gs: isIsoDate_ (AC-2)
 });
 
 // A-5: the payload must now BE a PNG (magic bytes), not merely a data URL.
@@ -50,6 +50,16 @@ function install(opts) {
              byAgent: {}, allExtensions: {} };
   };
   h.ctx.logReportUsage_ = function () {};
+  // AC-2: the agent's copy carries figures the SERVER computes for exactly
+  // that agent + window. Stubbed here (the IR builder has its own suite);
+  // `figureCalls` records what the send asked it for.
+  figureCalls = [];
+  h.ctx.computeIndividualReport_ = function (dept, from, to, agents) {
+    figureCalls.push({ dept: dept, from: from, to: to, agents: Array.from(agents) });
+    return { dateLabel: 'Sep 1, 2026 - Sep 7, 2026',
+             summaryData: [{ name: agents[0], stats: { rung: 44, missed: 3, answered: 41, pct: '93.2%',
+                                                      ttt: '2:10:00', att: '0:03:10' } }] };
+  };
   h.ctx.openSpreadsheet_ = function () {
     return {
       getSheetByName: function (n) {
@@ -70,9 +80,16 @@ function install(opts) {
   };
 }
 
+let figureCalls = [];
+
+// The client's request shape since AC-2: an agent send also carries the
+// report's agent list and window (script-6-ir.html::irEmailToAgent_).
 function send(req) {
-  return h.call('sendIndividualReportEmail',
-    Object.assign({ imageBase64: PNG, dateLabel: 'Aug 2026' }, req));
+  const base = { imageBase64: PNG, dateLabel: 'Aug 2026' };
+  if (req && req.sendToAgent && req.agentName && !('agents' in req)) {
+    base.agents = [req.agentName]; base.from = '2026-09-01'; base.to = '2026-09-07';
+  }
+  return h.call('sendIndividualReportEmail', Object.assign(base, req));
 }
 
 test('send-to-self is UNCHANGED when sendToAgent is absent', function () {
@@ -234,4 +251,60 @@ test('SEC-3: an agent (or any non-manager role) cannot send an IR email', functi
   assert.equal(h.state.sentEmails.length, 0);
   install({ email: 'admin@co.com', user: { role: 'admin', email: 'admin@co.com', department: null, departments: ['CSR', 'Sales'] } });
   assert.equal(send({}).to, 'admin@co.com', 'admins still send to themselves');
+});
+
+
+// ---- AC-2 (owner ruling 2026-10-02, option B) --------------------------------
+test('AC-2: the server refuses an agent send whose report is not exactly that one agent', function () {
+  install({});
+  [{ agents: ['Anna Smith', 'Bob Jones'] }, { agents: ['Bob Jones'] }, { agents: [] }, { agents: null }]
+    .forEach(function (extra) {
+      assert.throws(function () {
+        send(Object.assign({ sendToAgent: true, department: 'CSR', agentName: 'Anna Smith',
+                             from: '2026-09-01', to: '2026-09-07' }, extra));
+      }, /ONE agent/, JSON.stringify(extra));
+    });
+  assert.equal(h.state.sentEmails.length, 0, 'nothing was sent');
+});
+
+test('AC-2: a missing, inverted or over-cap window is refused', function () {
+  install({});
+  [{ from: '', to: '2026-09-07' }, { from: '2026-09-08', to: '2026-09-07' }, { from: 'Sept', to: '2026-09-07' }]
+    .forEach(function (w) {
+      assert.throws(function () {
+        send(Object.assign({ sendToAgent: true, department: 'CSR', agentName: 'Anna Smith', agents: ['Anna Smith'] }, w));
+      }, /window is missing or invalid/, JSON.stringify(w));
+    });
+  assert.throws(function () {
+    send({ sendToAgent: true, department: 'CSR', agentName: 'Anna Smith', agents: ['Anna Smith'],
+           from: '2020-01-01', to: '2026-09-07' });
+  }, /capped/);
+});
+
+test('AC-2: the agent copy carries SERVER-computed figures for exactly that agent and window, and a server label', function () {
+  install({});
+  send({ sendToAgent: true, department: 'CSR', agentName: 'Anna Smith', dateLabel: 'CLIENT LABEL' });
+  assert.deepEqual(figureCalls, [{ dept: 'CSR', from: '2026-09-01', to: '2026-09-07', agents: ['Anna Smith'] }]);
+  const mail = h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); })[0];
+  assert.equal(mail.subject, 'Individual Report: Sep 1, 2026 - Sep 7, 2026', 'subject from the server window, not the client');
+  assert.match(mail.htmlBody, />41</, 'answered');
+  assert.match(mail.htmlBody, />93\.2%</, 'answer rate');
+  assert.match(mail.htmlBody, />0:03:10</, 'ATT');
+  assert.match(mail.htmlBody, /cid:reportImg/, 'the image still rides along as a supplement');
+  assert.doesNotMatch(mail.htmlBody, /CLIENT LABEL/);
+});
+
+test('AC-2: send-to-self takes none of this (no figures, the client label as before)', function () {
+  install({});
+  send({ dateLabel: 'My label' });
+  assert.equal(figureCalls.length, 0);
+  assert.equal(h.state.sentEmails[0].subject, 'Individual Report: My label');
+});
+
+test('AC-2: the client sends the report\'s agent list and window with every agent send (source pin)', function () {
+  const fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-6-ir.html'), 'utf8');
+  const start = src.indexOf('function irEmailToAgent_(');
+  const body = src.slice(start, src.indexOf('\n  }\n', start));
+  assert.match(body, /agents: agents\.slice\(\), from: meta\.from \|\| '', to: meta\.to \|\| ''/);
 });

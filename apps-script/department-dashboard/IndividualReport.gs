@@ -959,10 +959,16 @@ function sendIndividualReportEmail(req) {
   // Absent `sendToAgent`, this is the unchanged send-to-self path.
   var recipient = email;
   var sentToAgent = null;
+  var agentFigures = null;
   if (req && req.sendToAgent) {
     var resolved = irResolveAgentRecipient_(user, req);
     recipient = resolved.to;
     sentToAgent = resolved.agentName;
+    // AC-2 (owner ruling 2026-10-02, option B): the one-agent rule and the
+    // email's FIGURES are server-side now. The image stays an attachment, but
+    // the numbers the agent reads in the email body are computed here for
+    // exactly that agent and window -- never taken from the client.
+    agentFigures = irAgentEmailFigures_(String(req.department || '').trim(), sentToAgent, req);
   }
 
   // A-5 (broad-scan 2026-09-17): the client supplies the image AND the
@@ -972,7 +978,9 @@ function sendIndividualReportEmail(req) {
   // label is one line of printable text, capped -- a header-injection or a
   // multi-line "subject" is refused, not sent.
   const dataUrl = String((req && req.imageBase64) || '');
-  const dateLabel = irSanitizeDateLabel_(req && req.dateLabel);
+  // AC-2: an agent's copy is labelled from the server's own window, not the
+  // client's free text.
+  const dateLabel = agentFigures ? agentFigures.dateLabel : irSanitizeDateLabel_(req && req.dateLabel);
   if (!dataUrl) throw new Error('No image payload.');
   const m = /^data:image\/png;base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl);
   if (!m) throw new Error('Malformed image payload (expected a base64 PNG data URL).');
@@ -995,9 +1003,10 @@ function sendIndividualReportEmail(req) {
       band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
       kicker: 'Call Data · Individual report',
       title: dateLabel,
-      subtitle: 'Visual snapshot of the on-screen report',
+      subtitle: agentFigures ? ('Your figures for ' + sentToAgent) : 'Visual snapshot of the on-screen report',
       preheader: 'Individual report snapshot · ' + dateLabel,
-      rowsHtml: ekRow_('<div style="text-align:center;border:1px solid ' + EK_C_.line + ';border-radius:10px;padding:10px;">'
+      rowsHtml: (agentFigures ? irAgentFiguresRowsHtml_(agentFigures) : '')
+        + ekRow_('<div style="text-align:center;border:1px solid ' + EK_C_.line + ';border-radius:10px;padding:10px;">'
         + '<img src="cid:reportImg" style="width:100%;max-width:548px;height:auto;" alt="Individual report snapshot">'
         + '</div>', '18px 26px 6px'),
       ctaUrl: dashboardUrl ? dashboardUrl + '#/report/individual' : '',
@@ -1079,6 +1088,57 @@ function irResolveAgentRecipient_(user, req) {
       + allowed.map(function (d) { return '@' + d; }).join(', ') + ').');
   }
   return { to: typed, agentName: agentName, source: 'typed' };
+}
+
+/**
+ * AC-2 (owner ruling 2026-10-02, option B): the server-side half of "Email to
+ * agent". The client used to be the only thing enforcing "exactly one agent on
+ * screen", and the email's content was the client's PNG alone -- so a crafted
+ * request could mail an agent a picture of teammates' figures. Now:
+ *   1. the request must name the report's agent list, and it must be EXACTLY
+ *      the one agent being emailed (refused otherwise);
+ *   2. the window (from/to) must be valid and inside the report range cap;
+ *   3. that agent's figures are computed HERE with the same IR builder the
+ *      on-screen report uses, and written into the email text -- the agent's
+ *      authoritative numbers never come from the client.
+ * The PNG still rides along as a visual supplement. The server cannot inspect
+ * what an image shows, so this narrows the image path rather than closing it;
+ * closing it means rendering the whole email server-side (option C, not
+ * chosen). Returns { dateLabel, from, to, stats }.
+ */
+function irAgentEmailFigures_(dept, agentName, req) {
+  const agents = (req && Array.isArray(req.agents)) ? req.agents.map(function (a) { return String(a).trim(); }) : null;
+  if (!agents || agents.length !== 1 || agents[0] !== agentName) {
+    throw new Error('Email to agent sends ONE agent\'s own report -- show only ' + agentName
+      + ' in the report, then send.');
+  }
+  const from = String((req && req.from) || '').trim();
+  const to = String((req && req.to) || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
+    throw new Error('The report window is missing or invalid -- generate the report again, then send.');
+  }
+  assertReportRangeCap_(from, to, null, 'The report window');
+  const data = computeIndividualReport_(dept, from, to, [agentName], getRosterForDepartment_(dept));
+  const row = ((data && data.summaryData) || []).filter(function (s) { return s.name === agentName; })[0] || null;
+  return {
+    dateLabel: (data && data.dateLabel) || (from + ' - ' + to),
+    from: from, to: to,
+    stats: row ? row.stats : { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
+  };
+}
+
+/** AC-2: the server-computed figures block at the top of an agent's copy. */
+function irAgentFiguresRowsHtml_(f) {
+  const st = f.stats || {};
+  return ekRow_(ekTilesHtml_([
+    { label: 'Answered', value: ekFmtInt_(st.answered) },
+    { label: 'Missed', value: ekFmtInt_(st.missed) },
+    { label: 'Answer rate', value: st.pct || '' },
+    { label: 'Avg talk time', value: st.att || '' },
+  ]), '18px 26px 4px')
+    + ekRow_('<div style="font:12px ' + EK_SANS_ + ';color:' + EK_C_.mut + ';">'
+      + 'Figures for ' + ekEsc_(f.dateLabel) + ', from the Call Data dashboard. The image below is the report as '
+      + 'the sender saw it.</div>', '4px 26px 2px');
 }
 
 /** A-5: the inline-image cap for the IR email (a rendered report is ~0.3-2 MB). */

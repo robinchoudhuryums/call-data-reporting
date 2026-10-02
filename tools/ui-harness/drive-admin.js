@@ -123,6 +123,35 @@ const MODALS = [
       }));
       record('Outbound: a callback header sorts from the keyboard (aria-sort set)',
         sorted.aria === 'descending' && /Sales/.test(sorted.first || ''), JSON.stringify(sorted));
+
+      // PC-12: a PARENT dept's view renders its agent rows GROUPED per dept
+      // (parent first, then its sub-queue), each heading carrying a subtotal,
+      // and its rows directly beneath it. The company view above is flat.
+      const hasSales = await page.evaluate(() => {
+        const sel = document.getElementById('outbound-dept');
+        if (!sel) return false;
+        if (!Array.from(sel.options).some((o) => o.value === 'Sales')) {
+          const o = document.createElement('option'); o.value = 'Sales'; o.textContent = 'Sales'; sel.appendChild(o);
+        }
+        sel.value = 'Sales';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      });
+      // The setup form (and its Generate button) is hidden once a report has
+      // rendered, so dispatch the click through the DOM rather than waiting on
+      // a visible target.
+      await page.evaluate(() => { const b = document.getElementById('outbound-generate-btn'); if (b) b.click(); });
+      await page.waitForTimeout(1500);
+      const groups = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#outbound-agent-tbody tr'));
+        return rows.map((tr) => tr.classList.contains('ob-group-head')
+          ? 'H:' + tr.cells[0].textContent.replace(/\s+/g, ' ').trim() + '|' + tr.cells[1].textContent.trim()
+          : 'R:' + tr.cells[0].textContent.trim());
+      });
+      record('Outbound: a parent dept view groups its rows per dept (PC-12), headings carry subtotals',
+        hasSales && JSON.stringify(groups) === JSON.stringify(
+          ['H:Sales 2 agents|38', 'R:Sam Seller', 'R:Sue Seller', 'H:PAP 1 agent|12', 'R:Pat Papper']),
+        JSON.stringify(groups));
     } } },
   // 6d: the agent-day view. Its RPCs (getAgentDay + getIndividualReportInit
   // for the picker) are mocked in build-harness.js. Like Outbound it opens on

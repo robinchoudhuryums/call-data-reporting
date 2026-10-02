@@ -103,6 +103,7 @@ tests/
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
+    qcd-violation-rule.test.js QO-2: a QCD violation is 4.00% OR MORE -- cdr-import's qcdViolationFlag_ (integers, both writers) and cdr-report's date-gated repairQcdViolationFlags (preview, apply, idempotent Neon re-mirror)
     diagnostics-tools.test.js Diagnostics.gs: CH-1 -- the editor-run tools are public (the Run dropdown hides `_` names) and each refuses a non-admin before reading
     harness-strictness.test.js  the fakes' platform limits themselves (HT-2/3/4/5): setValues shape + display update, cache caps, formatDate tokens, triggers / lock / property limits -- loosening a fake fails here
     deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (DEP-1), CI on Node 22 (HT-6)

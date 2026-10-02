@@ -1943,9 +1943,15 @@
     const note = $('outbound-attribution-note');
     if (note) {
       const bits = [];
+      const subDepts = (meta.scopeDepts || []).slice(1);   // PC-12: the sub-queues this view includes
+      if (!meta.companyView && subDepts.length) {
+        bits.push('Includes the ' + subDepts.join(', ') + ' sub-queue roster' + (subDepts.length === 1 ? '' : 's')
+          + ', grouped under each department.');
+      }
       if (!meta.companyView && meta.offRosterAgents) {
         bits.push(fmtNumber(meta.offRosterAgents) + ' dialing agent(s) not on the '
-          + (meta.department || '') + ' roster are excluded from this dept view (see All departments).');
+          + (meta.department || '') + (subDepts.length ? ' or sub-queue rosters' : ' roster')
+          + ' are excluded from this dept view (see All departments).');
       }
       if (meta.companyView && meta.unrosteredAgents) {
         bits.push(fmtNumber(meta.unrosteredAgents) + ' agent(s) on no roster are shown as "Unrostered".');
@@ -1961,10 +1967,17 @@
     // home) or misattribute (pick a primary); the flat table's multi-home
     // "Roster dept" label dodges both honestly. Don't "upgrade" this to
     // cards without a new ruling.
+    // PC-12: a parent dept's view also covers its sub-queues' rosters, so the
+    // rows are GROUPED per dept (the My Department combined-view shape: each
+    // group a heading with its own subtotal, the sort applied within each
+    // group). A single-dept view renders exactly as before.
+    const scopeDepts = meta.companyView ? [] : (meta.scopeDepts || []);
+    const grouped = scopeDepts.length > 1;
     const tb = $('outbound-agent-tbody');
     if (tb) {
       srtApply_('outbound-agent-tbody', agents, function (sorted) {
-        tb.innerHTML = sorted.map(outboundAgentRowHtml_).join('');
+        tb.innerHTML = grouped ? outboundGroupedRowsHtml_(sorted, scopeDepts)
+                               : sorted.map(outboundAgentRowHtml_).join('');
       }, function (r) { return Number(r.obTotal) || 0; });
     }
     const agentSection = $('outbound-agent-section');
@@ -2133,6 +2146,32 @@
       }
     }
     outboundPaintCbDept_();
+  }
+
+  // PC-12: one heading row (dept, agent count, subtotals) per in-scope dept
+  // that has agents, then that dept's rows in the current sort order.
+  function outboundGroupedRowsHtml_(sorted, scopeDepts) {
+    return scopeDepts.map(function (d) {
+      const rows = sorted.filter(function (r) { return r.scopeDept === d; });
+      if (!rows.length) return '';
+      const t = rows.reduce(function (acc, r) {
+        acc.obTotal += Number(r.obTotal) || 0; acc.obConnected += Number(r.obConnected) || 0;
+        acc.obTalkSec += Number(r.obTalkSec) || 0; acc.attempts += Number(r.attempts) || 0;
+        return acc;
+      }, { obTotal: 0, obConnected: 0, obTalkSec: 0, attempts: 0 });
+      const rate = t.obTotal ? Math.round(t.obConnected / t.obTotal * 1000) / 10 : null;
+      const att = t.obConnected ? Math.round(t.obTalkSec / t.obConnected) : 0;
+      return '<tr class="ob-group-head">'
+        + '<td colspan="2">' + escapeHtml(d) + ' <span class="ob-group-count">' + rows.length
+        + ' agent' + (rows.length === 1 ? '' : 's') + '</span></td>'
+        + '<td class="num">' + fmtNumber(t.obTotal) + '</td>'
+        + '<td class="num">' + fmtNumber(t.obConnected) + '</td>'
+        + '<td class="num">' + (rate != null ? rate + '%' : '—') + '</td>'
+        + '<td class="num">' + fmtDuration(t.obTalkSec) + '</td>'
+        + '<td class="num">' + fmtDuration(att) + '</td>'
+        + '<td class="num">' + fmtNumber(t.attempts) + '</td>'
+        + '</tr>' + rows.map(outboundAgentRowHtml_).join('');
+    }).join('');
   }
 
   function outboundAgentRowHtml_(r) {

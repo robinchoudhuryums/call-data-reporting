@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — rulings Batch 13 IMPLEMENTED (block 226).** QO-2 (violation =
+  4.00% or more: cdr-import qcdViolationFlag_ in integers + cdr-report's
+  date-gated repairQcdViolationFlags from 2026-08-01), DX-11 (conventions:
+  Pacific local, docs only), PC-12 (parent Outbound view includes sub-queue
+  rosters, grouped; outboundReport:v7), AC-2 (Email to agent: server enforces
+  one agent + writes the figures). 2133/2133 + ci:ui green. **Owner-side:**
+  deploy cdr-import + dashboard (blocking) and cdr-report, then
+  previewQcdViolationFlags -> repairQcdViolationFlags. **Where I left off:**
+  committed + pushed on claude/optimistic-lamport-92xm9l, no PR; next is
+  Batch 14 (ESC-D8 backup scrub, CL-23 back/forward).
 - **2026-10-02 — owner RULINGS on the scan's nine deferred items; PR #351 (Batches
   1-12) MERGED.** Rulings + the three batches they became are in
   docs/next-steps.md "Rulings round": DX-11 code correct (Pacific local, doc
