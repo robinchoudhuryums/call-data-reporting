@@ -713,9 +713,18 @@
         if (__tok !== heatLoadSeq_[containerId]) return;   // superseded by a newer load
         renderAbandonHeatmap_(containerId, data);
       })
-      .withFailureHandler(function () {
+      .withFailureHandler(function (err) {
         if (__tok !== heatLoadSeq_[containerId]) return;   // a newer load owns the panel
-        el.style.display = 'none'; el.innerHTML = '';
+        // CL-6: a FAILED load says so (with Retry) -- it used to hide the panel,
+        // indistinguishable from "nothing to show". The quiet hide stays for
+        // the genuinely-empty cases in renderAbandonHeatmap_. No beacon: a
+        // panel with its own visible error state does not report (R19 rule).
+        el.style.display = '';
+        el.innerHTML = '<div class="ds-note" role="alert">Couldn\u2019t load the abandon heatmap: '
+          + escapeHtml((err && err.message) ? err.message : String(err))
+          + ' <button type="button" class="link-btn ds-heatmap-retry">Retry</button></div>';
+        var retry = el.querySelector('.ds-heatmap-retry');
+        if (retry) retry.addEventListener('click', function () { loadAbandonHeatmap_(containerId, dept, from, to); });
       })
       .getInboundHeatmap({ department: dept || '', from: from, to: to });
   }

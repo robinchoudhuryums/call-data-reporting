@@ -49,6 +49,22 @@ template-EVALUATING `include_` (Code.gs). Everything a maintainer needs:
   assembler — INV-17 concerns REMOVED files only).
 - The fragment map (name → contents) lives in script.html's header comment —
   that comment is the canonical index; keep it current when fragments change.
+- **Boot is guarded per step (CL-18, broad-scan 2026-10-01).** The page
+  enters through `bootInit_()` (script-11), never a bare `init()`, and every
+  surface init inside `init()` runs as `initStep_('<name>', fn)` (script-2):
+  a throwing step is recorded, logged, beaconed (`boot-failure`) and skipped,
+  the rest of boot carries on, and `bootFailureNotice_` puts a `role=alert`
+  note at the top of the page naming the failed surfaces. A throw outside
+  the guarded block hides the Overview skeleton and says the dashboard failed
+  to start. **A new surface init goes inside the guarded block as an
+  `initStep_` call** -- `client-correctness.test.js` counts them and fails
+  on a bare call there.
+- **An `'error'` toast with no duration is STICKY (CL-4).** `showToast(msg,
+  'error')` stays until its ✕ is clicked, is `role=alert`, and its text is
+  selectable; at most three stack. Pass a duration (`showToast(msg, 'error',
+  4000)`) only for an INPUT nudge ("pick a date first") -- a failure must stay
+  readable. A failure should ALSO land in the surface's own status line when
+  it has one; the toast is the fallback, not the record.
 
 These moved because they describe HOW A SURFACE IS BUILT rather than a trap that
 bites unrelated work. The client traps that CAN bite you without warning stayed

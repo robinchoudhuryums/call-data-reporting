@@ -357,8 +357,16 @@
     const base = SHARE_STATE_['/report/insights'];
     SHARE_STATE_['/report/insights'] = {
       collect: function () { return base.collect(); },
-      apply: function (params) {
+      apply: function (params, opts) {
         base.apply(params || {});
+        // CL-17: the dept controls are the page's ONE date authority (M2/M4),
+        // so a share / digest link that set only ins-from/ins-to was undone:
+        // the async latest-date snap rewrote the dept window and
+        // insSyncToDeptWindow_ re-ran Insights over the latest day. Carry the
+        // link's window into the dept controls and mark it user-chosen (the
+        // C1-10 / ovRouteToDept_ pattern). A saved view applied from inside
+        // the open region passes keepDeptWindow -- it runs the report itself.
+        if (!(opts && opts.keepDeptWindow)) insCarryLinkWindowToDept_(params);
         if (params && (params.view === 'simple' || params.view === 'detailed')) {
           const open = params.view === 'detailed';
           if (typeof insFoldSet_ === 'function') {
@@ -370,6 +378,22 @@
       },
     };
   })();
+
+  function insCarryLinkWindowToDept_(params) {
+    var lf = String((params && params.from) || ''), lt = String((params && params.to) || '');
+    var iso = /^\d{4}-\d{2}-\d{2}$/;
+    if (!iso.test(lf) || !iso.test(lt) || lf > lt) return;
+    var df = $('from-date'), dt = $('to-date');
+    if (!df || !dt) return;
+    var moved = df.value !== lf || dt.value !== lt;
+    df.value = lf;
+    dt.value = lt;
+    datesTouched_ = true;   // C1-2: the init latest-date snap must not undo the link
+    if (typeof clearActivePreset_ === 'function') clearActivePreset_();
+    // The router already dispatched the dept summary for the OLD window;
+    // re-fetch for the linked one (refresh's token drops the stale reply).
+    if (moved && document.body.getAttribute('data-page') === 'dept' && typeof refresh === 'function') refresh();
+  }
 
   // Open-in-new-tab buttons on each report modal. Builds the target
   // URL from window.__DASHBOARD_URL__ (DASHBOARD_URL Script Property)

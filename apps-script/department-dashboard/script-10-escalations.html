@@ -990,7 +990,12 @@
       escRowError_(id, '');
       google.script.run
         .withSuccessHandler(function () { showToast(dept + ' restored to the escalation', 'success'); escLoad_(); })
-        .withFailureHandler(function (e) { showToast((e && e.message) ? e.message : String(e), 'error'); })
+        .withFailureHandler(function (e) {
+          // CL-4: on the card as well as the (now sticky) toast.
+          var msg = (e && e.message) ? e.message : String(e);
+          escRowError_(id, 'Restore failed: ' + msg);
+          showToast('Restore failed: ' + msg, 'error');
+        })
         .restoreEscalationDepartment({ id: id, note: note || '' });
     });
   }

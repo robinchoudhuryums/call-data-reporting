@@ -1192,18 +1192,47 @@
     return { from: iso(s), to: iso(e) };
   }
 
+  // CL-4 (broad-scan 2026-10-01): an ERROR toast with no explicit duration is
+  // STICKY -- it stays until dismissed (✕), is announced (role=alert) and its
+  // text is selectable, because a failure that vanished in 3 s was, for
+  // several surfaces, the only report the user ever got. A caller that is
+  // only flagging bad INPUT ("pick a date first") passes a duration and stays
+  // transient. At most TOAST_STICKY_MAX_ stack; the oldest goes first.
+  var TOAST_STICKY_MAX_ = 3;
   function showToast(msg, kind, durationMs) {
     var container = $('toast-container');
     if (!container) return;
     var el = document.createElement('div');
     el.className = 'toast' + (kind ? ' toast-' + kind : '');
-    el.textContent = msg;
-    container.appendChild(el);
-    requestAnimationFrame(function () { el.classList.add('toast-visible'); });
-    setTimeout(function () {
+    var sticky = kind === 'error' && durationMs == null;
+    var remove = function () {
       el.classList.remove('toast-visible');
       setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
-    }, durationMs || 3000);
+    };
+    if (sticky) {
+      el.classList.add('toast-sticky');
+      el.setAttribute('role', 'alert');
+      var text = document.createElement('span');
+      text.className = 'toast-text';
+      text.textContent = msg;
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'toast-close';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.textContent = '\u2715';
+      close.addEventListener('click', remove);
+      el.appendChild(text);
+      el.appendChild(close);
+      var stuck = container.querySelectorAll('.toast-sticky');
+      for (var i = 0; i <= stuck.length - TOAST_STICKY_MAX_; i++) {
+        if (stuck[i].parentNode) stuck[i].parentNode.removeChild(stuck[i]);
+      }
+    } else {
+      el.textContent = msg;
+    }
+    container.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('toast-visible'); });
+    if (!sticky) setTimeout(remove, durationMs || 3000);
   }
 
   /**

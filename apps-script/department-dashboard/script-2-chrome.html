@@ -7,8 +7,18 @@
   // dept's non-admin data like an admin, but NOT admin surfaces. Use this for
   // DATA-BREADTH gates (dept selector, cross-dept routing); admin-SURFACE gates
   // stay `USER.role === 'admin'`, which excludes this role automatically.
-  function isAllDeptViewer_() {
+  //
+  // CL-16: while an admin PREVIEWS a manager (View as, viewAsDept_) they are
+  // that dept's manager for every breadth gate -- a chart point / tile click on
+  // another dept's line used to route there while still marked as previewing.
+  // canPickDept_ deliberately reads the RAW role (isAllDeptRole_): the preview
+  // pins the header selector to the previewed dept and getRequestedDept must
+  // keep reading it, or a dept-less admin would request no dept at all.
+  function isAllDeptRole_() {
     return typeof USER !== 'undefined' && !!USER && (USER.role === 'admin' || USER.allDepts === true);
+  }
+  function isAllDeptViewer_() {
+    return isAllDeptRole_() && !(typeof viewAsDept_ !== 'undefined' && viewAsDept_);
   }
   // Tier C: who gets the header dept SELECTOR. Admins + all-dept managers pick
   // any dept; a MULTI-dept manager (>1 assigned dept, allDepts false) picks
@@ -19,7 +29,7 @@
   // stay isAllDeptViewer_-gated (the server rejects a non-assigned dept
   // regardless, so a multi-dept manager just uses the selector).
   function canPickDept_() {
-    return isAllDeptViewer_()
+    return isAllDeptRole_()
       || (typeof USER !== 'undefined' && !!USER && USER.role === 'manager'
           && !!USER.departments && USER.departments.length > 1);
   }
@@ -47,6 +57,51 @@
         if (localStorage.getItem(dead[i]) !== null) localStorage.removeItem(dead[i]);
       }
     } catch (e) { /* storage unavailable -- nothing to tidy */ }
+  }
+
+  // CL-18: boot guard. A step that throws is recorded, logged, beaconed
+  // (reportClientIssue_ -- the admins hear about it) and skipped; the rest
+  // of boot carries on. bootFailureNotice_ then says so ON the page.
+  var bootFailures_ = [];
+  function initStep_(name, fn) {
+    try { fn(); }
+    catch (e) {
+      bootFailures_.push(name);
+      try { console.error('[boot] ' + name + ' failed', e); } catch (_) {}
+      reportClientIssue_('boot-failure', name + ': ' + ((e && e.message) || String(e)),
+        e && e.stack);
+    }
+  }
+  // fatal=true: init() itself threw outside a guarded step, so no page will
+  // load -- also hide the Overview skeleton, the one thing on screen.
+  function bootFailureNotice_(fatal) {
+    if (!fatal && !bootFailures_.length) return;
+    try {
+      var box = $('boot-failure-note');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'boot-failure-note';
+        box.className = 'ds-note boot-failure-note';
+        box.setAttribute('role', 'alert');
+        document.body.insertBefore(box, document.body.firstChild);
+      }
+      box.textContent = fatal
+        ? 'The dashboard failed to start. Reload the page; if it keeps happening, the admins have been notified.'
+        : 'Part of the dashboard failed to load (' + bootFailures_.join(', ')
+          + '). Everything else works; reload the page to retry. The admins have been notified.';
+      if (fatal) {
+        var ov = $('ov-loading');
+        if (ov) ov.style.display = 'none';
+      }
+    } catch (e) { /* the notice must never throw */ }
+  }
+  function bootInit_() {
+    try { init(); }
+    catch (e) {
+      try { console.error('[boot] init failed', e); } catch (_) {}
+      reportClientIssue_('boot-failure', 'init: ' + ((e && e.message) || String(e)), e && e.stack);
+      bootFailureNotice_(true);
+    }
   }
 
   function init() {
@@ -425,38 +480,42 @@
     var deptBucketClose = $('dept-bucket-detail-close');
     if (deptBucketClose) deptBucketClose.addEventListener('click', function () { deptMissedBucketDetail_.hide(); });
 
-    initHelpModal();
-    loadEscBadge_();
-    initSettingsModal();
-    initCompanyOverview();
-    initIndividualReport();
-    initInsightsReport();
-    initInboundReport();
-    initDirectCallReport();
-    initOutboundReport();   // Batch G: outbound / callback report (admin-vetted)
-    initAlerts();
-    initOrphanFix();
-    initDeptConfig();
-    initAccessControl();
-    initCallerLookup();
-    initAgentDay();          // 6d
-    initEscalations();
-    initTour_();
-    initQcdAllDept_();
-    initSystemHealth_();
-    initCoaching_();   // F-e: coaching worklist (admin-only until released)
+    // CL-18 (broad-scan 2026-10-01): each step runs under initStep_, so one
+    // throw costs that one surface -- never the rest of boot (a single
+    // throw used to leave the loading skeleton up forever, no message).
+    initStep_('initHelpModal', initHelpModal);
+    initStep_('loadEscBadge_', loadEscBadge_);
+    initStep_('initSettingsModal', initSettingsModal);
+    initStep_('initCompanyOverview', initCompanyOverview);
+    initStep_('initIndividualReport', initIndividualReport);
+    initStep_('initInsightsReport', initInsightsReport);
+    initStep_('initInboundReport', initInboundReport);
+    initStep_('initDirectCallReport', initDirectCallReport);
+    initStep_('initOutboundReport', initOutboundReport);   // Batch G: outbound / callback report (admin-vetted)
+    initStep_('initAlerts', initAlerts);
+    initStep_('initOrphanFix', initOrphanFix);
+    initStep_('initDeptConfig', initDeptConfig);
+    initStep_('initAccessControl', initAccessControl);
+    initStep_('initCallerLookup', initCallerLookup);
+    initStep_('initAgentDay', initAgentDay);          // 6d
+    initStep_('initEscalations', initEscalations);
+    initStep_('initTour_', initTour_);
+    initStep_('initQcdAllDept_', initQcdAllDept_);
+    initStep_('initSystemHealth_', initSystemHealth_);
+    initStep_('initCoaching_', initCoaching_);   // F-e: coaching worklist (admin-only until released)
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
-    initRouter();
-    initOpenInNewTabButtons_();
-    initWorkWindowPill_();
-    initOverviewLauncher_();
-    initMetricGlossary_();
-    initCountUp_();   // R10-3: KPI count-up load animation (reduced-motion aware)
-    ovWireTrendCollapse_();   // R11-B5: collapsible Overview chart band
-    initChartHelp_();         // R11-B8: chart-tips popovers
-    initGlossTooltip_();
-    initDateRangeLinks_();
+    initStep_('initRouter', initRouter);
+    initStep_('initOpenInNewTabButtons_', initOpenInNewTabButtons_);
+    initStep_('initWorkWindowPill_', initWorkWindowPill_);
+    initStep_('initOverviewLauncher_', initOverviewLauncher_);
+    initStep_('initMetricGlossary_', initMetricGlossary_);
+    initStep_('initCountUp_', initCountUp_);   // R10-3: KPI count-up load animation (reduced-motion aware)
+    initStep_('ovWireTrendCollapse_', ovWireTrendCollapse_);   // R11-B5: collapsible Overview chart band
+    initStep_('initChartHelp_', initChartHelp_);         // R11-B8: chart-tips popovers
+    initStep_('initGlossTooltip_', initGlossTooltip_);
+    initStep_('initDateRangeLinks_', initDateRangeLinks_);
+    bootFailureNotice_(false);
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table

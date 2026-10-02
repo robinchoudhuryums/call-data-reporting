@@ -327,7 +327,14 @@
     alRsStatus_('loading', 'Saving ' + email + '…');
 
     // Route to the existing per-report RPCs; both fire if both are ticked.
+    // CL-22: each task carries its label, so a failure on the SECOND says the
+    // first one DID save (and the lists reload to show it) -- the old
+    // "Save failed" read as if nothing had been written.
     const tasks = [];
+    const labels = [];
+    const saved = [];
+    if (wantDigest) labels.push('Manager Digest');
+    if (wantQueue) labels.push('Daily Call Queue Report');
     if (wantDigest) tasks.push(function (next) {
       google.script.run
         .withSuccessHandler(function () { next(); })
@@ -350,9 +357,17 @@
     (function run(err) {
       if (err) {
         if (btn) btn.disabled = false;
-        alRsStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+        const why = (err && err.message ? err.message : String(err));
+        if (saved.length) {
+          alRsStatus_('error', 'Partly saved: the ' + saved.join(' and ') + ' subscription for ' + email
+            + ' was saved, but the ' + labels[i - 1] + ' save failed: ' + why);
+          alLoadInit_();   // show the half that did save
+        } else {
+          alRsStatus_('error', 'Save failed: ' + why);
+        }
         return;
       }
+      if (i > 0) saved.push(labels[i - 1]);
       if (i >= tasks.length) {
         if (btn) btn.disabled = false;
         showToast('Saved subscriber ' + email, 'success');
@@ -2241,10 +2256,14 @@
     el.style.display = '';
   }
 
-  function acLoadInit_() {
+  // CL-15: preserveStatus keeps the save/remove result across the reload (the
+  // Orphan Fix pattern, ofLoadInit_) -- the write paths set a message that can
+  // carry a warning (S2B-1 dormant row, S2B-6 canonical address) and then
+  // reload, and the reload's clear used to wipe it before it could be read.
+  function acLoadInit_(preserveStatus) {
     $('ac-loading').style.display = '';
     $('ac-body').style.display = 'none';
-    acSetStatus_(null);
+    if (!preserveStatus) acSetStatus_(null);
     google.script.run
       .withSuccessHandler(function (data) {
         $('ac-loading').style.display = 'none';
@@ -2253,10 +2272,10 @@
         acRenderDeptOptions_(acLastInit.departments || []);
         acRenderRows_(acLastInit.managers || []);
         acRenderAgents_();   // agent role Phase B
-        acClearForm_();
+        acClearForm_(preserveStatus);
       })
       .withFailureHandler(function (err) {
-        adminInitError_('ac-loading', err, acLoadInit_);   // C2-7
+        adminInitError_('ac-loading', err, function () { acLoadInit_(preserveStatus); });   // C2-7
       })
       .getAccessControlInit();
   }
@@ -2388,7 +2407,7 @@
         acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + '). Takes effect within ~60 s.' + stored + coexist);
         showToast('Saved agent access for ' + email, 'success');
         if ($('ac-agent-email')) $('ac-agent-email').value = '';
-        acLoadInit_();
+        acLoadInit_(true);   // CL-15
       })
       .withFailureHandler(function (err) {
         restore();
@@ -2414,7 +2433,7 @@
           mutationDone_('acRemove');
           acSetStatus_('success', 'Removed ' + a.email + '.');
           showToast('Removed agent access for ' + a.email, 'success');
-          acLoadInit_();
+          acLoadInit_(true);   // CL-15
         })
         .withFailureHandler(function (err) {
           mutationDone_('acRemove');
@@ -2439,13 +2458,13 @@
     if ($('ac-email')) $('ac-email').focus();
   }
 
-  function acClearForm_() {
+  function acClearForm_(keepStatus) {
     if ($('ac-email')) $('ac-email').value = '';
     const sel = $('ac-dept');
     if (sel) Array.prototype.forEach.call(sel.options, function (o) { o.selected = false; });
     if ($('ac-notes')) $('ac-notes').value = '';
     if ($('ac-form-title')) $('ac-form-title').textContent = 'Add manager access';
-    acSetStatus_(null);
+    if (!keepStatus) acSetStatus_(null);
   }
 
   function acSave_() {
@@ -2470,7 +2489,7 @@
         const stored = (res && res.storedAs) ? ' Stored as ' + res.storedAs + ' (the canonical address for this alias).' : '';
         acSetStatus_('success', 'Saved ' + email + ' → ' + label + '. Takes effect within ~60 s.' + stored + coexist);
         showToast('Saved access for ' + email, 'success');
-        acLoadInit_();
+        acLoadInit_(true);   // CL-15
       })
       .withFailureHandler(function (err) {
         restore();
@@ -2498,7 +2517,7 @@
           mutationDone_('acRemove');
           acSetStatus_('success', 'Removed ' + r.email + '. Takes effect within ~60 s.');
           showToast('Removed access for ' + r.email, 'success');
-          acLoadInit_();
+          acLoadInit_(true);   // CL-15
         })
         .withFailureHandler(function (err) {
           mutationDone_('acRemove');
@@ -2550,10 +2569,12 @@
     if (cancelBtn) cancelBtn.addEventListener('click', dcCloseEdit_);
   }
 
-  function dcLoadInit_() {
+  // CL-15: preserveStatus -- see acLoadInit_. The save's message carries the
+  // F11 "saved WITHOUT validating queue names" and S2B-5 mirror-failure warnings.
+  function dcLoadInit_(preserveStatus) {
     $('dc-loading').style.display = '';
     $('dc-body').style.display = 'none';
-    dcSetStatus_(null);
+    if (!preserveStatus) dcSetStatus_(null);
     dcCloseEdit_();
     google.script.run
       .withSuccessHandler(function (data) {
@@ -2563,7 +2584,7 @@
         dcRender_(dcLastInit);
       })
       .withFailureHandler(function (err) {
-        adminInitError_('dc-loading', err, dcLoadInit_);   // C2-7
+        adminInitError_('dc-loading', err, function () { dcLoadInit_(preserveStatus); });   // C2-7
       })
       .getDeptConfigInit();
   }
@@ -2768,7 +2789,7 @@
             + '. Changes take effect on the next request (Overview refreshes immediately; report caches within the TTL, up to ~6h).');
           showToast('Saved config for ' + dcEditDept, 'success');
         }
-        dcLoadInit_();
+        dcLoadInit_(true);   // CL-15
       })
       .withFailureHandler(function (err) {
         restoreSaveBtn();
@@ -2794,7 +2815,7 @@
           + (n === 1 ? '' : 's') + '. Reverted to defaults.'
           + (dWarns.length ? ' ⚠ ' + dWarns.join(' ') : ''));
         showToast('Reverted ' + dcEditDept + ' to defaults', 'success');
-        dcLoadInit_();
+        dcLoadInit_(true);   // CL-15
       })
       .withFailureHandler(function (err) {
         if (deact) deact.disabled = false;

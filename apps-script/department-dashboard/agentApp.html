@@ -199,11 +199,18 @@
     var pad = function (x) { return x < 10 ? '0' + x : String(x); };
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
+  // CL-14 (broad-scan 2026-10-01): without a latest DQE date (the lookup
+  // failed or returned nothing) presets anchor to YESTERDAY -- the manager
+  // client's rule (datePresetRange_: open-ended presets never include today,
+  // whose ingest has not landed) -- not to today, which tacked an empty day on
+  // and made "Yesterday" query today.
+  function yesterdayIso_() {
+    var t = new Date(); var pad = function (x) { return x < 10 ? '0' + x : String(x); };
+    var y = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1, 12);
+    return y.getFullYear() + '-' + pad(y.getMonth() + 1) + '-' + pad(y.getDate());
+  }
   function applyPreset(preset) {
-    var anchor = latestIso || (function () {
-      var t = new Date(); var pad = function (x) { return x < 10 ? '0' + x : String(x); };
-      return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate());
-    })();
+    var anchor = latestIso || yesterdayIso_();
     win.preset = preset;
     if (preset === 'mtd') { win.from = anchor.slice(0, 8) + '01'; win.to = anchor; }
     else if (preset === '7d') { win.from = isoShift(anchor, -6); win.to = anchor; }
@@ -479,10 +486,7 @@
   function relabelYesterdayChip_() {
     var chip = document.querySelector('.agent-chip[data-preset="yday"]');
     if (!chip || !latestIso) return;
-    var t = new Date(); var pad = function (x) { return x < 10 ? '0' + x : String(x); };
-    var y = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1, 12);
-    var yIso = y.getFullYear() + '-' + pad(y.getMonth() + 1) + '-' + pad(y.getDate());
-    chip.textContent = (latestIso === yIso) ? 'Yesterday' : ('Latest day (' + latestIso + ')');
+    chip.textContent = (latestIso === yesterdayIso_()) ? 'Yesterday' : ('Latest day (' + latestIso + ')');
   }
 
   // ── Boot ──────────────────────────────────────────────────────────────
@@ -525,16 +529,23 @@
   });
 
   // Snap presets to the latest DQE date (agents may read freshness metadata
-  // by design — Phase A). Falls back to today if the call fails.
+  // by design — Phase A). CL-14: without one (a failed lookup OR a null
+  // reply) presets end yesterday and the header SAYS the date is unknown,
+  // instead of silently querying a window that may run past the data.
+  var noteUnknownFreshness_ = function () {
+    $('agent-fresh').textContent = 'Latest data date unavailable — showing through yesterday';
+  };
   google.script.run
     .withSuccessHandler(function (iso) {
       latestIso = (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) ? iso : null;
       relabelYesterdayChip_();   // C2-8
       if (latestIso) $('agent-fresh').textContent = 'Data through ' + isoToLabel(latestIso, true);
+      else noteUnknownFreshness_();
       applyPreset('mtd');
       load();
     })
     .withFailureHandler(function () {
+      noteUnknownFreshness_();
       applyPreset('mtd');
       load();
     })

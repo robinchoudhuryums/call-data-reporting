@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 7 IMPLEMENTED on the same branch (block 220).**
+  Client correctness: CL-2 (per-day Insights card deltas), CL-1 (Company
+  line THEME.ink), CL-15 (AC/DC save status survives reload), CL-17 (share /
+  digest links carry their window into the dept controls), CL-18 (per-step
+  boot guard + notice), CL-4 (sticky error toasts + inline status), CL-6
+  (heatmap error + Retry, no beacon per R19), CL-16 (View-as gates), CL-14
+  (agent presets never anchor on today), CL-7 (IR Generate release), CL-5
+  (share-link copy), CL-22 (partial subscriber save). 2083/2083 + ci:ui
+  green. **Owner-side:** deploy the dashboard (blocking). **Where I left
+  off:** Batches 1-7 done and pushed, no PR opened; next suggested Batch 8
+  (client accessibility + hardening: CL-3, CL-21, CL-13, CL-12, CL-19,
+  CL-10, CL-8, CL-11) -- ci:ui applies.
 - **2026-10-02 — broad-scan Batch 6 IMPLEMENTED on the same branch (block 219).**
   BU-1 (backup refuses to recreate a set-but-unopenable workbook), DL-3 +
   CR-6 (per-statement query timeouts via connection wrappers in the dashboard

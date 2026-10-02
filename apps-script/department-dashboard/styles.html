@@ -4421,6 +4421,8 @@
   /* #5 redesign: featured primary metric bars vs the TEAM AVERAGE marker. */
   .ins-card-bars2 { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
   .ins-cbar-row { display: flex; align-items: center; gap: 6px; }
+  /* CL-2: the per-day subline under a bar sits under the track, not the label. */
+  .ins-card-bars2 .ins-metric-perday { margin-top: -4px; padding-left: 56px; }
   .ins-cbar-lbl { font-size: 10px; color: var(--muted); flex: 0 0 50px; text-align: right;
                   font-family: 'IBM Plex Mono', monospace; }
   .ins-cbar-track { position: relative; flex: 1 1 auto; min-width: 0; height: 15px;
@@ -6600,12 +6602,22 @@
      S2-5 date-chip trap, closed at the token instead of per surface. */
   .toast-success { background: var(--good); color: var(--on-good, #fff); }
   .toast-error   { background: var(--warn); color: var(--on-warn, #fff); }
+  /* CL-4: a sticky error toast stays until dismissed; its text is selectable
+     (a share URL in it can be copied) and the ✕ inherits the toast's ink. */
+  .toast-sticky { display: flex; align-items: flex-start; gap: 10px; max-width: min(560px, calc(100vw - 32px));
+                  user-select: text; -webkit-user-select: text; }
+  .toast-sticky .toast-text { overflow-wrap: anywhere; }
+  .toast-close { flex: 0 0 auto; background: none; border: 0; padding: 0 2px; cursor: pointer;
+                 color: inherit; font: inherit; line-height: 1.2; opacity: 0.85; }
+  .toast-close:hover { opacity: 1; }
 
   /* -------- Update notice ("new version — refresh at your convenience").
      Persistent + dismissible, unlike the auto-expiring .toast, so it sits in
      its own bottom-LEFT corner (transient toasts are bottom-center, the Help
      FAB bottom-right). Below the toasts (10100) and dsConfirm; above modals.
      Shared by the manager client (script-1-core) and the agent app. */
+  /* CL-18: the boot-failure notice (script-2 bootFailureNotice_) sits above the page. */
+  .boot-failure-note { margin: 12px 16px; }
   .update-notice {
     position: fixed;
     left: 18px;
