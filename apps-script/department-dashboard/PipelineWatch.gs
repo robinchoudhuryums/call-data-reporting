@@ -63,6 +63,7 @@ function installPipelineWatchTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('PIPELINE_WATCH_ENABLED', 'true');
   installPipelineWatchTrigger_();
+  recordTriggerInstaller_('runPipelineWatch_', true);   // EN-1
   return logStatusReturn_(getPipelineWatchStatus_());
 }
 
@@ -70,6 +71,7 @@ function installPipelineWatchTrigger() {
 function uninstallPipelineWatchTrigger() {
   assertAdmin_();
   uninstallPipelineWatchTrigger_();
+  recordTriggerInstaller_('runPipelineWatch_', false);   // EN-1
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('PIPELINE_WATCH_ENABLED');
   return logStatusReturn_(getPipelineWatchStatus_());
@@ -118,6 +120,20 @@ function runPipelineWatch_() {
     var lastTsRaw = props.getProperty('PIPELINE_WATCH_LAST_TS');
     var firstRun = (lastTsRaw == null || lastTsRaw === '');
     var sinceMs = firstRun ? null : (parseFloat(lastTsRaw) || 0);
+    // EN-6 (broad-scan 2026-10-01): the watermark is the newest timestamp seen,
+    // but Pipeline Health has SEVERAL writers (cdr-import, cdr-report, this
+    // project), so a failure row can land AFTER a newer row with an OLDER
+    // timestamp -- it then sat behind the watermark and was never emailed.
+    // Each run re-examines PIPELINE_WATCH_LOOKBACK_MS_ behind the watermark and
+    // skips rows it already emailed (PIPELINE_WATCH_SEEN, keyed ts|step).
+    // SEED mode -- the baseline run, or the first run after this deploy (no
+    // key store yet): no overlap this run, and every failure already inside
+    // the window is recorded as handled, so neither the pre-install backlog
+    // nor rows the previous version already emailed go out again.
+    var seedMode = firstRun || props.getProperty('PIPELINE_WATCH_SEEN') == null;
+    var seen = seedMode ? {} : pipelineWatchSeenRead_(props);
+    var lookbackMs = seedMode ? 0 : PIPELINE_WATCH_LOOKBACK_MS_;
+    var lookFromMs = firstRun ? null : Math.max(0, sinceMs - lookbackMs);
 
     // O-6: the fixed tail read + watermark-advance pair silently skipped rows.
     // If the OLDEST examined row is still newer than the watermark AND the
@@ -129,13 +145,17 @@ function runPipelineWatch_() {
     // watermark or the whole sheet, bounded at 3 widenings (x64 = 19,200
     // rows -- far beyond any real storm).
     var widenGuard = 0;
-    while (pipelineWatchTailClipped_(rows, scanRows, sinceMs) && widenGuard < 3) {
+    while (pipelineWatchTailClipped_(rows, scanRows, lookFromMs) && widenGuard < 3) {   // EN-6: the overlap too
       scanRows = scanRows * 4;
       rows = pipelineWatchReadRows_(scanRows);
       widenGuard++;
     }
 
-    var scan = pipelineWatchScan_(rows, sinceMs);
+    var scan = pipelineWatchScan_(rows, sinceMs, { lookbackMs: lookbackMs, seen: seen });
+    var seedRows = seedMode ? rows.filter(function (row) {
+      return row && isFinite(row.tsMs) && String(row.status || '').toLowerCase() === 'failure'
+        && scan.newFailures.indexOf(row) === -1;
+    }) : [];
 
     if (firstRun) {
       // Baseline: record the newest row so future runs only alert on rows that
@@ -143,6 +163,7 @@ function runPipelineWatch_() {
       // keeps the System Health outcome row green (OPS-8: its classifier paints
       // amber on a "fail"/"error" substring UNLESS the result starts with "ok").
       pipelineWatchRecord_(props, scan.maxTsMs, 'ok (baseline established)');
+      pipelineWatchSeenWrite_(props, seen, seedRows, scan.maxTsMs);   // EN-6 seed
       pipelineWatchAuxDispatch_(props, aux);   // R7 (G-1): aux signals still fire
       return;
     }
@@ -161,16 +182,26 @@ function runPipelineWatch_() {
           ? ('UNPARSEABLE ' + scan.unparseableFailures + ' failure row(s) have no readable Timestamp '
              + '-- cannot dedup or alert on them; fix the Pipeline Health Timestamp column (OD-7)')
           : 'ok (no new failures)');
+      pipelineWatchSeenWrite_(props, seen, seedRows, Math.max(sinceMs, scan.maxTsMs));   // EN-6: prune (+ seed)
       pipelineWatchAuxDispatch_(props, aux);   // R7 (G-1): aux signals still fire
       return;
     }
 
     // R7 (G-1): fold any aux alerts into the same failure digest email.
-    var sent = notifyPipelineFailures_(scan.newFailures, aux.alerts);
+    // EN-6: unparseable failure rows ride the same email (and the outcome) --
+    // they were reported only on the no-new-failures path.
+    var mailAux = aux.alerts.slice();
+    if (scan.unparseableFailures) {
+      mailAux.push('Pipeline Health -- ' + scan.unparseableFailures + ' failure row(s) have no readable '
+        + 'Timestamp, so they cannot be deduped or listed above; fix the Timestamp column (OD-7).');
+    }
+    var sent = notifyPipelineFailures_(scan.newFailures, mailAux);
     if (sent) {
       pipelineWatchAuxCommit_(props, aux);   // markers advance only on a confirmed send
       pipelineWatchRecord_(props, Math.max(sinceMs, scan.maxTsMs),
-        scan.newFailures.length + ' failure(s) emailed');
+        scan.newFailures.length + ' failure(s) emailed'
+        + (scan.unparseableFailures ? '; plus ' + scan.unparseableFailures + ' UNPARSEABLE failure row(s) (OD-7)' : ''));
+      pipelineWatchSeenWrite_(props, seen, seedRows.concat(scan.newFailures), Math.max(sinceMs, scan.maxTsMs));   // EN-6
     } else {
       // OPS-1: mail failed -- DON'T advance the watermark, so the same failures
       // (plus any newer ones) retry on the next run instead of being silenced.
@@ -212,6 +243,41 @@ function pipelineWatchRecord_(props, watermarkMs, result) {
   } catch (pe) { /* best-effort */ }
 }
 
+// EN-6: how far behind the watermark each run re-examines (another project's
+// out-of-order append), and the seen-key store that keeps it from re-emailing.
+var PIPELINE_WATCH_LOOKBACK_MS_ = 2 * 3600 * 1000;
+var PIPELINE_WATCH_SEEN_MAX_ = 200;
+
+/** EN-6: one failure row's identity -- its timestamp and step. */
+function pipelineWatchKey_(r) {
+  return String(r.tsMs) + '|' + String(r.step || '');
+}
+
+/** EN-6: the emailed-key set ({key: tsMs}); {} on absent / unreadable. */
+function pipelineWatchSeenRead_(props) {
+  try {
+    var o = JSON.parse(props.getProperty('PIPELINE_WATCH_SEEN') || '{}');
+    return (o && typeof o === 'object') ? o : {};
+  } catch (e) { return {}; }
+}
+
+/** EN-6: adds `emailed` keys, drops keys older than the lookback behind
+ *  `watermarkMs` (they can never be re-examined), caps the size. */
+function pipelineWatchSeenWrite_(props, seen, emailed, watermarkMs) {
+  try {
+    var next = {};
+    var floor = (watermarkMs || 0) - PIPELINE_WATCH_LOOKBACK_MS_;
+    Object.keys(seen || {}).forEach(function (k) { if (Number(seen[k]) > floor) next[k] = Number(seen[k]); });
+    (emailed || []).forEach(function (r) { if (r && isFinite(r.tsMs)) next[pipelineWatchKey_(r)] = r.tsMs; });
+    var keys = Object.keys(next).sort(function (a, b) { return next[b] - next[a]; }).slice(0, PIPELINE_WATCH_SEEN_MAX_);
+    var out = {};
+    keys.forEach(function (k) { out[k] = next[k]; });
+    props.setProperty('PIPELINE_WATCH_SEEN', JSON.stringify(out));
+  } catch (e) {
+    Logger.log('pipelineWatchSeenWrite_: not saved (%s) -- the overlap may re-email a row once.', (e && e.message) || e);
+  }
+}
+
 /**
  * O-6 pure predicate (unit-tested): TRUE when the tail read is CLIPPED (came
  * back with exactly the requested row count, so older rows exist beyond the
@@ -235,9 +301,14 @@ function pipelineWatchTailClipped_(rows, requestedRows, sinceMs) {
  * caller can advance past successes too). `sinceMs === null` yields no failures
  * (first-run baseline) while still computing `maxTsMs`.
  */
-function pipelineWatchScan_(rows, sinceMs) {
+function pipelineWatchScan_(rows, sinceMs, opts) {
   var maxTsMs = (sinceMs == null) ? 0 : sinceMs;
   var newFailures = [];
+  // EN-6: with opts.lookbackMs, a failure up to that far BEHIND the watermark
+  // is still new unless its key is in opts.seen (already emailed).
+  var lookbackMs = (opts && opts.lookbackMs) || 0;
+  var seen = (opts && opts.seen) || {};
+  var floorMs = (sinceMs == null) ? null : sinceMs - lookbackMs;
   var unparseableFailures = 0;   // OD-7: failure rows with no usable timestamp
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
@@ -248,8 +319,10 @@ function pipelineWatchScan_(rows, sinceMs) {
       if (String(r.status || '').toLowerCase() === 'failure') unparseableFailures++;
       continue;
     }
-    if (ts <= sinceMs) continue;
-    if (String(r.status || '').toLowerCase() === 'failure') newFailures.push(r);
+    if (ts <= floorMs) continue;
+    if (String(r.status || '').toLowerCase() !== 'failure') continue;
+    if (ts <= sinceMs && seen[pipelineWatchKey_(r)]) continue;   // EN-6: already emailed
+    if (ts > sinceMs || !seen[pipelineWatchKey_(r)]) newFailures.push(r);
   }
   newFailures.sort(function (a, b) { return (a.tsMs || 0) - (b.tsMs || 0); });
   return { newFailures: newFailures, maxTsMs: maxTsMs, unparseableFailures: unparseableFailures };

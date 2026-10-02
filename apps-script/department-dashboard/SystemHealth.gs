@@ -85,10 +85,12 @@ function healthFailureOnlyStep_(step) {
  *   stale -- the ingest watchdog's own verdict ("stale (alert sent)") read GREEN
  *   UNPARSEABLE -- PipelineWatch could not dedup a failure row (OD-7)
  *   SKIPPED-LOCK -- a digest cadence dropped on lock contention (O-5)
+ *   WARN -- the Neon backup finished but needs attention (BU-2: workbook near the cell cap)
  */
 var HEALTH_BAD_PREFIXES_ = Object.freeze([
   'MISSED', 'LATE', 'EMPTY', 'PARTIAL', 'NO-SUBSCRIBERS', 'GAPS', 'FAILED-PROBE',
   'SILENT', 'INCONCLUSIVE', 'UNPARSEABLE', 'SKIPPED-LOCK', 'stale',
+  'WARN',   // BU-2: a backup that finished but needs attention (workbook near the cell cap)
 ]);
 function healthOutcomeIsBad_(res) {
   var r = String(res || '');
@@ -672,6 +674,12 @@ function getSystemHealth(req) {
     // the reconciliation; engines with no flag (alerts, digests, cache warm,
     // backup) pass nothing and behave as before.
     var readiness = { armed: 0, attention: 0 };
+    // EN-1: the recorded installer of each editor-run engine, and who THIS page
+    // runs as (the deployer) -- a trigger owned by another account is invisible
+    // to getProjectTriggers() here.
+    var installers = (typeof readTriggerInstallers_ === 'function') ? readTriggerInstallers_() : {};
+    var me = '';
+    try { me = String(Session.getEffectiveUser().getEmail() || '').toLowerCase(); } catch (eMe) { me = ''; }
     var svc = function (key, label, fns, required, offHint, flagProp) {
       var on = fns.some(function (f) { return !!installed[f]; });
       var missing = fns.filter(function (f) { return !installed[f]; });
@@ -679,7 +687,19 @@ function getSystemHealth(req) {
       var flagOn = flagProp ? (String(props.getProperty(flagProp) || '') === 'true') : null;
 
       var status, value, hint;
-      if (complete && flagOn === false) {
+      var foreign = fns.filter(function (f) {
+        var by = String(installers[f] || '').toLowerCase();
+        return by && me && by !== me && by !== '(unknown)';
+      });
+      if (foreign.length) {
+        // EN-1: the trigger belongs to another account -- this page cannot see
+        // it (so it would read "NO trigger installed") and the deployer cannot
+        // remove it, so a reinstall here would run the engine TWICE.
+        status = 'warn';
+        value = 'installed by ' + installers[foreign[0]] + ' -- another account, so it is not visible or removable from here';
+        hint = 'Have ' + installers[foreign[0]] + ' run the matching uninstall from the editor, then reinstall '
+          + 'as ' + (me || 'the deployer') + ', so one account owns every trigger (Operator State #8).';
+      } else if (complete && flagOn === false) {
         // The silent-inert case: scheduled, but every run is a no-op.
         status = 'warn';
         value = 'installed but DISABLED (' + flagProp + ' is not "true") — every run is a no-op';
@@ -1329,6 +1349,12 @@ var CLIENT_ISSUE_MSG_CAP_ = 600;
 var CLIENT_ISSUE_STACK_CAP_ = 1800;
 var CLIENT_ISSUE_SIG_TTL_SEC = 1800;    // one email per distinct error / 30 min
 var CLIENT_ISSUE_WINDOW_CAP_ = 15;      // max emails per rolling 6h CacheService window
+// AC-6 (broad-scan 2026-10-01): ONE signed-in user could spend the whole window
+// -- 15 distinct crafted messages from devtools -- and every real error from
+// everyone else went Logger-only for 6 h. Each user gets at most this many of
+// the window's emails; past it their reports are logged, not emailed, and do
+// not count against the shared window.
+var CLIENT_ISSUE_USER_CAP_ = 5;
 
 function reportClientIssue(payload) {
   var user = resolveUser_(Session.getActiveUser().getEmail());
@@ -1346,8 +1372,14 @@ function reportClientIssue(payload) {
     Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, sig)).slice(0, 24);
   var cache = CacheService.getScriptCache();
   var emailed = false;
+  var userCapped = false;
   try {
     var seen = cache.get(sigKey);
+    // AC-6: the per-user sub-cap, checked before the shared window.
+    var userKey = 'cissue:user:' + Utilities.base64Encode(
+      Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(user.email || '').toLowerCase())).slice(0, 24);
+    var userCount = parseInt(cache.get(userKey) || '0', 10) || 0;
+    if (!seen && userCount >= CLIENT_ISSUE_USER_CAP_) { userCapped = true; seen = 'user-capped'; }
     var count = parseInt(cache.get('cissue:count') || '0', 10) || 0;
     if (!seen && count >= CLIENT_ISSUE_WINDOW_CAP_ && !cache.get('cissue:capat')) {
       // O-11 (broad-scan 2026-09-17): the cap used to close silently -- a
@@ -1414,11 +1446,12 @@ function reportClientIssue(payload) {
         emailed = true;
         cache.put(sigKey, '1', CLIENT_ISSUE_SIG_TTL_SEC);
         cache.put('cissue:count', String(count + 1), 21600);
+        cache.put(userKey, String(userCount + 1), 21600);   // AC-6
       }
     }
   } catch (e) { /* best-effort -- the beacon must never error back into the client */ }
   Logger.log('reportClientIssue [%s] %s %s: %s%s', kind, user.email, route, msg,
-    emailed ? '' : ' (throttled/not emailed)');
+    emailed ? '' : (userCapped ? ' (per-user cap -- not emailed, AC-6)' : ' (throttled/not emailed)'));
   return { ok: true, emailed: emailed };
 }
 

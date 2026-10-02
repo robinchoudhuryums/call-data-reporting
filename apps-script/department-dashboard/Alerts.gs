@@ -738,7 +738,12 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         return;
       }
 
-      const recipientsTo = resolveRecipients_(entry);
+      const invalidRecipients = [];   // EN-8
+      const recipientsTo = resolveRecipients_(entry, invalidRecipients);
+      const invalidNote = invalidRecipients.length
+        ? ' (skipped ' + invalidRecipients.length + ' invalid address' + (invalidRecipients.length === 1 ? '' : 'es')
+          + ': ' + invalidRecipients.join(', ') + ')'
+        : '';
       const recipientsCc = getAdminEmails_();
 
       // Above threshold = healthy. Log but don't send.
@@ -761,7 +766,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
           answerRate: round1_(stats.pct),
           threshold: entry.threshold,
           recipients: [],
-          notes: 'No manager in Access Control and no Extra Recipients configured',
+          notes: 'No manager in Access Control and no Extra Recipients configured' + invalidNote,
         });
         return;
       }
@@ -775,6 +780,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         sentNotes  = 'Sent to ' + recipientsTo.length + ' recipient'
                    + (recipientsTo.length === 1 ? '' : 's');
       }
+      sentNotes += invalidNote;   // EN-8
       pushAndLog({
         department: entry.department,
         status: sentStatus,
@@ -968,13 +974,18 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
  * the config row. Deduped, blank-filtered. Order: managers first
  * (the people accountable for the dept), then any extras.
  */
-function resolveRecipients_(cfgEntry) {
+function resolveRecipients_(cfgEntry, invalidOut) {
   const out = [];
   const seen = {};
   const add = function (email) {
     const e = String(email || '').trim().toLowerCase();
     if (!e || seen[e]) return;
     seen[e] = true;
+    // EN-8 (broad-scan 2026-10-01): MailApp rejects the WHOLE send when one
+    // address is malformed, so one bad Access Control or Extra Recipients
+    // cell cost the dept its alert (logged as an `error`). Skip it, send to
+    // the rest, and report what was skipped (invalidOut) in the Alert Log.
+    if (!ALERT_EMAIL_RE_.test(e)) { if (invalidOut) invalidOut.push(e); return; }
     out.push(e);
   };
   const managers = lookupDeptManagers_(cfgEntry.department);
@@ -982,6 +993,10 @@ function resolveRecipients_(cfgEntry) {
   (cfgEntry.extraRecipients || []).forEach(add);
   return out;
 }
+
+// EN-8: the deliberately loose shape MailApp accepts -- one @, a dotted
+// domain, no whitespace or list separators. Anything else is skipped.
+var ALERT_EMAIL_RE_ = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
 
 function lookupDeptManagers_(dept) {
   const optIn = allDeptNotifyOptIn_();
@@ -1621,7 +1636,10 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
     subtitle: dateIso,
     preheader: dept + ' answered ' + pctStr + ' on ' + dateIso + ' — below the ' + thresholdStr + ' threshold.',
     rowsHtml: ekRow_(ekCalloutHtml_('Threshold breached',
-        ekEsc_(dept) + ' answered <strong>' + ekEsc_(pctStr) + '</strong> of rung calls on '
+        // EN-7 (broad-scan 2026-10-01): name the denominator the rate actually
+        // used -- it said "of rung calls" under ANSWER_RATE_FORMULA=answerable too.
+        ekEsc_(dept) + ' answered <strong>' + ekEsc_(pctStr) + '</strong> of '
+        + (getAnswerRateFormula_() === 'answerable' ? 'answered-or-missed' : 'rung') + ' calls on '
         + ekEsc_(dateIso) + ' — below the configured <strong>' + ekEsc_(thresholdStr)
         + '</strong> alert threshold.', 'warn'), '16px 26px 0')
       + ekRow_(kpis)

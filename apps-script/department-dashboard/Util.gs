@@ -150,6 +150,40 @@ function assertReportSpanCap_(from, to, priorFrom, priorTo) {
   }
 }
 
+// EN-1 (broad-scan 2026-10-01): an installable trigger belongs to the account
+// that ran the installer, and getProjectTriggers() lists only the CALLER's
+// triggers. The UI-wired installers run as the deployer (executeAs:
+// USER_DEPLOYING), but four are EDITOR-run (pipeline watch, DQE silence,
+// sheet coverage, Neon retention): a second admin running one from the editor
+// created a trigger the Health page -- which runs as the deployer -- cannot
+// see ("NO trigger installed but flag=true") and the deployer's uninstall
+// cannot remove (a duplicate on reinstall). Those installers record WHO
+// installed each handler here; Health names a foreign owner instead.
+function recordTriggerInstaller_(handler, installed) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var map = {};
+    try { map = JSON.parse(props.getProperty('TRIGGER_INSTALLERS') || '{}') || {}; } catch (e) { map = {}; }
+    if (installed) {
+      var who = '';
+      try { who = String(Session.getEffectiveUser().getEmail() || ''); } catch (e) { who = ''; }
+      map[handler] = who || '(unknown)';
+    } else {
+      delete map[handler];
+    }
+    props.setProperty('TRIGGER_INSTALLERS', JSON.stringify(map));
+  } catch (e) {
+    Logger.log('recordTriggerInstaller_ (%s): not recorded: %s', handler, (e && e.message) || e);
+  }
+}
+
+/** EN-1: { handler: installer email } as recorded by recordTriggerInstaller_. */
+function readTriggerInstallers_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('TRIGGER_INSTALLERS') || '{}') || {};
+  } catch (e) { return {}; }
+}
+
 // -- Report-usage telemetry --------------------------------------------------
 
 /**

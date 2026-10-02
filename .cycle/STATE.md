@@ -1,6 +1,19 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 6 IMPLEMENTED on the same branch (block 219).**
+  BU-1 (backup refuses to recreate a set-but-unopenable workbook), DL-3 +
+  CR-6 (per-statement query timeouts via connection wrappers in the dashboard
+  and cdr-report reader factories), BU-4 (coaching FAILED/PARTIAL), BU-3
+  (backup run budget, newest-first, PARTIAL), EN-1 (trigger installer
+  recorded; foreign-owned triggers named on Health), EN-6 (watchdog 2 h
+  lookback + seen store), AC-6 (per-user beacon cap), BU-2 (WARN outcome),
+  EN-8 (recipient validation), EN-7 (denominator wording). 2071/2071 green.
+  **Owner-side:** deploy the dashboard (blocking) + cdr-report; re-run the
+  four editor installers from the deploying account. **Where I left off:**
+  Batches 1-6 done and pushed, no PR opened; next suggested Batch 7 (client
+  correctness: CL-2, CL-1, CL-15, CL-17, CL-18, CL-4, CL-6, CL-16, CL-14,
+  CL-7, CL-5, CL-22) -- client work, so ci:ui applies.
 - **2026-10-01 — broad-scan Batch 5 IMPLEMENTED on the same branch (block 218).**
   ESC-D1 (activity rows record their dept at write time; move-history
   backfill; esc-schema checks the new column; escSchema:v2), ESC-D3 (linked

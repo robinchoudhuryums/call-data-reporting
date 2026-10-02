@@ -146,7 +146,9 @@ tests/
                               call-path drill's sheet fallback: source
                               parity, both auth arms, miss reasons),
                               neon-conn-memo (the per-execution
-                              unreachable memo), inbound-calls /
+                              unreachable memo; DL-3: the factory's
+                              statement-timeout wrapper + its
+                              forwarded-method sweep), inbound-calls /
                               outbound-calls (the two per-call captures:
                               builder gates + authoritative/P-1/hash pins,
                               plus the shared-leg-tree scoping: originator-
@@ -297,6 +299,7 @@ tests/
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
                               pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up),
                               cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
+                              cdr-report-neon-timeout (CR-6: getNeonConn()'s statement-timeout wrapper + the forwarded-method sweep; the dashboard twin is in neon-conn-memo, DL-3),
                               neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),
                               agent-role / agent-home (the deny wall +
                               the no-teammate-identity payload pin),

@@ -95,3 +95,54 @@ test('O-5: alertsOutcomeString_ is ok with no errors and FAILED-PARTIAL with any
   assert.equal(h.state.props.ALERTS_LAST_RESULT, 'ok 2026-09-16: x');
   assert.ok(h.state.props.ALERTS_LAST);
 });
+
+// EN-8 (broad-scan 2026-10-01): MailApp rejects the WHOLE send when one address
+// is malformed, so one bad Access Control / Extra Recipients cell cost the dept
+// its alert. Bad addresses are skipped and reported; the rest still receive it.
+test('EN-8: a malformed address is skipped (and reported), the valid ones still resolve', function () {
+  install([['mgr@x.com', 'CSR'], ['typo at x.com', 'CSR']]);
+  const invalid = [];
+  const out = h.call('resolveRecipients_', { department: 'CSR', extraRecipients: ['ext@y.com', 'no-at-sign', 'a@b'] }, invalid);
+  assert.deepEqual(Array.from(out), ['mgr@x.com', 'ext@y.com']);
+  assert.deepEqual(Array.from(invalid), ['typo at x.com', 'no-at-sign', 'a@b']);
+  // The one-argument call is unchanged.
+  assert.deepEqual(Array.from(h.call('resolveRecipients_', { department: 'CSR', extraRecipients: [] })), ['mgr@x.com']);
+});
+
+test('EN-8: the run sends to the valid recipients and the Alert Log names what it skipped', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Access Control': [['Email', 'Department', 'Notes'], ['mgr@x.com', 'CSR'], ['typo at x.com', 'CSR']],
+    'Alert Log': [['Timestamp']],
+  } });
+  h.ctx.isIsoDate_ = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v)); };
+  h.ctx.appendAlertLog_ = function () {};
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  h.ctx.readAlertConfig_ = function () { return [{ department: 'CSR', active: true, threshold: 90, skipDates: '', extraRecipients: [] }]; };
+  h.ctx.getRosterForDepartment_ = function () { return { names: ['A'] }; };
+  h.ctx.computeDeptAnswerRateForDate_ = function () { return { rung: 10, answered: 5, missed: 5, pct: 50, lowAgents: [] }; };
+  const sentTo = [];
+  h.ctx.sendAlertEmail_ = function (entry, d, stats, to) { sentTo.push(Array.from(to)); };
+  const res = h.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger');
+  assert.equal(res[0].status, 'sent');
+  assert.deepEqual(sentTo, [['mgr@x.com']]);
+  assert.match(res[0].notes, /Sent to 1 recipient \(skipped 1 invalid address: typo at x\.com\)/);
+});
+
+// EN-7 (broad-scan 2026-10-01): the alert said "% of rung calls" even when
+// ANSWER_RATE_FORMULA=answerable made the denominator answered + missed.
+test('EN-7: the alert email names the denominator the active formula used', function () {
+  const h3 = loadGas({ files: ['Config.gs', 'Util.gs', 'EmailKit.gs', 'Alerts.gs'] });
+  const html = function (formula) {
+    h3.state.props = { ADMIN_EMAILS: 'admin@x.com' };
+    if (formula) h3.state.props.ANSWER_RATE_FORMULA = formula;
+    h3.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    h3.state.sentEmails.length = 0;
+    h3.call('sendAlertEmail_', { department: 'CSR', threshold: 90 }, '2026-09-21',
+      { pct: 50, rung: 10, answered: 5, missed: 5, lowAgents: [] }, ['m@x.com'], []);
+    return h3.state.sentEmails[0].htmlBody;
+  };
+  assert.match(html(''), /of rung calls on/);
+  assert.match(html('answerable'), /of answered-or-missed calls on/);
+  assert.doesNotMatch(html('answerable'), /of rung calls/);
+});

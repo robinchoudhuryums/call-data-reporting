@@ -1667,7 +1667,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   immediately. Bounded at BOTH ends — client: once per error signature per
   session, max 6/session, and `reportClientIssue_` must never throw;
   server: one email per signature per 30 min + `CLIENT_ISSUE_WINDOW_CAP_`
-  (=15) emails per rolling 6h CacheService window, with throttled reports
+  (=15) emails per rolling 6h CacheService window and `CLIENT_ISSUE_USER_CAP_`
+  (=5) per signed-in user per 6h (AC-6), with throttled reports
   still Logger.logged. Public but INV-01-clean (email + cache only, no
   sheet write). **A new top-level page loader's failure handler should call
   `reportClientIssue_('load-failure', ...)`** — drill/panel fetches with

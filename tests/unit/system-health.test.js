@@ -1413,6 +1413,8 @@ test('O-9: healthOutcomeIsBad_ -- ok prefix is healthy; failure words and every 
     'NO-SUBSCRIBERS 2026-07-09 ...', 'GAPS 3 finding(s)', 'SILENT 1 dept(s)', 'INCONCLUSIVE — source unreadable',
     'skipped (no latest date)', 'ERROR: x', '3 failure(s) -- email send FAILED', 'unreachable',
     'NOTIFY-FAILED 2 new, 0 continuing, 0 recovered-open (x..y) — EMAIL NOT SENT (send failed)',   // ENG-7
+    'WARN | store sheets | WARNING backup workbook at 85% of the 10M-cell cap',   // BU-2
+    'PARTIAL | store drive | inbound_calls partial (3 month file(s) written)',      // BU-3
   ];
   bad.forEach(function (r) { assert.equal(h.call('healthOutcomeIsBad_', r), true, 'bad: ' + r); });
   const good = [
@@ -1578,4 +1580,56 @@ test('ESC-DDL: the esc-schema row reads ONCE on the shared connection; unreachab
     assert.equal(t.status, 'warn');
     assert.equal(t.value, 'probe failed');
   } finally { h.ctx.escSchemaRead_ = undefined; h.ctx.escSchemaVerdict_ = undefined; }
+});
+
+// AC-6 (broad-scan 2026-10-01): one signed-in user could spend the whole
+// 15-email window with crafted messages, silencing everyone else's errors.
+test('AC-6: one user gets at most CLIENT_ISSUE_USER_CAP_ emails per window; the rest of the window stays for others', function () {
+  installHealth({ props: { ADMIN_EMAILS: 'admin@x.com,admin2@x.com' } });
+  h.state.cache = new Map();
+  h.state.sentEmails.length = 0;
+  const cap = h.ctx.CLIENT_ISSUE_USER_CAP_;
+  assert.ok(cap < h.ctx.CLIENT_ISSUE_WINDOW_CAP_, 'a sub-cap, below the shared window');
+  const results = [];
+  for (let i = 0; i < cap + 3; i++) results.push(h.call('reportClientIssue', { kind: 'uncaught', message: 'flood ' + i }).emailed);
+  assert.equal(results.filter(Boolean).length, cap, 'pre-AC-6 all ' + (cap + 3) + ' were emailed');
+  assert.equal(h.state.cache.get('cissue:count'), String(cap), 'capped reports do not spend the shared window');
+  assert.ok(!h.state.cache.get('cissue:capat'), 'and never trip the window cap-reached note');
+  h.state.userEmail = 'admin2@x.com';
+  assert.equal(h.call('reportClientIssue', { kind: 'uncaught', message: 'a real error elsewhere' }).emailed, true,
+    'another user\'s error still reaches the admins');
+});
+
+// EN-1 (broad-scan 2026-10-01): four engines are installed from the EDITOR,
+// so a second admin running one owns that trigger -- invisible to this page
+// (which runs as the deployer) and unremovable by the deployer's uninstall.
+test('EN-1: a trigger recorded as installed by ANOTHER account is named, not reported as missing', function () {
+  installHealth({ props: {
+    PIPELINE_WATCH_ENABLED: 'true', DQE_SILENCE_WATCH_ENABLED: 'true',
+    TRIGGER_INSTALLERS: JSON.stringify({ runPipelineWatch_: 'second.admin@x.com', runDqeSilenceWatch_: 'admin@x.com' }),
+  } });
+  const out = h.call('getSystemHealth');
+  const pw = rowByKey(out, 'trg-pipewatch');
+  assert.equal(pw.status, 'warn');
+  assert.match(pw.value, /installed by second\.admin@x\.com -- another account/,
+    'pre-EN-1: "NO trigger installed but PIPELINE_WATCH_ENABLED=true -- it never runs"');
+  assert.match(pw.hint, /reinstall as admin@x\.com/);
+  // Installed by the deployer itself (this page's identity): the ordinary rules apply.
+  assert.match(rowByKey(out, 'trg-dqesilence').value, /NO trigger installed/);
+});
+
+test('EN-1: the four editor-run installers record (and clear) who installed them', function () {
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  [['PipelineWatch.gs', 'runPipelineWatch_'], ['DqeSilenceWatch.gs', 'runDqeSilenceWatch_'],
+   ['SheetCoverage.gs', 'runSheetCoverageWeekly_'], ['NeonRetention.gs', 'runNeonRetentionWeekly_']].forEach(function (x) {
+    const src = fs.readFileSync(path.join(dash, x[0]), 'utf8');
+    assert.ok(src.indexOf("recordTriggerInstaller_('" + x[1] + "', true)") !== -1, x[0] + ' install records');
+    assert.ok(src.indexOf("recordTriggerInstaller_('" + x[1] + "', false)") !== -1, x[0] + ' uninstall clears');
+  });
+  installHealth({});
+  h.call('recordTriggerInstaller_', 'runPipelineWatch_', true);
+  assert.deepEqual(JSON.parse(h.state.props.TRIGGER_INSTALLERS), { runPipelineWatch_: 'admin@x.com' });
+  h.call('recordTriggerInstaller_', 'runPipelineWatch_', false);
+  assert.deepEqual(JSON.parse(h.state.props.TRIGGER_INSTALLERS), {});
 });

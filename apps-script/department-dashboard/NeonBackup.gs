@@ -96,8 +96,14 @@ function runNeonBackup_() {
   var t0 = Date.now();
   var outcomes = [];
   var conn = null;
+  var budgetHit = false;   // BU-3
+  var overBudget = function () {
+    if (!budgetHit && Date.now() - t0 > NB_RUN_BUDGET_MS_) budgetHit = true;
+    return budgetHit;
+  };
   try {
-    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    // DL-3: a week-sized month window of journey rows can legitimately run long.
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_({ queryTimeoutS: NB_QUERY_TIMEOUT_S_ }) : null;
     if (!conn) {
       nbRecord_('skipped (Neon unreachable/unconfigured)');
       return;
@@ -137,12 +143,15 @@ function runNeonBackup_() {
     var journeyDays = nbJourneyDays_();
     for (var m = 0; m < monthlies.length; m++) {
       var spec = monthlies[m];
+      if (overBudget()) { outcomes.push(spec.table + ' not reached (run budget)'); continue; }   // BU-3
       try {
         var firstYm = nbMinMonth_(conn, spec.table, spec.dateCol);
         if (!firstYm) { outcomes.push(spec.table + ' empty'); continue; }
         var months = nbMonthsBetween_(firstYm, currentYm);
-        var written = 0, skipped = 0, tails = 0;
-        for (var i = 0; i < months.length; i++) {
+        var written = 0, skipped = 0, tails = 0, unreached = 0;
+        // BU-3: newest first, and stop at the run budget.
+        for (var i = months.length - 1; i >= 0; i--) {
+          if (overBudget()) { unreached = i + 1; break; }
           var ym = months[i];
           var name = spec.table + '-' + ym + '.jsonl';
           if (ym < currentYm) {
@@ -220,9 +229,10 @@ function runNeonBackup_() {
           while (staleTail.hasNext()) staleTail.next().setTrashed(true);
           written++;
         }
-        outcomes.push(spec.table + ' ok (' + written + ' month file(s) written, '
+        outcomes.push(spec.table + (unreached ? ' partial (' : ' ok (') + written + ' month file(s) written, '
           + (tails ? tails + ' closed-month tail(s) written, ' : '')
-          + skipped + ' closed skipped)');
+          + skipped + ' closed skipped'
+          + (unreached ? ', ' + unreached + ' older month(s) not reached -- run budget' : '') + ')');
       } catch (e2) {
         var m2 = (e2 && e2.message ? e2.message : String(e2));
         // P5: a per-call table not created yet (outbound_calls before the
@@ -247,6 +257,7 @@ function runNeonBackup_() {
     if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') {
       var cfgTables = ['dept_config', 'alert_config', 'digest_config'];
       for (var ct = 0; ct < cfgTables.length; ct++) {
+        if (overBudget()) { outcomes.push(cfgTables[ct] + ' not reached (run budget)'); continue; }   // BU-3
         try {
           var cfgBody = nbFetchAgg_(conn,
             "SELECT COALESCE(string_agg(row_to_json(t)::text, E'\\n'), '') AS j "
@@ -278,7 +289,15 @@ function runNeonBackup_() {
     // (like the total-failure `nbRecord_('FAILED: ...')` path already does)
     // makes the shared classifier correct for backup too.
     var anyFail = outcomes.some(function (o) { return /\bFAILED\b/.test(o); });
-    var summary = (anyFail ? 'FAILED' : 'ok') + ' | ' + outcomes.join(' | ') + ' | ' + ms + 'ms';
+    // BU-2 (broad-scan 2026-10-01): a near-cap workbook is not `ok` -- the
+    // WARNING detail rode an `ok` prefix, so Health showed it green and the
+    // ENG-2 retention gate (which prunes only after an `ok` backup) passed
+    // while the next backups were heading for the cell cap. BU-3: a run cut at
+    // its budget is PARTIAL. Both are bad prefixes (HEALTH_BAD_PREFIXES_), so
+    // the gate holds until a complete, healthy run.
+    var anyWarn = outcomes.some(function (o) { return /^WARNING\b/.test(o); });
+    var status = anyFail ? 'FAILED' : budgetHit ? 'PARTIAL' : anyWarn ? 'WARN' : 'ok';
+    var summary = status + ' | ' + outcomes.join(' | ') + ' | ' + ms + 'ms';
     Logger.log('runNeonBackup_: ' + summary);
     nbRecord_(summary);
   } catch (e) {
@@ -295,6 +314,16 @@ function runNeonBackup_() {
 // failed/truncated around ~10MB; stay comfortably under. Months whose
 // combined rows exceed this are written as .partN.jsonl files.
 var NB_FILE_BUDGET_CHARS = 8 * 1024 * 1024;
+
+// BU-3 (broad-scan 2026-10-01): a WHOLE-RUN budget, under the ~6-minute
+// execution ceiling whose kill skips every catch and records nothing (#70).
+// A first seed of years of per-call months could hit it. Checked before each
+// month file and each table; a run that stops records PARTIAL (a bad prefix,
+// so the ENG-2 retention gate holds), and the next run resumes -- closed months
+// already written are skipped. Months are taken NEWEST first, so a partial
+// seed protects the most recent history first.
+var NB_RUN_BUDGET_MS_ = 5 * 60 * 1000;
+var NB_QUERY_TIMEOUT_S_ = 240;   // DL-3: per statement, inside NB_RUN_BUDGET_MS_
 
 // ENG-1: a closed month's file is final once written at least this many days
 // after the month closed -- covers the last day's next-morning ingest and a
@@ -543,7 +572,22 @@ function nbSheetsFolder_() {
   var id = props.getProperty('NEON_BACKUP_SS_ID');
   var ss = null;
   if (id) {
-    try { ss = SpreadsheetApp.openById(id); } catch (e) { ss = null; }   // deleted -> recreate
+    // BU-1 (broad-scan 2026-10-01): NEVER recreate over a set id. Any openById
+    // error -- a transient Sheets failure, or a restore run by an admin who
+    // does not own the workbook ("missing ... or you don't have read access"
+    // is one message for both) -- used to mint a fresh EMPTY workbook and
+    // repoint the property: the history was orphaned, closed months were
+    // re-fetched without their already-pruned journeys, and the run still
+    // reported ok, so retention kept pruning. Apps Script cannot tell
+    // "deleted" from "no access" without the Drive scope this store exists to
+    // avoid, so the operator confirms instead (Operator State #28).
+    try { ss = SpreadsheetApp.openById(id); }
+    catch (e) {
+      throw new Error('the backup workbook NEON_BACKUP_SS_ID=' + id + ' could not be opened ('
+        + (e && e.message ? e.message : e) + '). NOT recreating it -- a new workbook would orphan '
+        + 'the backup history. If it was deleted on purpose, clear NEON_BACKUP_SS_ID and re-run; '
+        + 'otherwise run the backup as its owner or retry later.');
+    }
   }
   if (!ss) {
     ss = SpreadsheetApp.create(NB_SHEETS_WORKBOOK_NAME_);

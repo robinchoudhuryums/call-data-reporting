@@ -19,7 +19,36 @@ function getNeonConn() {
   // STATEMENTS with stmt.setQueryTimeout(seconds) instead, which the platform
   // does support. cross-file-pins.test.js fails if the params come back.
   const url = `jdbc:postgresql://${p.getProperty('NEON_HOST')}/${p.getProperty('NEON_DB')}`;
-  return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
+  return cdrTimedConn_(Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS')),
+    CDR_REPORT_QUERY_TIMEOUT_S_);
+}
+
+// CR-6 (broad-scan 2026-10-01): every STATEMENT a getNeonConn() connection
+// prepares carries a query timeout. A statement that hangs -- a cold or
+// overloaded Neon, a lock -- used to run until the execution ceiling killed the
+// run, and that kill SKIPS catch blocks, so the 9 AM Inbound / Outbound exports
+// and the insurer sync logged nothing at all. Bounded here, a hang becomes an
+// ordinary thrown error their catch blocks already report. 240 s leaves the
+// run time to report it inside the 6-minute ceiling. The wrapper forwards only
+// the six Connection methods this project's getNeonConn() callers use;
+// cdr-report-neon-timeout.test.js sweeps them and fails on a seventh.
+// (The dashboard twin is NeonRead.gs::neonTimedConn_, DL-3 -- another project.)
+var CDR_REPORT_QUERY_TIMEOUT_S_ = 240;
+function cdrTimedConn_(conn, seconds) {
+  if (!conn || conn.__cdrTimed) return conn;
+  var bound = function (stmt) {
+    try { if (stmt && typeof stmt.setQueryTimeout === 'function') stmt.setQueryTimeout(seconds); } catch (e) {}
+    return stmt;
+  };
+  return {
+    __cdrTimed: true,
+    prepareStatement: function (sql) { return bound(conn.prepareStatement(sql)); },
+    createStatement: function () { return bound(conn.createStatement()); },
+    setAutoCommit: function (v) { return conn.setAutoCommit(v); },
+    commit: function () { return conn.commit(); },
+    rollback: function () { return conn.rollback(); },
+    close: function () { return conn.close(); }
+  };
 }
 
 function getHmacSecret() {

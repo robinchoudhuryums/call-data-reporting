@@ -935,6 +935,8 @@ var PROP_REGISTRY_ = Object.freeze({
     PIPELINE_WATCH_LAST: 'engine', PIPELINE_WATCH_LAST_RESULT: 'engine',
     PIPELINE_WATCH_LAST_TS: 'engine',
     PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',
+    PIPELINE_WATCH_SEEN: 'engine',   // EN-6: emailed failure keys inside the lookback
+    TRIGGER_INSTALLERS: 'engine',    // EN-1: who installed each editor-run engine's trigger
     QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
     QUEUE_REPORT_FAIL_NOTIFIED: 'engine',   // EN-3: last emailed failure signature (once/day)
     QUEUE_REPORT_LAST_RESULT: 'engine',

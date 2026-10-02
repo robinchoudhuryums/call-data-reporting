@@ -67,6 +67,34 @@ function getDqeReadSource_() {
 // the NEO-3 read-health line when a DQE reader asks for it.
 var NEON_CONN_DOWN_MEMO_ = null;   // null = not tripped; else { message }
 
+// DL-3 (broad-scan 2026-10-01): no dashboard DQE / QCD / per-call read set a
+// statement timeout, so a lock wait or a cold compute ran on to the ~6-minute
+// execution ceiling -- whose kill SKIPS the catch blocks, so the designed
+// sheet fallback never ran and the page simply failed. The connect itself
+// cannot be bounded (connectTimeout is refused, above), but every statement
+// can: the factory hands back a wrapper that sets setQueryTimeout on each
+// statement it creates. A statement that sets its own timeout afterwards
+// (retention, Orphan Fix, the smoke probe, escTimed_'s 30 s) overrides it.
+// Forwards exactly the six methods the dashboard calls on a connection;
+// tests/unit/neon-conn-memo.test.js sweeps the code for any seventh.
+var NEON_QUERY_TIMEOUT_S_ = 120;
+function neonTimedConn_(conn, seconds) {
+  if (!conn || conn.__neonTimed) return conn;
+  var bound = function (stmt) {
+    try { if (stmt && typeof stmt.setQueryTimeout === 'function') stmt.setQueryTimeout(seconds); } catch (e) { /* best-effort */ }
+    return stmt;
+  };
+  return {
+    __neonTimed: true,
+    prepareStatement: function (sql) { return bound(conn.prepareStatement(sql)); },
+    createStatement: function () { return bound(conn.createStatement()); },
+    setAutoCommit: function (v) { return conn.setAutoCommit(v); },
+    commit: function () { return conn.commit(); },
+    rollback: function () { return conn.rollback(); },
+    close: function () { return conn.close(); },
+  };
+}
+
 function getDashboardNeonConn_(opts) {
   var p = PropertiesService.getScriptProperties();
   var host = p.getProperty('NEON_HOST');
@@ -90,7 +118,10 @@ function getDashboardNeonConn_(opts) {
     // STATEMENTS with stmt.setQueryTimeout(seconds) instead, which the platform
     // does support. cross-file-pins.test.js fails if the params come back.
     var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB');
-    return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
+    // DL-3 (broad-scan 2026-10-01): every statement on a dashboard connection
+    // is BOUNDED -- see neonTimedConn_.
+    return neonTimedConn_(Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS')),
+      (opts && opts.queryTimeoutS) || NEON_QUERY_TIMEOUT_S_);
   } catch (e) {
     Logger.log('getDashboardNeonConn_ failed: ' + (e && e.message ? e.message : e));
     // F4/NEO-3: a hard connection failure (unreachable != unconfigured) is

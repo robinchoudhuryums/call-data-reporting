@@ -271,3 +271,58 @@ test('OD-7: unparseable-timestamp failure rows are counted and lead the outcome'
   assert.match(h.state.props.PIPELINE_WATCH_LAST_RESULT, /^UNPARSEABLE 1 failure row\(s\)/);
   assert.equal(h.state.sentEmails.length, 0, 'nothing to email -- it cannot be deduped');
 });
+
+// EN-6 (broad-scan 2026-10-01): Pipeline Health has several writers, so a
+// failure row can land after a newer row with an OLDER timestamp. Each run
+// re-examines PIPELINE_WATCH_LOOKBACK_MS_ behind the watermark and skips keys
+// it already emailed.
+const H_ = 3600 * 1000;
+const T0_ = 1_790_000_000_000;   // a realistic epoch-ms baseline
+
+test('EN-6: a failure appended OUT OF ORDER (older timestamp, behind the watermark) is emailed once', function () {
+  resetState();
+  setRows([phRow(T0_, 'autoImport', 'success', '')]);
+  h.call('runPipelineWatch_');                                   // baseline at T0
+  setRows([phRow(T0_, 'autoImport', 'success', ''), phRow(T0_ + 2 * H_, 'buildDQE', 'success', '')]);
+  h.call('runPipelineWatch_');                                   // watermark -> T0+2h
+  assert.equal(h.state.props.PIPELINE_WATCH_LAST_TS, String(T0_ + 2 * H_));
+  // cdr-report's row lands now, stamped 30 min BEFORE the watermark.
+  setRows([phRow(T0_, 'autoImport', 'success', ''), phRow(T0_ + 2 * H_, 'buildDQE', 'success', ''),
+           phRow(T0_ + 90 * 60000, 'inboundExport', 'failure', 'late writer')]);
+  h.call('runPipelineWatch_');
+  assert.equal(h.state.sentEmails.length, 1, 'pre-EN-6 this row sat behind the watermark forever');
+  assert.match(h.state.sentEmails[0].body, /inboundExport/);
+  h.call('runPipelineWatch_');
+  assert.equal(h.state.sentEmails.length, 1, 'the seen-key store stops a re-send');
+  assert.match(h.state.props.PIPELINE_WATCH_LAST_RESULT, /no new failures/);
+  // Beyond the lookback it is out of reach (the documented bound).
+  setRows([phRow(T0_ + 2 * H_, 'buildDQE', 'success', ''), phRow(T0_ - 3 * H_, 'oldStep', 'failure', 'too late')]);
+  h.call('runPipelineWatch_');
+  assert.equal(h.state.sentEmails.length, 1);
+});
+
+test('EN-6: the first run after deploy (no key store yet) seeds it -- never re-sends what the old version emailed', function () {
+  resetState();
+  h.state.props.PIPELINE_WATCH_ENABLED = 'true';
+  h.state.props.PIPELINE_WATCH_LAST_TS = String(T0_);   // the pre-EN-6 watermark
+  setRows([phRow(T0_ - 30 * 60000, 'buildDQE', 'failure', 'emailed last hour by the old version'),
+           phRow(T0_, 'autoImport', 'success', '')]);
+  h.call('runPipelineWatch_');
+  assert.equal(h.state.sentEmails.length, 0, 'no overlap on the seeding run');
+  assert.ok(h.state.props.PIPELINE_WATCH_SEEN, 'the key store now exists');
+  h.call('runPipelineWatch_');
+  assert.equal(h.state.sentEmails.length, 0, 'and the seeded row stays handled once the overlap is on');
+});
+
+test('EN-6: unparseable failure rows ride the email and the outcome when there ARE new failures', function () {
+  resetState();
+  setRows([phRow(T0_, 'autoImport', 'success', '')]);
+  h.call('runPipelineWatch_');
+  const rows = [phRow(T0_, 'autoImport', 'success', ''), phRow(T0_ + H_, 'buildDQE', 'failure', 'boom')];
+  rows.push(['not a date', 'mystery', 'failure', '', '', 'no ts']);
+  setRows(rows);
+  h.call('runPipelineWatch_');
+  assert.equal(h.state.sentEmails.length, 1);
+  assert.match(h.state.sentEmails[0].body, /1 failure row\(s\) have no readable Timestamp/);
+  assert.match(h.state.props.PIPELINE_WATCH_LAST_RESULT, /plus 1 UNPARSEABLE failure row/);
+});

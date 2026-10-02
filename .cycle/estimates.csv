@@ -5,3 +5,4 @@ date,cycle,action,estimate,estimated_hours,actual_hours,calibration_note
 2026-10-01,216,broad-scan-batch3-per-call-identity,L,14,3.5,"estimated ~14h across 10 items; ~3.5h of session work -- PC-1/PC-9 grew past their estimates (owner asked twice), the rest were S fixes."
 2026-10-01,217,broad-scan-batch4-neon-gates-figures,M,8.5,2,"estimated ~8.5h across 8 items; ~2h of session work -- all S fixes; DL-9 grew a small write/hit tally at the four warmed endpoints."
 2026-10-01,218,broad-scan-batch5-escalations-integrity,M,7,2,"estimated ~7h across 7 items; ~2h of session work -- ESC-D1 grew a schema check (ESC-DDL2 required it) and a move-history backfill."
+2026-10-02,219,broad-scan-batch6-backups-timeouts-signals,M,10.5,3,"estimated ~10.5h across 11 items; ~3h of session work -- EN-6 grew a seen store + seed mode (a naive lookback would re-email the backlog); DL-3/CR-6 became connection wrappers rather than per-callsite edits."

@@ -270,6 +270,7 @@ function installSheetCoverageTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('SHEET_COVERAGE_ENABLED', 'true');
   installSheetCoverageTrigger_();
+  recordTriggerInstaller_('runSheetCoverageWeekly_', true);   // EN-1
   return logStatusReturn_(getSheetCoverageStatus_());
 }
 
@@ -277,6 +278,7 @@ function installSheetCoverageTrigger() {
 function uninstallSheetCoverageTrigger() {
   assertAdmin_();
   uninstallSheetCoverageTrigger_();
+  recordTriggerInstaller_('runSheetCoverageWeekly_', false);   // EN-1
   PropertiesService.getScriptProperties().deleteProperty('SHEET_COVERAGE_ENABLED');
   return logStatusReturn_(getSheetCoverageStatus_());
 }

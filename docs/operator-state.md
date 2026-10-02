@@ -106,6 +106,16 @@ When something looks wrong, before assuming a code bug, check:
      list `runDailyDigests_`, `runWeeklyDigests_`, and `runMonthlyDigests_` (or install
      via Alerts modal → Report Subscribers → Install digest triggers).
      Without them, Digest Config rows have no effect.
+   - **Who installed it (EN-1, 2026-10-02):** a trigger belongs to the
+     account that installed it, and `ScriptApp.getProjectTriggers()` lists
+     only the CURRENT account's -- so a trigger another admin installed
+     reads "NO trigger installed" on the Health page while it keeps firing.
+     The four editor-run installers (`installPipelineWatchTrigger`,
+     `installDqeSilenceWatchTrigger`, `installSheetCoverageTrigger`,
+     `installNeonRetentionTrigger`) now record their installer in
+     `TRIGGER_INSTALLERS`, and the Health row for one installed by another
+     account reads warn and names them: have that person run the matching
+     uninstall, then reinstall as the deploying account.
 9. Did the latest push add a new OAuth scope? Open the Apps Script
    editor → Run → any function → grant the new permission. Scope-
    gated calls (trigger install, mail send) otherwise throw
@@ -720,6 +730,19 @@ When something looks wrong, before assuming a code bug, check:
     batches, so it only fills missing rows and never overwrites; both
     properties clear after an apply. Only the backed-up tables are
     restorable (an allowlist).
+    **Three outcome rules (Batch 6, 2026-10-02).** (1) BU-1: when
+    `NEON_BACKUP_SS_ID` is set but the workbook will not open, the run FAILS
+    and names the id -- it no longer silently creates a fresh, empty
+    workbook (which reset the rotation and orphaned the old backups). If the
+    workbook was deleted ON PURPOSE, clear `NEON_BACKUP_SS_ID` and run again;
+    otherwise restore access to it. (2) BU-3: a run has a 5-minute budget and
+    writes the NEWEST months first; a run that stops on the budget records
+    `PARTIAL` (Health warns) naming the months not reached, and the next run
+    picks them up. Every backup statement has a 240 s query timeout. (3)
+    BU-2: a run whose only problem is a warning (e.g. the workbook past 80%
+    of the cell cap) records `WARN`. Both `PARTIAL` and `WARN` hold the
+    retention prune (#57), which runs only after an `ok` backup -- clear the
+    cause, then "Back up now".
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -959,6 +982,13 @@ When something looks wrong, before assuming a code bug, check:
     failure alerts at most once (the watermark advances past every examined
     row); a failed send leaves the watermark un-advanced so the same failures
     retry next run (the OPS-1 "arm only on a confirmed send" discipline).
+    **EN-6 (2026-10-02):** each run also re-reads the 2 hours BEFORE the
+    watermark and alerts on any failure row in it not already emailed
+    (`PIPELINE_WATCH_SEEN`, a pruned `timestamp|step` list) -- a row written
+    by a slow run with an earlier timestamp than one already scanned used to
+    be skipped forever. The first run after this deploy only seeds that list
+    (no re-send of rows already alerted). Failure rows whose timestamp cannot
+    be parsed are now counted in the email instead of dropped.
     Enable by running `installPipelineWatchTrigger()` from the dashboard editor
     (admin; sets `PIPELINE_WATCH_ENABLED=true` + installs the trigger);
     `uninstallPipelineWatchTrigger()` reverses it. Tunable Script Property:

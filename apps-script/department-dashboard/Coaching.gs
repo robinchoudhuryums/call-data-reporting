@@ -339,6 +339,23 @@ function coachingDeliveryRun_() {
   if (!preview.available) {
     return { result: 'skipped (' + preview.reason + ')', newCount: 0, continuingCount: 0, recoveredCount: 0 };
   }
+  // BU-4 (broad-scan 2026-10-01): a dept whose compute THREW produced no flags,
+  // so every open flag in it diffed as "recovered" -- the run reported `ok 0
+  // new` and told the admins those agents had improved. An errored dept's open
+  // flags are now left out of the diff (untouched: not refreshed, not
+  // recovered), the run is PARTIAL, and a run where EVERY dept errored is a
+  // FAILED run that writes nothing.
+  var errors = preview.errors || [];
+  var erroredDept = {};
+  errors.forEach(function (e) { erroredDept[e.dept] = true; });
+  var errNote = errors.length
+    ? ' — ' + errors.length + ' dept(s) errored, their open flags left untouched: '
+      + errors.map(function (e) { return e.dept; }).join(', ') + ' (first: ' + String(errors[0].error).slice(0, 160) + ')'
+    : '';
+  if (errors.length && errors.length >= (preview.deptsScanned || errors.length)) {
+    return { result: 'FAILED (every dept errored -- nothing written, no email)' + errNote,
+             newCount: 0, continuingCount: 0, recoveredCount: 0 };
+  }
   var conn = getDashboardNeonConn_();
   if (!conn) {
     // Neon down: no worklist to reconcile against, and emailing flags that
@@ -371,7 +388,8 @@ function coachingDeliveryRun_() {
     var json = rs.next() ? rs.getString('j') : '[]';
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'coaching');
     rs.close(); stmt.close();
-    var diff = coachingDeliveryDiff_(preview.flags, JSON.parse(json || '[]'));
+    var openRows = JSON.parse(json || '[]').filter(function (row) { return !erroredDept[row.department]; });   // BU-4
+    var diff = coachingDeliveryDiff_(preview.flags, openRows);
 
     conn.setAutoCommit(false); txn = true;
     diff.continuing.forEach(function (c) {
@@ -489,10 +507,10 @@ function coachingDeliveryRun_() {
       // old "ok … EMAIL NOT SENT" read green on the Health page while the
       // admins were never told about the new flags. NOTIFY-FAILED carries the
       // failure word the classifier already matches.
-      result: (notifyFailed ? 'NOTIFY-FAILED ' : 'ok ') + diff.newFlags.length + ' new, ' + diff.continuing.length
+      result: (notifyFailed ? 'NOTIFY-FAILED ' : errors.length ? 'PARTIAL ' : 'ok ') + diff.newFlags.length + ' new, ' + diff.continuing.length
         + ' continuing, ' + diff.recoveredOpenRows.length + ' recovered-open ('
         + preview.window.from + '..' + preview.window.to + ')'
-        + emailNote,
+        + emailNote + errNote,
       newCount: diff.newFlags.length,
       continuingCount: diff.continuing.length,
       recoveredCount: diff.recoveredOpenRows.length,
