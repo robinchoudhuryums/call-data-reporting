@@ -83,7 +83,8 @@
 // the COMPANY view (own / other / none per dept, keyed on the FIRST callback's
 // dialer); the callback lateral also gained a call_id tie-break so the "first"
 // callback is deterministic when two dials share a second.
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v6';   // v6: PC-9 the callback denominator (inbound abandons) uses the R49 06:00 floor for CSR-family entry queues
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v7';   // v7: PC-12 a parent dept's agent table includes its one-level sub-queue rosters (scopeDept + meta.scopeDepts)
+// v6: PC-9 the callback denominator (inbound abandons) uses the R49 06:00 floor for CSR-family entry queues
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -193,7 +194,22 @@ function outboundResolveRequest_(req) {
     throw new Error('Unknown department: ' + dept);
   }
 
-  return { from: from, to: to, dept: dept, companyView: !dept, user: user };
+  return { from: from, to: to, dept: dept, companyView: !dept, user: user, scopeDepts: outboundScopeDepts_(dept) };
+}
+
+/**
+ * PC-12 (owner ruling 2026-10-02): the departments a DEPT view's agent table
+ * covers -- the dept plus its one-level sub-queues. The callback denominator
+ * (inboundQueuesForDept_) already rolls the children's queues in, so a parent
+ * view whose agent table held only the parent's own roster compared a
+ * children-inclusive denominator with a parent-only table. Same child map as
+ * that denominator (inboundChildDepts_), so the two can never disagree.
+ * [] for the company view.
+ */
+function outboundScopeDepts_(dept) {
+  if (!dept) return [];
+  const kids = (typeof inboundChildDepts_ === 'function') ? inboundChildDepts_(dept) : [];
+  return [dept].concat(kids.filter(function (k) { return k && k !== dept; }));
 }
 
 function emptyOutboundReport_(scope) {
@@ -502,6 +518,11 @@ function computeOutboundReport_(scope) {
 function outboundShapeReport_(scope, obj, deptsByAgent, cbDept) {
   const out = emptyOutboundReport_(scope);
   out.meta.coverageStart = obj.coverageStart || null;
+  // PC-12: the dept view covers the dept + its one-level sub-queues. A scope
+  // built without the list (older callers) keeps the old own-roster rule.
+  const inScope = scope.companyView ? []
+    : ((scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept]);
+  out.meta.scopeDepts = inScope.slice();
 
   // Roster-filter + shape one raw agent list (the same rules serve the
   // current AND the prior window, so the delta chips compare like with
@@ -513,10 +534,15 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept) {
       const homes = deptsByAgent[name] || [];
       if (counts && !homes.length) counts.unrostered++;
       if (!scope.companyView) {
-        // Dept view: ONLY agents on THIS dept's roster (the caveat: never
-        // the raw CDR org label). Off-roster/unrostered dialers are counted
-        // for the disclosure caption, not silently dropped.
-        if (homes.indexOf(scope.dept) === -1) { if (counts) counts.offRoster++; return; }
+        // Dept view: ONLY agents on THIS dept's roster or one of its
+        // sub-queues' rosters (PC-12; the caveat: never the raw CDR org
+        // label). Off-roster/unrostered dialers are counted for the
+        // disclosure caption, not silently dropped.
+        var scopeDept = null;
+        for (var s = 0; s < inScope.length && !scopeDept; s++) {
+          if (homes.indexOf(inScope[s]) !== -1) scopeDept = inScope[s];
+        }
+        if (!scopeDept) { if (counts) counts.offRoster++; return; }
       }
       const obTotal = Number(r.ob_total) || 0;
       const obConnected = Number(r.ob_connected) || 0;
@@ -526,6 +552,10 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept) {
       list.push({
         agent: name,
         dept: homes.length ? homes.join(', ') : 'Unrostered',
+        // PC-12: the in-scope dept this row is grouped under (the parent wins
+        // for an agent on both rosters, so no agent is counted twice). null in
+        // the company view.
+        scopeDept: scope.companyView ? null : scopeDept,
         obTotal: obTotal,
         obConnected: obConnected,
         obConnectRate: obTotal ? Math.round(obConnected / obTotal * 1000) / 10 : null,

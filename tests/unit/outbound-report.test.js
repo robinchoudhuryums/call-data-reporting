@@ -3010,3 +3010,45 @@ test('talk: the entry point is admin-gated, and a talk run is scored ONLY by the
   assert.ok(branch.indexOf('talk.separation.reason') < 0,
     'the refit window must never be quoted as a talk run\'s result');
 });
+
+// ── PC-12 (owner ruling 2026-10-02): a parent dept's view covers its sub-queues
+// The callback denominator (inboundQueuesForDept_) already rolls the child
+// queues in; the agent table now covers the child rosters too, grouped.
+const OB_AGENT_ = function (agent, total) {
+  return { agent: agent, ob_total: total, ob_connected: 1, ob_unconn_brief: 0, ob_unconn_real: 0, ob_talk_sec: 60, attempts: total };
+};
+
+test('PC-12: a parent view keeps parent + sub-queue rosters, tags each row, and the parent wins a crossover', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: 'Sales', companyView: false, scopeDepts: ['Sales', 'PAP'] },
+    { agents: [OB_AGENT_('Ann', 5), OB_AGENT_('Bob', 3), OB_AGENT_('Cat', 9), OB_AGENT_('Dee', 2)] },
+    { Ann: ['Sales'], Bob: ['PAP'], Cat: ['Other'], Dee: ['PAP', 'Sales'] });
+  const byName = {};
+  out.agents.forEach(function (a) { byName[a.agent] = a.scopeDept; });
+  assert.deepEqual(JSON.parse(JSON.stringify(byName)), { Ann: 'Sales', Bob: 'PAP', Dee: 'Sales' });
+  assert.equal(out.meta.offRosterAgents, 1, 'Cat is off every in-scope roster');
+  assert.equal(out.kpis.obTotal, 10, 'KPIs sum exactly the rows shown, each agent once');
+  assert.deepEqual(Array.from(out.meta.scopeDepts), ['Sales', 'PAP']);
+});
+
+test('PC-12: a scope without the list keeps the own-roster rule; the company view tags nothing', function () {
+  const legacy = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: 'Sales', companyView: false },
+    { agents: [OB_AGENT_('Ann', 5), OB_AGENT_('Bob', 3)] }, { Ann: ['Sales'], Bob: ['PAP'] });
+  assert.deepEqual(Array.from(legacy.agents.map(function (a) { return a.agent; })), ['Ann']);
+  const company = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [OB_AGENT_('Ann', 5)] }, { Ann: ['Sales'] });
+  assert.equal(company.agents[0].scopeDept, null);
+  assert.equal(company.meta.scopeDepts.length, 0);
+});
+
+test('PC-12: outboundScopeDepts_ uses the callback denominator\'s own child map (inboundChildDepts_)', function () {
+  const saved = h.ctx.getOverviewParentMap_;
+  h.ctx.getOverviewParentMap_ = function () { return { PAP: 'Sales', Spanish: 'CSR', Sales: 'Sales' }; };
+  try {
+    assert.deepEqual(Array.from(h.call('outboundScopeDepts_', 'Sales')), ['Sales', 'PAP'], 'self-edge ignored');
+    assert.deepEqual(Array.from(h.call('outboundScopeDepts_', 'Billing')), ['Billing']);
+    assert.deepEqual(Array.from(h.call('outboundScopeDepts_', '')), []);
+  } finally { h.ctx.getOverviewParentMap_ = saved; }
+});

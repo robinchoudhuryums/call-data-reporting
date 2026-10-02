@@ -181,7 +181,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     // Batch G: outbound report. Inline fixture; the payload shape is pinned
     // server-side by tests/unit/outbound-report.test.js.
     getOutboundReport: function (req) {
-      return {
+      const out = {
         meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || '', companyView: !(req && req.department),
           available: true, vetting: true, callbackWindowDays: 3,
@@ -256,7 +256,19 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           unmappedQueues: [{ queue: 'a_q_mystery', tracked: 5, total: 5 }],
           unmappedQueueCount: 1,
         },
-        agents: [
+        agents: (req && req.department === 'Sales') ? [
+          // PC-12: a PARENT dept's view -- its own roster AND its sub-queue's,
+          // each row tagged with the in-scope dept it groups under.
+          { agent: 'Sam Seller', dept: 'Sales', scopeDept: 'Sales', obTotal: 30, obConnected: 20,
+            obConnectRate: 66.7, obTalkSec: 4000, obAttSec: 200, attempts: 33,
+            obUnconnectedBrief: 3, obUnconnectedReal: 7, obUnconnectedUnknown: 0 },
+          { agent: 'Pat Papper', dept: 'PAP', scopeDept: 'PAP', obTotal: 12, obConnected: 9,
+            obConnectRate: 75, obTalkSec: 1800, obAttSec: 200, attempts: 14,
+            obUnconnectedBrief: 1, obUnconnectedReal: 2, obUnconnectedUnknown: 0 },
+          { agent: 'Sue Seller', dept: 'Sales', scopeDept: 'Sales', obTotal: 8, obConnected: 5,
+            obConnectRate: 62.5, obTalkSec: 900, obAttSec: 180, attempts: 9,
+            obUnconnectedBrief: 1, obUnconnectedReal: 2, obUnconnectedUnknown: 0 },
+        ] : [
           { agent: 'Test Agent', dept: 'CSR', obTotal: 40, obConnected: 30,
             obConnectRate: 75, obTalkSec: 6000, obAttSec: 200, attempts: 45,
             obUnconnectedBrief: 4, obUnconnectedReal: 6, obUnconnectedUnknown: 0 },
@@ -265,6 +277,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
             obUnconnectedBrief: 2, obUnconnectedReal: 4, obUnconnectedUnknown: 1 },
         ],
       };
+      // PC-12: the dept view's in-scope list (the server's meta.scopeDepts).
+      if (req && req.department) out.meta.scopeDepts = req.department === 'Sales' ? ['Sales', 'PAP'] : [req.department];
+      return out;
     },
     // F-e: coaching worklist (admin-only until released). Inline fixture --
     // small and stable; the payload shape itself is pinned server-side by
@@ -424,7 +439,36 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     script: {
       run: makeRunner(),
       url: { getLocation: function (cb) { cb({ hash: '', parameter: {}, parameters: {} }); } },
-      history: { push: function () {}, replace: function () {}, setChangeHandler: function () {} },
+      // CL-23: a recording history stack. push/replace edit it like the
+      // browser does; a driver walks it with __HARNESS__.historyBack() /
+      // historyForward(), which call the app's change handler the way a
+      // real Back / Forward (popstate) does.
+      history: (function () {
+        var H = window.__HARNESS__;
+        H.history = { entries: [{ state: null, params: {}, hash: '' }], index: 0, pushes: 0, handler: null };
+        function fire() {
+          var e = H.history.entries[H.history.index];
+          if (H.history.handler) H.history.handler({ state: e.state, location: { hash: e.hash, parameter: e.params || {}, parameters: {} } });
+        }
+        H.historyBack = function () { if (H.history.index > 0) { H.history.index--; fire(); return true; } return false; };
+        H.historyForward = function () {
+          if (H.history.index < H.history.entries.length - 1) { H.history.index++; fire(); return true; }
+          return false;
+        };
+        H.historyHashes = function () { return H.history.entries.map(function (e) { return e.hash; }); };
+        return {
+          push: function (state, params, hash) {
+            H.history.entries = H.history.entries.slice(0, H.history.index + 1);
+            H.history.entries.push({ state: state, params: params, hash: hash || '' });
+            H.history.index++;
+            H.history.pushes++;
+          },
+          replace: function (state, params, hash) {
+            H.history.entries[H.history.index] = { state: state, params: params, hash: hash || '' };
+          },
+          setChangeHandler: function (fn) { H.history.handler = fn; },
+        };
+      })(),
       host: { close: function () {}, setHeight: function () {}, setWidth: function () {}, origin: '' },
     },
   };

@@ -1900,3 +1900,102 @@ function previewDqeQueueExtColumn() {
     + (out.mergedDates.length ? out.mergedDates.join(', ') : 'none') + '. Samples: ' + JSON.stringify(out.samples));
   return out;
 }
+
+// ── QO-2 (owner ruling 2026-10-02): an exactly-4.00% QCD day is a violation ──
+//
+// The pipeline wrote col L ("Violations") with `abandoned/total > 0.04`, so an
+// exactly-4.00% queue-day stored 0 while every dashboard tint and the queue-
+// report email (>= 4) drew it red -- the row read "in violation" beside a Viol
+// count of 0. The writers now use cdr-import's qcdViolationFlag_ (4.00% OR
+// MORE, integer math). This repairs the rows already written: ONLY rows whose
+// stored counts are EXACTLY 4.00% (abandoned * 25 === total) and whose date is
+// on or after QCD_VIOL_GTE_FROM_ISO_ -- the month the 4% rule took effect, per
+// the owner. Earlier rows were written under the 5% rule and keep its meaning.
+// Nothing else in the row changes.
+//
+// Order is the bulk-apply contract (1b + CRT-7 + CR-1): fingerprint -> read ->
+// snapshot (only past HR_BACKUP_MIN_CELLS_, so normally none) -> re-verify ->
+// write. The checksum covers queue, source, both counts and the flag, so a
+// re-sort or a force re-import between the read and the write aborts it.
+//
+// Neon: every in-scope exactly-4.00% row is upserted (writeQCDRowsToNeon,
+// ON CONFLICT DO UPDATE), not only the ones this run changed in the sheet -- so
+// a run whose sheet write succeeded but whose mirror found Neon unreachable is
+// healed by simply running the apply again. The dashboard's qcdAll / Overview
+// caches pick the change up within their TTL (<= 6 h).
+//
+// Usage: previewQcdViolationFlags() (writes nothing), then
+// repairQcdViolationFlags(). Run outside the import window.
+var QCD_VIOL_GTE_FROM_ISO_ = '2026-08-01';
+var QCD_VIOL_SHEET_ = 'QCD Historical Data';
+var QCD_VIOL_COL_ = 12;   // L
+
+function previewQcdViolationFlags() { return repairQcdViolationFlags_(/*dryRun=*/true); }
+function repairQcdViolationFlags() { return repairQcdViolationFlags_(/*dryRun=*/false); }
+
+/** Pure: is this QCD row an in-scope exactly-4.00% day? (display values A..L) */
+function qcdViolExactBoundary_(r) {
+  var iso = parseDateForNeon(r[2]);
+  if (!iso || iso < QCD_VIOL_GTE_FROM_ISO_) return null;
+  var total = parseInt(String(r[5]).replace(/,/g, ''), 10) || 0;
+  var abnd  = parseInt(String(r[7]).replace(/,/g, ''), 10) || 0;
+  if (!(total > 0) || abnd * 25 !== total) return null;
+  return { iso: iso, total: total, abandoned: abnd, flag: parseInt(r[11], 10) || 0 };
+}
+
+function repairQcdViolationFlags_(dryRun) {
+  var label = dryRun ? 'previewQcdViolationFlags' : 'repairQcdViolationFlags';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(QCD_VIOL_SHEET_);
+  var res = { dryRun: !!dryRun, from: QCD_VIOL_GTE_FROM_ISO_, boundaryRows: 0, toFlag: 0,
+              alreadyFlagged: 0, written: 0, mirrored: 0, neon: 'skipped', backup: null, rows: [] };
+  if (!sheet || sheet.getLastRow() < 2) { Logger.log(label + ': no ' + QCD_VIOL_SHEET_ + ' rows.'); return res; }
+
+  var rowSnap = hrRowFingerprint_(sheet, [[4, 2], [6, 1], [8, 1], [QCD_VIOL_COL_, 1]]);
+  var lastRow = sheet.getLastRow();
+  var data = sheet.getRange(2, 1, lastRow - 1, QCD_VIOL_COL_).getDisplayValues();
+  var fix = [], mirror = [];
+  for (var i = 0; i < data.length; i++) {
+    var b = qcdViolExactBoundary_(data[i]);
+    if (!b) continue;
+    res.boundaryRows++;
+    var r = data[i];
+    var pctRaw = String(r[10] || '').trim();
+    var pctVal = parseFloat(pctRaw.replace('%', ''));
+    if (isNaN(pctVal)) pctVal = 0;
+    else if (pctRaw.indexOf('%') !== -1 || pctVal > 1) pctVal = pctVal / 100;   // the backfill's unit rule
+    mirror.push({
+      monthYear: r[0] || null, week: r[1] || null, callDate: b.iso,
+      callQueue: r[3], callSource: r[4],
+      totalCalls: b.total, totalAnswered: parseInt(String(r[6]).replace(/,/g, ''), 10) || 0,
+      abandoned: b.abandoned,
+      longestWait: normalizeDuration(r[8]), avgAnswer: normalizeDuration(r[9]),
+      abandonedPct: pctVal, violations: 1
+    });
+    if (b.flag === 1) { res.alreadyFlagged++; continue; }
+    fix.push(i + 2);
+    if (res.rows.length < 50) res.rows.push(b.iso + ' ' + r[3] + ' / ' + r[4] + ': ' + b.abandoned + '/' + b.total);
+  }
+  res.toFlag = fix.length;
+  Logger.log(label + ': ' + res.boundaryRows + ' exactly-4.00% row(s) on/after ' + QCD_VIOL_GTE_FROM_ISO_
+    + '; ' + res.toFlag + ' stored as 0 (to flag), ' + res.alreadyFlagged + ' already 1.'
+    + (res.rows.length ? '\n  ' + res.rows.join('\n  ') : ''));
+  if (dryRun || !res.boundaryRows) return res;
+
+  if (fix.length) {
+    res.backup = hrBackupBeforeApply_(ss, sheet, 'qcd-violation-flags', fix.length);
+    hrReverifyRows_(sheet, rowSnap, 'repairQcdViolationFlags');
+    fix.forEach(function (rowNum) { sheet.getRange(rowNum, QCD_VIOL_COL_).setValue(1); });
+    res.written = fix.length;
+  }
+  try {
+    var w = writeQCDRowsToNeon(mirror);
+    res.mirrored = (w && w.inserted) || 0;
+    res.neon = (w && w.skipped) ? 'unreachable -- re-run repairQcdViolationFlags() once Neon is back' : 'ok';
+  } catch (e) {
+    res.neon = 'FAILED: ' + (e && e.message ? e.message : e) + ' -- the sheet is repaired; re-run to retry the mirror';
+  }
+  Logger.log(label + ': flagged ' + res.written + ' row(s) in the sheet; Neon ' + res.neon
+    + ' (' + res.mirrored + ' row(s) upserted).');
+  return res;
+}

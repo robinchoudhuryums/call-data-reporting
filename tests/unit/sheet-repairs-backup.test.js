@@ -116,7 +116,7 @@ test('1b: every bulk apply in sheetRepairs.js calls the backup before its first 
   const fs = require('fs'), path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'sheetRepairs.js'), 'utf8');
   const applies = ['repairDqeSlotTimestamps_', 'repairDqeAbandonedIds_', 'repairDqeOldPstTimestampShift_',
-                   'mergeDqeDuplicateRows_', 'normalizeDqeDateColumn_'];
+                   'mergeDqeDuplicateRows_', 'normalizeDqeDateColumn_', 'repairQcdViolationFlags_'];
   applies.forEach(function (fn) {
     const start = src.indexOf('function ' + fn + '(');
     assert.ok(start > 0, fn + ' found');
@@ -145,7 +145,8 @@ test('CR-1: every DQE bulk apply snapshots FIRST, then re-verifies, then writes 
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'sheetRepairs.js'), 'utf8');
   [['repairDqeAbandonedIds_', 'repairDqeAbandonedIds'], ['repairDqeOldPstTimestampShift_', 'repairDqeOldPstTimestampShift'],
    ['mergeDqeDuplicateRows_', 'repairDqeDuplicateMerge'], ['normalizeDqeDateColumn_', 'repairDqeDateNormalize'],
-   ['repairDqeSlotTimestamps_', 'repairDqeSlotTimestamps']].forEach(function (p) {
+   ['repairDqeSlotTimestamps_', 'repairDqeSlotTimestamps'],
+   ['repairQcdViolationFlags_', 'repairQcdViolationFlags']].forEach(function (p) {   // QO-2: the QCD twin
     const start = src.indexOf('function ' + p[0] + '(');
     const end = src.indexOf('\nfunction ', start + 1);
     const body = src.slice(start, end > 0 ? end : undefined);

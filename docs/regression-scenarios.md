@@ -469,3 +469,14 @@ S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S
     - Neon-down check (only when an outage happens, or on a dev copy with NEON_HOST pointed nowhere): open the Escalations page -- the read-only snapshot banner shows; open Activity on an open linked card: the thread renders with "Offline copy from <time>", department tags intact, long entries marked "(shortened in the offline copy)". A card the snapshot does not hold says Activity is unavailable.
   Expected: as described.
   Fails if: a restore lands in a different status than the one removed; the removal disappears from the thread; a removed department gets a second copy via Link/Move; or, offline, a manager sees another department's thread, or a thread shows only part of its entries without saying so.
+
+S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Department Dashboard
+  Steps:
+    - In TWO real browsers (e.g. Chrome and Safari or Firefox), open the deployed /exec URL fresh. Click My Department, then Escalations.
+    - Press the browser's Back button: My Department shows, with its tab lit. Back again: the Overview. Forward: My Department.
+    - As an ADMIN, open Reports -> Individual Report; press Back: the modal closes and the page under it stays. Forward: the modal reopens. Close it with X, then press Back: the modal reopens (closing was a step).
+    - Open a deep link (.../exec#/report/insights) in a new tab, then press Back: the browser leaves the dashboard (no extra entry was added for the landing view).
+    - As a MANAGER, paste .../exec#/admin/health, then click My Department and press Back: nothing admin-only opens.
+    - Watch the address bar: each step shows the route after `#`, and any `?` query the URL was opened with is kept.
+  Expected: Back / Forward step through views in the order visited; no step needs two presses; no console errors; the "Open in new tab" button still opens the current view.
+  Fails if: Back leaves the dashboard while views remain in history; a step needs two presses (a duplicate entry); a modal stays open after Back to a page; the wrong tab is lit; anything differs between the two browsers (record which -- this API was once noted as spotty).

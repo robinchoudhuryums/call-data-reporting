@@ -270,6 +270,22 @@ function runNeonBackup_() {
       }
     }
 
+    // 5. ESC-D8: retry the scrub of deleted escalations -- AFTER the monthly
+    // files, so a closed month the scrub had to defer has just been finalized.
+    // Reported in the outcome but never FAILED: a backup that is complete is
+    // still ok (the ENG-2 retention gate keys on it); the pending scrub has its
+    // own Health row.
+    if (nbScrubQueue_().ids.length) {
+      if (overBudget()) {
+        outcomes.push('scrub not reached (run budget)');
+      } else {
+        var sr = nbScrubPending_();
+        outcomes.push(sr.status === 'ok'
+          ? 'scrub ok (' + sr.lines + ' row(s) of deleted escalations removed from ' + sr.files + ' file(s))'
+          : 'scrub pending (' + sr.pending + ' deleted escalation id(s) still in the backups)');
+      }
+    }
+
     if (store.label === 'sheets' && typeof folder.cellsUsedPct === 'function') {
       var pct = folder.cellsUsedPct();
       if (pct >= NB_SHEETS_WARN_PCT_) {
@@ -715,6 +731,210 @@ function nbSheetsReadTab_(ss, name) {
     .join('\n');
 }
 
+// ── ESC-D8: scrub a deleted escalation out of the backups ─────────────
+//
+// Owner ruling 2026-10-02 (option C): a permanent delete must not survive in
+// the backups. deleteEscalation calls nbScrubAfterDelete_ AFTER its Neon
+// transaction commits and OUTSIDE the escalation write lock. The ids go on a
+// queue (NEON_BACKUP_SCRUB_PENDING) FIRST, so a scrub that throws or is killed
+// leaves them queued; then every `escalations-*.jsonl` snapshot and every
+// `escalation_activity` month / part / tail file is rewritten without the
+// rows of those ids, in EVERY store this install has written to (the Drive
+// folder and the Sheets workbook -- a run that fell back to Sheets leaves the
+// older Drive files behind). Ids leave the queue only once every store opened
+// and every file is clean; the next backup run retries the rest, and the
+// Health page's `backup-scrub` row shows what is still waiting.
+//
+// The ENG-1 trap: rewriting a file stamps it "last updated today", and that
+// date is what marks a CLOSED month final. A closed month that is not final
+// yet (still missing its last days) would be frozen short by a scrub run on or
+// after its final date -- so such a file is DEFERRED, never rewritten; the
+// next backup run finalizes the month from Neon (where the rows are already
+// gone) before it retries the scrub. A write before the final date cannot
+// mark it final, so those files are scrubbed at once.
+//
+// Limits (Operator State #28): Drive keeps prior revisions of a file for 30
+// days and a spreadsheet keeps its version history -- the scrub rewrites the
+// current content only.
+
+var NB_SCRUB_PROP_ = 'NEON_BACKUP_SCRUB_PENDING';
+var NB_SCRUB_MAX_IDS_ = 150;   // keeps the queue under the 9 KB property-value cap
+var NB_SCRUB_SNAPSHOT_RE_ = /^escalations-\d{4}-\d{2}-\d{2}\.jsonl$/;
+var NB_SCRUB_ACTIVITY_RE_ = /^escalation_activity-(\d{4}-\d{2})(?:\.part\d+|\.tail)?\.jsonl$/;
+
+/** EDITOR-RUN (admin): retry the pending scrub now instead of at the next backup run. */
+function runNeonBackupScrubNow() {
+  assertAdmin_();
+  var res = nbScrubPending_();
+  Logger.log('runNeonBackupScrubNow: ' + JSON.stringify(res));
+  return res;
+}
+
+/**
+ * Called by deleteEscalation after the commit, with the lock released. Never
+ * throws -- the delete already succeeded; a failed scrub stays queued.
+ */
+function nbScrubAfterDelete_(ids) {
+  try {
+    var clean = (ids || []).map(function (x) { return String(x || '').trim(); })
+      .filter(function (x) { return x; });
+    if (!clean.length) return { status: 'none', pending: nbScrubQueue_().ids.length };
+    nbScrubUpdateQueue_(function (q) {
+      clean.forEach(function (id) {
+        if (q.ids.indexOf(id) !== -1) return;
+        if (q.ids.length >= NB_SCRUB_MAX_IDS_) { q.dropped = (q.dropped || 0) + 1; return; }
+        q.ids.push(id);
+      });
+      if (!q.since) q.since = new Date().toISOString();
+      return q;
+    });
+    return nbScrubPending_();
+  } catch (e) {
+    var msg = (e && e.message) ? e.message : String(e);
+    Logger.log('nbScrubAfterDelete_: ' + msg);
+    return { status: 'queued', error: msg };
+  }
+}
+
+/** The queue: { ids: [...], since, lastAttempt, lastError, dropped }. */
+function nbScrubQueue_() {
+  var raw = '';
+  try { raw = PropertiesService.getScriptProperties().getProperty(NB_SCRUB_PROP_) || ''; } catch (e) { raw = ''; }
+  var q = null;
+  try { q = raw ? JSON.parse(raw) : null; } catch (e) { q = null; }
+  if (!q || typeof q !== 'object') q = {};
+  q.ids = Array.isArray(q.ids) ? q.ids.map(String) : [];
+  return q;
+}
+
+/** Read-modify-write the queue under the script lock (an empty queue clears the property). */
+function nbScrubUpdateQueue_(fn) {
+  var lock = LockService.getScriptLock();
+  var held = false;
+  try { held = lock.tryLock(10000); } catch (e) { held = false; }
+  try {
+    var q = fn(nbScrubQueue_()) || { ids: [] };
+    var props = PropertiesService.getScriptProperties();
+    if (!q.ids.length && !q.dropped) props.deleteProperty(NB_SCRUB_PROP_);
+    else props.setProperty(NB_SCRUB_PROP_, JSON.stringify(q));
+    return q;
+  } finally {
+    if (held) { try { lock.releaseLock(); } catch (re) {} }
+  }
+}
+
+/** Scrubs every queued id; dequeues them only when every store came back clean. */
+function nbScrubPending_() {
+  var q = nbScrubQueue_();
+  if (!q.ids.length) return { status: 'none', pending: 0, dropped: q.dropped || 0 };
+  var ids = q.ids.slice();
+  var res;
+  try {
+    res = nbScrubIds_(ids, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'));
+  } catch (e) {
+    res = { ok: false, files: 0, lines: 0, deferred: [], errors: [(e && e.message) ? e.message : String(e)] };
+  }
+  var done = res.ok && !res.errors.length && !res.deferred.length;
+  var after = nbScrubUpdateQueue_(function (cur) {
+    if (done) cur.ids = cur.ids.filter(function (id) { return ids.indexOf(id) === -1; });
+    cur.lastAttempt = new Date().toISOString();
+    cur.lastError = done ? '' : (res.errors.concat(res.deferred.length
+      ? ['deferred until the next backup run finalizes ' + res.deferred.join(', ')] : []).join('; ')).slice(0, 600);
+    if (!cur.ids.length) cur.since = '';
+    return cur;
+  });
+  return { status: done ? 'ok' : 'pending', pending: after.ids.length, dropped: after.dropped || 0,
+           files: res.files, lines: res.lines, deferred: res.deferred, errors: res.errors };
+}
+
+/** The stores this install has written to (never creates one). */
+function nbScrubStores_() {
+  var props = PropertiesService.getScriptProperties();
+  var out = { stores: [], errors: [] };
+  var fid = props.getProperty('NEON_BACKUP_FOLDER_ID');
+  if (fid) {
+    try { out.stores.push({ label: 'drive', folder: DriveApp.getFolderById(fid) }); }
+    catch (e) { out.errors.push('Drive folder ' + fid + ': ' + ((e && e.message) ? e.message : e)); }
+  }
+  var sid = props.getProperty('NEON_BACKUP_SS_ID');
+  if (sid) {
+    try { out.stores.push({ label: 'sheets', folder: nbSheetsFolderFor_(SpreadsheetApp.openById(sid)) }); }
+    catch (e2) { out.errors.push('backup workbook ' + sid + ': ' + ((e2 && e2.message) ? e2.message : e2)); }
+  }
+  return out;
+}
+
+/**
+ * Rewrites every escalation backup file without the rows of `ids`.
+ * Returns { ok, files (rewritten), lines (removed), deferred: [names], errors }.
+ */
+function nbScrubIds_(ids, todayIso) {
+  var set = {};
+  ids.forEach(function (id) { set[id] = true; });
+  var st = nbScrubStores_();
+  var res = { ok: true, files: 0, lines: 0, deferred: [], errors: st.errors.slice() };
+  var currentYm = String(todayIso).slice(0, 7);
+  st.stores.forEach(function (s) {
+    try {
+      var names = [];
+      var it = s.folder.getFiles();
+      while (it.hasNext()) names.push(it.next().getName());
+      names.sort().forEach(function (name) {
+        var snap = NB_SCRUB_SNAPSHOT_RE_.test(name);
+        var act = NB_SCRUB_ACTIVITY_RE_.exec(name);
+        if (!snap && !act) return;
+        var file = nbFirstFile_(s.folder, name);
+        if (!file) return;
+        var body = String(file.getBlob().getDataAsString() || '');
+        if (!ids.some(function (id) { return body.indexOf(id) !== -1; })) return;   // cheap pre-check
+        var key = snap ? 'id' : 'escalation_id';
+        var removed = 0, unparsed = 0;
+        var kept = body.split('\n').filter(function (l) {
+          if (!l.trim()) return false;
+          var row = null;
+          try { row = JSON.parse(l); } catch (e) { row = null; }
+          if (!row) {
+            if (ids.some(function (id) { return l.indexOf(id) !== -1; })) unparsed++;
+            return true;
+          }
+          if (set[String(row[key])]) { removed++; return false; }
+          return true;
+        });
+        if (unparsed) res.errors.push(s.label + ' ' + name + ': ' + unparsed + ' unparseable line(s) name a deleted id');
+        if (!removed) return;
+        if (act && !nbScrubMonthSafe_(s.folder, act[1], currentYm, todayIso)) {
+          res.deferred.push(s.label + ' ' + name);
+          return;
+        }
+        file.setContent(kept.join('\n'));
+        res.files++;
+        res.lines += removed;
+      });
+    } catch (e) {
+      res.errors.push(s.label + ': ' + ((e && e.message) ? e.message : e));
+    }
+  });
+  if (res.errors.length) res.ok = false;
+  return res;
+}
+
+/**
+ * ENG-1 guard: may a scrub rewrite a file of month `ym` today? Yes for the
+ * current month, for a closed month already FINAL (its main file or tail was
+ * written on/after the final date), and before the final date (a write then
+ * cannot mark it final). No otherwise -- the backup run must finalize it first.
+ */
+function nbScrubMonthSafe_(folder, ym, currentYm, todayIso) {
+  if (ym >= currentYm) return true;
+  var finalOn = nbAddDaysIso_(nbNextMonth_(ym) + '-01', NB_FINAL_GRACE_DAYS_);
+  if (todayIso < finalOn) return true;
+  var main = nbMonthMainFile_(folder, 'escalation_activity', ym);
+  var tail = nbFirstFile_(folder, 'escalation_activity-' + ym + '.tail.jsonl');
+  var mu = main ? nbFileUpdatedIso_(main) : '';
+  var tu = tail ? nbFileUpdatedIso_(tail) : '';
+  return !!((mu && mu >= finalOn) || (tu && tu >= finalOn));
+}
+
 // ── Restore (either store) ────────────────────────────────────────────
 
 var NB_RESTORE_TABLES_ = ['escalations', 'escalation_activity', 'inbound_calls', 'outbound_calls',
@@ -760,8 +980,21 @@ function restoreNeonBackupFile() {
   });
   var bad = 0;
   lines.forEach(function (l) { try { JSON.parse(l); } catch (e) { bad++; } });
+  // ESC-D8: never restore an escalation that was deleted but is still waiting
+  // to be scrubbed out of the backups.
+  var skippedDeleted = 0;
+  if (!bad && (table === 'escalations' || table === 'escalation_activity')) {
+    var gone = {};
+    nbScrubQueue_().ids.forEach(function (id) { gone[id] = true; });
+    var idKey = table === 'escalations' ? 'id' : 'escalation_id';
+    lines = lines.filter(function (l) {
+      if (gone[String(JSON.parse(l)[idKey])]) { skippedDeleted++; return false; }
+      return true;
+    });
+  }
   var summary = { ok: true, table: table, files: files.map(function (f) { return f.getName(); }),
-                  rows: lines.length, unparseable: bad, applied: apply, inserted: 0 };
+                  rows: lines.length, unparseable: bad, applied: apply, inserted: 0,
+                  skippedDeleted: skippedDeleted };
   if (bad) {
     summary.ok = false;
     Logger.log('restoreNeonBackupFile: ' + bad + ' line(s) are not valid JSON -- refusing to restore.');
@@ -770,6 +1003,7 @@ function restoreNeonBackupFile() {
   if (!apply) {
     Logger.log('restoreNeonBackupFile PREVIEW: ' + lines.length + ' row(s) from ' + summary.files.join(', ')
       + ' -> ' + table + '. Rows already in Neon are skipped (ON CONFLICT DO NOTHING). '
+      + (skippedDeleted ? skippedDeleted + ' row(s) of deleted escalations are left out (ESC-D8). ' : '')
       + 'Set NEON_RESTORE_APPLY=true and run again to write.');
     return summary;
   }

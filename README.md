@@ -44,7 +44,7 @@ still LIVE TRUTH, and CLAUDE.md carries a one-line index for each entry** —
 [`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-55`),
 [`docs/operator-state.md`](docs/operator-state.md) (the numbered operator
 checklist), [`docs/regression-scenarios.md`](docs/regression-scenarios.md)
-(`S1`…`S53`),
+(`S1`…`S54`),
 [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) (client /
 presentation layer), [`docs/neon-layer.md`](docs/neon-layer.md) (the Neon
 mirror + read-back layer) and

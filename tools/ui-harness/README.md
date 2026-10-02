@@ -28,7 +28,14 @@ quietly verify the client against a different Chart.js than production ships.
   class: laid out and visible but entirely uniform pixels), and horizontal page
   overflow -- at 1440 px AND, in a separate fresh boot, at 360 px (CL-9), where
   a failure names the elements that reach past the viewport. `drive-agent.js`
-  runs the same 360 px check on the agent app's two tabs.
+  runs the same 360 px check on the agent app's two tabs. A third fresh boot
+  per role walks browser **Back / Forward** (CL-23): `build-harness.js`'s
+  `google.script.history` mock records every push and replays an entry into
+  the app's change handler the way a popstate does (`__HARNESS__.historyBack()`
+  / `historyForward()`), and the driver asserts one entry per view, no push
+  on Back/Forward, a modal closed by Back and reopened by Forward, and an
+  admin-only route left closed for a manager. The mock proves the app's half;
+  the owner walks S54 in two real browsers for the browser's half.
 - `drive-f13.js` — the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.

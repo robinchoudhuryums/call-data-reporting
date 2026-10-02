@@ -306,25 +306,12 @@ function ovDeptVisibleForCompany_(dept) {
 }
 
 function getCompanyOverview(req) {
-  const email = Session.getActiveUser().getEmail();
-  const realUser = resolveUser_(email);
-  // Phase A (agent role): allowlist -- the Overview is an all-dept surface
-  // with no dept pin, so the shared assertDeptAccess_ wall never runs here.
-  assertManagerOrAdmin_(realUser);
-
-  // View-as (admin-only preview): an admin may request the MANAGER-personalized
-  // Overview for a department to see exactly what that manager sees. SAFE --
-  // admins are entitled to all data, so this only HIDES admin-only fields
-  // (companyAggregate / pipelineFreshness / orphanNag / unmappedQcd, stripped
-  // by personalizeOverview_) and sets viewerRole='manager'. Non-admin callers
-  // and unknown depts are ignored (no privilege change). All personalization
-  // below runs against this effective user.
-  let user = realUser;
-  const viewAsDept = req && String(req.viewAsDept || '').trim();
-  if (realUser.role === 'admin' && viewAsDept
-      && getAllDepartments_().indexOf(viewAsDept) !== -1) {
-    user = { email: realUser.email, role: 'manager', department: viewAsDept, departments: [viewAsDept] };
-  }
+  // CH-4 (Batch 15): the stages are the ov*_ helpers below, called in the
+  // order the single function ran them; each takes its inputs explicitly.
+  // The payload is pinned byte for byte by tests/unit/ch4-split-snapshot.test.js.
+  const viewer = ovResolveViewer_(req);
+  const realUser = viewer.realUser;
+  const user = viewer.user;
 
   const cache = CacheService.getScriptCache();
   // CORE-3 (extended for #3): the Overview blob embeds BOTH the DQE aggregate
@@ -374,6 +361,127 @@ function getCompanyOverview(req) {
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
+  const w = ovWindows_(latestDate);
+  const trendIsoLabels = w.trendIsoLabels, chartTrendIsoLabels = w.chartTrendIsoLabels;
+
+  // Load every dept's roster up front. Build a name->dept lookup so
+  // we can attribute each row to the right dept(s) in O(1) inside
+  // the bulk scan.  Agents on multiple rosters count in each.
+  const allDepts = getAllDepartments_();
+
+  // Merged child->parent map (OVERVIEW_PARENT_OF constant + any
+  // admin-authored Dept Config overrides, via DeptConfig.gs). Used
+  // both for the misconfig check here and the per-dept `parent` field
+  // in ovFormatDept_.
+  const overviewParentMap = getOverviewParentMap_();
+
+  // Surface parent-map misconfigurations early: if a key doesn't
+  // match any real dept header, the sub-queue silently renders as a
+  // standalone top-level tile with no warning. A Logger entry shows
+  // up in the project's execution log and is grep-able when something
+  // looks off.
+  Object.keys(overviewParentMap).forEach(function (childKey) {
+    if (allDepts.indexOf(childKey) === -1) {
+      Logger.log(
+        'Overview parent map: key "%s" -> parent "%s" does not match any '
+        + 'DO NOT EDIT! column header. The sub-queue nesting will not apply '
+        + '(the dept either does not exist or is named differently in the '
+        + 'roster sheet).',
+        childKey, overviewParentMap[childKey]
+      );
+    }
+  });
+
+  const rosters = ovLoadRosters_(allDepts);
+  const rosterByDept = rosters.rosterByDept;
+  const deptsForAgent = rosters.deptsForAgent;
+  const companyRosterUnion = rosters.companyRosterUnion;
+
+  const dqeRows = ovReadDqeRows_(ovNeonCapable, w.readFromIso, latestDate);
+  const company = ovAccumulateCompany_(dqeRows, w, latestDate, companyRosterUnion);
+  const deptStats = ovAccumulateDeptStats_(dqeRows, allDepts, deptsForAgent, w.trendStartIso, latestDate);
+  const periods = ovAccumulatePeriods_(dqeRows, allDepts, deptsForAgent, w, latestDate);
+
+  // Format per-dept output. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
+  // are skipped entirely; sub-queues get a `parent` reference and
+  // are slotted right after their parent in the output order.
+  // Top-level depts sorted by latest-day rung desc so busier
+  // teams surface first; children sorted alphabetically inside
+  // their parent group (their volumes vary too much to use rung
+  // for sub-ordering meaningfully).
+  const alertedSet = computeAlertedDeptsForDate_(latestDate, ssTZ);
+  // Per-dept QCD snapshot read once for all depts; cheap (one extra
+  // sheet read of QCD Historical Data, scoped to the last 30 days).
+  // Returns dept -> { latestDate, totalCalls, abandonedPct,
+  // violations } or null if no QCD rows for that dept in window.
+  // computeQcdSnapshots_ scanned with the 90-day chart window so its per-dept
+  // `daily` map covers the full chart series (the tile-chip latest/MTD fields
+  // are date-gated and unaffected by the wider window).
+  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, w.chartTrendStartIso, ssTZ);
+  // The company-wide per-day QCD map that came back alongside the per-dept
+  // snapshots, for the chart's Company line. `{}` when the QCD read failed --
+  // the series then goes all-null and the line simply does not draw.
+  const companyQcdDaily = qcdSnapshotsByDept._companyDaily || {};
+  const tileCtx = { deptStats: deptStats, trendIsoLabels: trendIsoLabels, chartTrendIsoLabels: chartTrendIsoLabels,
+    qcdSnapshotsByDept: qcdSnapshotsByDept, deptChartDaily: periods.deptChartDaily, overviewParentMap: overviewParentMap,
+    rosterByDept: rosterByDept, alertedSet: alertedSet, latestDate: latestDate, deptPeriodAcc: periods.deptPeriodAcc };
+  const allFormatted = allDepts
+    .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
+    .map(function (d) { return ovFormatDept_(d, tileCtx); });
+  const depts = ovOrderDepts_(allFormatted);
+  const companyAggregate = ovCompanyAggregate_(company, companyRosterUnion, w, companyQcdDaily);
+
+  const result = {
+    latestDate:       latestDate,
+    trendIsoLabels:   trendIsoLabels,
+    trendLabels:      w.trendLabels,
+    // 90-day chart axis (client slices to 30/60/90; YTD fetched on demand).
+    chartTrendIsoLabels: chartTrendIsoLabels,
+    chartTrendLabels:    w.chartTrendLabels,
+    depts:            depts,
+    companyAggregate: companyAggregate,
+    // Admin-only surface fields (stripped by personalizeOverview_ for
+    // managers). Computed lazily inside try/catch so a Pipeline Health
+    // sheet outage or a slow orphan scan never blocks the Overview.
+    pipelineFreshness: computeOverviewPipelineFreshness_(),
+    orphanNag:         computeOverviewOrphanNag_(Object.keys(deptsForAgent)),   // DATA-6: rosters already loaded
+    unmappedQcd:       computeOverviewUnmappedQcd_(),
+    // viewerRole and viewerDept are NOT cached; personalizeOverview_
+    // injects them per-request so a payload warmed by user A still
+    // serves user B's identity correctly.
+  };
+
+  ovCacheOverview_(cache, ovCacheKey, result, dqeRows, depts);
+
+  return personalizeOverview_(result, user);
+}
+
+/** CH-4: Overview stage -- the caller and the effective (view-as) viewer. */
+function ovResolveViewer_(req) {
+  const email = Session.getActiveUser().getEmail();
+  const realUser = resolveUser_(email);
+  // Phase A (agent role): allowlist -- the Overview is an all-dept surface
+  // with no dept pin, so the shared assertDeptAccess_ wall never runs here.
+  assertManagerOrAdmin_(realUser);
+
+  // View-as (admin-only preview): an admin may request the MANAGER-personalized
+  // Overview for a department to see exactly what that manager sees. SAFE --
+  // admins are entitled to all data, so this only HIDES admin-only fields
+  // (companyAggregate / pipelineFreshness / orphanNag / unmappedQcd, stripped
+  // by personalizeOverview_) and sets viewerRole='manager'. Non-admin callers
+  // and unknown depts are ignored (no privilege change). All personalization
+  // below runs against this effective user.
+  let user = realUser;
+  const viewAsDept = req && String(req.viewAsDept || '').trim();
+  if (realUser.role === 'admin' && viewAsDept
+      && getAllDepartments_().indexOf(viewAsDept) !== -1) {
+    user = { email: realUser.email, role: 'manager', department: viewAsDept, departments: [viewAsDept] };
+  }
+  return { realUser: realUser, user: user };
+}
+
+/** CH-4: Overview stage -- the 30-day tile axis, the 90-day chart axis, YTD and the card-period starts. */
+function ovWindows_(latestDate) {
   // 30-day window ending on latestDate (inclusive).
   const latestDateObj = parseIsoNoon_(latestDate);
   const trendDays = 30;
@@ -429,35 +537,14 @@ function getCompanyOverview(req) {
   };
   const last60StartIso = periodStartIso_(60);
   const last90StartIso = periodStartIso_(OV_CHART_TREND_DAYS);
+  return { trendStartIso: trendStartIso, trendIsoLabels: trendIsoLabels, trendLabels: trendLabels,
+           chartTrendStartIso: chartTrendStartIso, chartTrendIsoLabels: chartTrendIsoLabels,
+           chartTrendLabels: chartTrendLabels, ytdStartIso: ytdStartIso, readFromIso: readFromIso,
+           last60StartIso: last60StartIso, last90StartIso: last90StartIso };
+}
 
-  // Load every dept's roster up front. Build a name->dept lookup so
-  // we can attribute each row to the right dept(s) in O(1) inside
-  // the bulk scan.  Agents on multiple rosters count in each.
-  const allDepts = getAllDepartments_();
-
-  // Merged child->parent map (OVERVIEW_PARENT_OF constant + any
-  // admin-authored Dept Config overrides, via DeptConfig.gs). Used
-  // both for the misconfig check here and the per-dept `parent` field
-  // in formatDept below.
-  const overviewParentMap = getOverviewParentMap_();
-
-  // Surface parent-map misconfigurations early: if a key doesn't
-  // match any real dept header, the sub-queue silently renders as a
-  // standalone top-level tile with no warning. A Logger entry shows
-  // up in the project's execution log and is grep-able when something
-  // looks off.
-  Object.keys(overviewParentMap).forEach(function (childKey) {
-    if (allDepts.indexOf(childKey) === -1) {
-      Logger.log(
-        'Overview parent map: key "%s" -> parent "%s" does not match any '
-        + 'DO NOT EDIT! column header. The sub-queue nesting will not apply '
-        + '(the dept either does not exist or is named differently in the '
-        + 'roster sheet).',
-        childKey, overviewParentMap[childKey]
-      );
-    }
-  });
-
+/** CH-4: Overview stage -- every dept roster, the agent -> depts lookup, and the visible-roster union. */
+function ovLoadRosters_(allDepts) {
   const rosterByDept = {};
   const deptsForAgent = {};
   allDepts.forEach(function (d) {
@@ -467,26 +554,6 @@ function getCompanyOverview(req) {
       if (!deptsForAgent[name]) deptsForAgent[name] = [];
       deptsForAgent[name].push(d);
     });
-  });
-
-  // Per-dept aggregators. trendByDate keyed on ISO day; latestDay
-  // is the same shape but only for latestDate. recentlyActiveAgents
-  // captures anyone with ANY activity in the trend window -- used
-  // as the denominator for the "X of Y agents" caption so ex-
-  // employees still on the roster sheet (kept for historical-data
-  // preservation) don't dilute the count.
-  const deptStats = {};
-  allDepts.forEach(function (d) {
-    deptStats[d] = {
-      latestDay: { rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {} },
-      trendByDate: {},  // iso -> { rung, answered }
-      recentlyActiveAgents: {},
-      // Per-agent per-day series used by computeWowDriver_ to
-      // explain which agent contributed most to the dept's WoW
-      // delta. Keyed agent -> iso -> { rung, answered, missed }.
-      // Only populated for non-sentinel real agents.
-      agentTrendByDate: {},
-    };
   });
 
   // On-roster, non-hidden-dept population. The company aggregate's
@@ -500,20 +567,11 @@ function getCompanyOverview(req) {
     if (OVERVIEW_HIDDEN_DEPTS.indexOf(d) !== -1) return;
     rosterByDept[d].names.forEach(function (n) { companyRosterUnion[n] = true; });
   });
+  return { rosterByDept: rosterByDept, deptsForAgent: deptsForAgent, companyRosterUnion: companyRosterUnion };
+}
 
-  // Company-wide aggregator for latestDate. Computed unconditionally
-  // (cost is identical whether we use it or not); admin-only on serve
-  // via personalizeOverview_. Unlike the per-dept aggregator, this
-  // counts each row ONCE regardless of which roster(s) the agent
-  // belongs to -- so total company volume isn't inflated by floaters
-  // on multiple rosters. companyTrendByDate is the per-day series
-  // used for the aggregate tile's sparkline.
-  const companyLatest = {
-    rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {},
-  };
-  const companyRecentlyActive = {};
-  const companyTrendByDate = {};
-
+/** CH-4: Overview stage -- the DQE read (Neon when capable, the sheet otherwise or on fallback). */
+function ovReadDqeRows_(ovNeonCapable, readFromIso, latestDate) {
   // F1 cutover #2: source the trend-window DQE rows from Neon when
   // DQE_READ_SOURCE=neon, else the sheet. Both fetchers return the same
   // normalized per-(date,agent) shape (durations already in seconds), so
@@ -543,6 +601,25 @@ function getCompanyOverview(req) {
       ? sheetFetchDqeRows_(readFromIso, latestDate) : [];
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getCompanyOverview', effectiveSource, _tRead, dqeRows.length);
+  return dqeRows;
+}
+
+/** CH-4: Overview stage -- the company aggregate pass (each row once, on-roster visible depts only). */
+function ovAccumulateCompany_(dqeRows, w, latestDate, companyRosterUnion) {
+  const trendStartIso = w.trendStartIso, chartTrendStartIso = w.chartTrendStartIso;
+  // Company-wide aggregator for latestDate. Computed unconditionally
+  // (cost is identical whether we use it or not); admin-only on serve
+  // via personalizeOverview_. Unlike the per-dept aggregator, this
+  // counts each row ONCE regardless of which roster(s) the agent
+  // belongs to -- so total company volume isn't inflated by floaters
+  // on multiple rosters. companyTrendByDate is the per-day series
+  // used for the aggregate tile's sparkline.
+  const companyLatest = {
+    rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {},
+  };
+  const companyRecentlyActive = {};
+  const companyTrendByDate = {};
+
   // Queue-split adoption: the COMPANY aggregate stays un-narrowed by design --
   // company-wide, every call belongs to exactly one company and each row is
   // counted once, so the all-queue rollup IS the correct company number. Only
@@ -597,6 +674,30 @@ function getCompanyOverview(req) {
       if (hadActivity && dateIso >= trendStartIso) companyRecentlyActive[agent] = true;   // S2A-2: stays 30-day
     }
   }
+  return { companyLatest: companyLatest, companyRecentlyActive: companyRecentlyActive, companyTrendByDate: companyTrendByDate };
+}
+
+/** CH-4: Overview stage -- the per-dept 30-day pass (each dept narrowed to its own queues). */
+function ovAccumulateDeptStats_(dqeRows, allDepts, deptsForAgent, trendStartIso, latestDate) {
+  // Per-dept aggregators. trendByDate keyed on ISO day; latestDay
+  // is the same shape but only for latestDate. recentlyActiveAgents
+  // captures anyone with ANY activity in the trend window -- used
+  // as the denominator for the "X of Y agents" caption so ex-
+  // employees still on the roster sheet (kept for historical-data
+  // preservation) don't dilute the count.
+  const deptStats = {};
+  allDepts.forEach(function (d) {
+    deptStats[d] = {
+      latestDay: { rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {} },
+      trendByDate: {},  // iso -> { rung, answered }
+      recentlyActiveAgents: {},
+      // Per-agent per-day series used by computeWowDriver_ to
+      // explain which agent contributed most to the dept's WoW
+      // delta. Keyed agent -> iso -> { rung, answered, missed }.
+      // Only populated for non-sentinel real agents.
+      agentTrendByDate: {},
+    };
+  });
 
   // Per-dept attribution. Each dept accumulates from ITS OWN (possibly
   // narrowed) view of the rows: queueSplitNarrowedCopy_ clones before
@@ -661,7 +762,13 @@ function getCompanyOverview(req) {
       }
     });
   });
+  return deptStats;
+}
 
+/** CH-4: Overview stage -- card period sums + the 90-day chart daily map, per dept. */
+function ovAccumulatePeriods_(dqeRows, allDepts, deptsForAgent, w, latestDate) {
+  const readFromIso = w.readFromIso, ytdStartIso = w.ytdStartIso, last90StartIso = w.last90StartIso,
+    last60StartIso = w.last60StartIso, trendStartIso = w.trendStartIso, chartTrendStartIso = w.chartTrendStartIso;
   // ── Card period aggregates + 90-day chart series ────────────────────
   // Isolated pass over the SAME dqeRows (already read back to readFromIso).
   // Kept SEPARATE from the main loop above so that loop's 30-day gate -- and
@@ -728,111 +835,99 @@ function getCompanyOverview(req) {
       }
     }
   });
-  const fmtPeriod_ = function (b) {
-    const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
-    const att = b.answered > 0 ? b.att_sum / b.answered : 0;
-    return {
-      rung: b.rung, missed: b.missed, answered: b.answered,
-      pct: round1_(pct), pctFormatted: pct.toFixed(1) + '%',
-      attFormatted: formatSecondsHms_(att),
-    };
-  };
+  return { deptPeriodAcc: deptPeriodAcc, deptChartDaily: deptChartDaily };
+}
 
-  // Format per-dept output. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
-  // are skipped entirely; sub-queues get a `parent` reference and
-  // are slotted right after their parent in the output order.
-  // Top-level depts sorted by latest-day rung desc so busier
-  // teams surface first; children sorted alphabetically inside
-  // their parent group (their volumes vary too much to use rung
-  // for sub-ordering meaningfully).
-  const alertedSet = computeAlertedDeptsForDate_(latestDate, ssTZ);
-  // Per-dept QCD snapshot read once for all depts; cheap (one extra
-  // sheet read of QCD Historical Data, scoped to the last 30 days).
-  // Returns dept -> { latestDate, totalCalls, abandonedPct,
-  // violations } or null if no QCD rows for that dept in window.
-  // computeQcdSnapshots_ scanned with the 90-day chart window so its per-dept
-  // `daily` map covers the full chart series (the tile-chip latest/MTD fields
-  // are date-gated and unaffected by the wider window).
-  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, chartTrendStartIso, ssTZ);
-  // The company-wide per-day QCD map that came back alongside the per-dept
-  // snapshots, for the chart's Company line. `{}` when the QCD read failed --
-  // the series then goes all-null and the line simply does not draw.
-  const companyQcdDaily = qcdSnapshotsByDept._companyDaily || {};
-  const formatDept = function (d) {
-    const stats = deptStats[d];
-    const ld = stats.latestDay;
-    const pct = answerRatePct_(ld.answered, ld.missed, ld.rung);   // DD-2
-    const att = ld.answered > 0 ? ld.att_sum / ld.answered : 0;
-    // 30-day sparkline series (answered %) -- card sparklines only.
-    const trend = trendIsoLabels.map(function (iso) {
-      const day = stats.trendByDate[iso];
-      if (!day || answerRateDenom_(day.answered, day.missed, day.rung) <= 0) return null;
-      return round1_(answerRatePct_(day.answered, day.missed, day.rung));
-    });
-    // 90-day CHART series (client-sliced to 30/60/90): answered % from the
-    // per-day DQE map + abandoned count/% from the QCD snapshot's `daily` map,
-    // both aligned to chartTrendIsoLabels. Null on gap days / QCD-unmapped depts.
-    const snap = qcdSnapshotsByDept[d] || null;
-    const qcdDaily = (snap && snap.daily) || {};
-    const chartSeries = ovDeptChartSeries_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily);
-    // R18d: DQE-silence flag for the tile's LABELED queue-lens fallback --
-    // computed while snap.daily is still here. Visible to every viewer (it is
-    // queue-level data the tile's QCD chips already show); the client must
-    // render it as an explicitly DIFFERENT lens, never feed these numbers
-    // into the DQE tiles -- QCD counts CALLS with an abandon-threshold
-    // semantic, DQE counts RINGS, and the two are not the same species.
-    const dqeSilence = ovDqeSilence_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily, 7);
-    if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
-    return {
-      name: d,
-      parent: overviewParentMap[d] || null,
-      activeAgents: Object.keys(ld.activeAgents).length,
-      // "Recently active" = anyone with any call activity in the
-      // last OVERVIEW_RECENT_ACTIVE_DAYS days. Used as the
-      // denominator in tile captions; ex-employees who are kept on
-      // the roster sheet for historical-data preservation fall out
-      // of this count naturally.
-      recentlyActiveCount: Object.keys(stats.recentlyActiveAgents).length,
-      rosterSize: rosterByDept[d].names.length,
-      alertedOnLatest: !!alertedSet[d],
-      latest: {
-        rung:           ld.rung,
-        missed:         ld.missed,
-        answered:       ld.answered,
-        pct:            round1_(pct),
-        pctFormatted:   pct.toFixed(1) + '%',
-        attFormatted:   formatSecondsHms_(att),
-      },
-      wow: computeWowDelta_(stats, latestDate),
-      // R18d: null when healthy; { days, qcdCalls, qcdAbandoned, qcdPct }
-      // when the agent view has been dark for the trailing window while the
-      // queue kept taking calls.
-      dqeSilence: dqeSilence,
-      // QCD snapshot from the most recent date in the trend window.
-      // Visible to everyone (no admin gate) -- managers see the same
-      // QCD numbers their own dept's full report shows.
-      qcd: snap,
-      trend: trend,                                     // 30-day sparkline
-      trendChart: chartSeries.trend,                    // 90-day chart (answered %)
-      trendChartAnswered: chartSeries.trendAnswered,    // 90-day chart (answered count, 6b)
-      trendChartAbandoned: chartSeries.trendAbandoned,  // 90-day chart (abandoned count)
-      trendChartAbandonedPct: chartSeries.trendAbandonedPct,
-      // Card period slider (Yesterday / Last 30 / 60 / 90 / YTD -- R50 added
-      // the middle two so this set covers the chart's range control). `latest`
-      // above stays the Yesterday view for back-compat; the client picks a
-      // block here.
-      periods: {
-        yesterday: fmtPeriod_(deptPeriodAcc[d].yesterday),
-        last30:    fmtPeriod_(deptPeriodAcc[d].last30),
-        last60:    fmtPeriod_(deptPeriodAcc[d].last60),
-        last90:    fmtPeriod_(deptPeriodAcc[d].last90),
-        ytd:       fmtPeriod_(deptPeriodAcc[d].ytd),
-      },
-    };
+/** CH-4: Overview -- one card-period block (yesterday / last30 / 60 / 90 / ytd). */
+function ovFmtPeriod_(b) {
+  const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
+  const att = b.answered > 0 ? b.att_sum / b.answered : 0;
+  return {
+    rung: b.rung, missed: b.missed, answered: b.answered,
+    pct: round1_(pct), pctFormatted: pct.toFixed(1) + '%',
+    attFormatted: formatSecondsHms_(att),
   };
-  const allFormatted = allDepts
-    .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
-    .map(formatDept);
+}
+
+/** CH-4: Overview stage -- one dept tile (latest, WoW, QCD chip, sparkline, chart series, periods). */
+function ovFormatDept_(d, c) {
+  const deptStats = c.deptStats, trendIsoLabels = c.trendIsoLabels, chartTrendIsoLabels = c.chartTrendIsoLabels,
+    qcdSnapshotsByDept = c.qcdSnapshotsByDept, deptChartDaily = c.deptChartDaily, overviewParentMap = c.overviewParentMap,
+    rosterByDept = c.rosterByDept, alertedSet = c.alertedSet, latestDate = c.latestDate, deptPeriodAcc = c.deptPeriodAcc;
+  const stats = deptStats[d];
+  const ld = stats.latestDay;
+  const pct = answerRatePct_(ld.answered, ld.missed, ld.rung);   // DD-2
+  const att = ld.answered > 0 ? ld.att_sum / ld.answered : 0;
+  // 30-day sparkline series (answered %) -- card sparklines only.
+  const trend = trendIsoLabels.map(function (iso) {
+    const day = stats.trendByDate[iso];
+    if (!day || answerRateDenom_(day.answered, day.missed, day.rung) <= 0) return null;
+    return round1_(answerRatePct_(day.answered, day.missed, day.rung));
+  });
+  // 90-day CHART series (client-sliced to 30/60/90): answered % from the
+  // per-day DQE map + abandoned count/% from the QCD snapshot's `daily` map,
+  // both aligned to chartTrendIsoLabels. Null on gap days / QCD-unmapped depts.
+  const snap = qcdSnapshotsByDept[d] || null;
+  const qcdDaily = (snap && snap.daily) || {};
+  const chartSeries = ovDeptChartSeries_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily);
+  // R18d: DQE-silence flag for the tile's LABELED queue-lens fallback --
+  // computed while snap.daily is still here. Visible to every viewer (it is
+  // queue-level data the tile's QCD chips already show); the client must
+  // render it as an explicitly DIFFERENT lens, never feed these numbers
+  // into the DQE tiles -- QCD counts CALLS with an abandon-threshold
+  // semantic, DQE counts RINGS, and the two are not the same species.
+  const dqeSilence = ovDqeSilence_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily, 7);
+  if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
+  return {
+    name: d,
+    parent: overviewParentMap[d] || null,
+    activeAgents: Object.keys(ld.activeAgents).length,
+    // "Recently active" = anyone with any call activity in the
+    // last OVERVIEW_RECENT_ACTIVE_DAYS days. Used as the
+    // denominator in tile captions; ex-employees who are kept on
+    // the roster sheet for historical-data preservation fall out
+    // of this count naturally.
+    recentlyActiveCount: Object.keys(stats.recentlyActiveAgents).length,
+    rosterSize: rosterByDept[d].names.length,
+    alertedOnLatest: !!alertedSet[d],
+    latest: {
+      rung:           ld.rung,
+      missed:         ld.missed,
+      answered:       ld.answered,
+      pct:            round1_(pct),
+      pctFormatted:   pct.toFixed(1) + '%',
+      attFormatted:   formatSecondsHms_(att),
+    },
+    wow: computeWowDelta_(stats, latestDate),
+    // R18d: null when healthy; { days, qcdCalls, qcdAbandoned, qcdPct }
+    // when the agent view has been dark for the trailing window while the
+    // queue kept taking calls.
+    dqeSilence: dqeSilence,
+    // QCD snapshot from the most recent date in the trend window.
+    // Visible to everyone (no admin gate) -- managers see the same
+    // QCD numbers their own dept's full report shows.
+    qcd: snap,
+    trend: trend,                                     // 30-day sparkline
+    trendChart: chartSeries.trend,                    // 90-day chart (answered %)
+    trendChartAnswered: chartSeries.trendAnswered,    // 90-day chart (answered count, 6b)
+    trendChartAbandoned: chartSeries.trendAbandoned,  // 90-day chart (abandoned count)
+    trendChartAbandonedPct: chartSeries.trendAbandonedPct,
+    // Card period slider (Yesterday / Last 30 / 60 / 90 / YTD -- R50 added
+    // the middle two so this set covers the chart's range control). `latest`
+    // above stays the Yesterday view for back-compat; the client picks a
+    // block here.
+    periods: {
+      yesterday: ovFmtPeriod_(deptPeriodAcc[d].yesterday),
+      last30:    ovFmtPeriod_(deptPeriodAcc[d].last30),
+      last60:    ovFmtPeriod_(deptPeriodAcc[d].last60),
+      last90:    ovFmtPeriod_(deptPeriodAcc[d].last90),
+      ytd:       ovFmtPeriod_(deptPeriodAcc[d].ytd),
+    },
+  };
+}
+
+/** CH-4: Overview stage -- tile order: top-level by latest rung, children after their parent, orphans surfaced. */
+function ovOrderDepts_(allFormatted) {
 
   const topLevel = allFormatted
     .filter(function (d) { return !d.parent; })
@@ -871,7 +966,14 @@ function getCompanyOverview(req) {
       depts.push(c);
     });
   });
+  return depts;
+}
 
+/** CH-4: Overview stage -- the admin-only company aggregate (stripped for non-admins, INV-39). */
+function ovCompanyAggregate_(company, companyRosterUnion, w, companyQcdDaily) {
+  const companyLatest = company.companyLatest, companyRecentlyActive = company.companyRecentlyActive,
+    companyTrendByDate = company.companyTrendByDate, trendIsoLabels = w.trendIsoLabels,
+    chartTrendIsoLabels = w.chartTrendIsoLabels;
   // Company-wide aggregate for latestDate. Total roster size is the
   // union of agent names across all non-hidden depts (companyRosterUnion,
   // built before the scan loop above; dedupes floaters who appear on
@@ -942,27 +1044,11 @@ function getCompanyOverview(req) {
       return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
     }),
   };
+  return companyAggregate;
+}
 
-  const result = {
-    latestDate:       latestDate,
-    trendIsoLabels:   trendIsoLabels,
-    trendLabels:      trendLabels,
-    // 90-day chart axis (client slices to 30/60/90; YTD fetched on demand).
-    chartTrendIsoLabels: chartTrendIsoLabels,
-    chartTrendLabels:    chartTrendLabels,
-    depts:            depts,
-    companyAggregate: companyAggregate,
-    // Admin-only surface fields (stripped by personalizeOverview_ for
-    // managers). Computed lazily inside try/catch so a Pipeline Health
-    // sheet outage or a slow orphan scan never blocks the Overview.
-    pipelineFreshness: computeOverviewPipelineFreshness_(),
-    orphanNag:         computeOverviewOrphanNag_(Object.keys(deptsForAgent)),   // DATA-6: rosters already loaded
-    unmappedQcd:       computeOverviewUnmappedQcd_(),
-    // viewerRole and viewerDept are NOT cached; personalizeOverview_
-    // injects them per-request so a payload warmed by user A still
-    // serves user B's identity correctly.
-  };
-
+/** CH-4: Overview stage -- the shared-blob cache put, skipped for every degraded shape. */
+function ovCacheOverview_(cache, ovCacheKey, result, dqeRows, depts) {
   if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
     // R8-C4: config read errored -> QCD snapshots / parent map may be
     // constant-only this request; don't pin the shared blob for the TTL.
@@ -1005,8 +1091,6 @@ function getCompanyOverview(req) {
         json.length, depts.length, e, OVERVIEW_CACHE_MAX_BYTES);
     }
   }
-
-  return personalizeOverview_(result, user);
 }
 
 /**

@@ -7983,4 +7983,14 @@ tr.subq-subtotal td:first-child { font-weight: 600; opacity: .85; }
 }
 #dev-overlay .dev-run[disabled] { opacity: .5; cursor: default; }
 @media (max-width: 768px) { #dev-overlay { width: 100vw; } }
+
+/* PC-12: per-dept group heading in a parent dept's Outbound agent table.
+   Static (no collapse) -- deliberately NOT .subq-group-head, whose cursor /
+   hover / focus ring promise a toggle this row does not have. */
+tr.ob-group-head td {
+  font-weight: 600;
+  background: var(--accent-soft);
+  border-top: 1px solid var(--line);
+}
+tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82em; margin-left: 6px; }
 </style>

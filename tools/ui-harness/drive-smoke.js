@@ -177,6 +177,90 @@ async function phonePass(browser, role) {
   await page.close();
 }
 
+// CL-23: browser Back / Forward through google.script.history. A FRESH boot
+// (clean history stack), the recording mock in build-harness.js, and the
+// app's own change handler -- the mock calls it exactly as a popstate would.
+// The owner still walks this in two real browsers before release (S54): the
+// mock proves the app's half, not the browser's.
+async function historyPass(browser, role) {
+  const { page, errors } = await bootPage(browser, role);
+  const tag = role + ': history';
+  const state = () => page.evaluate(() => {
+    const H = window.__HARNESS__;
+    const cur = document.querySelector('[data-route][aria-current="page"]');
+    const ir = document.getElementById('individual-modal');
+    return { hashes: H.historyHashes(), index: H.history.index, pushes: H.history.pushes,
+             handler: !!H.history.handler, page: document.body.getAttribute('data-page'),
+             current: cur ? cur.getAttribute('data-route') : null,
+             irOpen: !!ir && getComputedStyle(ir).display !== 'none' };
+  });
+  const back = async () => { await page.evaluate(() => window.__HARNESS__.historyBack()); await page.waitForTimeout(1500); };
+  const fwd = async () => { await page.evaluate(() => window.__HARNESS__.historyForward()); await page.waitForTimeout(1500); };
+
+  let s = await state();
+  record(tag + ': a change handler is registered and the landing pushes nothing',
+    s.handler && s.pushes === 0, JSON.stringify(s));
+  await page.click('#my-dept-btn');
+  await page.waitForTimeout(3500);
+  await page.click('#escalations-btn');
+  await page.waitForTimeout(1800);
+  s = await state();
+  record(tag + ': each page change pushes ONE entry named by its route',
+    JSON.stringify(s.hashes) === JSON.stringify(['', '/dept', '/escalations']), JSON.stringify(s.hashes));
+  await back();
+  s = await state();
+  record(tag + ': Back returns to My Department without pushing',
+    s.page === 'dept' && s.current === '/dept' && s.pushes === 2, JSON.stringify(s));
+  await back();
+  s = await state();
+  record(tag + ': Back again lands on the Overview', s.page === 'overview' && s.current === '/overview'
+    && s.pushes === 2, JSON.stringify(s));
+  await fwd();
+  s = await state();
+  record(tag + ': Forward goes to My Department again', s.page === 'dept' && s.pushes === 2, JSON.stringify(s));
+
+  if (role === 'admin') {
+    await page.click('#reports-menu-btn');
+    await page.waitForTimeout(400);
+    await page.click('#individual-report-btn');
+    await page.waitForTimeout(2500);
+    s = await state();
+    record(tag + ': opening a routed modal pushes its route (the forward entry is replaced)',
+      s.irOpen && JSON.stringify(s.hashes) === JSON.stringify(['', '/dept', '/report/individual']), JSON.stringify(s));
+    await back();
+    s = await state();
+    record(tag + ': Back closes the modal and stays on the page under it, without pushing',
+      !s.irOpen && s.page === 'dept' && s.current === '/dept' && s.pushes === 3, JSON.stringify(s));
+    await fwd();
+    s = await state();
+    record(tag + ': Forward reopens the modal', s.irOpen && s.current === '/report/individual' && s.pushes === 3,
+      JSON.stringify(s));
+    await page.click('#individual-modal .modal-close');
+    await page.waitForTimeout(800);
+    s = await state();
+    record(tag + ': closing the modal is a navigation -- one entry for the page under it',
+      !s.irOpen && s.hashes[s.hashes.length - 1] === '/dept' && s.pushes === 4, JSON.stringify(s));
+  } else {
+    // F11: an admin-only route in history is a no-op for a manager.
+    await page.evaluate(() => window.__HARNESS__.history.handler({ state: null, location: { hash: '/admin/health', parameter: {} } }));
+    await page.waitForTimeout(800);
+    const healthOpen = await page.evaluate(() => {
+      const m = document.getElementById('health-modal');
+      return !!m && getComputedStyle(m).display !== 'none';
+    });
+    s = await state();
+    record(tag + ': an admin-only route from history stays closed for a manager',
+      !healthOpen && s.page === 'dept', JSON.stringify(s));
+  }
+  const unmocked = await page.evaluate(() => (window.__HARNESS__ || {}).unmocked || []);
+  const unexpected = unmocked.filter((n) => !UNMOCKED_OK.has(n));
+  record(tag + ': no unexpected unmocked RPCs', unexpected.length === 0, Array.from(new Set(unexpected)).join(', '));
+  const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
+  record(tag + ': no page/console errors', realErrors.length === 0,
+    Array.from(new Set(realErrors)).slice(0, 4).join(' | '));
+  await page.close();
+}
+
 async function overflowMeasurable(page) {
   return page.evaluate(() => {
     const clipping = (el) => /hidden|clip/.test(getComputedStyle(el).overflowX);
@@ -1034,6 +1118,7 @@ async function visibleErrorTones(page) {
     await page.close();
 
     await phonePass(browser, role);   // CL-9
+    await historyPass(browser, role); // CL-23
   }
 
   await browser.close();

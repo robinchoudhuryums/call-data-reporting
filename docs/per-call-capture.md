@@ -508,7 +508,13 @@ connected", disclosed as an UPPER BOUND on callers reached; and the audit's
 figures never appear in reporting. Pinned in `outbound-report.test.js`. **Company view is the FLAT table by
 owner ruling (Option C, 2026-08-20)**: crossover agents have multiple
 roster homes, so per-dept cards would double-count or misattribute --
-don't "upgrade" without a new ruling. **The per-dept CALLBACK table (CB-1,
+don't "upgrade" without a new ruling. **A PARENT dept's view covers its
+sub-queues (PC-12, owner ruling 2026-10-02):** the agent table holds the
+parent's AND its one-level sub-queues' rosters (`outboundScopeDepts_` -- the
+same child map the callback denominator rolls in, so table and denominator
+cannot disagree), each row tagged `scopeDept` (the parent wins for an agent on
+both rosters, so nobody is counted twice) and rendered GROUPED per dept with a
+subtotal heading; a single-dept view is unchanged. **The per-dept CALLBACK table (CB-1,
 2026-09-28) does not contradict that ruling**: its row axis is the ABANDON's
 entry queue (one queue, one or more depts -- never an agent's homes), and the
 agent only decides the own / other COLUMN (member of THIS row's dept, a
@@ -523,7 +529,7 @@ block (never the rows' sum). The FIRST callback decides own vs other, with a
 (`outbound-callback-dept.test.js`); S48 is the walk. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
-`outboundReport:v6` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v7` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) `calledBackConnectedPct`, the CONNECTED callback rate

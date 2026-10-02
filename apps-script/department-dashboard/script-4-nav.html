@@ -28,13 +28,15 @@
   //     the right view. Defensive against unknown / malformed hashes:
   //     the tab lookup quietly no-ops if no match.
   //
-  // The router does not push hash updates to the parent URL on
-  // modal open -- that would require google.script.history which
-  // has had spotty browser behavior. The currentRoute is tracked
-  // purely in-JS and consumed by the "Open in new tab" buttons,
-  // which build a fresh URL from window.__DASHBOARD_URL__ + the
-  // current route. The new tab loads the dashboard fresh and the
-  // init-time hash read opens the deep-linked modal.
+  // CL-23 (owner ruling 2026-10-02, option B): every route change PUSHES a
+  // history entry (google.script.history.push, hash = the route) and a
+  // browser Back / Forward routes to the entry's hash (setChangeHandler ->
+  // onHistoryChange_). This note used to say the API "has had spotty browser
+  // behavior", so it is wrapped to fail quiet: no API, or a throwing push,
+  // leaves the old in-JS routing exactly as it was. Owner walk in two real
+  // browsers before release (Regression Scenario S54). The "Open in new tab"
+  // buttons still build their URL from window.__DASHBOARD_URL__ + the current
+  // route (never window.location inside the Apps Script iframe).
 
   const ROUTES_ = {
     '/overview':           { kind: 'page',  page: 'overview' },
@@ -107,8 +109,83 @@
 
   function setRoute_(route) {
     if (!ROUTES_[route]) return;
+    // CL-23: while a Back / Forward runs, the only route it may set is its
+    // own target -- the close handlers of the modals it shuts revert to their
+    // base page asynchronously and must neither repaint nor push.
+    if (historyNav_ != null && route !== historyNav_) return;
     currentRoute = route;
     updateTabActiveState_(route);
+    historyPush_(route);
+  }
+
+  // -- Browser history (CL-23) --------------------------------------------
+  var historyNav_ = null;             // a Back/Forward's target route while it runs
+  var lastHistoryRoute_ = '/overview'; // the route the CURRENT history entry names
+  var historyParams_ = {};            // the page's own query string, kept on every push
+
+  function historyApi_() {
+    try {
+      return (typeof google !== 'undefined' && google.script && google.script.history) || null;
+    } catch (e) { return null; }
+  }
+
+  /** One entry per route change; never a duplicate, never during Back/Forward. */
+  function historyPush_(route) {
+    if (historyNav_ != null || route === lastHistoryRoute_) return;
+    lastHistoryRoute_ = route;
+    var api = historyApi_();
+    if (!api || typeof api.push !== 'function') return;
+    try { api.push({ route: route }, historyParams_, route); } catch (e) { /* fail quiet */ }
+  }
+
+  /** The route a ROUTES_ key settles on once dispatched (a page route maps to its page). */
+  function routeTarget_(route) {
+    var def = ROUTES_[route];
+    if (!def) return '/overview';
+    if (def.kind !== 'page') return route;
+    return def.page === 'escalations' ? '/escalations' : (def.page === 'overview' ? '/overview' : '/dept');
+  }
+
+  function routeModalOpen_(def) {
+    var m = def && def.modalId ? document.getElementById(def.modalId) : null;
+    return !!m && m.style.display !== 'none';
+  }
+
+  /** setChangeHandler target: route to the entry Back / Forward landed on. */
+  function onHistoryChange_(e) {
+    var hash = (e && e.location && e.location.hash) || '';
+    var route = hash ? (hash.charAt(0) === '/' ? hash : '/' + hash) : '/overview';
+    var q = route.indexOf('?');
+    if (q !== -1) route = route.slice(0, q);
+    if (!ROUTES_[route]) route = '/overview';
+    var def = ROUTES_[route];
+    var target = routeTarget_(route);
+    lastHistoryRoute_ = target;
+    var btn = def.kind === 'modal' ? document.getElementById(def.buttonId) : null;
+    // F11: an admin-only modal is a no-op for a non-admin (the deep-link rule).
+    if (def.kind === 'modal' && (!btn || (btn.hasAttribute('data-admin-only') && USER.role !== 'admin'))) return;
+    historyNav_ = target;
+    try {
+      // Shut every open routed modal except the target, through its own close
+      // button so each modal runs its normal close path (focus, scroll lock).
+      Object.keys(ROUTES_).forEach(function (r) {
+        var d = ROUTES_[r];
+        if (d.kind !== 'modal' || r === route || !routeModalOpen_(d)) return;
+        var x = document.getElementById(d.modalId).querySelector('.modal-close');
+        if (x) x.click();
+      });
+      if (def.kind === 'page') {
+        if (def.page === 'insights' || document.body.getAttribute('data-page') !== def.page) setPage(def.page);
+        else setRoute_(target);
+      } else if (!routeModalOpen_(def)) {
+        btn.click();
+      } else {
+        setRoute_(target);
+      }
+    } finally {
+      // Released AFTER the closed modals' own async route reverts have run.
+      setTimeout(function () { if (historyNav_ === target) historyNav_ = null; }, 0);
+    }
   }
 
   function basePageRoute_() {
@@ -152,6 +229,12 @@
       });
     });
 
+    // CL-23: Back / Forward route through onHistoryChange_.
+    var hApi = historyApi_();
+    if (hApi && typeof hApi.setChangeHandler === 'function') {
+      try { hApi.setChangeHandler(onHistoryChange_); } catch (e) { /* fail quiet */ }
+    }
+
     // Initial route from parent URL hash. google.script.url.getLocation
     // returns the parent URL's hash (without the leading '#') so deep
     // links like ".../exec#/report/individual" hit ROUTES_ exactly.
@@ -160,6 +243,8 @@
     // it off before the route lookup and apply it after the modal opens.
     if (typeof google !== 'undefined' && google.script && google.script.url) {
       google.script.url.getLocation(function (loc) {
+        // CL-23: keep the page's own query string on every pushed entry.
+        if (loc && loc.parameter && typeof loc.parameter === 'object') historyParams_ = loc.parameter;
         const hash = (loc && loc.hash) || '';
         if (!hash) return;
         // Allow either '#/report/individual' (leading slash) or
@@ -169,6 +254,9 @@
         const qIdx = normalized.indexOf('?');
         const route = qIdx === -1 ? normalized : normalized.slice(0, qIdx);
         const params = qIdx === -1 ? null : decodeShareParams_(normalized.slice(qIdx + 1));
+        // CL-23: the landing entry already names this route -- dispatching it
+        // must not push a second entry for the same view.
+        if (ROUTES_[route]) lastHistoryRoute_ = routeTarget_(route);
         // C-4: escape the hand-typed hash -- a crafted quote/backslash used
         // to throw a selector SyntaxError inside this callback, silently
         // killing all deep-link handling for the load.

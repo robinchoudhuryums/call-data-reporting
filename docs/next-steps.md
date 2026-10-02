@@ -1,4 +1,4 @@
-# Next steps — the sequenced roadmap (as of 2026-10-02; Batches 1–2 SHIPPED 2026-09-11)
+# Next steps — the sequenced roadmap (as of 2026-10-02, rulings round; Batches 1–2 SHIPPED 2026-09-11)
 
 **What this is.** The one place that says what is queued, in which batch, and
 why in that order. Detailed designs stay in their own plan docs (linked); the
@@ -22,7 +22,8 @@ batch, items are independent unless marked.
 | 6 | **Owner testing round** — IMPLEMENTED 2026-09-15 (6a/6b/6d done; 6c code-complete, RELEASE pending: Operator State #63) | 6a queue worst-first (own dept pinned) · 6b Overview answered volume · 6c Outbound RELEASE not build · 6d agent-day view (90d exact, then degrade) | dashboard | any time; 6a/6b are S |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
 | ∥ | **Escalations: multi-department + reassignment** (owner ask 2026-09-30) — SHIPPED (blocks 207-211) | EML-1/2 email opt-in + admin copy · ESC-R1 move · ESC-L1 linked copies · ESC-L2 shared thread, link/remove, delete-all · ESC-L3 restore · ESC-S1 offline thread | dashboard (+ cdr-report for EML-2) | MERGED #348; dashboard DEPLOYED 2026-09-30 (S50-S53 walk pending); + blocks 212-213 (PROPS-1, ESC-G1, ESC-DDL, ESC-U1) MERGED #349 |
-| ∥ | **Broad scan 2026-10-01** — IMPLEMENTED (blocks 214-225) | Batches 1-12: ingest safety · lock discipline · per-call identity · Neon gates + figures · escalations integrity · backups, timeouts + signals · client correctness · client a11y + hardening · cdr-report repair safety · performance · harness strictness + CI · docs + code health; deferred items (AC-2, PC-12, QO-2, ESC-D8, CL-20, CL-23, CH-4, LEG-2, DX-11) need owner rulings | all three | on branch `claude/optimistic-lamport-92xm9l`, not yet merged; deploy per each block's OPERATOR ACTIONS |
+| ∥ | **Broad scan 2026-10-01** — IMPLEMENTED (blocks 214-225) | Batches 1-12: ingest safety · lock discipline · per-call identity · Neon gates + figures · escalations integrity · backups, timeouts + signals · client correctness · client a11y + hardening · cdr-report repair safety · performance · harness strictness + CI · docs + code health; deferred items (AC-2, PC-12, QO-2, ESC-D8, CL-20, CL-23, CH-4, LEG-2, DX-11) need owner rulings | all three | MERGED #351 (2026-10-02); deploy per each block's OPERATOR ACTIONS. Owner rulings on the deferred items: next section's "Rulings round" |
+| ∥ | **Rulings round (scan 2026-10-01 deferred items)** — IMPLEMENTED (blocks 226-228) | Batch 13 (QO-2 ≥ 4% violations + history repair · DX-11 · PC-12 sub-queue Outbound rosters · AC-2 server-side agent email) · Batch 14 (ESC-D8 backup scrub on delete · CL-23 browser Back/Forward) · Batch 15 (CH-4 split of getSystemHealth + getCompanyOverview behind payload goldens); CL-20 accepted; LEG-2 waits on the decommission date | dashboard + cdr-import + cdr-report | MERGED #352 (2026-10-02); deploy per blocks 226-228; run Operator State #73 after the cdr-report deploy; walk S54 in two browsers before releasing Back/Forward |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 
@@ -478,6 +479,68 @@ through the DAL rather than `direct_call_history` / `call_history_dept` — same
 with My Department by construction; and the tier is decided by WHAT CAME BACK
 rather than by the calendar, since the prune is flag-gated and tunable. Full
 design notes now live in `docs/per-call-capture.md`; walk S47.
+
+## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
+
+Nine items were held for an owner ruling. The rulings, and the batches they
+became. Sizes: S < 1 h, M 2-4 h.
+
+| Item | Ruling | What it means |
+|---|---|---|
+| DX-11 | Provider timestamps are Pacific LOCAL (a test call during DST showed a 2 h gap) | The fixed +2 h shift is correct; `conventions.md`'s CDT column is the doc bug. No data change. |
+| QO-2 | A violation is **4.00% or more** | The pipeline's two writers move from `>` to `>=`; the dashboard and email already use `>=`. |
+| AC-2 | Option B | "Email to agent": the server enforces one agent and writes the key figures from its own data; the image becomes a supplement. |
+| ESC-D8 | Option C | A permanent delete also scrubs the escalation out of existing backups. |
+| PC-12 | Option A | The parent dept's Outbound agent table includes its sub-queue rosters, grouped per dept. |
+| CL-20 | Option A | Accepted while one person edits config; revisit if a second admin starts. |
+| CL-23 | Option B | Browser back/forward via `google.script.history`. |
+| CH-4 | Split selectively (see Batch 15) | |
+| LEG-2 | Option B | Leave the frozen legacy spreadsheet; decommission it. |
+
+### Batch 13 — data rules (cdr-import + cdr-report + dashboard) — IMPLEMENTED 2026-10-02 (block 226; the repair is dated from 2026-08-01 per the owner)
+- **QO-2 (M).** `>=` in both `autoImport.js` writers (daily + bulk), compared
+  in INTEGERS (`abnd * 25 >= total`) so float rounding can never decide a
+  boundary row; pin both writers. History: a date-gated repair (preview +
+  apply, the 1b snapshot and CRT-7 re-verify rules) that re-flags ONLY rows
+  whose stored counts are exactly 4.00% and whose date is on/after the
+  0.05 -> 0.04 switch -- the 5% era keeps its meaning -- then re-mirrors those
+  dates' `qcd_history.violations` and bumps `qcdAll` so cached reports move.
+  The owner dated the 4% rule to August 2026, so the repair starts 2026-08-01.
+- **DX-11 (S).** Fix the CDT column in `conventions.md` to say the source is
+  Pacific local time, so the shift is a constant 2 h all year.
+- **PC-12 (S-M).** Outbound roster attribution accepts the parent's
+  one-level sub-queue rosters (the INV-38 set), grouped per dept like My
+  Department's combined view; `outboundReport` version bump.
+- **AC-2 (M).** Server-side: refuse a request naming more than one agent;
+  compute the agent's headline figures with the IR builder and put them in the
+  email text; the client PNG stays an attachment only.
+
+### Batch 14 — escalations + navigation (dashboard) — IMPLEMENTED 2026-10-02 (block 227; S54 two-browser walk before release)
+- **ESC-D8 (M).** After a delete's Neon transaction commits, rewrite every
+  `escalations-*.jsonl` snapshot and every `escalation_activity` month (and
+  tail) file without that id, through the existing store adapter (Drive or the
+  Sheets fallback). Best-effort and outside the lock: a failed scrub queues
+  the id and the next backup run retries it; a pending scrub shows on the
+  Health page. Restore also skips queued ids.
+- **CL-23 (M).** Push a history entry on page/route change
+  (`google.script.history.push`) and route on back/forward
+  (`setChangeHandler`). The router's own note records "spotty browser
+  behavior" with this API, so the ui-harness gets a mock + driver check AND
+  the owner walks it in two real browsers before release.
+
+### Batch 15 — CH-4, selective split (dashboard) — IMPLEMENTED 2026-10-02 (block 228; pinned by tests/unit/ch4-split-snapshot.test.js)
+Split only where the parts are independent and the file changes often:
+`getSystemHealth` (977 lines, 17 commits since August -- a list of
+independent Health rows) and `getCompanyOverview` (703 lines, 13 commits).
+Each goes behind a byte-identical payload snapshot taken BEFORE the split.
+Explicitly NOT split: `buildDQEHistoricalData` (INV-16 duplicated, four
+hand-mirrored rule sets pinned against it -- highest blast radius, lowest
+churn) and the report compute cores (split when a change already touches them).
+
+### LEG-2 — operator
+Pick a decommission date for the legacy DQE Report spreadsheet. After it is
+retired: delete `apps-script/dqe-report/`, its Subsystems entry and the
+Frozen Subsystems note in CLAUDE.md, and the INV-22 entry (retire in place).
 
 ## Parallel track — the Neon storage decision (operator)
 

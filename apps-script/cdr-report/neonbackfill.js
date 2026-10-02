@@ -1115,7 +1115,7 @@ function backfillQCDHistory() {
         // R8-B1 (corrects T-4, whose unit analysis was INVERTED): store
         // abandoned_pct as a FRACTION (0..1), matching the inline writer.
         // The daily importer computes abndPct = abnd/total -- a fraction
-        // (autoImport.js; the violation gate is `> QCD_VIOLATION_ABANDON_RATE`), writes that to
+        // (autoImport.js; the violation gate is qcdViolationFlag_, 4.00% or more since QO-2), writes that to
         // the sheet, and writeQCDRowsToNeon mirrors it VERBATIM -- so for a
         // 5.26% day the inline writer stores 0.0526, not T-4's claimed
         // 5.26 (Config.gs ABANDONED_PCT pins the sheet convention:

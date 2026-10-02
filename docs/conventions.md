@@ -6,12 +6,14 @@ Z?" — check here first, and add an entry if the answer wasn't documented.
 
 ## Work window
 
-The canonical work window for DQE metrics:
+The canonical work window for DQE metrics, in each zone's LOCAL clock time
+(the same all year -- see "Timezones" below; the code says "PST" for the
+Pacific clock, DST included):
 
-| | PST | CST | CDT |
-|---|---|---|---|
-| Start | 6:30 AM | 8:30 AM | 9:30 AM |
-| End   | 3:00 PM | 5:00 PM | 6:00 PM |
+| | Pacific (source) | Central (team) |
+|---|---|---|
+| Start | 6:30 AM | 8:30 AM |
+| End   | 3:00 PM | 5:00 PM |
 
 In code (`buildDQEHistoricalData.js`):
 
@@ -35,10 +37,10 @@ The half hour immediately AFTER the work window is captured separately,
 into two additive columns, `AJ After-Hrs Answered` and `AK After-Hrs TTT
 (sec)`:
 
-| | PST | CST | CDT |
-|---|---|---|---|
-| Start | 3:00 PM | 5:00 PM | 6:00 PM |
-| End   | 3:30 PM | 5:30 PM | 6:30 PM |
+| | Pacific (source) | Central (team) |
+|---|---|---|
+| Start | 3:00 PM | 5:00 PM |
+| End   | 3:30 PM | 5:30 PM |
 
 ```js
 const DQE_AFTER_HOURS_END = (15 * 60 + 30) * 60;   // 3:30 PM PST in seconds
@@ -58,15 +60,19 @@ pinned against the pipeline constant by `cross-file-pins.test.js`.
 
 | Where | Value | Why |
 |---|---|---|
-| Raw Data timestamps | PST (UTC-8 or UTC-7 with DST) | Comes from the external CDR system this way |
+| Raw Data timestamps | Pacific LOCAL time (PST in winter, PDT in summer) | Comes from the external CDR system this way -- confirmed by the owner 2026-10-02 (DX-11): a test call during DST showed a 2 h gap to Central, not 3 h |
 | `DQE Historical Data` display | CST (via `pstToCSTStr` in `buildDQEHistoricalData.js`) | Internal team's home timezone |
 | Spreadsheet timezone (CDR Report) | "Central Time - Mexico City" (GMT-06:00, no DST) | Historical — see [known-issues.md](known-issues.md) |
 | Script timezone (`appsscript.json`) | `America/Chicago` | Matches the team's home TZ |
 | Dashboard date pickers | Browser-local | Phase 1 default. Phase 3 may add explicit TZ controls. |
 
-The PST-to-CST offset is hardcoded: `DQE_PST_TO_CST = 7200` (2 hours).
-This will silently be wrong if either side observes DST differently — the
-US (both PST and CST) DSTs in sync, so this is currently fine.
+The Pacific-to-Central offset is hardcoded: `DQE_PST_TO_CST = 7200` (2 hours).
+That is right ALL YEAR because the source is Pacific LOCAL time and both US
+zones change for DST on the same night, so the clock gap stays 2 hours (the
+"PST" / "CST" names in the code mean the local clocks). It would be silently
+wrong in summer -- every window an hour late -- if the provider ever switched
+to fixed PST (UTC-8) all year. Re-check with one test call during DST if the
+provider or its export settings change: a 3-hour gap means fixed PST.
 
 ## `DO NOT EDIT!` roster sheet format
 
@@ -531,7 +537,7 @@ complete set of prefixes.
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
-| `OutboundReport.gs` | `outboundReport:vN:` | `v6` |
+| `OutboundReport.gs` | `outboundReport:vN:` | `v7` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
 | `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |

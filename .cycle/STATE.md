@@ -1,6 +1,55 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — /sync-docs after the rulings round.** CLAUDE.md: the Health
+  `backup-scrub` row, the delete's backup scrub, Back/Forward in the router
+  index + drive-smoke line, a third "rule that bites" (the CH-4 payload
+  goldens), Operator State #73 (the QO-2 repair). docs/fix-history.md gained
+  the 2026-10-01 scan + rulings-round section (one row per batch, blocks
+  214-228). CLAUDE.md 174.7 KB (85.3%). **Where I left off:** PR for
+  Batches 13-15 + this sync opened and merged.
+- **2026-10-02 — rulings Batch 15 IMPLEMENTED (block 228).** CH-4: getSystemHealth
+  (~1000 -> ~50 lines, fifteen section helpers sharing one ctx) and
+  getCompanyOverview (~700 -> ~150, twelve stage helpers) split behind a
+  byte-for-byte payload golden (tests/unit/ch4-split-snapshot.test.js +
+  snapshots/ch4-payloads.json) committed BEFORE the split; 16 states, every
+  bite red; Overview half compares in America/Chicago only. An intended
+  payload change regenerates the golden with UPDATE_SNAPSHOTS=1. 2155/2155 +
+  ci:ui green. **Owner-side:** nothing new (deploy with the other batches).
+  **Where I left off:** committed + pushed on claude/optimistic-lamport-92xm9l,
+  no PR; the rulings round's batches (13-15) are all done; LEG-2 waits on the
+  owner's decommission date.
+- **2026-10-02 — rulings Batch 14 IMPLEMENTED (block 227).** ESC-D8 (a
+  permanent escalation delete scrubs the deleted rows out of every backup
+  snapshot + activity file in both stores; queued in
+  NEON_BACKUP_SCRUB_PENDING when a store is unreachable or a closed month is
+  not final yet; the backup run retries; Health `backup-scrub` row; restore
+  skips queued ids) and CL-23 (browser Back/Forward via google.script.history,
+  fail-quiet; harness recording mock + 16 drive-smoke checks). 2144/2144 +
+  ci:ui green. **Owner-side:** deploy the dashboard, then walk S54 in two real
+  browsers before release. **Where I left off:** committed + pushed on
+  claude/optimistic-lamport-92xm9l, no PR; next is Batch 15 (CH-4 selective
+  split of getSystemHealth + getCompanyOverview behind payload snapshots).
+- **2026-10-02 — rulings Batch 13 IMPLEMENTED (block 226).** QO-2 (violation =
+  4.00% or more: cdr-import qcdViolationFlag_ in integers + cdr-report's
+  date-gated repairQcdViolationFlags from 2026-08-01), DX-11 (conventions:
+  Pacific local, docs only), PC-12 (parent Outbound view includes sub-queue
+  rosters, grouped; outboundReport:v7), AC-2 (Email to agent: server enforces
+  one agent + writes the figures). 2133/2133 + ci:ui green. **Owner-side:**
+  deploy cdr-import + dashboard (blocking) and cdr-report, then
+  previewQcdViolationFlags -> repairQcdViolationFlags. **Where I left off:**
+  committed + pushed on claude/optimistic-lamport-92xm9l, no PR; next is
+  Batch 14 (ESC-D8 backup scrub, CL-23 back/forward).
+- **2026-10-02 — owner RULINGS on the scan's nine deferred items; PR #351 (Batches
+  1-12) MERGED.** Rulings + the three batches they became are in
+  docs/next-steps.md "Rulings round": DX-11 code correct (Pacific local, doc
+  fix only); QO-2 violation = 4.00% or more; AC-2 B; ESC-D8 C; PC-12 A;
+  CL-20 A (accepted); CL-23 B; CH-4 selective split (getSystemHealth +
+  getCompanyOverview only); LEG-2 B (decommission). **Waiting on the owner:**
+  the date the 4% violation rule took effect (QO-2's history repair is
+  date-gated on it). **Where I left off:** branch restarted from main
+  (3dfc830); nothing implemented yet; next is Batch 13 (QO-2, DX-11, PC-12,
+  AC-2).
 - **2026-10-02 — broad-scan Batch 12 IMPLEMENTED on the same branch (block 225).**
   The LAST batch of the 2026-10-01 scan. Code health: CH-1 (the five
   Diagnostics.gs tools are public + admin-gated, so the Run dropdown shows

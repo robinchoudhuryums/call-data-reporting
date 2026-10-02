@@ -507,7 +507,8 @@ When something looks wrong, before assuming a code bug, check:
     DELETE an escalation** (mistake / test entry) from its card: row + activity
     trail in one transaction, audited as an `escalations:delete` Report Usage
     row (dept only, no PHI) -- no property, no trigger; managers never see the
-    control. **An admin can also MOVE an open escalation to another
+    control. The delete also scrubs the escalation out of the Neon backups
+    (ESC-D8, #28). **An admin can also MOVE an open escalation to another
     department** from its card (ESC-R1, S50) -- no property; recorded in the
     Activity trail. **And assign ONE escalation to several departments** by
     picking more than one in the create form (ESC-L1, S51): each department
@@ -745,6 +746,23 @@ When something looks wrong, before assuming a code bug, check:
     of the cell cap) records `WARN`. Both `PARTIAL` and `WARN` hold the
     retention prune (#57), which runs only after an `ok` backup -- clear the
     cause, then "Back up now".
+    **A permanent escalation delete also scrubs the backups (ESC-D8,
+    2026-10-02).** After the delete commits, every `escalations-*.jsonl`
+    snapshot and every `escalation_activity` month / part / tail file is
+    rewritten without the deleted rows, in BOTH stores if both exist (a run
+    that fell back to Sheets leaves the older Drive files behind). If a store
+    cannot be opened, or a CLOSED month has not been finalized yet (rewriting
+    it would stamp it final with its last days missing -- the ENG-1 rule), the
+    ids wait in `NEON_BACKUP_SCRUB_PENDING`; the next backup run finalizes
+    the month from Neon and retries, and `runNeonBackupScrubNow()` (editor)
+    retries at once. The Health page's `backup-scrub` row shows how many wait
+    and why; it never turns the backup row red. A restore leaves out the rows
+    of any id still waiting. **What it cannot reach:** Drive keeps a file's
+    earlier revisions for 30 days, and the backup workbook keeps its version
+    history -- delete those by hand (File -> Version history) if a deleted
+    escalation must be gone everywhere at once. A queue past 150 ids counts
+    the overflow ("could not be queued") -- those ids must be removed from
+    the files by hand.
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -3088,3 +3106,26 @@ When something looks wrong, before assuming a code bug, check:
       roster spelling: capture only applies the rule going forward. The
       `Inbound Calls` / `Outbound Calls` export tabs pick up the rewritten
       names on their next run (#49 / #50).
+
+73. **QCD violation-flag repair (QO-2, owner ruling 2026-10-02; cdr-report).**
+    A QCD violation is now an abandoned rate of **4.00% or more** (it was
+    `> 4%` in the pipeline writers, so an exactly-4.00% day read red beside a
+    Violations count of 0). New rows are written right from the cdr-import
+    deploy on; rows already in `QCD Historical Data` keep the flag they were
+    written with until this repair runs. One-time, after deploying cdr-report:
+    - **Preview:** run `previewQcdViolationFlags()` in the cdr-report editor.
+      Read-only; it lists the exactly-4.00% rows dated on or after
+      `QCD_VIOL_GTE_FROM_ISO_` (2026-08-01, the month the 4% rule took effect)
+      and how many already carry the flag. Earlier rows are the 5% era and are
+      never touched.
+    - **Apply:** `repairQcdViolationFlags()`. It follows the bulk-apply
+      contract (fingerprint -> snapshot when 500+ cells -> re-verify -> write,
+      #59), sets col L to 1 on those rows only, and upserts every in-scope
+      row's `qcd_history.violations` in Neon. If it reports Neon unreachable,
+      run it again later: it is idempotent, and a re-run re-mirrors without
+      rewriting the sheet.
+    - Cached reports pick up the change within 6 h (the freshness anchor), or
+      at once after a cache bust. If the switch to 4% actually happened
+      mid-August, change `QCD_VIOL_GTE_FROM_ISO_` before running -- rows
+      between Aug 1 and the real switch day were written under the 5% rule.
+

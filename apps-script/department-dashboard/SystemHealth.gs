@@ -205,11 +205,43 @@ function getSystemHealth(req) {
     rows.push({ section: section, key: key, label: label, status: status,
                 value: String(value == null ? '' : value), hint: hint || '' });
   };
-  var neonConfigured = false;
-  try { neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); }
-  catch (eNc) { neonConfigured = false; }
+  // CH-4 (Batch 15): each section is its own helper below, in page order.
+  // They share only `ctx`: the props handle, whether Neon is configured, the
+  // Pipeline Health rows (pipeline -> historical-sort) and the installed
+  // trigger map (triggers -> outcomes). The payload is pinned byte for byte by
+  // tests/unit/ch4-split-snapshot.test.js.
+  var ctx = { part: part, props: null, neonConfigured: false, phRows: undefined, installed: undefined };
+  try {
+    ctx.props = PropertiesService.getScriptProperties();
+    ctx.neonConfigured = !!ctx.props.getProperty('NEON_HOST');
+  } catch (eNc) { ctx.neonConfigured = false; }
 
   if (part !== 'neon') {
+    healthPresenceRows_(add);
+    healthFreshnessRow_(add);
+    healthPipelineRows_(add, ctx);
+    healthHistoricalSortRow_(add, ctx);
+    healthNeonConfigRows_(add, ctx);
+  }
+  if (part !== 'fast') healthNeonLiveRows_(add, ctx);
+  if (part !== 'neon') {
+    healthTriggerRows_(add, ctx);
+    healthOutcomeRows_(add, ctx);
+    healthBackupScrubRow_(add, ctx);
+    healthBeaconRow_(add);
+    healthConfigRows_(add, ctx);
+    healthPropsInventoryRows_(add);
+    healthSetupSheetsRow_(add);
+    healthWorkbookCellsRow_(add);
+    healthUsageRows_(add);
+  }
+
+  var warnCount = rows.filter(function (r) { return r.status === 'warn'; }).length;
+  return { generatedAt: new Date().toISOString(), rows: rows, warnCount: warnCount, part: part };
+}
+
+/** CH-4: Health section -- live presence (who has the app open). */
+function healthPresenceRows_(add) {
   // ── Live presence (who is using the app right now) ──────────────────
   // Owner request: a pre-deploy glance -- "is anyone mid-session before I
   // roll a new version?". Fed by the recordPresence heartbeat below; every
@@ -231,7 +263,10 @@ function getSystemHealth(req) {
       });
     }
   } catch (e) { add('presence', 'presence-now', 'Active now', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- DQE build freshness. */
+function healthFreshnessRow_(add) {
   // ── Pipeline freshness ──────────────────────────────────────────────
   try {
     var fresh = computeOverviewPipelineFreshness_();
@@ -247,7 +282,10 @@ function getSystemHealth(req) {
         fresh.latestTimestamp + ' (' + fresh.hoursSinceFresh + 'h ago)');
     }
   } catch (e) { add('pipeline', 'dqe-fresh', 'DQE build freshness', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- build stamp, Call_Legs horizon, recent step failures (sets ctx.phRows). */
+function healthPipelineRows_(add, ctx) {
   // ── Recent pipeline step failures (the single trustworthy signal) ────
   // Flags a step ONLY when its MOST RECENT outcome is `failure` -- a step that
   // failed then recovered (its latest row is `success`) is NOT flagged, so this
@@ -302,7 +340,7 @@ function getSystemHealth(req) {
     } catch (eLegs) { add('pipeline', 'legs-horizon', 'Call_Legs retention horizon', 'warn', 'probe failed', String(eLegs && eLegs.message || eLegs)); }
 
     var phScan = HEALTH_PIPELINE_SCAN_ROWS;
-    var phRows = (typeof readPipelineHealth_ === 'function') ? readPipelineHealth_(phScan) : [];
+    var phRows = ctx.phRows = (typeof readPipelineHealth_ === 'function') ? readPipelineHealth_(phScan) : [];
     if (!phRows || !phRows.length) {
       add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'muted', 'no Pipeline Health rows');
     } else {
@@ -346,7 +384,10 @@ function getSystemHealth(req) {
       }
     }
   } catch (e) { add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- the nightly historical sort check (reads ctx.phRows). */
+function healthHistoricalSortRow_(add, ctx) {
   // ── Batch 4 / Phase 2: the nightly historical sort check ─────────────
   // cdr-report's Script Properties are NOT this project's, so the check's
   // outcome cannot travel as a *_LAST property; it travels as
@@ -355,7 +396,7 @@ function getSystemHealth(req) {
   // (which also flags a failing one -- this row says what it MEANS).
   try {
     var hsPrefix = 'historicalSort:';
-    var hsAll = (typeof phRows !== 'undefined' && phRows) ? phRows : [];
+    var hsAll = ctx.phRows || [];   // CH-4: the rows the pipe-failures section read (undefined when it threw)
     var hsLatest = {};
     hsAll.forEach(function (r) {
       if (r && r.step && String(r.step).indexOf(hsPrefix) === 0 && !(r.step in hsLatest)) hsLatest[r.step] = r;
@@ -410,9 +451,13 @@ function getSystemHealth(req) {
       }
     }
   } catch (eHs) { add('pipeline', 'historical-sort', 'Nightly historical sort check', 'warn', 'probe failed', String(eHs && eHs.message || eHs)); }
+}
 
+/** CH-4: Health section -- Neon config, read volume, mail quota, read sources (sets ctx.neonConfigured). */
+function healthNeonConfigRows_(add, ctx) {
   // ── Neon ────────────────────────────────────────────────────────────
-  var props = PropertiesService.getScriptProperties();
+  var props = ctx.props || PropertiesService.getScriptProperties();   // first use: throws as before when the service does
+  ctx.props = props;
   var neonConfigured = false;
   try {
     neonConfigured = !!props.getProperty('NEON_HOST');
@@ -420,6 +465,7 @@ function getSystemHealth(req) {
       neonConfigured ? 'ok' : 'warn', neonConfigured ? 'configured' : 'not configured',
       neonConfigured ? '' : 'Escalations, Inbound, Caller Lookup, and the F1 read-back need the NEON_* Script Properties (Operator State #18).');
   } catch (e) { add('neon', 'neon-conf', 'Neon connection', 'warn', 'probe failed', String(e && e.message || e)); }
+  ctx.neonConfigured = neonConfigured;   // CH-4: the live block below reads it
   // F5: read VOLUME, not just reachability. The owner exhausted Neon's monthly
   // transfer allowance with managers live and the Neon-only surfaces went dark
   // for the rest of the month; every probe on this page said "reachable" right
@@ -512,9 +558,11 @@ function getSystemHealth(req) {
         'Neon DQE reads are silently falling back to the sheet — sustained outage serves aging data (Operator State #19).');
     }
   } catch (e) { add('neon', 'read-health', 'Neon read-back health', 'warn', 'probe failed', String(e && e.message || e)); }
-  }   // end part !== 'neon' (first fast range)
+}
 
-  if (part !== 'fast') {
+/** CH-4: Health section -- the LIVE-Neon probes on ONE shared connection (the part=neon pass, R21). */
+function healthNeonLiveRows_(add, ctx) {
+  var neonConfigured = ctx.neonConfigured;
   // Both mirror-health probes (DQE + QCD) share ONE Neon connection so the
   // page pays at most a single free-tier cold-start, not one handshake per
   // probe. Opened here, threaded into both compute*MirrorHealth_(conn), closed
@@ -658,12 +706,14 @@ function getSystemHealth(req) {
   } finally {
     if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
   }
-  }   // end part !== 'fast'
+}
 
-  if (part !== 'neon') {
+/** CH-4: Health section -- trigger-driven services, install readiness, trigger quota (sets ctx.installed). */
+function healthTriggerRows_(add, ctx) {
+  var props = ctx.props;
   // ── Trigger-driven services (THIS project) ──────────────────────────
   try {
-    var installed = {};
+    var installed = ctx.installed = {};
     var trig = ScriptApp.getProjectTriggers();
     for (var i = 0; i < trig.length; i++) installed[trig[i].getHandlerFunction()] = true;
     // Batch 3: an engine can be ARMED two ways, and they can disagree. Eight of
@@ -799,7 +849,11 @@ function getSystemHealth(req) {
           + 'optional engine or fold engines onto one dispatcher trigger before installing another.'
         : '');
   } catch (e) { add('triggers', 'trg-probe', 'Trigger inventory', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- last outcome of each engine (reads ctx.installed). */
+function healthOutcomeRows_(add, ctx) {
+  var props = ctx.props;
   // Last outcomes of the optional services (property-backed, cheap).
   try {
     // O-4: each row also names its trigger HANDLER, the engine's `*_ENABLED`
@@ -863,7 +917,7 @@ function getSystemHealth(req) {
       // it continues next run) / 'FAILED n step(s) threw ...' / 'skipped (...)'.
       ['out-neonretention', 'Neon retention — last prune', 'NEON_RETENTION_LAST', 'NEON_RETENTION_LAST_RESULT', 'runNeonRetentionWeekly_', 'NEON_RETENTION_ENABLED', 9 * DAY_],
     ];
-    var installedMap = (typeof installed === 'object' && installed) ? installed : {};
+    var installedMap = (typeof ctx.installed === 'object' && ctx.installed) ? ctx.installed : {};
     for (var o = 0; o < outcomes.length; o++) {
       var at = outcomes[o][2] ? props.getProperty(outcomes[o][2]) : '';
       var res = props.getProperty(outcomes[o][3]);
@@ -933,7 +987,36 @@ function getSystemHealth(req) {
         (res || '') + (at ? (' @ ' + at) : '') + stale + interrupted);
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- deleted escalations still in the backups (ESC-D8). */
+function healthBackupScrubRow_(add, ctx) {
+  var props = ctx.props;
+  // ESC-D8: deleted escalations still waiting to be scrubbed out of the Neon
+  // backups (NeonBackup.gs). The queue is written only by a delete whose scrub
+  // could not finish, so an empty one is the normal state.
+  try {
+    var scrubQ = null;
+    try { scrubQ = JSON.parse(props.getProperty('NEON_BACKUP_SCRUB_PENDING') || 'null'); } catch (eq) { scrubQ = { ids: [], lastError: 'unreadable queue' }; }
+    var scrubIds = (scrubQ && Array.isArray(scrubQ.ids)) ? scrubQ.ids.length : 0;
+    var scrubDropped = (scrubQ && scrubQ.dropped) || 0;
+    if (!scrubIds && !scrubDropped) {
+      add('triggers', 'backup-scrub', 'Deleted escalations in backups', 'ok', 'none waiting');
+    } else {
+      add('triggers', 'backup-scrub', 'Deleted escalations in backups', 'warn',
+        scrubIds + ' deleted escalation(s) still in the backups'
+          + (scrubQ.since ? ' since ' + scrubQ.since : '')
+          + (scrubDropped ? '; ' + scrubDropped + ' more could not be queued (queue full)' : '')
+          + (scrubQ.lastError ? ' — last attempt: ' + scrubQ.lastError : ''),
+        'The next Neon backup run retries; runNeonBackupScrubNow() (editor) retries now. A closed month '
+          + 'not yet finalized waits for the backup run. "Queue full" ids must be removed from the backup '
+          + 'files by hand (Operator State #28).');
+    }
+  } catch (e) { add('triggers', 'backup-scrub', 'Deleted escalations in backups', 'muted', 'probe failed', String(e && e.message || e)); }
+}
+
+/** CH-4: Health section -- the client-error beacon window. */
+function healthBeaconRow_(add) {
   // O-11: the client-error beacon's window state (CacheService-only, like the
   // presence map). A reached cap is a real signal -- errors are being
   // suppressed, not absent.
@@ -948,7 +1031,11 @@ function getSystemHealth(req) {
         : (beaconCount + ' of ' + CLIENT_ISSUE_WINDOW_CAP_ + ' emails used'),
       beaconCapAt ? 'A burst this size is usually one broken deploy; read the Executions log (reportClientIssue) for the tail.' : '');
   } catch (e) { add('usage', 'client-beacon', 'Client-error beacon (6 h window)', 'muted', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- required Script Properties, holidays, published standards, EMAIL_BCC. */
+function healthConfigRows_(add, ctx) {
+  var props = ctx.props;
   // ── Script Properties presence ──────────────────────────────────────
   try {
     var propSpecs = [
@@ -1012,7 +1099,10 @@ function getSystemHealth(req) {
       }
     } catch (eB) { add('config', 'email-bcc', 'EMAIL_BCC addresses', 'warn', 'probe failed', String(eB && eB.message || eB)); }
   } catch (e) { add('config', 'prop-probe', 'Script Properties', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- the Script Properties inventory + store usage. */
+function healthPropsInventoryRows_(add) {
   // ── All Script Properties (inventory) ───────────────────────────────
   // The settings page renders only the FIRST 50 properties (read-only past
   // that), and this store holds ~90 — so "what is stored, and is it still
@@ -1074,7 +1164,10 @@ function getSystemHealth(req) {
           + 'in Config.gs PROP_REGISTRY_.');
     });
   } catch (e) { add('props', 'props-count', 'Stored properties', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- setup()-managed sheets. */
+function healthSetupSheetsRow_(add) {
   // ── setup()-managed sheets ──────────────────────────────────────────
   try {
     var ss = openSpreadsheet_();
@@ -1090,7 +1183,10 @@ function getSystemHealth(req) {
       missing.length ? ('missing: ' + missing.join(', ')) : (expected.length + ' present'),
       missing.length ? 'Re-run setup() from the editor as an admin (Operator State #6) — writers against missing sheets silently no-op.' : '');
   } catch (e) { add('sheets', 'setup-sheets', 'setup()-managed sheets', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- the workbook 10M-cell cap (R47). */
+function healthWorkbookCellsRow_(add) {
   // R47: the workbook's 10M-CELL CAP. Google counts the ALLOCATED grid
   // (maxRows x maxColumns per tab), not the cells holding data, so an
   // oversized empty grid costs exactly as much as a full one. Nothing here
@@ -1126,7 +1222,10 @@ function getSystemHealth(req) {
       + 'CDR Report → CDR Tools → Workbook Cell Space → Audit, then Preview trim '
       + '(Operator State #62).');
   } catch (e) { add('sheets', 'workbook-cells', 'Workbook cell usage (10M cap)', 'warn', 'probe failed', String(e && e.message || e)); }
+}
 
+/** CH-4: Health section -- report usage + per-user rollup. */
+function healthUsageRows_(add) {
   // ── Report usage (last 30 days) ─────────────────────────────────────
   // The consolidation / un-gating EVIDENCE the Report Usage telemetry
   // carve-out (INV-01) exists to provide, surfaced instead of asking the
@@ -1161,10 +1260,6 @@ function getSystemHealth(req) {
       });
     }
   } catch (e) { add('usage', 'usage-none', 'Report usage', 'warn', 'probe failed', String(e && e.message || e)); }
-  }   // end part !== 'neon' (second fast range)
-
-  var warnCount = rows.filter(function (r) { return r.status === 'warn'; }).length;
-  return { generatedAt: new Date().toISOString(), rows: rows, warnCount: warnCount, part: part };
 }
 
 // -- UI surface toggles (R7 / G-3) ---------------------------------------------
