@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — /sync-docs after the rulings round.** CLAUDE.md: the Health
+  `backup-scrub` row, the delete's backup scrub, Back/Forward in the router
+  index + drive-smoke line, a third "rule that bites" (the CH-4 payload
+  goldens), Operator State #73 (the QO-2 repair). docs/fix-history.md gained
+  the 2026-10-01 scan + rulings-round section (one row per batch, blocks
+  214-228). CLAUDE.md 174.7 KB (85.3%). **Where I left off:** PR for
+  Batches 13-15 + this sync opened and merged.
 - **2026-10-02 — rulings Batch 15 IMPLEMENTED (block 228).** CH-4: getSystemHealth
   (~1000 -> ~50 lines, fifteen section helpers sharing one ctx) and
   getCompanyOverview (~700 -> ~150, twelve stage helpers) split behind a

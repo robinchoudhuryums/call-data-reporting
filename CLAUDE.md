@@ -144,7 +144,7 @@ npm run lint:gas
 # tests/README.md (its designated home; this block stopped enumerating
 # suites in the 2026-08-20 trim pass -- keep it that way. Map completeness
 # is ENFORCED: claude-md-split.test.js fails on an unlisted suite).
-# Two rules that bite here:
+# Three rules that bite here:
 # - HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
 #   getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a
 #   test needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
@@ -161,6 +161,10 @@ npm run lint:gas
 #   splices the script-N-*.html fragments into ONE IIFE): per-fragment
 #   purity, include-list<->disk parity, node --check of the assembled
 #   body -- see docs/client-ui-conventions.md "The assembled client".
+# - PAYLOAD GOLDENS (CH-4): getSystemHealth + getCompanyOverview are pinned
+#   byte-for-byte by ch4-split-snapshot.test.js; an INTENDED payload change
+#   (a new Health row, a new Overview field) regenerates the golden with
+#   UPDATE_SNAPSHOTS=1 under TZ=America/Chicago, and its diff is the review.
 node --test          # from repo root (or: npm test)
 
 # CI: .github/workflows/ci.yml runs THREE jobs on push-to-main + every PR --
@@ -224,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
 # EIGHT ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
-# CL-9 -- drive-agent too), both roles, plus
+# CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
 # throws nothing),
@@ -572,7 +576,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   paths need at least the admin gate.** The dashboard's NON-spreadsheet
   (Neon) write paths are: Escalations (INV-55, per-dept-gated; its
   `deleteEscalation` is ADMIN-gated -- row + activity trail in one
-  transaction, audited as an `escalations:delete` usage row with no PHI --
+  transaction, audited as an `escalations:delete` usage row with no PHI, then
+  scrubbed out of the Neon backups (ESC-D8, #28) --
   as are the move / link / remove / restore department verbs),
   the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
@@ -1068,7 +1073,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   auto-refresh -- trend arrows, axis zoom) · the top-tab ROUTER (Phase C:
   every tab/menu item's `data-route`+id pair, `__DASHBOARD_URL__` -- NEVER
   `window.location` inside the Apps Script iframe -- deep links + state-in-URL
-  via `SHARE_STATE_`, the F11 non-admin no-op) · the client ACCESSIBILITY +
+  via `SHARE_STATE_`, the F11 non-admin no-op, browser Back/Forward via
+  `google.script.history`, CL-23) · the client ACCESSIBILITY +
   PRINT contract (keyboard parity, the ARIA shapes, the focus ring, the
   on-fill tokens, what never reaches paper).
   **The client traps that CAN bite you without warning stayed HERE** and are
@@ -1625,7 +1631,6 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (4 days) is named in the hint, not flagged (O-3/C2-5; a recurring one stays
   red). The engine outcome rows (`*_LAST`) also warn STALE when an ARMED engine
   has not recorded past its allowance (O-4) -- a killed run records nothing.
-  Pinned by `system-health.test.js`.
   This page is the PULL view; the **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email.
   Three other sections share the page, each with its own operator
@@ -1657,8 +1662,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
   per-call tables are missing; #40/#43), `workbook-cells` (the 10M
-  grid cap, ALLOCATED not used; #62) and `esc-schema` (the escalations
-  linked-copy columns + unique index, INV-55).
+  grid cap, ALLOCATED not used; #62), `esc-schema` (the escalations
+  linked-copy columns + unique index, INV-55) and `backup-scrub` (ESC-D8, #28).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -2145,6 +2150,7 @@ items for anything it flags or doesn't cover.)
 70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the probe, then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
 71. The answer-quality review sample -- CONCLUDED 2026-09-23: no stored field tells a person from a machine; now research-only, its figures never shown in reporting; blinded worksheet, do NOT open the key until every row is labelled
 72. Per-call agent-name rewrite (PC-1) -- capture now stores the roster-canonical name; run the cdr-import preview, back up Neon, then the rewrite once after deploy, and again after a new alias override
+73. QCD violation-flag repair (QO-2) -- a violation is 4.00% or more; run `previewQcdViolationFlags` then `repairQcdViolationFlags` (cdr-report) once after deploy; dated from 2026-08-01, re-run if Neon was unreachable
 
 ## Cycle Workflow Config
 

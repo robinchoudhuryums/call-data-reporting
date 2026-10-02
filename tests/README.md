@@ -301,7 +301,9 @@ tests/
                               every probe throwing) and nine Overview
                               scenarios; the Overview half compares in
                               America/Chicago only; an intended change
-                              regenerates it with UPDATE_SNAPSHOTS=1),
+                              regenerates it with UPDATE_SNAPSHOTS=1;
+                              CH4_SNAP_FILE points a run at another golden,
+                              e.g. a one-off UTC copy taken before a refactor),
                               neon-backup-scrub (ESC-D8: a permanent
                               escalation delete rewrites every snapshot +
                               activity file without the deleted rows, in

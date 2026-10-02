@@ -3106,3 +3106,26 @@ When something looks wrong, before assuming a code bug, check:
       roster spelling: capture only applies the rule going forward. The
       `Inbound Calls` / `Outbound Calls` export tabs pick up the rewritten
       names on their next run (#49 / #50).
+
+73. **QCD violation-flag repair (QO-2, owner ruling 2026-10-02; cdr-report).**
+    A QCD violation is now an abandoned rate of **4.00% or more** (it was
+    `> 4%` in the pipeline writers, so an exactly-4.00% day read red beside a
+    Violations count of 0). New rows are written right from the cdr-import
+    deploy on; rows already in `QCD Historical Data` keep the flag they were
+    written with until this repair runs. One-time, after deploying cdr-report:
+    - **Preview:** run `previewQcdViolationFlags()` in the cdr-report editor.
+      Read-only; it lists the exactly-4.00% rows dated on or after
+      `QCD_VIOL_GTE_FROM_ISO_` (2026-08-01, the month the 4% rule took effect)
+      and how many already carry the flag. Earlier rows are the 5% era and are
+      never touched.
+    - **Apply:** `repairQcdViolationFlags()`. It follows the bulk-apply
+      contract (fingerprint -> snapshot when 500+ cells -> re-verify -> write,
+      #59), sets col L to 1 on those rows only, and upserts every in-scope
+      row's `qcd_history.violations` in Neon. If it reports Neon unreachable,
+      run it again later: it is idempotent, and a re-run re-mirrors without
+      rewriting the sheet.
+    - Cached reports pick up the change within 6 h (the freshness anchor), or
+      at once after a cache bust. If the switch to 4% actually happened
+      mid-August, change `QCD_VIOL_GTE_FROM_ISO_` before running -- rows
+      between Aug 1 and the real switch day were written under the 5% rule.
+
