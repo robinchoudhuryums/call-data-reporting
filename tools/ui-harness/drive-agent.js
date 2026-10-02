@@ -116,6 +116,31 @@ function record(name, pass, detail) {
   record('glossary: fold present with the wait-coverage explanation',
     /before call-capture coverage|call-capture system has/.test(await page.locator('#agent-gloss').textContent()));
 
+  // ---- CL-9: phone width ----------------------------------------------------
+  // The agent app is the surface most likely to be opened on a phone, and the
+  // 1100 px run below never saw one. Resize the SAME page and re-enter both
+  // tabs so each lays out at the narrow width; this runs BEFORE the
+  // cleanliness checks so an error raised at phone width fails them too.
+  // The html/body clip check keeps the overflow assertion from passing
+  // vacuously (see drive-smoke.js, the same helper's rationale).
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.waitForTimeout(500);
+  record('phone@360: overflow is measurable (html/body do not clip it)', await page.evaluate(() =>
+    !/hidden|clip/.test(getComputedStyle(document.documentElement).overflowX)
+    && !/hidden|clip/.test(getComputedStyle(document.body).overflowX)));
+  const phoneOverflow = async () => page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  for (const [tab, pane] of [['#agent-tab-history', '#agent-history-page'], ['#agent-tab-home', '#agent-home-page']]) {
+    await page.locator(tab).click();
+    await page.waitForTimeout(500);
+    const over = await phoneOverflow();
+    record('phone@360: ' + pane + ' renders with no horizontal overflow',
+      (await page.locator(pane).isVisible()) && over <= 1, 'scrollWidth-clientWidth=' + over);
+  }
+  // Back to the desktop size, so the layout check at the end still measures it.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.waitForTimeout(300);
+
   // ---- cleanliness --------------------------------------------------------
   const unmocked = await page.evaluate(() => window.__MOCK_UNMOCKED__ || []);
   record('rpc: no unmocked server calls', unmocked.length === 0, unmocked.join(','));

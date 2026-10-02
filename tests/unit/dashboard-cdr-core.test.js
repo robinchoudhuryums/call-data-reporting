@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
+const { assertSetValuesShape } = require('../harness/fakeSheet');
 
 // The C1 fixture treatment for dashboardCDR.js's generateCustomReportCore_
 // (owner go-ahead 2026-08-20) — the ~480-line end-to-end path (dashboard
@@ -66,8 +67,12 @@ function makeRecordingSheet_(opts) {
       },
       setValue: function (v) { sheet.set(r0, c0, v); return proxy; },
       setValues: function (vals) {
+        assertSetValuesShape(vals, nr, nc);   // HT-2: the real API's shape rule
         for (let r = 0; r < vals.length; r++) {
-          for (let c = 0; c < vals[r].length; c++) sheet.set(r0 + r, c0 + c, vals[r][c]);
+          for (let c = 0; c < vals[r].length; c++) {
+            sheet.set(r0 + r, c0 + c, vals[r][c]);
+            delete displays[(r0 + r) + ',' + (c0 + c)];   // HT-2: a write replaces the rendered text
+          }
         }
         return proxy;
       },
@@ -170,13 +175,15 @@ function runCore_(histRows, durDisplays, inputs) {
 
   // Historical sheet: values grid + a DISPLAY override for the duration
   // column (the F-11 pin: values hold junk, displays hold H:MM:SS).
+  // The overrides go on AFTER the setup writes: a write replaces a cell's
+  // rendered text (HT-2), exactly as it would on a real sheet.
   const displays = {};
-  (durDisplays || []).forEach(function (d, i) {
-    if (d != null) displays[(i + 2) + ',' + DUR_COL] = d;   // data starts row 2
-  });
   const hist = makeRecordingSheet_({ displays: displays });
   hist.getRange(1, 1, 1, HIST_HEADERS.length).setValues([HIST_HEADERS]);
   if (histRows.length) hist.getRange(2, 1, histRows.length, HIST_HEADERS.length).setValues(histRows);
+  (durDisplays || []).forEach(function (d, i) {
+    if (d != null) displays[(i + 2) + ',' + DUR_COL] = d;   // data starts row 2
+  });
 
   h.state.props = {};
   if (inputs.prevDiagCol) h.state.props.CRB_DIAG_COL = String(inputs.prevDiagCol);

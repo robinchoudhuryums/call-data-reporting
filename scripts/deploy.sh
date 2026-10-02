@@ -25,15 +25,37 @@
 #
 #   FORCE=1          bypass the redundant-run guard (see below), e.g. to
 #                    re-roll a deployment after an editor-side change.
+#   STRICT_DEPLOY=1  refuse a deploy from a dirty tree or a branch other than
+#                    main (both only WARN by default; DEP-3).
 #
 # Notes:
-#   - Each project keeps its own gitignored .clasp.json, so run this from the
-#     repo root and pass the dir (it cd's in for you).
+#   - Each project keeps its own gitignored .clasp.json; pass the project dir
+#     in any spelling (`.`, `./`, an absolute path -- DEP-2 normalizes it) and
+#     the script cd's in for you.
 #   - Requires the clasp CLI, logged in (`clasp login`).
 set -euo pipefail
 
 DIR="${1:?usage: scripts/deploy.sh <project-dir> [deployment-id]}"
 DEP_ID="${2:-}"
+
+# DEP-2 (broad-scan 2026-10-01): normalize <project-dir> to its REPO-RELATIVE
+# form before anything matches on it. The stamp / sibling-project `case`
+# blocks below compare literal strings, so `./`, `$PWD`, an absolute path or
+# `apps-script/cdr-import/.` used to fall through to "no stamp file" and ship
+# the "unstamped" placeholder -- the Health page then reported a deploy.sh run
+# as a bypass. One canonical spelling: `.` for the dashboard, otherwise
+# `apps-script/<project>` with no trailing slash.
+ROOT_ABS="$(cd "$(dirname "$0")/.." && pwd -P)"
+if ! DIR_ABS="$(cd "$DIR" 2>/dev/null && pwd -P)"; then
+  echo "error: no such project dir: '$DIR'" >&2
+  exit 1
+fi
+case "$DIR_ABS" in
+  "$ROOT_ABS")   DIR="." ;;
+  "$ROOT_ABS"/*) DIR="${DIR_ABS#"$ROOT_ABS"/}" ;;
+  *) echo "error: '$DIR' is outside this repo ($ROOT_ABS)" >&2; exit 1 ;;
+esac
+cd "$ROOT_ABS"   # every path below is repo-relative from here on
 
 if ! command -v clasp >/dev/null 2>&1; then
   echo "error: clasp not found. Install with: npm install -g @google/clasp" >&2
@@ -76,6 +98,31 @@ LAST_FILE="$(cd "$DIR" && pwd)/.last-deployed"   # absolute: the script cd's lat
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
 TREE_DIRTY=""
 [ -n "$(git status --porcelain 2>/dev/null)" ] && TREE_DIRTY="1"
+GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+
+# DEP-3 (broad-scan 2026-10-01): say so, loudly, when this deploy ships code
+# that is not on main or not in any commit. Both stay ALLOWED by default --
+# a dirty deploy is a supported path (DOC-14 above records it as +dirty) and
+# this repo ships from feature branches between reviews -- but they used to
+# pass with no word at all. STRICT_DEPLOY=1 makes either one fatal (the
+# STRICT_ORPHANS pattern). TREE_DIRTY is the ONE dirtiness definition: the
+# build stamp below used `git diff` (tracked edits only) while this guard
+# used `git status --porcelain` (untracked files too), so a new untracked .gs
+# -- which `clasp push` DOES ship -- was "+dirty" here and clean in the stamp.
+DEPLOY_WARN=""
+if [ -n "$TREE_DIRTY" ]; then
+  echo "warn: the working tree is DIRTY -- this deploy ships uncommitted edits (stamp: +dirty):" >&2
+  git status --short 2>/dev/null | head -n 10 >&2
+  DEPLOY_WARN="1"
+fi
+if [ "$GIT_BRANCH" != "main" ]; then
+  echo "warn: deploying from branch '$GIT_BRANCH', not main." >&2
+  DEPLOY_WARN="1"
+fi
+if [ -n "$DEPLOY_WARN" ] && [ "${STRICT_DEPLOY:-}" = "1" ]; then
+  echo "error: STRICT_DEPLOY=1 -- refusing a dirty or non-main deploy." >&2
+  exit 1
+fi
 record_deploy() {
   if [ -n "$HEAD_SHA" ]; then
     local mark="$HEAD_SHA"
@@ -142,7 +189,7 @@ fi
 # Runs BEFORE the push so its "remote vs local" comparison isn't confused by
 # the files this push is about to add.
 echo "==> remote-orphan check   (STRICT_ORPHANS=1 to make it fatal)"
-node "$(dirname "$0")/check-remote-orphans.mjs" "$DIR" || exit 1
+node "$ROOT_ABS/scripts/check-remote-orphans.mjs" "$DIR" || exit 1
 
 # E3: stamp the DASHBOARD build before pushing. BuildStamp.gs is committed
 # with a placeholder ("unstamped -- last push bypassed scripts/deploy.sh");
@@ -155,19 +202,16 @@ node "$(dirname "$0")/check-remote-orphans.mjs" "$DIR" || exit 1
 # INV-16 duplicated files and a bare `clasp push -f` from their directories
 # previously left no trace of having bypassed the CI gates. Per-project
 # stamp file + variable name (the dashboard keeps its E3 names).
-ROOT_ABS="$(cd "$(dirname "$0")/.." && pwd)"
+# DIR is normalized above (DEP-2), so these literals are the ONLY spellings.
 case "$DIR" in
   .)                       STAMP_FILE="$ROOT_ABS/apps-script/department-dashboard/BuildStamp.gs"; STAMP_VAR="BUILD_STAMP_" ;;
-  apps-script/cdr-import|apps-script/cdr-import/)  STAMP_FILE="$ROOT_ABS/apps-script/cdr-import/buildStamp.js"; STAMP_VAR="PROJECT_BUILD_STAMP_" ;;
-  apps-script/cdr-report|apps-script/cdr-report/)  STAMP_FILE="$ROOT_ABS/apps-script/cdr-report/buildStamp.js"; STAMP_VAR="PROJECT_BUILD_STAMP_" ;;
+  apps-script/cdr-import)  STAMP_FILE="$ROOT_ABS/apps-script/cdr-import/buildStamp.js"; STAMP_VAR="PROJECT_BUILD_STAMP_" ;;
+  apps-script/cdr-report)  STAMP_FILE="$ROOT_ABS/apps-script/cdr-report/buildStamp.js"; STAMP_VAR="PROJECT_BUILD_STAMP_" ;;
   *)                       STAMP_FILE=""; STAMP_VAR="" ;;
 esac
 if [ -n "$STAMP_FILE" ] && [ -f "$STAMP_FILE" ]; then
   GIT_DESC="$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')"
-  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-    GIT_DESC="${GIT_DESC}+dirty"
-  fi
-  GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  [ -n "$TREE_DIRTY" ] && GIT_DESC="${GIT_DESC}+dirty"   # DEP-3: the one definition
   STAMP="deploy.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) | git ${GIT_DESC} | ${GIT_BRANCH}"
   # Restore the committed placeholder no matter how this script exits. The
   # restore can only no-op if the file is somehow UNTRACKED (caught in the
@@ -195,7 +239,7 @@ if [ -n "$DEP_ID" ]; then
   echo "==> Done. Deployment $DEP_ID now serves the pushed code."
 else
   case "$DIR" in
-    apps-script/cdr-import|apps-script/cdr-import/|apps-script/cdr-report|apps-script/cdr-report/)
+    apps-script/cdr-import|apps-script/cdr-report)
       # The sibling projects are NOT web apps: their triggers and menus always
       # execute the pushed code, so there is no deployment version to roll and
       # the old "finish in the editor" hint sent operators hunting for a step

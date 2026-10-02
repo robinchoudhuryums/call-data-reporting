@@ -159,6 +159,12 @@ MISSING tool fail the gate rather than skip it, so a fresh clone needs
 before it can deploy. `DEPLOY_SKIP_CI=1 scripts/deploy.sh …` skips all three,
 for emergencies only.
 
+The helper accepts the project dir in any spelling (`.`, `./`, an absolute
+path) and normalizes it, so the right build stamp is always written (DEP-2).
+It WARNS when the tree is dirty (uncommitted or untracked files -- `clasp push`
+ships both, and the stamp says `+dirty`) or the branch is not `main`;
+`STRICT_DEPLOY=1` turns either warning into a refusal (DEP-3).
+
 **One-time, in the Apps Script project:**
 
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`

@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
+const { assertSetValuesShape } = require('../harness/fakeSheet');
 
 // The 'Inbound Calls' export tab (cdr-report/inboundCallsExport.js) -- the
 // fallback COPY of Neon inbound_calls, and since the heatmap-sheet-fallback
@@ -57,6 +58,7 @@ function fakeSheet(dataRows, opts) {
       if (col + numCols - 1 > self._maxCols) throw new Error('getRange past getMaxColumns (REP-10)');
       const rng = {
         setValues: function (vals) {
+          assertSetValuesShape(vals, numRows, numCols);   // HT-2: the real API's shape rule
           for (let r = 0; r < numRows; r++) {
             const tr = row - 1 + r;
             while (self._rows.length <= tr) self._rows.push(new Array(self._maxCols).fill(''));

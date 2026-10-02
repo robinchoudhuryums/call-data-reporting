@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'   # tests need Node >= 18; dev on 22
+          node-version: '22'   # HT-6: Node 20 is EOL; CI matches dev (22). Tests need >= 18
       - name: Unit tests (node --test)
         run: node --test
       - name: INV-16 duplicated-file guard
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Install eslint (devDependency)
         run: npm ci --no-audit --no-fund
       - name: Undeclared-identifier net (npm run lint:gas)
@@ -84,7 +84,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       # Vendor bundles (Chart.js, datalabels, html2canvas-pro) are COMMITTED
       # under tools/ui-harness/vendor/, so playwright is the only install --
       # and `npx playwright install` fetches the browser it needs.

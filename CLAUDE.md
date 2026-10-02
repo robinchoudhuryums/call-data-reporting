@@ -150,7 +150,9 @@ npm run lint:gas
 #   test needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
 #   (sheet._numberFormats), so the widen-before-write and plain-text
 #   coercion protections are test-enforceable; never loosen the fake to
-#   make a fixture fit.
+#   make a fixture fit. Batch 11 extended it: setValues is shape-strict, the
+#   cache / property / trigger quotas throw, formatDate refuses an unmodelled
+#   token (harness-strictness.test.js pins each).
 # - html-include-structure: styles.html / script.html are Apps Script
 #   INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
 #   content appended to the END lands OUTSIDE the tag and renders as
@@ -221,7 +223,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
 # EIGHT ASSERTING stages gate it -- drive-smoke.js (page/console errors,
-# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
+# unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
+# CL-9 -- drive-agent too), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
 # throws nothing),

@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 11 IMPLEMENTED on the same branch (block 224).**
+  Harness strictness + CI: HT-2 (shape-strict setValues + display update),
+  HT-3 (cache key/value caps), HT-4 (formatDate tokenizer, throws on unmodelled
+  letters), HT-5 (live triggers + 20 cap, lock state, property limits), CL-9
+  (360 px overflow pass in drive-smoke + drive-agent), DEP-1 (bite.sh EXIT
+  trap), DEP-2 (deploy.sh dir normalization -- fixed a wrong-stamp case),
+  DEP-3 (dirty/branch warnings, STRICT_DEPLOY, one dirtiness flag), DEP-4
+  (placeholder scriptIds), HT-6 (CI Node 22). No production writer was
+  exposed by the stricter fakes. 2118/2118 + ci:ui green. **Owner-side:**
+  nothing to deploy (tests/tooling only). **Where I left off:** Batches 1-11
+  done and pushed, no PR opened; next suggested Batch 12 (docs and code
+  health: CH-1, ...).
 - **2026-10-02 — broad-scan Batch 10 IMPLEMENTED on the same branch (block 223).**
   Performance (dashboard): DL-7 (per-execution memo for openSpreadsheet_ and
   a single-read roster block behind getAllDepartments_ /

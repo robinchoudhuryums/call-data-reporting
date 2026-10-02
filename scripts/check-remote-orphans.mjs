@@ -44,7 +44,19 @@ if (!existsSync(claspPath)) skip('no .clasp.json in ' + dir);
 let cfg;
 try { cfg = JSON.parse(readFileSync(claspPath, 'utf8')); }
 catch (e) { skip('.clasp.json is not valid JSON (' + e.message + ')'); }
-if (!cfg.scriptId || /REPLACE/i.test(cfg.scriptId)) skip('.clasp.json has no real scriptId');
+// DEP-4 (broad-scan 2026-10-01): recognise a PLACEHOLDER by shape, not one
+// word. The old /REPLACE/ matched none of the repo's actual templates
+// (`.clasp.example.json` ships `PASTE_SCRIPT_ID`, README shows
+// `<paste-scriptId-here>`), so a copied-but-unfilled template went on to a
+// `clasp pull` that failed with an auth/404 error instead of a clean SKIP. A
+// real Apps Script id is one long token of [A-Za-z0-9_-] (~57 chars).
+// The word list is ANCHORED (a prefix, or the whole SCRIPT_ID token) so a real
+// random id that merely contains "your" or "paste" is never mistaken for one.
+const PLACEHOLDER_ID_RE = /^(?:REPLACE|PASTE|YOUR)|SCRIPT_ID|scriptId|[<>{}\s]/i;
+const REAL_ID_SHAPE_RE = /^[A-Za-z0-9_-]{25,}$/;
+if (!cfg.scriptId || PLACEHOLDER_ID_RE.test(cfg.scriptId) || !REAL_ID_SHAPE_RE.test(cfg.scriptId)) {
+  skip('.clasp.json has no real scriptId (placeholder: ' + JSON.stringify(cfg.scriptId || '') + ')');
+}
 
 // Apps Script has three file kinds. clasp PULL writes server files as `.js`
 // even when they live locally as `.gs`, so compare on (name, kind) -- otherwise

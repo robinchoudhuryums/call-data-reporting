@@ -69,7 +69,9 @@ deploy. It is **not** a full Apps Script emulator — see Limitations.
 ```
 tests/
   harness/
-    formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware)
+    formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware).
+                    A Java-pattern TOKENIZER (HT-4): quoted literals honoured,
+                    an unmodelled letter THROWS rather than passing through.
     fakeSheet.js    in-memory SpreadsheetApp fakes; supports a separate
                     { values, displays } grid so duration columns can
                     model getValue() ≠ getDisplayValue() (INV-02).
@@ -78,10 +80,19 @@ tests/
                     class -- set `_maxColumns` when a test wants a narrow
                     sheet), and setNumberFormat RECORDS onto
                     sheet._numberFormats so the plain-text coercion
-                    protections are assertable. Never loosen the fake to
-                    make a fixture fit -- widen the fixture.
+                    protections are assertable. setValues is SHAPE-strict
+                    (HT-2: rows x cols must match the range, every row, with
+                    Sheets' own messages -- `assertSetValuesShape` is exported
+                    for a suite's own range double) and a write updates a
+                    fixture's display grid. Never loosen the fake to make a
+                    fixture fit -- widen the fixture.
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
-    shim.js         mock Apps Script globals + a `state` handle to drive them
+    shim.js         mock Apps Script globals + a `state` handle to drive them.
+                    Models the platform LIMITS (HT-3/HT-5): cache keys > 250
+                    chars and values > 100 KB throw (state.cacheLimitHits);
+                    properties > 9 KB / a store > 500 KB throw; triggers are a
+                    live set (state.triggers, 20-trigger cap); the script lock
+                    has real held state (state.lockHeld, hasLock()).
     loadGas.js      loads .gs files into one vm context (shared global scope)
   unit/                       (the directory is canonical; every suite is
                                named somewhere in this map — ENFORCED by
@@ -92,6 +103,8 @@ tests/
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
+    harness-strictness.test.js  the fakes' platform limits themselves (HT-2/3/4/5): setValues shape + display update, cache caps, formatDate tokens, triggers / lock / property limits -- loosening a fake fails here
+    deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (DEP-1), CI on Node 22 (HT-6)
     workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window

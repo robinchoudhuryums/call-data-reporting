@@ -288,3 +288,22 @@ test('DATA-2: IR + the active-agent picker do not cache a payload built on a fai
   h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'] });
   assert.equal(keys(/^individual:/).length, 1, 'a healthy read caches as before');
 });
+
+// HT-3 (broad-scan 2026-10-01): INV-36 by BEHAVIOUR. The fake CacheService now
+// enforces the real 250-char key cap (it throws on get, as production did on
+// the Sales roster), so a big selection must still complete AND cache -- which
+// it can only do while the agent list goes through hashAgents_.
+test('INV-36/HT-3: a big-roster selection completes and caches under the 250-char key cap', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 4, answered: 3, att: '0:03:00', ttt: '0:09:00' }),
+  ]);
+  const agents = ['Anna'];
+  for (let i = 0; i < 60; i++) agents.push('A Long Selected Agent Name Number ' + i);   // ~2 KB of names
+  h.state.cacheLimitHits.length = 0;
+  const data = h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: agents });
+  assert.ok(entry(data, 'Anna'), 'the report rendered');
+  assert.equal(h.state.cacheLimitHits.length, 0, 'no cache key or value hit a platform limit');
+  const keys = Array.from(h.state.cache.keys()).filter(function (k) { return /^individual:/.test(k); });
+  assert.equal(keys.length, 1, 'the payload cached');
+  assert.ok(keys[0].length <= 250, 'key length ' + keys[0].length);
+});
