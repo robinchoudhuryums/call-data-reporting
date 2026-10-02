@@ -293,6 +293,15 @@ tests/
                               then frozen; a pre-fix month too old to
                               rewrite losslessly gets a .tail.jsonl of the
                               rows after its last row, never an overwrite),
+                              ch4-split-snapshot (CH-4: getSystemHealth +
+                              getCompanyOverview payloads pinned BYTE FOR
+                              BYTE against tests/unit/snapshots/ch4-payloads.json
+                              -- taken from the pre-split code -- across
+                              seven Health states (every part, Neon down,
+                              every probe throwing) and nine Overview
+                              scenarios; the Overview half compares in
+                              America/Chicago only; an intended change
+                              regenerates it with UPDATE_SNAPSHOTS=1),
                               neon-backup-scrub (ESC-D8: a permanent
                               escalation delete rewrites every snapshot +
                               activity file without the deleted rows, in
