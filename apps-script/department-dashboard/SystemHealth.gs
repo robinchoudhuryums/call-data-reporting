@@ -934,6 +934,28 @@ function getSystemHealth(req) {
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
 
+  // ESC-D8: deleted escalations still waiting to be scrubbed out of the Neon
+  // backups (NeonBackup.gs). The queue is written only by a delete whose scrub
+  // could not finish, so an empty one is the normal state.
+  try {
+    var scrubQ = null;
+    try { scrubQ = JSON.parse(props.getProperty('NEON_BACKUP_SCRUB_PENDING') || 'null'); } catch (eq) { scrubQ = { ids: [], lastError: 'unreadable queue' }; }
+    var scrubIds = (scrubQ && Array.isArray(scrubQ.ids)) ? scrubQ.ids.length : 0;
+    var scrubDropped = (scrubQ && scrubQ.dropped) || 0;
+    if (!scrubIds && !scrubDropped) {
+      add('triggers', 'backup-scrub', 'Deleted escalations in backups', 'ok', 'none waiting');
+    } else {
+      add('triggers', 'backup-scrub', 'Deleted escalations in backups', 'warn',
+        scrubIds + ' deleted escalation(s) still in the backups'
+          + (scrubQ.since ? ' since ' + scrubQ.since : '')
+          + (scrubDropped ? '; ' + scrubDropped + ' more could not be queued (queue full)' : '')
+          + (scrubQ.lastError ? ' — last attempt: ' + scrubQ.lastError : ''),
+        'The next Neon backup run retries; runNeonBackupScrubNow() (editor) retries now. A closed month '
+          + 'not yet finalized waits for the backup run. "Queue full" ids must be removed from the backup '
+          + 'files by hand (Operator State #28).');
+    }
+  } catch (e) { add('triggers', 'backup-scrub', 'Deleted escalations in backups', 'muted', 'probe failed', String(e && e.message || e)); }
+
   // O-11: the client-error beacon's window state (CacheService-only, like the
   // presence map). A reached cap is a real signal -- errors are being
   // suppressed, not absent.

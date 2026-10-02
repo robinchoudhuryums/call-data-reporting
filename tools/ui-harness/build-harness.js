@@ -439,7 +439,36 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     script: {
       run: makeRunner(),
       url: { getLocation: function (cb) { cb({ hash: '', parameter: {}, parameters: {} }); } },
-      history: { push: function () {}, replace: function () {}, setChangeHandler: function () {} },
+      // CL-23: a recording history stack. push/replace edit it like the
+      // browser does; a driver walks it with __HARNESS__.historyBack() /
+      // historyForward(), which call the app's change handler the way a
+      // real Back / Forward (popstate) does.
+      history: (function () {
+        var H = window.__HARNESS__;
+        H.history = { entries: [{ state: null, params: {}, hash: '' }], index: 0, pushes: 0, handler: null };
+        function fire() {
+          var e = H.history.entries[H.history.index];
+          if (H.history.handler) H.history.handler({ state: e.state, location: { hash: e.hash, parameter: e.params || {}, parameters: {} } });
+        }
+        H.historyBack = function () { if (H.history.index > 0) { H.history.index--; fire(); return true; } return false; };
+        H.historyForward = function () {
+          if (H.history.index < H.history.entries.length - 1) { H.history.index++; fire(); return true; }
+          return false;
+        };
+        H.historyHashes = function () { return H.history.entries.map(function (e) { return e.hash; }); };
+        return {
+          push: function (state, params, hash) {
+            H.history.entries = H.history.entries.slice(0, H.history.index + 1);
+            H.history.entries.push({ state: state, params: params, hash: hash || '' });
+            H.history.index++;
+            H.history.pushes++;
+          },
+          replace: function (state, params, hash) {
+            H.history.entries[H.history.index] = { state: state, params: params, hash: hash || '' };
+          },
+          setChangeHandler: function (fn) { H.history.handler = fn; },
+        };
+      })(),
       host: { close: function () {}, setHeight: function () {}, setWidth: function () {}, origin: '' },
     },
   };

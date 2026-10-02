@@ -293,6 +293,15 @@ tests/
                               then frozen; a pre-fix month too old to
                               rewrite losslessly gets a .tail.jsonl of the
                               rows after its last row, never an overwrite),
+                              neon-backup-scrub (ESC-D8: a permanent
+                              escalation delete rewrites every snapshot +
+                              activity file without the deleted rows, in
+                              both stores; an unreachable store or a closed
+                              month not yet final QUEUES the id (never
+                              stamps the month final short), the next
+                              backup run retries and stays ok; the queue
+                              cap; restore skips queued ids; the delete
+                              calls it after commit + lock release),
                               html-include-structure (the whole-file
                               tag-wrap trap + the assembled-client pins),
                               queue-split (cols A..AH byte-identical +

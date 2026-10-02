@@ -514,7 +514,7 @@ became. Sizes: S < 1 h, M 2-4 h.
   compute the agent's headline figures with the IR builder and put them in the
   email text; the client PNG stays an attachment only.
 
-### Batch 14 — escalations + navigation (dashboard)
+### Batch 14 — escalations + navigation (dashboard) — IMPLEMENTED 2026-10-02 (block 227; S54 two-browser walk before release)
 - **ESC-D8 (M).** After a delete's Neon transaction commits, rewrite every
   `escalations-*.jsonl` snapshot and every `escalation_activity` month (and
   tail) file without that id, through the existing store adapter (Drive or the

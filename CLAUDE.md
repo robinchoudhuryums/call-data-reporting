@@ -2303,6 +2303,7 @@ S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Depa
 S51 | One escalation assigned to several departments -- linked copies (ESC-L1) | Subsystem: Department Dashboard
 S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC-L2) | Subsystem: Department Dashboard
 S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
+S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

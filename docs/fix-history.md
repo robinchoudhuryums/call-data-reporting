@@ -10,7 +10,7 @@ The project keeps two surfaces:
   in one of the six reference files split OUT of it (F8 and its successors),
   each of which CLAUDE.md still indexes: `docs/invariants.md` (the Invariant
   Library, `INV-01`…`INV-55`), `docs/operator-state.md` (the numbered Operator
-  State items), `docs/regression-scenarios.md` (`S1`…`S53`),
+  State items), `docs/regression-scenarios.md` (`S1`…`S54`),
   `docs/client-ui-conventions.md` (the client/presentation-layer conventions),
   `docs/neon-layer.md` (the Neon mirror + read-back layer) and
   `docs/per-call-capture.md` (the per-call capture subsystem).

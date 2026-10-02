@@ -125,6 +125,13 @@ function reviewConn(row, log) {
             return { next: function () { return ++k < np.length; },
               getString: function (c) { return c === 'department' ? np[k][0] : np[k][1]; }, close: function () {} };
           }
+          // ESC-D8: escGroupIds_ answers from row.groupIds.
+          if (isGroup && sql.indexOf('SELECT id FROM') === 0) {
+            const gi = (row && row.groupIds) || [];
+            let g = -1;
+            return { next: function () { return ++g < gi.length; },
+              getString: function () { return gi[g]; }, close: function () {} };
+          }
           if (isGroup && sql.indexOf('SELECT department FROM') === 0) {
             const ds = (row && row.groupDepts) || [];
             let i = -1;
@@ -1002,6 +1009,48 @@ test('ESC-L2: delete defaults to ONE copy; allLinked deletes every copy + the wh
   assert.deepEqual(log2.writes[1].params, ['g1']);
   assert.equal(log2.commits, 1);
   assert.equal(usage[1], 'CSR + Sales + Power', 'the audit names every department, never an id or PHI');
+});
+
+test('ESC-D8: a delete hands the deleted ids to the backup scrub AFTER the commit, with the lock released; delete-all passes every copy', function () {
+  const calls = [];
+  const scrubStub = function (ids) {
+    calls.push({ ids: Array.from(ids), lockHeld: h.state.lockHeld, commits: log.commits || 0 });
+    return { status: 'pending' };
+  };
+  let log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.ctx.logReportUsage_ = function () {};
+  h.ctx.nbScrubAfterDelete_ = scrubStub;
+  try {
+    const one = JSON.parse(JSON.stringify(h.call('deleteEscalation', { id: 'e1' })));
+    assert.equal(one.backupScrub, 'pending', 'the client learns the scrub is still queued');
+    assert.deepEqual(calls[0], { ids: ['e1'], lockHeld: false, commits: 1 });
+
+    log = { writes: [] };
+    installMove(ADMIN, { status: 'removed', department: 'Power', reason: 'r', groupId: 'g1', groupSize: 3,
+      groupDepts: ['CSR', 'Sales'], groupIds: ['e1', 'e2', 'e3'] }, log);
+    h.ctx.logReportUsage_ = function () {};
+    h.ctx.nbScrubAfterDelete_ = scrubStub;
+    h.call('deleteEscalation', { id: 'e1', allLinked: true });
+    assert.deepEqual(calls[1].ids, ['e1', 'e2', 'e3']);
+
+    // A failed delete never scrubs.
+    log = { writes: [] };
+    installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+    const conn = h.ctx.getDashboardNeonConn_();
+    const orig = conn.prepareStatement;
+    conn.prepareStatement = function (sql) {
+      const st = orig(sql);
+      if (sql.indexOf('DELETE FROM escalations WHERE') === 0) st.execute = function () { throw new Error('boom'); };
+      return st;
+    };
+    h.ctx.getDashboardNeonConn_ = function () { return conn; };
+    h.ctx.nbScrubAfterDelete_ = scrubStub;
+    assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /boom/);
+    assert.equal(calls.length, 2);
+  } finally {
+    delete h.ctx.nbScrubAfterDelete_;
+  }
 });
 
 test('ESC-L2: "removed" is a list filter + count, and the list carries who/when/why for the card', function () {

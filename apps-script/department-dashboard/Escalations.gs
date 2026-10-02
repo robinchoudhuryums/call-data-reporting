@@ -1775,7 +1775,10 @@ function updateEscalationComment(req) {
  * out of the usage sheet) plus a Logger line naming the id and prior status.
  * The E2 outage snapshot is refreshed (forced) after the commit so a
  * Neon-down read cannot resurrect the row; the client's escLoad_ then reloads
- * the list and the badge (the F10 rule).
+ * the list and the badge (the F10 rule). ESC-D8: once the lock is released,
+ * the deleted ids are scrubbed out of the existing Neon backups
+ * (nbScrubAfterDelete_, NeonBackup.gs); a scrub that cannot finish stays
+ * queued for the next backup run and the result carries `backupScrub`.
  */
 function deleteEscalation(req) {
   assertAdmin_();
@@ -1787,6 +1790,7 @@ function deleteEscalation(req) {
   var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
   var lock = escTakeWriteLock_(conn, 15000);
   var txn = false;
+  var result = null, goneIds = [];
   try {
     escEnsureTableOnce_(conn);
     var meta = escRowMeta_(conn, id);
@@ -1815,6 +1819,9 @@ function deleteEscalation(req) {
     var depts = all ? escGroupDepts_(conn, meta.groupId, /*includeRemoved=*/true) : [meta.department];
     if (all && depts.indexOf(meta.department) === -1) depts.push(meta.department);   // belt and braces
     var n = all ? escGroupSize_(conn, meta.groupId) : 1;
+    // ESC-D8: the ids whose rows the backups must lose (every copy on a delete-all).
+    goneIds = all ? escGroupIds_(conn, meta.groupId) : [id];
+    if (goneIds.indexOf(id) === -1) goneIds.push(id);
     conn.setAutoCommit(false); txn = true;
     var a = conn.prepareStatement(all
       ? 'DELETE FROM escalation_activity WHERE escalation_id IN (SELECT id FROM escalations WHERE group_id = ?)'
@@ -1829,7 +1836,7 @@ function deleteEscalation(req) {
       user.email, id, meta.department, meta.status, all ? (' + every linked copy (' + n + ', group ' + meta.groupId + ')') : '');
     try { logReportUsage_('escalations:delete', depts.join(' + '), user, false); } catch (eu) {}
     try { escSnapshotMaybeRefresh_(conn, /*force=*/true); } catch (eSnap) { /* best-effort */ }
-    return { id: id, deleted: n, allLinked: all };
+    result = { id: id, deleted: n, allLinked: all };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('deleteEscalation failed: ' + (e && e.message ? e.message : e));
@@ -1839,6 +1846,27 @@ function deleteEscalation(req) {
     try { conn.close(); } catch (ce) {}
     lock.releaseLock();
   }
+  // ESC-D8 (owner ruling 2026-10-02, option C): scrub the deleted rows out of
+  // the existing backups -- after the commit and OUTSIDE the lock (file I/O
+  // must not hold up other escalation writes). Best-effort and never throws:
+  // a failed scrub stays queued for the next backup run (NeonBackup.gs).
+  if (typeof nbScrubAfterDelete_ === 'function') {
+    var scrub = nbScrubAfterDelete_(goneIds);
+    if (scrub && scrub.status !== 'none') result.backupScrub = scrub.status;
+  }
+  return result;
+}
+
+/** ESC-D8: the ids of every copy in a linked group (any status). */
+function escGroupIds_(conn, groupId) {
+  var stmt = conn.prepareStatement('SELECT id FROM escalations WHERE group_id = ? ORDER BY id');
+  stmt.setString(1, groupId);
+  var rs = stmt.executeQuery();
+  var out = [];
+  while (rs.next()) { var v = rs.getString('id'); if (v) out.push(String(v)); }
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(out).length, 'escalations');   // OD-3
+  return out;
 }
 
 /**

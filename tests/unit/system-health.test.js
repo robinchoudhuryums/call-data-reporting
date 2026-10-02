@@ -147,6 +147,19 @@ test('M1/OPS-8: a successful backup (leads with ok, detail says "skipped") is OK
     'a failed backup surfaces as warn');
 });
 
+test('ESC-D8: the backup-scrub row is ok when nothing waits and warns with the count, age and last error when ids are queued', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'backup-scrub').status, 'ok');
+  installHealth({ props: { NEON_HOST: 'h', NEON_BACKUP_SCRUB_PENDING: JSON.stringify({
+    ids: ['secret-id-1', 'secret-id-2'], since: '2026-10-02T12:00:00Z', lastError: 'Drive folder F: no permission', dropped: 1 }) } });
+  const row = rowByKey(h.call('getSystemHealth'), 'backup-scrub');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /^2 deleted escalation\(s\) still in the backups since 2026-10-02T12:00:00Z; 1 more could not be queued/);
+  assert.match(row.value, /no permission/);
+  assert.match(row.hint, /runNeonBackupScrubNow/);
+  assert.ok(JSON.stringify(row).indexOf('secret-id') === -1, 'the ids themselves never reach the payload');
+});
+
 test('health: stale pipeline / behind mirror / missing sheets surface as warn rows', function () {
   installHealth({ props: { NEON_HOST: 'h' }, missingSheets: ['Report Usage'] });
   h.ctx.computeOverviewPipelineFreshness_ = function () {

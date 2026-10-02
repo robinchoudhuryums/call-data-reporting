@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — rulings Batch 14 IMPLEMENTED (block 227).** ESC-D8 (a
+  permanent escalation delete scrubs the deleted rows out of every backup
+  snapshot + activity file in both stores; queued in
+  NEON_BACKUP_SCRUB_PENDING when a store is unreachable or a closed month is
+  not final yet; the backup run retries; Health `backup-scrub` row; restore
+  skips queued ids) and CL-23 (browser Back/Forward via google.script.history,
+  fail-quiet; harness recording mock + 16 drive-smoke checks). 2144/2144 +
+  ci:ui green. **Owner-side:** deploy the dashboard, then walk S54 in two real
+  browsers before release. **Where I left off:** committed + pushed on
+  claude/optimistic-lamport-92xm9l, no PR; next is Batch 15 (CH-4 selective
+  split of getSystemHealth + getCompanyOverview behind payload snapshots).
 - **2026-10-02 — rulings Batch 13 IMPLEMENTED (block 226).** QO-2 (violation =
   4.00% or more: cdr-import qcdViolationFlag_ in integers + cdr-report's
   date-gated repairQcdViolationFlags from 2026-08-01), DX-11 (conventions:

@@ -507,7 +507,8 @@ When something looks wrong, before assuming a code bug, check:
     DELETE an escalation** (mistake / test entry) from its card: row + activity
     trail in one transaction, audited as an `escalations:delete` Report Usage
     row (dept only, no PHI) -- no property, no trigger; managers never see the
-    control. **An admin can also MOVE an open escalation to another
+    control. The delete also scrubs the escalation out of the Neon backups
+    (ESC-D8, #28). **An admin can also MOVE an open escalation to another
     department** from its card (ESC-R1, S50) -- no property; recorded in the
     Activity trail. **And assign ONE escalation to several departments** by
     picking more than one in the create form (ESC-L1, S51): each department
@@ -745,6 +746,23 @@ When something looks wrong, before assuming a code bug, check:
     of the cell cap) records `WARN`. Both `PARTIAL` and `WARN` hold the
     retention prune (#57), which runs only after an `ok` backup -- clear the
     cause, then "Back up now".
+    **A permanent escalation delete also scrubs the backups (ESC-D8,
+    2026-10-02).** After the delete commits, every `escalations-*.jsonl`
+    snapshot and every `escalation_activity` month / part / tail file is
+    rewritten without the deleted rows, in BOTH stores if both exist (a run
+    that fell back to Sheets leaves the older Drive files behind). If a store
+    cannot be opened, or a CLOSED month has not been finalized yet (rewriting
+    it would stamp it final with its last days missing -- the ENG-1 rule), the
+    ids wait in `NEON_BACKUP_SCRUB_PENDING`; the next backup run finalizes
+    the month from Neon and retries, and `runNeonBackupScrubNow()` (editor)
+    retries at once. The Health page's `backup-scrub` row shows how many wait
+    and why; it never turns the backup row red. A restore leaves out the rows
+    of any id still waiting. **What it cannot reach:** Drive keeps a file's
+    earlier revisions for 30 days, and the backup workbook keeps its version
+    history -- delete those by hand (File -> Version history) if a deleted
+    escalation must be gone everywhere at once. A queue past 150 ids counts
+    the overflow ("could not be queued") -- those ids must be removed from
+    the files by hand.
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying

@@ -1858,9 +1858,21 @@ behind the removed button.
   group. Two click handlers fire per tab (modal-open + the route tracker) and
   don't conflict because `openModal` is idempotent. Escape-key modal close
   doesn't revert the active-tab state — cosmetic; any tab click refreshes it.
-  **No `google.script.history.push`** (spotty browser behavior inside Apps
-  Script web apps); hashes are read at init via `google.script.url.getLocation`
-  and written only when a new tab opens.
+  **Browser Back / Forward (CL-23, owner ruling 2026-10-02):** `setRoute_`
+  pushes ONE history entry per route change (`google.script.history.push`,
+  hash = the route, the page's own query string kept) -- never a duplicate
+  (`lastHistoryRoute_`) and never during a Back/Forward; `setChangeHandler`
+  routes to the entry's hash via `onHistoryChange_`, which closes any other
+  open routed modal through its own close button, then swaps the page or
+  opens the target modal (the F11 non-admin no-op applies). While it runs,
+  `setRoute_` accepts only its target, so the closed modals' async reverts
+  cannot repaint or push. Closing a modal is a navigation (one entry for the
+  page under it), so Back after a close reopens it. The API was once noted as
+  having "spotty browser behavior", so every call fails quiet -- no API means
+  the old in-JS routing, unchanged. `drive-smoke.js`'s history pass drives
+  the real handler through a recording mock; the owner walks S54 in two real
+  browsers before release. Hashes are still read at init via
+  `google.script.url.getLocation`.
   **`window.__DASHBOARD_URL__` is injected by `renderDashboard_` (Code.gs)**
   from the `DASHBOARD_URL` Script Property with the same `<` escape trick as
   `userJson` (empty string when unset). **Never read the deployed URL from

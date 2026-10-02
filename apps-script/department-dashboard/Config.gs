@@ -974,6 +974,7 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_BACKUP_LAST: 'engine', NEON_BACKUP_LAST_RESULT: 'engine',
     NEON_BACKUP_FOLDER_ID: 'engine',
     NEON_BACKUP_SS_ID: 'engine',        // Sheets fallback workbook (Drive-permission block)
+    NEON_BACKUP_SCRUB_PENDING: 'engine',   // ESC-D8: deleted escalation ids still in the backups
     NEON_COVERAGE_LAST: 'engine', NEON_COVERAGE_LAST_RESULT: 'engine',
     SHEET_COVERAGE_LAST: 'engine', SHEET_COVERAGE_LAST_RESULT: 'engine',
     NEON_EGRESS_MTD: 'engine', NEON_READ_LAST_ERROR: 'engine',
