@@ -79,7 +79,16 @@ function loadGas(opts) {
           + '(top-level const? functions/var attach to global, const/let do not -- '
           + 'use `capture` for constants).');
       }
-      return f;
+      // DL-7: every h.call / h.fn entry is a fresh Apps Script EXECUTION for
+      // the per-execution workbook memos (openSpreadsheet_ + the roster block),
+      // exactly as the platform resets globals between requests -- so a test
+      // that swaps state.spreadsheet between calls is served the new fixture.
+      // Within one call the memo behaves as in production. A test reaching
+      // into ctx directly (h.ctx.someFn) bypasses this boundary on purpose.
+      return function () {
+        if (typeof ctx.resetWorkbookMemos_ === 'function') ctx.resetWorkbookMemos_();
+        return f.apply(this, arguments);
+      };
     },
     call: function (name) {
       const args = Array.prototype.slice.call(arguments, 1);

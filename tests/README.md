@@ -92,6 +92,7 @@ tests/
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
+    workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
     individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
@@ -586,7 +587,7 @@ it; `h.consts.NAME` reads a captured constant; `h.ctx` is the raw context
 drives the shim (current user email, script properties, cache, the fake
 spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
 
-### Two gotchas the harness imposes
+### Three gotchas the harness imposes
 
 1. **Top-level `const`/`let` are not global properties.** Apps Script's
    flat scope means files see each other's `function` and `var`
@@ -604,6 +605,18 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
    prototype-agnostic. Primitive comparisons (`assert.equal`, `.match`,
    `.throws`) are fine as-is. (The harness shares the host `Date` into the
    vm so `instanceof Date` works in both directions.)
+
+3. **One `h.call` / `h.fn` invocation = one Apps Script EXECUTION (DL-7).**
+   `openSpreadsheet_` and the roster block are memoized per execution, so the
+   wrapper calls `resetWorkbookMemos_()` before every entry point -- the same
+   boundary the platform draws between two `google.script.run` calls. Swapping
+   `h.state.spreadsheet` between two `h.call`s therefore just works. Calling
+   one `.gs` function from INSIDE another (or through `h.ctx.fn(...)`, which
+   bypasses the wrapper) stays in the same execution and sees the memo -- which
+   is the production behaviour. A new dashboard write to `DO NOT EDIT!` must
+   call `bustRosterMemo_()` after it, or a read later in the same execution
+   serves the pre-write roster (`workbook-memo.test.js` pins the one writer,
+   `appendRosterEntry_`).
 
 ## Limitations (and the roadmap this Phase-1 harness leaves open)
 

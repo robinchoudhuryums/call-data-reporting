@@ -492,7 +492,13 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   // and the per-agent cards agree with the narrowed numbers. Off = the empty
   // shape, rows untouched, payload byte-identical (S2-0). Sentinel rows carry
   // no split, so the queue-only abandoned section is never narrowed.
-  let values = null, displays = null, deptQueueExts = null;
+  // DL-8 (broad-scan 2026-10-01): the dept queue-ext set feeds ONLY the legacy
+  // queue/both agent match below; both callers lock scope to 'roster' (and
+  // R6 attributes sentinels by queue NAME), so deriving it -- a Neon DISTINCT
+  // query, or a whole-sheet A..D scan as fallback -- was pure cost. It is
+  // derived only when a non-roster scope can actually read it.
+  const needsQueueExts = scope !== 'roster';
+  let values = null, displays = null, deptQueueExts = needsQueueExts ? null : {};
   let qsInfo = null;
   let dalRows = null;
   if (neonCapable) {
@@ -501,13 +507,13 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       const neonRows = neonFetchDqeRows_(from, to, { includeMissedDetail: true });
       if (neonDqeRowsUsable_(neonRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
         dalRows = neonRows;
-        deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
+        if (needsQueueExts) deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;   // DL-8
         if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('missedCalls', 'neon', _t0, neonRows.length);
       }
     } catch (e) {
       Logger.log('computeMissedCallsReport_: neon read failed, falling back to sheet: '
         + (e && e.message ? e.message : e));
-      dalRows = null; deptQueueExts = null;
+      dalRows = null; deptQueueExts = needsQueueExts ? null : {};
     }
   }
   if (!dalRows) {

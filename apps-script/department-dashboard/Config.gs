@@ -697,8 +697,55 @@ function getSpreadsheetId_() {
   return id;
 }
 
+// DL-7 (broad-scan 2026-10-01): PER-EXECUTION memos for the two reads almost
+// every request makes before it can even check a cache -- the workbook open and
+// the DO NOT EDIT! roster block. An admin's cache HIT used to pay three-plus
+// openById calls and as many roster reads (the dept set, the access gate per
+// dept, the roster hash), and an Overview compute one open + one roster read
+// PER DEPT. Apps Script globals reset between executions, so neither can
+// outlive the request that filled it; within one, a write to the roster busts
+// it (bustRosterMemo_, appendRosterEntry_). resetWorkbookMemos_ is the
+// execution boundary the test harness calls before every entry point.
+var OPEN_SS_MEMO_ = null;       // { id, ss }
+var ROSTER_BLOCK_MEMO_ = null;  // rosterDeptBlock_()'s { depts, cells }
+function resetWorkbookMemos_() { OPEN_SS_MEMO_ = null; ROSTER_BLOCK_MEMO_ = null; }
+function bustRosterMemo_() { ROSTER_BLOCK_MEMO_ = null; }
+
 function openSpreadsheet_() {
-  return SpreadsheetApp.openById(getSpreadsheetId_());
+  const id = getSpreadsheetId_();
+  if (OPEN_SS_MEMO_ && OPEN_SS_MEMO_.id === id) return OPEN_SS_MEMO_.ss;
+  const ss = SpreadsheetApp.openById(id);
+  OPEN_SS_MEMO_ = { id: id, ss: ss };
+  return ss;
+}
+
+/**
+ * DL-7: the DO NOT EDIT! dept block -- the header names up to the first blank
+ * (the INV-11 layout; the insurance block past the gap is ignored) and the data
+ * cells beneath them -- in ONE range read, memoized per execution
+ * (ROSTER_BLOCK_MEMO_, Config.gs). getAllDepartments_, getRosterForDepartment_
+ * and rosterAllDeptsHash_ all derive from it and return FRESH objects, so the
+ * memo itself is never handed out. `cells[r][c]` is dept `depts[c]`'s row r.
+ */
+function rosterDeptBlock_() {
+  if (ROSTER_BLOCK_MEMO_) return ROSTER_BLOCK_MEMO_;
+  const out = { depts: [], cells: [] };
+  const sheet = openSpreadsheet_().getSheetByName(SHEETS.ROSTER);
+  const lastCol = sheet ? sheet.getLastColumn() : 0;
+  if (sheet && lastCol >= ROSTER.DEPT_FIRST_COL) {
+    const lastRow = Math.max(sheet.getLastRow(), ROSTER.HEADER_ROW);
+    const grid = sheet.getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
+                                lastRow - ROSTER.HEADER_ROW + 1, lastCol - ROSTER.DEPT_FIRST_COL + 1).getValues();
+    const header = grid[0] || [];
+    for (let i = 0; i < header.length; i++) {
+      const v = String(header[i] || '').trim();
+      if (!v) break; // first blank ends the dept block
+      out.depts.push(v);
+    }
+    out.cells = grid.slice(ROSTER.DATA_START_ROW - ROSTER.HEADER_ROW);
+  }
+  ROSTER_BLOCK_MEMO_ = out;
+  return out;
 }
 
 /**

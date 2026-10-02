@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 10 IMPLEMENTED on the same branch (block 223).**
+  Performance (dashboard): DL-7 (per-execution memo for openSpreadsheet_ and
+  a single-read roster block behind getAllDepartments_ /
+  getRosterForDepartment_ / rosterAllDeptsHash_; appendRosterEntry_ busts it;
+  the harness now treats one h.call/h.fn as one execution) and DL-8 (Missed
+  report derives the dept queue-ext set only for a non-roster scope). 2105/2105 + ci:ui
+  green, lint + UTC run green. **Owner-side:** deploy the dashboard
+  (blocking). **Where I left off:** Batches 1-10 done and pushed, no PR
+  opened; next suggested Batch 11 (harness strictness and CI: HT-2, CL-9,
+  HT-5, HT-3, HT-4, DEP-2, DEP-3, HT-6, DEP-1, DEP-4).
 - **2026-10-02 — broad-scan Batch 9 IMPLEMENTED on the same branch (block 222).**
   cdr-report repair + report safety: CR-1 (snapshot before the re-verify),
   CR-2 (rewritten-columns checksum in the fingerprint), CR-3 (slot abort

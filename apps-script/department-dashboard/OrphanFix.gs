@@ -703,6 +703,7 @@ function appendRosterEntry_(department, name, exts) {
   // roster every dashboard consumer parses (parseRosterCell_ reads the
   // stored string back unchanged; the apostrophe is formatting only).
   target.setValue(sheetSafeCell_(name + ', ' + exts.join(', ')));
+  bustRosterMemo_();   // DL-7: a later read in THIS execution must see the new entry
   return target.getA1Notation();
 }
 

@@ -350,25 +350,9 @@ function agentRoleEnabled_() {
  * currently in cols X-AG) is ignored.
  */
 function getAllDepartments_() {
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.ROSTER);
-  if (!sheet) return [];
-
-  const lastCol = sheet.getLastColumn();
-  if (lastCol < ROSTER.DEPT_FIRST_COL) return [];
-
-  const headerRow = sheet
-    .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
-              1, lastCol - ROSTER.DEPT_FIRST_COL + 1)
-    .getValues()[0];
-
-  const depts = [];
-  for (let i = 0; i < headerRow.length; i++) {
-    const v = String(headerRow[i] || '').trim();
-    if (!v) break; // first blank ends the dept block
-    depts.push(v);
-  }
-  return depts;
+  // DL-7: from the per-execution roster block (Data.gs::rosterDeptBlock_); a
+  // copy, so a caller's push/splice can never reach the memo.
+  return rosterDeptBlock_().depts.slice();
 }
 
 /**

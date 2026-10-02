@@ -350,3 +350,47 @@ test('DL-6: a throwing enrichment query is a failure; an unconfigured Neon is NO
   assert.equal(ok.meta.enrichmentFailed, false);
   assert.equal(missedCacheKeys_().length, 1, 'a normal payload caches as before');
 });
+
+// DL-8 (broad-scan 2026-10-01): the dept queue-ext set feeds ONLY the legacy
+// queue/both agent match. Both public callers lock scope to 'roster', so the
+// derivation (a Neon DISTINCT, or a whole-sheet A..D scan) must not run there
+// -- and a non-roster scope must still get it.
+test('DL-8: roster scope skips the queue-ext derivation on both read paths; a non-roster scope still derives it', function () {
+  const realSheet = h.ctx.getDeptQueueExts_;
+  const realNeon = h.ctx.deptQueueExtsForNeonReader_;
+  const realFetch = h.ctx.neonFetchDqeRows_;
+  const calls = { sheet: 0, neon: 0 };
+  function stub() {
+    h.ctx.getDeptQueueExts_ = function () { calls.sheet++; return realSheet.apply(null, arguments); };
+    h.ctx.deptQueueExtsForNeonReader_ = function () { calls.neon++; return realNeon.apply(null, arguments); };
+  }
+  const rows = [
+    { date: '2026-03-10', agent: 'Anna', ext: '501', rung: 3, missed: 1, answered: 2, slots: ['', '', '9:05:11 AM'] },
+  ];
+  try {
+    // Sheet path.
+    install(rows); stub();
+    const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+    assert.equal(r.meta.totalMissed, 1, 'the report itself is unchanged');
+    assert.deepEqual(calls, { sheet: 0, neon: 0 }, 'roster scope: no derivation on the sheet path');
+    install(rows); stub();
+    h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'both');
+    assert.equal(calls.sheet, 1, 'a non-roster scope still derives the set');
+
+    // Neon path (the DAL rows served from the sheet primitive -- same shape).
+    calls.sheet = 0; calls.neon = 0;
+    install(rows); stub();
+    h.state.props.DQE_READ_SOURCE = 'neon';
+    h.ctx.neonFetchDqeRows_ = function (f, t, o) { return h.ctx.sheetFetchDqeRows_(f, t, o); };
+    const n = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+    assert.equal(n.meta.totalMissed, 1);
+    assert.deepEqual(calls, { sheet: 0, neon: 0 }, 'roster scope: no Neon DISTINCT and no sheet fallback');
+    h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'both');
+    assert.equal(calls.neon, 1, 'a non-roster scope still derives it on the Neon path');
+  } finally {
+    h.ctx.getDeptQueueExts_ = realSheet;
+    h.ctx.deptQueueExtsForNeonReader_ = realNeon;
+    h.ctx.neonFetchDqeRows_ = realFetch;
+    delete h.state.props.DQE_READ_SOURCE;
+  }
+});

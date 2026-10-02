@@ -2081,39 +2081,15 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
  */
 function getRosterForDepartment_(dept) {
   const empty = { names: [], byAgent: {}, allExtensions: {} };
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.ROSTER);
-  if (!sheet) return empty;
-
-  const lastCol = sheet.getLastColumn();
-  if (lastCol < ROSTER.DEPT_FIRST_COL) return empty;
-
-  const headerRow = sheet
-    .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
-              1, lastCol - ROSTER.DEPT_FIRST_COL + 1)
-    .getValues()[0];
-
-  let foundCol = -1;
-  for (let i = 0; i < headerRow.length; i++) {
-    const v = String(headerRow[i] || '').trim();
-    if (!v) break; // first blank ends the dept block
-    if (v === dept) { foundCol = ROSTER.DEPT_FIRST_COL + i; break; }
-  }
-  if (foundCol === -1) return empty;
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < ROSTER.DATA_START_ROW) return empty;
-
-  const cells = sheet
-    .getRange(ROSTER.DATA_START_ROW, foundCol,
-              lastRow - ROSTER.DATA_START_ROW + 1, 1)
-    .getValues();
+  const block = rosterDeptBlock_();   // DL-7: one read per execution, not one per call
+  const c = block.depts.indexOf(dept);
+  if (c === -1) return empty;
 
   const names = [];
   const byAgent = {};
   const allExtensions = {};
-  for (let i = 0; i < cells.length; i++) {
-    const parsed = parseRosterCell_(cells[i][0]);
+  for (let i = 0; i < block.cells.length; i++) {
+    const parsed = parseRosterCell_(block.cells[i][c]);
     if (!parsed) continue;
     names.push(parsed.name);
     byAgent[parsed.name] = parsed.extensions.slice();
@@ -2149,20 +2125,13 @@ function rosterSetHash_(depts) {
  */
 function rosterAllDeptsHash_() {
   try {
-    const sheet = openSpreadsheet_().getSheetByName(SHEETS.ROSTER);
-    if (!sheet) return 'na';
-    const lastCol = sheet.getLastColumn(), lastRow = sheet.getLastRow();
-    if (lastCol < ROSTER.DEPT_FIRST_COL || lastRow < ROSTER.HEADER_ROW) return 'na';
-    const grid = sheet.getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
-                                lastRow - ROSTER.HEADER_ROW + 1, lastCol - ROSTER.DEPT_FIRST_COL + 1).getValues();
-    const header = grid[0], pairs = [];
-    const firstData = ROSTER.DATA_START_ROW - ROSTER.HEADER_ROW;
-    for (let c = 0; c < header.length; c++) {
-      const dept = String(header[c] || '').trim();
-      if (!dept) break;   // first blank ends the dept block (getRosterForDepartment_'s rule)
-      for (let r = firstData; r < grid.length; r++) {
-        const parsed = parseRosterCell_(grid[r][c]);
-        if (parsed) pairs.push(dept + '|' + parsed.name);
+    const block = rosterDeptBlock_();   // DL-7: the same per-execution read
+    if (!block.depts.length) return 'na';
+    const pairs = [];
+    for (let c = 0; c < block.depts.length; c++) {
+      for (let r = 0; r < block.cells.length; r++) {
+        const parsed = parseRosterCell_(block.cells[r][c]);
+        if (parsed) pairs.push(block.depts[c] + '|' + parsed.name);
       }
     }
     return hashAgents_(pairs);
