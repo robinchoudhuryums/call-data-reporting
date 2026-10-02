@@ -1573,8 +1573,9 @@ behind the removed button.
   for the one legitimate divergence — a MONTHLY trend-point drill reruns
   Insights for that month without moving the dept controls (R16h) — so a
   split range is visible, never silent.
-  **R18 clamps the To-date to the last day WITH DATA** (`clampToLatestData_`
-  / `clampDeptToDate_`, script-2-chrome), on both entry points — the preset
+  **R18 clamps the To-date to the last day WITH DATA** (`clampDeptToDate_` →
+  the shared R30 `clampInputsToLatest_`, script-2-chrome; R18's own
+  `clampToLatestData_` was removed as dead code, CL-10), on both entry points — the preset
   chips and a hand-typed date — BEFORE the fetch, so the request already
   carries the corrected window rather than firing twice. This is a NUMBERS
   fix, not a convenience: every per-workday figure divides by the INV-35
@@ -1918,6 +1919,19 @@ block) unless noted, and the two behavioural ones are also driven in
   `aria-sort` for every table that sorts through it, so a new report table
   inherits all three. `drive-subqueue.js` presses Enter and Space on a real
   group header; `drive-f13.js` is the S39 walk.
+- **A re-render must not drop focus to `<body>` (CL-3, broad-scan
+  2026-10-01).** A surface that rebuilds its markup after a mutation destroys
+  the control the keyboard user just pressed. Record what was acted on before
+  the RPC and put focus back after the render -- the same control if it still
+  exists, else its card, else the item now in its place -- and never take
+  focus from somewhere the user has since moved. The Escalations worklist
+  does this (`escNoteFocusIntent_` / `escRestoreFocus_`); `drive-admin.js`
+  asserts focus is back inside the list after a real delete + reload.
+- **Tabs are the full WAI-ARIA pattern or plain buttons -- never half
+  (CL-13).** `role="tab"` promises arrow-key movement, a roving `tabindex`
+  (only the selected tab is in the Tab order) and `role="tabpanel"` panels
+  with `aria-labelledby`. The agent app's two tabs carry all of it, and
+  `drive-agent.js` presses ArrowRight / Home on them.
 - **A dialog traps Tab, names itself, and gives focus back.** `role="dialog"`
   / `alertdialog` with `aria-modal` promises a boundary the browser does not
   enforce: use the shared `trapFocus_` / `releaseFocus_`, point

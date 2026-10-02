@@ -467,6 +467,16 @@ const MODALS = [
           cards: document.querySelectorAll('.esc-card').length,
         }));
         record('2a: Confirm calls the verb and the list reloads cleanly', !afterOk.dlg && afterOk.cards > 0, JSON.stringify(afterOk));
+        // CL-3: the reload rebuilds every card; keyboard focus must land back
+        // on the acted-on control (or its card), never fall to <body>.
+        const focusAfter = await page.evaluate(() => {
+          const ae = document.activeElement;
+          const list = document.getElementById('esc-list');
+          return { tag: ae ? ae.tagName : null, cls: ae ? String(ae.className || '') : '',
+                   inList: !!(ae && list && list.contains(ae)) };
+        });
+        record('CL-3: after the reload, focus returns inside the worklist (not <body>)',
+          focusAfter.inList === true, JSON.stringify(focusAfter));
       }
     }
 

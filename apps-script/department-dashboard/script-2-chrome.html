@@ -624,10 +624,9 @@
    * when the latest date isn't known yet (the init fetch is async -- never
    * clamp against a null and land everyone on today).
    */
-  function clampToLatestData_(iso) {
-    if (!iso || !latestDqeIso_) return iso;
-    return iso > latestDqeIso_ ? latestDqeIso_ : iso;
-  }
+  // CL-10 (broad-scan 2026-10-01): R18's own clampToLatestData_ lived here; R30
+  // folded the rule into the shared clampInputsToLatest_ below, which every
+  // surface now calls, and the old helper had no caller left.
   /**
    * R30: the SHARED window clamp -- the whole rule in one pure function, so
    * every report surface corrects a window the same way.
@@ -734,7 +733,6 @@
     var wrap = $('date-presets');
     if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
   }
-  function daysAgo_(n) { var d = new Date(); d.setDate(d.getDate() - n); return isoDate_(d); }
   // R17g (owner): the sticky controls strip carries the window's workday
   // count (the Insights header date restatement is retired -- the dept
   // controls are the single date authority). serverCount, when passed, is
@@ -775,11 +773,6 @@
       count++;
     }
     return count;
-  }
-  function isoDate_(d) {
-    var m = String(d.getMonth() + 1); if (m.length < 2) m = '0' + m;
-    var day = String(d.getDate()); if (day.length < 2) day = '0' + day;
-    return d.getFullYear() + '-' + m + '-' + day;
   }
 
   // Page switcher between the Overview "home" page and the dept

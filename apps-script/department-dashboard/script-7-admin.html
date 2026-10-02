@@ -1390,8 +1390,10 @@
       'skipped':         { text: 'Inactive',        cls: 'pr-delta-neu' },
       'error':           { text: 'Error',           cls: 'pr-delta-neg' },
     };
+    // CL-12: an UNKNOWN status is a raw Alert Log cell -- escape it (the known
+    // labels are literals above). Escaping is idempotent for those.
     const meta = labels[status] || { text: status, cls: 'pr-delta-neu' };
-    return '<span class="pr-delta ' + meta.cls + '">' + meta.text + '</span>';
+    return '<span class="pr-delta ' + meta.cls + '">' + escapeHtml(meta.text) + '</span>';
   }
 
   function alInstallTrigger_() {

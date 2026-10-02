@@ -299,3 +299,83 @@ test('CL-22: a subscriber save that half-succeeds says which half, and reloads t
   assert.match(partial, /alLoadInit_\(\);/);
   assert.match(fn, /if \(i > 0\) saved\.push\(labels\[i - 1\]\);/);
 });
+
+// ---------------------------------------------------------------------------
+// Batch 8 of the 2026-10-01 broad scan: client ACCESSIBILITY + HARDENING.
+// CL-3 (focus after an escalation mutation) and CL-13 (the agent-app tabs
+// keyboard pattern) are also asserted RENDERED, in drive-admin.js and
+// drive-agent.js; these are their source / unit halves.
+
+test('CL-3: every escalation reload puts focus back on what was acted on', function () {
+  const esc = src('script-10-escalations.html');
+  assert.match(extractFn(esc, 'escOnListClick_'), /escNoteFocusIntent_\(t\);/, 'the list click records the intent');
+  const load = extractFn(esc, 'escLoad_');
+  assert.match(load, /escRenderList_\(resp \|\| \{\}\);\s*\n\s*escRestoreFocus_\(\);/, 'restored right after the render');
+  const restore = extractFn(esc, 'escRestoreFocus_');
+  assert.match(restore, /ae !== document\.body/, 'never steals focus from somewhere the user went');
+  assert.match(restore, /cards\[Math\.min\(Math\.max\(it\.idx, 0\), cards\.length - 1\)\]/,
+    'a card that left the list hands focus to the one now in its place');
+  // Every list action that reloads is in the intent set.
+  const intents = between(esc, /var ESC_FOCUS_ACTIONS_ = \[/, /\];/);
+  ['esc-resolve-save', 'esc-comment-save', 'esc-reopen-save', 'esc-approve', 'esc-reject-save', 'esc-start',
+   'esc-move-save', 'esc-delete', 'esc-delete-all', 'esc-remove-dept', 'esc-restore-dept', 'esc-link-save']
+    .forEach(function (c) { assert.ok(intents.indexOf("'" + c + "'") !== -1, c + ' records a focus intent'); });
+  assert.match(esc, /\{ id: editingId, cls: 'esc-edit'/, 'the edit form lands on the edited card');
+});
+
+test('CL-21: escalation remove / restore-dept allow one change per row in flight', function () {
+  const esc = src('script-10-escalations.html');
+  ['escRemoveDept_', 'escRestoreDept_'].forEach(function (name) {
+    const fn = extractFn(esc, name);
+    assert.match(fn, /const busyKey = 'escDept:' \+ id;/, name + ' shares the per-row key');
+    assert.match(fn, /if \(mutationBusy_\(busyKey\)\) return;/, name + ' refuses a second submit');
+    assert.equal((fn.match(/mutationDone_\(busyKey\)/g) || []).length, 2, name + ' releases on success AND failure');
+  });
+});
+
+test('CL-13: the agent app tabs carry the tabs pattern and history loads once at a time', function () {
+  const page = src('agent.html');
+  assert.match(page, /id="agent-home-page" role="tabpanel" aria-labelledby="agent-tab-home"/);
+  assert.match(page, /id="agent-history-page" role="tabpanel" aria-labelledby="agent-tab-history"/);
+  assert.match(page, /id="agent-tab-history" role="tab" aria-selected="false" tabindex="-1"/);
+  const app = src('agentApp.html');
+  const load = extractFn(app, 'loadHistory_');
+  assert.match(load, /if \(histInFlight_\) return;\s*\n\s*histInFlight_ = true;/);
+  assert.equal((load.match(/histInFlight_ = false;/g) || []).length, 2, 'released on success AND failure');
+});
+
+test('CL-12: escapeHtml renders null / undefined as nothing, and an unknown alert status is escaped', function () {
+  const sb = {};
+  vm.runInNewContext(extractFn(src('script-1-core.html'), 'escapeHtml')
+    + '; r = [escapeHtml(null), escapeHtml(undefined), escapeHtml(0), escapeHtml(\'<b a="x">\')].join("|");', sb);
+  assert.equal(sb.r, '||0|&lt;b a=&quot;x&quot;&gt;');
+  const badge = extractFn(src('script-7-admin.html'), 'alStatusBadge_');
+  const sb2 = {};
+  vm.runInNewContext(extractFn(src('script-1-core.html'), 'escapeHtml') + '\n' + badge
+    + '; r = alStatusBadge_(\'<img src=x onerror=alert(1)>\'); k = alStatusBadge_(\'sent\');', sb2);
+  assert.ok(!/<img/.test(sb2.r), 'an Alert Log cell is never injected as markup');
+  assert.match(sb2.k, />Sent<\/span>$/, 'known labels unchanged');
+});
+
+test('CL-19: the #/dev entry point reads the PARENT URL hash via google.script.url', function () {
+  const fn = extractFn(src('script-11-qcd-boot.html'), 'devInstallToggle_');
+  assert.match(fn, /google\.script\.url\.getLocation\(function \(loc\) \{ openIfDevHash_\(loc && loc\.hash\); \}\)/);
+  assert.match(fn, /\} else \{\s*\n\s*openIfDevHash_\(window\.location\.hash\);/, 'window.location only outside Apps Script');
+});
+
+test('CL-10: the dead client helpers stay deleted', function () {
+  const all = clientFragments().map(src).join('\n');
+  ['clampToLatestData_', 'daysAgo_', 'isoDate_', 'insWorstMover_', 'ovBuildHeroTile_', 'ovBuildWowDriver_',
+   'insSetExportMenuOpen_'].forEach(function (name) {
+    assert.ok(!new RegExp('function ' + name + '\\(').test(all), name + ' is defined again with no caller');
+  });
+});
+
+test('CL-8 / CL-11: the qcd-hero-sub font is a valid declaration, and every template declares its language', function () {
+  const css = src('styles.html');
+  assert.match(css, /\.qcd-hero-sub \{ font: 500 12px\/1\.3 var\(--ui\);/);
+  assert.ok(!/var\(--body/.test(css), 'no --body token exists');
+  ['dashboard.html', 'agent.html', 'access_denied.html'].forEach(function (f) {
+    assert.match(src(f), /^<!DOCTYPE html>\s*<html lang="en">/i, f);
+  });
+});

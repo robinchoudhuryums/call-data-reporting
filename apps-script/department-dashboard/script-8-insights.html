@@ -1479,30 +1479,6 @@
     insRenderTrendChart_(data);
   }
 
-  // A1: among the valenced volume/rate metrics, the one that moved MOST
-  // unfavorably (per-working-day-adjusted, matching the trend pill's
-  // classification). Returns { label, arrow } or null when nothing moved
-  // the wrong way. Valence: % answered / answered up = good; missed up = bad.
-  function insWorstMover_(metrics, meta) {
-    var adj = insPerDayMetrics_(metrics || {}, meta) || {};
-    var defs = [
-      { key: 'pct',      label: '% answered', inverse: false },
-      { key: 'answered', label: 'answered',   inverse: false },
-      { key: 'missed',   label: 'missed',     inverse: true  },
-    ];
-    var worst = null;
-    defs.forEach(function (d) {
-      var st = adj[d.key];
-      if (!st || st.deltaPct == null) return;
-      var dp = Number(st.deltaPct) || 0;
-      var badness = d.inverse ? dp : -dp;   // > 0 = an unfavorable move
-      if (badness <= 0.05) return;
-      if (!worst || badness > worst.badness) {
-        worst = { badness: badness, label: d.label, arrow: d.inverse ? '▲' : '▼' };
-      }
-    });
-    return worst ? { label: worst.label, arrow: worst.arrow } : null;
-  }
 
   // I2: the needs-attention chips are now folded INTO the headline banner (one
   // "here's who's behind" surface instead of a separate strip). One chip per
@@ -4341,14 +4317,6 @@
     el.style.display = '';
   }
 
-  function insSetExportMenuOpen_(open) {
-    const btn  = $('ins-export-btn');
-    const menu = $('ins-export-menu');
-    if (!btn || !menu) return;
-    menu.style.display = open ? '' : 'none';
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    btn.classList.toggle('open', open);
-  }
 
   // P15: while an export action (email send / image capture) is pending.
   // The busy-state button this fed (#ins-export-btn) was retired in R16c when

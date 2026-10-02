@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <base target="_top">
   <meta charset="utf-8">
@@ -97,14 +97,14 @@
     <span class="agent-fresh" id="agent-fresh"></span>
     <div class="agent-tabs">
       <span role="tablist" aria-label="Pages" class="agent-tablist">
-        <button type="button" class="agent-tab on" id="agent-tab-home" role="tab" aria-selected="true" aria-controls="agent-home-page">My Performance</button>
-        <button type="button" class="agent-tab" id="agent-tab-history" role="tab" aria-selected="false" aria-controls="agent-history-page">My History</button>
+        <button type="button" class="agent-tab on" id="agent-tab-home" role="tab" aria-selected="true" tabindex="0" aria-controls="agent-home-page">My Performance</button>
+        <button type="button" class="agent-tab" id="agent-tab-history" role="tab" aria-selected="false" tabindex="-1" aria-controls="agent-history-page">My History</button>
       </span>
       <button type="button" class="agent-chip" id="agent-mode-btn" aria-label="Switch color mode" title="Switch color mode">◐</button>
     </div>
   </div>
   <div class="agent-wrap">
-    <div id="agent-home-page">
+    <div id="agent-home-page" role="tabpanel" aria-labelledby="agent-tab-home" tabindex="0">
     <div class="agent-controls">
       <button type="button" class="agent-chip" data-preset="mtd">This month</button>
       <button type="button" class="agent-chip" data-preset="7d">Last 7 days</button>
@@ -139,7 +139,7 @@
     </div>
     </div><!-- /agent-home-page -->
     <!-- Phase C: My History -->
-    <div id="agent-history-page" style="display:none;">
+    <div id="agent-history-page" role="tabpanel" aria-labelledby="agent-tab-history" tabindex="0" style="display:none;">
       <div class="agent-loading" id="agent-hist-loading">Loading your history…</div>
       <div class="agent-error" id="agent-hist-error" style="display:none;"></div>
       <div id="agent-hist-body" style="display:none;">

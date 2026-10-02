@@ -377,16 +377,27 @@
     $('agent-tab-history').classList.toggle('on', !home);
     $('agent-tab-home').setAttribute('aria-selected', home ? 'true' : 'false');
     $('agent-tab-history').setAttribute('aria-selected', home ? 'false' : 'true');
+    // CL-13: roving tabindex -- only the selected tab is in the Tab order; the
+    // arrow keys move between tabs (tablist keydown below).
+    $('agent-tab-home').setAttribute('tabindex', home ? '0' : '-1');
+    $('agent-tab-history').setAttribute('tabindex', home ? '-1' : '0');
     $('agent-kicker').textContent = home ? 'My Performance' : 'My History';
     if (!home && !histLoaded_) loadHistory_();
   }
 
+  // CL-13: one history load in flight -- a second tab switch before the first
+  // reply landed fired a second getAgentHistory (histLoaded_ is only set on
+  // success, so it could not stop it).
+  var histInFlight_ = false;
   function loadHistory_() {
+    if (histInFlight_) return;
+    histInFlight_ = true;
     $('agent-hist-error').style.display = 'none';
     $('agent-hist-loading').style.display = '';
     $('agent-hist-body').style.display = 'none';
     google.script.run
       .withSuccessHandler(function (d) {
+        histInFlight_ = false;
         histLoaded_ = true;
         try { renderHistory_(d); } catch (e) {
           reportIssue_('render-failure', 'Agent history render failed: ' + (e && e.message ? e.message : String(e)), e && e.stack);
@@ -394,6 +405,7 @@
         }
       })
       .withFailureHandler(function (err) {
+        histInFlight_ = false;
         var msg = err && err.message ? err.message : String(err);
         reportIssue_('load-failure', 'Agent history load failed: ' + msg);
         showHistError_('Error loading your history: ' + msg);
@@ -503,6 +515,21 @@
   }
   $('agent-tab-home').addEventListener('click', function () { setTab_('home'); });
   $('agent-tab-history').addEventListener('click', function () { setTab_('history'); });
+  // CL-13: the WAI-ARIA tabs keyboard pattern (automatic activation) --
+  // Left/Right wrap between the two tabs, Home/End jump; focus follows.
+  var tabKeys_ = ['home', 'history'];
+  document.querySelector('.agent-tablist').addEventListener('keydown', function (e) {
+    var cur = $('agent-tab-history').getAttribute('aria-selected') === 'true' ? 1 : 0;
+    var next = null;
+    if (e.key === 'ArrowRight') next = (cur + 1) % tabKeys_.length;
+    else if (e.key === 'ArrowLeft') next = (cur - 1 + tabKeys_.length) % tabKeys_.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabKeys_.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    setTab_(tabKeys_[next]);
+    $('agent-tab-' + tabKeys_[next]).focus();
+  });
 
   Array.prototype.forEach.call(document.querySelectorAll('.agent-chip[data-preset]'), function (c) {
     c.addEventListener('click', function () {

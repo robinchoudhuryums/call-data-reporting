@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 8 IMPLEMENTED on the same branch (block 221).**
+  Client accessibility + hardening: CL-3 (escalation focus restore, rendered
+  check in drive-admin), CL-21 (remove/restore-dept in-flight guard), CL-13
+  (agent-app tabs pattern + history guard, rendered checks in drive-agent),
+  CL-12 (null-safe escapeHtml, escaped alert status), CL-19 (#/dev via
+  google.script.url), CL-10 (seven dead helpers removed), CL-8 (qcd-hero-sub
+  font), CL-11 (lang="en"). 2090/2090 + ci:ui green. **Owner-side:** deploy
+  the dashboard (blocking); try #/dev once. **Where I left off:** Batches
+  1-8 done and pushed, no PR opened; next suggested Batch 9 (cdr-report
+  repair and report safety: CR-1, CR-5, CR-2, CR-3, CR-9, CR-7, CR-4, CR-10).
 - **2026-10-02 — broad-scan Batch 7 IMPLEMENTED on the same branch (block 220).**
   Client correctness: CL-2 (per-day Insights card deltas), CL-1 (Company
   line THEME.ink), CL-15 (AC/DC save status survives reload), CL-17 (share /

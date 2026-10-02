@@ -969,8 +969,10 @@
     return out;
   }
 
+  // CL-12: null / undefined render as '' -- String(null) put the literal text
+  // "null" / "undefined" on screen wherever a payload field was absent.
   function escapeHtml(s) {
-    return String(s)
+    return (s == null ? '' : String(s))
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }

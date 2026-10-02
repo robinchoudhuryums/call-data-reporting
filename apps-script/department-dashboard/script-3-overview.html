@@ -822,44 +822,6 @@
     });
   }
 
-  function ovBuildHeroTile_(dept, color) {
-    const st = ovPeriodStats_(dept);
-    // R11-L: honest 70-100% band + raw series (nulls gap-connected).
-    const spark = irSparkline_(dept.trend || [], color, { band: [70, 100] });
-    const subTag = dept.parent
-      ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
-      : '';
-    return '<div class="ov-dept-tile ov-dept-tile-hero" data-dept="' + escapeHtml(dept.name) + '" style="border-top-color:' + color + ';">'
-         +   '<div class="ov-dept-tile-head">'
-         +     '<div>'
-         +       '<div class="ov-hero-kicker">Your department</div>'
-         +       '<span class="ov-dept-name ov-hero-name">' + escapeHtml(dept.name) + '</span>'
-         +       (subTag ? ' ' + subTag : '')
-         +     '</div>'
-         +     '<div class="ov-hero-meta">'
-         +       ovBuildAlertPill_(dept)
-         +       (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
-         +         dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents active'
-         +       '</span>'
-         +     '</div>'
-         +   '</div>'
-         +   '<div class="ov-hero-body">'
-         +     '<div class="ov-hero-pct-block">'
-         +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</div>'
-         +       '<div class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</div>'
-         +       ovBuildWowChip_(dept)
-         +       ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
-         +     '</div>'
-         +     '<div class="ov-hero-stats">'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(st.rung) + '</span></div>'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Answered</span><span>' + fmtNumber(st.answered) + '</span></div>'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Missed</span><span>' + fmtNumber(st.missed) + '</span></div>'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">ATT</span><span>' + escapeHtml(st.attFormatted) + '</span></div>'
-         +     '</div>'
-         +     '<div class="ov-hero-spark" title="30-day % answered trend">' + spark + '</div>'
-         +   '</div>'
-         + '</div>';
-  }
 
   function ovBuildWowChip_(dept) {
     if (!dept.wow) return '';
@@ -961,13 +923,6 @@
     return html;
   }
 
-  // RETIRED (#4): the "what changed" per-agent driver callout (e.g.
-  // "Sarah +12 answered") was removed from the Overview cards -- naming a
-  // specific agent on the dept tile read as clutter, not at-a-glance. The
-  // server still computes dept.wow.driver (used by the manager digest's
-  // own narrative, INV-48); it's just no longer rendered on the cards.
-  // Kept as a no-op so any stray caller renders nothing.
-  function ovBuildWowDriver_(dept) { return ''; }
 
   // Tooltip text for the active-agents caption. Spells out the
   // three counts (today's active / recently active / full roster)

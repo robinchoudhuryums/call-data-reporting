@@ -87,6 +87,31 @@ function record(name, pass, detail) {
   record('history: tab switch back restores My Performance',
     await page.locator('#agent-home-page').isVisible());
 
+  // ---- CL-13: the tabs keyboard pattern ----------------------------------
+  // Arrow keys move selection AND focus (roving tabindex), both panels are
+  // role=tabpanel, and the history panel was already loaded above so the
+  // keyboard switch must not refetch it.
+  await page.locator('#agent-tab-home').focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(300);
+  const kb = await page.evaluate(() => ({
+    focused: document.activeElement && document.activeElement.id,
+    selected: document.getElementById('agent-tab-history').getAttribute('aria-selected'),
+    histTab: document.getElementById('agent-tab-history').getAttribute('tabindex'),
+    homeTab: document.getElementById('agent-tab-home').getAttribute('tabindex'),
+    panels: [...document.querySelectorAll('[role="tabpanel"]')].map((p) => p.id).join(','),
+    histVisible: document.getElementById('agent-history-page').style.display !== 'none',
+  }));
+  record('CL-13: ArrowRight selects and focuses My History (roving tabindex)',
+    kb.focused === 'agent-tab-history' && kb.selected === 'true' && kb.histTab === '0' && kb.homeTab === '-1'
+      && kb.histVisible, JSON.stringify(kb));
+  record('CL-13: both pages are role=tabpanel', kb.panels === 'agent-home-page,agent-history-page', kb.panels);
+  await page.keyboard.press('Home');
+  await page.waitForTimeout(200);
+  record('CL-13: Home returns to My Performance',
+    await page.evaluate(() => document.activeElement && document.activeElement.id === 'agent-tab-home'
+      && document.getElementById('agent-home-page').style.display !== 'none'));
+
   // ---- Phase C: glossary --------------------------------------------------
   record('glossary: fold present with the wait-coverage explanation',
     /before call-capture coverage|call-capture system has/.test(await page.locator('#agent-gloss').textContent()));

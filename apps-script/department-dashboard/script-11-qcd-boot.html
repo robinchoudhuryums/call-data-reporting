@@ -1134,8 +1134,20 @@
     });
     // `#/dev` is the no-chord entry point: the whole point of this feature is
     // that a diagnostic does not need its own button in the header.
+    // CL-19: read the hash through google.script.url -- the page runs in Apps
+    // Script's sandbox IFRAME, whose own window.location never carries the
+    // parent URL's #fragment (the router's getLocation read, script-4). The
+    // bare window.location stays as the fallback outside Apps Script.
+    var openIfDevHash_ = function (hash) {
+      if (String(hash || '').indexOf('/dev') !== -1) devToggle_(true);
+    };
     try {
-      if (String(window.location.hash || '').indexOf('/dev') !== -1) devToggle_(true);
+      if (typeof google !== 'undefined' && google.script && google.script.url
+          && typeof google.script.url.getLocation === 'function') {
+        google.script.url.getLocation(function (loc) { openIfDevHash_(loc && loc.hash); });
+      } else {
+        openIfDevHash_(window.location.hash);
+      }
     } catch (e) {}
     if (DEV_.on) devToggle_(true);           // restore a persisted open state
   }
