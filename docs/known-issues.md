@@ -8,11 +8,11 @@ Entries are ordered roughly by severity / how often they trip people up.
 
 ---
 
-## Source pipeline: `buildDQEHistoricalData.gs` (CDR Report project)
+## Source pipeline: `buildDQEHistoricalData.js` (CDR Report project)
 
 ### Bug 1: TTT included calls outside the work window
 
-**Status:** Fixed (see `apps-script/cdr-report/buildDQEHistoricalData.gs`).
+**Status:** Fixed (see `apps-script/cdr-report/buildDQEHistoricalData.js`).
 
 **Symptom:** An agent's `Total Answered` in `DQE Historical Data` would
 exclude a call (e.g., one that started at 15:01 PST = 17:01 CST, outside the
@@ -541,11 +541,11 @@ section above).
 Historical data sometimes contains rows where `Agent Name` is a system
 entity ("Sales Voicemails", "A_Q_*" queue names, "Normal Call Menu",
 etc.) instead of a real person. These won't be in any dept roster and
-will appear in the dashboard's `whyNoMatches_` diagnostic under
+will appear in the dashboard's `whyNoMatches` diagnostic under
 "Agents in historical NOT in ANY roster".
 
 These are correct rejections — don't add them to any dept roster.
-`buildDQEHistoricalData.gs` has a `DQE_EXCLUDED_AGENTS` allowlist that
+`buildDQEHistoricalData.js` has a `DQE_EXCLUDED_AGENTS` allowlist that
 *should* drop them upstream; missing entries should be added there, not
 worked around downstream.
 

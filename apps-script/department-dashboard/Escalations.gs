@@ -1928,16 +1928,6 @@ function escAssertRowAccess_(user, rowDept) {
   // whose stored dept no longer matches a current roster header.
 }
 
-function escRowDepartment_(conn, id) {
-  var stmt = conn.prepareStatement('SELECT department FROM escalations WHERE id = ?');
-  stmt.setString(1, id);
-  var rs = stmt.executeQuery();
-  var dept = rs.next() ? rs.getString('department') : null;
-  rs.close(); stmt.close();
-  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(String(dept || '').length + 8, 'escalations');   // OD-3
-  return dept;
-}
-
 /** Reads { status, department, groupId } for an escalation; null if absent.
  *  Every caller runs escEnsureTable_ first, so group_id always exists. */
 function escRowMeta_(conn, id) {
@@ -2524,7 +2514,7 @@ function escEnsureTable_(conn) {
     Logger.log('escEnsureTable_: linked-copy column DDL failed: ' + (grpErr && grpErr.message ? grpErr.message : grpErr));
   }
   // ESC-U1 (reflect 207-211): the DATABASE enforces one copy per department
-  // per linked group (INV-57) -- the verbs' checks stay as the readable
+  // per linked group (INV-55) -- the verbs' checks stay as the readable
   // refusals; this makes a slipped check impossible. Partial (standalone rows
   // carry NULL group_id) and non-concurrent, so a build that hits existing
   // duplicates rolls back whole instead of leaving an invalid index. Its own

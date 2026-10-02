@@ -320,13 +320,6 @@ function ekSectionTitle_(title) {
   return '<div style="font:600 9px ' + EK_SANS_ + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;padding-bottom:4px;">' + ekEsc_(title) + '</div>';
 }
 
-/** Dashboard URL + route hash, or '' when DASHBOARD_URL is unset (no CTA). */
-function ekDashUrl_(hash) {
-  var url = '';
-  try { url = String(PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '').trim(); } catch (e) {}
-  return url ? (url + (hash || '')) : '';
-}
-
 /**
  * One notice, one spec:
  *   { tone, glyph, kicker, title, subtitle, preheader,

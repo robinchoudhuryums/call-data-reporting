@@ -2,6 +2,14 @@
  * Editor-only diagnostics. Run from the Apps Script "Run" dropdown
  * to introspect the sheet shapes and verify the parsing assumptions.
  * Output goes to the Execution log (View > Logs / Executions).
+ *
+ * CH-1 (broad-scan 2026-10-01): the five tools are NOT `_`-suffixed. The
+ * editor's Run dropdown hides private (`_`) functions, so the names the docs
+ * told operators to run (whyNoMatches_ above all -- INV-23, conventions,
+ * known-issues) could not be picked at all. Un-suffixed means RPC-reachable
+ * too, so each one starts with assertAdmin_() (the auditQueueSplitAttribution
+ * pattern); they only read and Logger.log, so INV-01 is untouched. The
+ * helpers below them (typeOfCell_, formatHms_, columnLetter_) stay private.
  */
 
 /**
@@ -10,7 +18,8 @@
  * appears in any department roster. Use this to diagnose date-filter
  * or roster-match bugs.
  */
-function diagnoseDate_() {
+function diagnoseDate() {
+  assertAdmin_();   // CH-1: un-suffixed for the Run dropdown, so RPC-reachable
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) {
@@ -88,7 +97,8 @@ function diagnoseDate_() {
  *
  * Edit TEST_DATE below before running.
  */
-function whyNoMatches_() {
+function whyNoMatches() {
+  assertAdmin_();   // CH-1: un-suffixed for the Run dropdown, so RPC-reachable
   // CORE-9: defaults to the most recent DQE date so this editor-run
   // diagnostic works out of the box months later; hardcode a YYYY-MM-DD
   // here when investigating a specific historical date.
@@ -159,7 +169,8 @@ function whyNoMatches_() {
  * reformat them as. Use to diagnose H:MM:SS mismatches between the
  * dashboard and the source sheet.
  */
-function diagnoseTimes_() {
+function diagnoseTimes() {
+  assertAdmin_();   // CH-1: un-suffixed for the Run dropdown, so RPC-reachable
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) { Logger.log('Historical sheet not found.'); return; }
@@ -263,7 +274,8 @@ function columnLetter_(col) {
  * Edit ADDRESS below before running. A1 notation, e.g. "I6", "J6",
  * "AG6", "AH6".
  */
-function dumpCell_() {
+function dumpCell() {
+  assertAdmin_();   // CH-1: un-suffixed for the Run dropdown, so RPC-reachable
   const ADDRESS = 'I6';  // edit this to inspect a different cell
 
   const ss = openSpreadsheet_();
@@ -305,7 +317,8 @@ function dumpCell_() {
  *
  * Edit DEPT, FROM, TO below before running.
  */
-function diagnoseAbandoned_() {
+function diagnoseAbandoned() {
+  assertAdmin_();   // CH-1: un-suffixed for the Run dropdown, so RPC-reachable
   // CORE-9: defaults to the most recent DQE date (single-day window) so
   // the editor-run diagnostic works out of the box; hardcode FROM/TO when
   // investigating a specific historical range. NOTE: the

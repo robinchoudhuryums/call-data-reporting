@@ -1435,11 +1435,15 @@ function hdLogCensus_(census) {
 //     and names the cells. Converting around a stray cell would leave the
 //     column mixed -- and unsortable -- while looking repaired.
 //
-// The Date is built exactly as the writer builds callDateObj (its nested
-// displayToDate): `new Date(Y, M-1, D)`, local midnight. A repaired cell is
-// therefore indistinguishable from one the build writes, which is what lets
-// the two eras sort as one -- pinned as a shared property in
-// pipeline-build.test.js (writer) and historical-date-columns.test.js (repair).
+// The Date is built exactly as the writer builds callDateObj since R46:
+// midnight in the SPREADSHEET's timezone (`dateAtSheetMidnight_`, via
+// dqeDateFromMdy_ below) -- NOT `new Date(Y, M-1, D)`, which is script-TZ
+// midnight and renders as 23:00 of the previous day from March to November
+// (the R46 shift; CR-8 corrected this paragraph, which still prescribed it).
+// A repaired cell is therefore indistinguishable from one the build writes,
+// which is what lets the two eras sort as one -- pinned as a shared property
+// in pipeline-build.test.js (writer) and historical-date-columns.test.js
+// (repair).
 //
 // After a successful apply the sheet is sorted once by col B -- the sort the
 // build already runs after every write, now able to work. That reorders rows,

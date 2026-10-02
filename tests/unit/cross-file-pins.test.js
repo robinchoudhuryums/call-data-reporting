@@ -246,7 +246,7 @@ const DQE_SHEET_ONLY_ALLOWED = {
   // to compare the two).
   'NeonRead.gs': 'the DAL / the sheet arm it dispatches to',
   // Editor-run diagnostics that deliberately inspect the SHEET's cells --
-  // dumpCell_ / diagnoseTimes_ exist to show what the spreadsheet holds and
+  // dumpCell / diagnoseTimes exist to show what the spreadsheet holds and
   // how it coerces, which is meaningless against Neon.
   'Diagnostics.gs': 'sheet-cell diagnostics; reading Neon would defeat their purpose',
   // Admin-gated live-wiring probe: opens the sheet BY LITERAL to report

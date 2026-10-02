@@ -103,6 +103,7 @@ tests/
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
+    diagnostics-tools.test.js Diagnostics.gs: CH-1 -- the editor-run tools are public (the Run dropdown hides `_` names) and each refuses a non-admin before reading
     harness-strictness.test.js  the fakes' platform limits themselves (HT-2/3/4/5): setValues shape + display update, cache caps, formatDate tokens, triggers / lock / property limits -- loosening a fake fails here
     deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (DEP-1), CI on Node 22 (HT-6)
     workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)

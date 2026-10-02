@@ -1690,9 +1690,3 @@ function getAlertTriggerStatus_() {
 
 // ── Tiny helpers ──────────────────────────────────────────────────
 // assertAdmin_, round1_, escapeHtmlServer_ moved to Util.gs.
-
-function yesterdayIso_() {
-  const now = new Date();
-  const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0, 0);
-  return Utilities.formatDate(y, TZ, 'yyyy-MM-dd');
-}

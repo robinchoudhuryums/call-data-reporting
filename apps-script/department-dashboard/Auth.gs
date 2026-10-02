@@ -355,18 +355,6 @@ function getAllDepartments_() {
   return rosterDeptBlock_().depts.slice();
 }
 
-/**
- * Editor-only helper: clears a cached access lookup for a given email.
- * Useful if you just added someone to Access Control and don't want to
- * wait the 60s TTL. Run from the Apps Script editor.
- */
-function invalidateAuthCache_(email) {
-  const normalized = (email || '').toLowerCase().trim();
-  if (!normalized) return;
-  CacheService.getScriptCache().remove('access:' + normalized);
-  Logger.log('Cleared auth cache for %s', normalized);
-}
-
 // -- Access Control admin editor (C1) ------------------------------------
 // Manager onboarding used to mean hand-editing the Access Control SHEET
 // ("add a row, wait 60 s"). These admin-only RPCs replace that with the

@@ -79,7 +79,7 @@ drift apart, and caps this file's size.
 - [`docs/fix-history.md`](docs/fix-history.md) — the **historical fix log**:
   what each short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`,
   `NEO-1`, the bare-`F#` Neon family, …) fixed, with a pointer to the live
-  rule it produced. **CLAUDE.md plus its four split files above are the
+  rule it produced. **CLAUDE.md plus its six split files above are the
   current-invariants / live truth; fix-history is the "why" archive.** Read
   fix-history when you hit a
   code in a comment and want the backstory — not to learn a current rule. It
@@ -138,7 +138,7 @@ npm run lint:gas
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~115 suites pin the invariants, the report
+# Non-zero exit on failure. ~130 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -987,9 +987,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (Operator State #69; `answer-rate-formula.test.js` fails on a bare
   `answered / rung`).** The CSR team app (a separate repo) reads
   `DQE Historical Data` and tints the same per-agent rate the manager sees
-  here, so a formula or standard is a TWO-REPO edit: Answer % is
-  `answered / (answered + missed)` on both sides, rounded to a WHOLE percent
-  as the Answer % cell prints it -- **and ROUNDING, not the denominator, is
+  here, so a formula or standard is a TWO-REPO edit. The H2 standard is
+  `answered / (answered + missed)`, rounded to a WHOLE percent as the Answer %
+  cell prints it -- what team-tools, the My Department table and the agent app
+  compute; the SERVER surfaces (IR, Insights, Overview, Alerts, Digest) join
+  it only once `ANSWER_RATE_FORMULA=answerable` is set, and the DEFAULT is
+  `rung` (DX-7) -- **and ROUNDING, not the denominator, is
   what actually drifts** (measured 2026-09-18, Operator State #69): across 16
   depts x 30 days the two denominators agreed to within 0.007 pts, because
   every window leg carried exactly one disposition. That equality is
@@ -1039,7 +1042,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) — READ IT
   before touching `script.html`, `styles.html`, or `dashboard.html`**, and
   re-run `npm run ci:ui` afterwards. Fifteen bullets moved there in the F8/F8b
-  splits because they describe how a SURFACE IS BUILT rather than a trap that
+  splits (+ seven KDD bullets in DX-6, indexed in Key Design Decisions) because they describe how a SURFACE IS BUILT rather than a trap that
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
   incl. the consolidated trend chart + per-agent cards/chart bases + IR
@@ -1621,11 +1624,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Pinned by `system-health.test.js`.
   This page is the PULL view; the **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email.
-  Three other read-only sections share the page, each with its own operator
+  Three other sections share the page, each with its own operator
   item: **"Report usage (last 30 days)"** (`computeReportUsageSummary_`; a
   bounded tail read, cap 5000); **`SmokeCheck.gs::runLiveSmoke`** (editor-run,
-  admin-gated, READ-ONLY sweep of the live WIRING -- properties, scopes,
-  sheets, Neon; **run it after every deploy**, then walk the client-side
+  admin-gated sweep of seven live READ PATHS -- sheet, latest date, summary,
+  Missed, Insights, all-dept QCD, Neon; it emails admins + stamps
+  `SMOKE_LAST*`, no data writes; **run it after every deploy**, then walk the client-side
   Regression Scenarios by hand); **`runNeonCoverageCheck`** (NeonCoverage.gs,
   Op State #35: per-date sheet-vs-Neon row counts + zero-row-weekday gaps on
   the no-sheet-primary tables; a not-yet-created table is a clean SKIP via
@@ -2004,124 +2008,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   strip). It's a VISUAL preview: report endpoints still authorize the
   real admin (entitled), so the admin isn't locked out of clicking
   through; the point is to see the manager's layout/content.
-- **Overview admin-only banners (Phase B).** Three banners sit above the
-  Overview summary line, all sharing one shape: **two layers of gating** --
-  the div's `data-admin-only` attribute is cleared at init for admins (the
-  `querySelectorAll('[data-admin-only]')` loop in script.html), AND each
-  renderer further hides itself when there's nothing to say -- plus a
-  **best-effort server helper that returns null on failure**, so a broken
-  helper costs the banner, never the Overview.
-  (1) **Pipeline Health** (`#ov-pipeline-banner` / `ovRenderPipelineBanner_` /
-  `computeOverviewPipelineFreshness_`) fires when no DQE-freshness success row
-  (`buildDQE` / `processIntegratedHistory:DQE` / `bulkBackfill:DQE`, per
-  INV-44) appears in the last `OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS` (=250 --
-  **do not shrink it**: at 40 a deferred-mirror retry storm evicted the DQE row
-  and false-warned, LM1) Pipeline Health entries, OR the latest is older than
-  `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header freshness pill).
-  A `rows:0` DQE-step `success` (a no-op build of an already-in-history date)
-  does NOT count as freshness -- the helper requires `rows>0` (F5).
-  (2) **Orphan Fix nag** (`#ov-orphan-nag` / `ovRenderOrphanNag_` /
-  `computeOverviewOrphanNag_`) counts orphans with `lastSeen` inside
-  `OVERVIEW_ORPHAN_NAG_DAYS` (=7d), samples up to 3 names by row-count desc,
-  and its Open button clicks `#orphan-fix-btn`.
-  (3) **Unmapped-queue nag** (`#ov-unmapped-nag` / `ovRenderUnmappedNag_` /
-  `computeOverviewUnmappedQcd_`) fires when QCD queues seen in the data map to
-  no department; it reuses the Dept Config discovery (`discoverQueues_`, the
-  180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
-  samples up to 3 queue names busiest-first, and its Open button clicks
-  `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v26`).
-- **Agent table column model (My Department).** The table is rendered
-  from the client `COLUMNS` array (script.html) against a matching static
-  `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
-  `ov-user-table` shares `COLUMNS` and must keep its own thead in sync).
-  Columns: Agent · Source · **Answered / Missed** (`type:'bar'`; since
-  Round-16 AGENT rows render a VOLUME-PROPORTIONAL TALLY — sage answered +
-  red missed blocks, one block per cohort-adaptive unit via
-  `ansTallyUnitFor_` (≤36 blocks for the busiest row; a >1 unit is disclosed
-  in tooltips + a totals-row legend) — while totals/subtotal rows keep the
-  classic proportional bar; there is no separate Rung / Missed / Answered /
-  **Total calls** column; built by
-  `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
-  counts and the rung total as a muted "(N)", answer-rate gets the R23
-  three-tier dept-standard tint, sorts by answered VOLUME (`totalAnswered`,
-  owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
-  `sortRows`). **The CSV still emits a numeric Total calls column** spliced
-  after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
-  cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
-  rate the bar folds in is readable without decoding it; the `answerRate`
-  sort key and the default landing) · Ans / day (owner 2026-09: answered per
-  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`; the combined
-  total row divides by the UNION of the depts' active days, D-6) · Unique ·
-  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
-  columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
-  AWAY by default behind the **"Show all columns"** toggle
-  (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
-  `hide-extra` class + `.col-extra` cells through the shared `cellClass_`
-  helper); the Overview mini-table carries `hide-extra` permanently
-  (glance view). Default sort is `answerRate` ascending (worst answer rate
-  first; idle/no-activity agents always sink to the bottom regardless of
-  direction). **The Overview mini-table is header-sortable too**, with its OWN
-  sort state (`ovUserSort_`, same worst-first default,
-  `ovRenderUserRows_`/`ovOnUserSort_`); `sortRows` is parametrized
-  `(rows, sortKey, sortDir)` so both tables share it, and each table's Total
-  row renders from `totals` (never part of the sort).
-  CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
-  and renders the bar as `answered / missed (rate%)` text + the Answer %
-  column via `pctCell`. **In a sub-queue COMBINED view it also prepends a
-  `Department` column and emits per-dept subtotals + an `All shown` grand
-  total** (single-dept exports are byte-identical to before) -- see the
-  sub-queue combined-view decision above, and S43. `drive-subqueue.js` is the
-  ONLY automated coverage of any CSV writer in this repo (both shapes, asserted
-  from real Blob bytes); S43 remains the manual walk over the rest.
-- **Source column + roster-only totals (Phase D).** The agent table's
-  Source column (between Agent and the Answered/Missed bar) renders one of
-  three chips per row: **ROSTER** (accent-soft), **BOTH** (good-soft, rostered
-  AND matched via shared-queue extensions), **QUEUE** (warn-soft, queue-only
-  floaters) -- the QUEUE chip suffixing the floater's `sourceHomes` as a dept
-  list, e.g. `QUEUE · Sales, Power`, or bare `QUEUE` when on no roster.
-  **In practice the QUEUE chip never renders HERE**, because
-  `getDepartmentSummary` locks scope to `roster` (see the decision above), so
-  `queueOnlyAgentCount` is 0 and the "N floaters excluded" caption stays
-  hidden. The chip helpers and the `sourceHomes` machinery are NOT dead
-  code -- they serve the IR picker's floater group (INV-53) and Diagnostics,
-  which is why the whole path is still documented.
-  `sourceHomes` is built lazily server-side by `Data.gs::buildDeptsByAgent_`
-  (only when at least one queue-only row exists) and iterates every dept
-  including `OVERVIEW_HIDDEN_DEPTS` in `getAllDepartments_` alphabetical
-  order, so the array is stable; client `sourceChipHtml_` / `sourceChipCsv_`
-  array-check defensively and fall back to bare `QUEUE` if it's missing.
-  **The totals row sums only `matchedViaRoster=true` rows** -- queue-only
-  floaters never factor into dept averages -- and the totals object carries
-  `rosterAgentCount` + `queueOnlyAgentCount`, driving a
-  'Total (roster only · N floaters excluded)' caption when the latter is
-  non-zero ('Total (roster only)' in the CSV). **The totals row is a pinned
-  `<tbody class="agents-totals">` ABOVE the data rows, not a `<tfoot>`** -- a
-  real tfoot always renders at the bottom; the element ids `agents-tfoot` /
-  `ov-user-tfoot` were kept so the JS is unchanged. INV-04 (exact agent-name
-  match) and INV-23 (queue-sentinel `A_Q_*` rows skipped) both hold. See
-  INV-53 for the floater-exclusion contract across all dept-level aggregations.
-- **Phase E UI surfaces** (the `E#` codes appear in code comments across
-  script.html / styles.html / Code.gs / IndividualReport.gs / Data.gs, so
-  they stay attached to their affordance). Four client surfaces, each with a
-  data dependency worth knowing: (**E2**) the **work-window pill**
-  (`#work-window-pill`) reads `window.__WORK_WINDOW__`, injected by
-  `renderDashboard_` from `Config.gs::DASHBOARD_WORK_WINDOW` -- the dashboard's
-  read-only mirror of cdr-import's pipeline constants, so **changing those
-  constants requires syncing this one** (INV-06). (**E3**) the `.diagnostics`
-  block's severity chip: `.diag-severity-warn` for 1-5 issues,
-  `.diag-severity-bad` for >5, off the same
-  `rosterWithNoData.length + queueOnlyMatched.length` total the collapsible
-  reads. (**E4**) the **EXCLUDED FROM TEAM AVG pill** (`.ir-excluded-pill`) on
-  IR agent cards, from the `excludedFromTeamAvg` field on each `summaryData`
-  row (INV-26). (**E9**) the **QCD days-to-violation forecast**
-  (`#qcd-forecast`): a 7-day linear regression on `dailySeries.abandonedPct`
-  (INV-51) projecting when the 4% threshold crosses, hidden in three healthy
-  states -- currentY >= 4 (already over), slope <= 0.01 (flat / improving), or
-  a projected crossing more than 7 days out. The three later Phase E items
-  each have their own home: **E5** per-row WoW chips (the "Per-row
-  prior-period chips" gotcha), **E8** alert Skip Dates (INV-33 / INV-34),
-  **E10** threshold drift (its own gotcha bullet).
+- **My Department table, Overview banners + shared chrome live in
+  [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) "Moved from
+  CLAUDE.md (DX-6)" -- read it before touching those surfaces.** Seven KDD
+  bullets moved there verbatim (they describe how a CLIENT surface is built):
+  the Overview admin-only banners (Phase B) · the agent-table column model ·
+  the Source column + roster-only totals (Phase D) · the Phase E UI surfaces
+  (E2/E3/E4/E9) · the My Department export (one grid, CSV + TSV) · draggable
+  modals · the Help FAB. The server rules inside them stay pinned where they
+  were: INV-39 (the admin-field strip), INV-53 (floaters out of every total),
+  INV-06 (the work-window pill mirrors the pipeline constants).
 - **Floater-awareness in the agent reports (INV-53 expansion, Phase D+1).**
   The agent-level reports extend the Phase D My Department contract (the
   Performance and Compare Ranges reports carried it too, until both were
@@ -2146,52 +2042,6 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   contains at least one floater. INV-53 is the underlying contract; INV-26 is
   the separate `TEAM_AVG_EXCLUDES` path, which composes with the floater gate
   in IR.
-- **My Department export: ONE grid, two serialisations.** The agent table's
-  "Export ▾" menu (R9-2: the Insights-toolbar dropdown convention replaced the
-  old one-click download icon; the wrap keeps the `#csv-export-btn` id so the
-  hidden-until-data gating is unchanged, and it sits horizontally beside
-  Refresh in `.control-btn-row`) offers **Download CSV** and **Copy for
-  spreadsheet**, both rendering the current view (scope, date range, sort
-  order) client-side with no server round-trip. Both read `deptTableGrid_`,
-  which returns RAW cells plus the combined-view Department column and
-  subtotal rows -- **a new column must be added there, not per format**, or
-  the file and the clipboard drift. The clipboard copy is TAB-separated
-  (`deptGridToTsv_`), because a spreadsheet PASTE splits on tabs and comma
-  text lands in a single column; the downloaded file stays real CSV. Cells go
-  through `csvSafeCell_` in BOTH (the injection rule's "CSV or not" clause --
-  the paste target is a spreadsheet), and the TSV additionally FLATTENS any
-  tab/newline inside a cell, since a paste has no quoting convention to escape
-  into and one stray tab shifts every column after it silently. ENFORCED:
-  `html-include-structure.test.js` pins both writers' `csvSafeCell_` routing,
-  and `drive-subqueue.js` asserts the real clipboard bytes (tab-separated,
-  every row carrying the header's column count, same row set as the CSV).
-- **Draggable / resizable modals.** All modals can be
-  repositioned via header drag and resized via a bottom-right
-  corner handle. Position and size reset on close so the next
-  open starts centered at default size. Disabled below 768px
-  viewport width (mobile). (Insights left this set when it became
-  a page -- docs/insights-page-plan.md.)
-- **Universal Help FAB.** A floating circled-`?` button (`#help-fab`,
-  `z-index:150`) stays above report modals so Help is always one click
-  away; it opens the SAME `#help-modal` as the header `?`. Because all
-  modals share `z-index:100` and stack by DOM order, `#help-modal` is
-  lifted to `z-index:200` so Help opened from the FAB while a report
-  modal is already open renders ABOVE it (and the FAB tucks itself away
-  while Help is open). Hide-able via the Settings toggle
-  `#help-fab-toggle` (localStorage `cdr.help.fab` = `off`); the header
-  `?` stays as the always-present fallback. Per-report client prefs +
-  this key live in localStorage (see the per-report prefs note above).
-  The modal content is a **two-pane reference** (`.help-layout`): a
-  folder-tree nav (`<details>` categories of `.help-link` topics) + a
-  single-topic content panel (`.help-topic` sections), wired by
-  `initHelpNav_` with a title+body search box. Since R10-1 a
-  `.help-quickstart` strip sits between the modal header and the
-  two-pane layout: the four quick-start question chips
-  (`#help-launcher`, injected by `initOverviewLauncher_`) + the
-  `#help-tour-btn` tour replay -- both close Help via its own close
-  button before acting (the F-42 focus-trap discipline). Add a topic = a nav
-  `.help-link[data-topic=KEY]` + a `<section id="help-topic-KEY">`; all
-  static markup in `dashboard.html`, no server endpoint.
 
 ## Operator State Checklist
 
@@ -2221,7 +2071,7 @@ items for anything it flags or doesn't cover.)
 
 1. Did the daily ingest run? (+ `probeOverviewChartDates()` when a date gap shows despite parity-clean data)
 2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp)
-3. Did the user actually have access? (`Access Control` rows are case-sensitive on email)
+3. Did the user actually have access? (the email match is case-INsensitive -- check the Department cell + Role, and `EMAIL_ALIASES`)
 4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
 6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, twelve sheets -- and it REPUBLISHES the Dashboard Standards sheet, #37)

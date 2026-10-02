@@ -7,12 +7,14 @@ The project keeps two surfaces:
 - **CLAUDE.md = current invariants / live truth.** The rules you must follow
   now: the Common Gotchas *rules*, Key Design Decisions, and the Cycle Workflow
   Config. If a rule governs how you write code today, it lives in CLAUDE.md — or
-  in one of the four reference files the F8 split moved OUT of it, each of which
-  CLAUDE.md still indexes: `docs/invariants.md` (the Invariant Library,
-  `INV-01`…`INV-55`), `docs/operator-state.md` (the numbered Operator State
-  items), `docs/regression-scenarios.md` (`S1`…`S44`), and
-  `docs/client-ui-conventions.md` (the client/presentation-layer conventions).
-  Those four are still LIVE TRUTH, not archive — only their location changed.
+  in one of the six reference files split OUT of it (F8 and its successors),
+  each of which CLAUDE.md still indexes: `docs/invariants.md` (the Invariant
+  Library, `INV-01`…`INV-55`), `docs/operator-state.md` (the numbered Operator
+  State items), `docs/regression-scenarios.md` (`S1`…`S53`),
+  `docs/client-ui-conventions.md` (the client/presentation-layer conventions),
+  `docs/neon-layer.md` (the Neon mirror + read-back layer) and
+  `docs/per-call-capture.md` (the per-call capture subsystem).
+  Those six are still LIVE TRUTH, not archive — only their location changed.
 - **This file = the historical fix log.** The commit-by-commit "why": what each
   short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`, `NEO-1`, …) fixed,
   and a pointer to the CLAUDE.md invariant / gotcha the fix produced. Read this
@@ -21,7 +23,7 @@ The project keeps two surfaces:
 
 **How to use it:** codes are terse on purpose. To find a code's full narrative,
 `grep -n "<code>" CLAUDE.md docs/*.md apps-script/**` — the live rule is in
-CLAUDE.md or one of its four split reference files (above); the reasoning is here
+CLAUDE.md or one of its six split reference files (above); the reasoning is here
 or in `docs/known-issues.md`. When a fix code's rule changes, update the live
 rule; leave the history entry as-is (it's an archive).
 

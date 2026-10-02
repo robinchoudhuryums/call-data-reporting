@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 12 IMPLEMENTED on the same branch (block 225).**
+  The LAST batch of the 2026-10-01 scan. Code health: CH-1 (the five
+  Diagnostics.gs tools are public + admin-gated, so the Run dropdown shows
+  them), CH-2 (invalidateAuthCache_ deleted), CH-3 (three dead helpers
+  deleted), CR-8 (R46 docblock). Docs: DX-1..5, 7..10, 12 truth pass; DX-6
+  moved seven client-surface KDD bullets to docs/client-ui-conventions.md
+  (CLAUDE.md 90.2% -> 84.8%). 2120/2120 green. **Owner-side:** deploy the
+  dashboard with the earlier batches. **Where I left off:** Batches 1-12 ALL
+  done and pushed on claude/optimistic-lamport-92xm9l, no PR opened; the
+  scan's deferred items (AC-2, PC-12, QO-2, ESC-D8, CL-20, CL-23, CH-4,
+  LEG-2, DX-11) wait on owner rulings; a one-off neon-mirror-tail timing
+  flake is logged in block 225's follow-ons.
 - **2026-10-02 — broad-scan Batch 11 IMPLEMENTED on the same branch (block 224).**
   Harness strictness + CI: HT-2 (shape-strict setValues + display update),
   HT-3 (cache key/value caps), HT-4 (formatDate tokenizer, throws on unmodelled

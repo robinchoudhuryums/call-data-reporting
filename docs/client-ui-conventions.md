@@ -2048,3 +2048,176 @@ nothing to navigate.
   (`drive-admin.js`: the picker offers departments, and they equal the served
   list) -- every pre-existing check passed against a picker with no options,
   because the modal opened, rendered, trapped focus and closed.
+
+## Moved from CLAUDE.md (DX-6, broad-scan 2026-10-01)
+
+These seven bullets were Key Design Decisions in CLAUDE.md. They moved here
+VERBATIM when CLAUDE.md passed 90% of its size cap, because each describes how
+a client surface is built (the F8 rule) -- they are still LIVE TRUTH. CLAUDE.md
+keeps a one-line index bullet pointing here; the server-side rules they mention
+stay pinned by INV-39, INV-53 and INV-06.
+
+- **Overview admin-only banners (Phase B).** Three banners sit above the
+  Overview summary line, all sharing one shape: **two layers of gating** --
+  the div's `data-admin-only` attribute is cleared at init for admins (the
+  `querySelectorAll('[data-admin-only]')` loop in script.html), AND each
+  renderer further hides itself when there's nothing to say -- plus a
+  **best-effort server helper that returns null on failure**, so a broken
+  helper costs the banner, never the Overview.
+  (1) **Pipeline Health** (`#ov-pipeline-banner` / `ovRenderPipelineBanner_` /
+  `computeOverviewPipelineFreshness_`) fires when no DQE-freshness success row
+  (`buildDQE` / `processIntegratedHistory:DQE` / `bulkBackfill:DQE`, per
+  INV-44) appears in the last `OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS` (=250 --
+  **do not shrink it**: at 40 a deferred-mirror retry storm evicted the DQE row
+  and false-warned, LM1) Pipeline Health entries, OR the latest is older than
+  `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header freshness pill).
+  A `rows:0` DQE-step `success` (a no-op build of an already-in-history date)
+  does NOT count as freshness -- the helper requires `rows>0` (F5).
+  (2) **Orphan Fix nag** (`#ov-orphan-nag` / `ovRenderOrphanNag_` /
+  `computeOverviewOrphanNag_`) counts orphans with `lastSeen` inside
+  `OVERVIEW_ORPHAN_NAG_DAYS` (=7d), samples up to 3 names by row-count desc,
+  and its Open button clicks `#orphan-fix-btn`.
+  (3) **Unmapped-queue nag** (`#ov-unmapped-nag` / `ovRenderUnmappedNag_` /
+  `computeOverviewUnmappedQcd_`) fires when QCD queues seen in the data map to
+  no department; it reuses the Dept Config discovery (`discoverQueues_`, the
+  180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
+  samples up to 3 queue names busiest-first, and its Open button clicks
+  `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
+  stripped by `personalizeOverview_` (`companyOverview:v26`).
+- **Agent table column model (My Department).** The table is rendered
+  from the client `COLUMNS` array (script.html) against a matching static
+  `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
+  `ov-user-table` shares `COLUMNS` and must keep its own thead in sync).
+  Columns: Agent · Source · **Answered / Missed** (`type:'bar'`; since
+  Round-16 AGENT rows render a VOLUME-PROPORTIONAL TALLY — sage answered +
+  red missed blocks, one block per cohort-adaptive unit via
+  `ansTallyUnitFor_` (≤36 blocks for the busiest row; a >1 unit is disclosed
+  in tooltips + a totals-row legend) — while totals/subtotal rows keep the
+  classic proportional bar; there is no separate Rung / Missed / Answered /
+  **Total calls** column; built by
+  `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
+  counts and the rung total as a muted "(N)", answer-rate gets the R23
+  three-tier dept-standard tint, sorts by answered VOLUME (`totalAnswered`,
+  owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
+  `sortRows`). **The CSV still emits a numeric Total calls column** spliced
+  after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
+  cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
+  rate the bar folds in is readable without decoding it; the `answerRate`
+  sort key and the default landing) · Ans / day (owner 2026-09: answered per
+  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`; the combined
+  total row divides by the UNION of the depts' active days, D-6) · Unique ·
+  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
+  columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
+  AWAY by default behind the **"Show all columns"** toggle
+  (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
+  `hide-extra` class + `.col-extra` cells through the shared `cellClass_`
+  helper); the Overview mini-table carries `hide-extra` permanently
+  (glance view). Default sort is `answerRate` ascending (worst answer rate
+  first; idle/no-activity agents always sink to the bottom regardless of
+  direction). **The Overview mini-table is header-sortable too**, with its OWN
+  sort state (`ovUserSort_`, same worst-first default,
+  `ovRenderUserRows_`/`ovOnUserSort_`); `sortRows` is parametrized
+  `(rows, sortKey, sortDir)` so both tables share it, and each table's Total
+  row renders from `totals` (never part of the sort).
+  CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
+  and renders the bar as `answered / missed (rate%)` text + the Answer %
+  column via `pctCell`. **In a sub-queue COMBINED view it also prepends a
+  `Department` column and emits per-dept subtotals + an `All shown` grand
+  total** (single-dept exports are byte-identical to before) -- see CLAUDE.md's
+  sub-queue combined-view decision, and S43. `drive-subqueue.js` is the
+  ONLY automated coverage of any CSV writer in this repo (both shapes, asserted
+  from real Blob bytes); S43 remains the manual walk over the rest.
+- **Source column + roster-only totals (Phase D).** The agent table's
+  Source column (between Agent and the Answered/Missed bar) renders one of
+  three chips per row: **ROSTER** (accent-soft), **BOTH** (good-soft, rostered
+  AND matched via shared-queue extensions), **QUEUE** (warn-soft, queue-only
+  floaters) -- the QUEUE chip suffixing the floater's `sourceHomes` as a dept
+  list, e.g. `QUEUE · Sales, Power`, or bare `QUEUE` when on no roster.
+  **In practice the QUEUE chip never renders HERE**, because
+  `getDepartmentSummary` locks scope to `roster` (see the decision above), so
+  `queueOnlyAgentCount` is 0 and the "N floaters excluded" caption stays
+  hidden. The chip helpers and the `sourceHomes` machinery are NOT dead
+  code -- they serve the IR picker's floater group (INV-53) and Diagnostics,
+  which is why the whole path is still documented.
+  `sourceHomes` is built lazily server-side by `Data.gs::buildDeptsByAgent_`
+  (only when at least one queue-only row exists) and iterates every dept
+  including `OVERVIEW_HIDDEN_DEPTS` in `getAllDepartments_` alphabetical
+  order, so the array is stable; client `sourceChipHtml_` / `sourceChipCsv_`
+  array-check defensively and fall back to bare `QUEUE` if it's missing.
+  **The totals row sums only `matchedViaRoster=true` rows** -- queue-only
+  floaters never factor into dept averages -- and the totals object carries
+  `rosterAgentCount` + `queueOnlyAgentCount`, driving a
+  'Total (roster only · N floaters excluded)' caption when the latter is
+  non-zero ('Total (roster only)' in the CSV). **The totals row is a pinned
+  `<tbody class="agents-totals">` ABOVE the data rows, not a `<tfoot>`** -- a
+  real tfoot always renders at the bottom; the element ids `agents-tfoot` /
+  `ov-user-tfoot` were kept so the JS is unchanged. INV-04 (exact agent-name
+  match) and INV-23 (queue-sentinel `A_Q_*` rows skipped) both hold. See
+  INV-53 for the floater-exclusion contract across all dept-level aggregations.
+- **Phase E UI surfaces** (the `E#` codes appear in code comments across
+  script.html / styles.html / Code.gs / IndividualReport.gs / Data.gs, so
+  they stay attached to their affordance). Four client surfaces, each with a
+  data dependency worth knowing: (**E2**) the **work-window pill**
+  (`#work-window-pill`) reads `window.__WORK_WINDOW__`, injected by
+  `renderDashboard_` from `Config.gs::DASHBOARD_WORK_WINDOW` -- the dashboard's
+  read-only mirror of cdr-import's pipeline constants, so **changing those
+  constants requires syncing this one** (INV-06). (**E3**) the `.diagnostics`
+  block's severity chip: `.diag-severity-warn` for 1-5 issues,
+  `.diag-severity-bad` for >5, off the same
+  `rosterWithNoData.length + queueOnlyMatched.length` total the collapsible
+  reads. (**E4**) the **EXCLUDED FROM TEAM AVG pill** (`.ir-excluded-pill`) on
+  IR agent cards, from the `excludedFromTeamAvg` field on each `summaryData`
+  row (INV-26). (**E9**) the **QCD days-to-violation forecast**
+  (`#qcd-forecast`): a 7-day linear regression on `dailySeries.abandonedPct`
+  (INV-51) projecting when the 4% threshold crosses, hidden in three healthy
+  states -- currentY >= 4 (already over), slope <= 0.01 (flat / improving), or
+  a projected crossing more than 7 days out. The three later Phase E items
+  each have their own home: **E5** per-row WoW chips (CLAUDE.md's "Per-row
+  prior-period chips" gotcha), **E8** alert Skip Dates (INV-33 / INV-34),
+  **E10** threshold drift (its own CLAUDE.md gotcha bullet).
+- **My Department export: ONE grid, two serialisations.** The agent table's
+  "Export ▾" menu (R9-2: the Insights-toolbar dropdown convention replaced the
+  old one-click download icon; the wrap keeps the `#csv-export-btn` id so the
+  hidden-until-data gating is unchanged, and it sits horizontally beside
+  Refresh in `.control-btn-row`) offers **Download CSV** and **Copy for
+  spreadsheet**, both rendering the current view (scope, date range, sort
+  order) client-side with no server round-trip. Both read `deptTableGrid_`,
+  which returns RAW cells plus the combined-view Department column and
+  subtotal rows -- **a new column must be added there, not per format**, or
+  the file and the clipboard drift. The clipboard copy is TAB-separated
+  (`deptGridToTsv_`), because a spreadsheet PASTE splits on tabs and comma
+  text lands in a single column; the downloaded file stays real CSV. Cells go
+  through `csvSafeCell_` in BOTH (the injection rule's "CSV or not" clause --
+  the paste target is a spreadsheet), and the TSV additionally FLATTENS any
+  tab/newline inside a cell, since a paste has no quoting convention to escape
+  into and one stray tab shifts every column after it silently. ENFORCED:
+  `html-include-structure.test.js` pins both writers' `csvSafeCell_` routing,
+  and `drive-subqueue.js` asserts the real clipboard bytes (tab-separated,
+  every row carrying the header's column count, same row set as the CSV).
+- **Draggable / resizable modals.** All modals can be
+  repositioned via header drag and resized via a bottom-right
+  corner handle. Position and size reset on close so the next
+  open starts centered at default size. Disabled below 768px
+  viewport width (mobile). (Insights left this set when it became
+  a page -- docs/insights-page-plan.md.)
+- **Universal Help FAB.** A floating circled-`?` button (`#help-fab`,
+  `z-index:150`) stays above report modals so Help is always one click
+  away; it opens the SAME `#help-modal` as the header `?`. Because all
+  modals share `z-index:100` and stack by DOM order, `#help-modal` is
+  lifted to `z-index:200` so Help opened from the FAB while a report
+  modal is already open renders ABOVE it (and the FAB tucks itself away
+  while Help is open). Hide-able via the Settings toggle
+  `#help-fab-toggle` (localStorage `cdr.help.fab` = `off`); the header
+  `?` stays as the always-present fallback. Per-report client prefs +
+  this key live in localStorage (see the per-report prefs note above).
+  The modal content is a **two-pane reference** (`.help-layout`): a
+  folder-tree nav (`<details>` categories of `.help-link` topics) + a
+  single-topic content panel (`.help-topic` sections), wired by
+  `initHelpNav_` with a title+body search box. Since R10-1 a
+  `.help-quickstart` strip sits between the modal header and the
+  two-pane layout: the four quick-start question chips
+  (`#help-launcher`, injected by `initOverviewLauncher_`) + the
+  `#help-tour-btn` tour replay -- both close Help via its own close
+  button before acting (the F-42 focus-trap discipline). Add a topic = a nav
+  `.help-link[data-topic=KEY]` + a `<section id="help-topic-KEY">`; all
+  static markup in `dashboard.html`, no server endpoint.

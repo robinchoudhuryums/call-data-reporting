@@ -536,8 +536,10 @@ When something looks wrong, before assuming a code bug, check:
     Trx / reason) -- a PII surface -- so leave it off until that's signed off.
     Best-effort (never blocks/fails the create); needs `script.send_mail`
     (already present) + `DASHBOARD_URL` for the deep link. (b) **§5 activity
-    trail**: the `escalation_activity` table is auto-created on first write
-    (no setup() change). After deploying, run the admin editor function
+    trail**: the `escalation_activity` table is auto-created by the first
+    escalation call, read OR write (no setup() change) -- every call runs the
+    schema check, bounded to once per execution and once an hour across
+    executions (`escEnsureTableOnce_`, AC-5; DX-12). After deploying, run the admin editor function
     `backfillEscalationActivity()` ONCE to seed `created`/`resolved` rows for
     escalations logged before the trail existed (idempotent, safe to re-run);
     otherwise their Activity timelines render only events that happen post-deploy.

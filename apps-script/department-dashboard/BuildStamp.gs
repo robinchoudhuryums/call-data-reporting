@@ -21,7 +21,14 @@
  * bypassed the deploy helper and its CI gates (TST-7/F-10). Do not
  * "fix" the placeholder to look like a stamp.
  *
- * The Health page renders this in the pipeline section
- * (SystemHealth.gs, 'build-stamp' row); nothing else reads it.
+ * Three readers (DX-4 corrected an earlier "nothing else reads it"):
+ *  - the Health page's 'build-stamp' row (SystemHealth.gs, pipeline section);
+ *  - Code.gs, which injects it into BOTH page templates as
+ *    window.__BUILD_STAMP__ (the manager/admin client and the agent app);
+ *  - SystemHealth.gs::recordPresence, which returns it on every presence
+ *    beat -- each client compares that to its load-time __BUILD_STAMP__ and
+ *    shows the one-time "new version -- refresh" notice on a mismatch.
+ * So a bare `clasp push -f` also disarms the update notice (both sides read
+ * the same placeholder, and an empty/equal pair is suppressed).
  */
 var BUILD_STAMP_ = 'unstamped — last push bypassed scripts/deploy.sh';
