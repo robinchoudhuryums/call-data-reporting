@@ -162,6 +162,14 @@ test('P8/P26 wiring: the bulk branch guards QCD+CSR at queue time, gated on forc
     'bulk QCD guard present + forceDeleted-gated');
   assert.match(src, /guardForceRebuildLoss_\(targetSS, 'bulkBackfill:CSR', dateObj,\s*\n?\s*force && forceDeleted\.csr/,
     'bulk CSR guard present + forceDeleted-gated');
+  // CR-9: CDR Historical has a live reader (the Custom Report Builder), so it
+  // is guarded on BOTH paths; Q Path has none and stays unguarded.
+  assert.match(src, /guardForceRebuildLoss_\(targetSS, 'bulkBackfill:CDR', dateObj,[^\n]*\n?\s*force && forceDeleted\.cdr/,
+    'bulk CDR guard present + forceDeleted-gated');
+  assert.match(src, /guardForceRebuildLoss_\(targetSS, 'processIntegratedHistory:CDR', dateObj, force && fdel\.cdr, cdrCount\)/,
+    'daily CDR guard present + forceDeleted-gated');
+  assert.match(src, /forceDeleted\.cdr = !!existsInCDR;/, 'the CDR delete is captured');
+  assert.ok(!/QPath', dateObj/.test(src), 'Q Path has no reader, so no guard');
   assert.match(src, /force: !!\(force && forceDeleted\.dqe\)/,
     'bulk DQE build opts.force carries the forceDeleted gate');
   assert.match(src, /force: !!\(force && fdel\.dqe\)/,
@@ -210,7 +218,7 @@ test('I-6: processNewImport COMPUTES before the force-delete block (a compute th
   const iCompute = src.indexOf('const results = calculateMetricsInMemory(cleanData, configSheet);');
   const iQcd = src.indexOf('results.qcdData = calcQcdReport(cleanData, targetSS);');
   const iCsr = src.indexOf('results.csrData = calcCsrReport(cleanData, targetSS);');
-  const iForce = src.indexOf('const forceDeleted = { qcd: false, csr: false, dqe: false };');
+  const iForce = src.indexOf('const forceDeleted = { qcd: false, csr: false, dqe: false, cdr: false };');   // CR-9 added cdr
   const iSource = src.indexOf('if (sourceData.length < 2) throw new Error("Source sheet empty.");');
   assert.ok(iCompute > 0 && iQcd > 0 && iCsr > 0 && iForce > 0 && iSource > 0, 'anchors present');
   assert.ok(iSource < iCompute, 'P-3: source validated first');

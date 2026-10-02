@@ -281,8 +281,14 @@ function generateCustomReportCore_() {
     useComp = true;
     start2  = new Date(cStartInput);
     start2.setHours(0, 0, 0, 0);
-    const durationMs = end1 - start1;
-    end2 = new Date(start2.getTime() + durationMs);
+    // CR-10 (broad-scan 2026-10-01): the comparison window is the same number
+    // of CALENDAR days, counted between noon anchors -- adding the current
+    // window's MILLISECOND length gained a day whenever only one window held
+    // the November fall-back (7 days + 1 h rolled the end past midnight, so a
+    // 7-day window compared against 8).
+    const noon = function (d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12); };
+    const spanDays = Math.round((noon(end1) - noon(start1)) / 86400000);
+    end2 = new Date(start2.getFullYear(), start2.getMonth(), start2.getDate() + spanDays);
     end2.setHours(23, 59, 59, 999);
     dashSheet.getRange('B6').setValue(end2);
   } else {

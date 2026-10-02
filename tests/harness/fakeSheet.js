@@ -120,6 +120,20 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
         numRows: numRows, numCols: numCols, format: fmt });
       return this;
     },
+    // The per-cell twin (CR-3, broad-scan 2026-10-01): RECORDED the same way,
+    // with the grid on `formats` -- a restore-the-original-formats path is
+    // asserted against it. Shape-checked like the real API (a grid of the
+    // range's size), so a wrong-sized restore throws here as it would live.
+    setNumberFormats: function (grid) {
+      if (!Array.isArray(grid) || grid.length !== numRows
+          || grid.some(function (r) { return !Array.isArray(r) || r.length !== numCols; })) {
+        throw new Error('setNumberFormats: the grid must be ' + numRows + 'x' + numCols);
+      }
+      if (!sheet._numberFormats) sheet._numberFormats = [];
+      sheet._numberFormats.push({ startRow: startRow, startCol: startCol,
+        numRows: numRows, numCols: numCols, format: '(per-cell)', formats: grid });
+      return this;
+    },
     // Batch 4 / Phase 2: MODELLED, not stubbed (the clearContent discipline).
     // Real Range.sort orders the range's rows by the given ABSOLUTE column,
     // numbers + Dates first (as numbers), then text, blanks last, stably;

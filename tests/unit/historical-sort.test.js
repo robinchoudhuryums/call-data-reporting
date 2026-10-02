@@ -372,3 +372,73 @@ test('DD-7 (broad-scan 2026-09-17): an all-TEXT date column is single-typed but 
   assert.match(dqe.notes, /sorts LEXICALLY/);
   assert.equal(sortCalls(ss, 'DQE Historical Data'), 0, 'a lexical sort would reorder it WRONGLY and then read as sorted');
 });
+
+// CR-5 (broad-scan 2026-10-01): cdr-import's bulk chain runs in ANOTHER project,
+// so the sort cannot be locked out of it; its force path deletes a date's rows
+// by position from a date-column READ, and a sort in between deletes other
+// dates. The chain marks the workbook (spreadsheet DeveloperMetadata); a FRESH
+// marker defers every sheet, a killed run's stale one is ignored.
+function withBulkMarker_(ss, iso) {
+  const metas = iso ? [{ getValue: function () { return iso; } }] : [];
+  ss.createDeveloperMetadataFinder = function () {
+    return { withKey: function (k) {
+      return { find: function () { return k === 'cdrImport.bulkInProgress' ? metas : []; } };
+    } };
+  };
+}
+
+test('CR-5: a fresh cdr-import bulk marker defers EVERY sheet (success rows, nothing read or sorted)', function () {
+  const ss = install(fiveSheets({
+    'QCD Historical Data': colCSheet([dateCell(2026, 6, 3), dateCell(2026, 6, 1)]),
+  }), { HISTORICAL_SORT_ENABLED: 'true' });
+  withBulkMarker_(ss, new Date(Date.now() - 5 * 60000).toISOString());
+  const res = h.call('runHistoricalSortCheck_');
+  assert.ok(res.bulkInProgress && res.bulkInProgress.fresh);
+  const rows = phRows(ss);
+  assert.equal(rows.length, 5);
+  rows.forEach(function (r) {
+    assert.equal(r.status, 'success', r.step + ': deferred, not failed');
+    assert.match(String(r.notes), /^skipped -- the cdr-import bulk chain is running/, r.step);
+  });
+  NAMES.forEach(function (n) { assert.equal(sortCalls(ss, n), 0, n + ' not sorted'); });
+});
+
+test('CR-5: a marker older than the bulk budget (a killed run) is ignored -- the sort runs', function () {
+  const ss = install(fiveSheets({
+    'QCD Historical Data': colCSheet([dateCell(2026, 6, 3), dateCell(2026, 6, 1)]),
+  }), { HISTORICAL_SORT_ENABLED: 'true' });
+  withBulkMarker_(ss, new Date(Date.now() - 3 * 3600000).toISOString());
+  const res = h.call('runHistoricalSortCheck_');
+  assert.equal(res.bulkInProgress.fresh, false);
+  assert.equal(sortCalls(ss, 'QCD Historical Data'), 1);
+});
+
+test('CR-5: cdr-import sets the marker once the workbook is open and clears it in the bulk finally (pause included)', function () {
+  const imp = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const rep = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'sheetRepairs.js'), 'utf8');
+  const key = /var BULK_IN_PROGRESS_KEY_ = '([^']+)';/.exec(imp);
+  const key2 = /var HISTORICAL_SORT_BULK_KEY_ = '([^']+)';/.exec(rep);
+  assert.ok(key && key2 && key[1] === key2[1], 'writer and reader agree on the metadata key');
+  const fn = imp.slice(imp.indexOf('function processBulkQueue('), imp.indexOf('\nfunction ', imp.indexOf('function processBulkQueue(') + 1));
+  assert.ok(fn.indexOf('bulkMarkerSet_(targetSS);') > fn.indexOf('targetSS = SpreadsheetApp.openById('), 'set after the open');
+  assert.match(fn, /\} finally \{\s*\n\s*bulkMarkerClear_\(bulkMarkerSS\);/, 'cleared on every exit');
+  // Behavioural: the writer adds a DOCUMENT-visible marker and removes it again.
+  const hi = loadGas({ project: 'cdr-import', files: ['autoImport.js'] });
+  const added = [];
+  const store = [];
+  const fake = {
+    addDeveloperMetadata: function (k, v) {
+      assert.equal(arguments.length, 2, 'default DOCUMENT visibility -- PROJECT would hide it from cdr-report');
+      added.push(k); store.push({ k: k, remove: function () { store.splice(store.indexOf(this), 1); } });
+    },
+    createDeveloperMetadataFinder: function () {
+      return { withKey: function (k) { return { find: function () { return store.filter(function (m) { return m.k === k; }); } }; } };
+    },
+  };
+  hi.call('bulkMarkerSet_', fake);
+  hi.call('bulkMarkerSet_', fake);
+  assert.equal(store.length, 1, 'a re-set replaces, never stacks');
+  hi.call('bulkMarkerClear_', fake);
+  assert.equal(store.length, 0);
+  assert.doesNotThrow(function () { hi.call('bulkMarkerSet_', {}); }, 'no API (harness) -> a no-op');
+});

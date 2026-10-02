@@ -315,3 +315,69 @@ test('CRT-5: a slot repair with nothing coerced takes no snapshot and rewrites n
   assert.equal(h.state.createdSpreadsheets.length, 0, 'no backup workbook touched (30 rows x 20 cols is over the threshold)');
   assert.equal(h.state.props.HR_BACKUP_SS_ID, undefined);
 });
+
+// ---- broad-scan 2026-10-01 Batch 9: CR-2 / CR-3 ------------------------------
+
+// CR-2: row count + date/agent could not see a SAME-POSITION rebuild (a force
+// re-import that lands the date's rows back on the same rows with new values).
+test('CR-2: a same-position rewrite of the columns the merge rewrites aborts it, nothing written', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': [
+    new Array(34).fill('h'),
+    dqeRow('06/22/2026', 'Anna Smith', { 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+    dqeRow('06/22/2026', 'Anna Smith', { 29: 'P2', 30: 'M2', 31: '9:15:00' }),
+  ] } });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const real = h.ctx.scMergeAlreadyApplied_;
+  h.ctx.scMergeAlreadyApplied_ = function (a, b) {
+    sheet._data[1][5] = '9';   // same rows, same date + agent, a rebuilt value in col F
+    return real(a, b);
+  };
+  try {
+    assert.throws(function () { h.call('repairDqeDuplicateMerge'); },
+      /repairDqeDuplicateMerge ABORTED before writing: .*the values in the columns it rewrites changed/);
+  } finally { h.ctx.scMergeAlreadyApplied_ = real; }
+  assert.equal(sheet.getLastRow(), 3, 'no row deleted');
+});
+
+test('CR-2: an UNCHANGED sheet still passes the checksum (no false abort)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': [
+    new Array(34).fill('h'),
+    dqeRow('06/22/2026', 'Anna Smith', { 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+    dqeRow('06/22/2026', 'Anna Smith', { 29: 'P2', 30: 'M2', 31: '9:15:00' }),
+  ] } });
+  const res = h.call('repairDqeDuplicateMerge');
+  assert.equal(res.merged, 1);
+});
+
+// CR-3: an abort inside the slot repair used to leave the group in the numeric
+// lens, and after the first group its "Nothing was written" was false.
+test('CR-3: a slot-repair abort restores the group\'s formats and names what was already written', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  const coerced = Object.assign(new Array(34).fill(''), { 0: 'June, 26', 1: '06/22/2026', 2: 'Anna Smith', 10: 0.4375, 31: 0.5 });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': [
+    new Array(34).fill('h'), coerced, dqeRow('06/23/2026', 'Bob Jones', {}),
+  ] } });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  // The build lands during the SECOND group (AF): the third re-verify call is
+  // group 2's run-level check.
+  const real = h.ctx.hrReverifyRows_;
+  let calls = 0;
+  h.ctx.hrReverifyRows_ = function (sh, snap, label) {
+    calls++;
+    if (calls === 3) sheet.appendRow(dqeRow('06/24/2026', 'Zed New', {}));
+    return real(sh, snap, label);
+  };
+  const realBackup = h.ctx.hrBackupBeforeApply_;
+  h.ctx.hrBackupBeforeApply_ = function () { return null; };
+  let err = null;
+  try { h.call('repairDqeSlotTimestamps'); } catch (e) { err = e; }
+  finally { h.ctx.hrReverifyRows_ = real; h.ctx.hrBackupBeforeApply_ = realBackup; }
+  assert.ok(err, 'aborted');
+  assert.match(err.message, /Already written before the abort .*: K-AC\. NOT written: AF/);
+  assert.ok(!/Nothing was written/.test(err.message), 'no longer claims nothing was written');
+  const restore = (sheet._numberFormats || []).filter(function (f) { return f.format === '(per-cell)' && f.startCol === 32; });
+  assert.equal(restore.length, 1, 'AF got its ORIGINAL per-cell formats back, not left in the numeric lens');
+  assert.equal(sheet.getRange(2, 11).getValue(), '10:30:00', 'the K-AC group that passed its re-check was written');
+});

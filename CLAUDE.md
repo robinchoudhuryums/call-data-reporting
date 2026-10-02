@@ -441,9 +441,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `tests/unit/sheet-repairs-backup.test.js` fails when one of the applies
   writes before it. **And re-verifies before it writes (CRT-7):** the daily
   build runs in another project, so a DQE apply fingerprints row identity
-  (`hrRowFingerprint_`) before reading and calls `hrReverifyRows_` before its
-  first write, aborting with nothing written -- the source pin in
-  `sheet-repairs-merge.test.js` names the five current applies.
+  plus a checksum of the columns it rewrites (`hrRowFingerprint_`, CR-2)
+  before reading and calls `hrReverifyRows_` AFTER the snapshot and right
+  before its first write (CR-1), aborting if anything moved -- the order is
+  pinned in `sheet-repairs-backup.test.js` for all five applies.
 - **A dated sheet read is bounded by a min/max SPAN, not a tail scan -- and the
   discriminator is whether that sheet is date-ORDERED.** Two dashboard readers
   answer a windowed question against a years-deep sheet, and both do it the same
@@ -1584,11 +1585,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   only when force AND that sheet's date rows were ACTUALLY deleted** (the
   caller's per-sheet `forceDeleted` capture), so an always-force Manual
   Export of a first-time light day is a legitimate rows:0, never a false
-  "data may be lost" alarm. CDR / QPath are NOT dashboard-read (INV-52 --
-  legacy DQE Report only) so they're intentionally left unguarded.
+  "data may be lost" alarm. **CDR is guarded too (CR-9: its live reader is
+  cdr-report's Custom Report Builder); Q Path has NO reader and is left
+  unguarded on purpose** (INV-52 lists every reader).
   **When a historical sheet gains its
-  first dashboard reader, add its force-path guard in the same commit** --
-  the guard list is keyed on "is this dashboard-read", and that property
+  first reader, add its force-path guard in the same commit** --
+  the guard list is keyed on "is this sheet read", and that property
   changes over time. A NON-force empty rebuild is a legitimate no-op (F5) and
   is never flagged. New force-path writers that delete-then-rebuild must call
   one of these. The delete itself (`deleteHistoricalRowsForDate`) reads only

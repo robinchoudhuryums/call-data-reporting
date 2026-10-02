@@ -2048,12 +2048,16 @@ When something looks wrong, before assuming a code bug, check:
     sheet are kept (`HR_BACKUP_KEEP_`, CRT-5: the DQE repair chain is five
     applies, so the pre-chain original survives the whole chain; ~6.6M of the
     backup workbook's 10M cells; older ones deleted via `deleteSheet`, so no
-    Drive scope). Previews never back up, and neither does a slot repair that
-    finds nothing coerced. Every DQE apply also re-checks the row identity
-    (row count + date/agent columns) right before its first write and ABORTS
-    with nothing written if the sheet changed since it was read (CRT-7: the
-    daily build runs in another project) -- re-run it outside the build
-    window. The apply log names the tab and
+    Drive scope; since CR-4 the old tabs are pruned to 5 BEFORE the copy, so
+    the workbook never briefly holds 7). Previews never back up, and neither
+    does a slot repair that finds nothing coerced. Every DQE apply also
+    re-checks the row identity (row count + date/agent columns, plus -- CR-2 --
+    a checksum of the columns it rewrites) AFTER the snapshot and right before
+    its first write (CR-1), and ABORTS if the sheet changed since it was read
+    (CRT-7: the daily build runs in another project) -- re-run it outside the
+    build window. The slot repair writes K-AC and AF as two groups, so its
+    abort message names any group already written (CR-3; those writes passed
+    their own re-check and are correct). The apply log names the tab and
     the workbook URL. **Why a separate workbook:** a DQE copy is ~1.1M cells and
     the CDR Report workbook is already large, so in-workbook copies could reach
     the 10M-cell cap; the backup workbook holds its own.
@@ -2132,7 +2136,14 @@ When something looks wrong, before assuming a code bug, check:
     resumes when the backfill clears its pointer. A pointer older than 3 days
     turns into a `STALE-POINTER` failure: an abandoned backfill. Re-run it to
     completion or delete the property. Pointers written before CRT-6 carry no
-    age and never go stale; re-running the backfill once stamps them. The bulk path (`processBatchArchive`) now logs
+    age and never go stale; re-running the backfill once stamps them.
+    **CR-5 (2026-10-02):** every sheet is also skipped (a `success` row,
+    "skipped -- the cdr-import bulk chain is running") while cdr-import's bulk
+    chain holds its run: `processBulkQueue` puts a `cdrImport.bulkInProgress`
+    DeveloperMetadata marker on the CDR Report workbook and removes it when the
+    invocation ends (a pause included), because its force path deletes rows by
+    position and a sort in between would delete other dates. A marker older
+    than 45 minutes is a killed run's leftover and is ignored. The bulk path (`processBatchArchive`) now logs
     its own post-write sort failure under the same step name, so the next
     clean nightly run supersedes it; until the check is installed such a row
     stays flagged in "Recent pipeline step failures", which is correct — the

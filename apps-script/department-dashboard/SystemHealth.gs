@@ -58,6 +58,7 @@ var HEALTH_FAILURE_ONLY_STEPS_ = [
   'neonMirror:gave-up',
   'bulkBackfill:QCD',
   'bulkBackfill:CSR',
+  'bulkBackfill:CDR',               // CR-9: the bulk-path CDR Historical force-loss guard
   'processBatchArchive:CDR:neon',   // ING-3
   'processBatchArchive:QCD:neon',
 ];

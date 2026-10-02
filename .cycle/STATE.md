@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — broad-scan Batch 9 IMPLEMENTED on the same branch (block 222).**
+  cdr-report repair + report safety: CR-1 (snapshot before the re-verify),
+  CR-2 (rewritten-columns checksum in the fingerprint), CR-3 (slot abort
+  restores formats + honest message), CR-4 (prune before copy), CR-5
+  (cross-project bulk marker the nightly sort honours), CR-9 (INV-52 readers
+  rewritten; CDR Historical force guard; Q Path stays unguarded), CR-7
+  (detect-only col D preview), CR-10 (CRB comparison window in calendar
+  days). 2100/2100 green. **Owner-side:** deploy cdr-report + cdr-import
+  (blocking) and the dashboard. **Where I left off:** Batches 1-9 done and
+  pushed, no PR opened; next suggested Batch 10 (performance: DL-7, DL-8).
 - **2026-10-02 — broad-scan Batch 8 IMPLEMENTED on the same branch (block 221).**
   Client accessibility + hardening: CL-3 (escalation focus restore, rendered
   check in drive-admin), CL-21 (remove/restore-dept in-flight guard), CL-13

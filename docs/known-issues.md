@@ -198,6 +198,19 @@ are rebuilt (same runbook as above). Pinned by
 
 ---
 
+## Coerced queue-extension cells (DQE col D) -- detect-only (CR-7, 2026-10-02)
+
+Col D holds an agent's comma-joined queue extensions and coerces like K-AC /
+AD-AF: without the `@` format, `"103,108"` becomes the NUMBER `103108`, which
+every reader splits on commas into ONE bogus extension -- the real ones drop
+out of the dept's ext set and floater recognition (INV-53) shifts with no
+error. The writers protect col D today; old rows may not be. Run
+`previewDqeQueueExtColumn()` (cdr-report, editor; read-only) to count and date
+them. There is deliberately NO automatic repair: `103108` cannot be split back
+with certainty (103+108 or 1031+08), so the fix is to rebuild the listed dates
+from Raw Data (Operator State #56). A numeric cell of five digits or fewer is
+a lossless single extension and reads correctly.
+
 ## Sheets auto-coercion of DATE-shaped strings (writer-side)
 
 **Status:** One instance fixed (Direct Call History, F-3); one still

@@ -1256,7 +1256,7 @@ test('O-3 / C2-5: a failure-only step name ages out of pipe-failures; a recurrin
   const names = h.ctx.HEALTH_FAILURE_ONLY_STEPS_;
   ['processIntegratedHistory:CDR:neon', 'processIntegratedHistory:QCD:neon', 'processIntegratedHistory:Direct:neon',
    'buildDQE:neon', 'processIntegratedHistory:CSR-guard', 'neonMirror:gave-up', 'bulkBackfill:QCD', 'bulkBackfill:CSR',
-   'processBatchArchive:CDR:neon', 'processBatchArchive:QCD:neon']
+   'bulkBackfill:CDR', 'processBatchArchive:CDR:neon', 'processBatchArchive:QCD:neon']
     .forEach(function (n) { assert.ok(names.indexOf(n) !== -1, n + ' is failure-only'); });
   const inv = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'docs', 'invariants.md'), 'utf8');
   names.forEach(function (n) { assert.ok(inv.indexOf(n) !== -1, 'INV-44 names ' + n); });

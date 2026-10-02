@@ -81,16 +81,49 @@ var HR_BACKUP_SS_NAME_ = 'CDR Report -- repair backups';
 // re-check it immediately before the first write, aborting with nothing
 // written. A mitigation, not a serialization -- the window shrinks to the
 // write itself.
-function hrRowFingerprint_(sheet) {
+// CR-1 (broad-scan 2026-10-01): the re-check runs AFTER hrBackupBeforeApply_,
+// never before it -- the snapshot copies the ~1.2M-cell sheet and takes long
+// enough for a build to land inside it, which a re-check placed before the
+// copy could not see. Order in every apply: fingerprint -> read/compute ->
+// snapshot -> re-verify -> write. Pinned by sheet-repairs-backup.test.js.
+// CR-2 (broad-scan 2026-10-01): row count + date/agent cannot see a
+// SAME-POSITION rebuild -- a force re-import deletes a date's rows, re-appends
+// them and the re-sort lands them on the same rows with the same B..C and NEW
+// values. `cols` ([[startCol, numCols], ...]) adds a checksum of the columns
+// the apply REWRITES, so that rebuild aborts the write too. Display values,
+// like the keys: format-stable between the fingerprint and the re-check in
+// every apply (the slot repair, which changes its own columns' format
+// mid-run, fingerprints each group AFTER its own read instead).
+function hrRowFingerprint_(sheet, cols) {
   var lastRow = sheet.getLastRow();
   var keys = lastRow >= 2 ? sheet.getRange(2, 2, lastRow - 1, 2).getDisplayValues() : [];
-  return { lastRow: lastRow, keys: keys.map(function (r) { return r[0] + '\u0001' + r[1]; }).join('\u0002') };
+  return { lastRow: lastRow, keys: keys.map(function (r) { return r[0] + '\u0001' + r[1]; }).join('\u0002'),
+           cols: cols || null, sum: hrColsChecksum_(sheet, lastRow, cols) };
+}
+// 32-bit FNV-1a over every display string of the given column ranges, with a
+// separator after each cell (so "1,2"+"3" never equals "1"+",23"). Never
+// concatenates the grid into one string -- a DQE rewrite range is ~1M cells.
+function hrColsChecksum_(sheet, lastRow, cols) {
+  if (!cols || !cols.length || lastRow < 2) return '';
+  var h = 0x811c9dc5;
+  for (var c = 0; c < cols.length; c++) {
+    var grid = sheet.getRange(2, cols[c][0], lastRow - 1, cols[c][1]).getDisplayValues();
+    for (var i = 0; i < grid.length; i++) {
+      for (var j = 0; j < grid[i].length; j++) {
+        var str = String(grid[i][j]);
+        for (var k = 0; k < str.length; k++) { h ^= str.charCodeAt(k); h = Math.imul(h, 16777619); }
+        h ^= 0x1f; h = Math.imul(h, 16777619);
+      }
+    }
+  }
+  return (h >>> 0).toString(16);
 }
 function hrReverifyRows_(sheet, snap, label) {
-  var now = hrRowFingerprint_(sheet);
+  var now = hrRowFingerprint_(sheet, snap.cols);
   var why = now.lastRow !== snap.lastRow
     ? 'row count changed (' + snap.lastRow + ' -> ' + now.lastRow + ')'
-    : (now.keys !== snap.keys ? 'the date/agent columns changed (a sort or rewrite)' : null);
+    : (now.keys !== snap.keys ? 'the date/agent columns changed (a sort or rewrite)'
+      : (now.sum !== snap.sum ? 'the values in the columns it rewrites changed (a rebuild of the same rows)' : null));
   if (why) {
     throw new Error(label + ' ABORTED before writing: the sheet changed since it was read -- ' + why
       + ' (the daily build runs in another project and cannot be locked out). Nothing was written; '
@@ -119,18 +152,23 @@ function hrBackupBeforeApply_(ss, sheet, label, cellCount) {
   var src = sheet.getName();
   var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmm');
   var base = src + '|' + stamp + '|' + String(label || 'repair');
+  // Prune: newest HR_BACKUP_KEEP_ per source sheet. The stamp leads the name,
+  // so lexical order is chronological. CR-4 (broad-scan 2026-10-01): pruned to
+  // KEEP-1 BEFORE the copy, not to KEEP after it -- the old order briefly held
+  // KEEP+1 DQE copies (~7.7M cells), so the workbook would hit Google's 10M
+  // ALLOCATED-cell cap a few thousand DQE rows sooner, and from then on every
+  // repair's copyTo would fail and block the apply. The window is still exactly
+  // KEEP once the new copy lands.
+  var prefix = src + '|';
+  var mine = backupSs.getSheets()
+    .filter(function (t) { return t.getName().indexOf(prefix) === 0; })
+    .sort(function (a, b) { return a.getName() < b.getName() ? -1 : (a.getName() > b.getName() ? 1 : 0); });
+  while (mine.length > HR_BACKUP_KEEP_ - 1) backupSs.deleteSheet(mine.shift());
   var copy = sheet.copyTo(backupSs);
   var tabName = base;
   for (var k = 2; k < 50; k++) {                 // same-minute re-run: suffix, never overwrite
     try { copy.setName(tabName); break; } catch (e) { tabName = base + '-' + k; }
   }
-  // Prune: newest HR_BACKUP_KEEP_ per source sheet. The stamp leads the name,
-  // so lexical order is chronological.
-  var prefix = src + '|';
-  var mine = backupSs.getSheets()
-    .filter(function (t) { return t.getName().indexOf(prefix) === 0; })
-    .sort(function (a, b) { return a.getName() < b.getName() ? -1 : (a.getName() > b.getName() ? 1 : 0); });
-  while (mine.length > HR_BACKUP_KEEP_) backupSs.deleteSheet(mine.shift());
   Logger.log('[repair-backup] ' + src + ': ' + cellCount + ' cell(s) about to be rewritten; snapshot "'
     + tabName + '" in ' + backupSs.getUrl() + ' (newest ' + HR_BACKUP_KEEP_ + ' kept). Restore = copy '
     + 'that tab back over the sheet (Operator State #59).');
@@ -179,6 +217,7 @@ function repairDqeSlotTimestamps_(dryRun) {
 
   var fixed = 0, samples = [];
   var pending = [];                                    // [{ range, vals }] to write back on apply
+  var written = [];                                    // CR-3: groups already written on this apply
   if (!dryRun) {
     // CRT-5: a NO-OP apply used to snapshot the whole sheet (and rotate an
     // older, useful backup out) before discovering there was nothing to fix.
@@ -210,7 +249,9 @@ function repairDqeSlotTimestamps_(dryRun) {
     // still-coerced cells (a bare serial like "0.43302..." instead of
     // their date/time render) until the real repair was applied: a
     // dry-run-parity violation mid-repair.
-    var priorFormats = dryRun ? range.getNumberFormats() : null;
+    // CR-3: captured on APPLY too, so an abort can put them back (the lens
+    // below must never outlive a run that did not write this group).
+    var priorFormats = range.getNumberFormats();
 
     // Numeric lens: a coerced time-VALUE cell now returns its serial NUMBER
     // (not a 1899-epoch Date). Already-text cells stay strings. Applied even on
@@ -219,6 +260,10 @@ function repairDqeSlotTimestamps_(dryRun) {
     range.setNumberFormat('0.############');
     SpreadsheetApp.flush();
     var vals = range.getValues();
+    // CR-2: this group's values, AS READ under the lens -- the re-check below
+    // compares against them, so a rebuild of the same rows during the scan
+    // aborts the write (the run-level rowSnap was taken before the lens).
+    var grpSnap = dryRun ? null : hrRowFingerprint_(sheet, [[start, groups[g].count]]);
 
     for (var i = 0; i < vals.length; i++) {
       for (var j = 0; j < vals[i].length; j++) {
@@ -248,10 +293,29 @@ function repairDqeSlotTimestamps_(dryRun) {
     // repair was re-run to completion. The exposure window is now a single
     // group's read->write, and each completed group is durably repaired.
     if (!dryRun) {
-      hrReverifyRows_(sheet, rowSnap, 'repairDqeSlotTimestamps');   // CRT-7
+      try {
+        hrReverifyRows_(sheet, rowSnap, 'repairDqeSlotTimestamps');   // CRT-7
+        hrReverifyRows_(sheet, grpSnap, 'repairDqeSlotTimestamps');   // CR-2
+      } catch (e) {
+        // CR-3 (broad-scan 2026-10-01): an abort used to leave THIS group in
+        // the numeric lens (every still-coerced cell displaying as a bare
+        // serial), and from the second group on its "Nothing was written"
+        // was false -- K-AC had already been written. Restore the group's
+        // own formats and say exactly what was written.
+        range.setNumberFormats(priorFormats);
+        SpreadsheetApp.flush();
+        var msg = String((e && e.message) || e);
+        if (written.length) {
+          msg = msg.replace('Nothing was written; ', 'Already written before the abort (each group re-verified first, so '
+            + 'those writes are correct): ' + written.join(', ') + '. NOT written: ' + label
+            + (g < groups.length - 1 ? ' and the groups after it' : '') + '; ');
+        }
+        throw new Error(msg);
+      }
       range.setNumberFormat('@');
       range.setValues(vals);
       SpreadsheetApp.flush();
+      written.push(label);
     } else {
       // R8-E2 (REP-9's per-group discipline, applied to the PREVIEW too):
       // restore THIS group's formats immediately after its scan instead of
@@ -368,7 +432,7 @@ function repairDqeAbandonedIds_(dryRun) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('repairDqeAbandonedIds: no data rows.'); return; }
 
-  var rowSnap = hrRowFingerprint_(sheet);     // CRT-7
+  var rowSnap = hrRowFingerprint_(sheet, [[30, 2]]);     // CRT-7 + CR-2: AD..AE are rewritten
   var START_COL = 30, NUM_COLS = 2;            // AD..AE (abandoned parent IDs / missed-leg IDs). AF (32) is a TIME column -- recovered by repairDqeSlotTimestamps, NOT here.
   var range = sheet.getRange(2, START_COL, lastRow - 1, NUM_COLS);
   var vals  = range.getValues();               // coerced cells come back as Numbers; text/'' stay as-is
@@ -410,8 +474,8 @@ function repairDqeAbandonedIds_(dryRun) {
   // Lock AD-AE to plain text (so recovered values + the sentinel STAY text and
   // the columns can't re-coerce), then write back. (T-5: AF's plain-text lock
   // lives in the slot repair, which owns that column's recovery.)
-  hrReverifyRows_(sheet, rowSnap, 'repairDqeAbandonedIds');   // CRT-7
   hrBackupBeforeApply_(ss, sheet, 'abandoned-ids', vals.length * (vals[0] ? vals[0].length : 0));   // 1b
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeAbandonedIds');   // CRT-7 / CR-1: AFTER the snapshot, right before the write
   range.setNumberFormat('@');
   range.setValues(vals);
   SpreadsheetApp.flush();
@@ -504,7 +568,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
 
   var SLOT_START = 11, SLOT_N = 19, AF_COL = 32, SHIFT = DQE_TZ_SHIFT_SECONDS;
   var n = lastRow - 1;
-  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7
+  var rowSnap = hrRowFingerprint_(sheet, [[SLOT_START, SLOT_N], [AF_COL, 1]]);   // CRT-7 + CR-2: K-AC + AF are rewritten
   // TZ-safe reads: getDisplayValues returns the H:MM:SS strings (getValues would
   // drag the spreadsheet-vs-script TZ shift onto time-typed cells -- INV-02).
   var dates    = sheet.getRange(2, 2, n, 1).getDisplayValues();
@@ -652,8 +716,8 @@ function repairDqeOldPstTimestampShift_(dryRun) {
   }
 
   // Apply: rewrite ONLY changed rows (K-AC range + AF cell), as plain text.
-  hrReverifyRows_(sheet, rowSnap, 'repairDqeOldPstTimestampShift');   // CRT-7
   hrBackupBeforeApply_(ss, sheet, 'pst-shift', changes.length * (SLOT_N + 1));   // 1b
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeOldPstTimestampShift');   // CRT-7 / CR-1: AFTER the snapshot
   for (var x = 0; x < changes.length; x++) {
     var ch = changes[x];
     var sr = sheet.getRange(ch.rowNum, SLOT_START, 1, SLOT_N);
@@ -791,7 +855,7 @@ function mergeDqeDuplicateRows_(dryRun) {
 
   // Same read as the upsert (getDisplayValues, 34 cols): col B (idx 1) =
   // call_date, col C (idx 2) = agent_name.
-  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7
+  var rowSnap = hrRowFingerprint_(sheet, [[4, 31]]);   // CRT-7 + CR-2: D..AH are rewritten
   var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();
 
   var groups = {};   // key -> [0-based row indexes into data]
@@ -966,8 +1030,8 @@ function mergeDqeDuplicateRows_(dryRun) {
 
   // Plain-text-protect the coercion-prone cols on each target row, then write
   // cols D..AH only (A-C untouched -> no date-cell coercion).
-  hrReverifyRows_(sheet, rowSnap, 'repairDqeDuplicateMerge');   // CRT-7
   hrBackupBeforeApply_(ss, sheet, 'duplicate-merge', writes.length * 31 + deleteRows.length * sheet.getLastColumn());   // 1b
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeDuplicateMerge');   // CRT-7 / CR-1: AFTER the snapshot
   writes.forEach(function (w) {
     sheet.getRange(w.row, 4).setNumberFormat('@');           // D queue exts
     sheet.getRange(w.row, 11, 1, 19).setNumberFormat('@');   // K-AC slots
@@ -1428,7 +1492,7 @@ function normalizeDqeDateColumn_(dryRun) {
   // Typed from getValues, resolved from the DISPLAY (INV-02 discipline; and the
   // census classifier hdCellType_ is reused so "what counts as text:mdy" has
   // exactly one definition in this file).
-  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7
+  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7 (col B, the column it rewrites, is already in the keys)
   var vals = sheet.getRange(2, 2, n, 1).getValues();
   var disp = sheet.getRange(2, 2, n, 1).getDisplayValues();
   var targets = [];   // { row, date } in row order
@@ -1489,9 +1553,9 @@ function normalizeDqeDateColumn_(dryRun) {
     return out;
   }
 
-  hrReverifyRows_(sheet, rowSnap, 'repairDqeDateNormalize');   // CRT-7
   // 1b: snapshot first (one cell per target).
   out.backup = hrBackupBeforeApply_(ss, sheet, 'date-normalize', targets.length);
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeDateNormalize');   // CRT-7 / CR-1: AFTER the snapshot
   // Write in contiguous row runs so one setValues covers each block (the live
   // sheet is one 9,442-row block; a scattered case still works, just slower).
   var runStart = 0;
@@ -1620,12 +1684,39 @@ function hsSortSheet_(sheet, dateCol) {
   SpreadsheetApp.flush();
 }
 
+// CR-5 (broad-scan 2026-10-01): cdr-import's bulk chain marks the workbook
+// while it runs (autoImport.js bulkMarkerSet_, spreadsheet DeveloperMetadata --
+// the one store both projects see). Its force path deletes a date's rows from
+// a date-column READ, so a sort landing in between deletes other dates' rows.
+// While a FRESH marker is present every sheet is skipped (a success row: the
+// sort is deferred, not failed). Older than this many minutes, it is a killed
+// run's leftover -- the bulk budget is capped at 40 min per invocation.
+var HISTORICAL_SORT_BULK_KEY_ = 'cdrImport.bulkInProgress';
+var HISTORICAL_SORT_BULK_MAX_AGE_MIN_ = 45;
+function hsBulkInProgress_(ss, nowMs) {
+  try {
+    if (!ss || typeof ss.createDeveloperMetadataFinder !== 'function') return null;
+    var found = ss.createDeveloperMetadataFinder().withKey(HISTORICAL_SORT_BULK_KEY_).find();
+    var newest = null;
+    found.forEach(function (m) {
+      var t = Date.parse(m.getValue());
+      if (!isNaN(t) && (newest === null || t > newest)) newest = t;
+    });
+    if (newest === null) return null;
+    var ageMin = ((nowMs || Date.now()) - newest) / 60000;
+    return { since: new Date(newest).toISOString(), ageMin: ageMin,
+             fresh: ageMin <= HISTORICAL_SORT_BULK_MAX_AGE_MIN_ };
+  } catch (e) { return null; }
+}
+
 function historicalSortCheck_(opts) {
   var apply = !!(opts && opts.apply);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var props = PropertiesService.getScriptProperties();
   var out = { scannedAt: new Date().toISOString(), apply: apply, resumePending: [], sheets: [] };
   out.resumePending = HISTORICAL_SORT_RESUME_PROPS_.filter(function (k) { return !!props.getProperty(k); });
+  var bulk = hsBulkInProgress_(ss);   // CR-5
+  out.bulkInProgress = bulk;
 
   HISTORICAL_DATE_COLUMNS_.forEach(function (spec) {
     var t0 = Date.now();
@@ -1634,7 +1725,12 @@ function historicalSortCheck_(opts) {
                   rows: null, inversions: 0, status: 'success', notes: '', ms: 0 };
     try {
       var mine = out.resumePending.filter(function (k) { return HISTORICAL_SORT_RESUME_SHEET_[k] === spec.sheet; });
-      if (mine.length) {
+      if (bulk && bulk.fresh) {
+        entry.action = 'skipped';
+        entry.notes = 'skipped -- the cdr-import bulk chain is running (marker set ' + bulk.since
+          + '); its force path deletes rows by position, so a sort now could delete other dates (CR-5). '
+          + 'Re-checks on the next run';
+      } else if (mine.length) {
         entry.action = 'skipped';
         var stale = [];
         mine.forEach(function (k) {
@@ -1734,4 +1830,69 @@ function uninstallHistoricalSortTrigger() {
   });
   PropertiesService.getScriptProperties().deleteProperty(HISTORICAL_SORT_FLAG_PROP_);
   Logger.log('Nightly historical sort check removed (trigger deleted if it existed; ' + HISTORICAL_SORT_FLAG_PROP_ + ' cleared).');
+}
+
+
+// -- CR-7: coerced queue-extension column (DQE col D) -- DETECT ONLY ----------
+//
+// Col D holds the agent's comma-joined queue extensions ("103,108") -- the same
+// coercion class as K-AC / AD-AF: without the '@' format Sheets reads "103,108"
+// as the NUMBER 103108 (the comma taken as a thousands group). Every reader
+// splits the cell on commas (the dashboard's deptQueueExtsFromSheet_, the
+// floater / INV-53 machinery), so a coerced multi-ext cell yields ONE bogus
+// extension and the real ones silently drop out of the dept's ext set. The
+// writers protect it now (buildDQEHistoricalData plain-texts col 4; the merge
+// repair re-formats it); this preview finds the OLD rows. It is read-only by
+// design: a coerced multi-ext cell cannot be split back with certainty
+// (103108 could be 103+108 or 1031+08), so the fix is a rebuild of the date
+// from Raw Data, never a guess. Exts in this install are 3-4 digits, so a
+// numeric cell with more than QD_MAX_EXT_DIGITS_ digits is reported as a
+// likely merged multi-ext cell; one at or under it is a lossless single ext.
+var QD_MAX_EXT_DIGITS_ = 5;
+
+/** Read-only: classify every DQE col D cell. Writes nothing. */
+function previewDqeQueueExtColumn() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) { Logger.log('previewDqeQueueExtColumn: sheet "DQE Historical Data" not found.'); return null; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('previewDqeQueueExtColumn: no data rows.'); return null; }
+  var n = lastRow - 1;
+  var vals = sheet.getRange(2, 4, n, 1).getValues();
+  var disp = sheet.getRange(2, 4, n, 1).getDisplayValues();
+  var fmts = sheet.getRange(2, 4, n, 1).getNumberFormats();
+  var dates = sheet.getRange(2, 2, n, 1).getDisplayValues();
+  var out = { rows: n, text: 0, empty: 0, singleNumeric: 0, mergedNumeric: 0, other: 0,
+              notPlainText: 0, mergedDates: [], samples: [] };
+  var mergedDates = {};
+  for (var i = 0; i < n; i++) {
+    var v = vals[i][0];
+    if (fmts[i][0] !== '@') out.notPlainText++;
+    if (v === '' || v == null) { out.empty++; continue; }
+    if (typeof v === 'string') {
+      if (/^\s*\d+(\s*,\s*\d+)*\s*$/.test(v)) out.text++;
+      else { out.other++; if (out.samples.length < 12) out.samples.push('R' + (i + 2) + ' other: ' + JSON.stringify(v)); }
+      continue;
+    }
+    if (typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0) {
+      if (String(v).length > QD_MAX_EXT_DIGITS_) {
+        out.mergedNumeric++;
+        mergedDates[dates[i][0]] = (mergedDates[dates[i][0]] || 0) + 1;
+        if (out.samples.length < 12) out.samples.push('R' + (i + 2) + ' merged: ' + v + ' (shows "' + disp[i][0] + '")');
+      } else {
+        out.singleNumeric++;
+      }
+      continue;
+    }
+    out.other++;   // a Date / fraction / negative: not an extension list in any reading
+    if (out.samples.length < 12) out.samples.push('R' + (i + 2) + ' other: ' + JSON.stringify(disp[i][0]));
+  }
+  out.mergedDates = Object.keys(mergedDates).sort();
+  Logger.log('previewDqeQueueExtColumn (read-only): ' + n + ' rows -- ' + out.text + ' clean text, '
+    + out.empty + ' empty, ' + out.singleNumeric + ' numeric single ext (lossless; reads correctly), '
+    + out.mergedNumeric + ' numeric with > ' + QD_MAX_EXT_DIGITS_ + ' digits (LIKELY a merged multi-ext cell -- '
+    + 'its real extensions are lost; rebuild those dates from Raw Data), ' + out.other + ' other; '
+    + out.notPlainText + ' cell(s) not plain-text formatted. Dates with merged cells: '
+    + (out.mergedDates.length ? out.mergedDates.join(', ') : 'none') + '. Samples: ' + JSON.stringify(out.samples));
+  return out;
 }

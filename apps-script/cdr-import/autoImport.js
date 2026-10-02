@@ -234,6 +234,34 @@ function bulkTimeLimitMs_() {
   return Math.min(Math.max(n, 60000), 40 * 60000);
 }
 
+// CR-5 (broad-scan 2026-10-01): a CROSS-PROJECT "bulk in progress" marker.
+// cdr-report's nightly historical sort (runHistoricalSortCheck_) runs in
+// another project, so this chain's script lock cannot hold it off -- and a
+// sort landing between deleteHistoricalRowsForDate's date-column read and its
+// block deletes would delete OTHER dates' rows. The marker is spreadsheet-level
+// DeveloperMetadata on the CDR Report workbook (DOCUMENT visibility, the one
+// store both projects can see), set while an invocation holds the bulk lock and
+// removed when it ends -- a pause included. The sort skips while it is fresh;
+// a marker older than HISTORICAL_SORT_BULK_MAX_AGE_MIN_ (cdr-report) is a
+// killed run's leftover and is ignored. Best-effort both ways: a workbook
+// without the API (the test harness) simply has no marker.
+// cross-file-pins.test.js holds the key equal in both projects.
+var BULK_IN_PROGRESS_KEY_ = 'cdrImport.bulkInProgress';
+function bulkMarkerClear_(ss) {
+  try {
+    if (!ss || typeof ss.createDeveloperMetadataFinder !== 'function') return;
+    ss.createDeveloperMetadataFinder().withKey(BULK_IN_PROGRESS_KEY_).find()
+      .forEach(function (m) { m.remove(); });
+  } catch (e) { console.warn('bulkMarkerClear_: ' + (e && e.message ? e.message : e)); }
+}
+function bulkMarkerSet_(ss) {
+  try {
+    if (!ss || typeof ss.addDeveloperMetadata !== 'function') return;
+    bulkMarkerClear_(ss);
+    ss.addDeveloperMetadata(BULK_IN_PROGRESS_KEY_, new Date().toISOString());
+  } catch (e) { console.warn('bulkMarkerSet_: ' + (e && e.message ? e.message : e)); }
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -260,6 +288,7 @@ function processBulkQueue() {
       + "Wait for it to finish, then click 'Resume Bulk Processing'.", ui.ButtonSet.OK);
     return;
   }
+  let bulkMarkerSS = null;   // CR-5: cleared in the finally below
   try {
 
   const batchStartTime = Date.now();
@@ -288,6 +317,8 @@ function processBulkQueue() {
     ui.alert("Critical Error", "Could not open Target Spreadsheet. Aborting.", ui.ButtonSet.OK);
     return;
   }
+  bulkMarkerSS = targetSS;
+  bulkMarkerSet_(targetSS);   // CR-5
 
   const histDateCache = {
     cdr:   buildHistoryDateSet(targetSS, "CDR Historical Data"),
@@ -383,6 +414,7 @@ function processBulkQueue() {
   props.deleteProperty("bulkReport");
 
   } finally {
+    bulkMarkerClear_(bulkMarkerSS);   // CR-5 -- a pause ends the marker too
     bulkLock.releaseLock();   // F-17 -- also runs on the pause/stop returns
   }
 }
@@ -517,7 +549,9 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // logged "rows were already cleared / data may be lost" failures (and the
     // DQE email) for deletions that never happened. A guard now fires only
     // when force AND that sheet's date rows were really deleted.
-    const forceDeleted = { qcd: false, csr: false, dqe: false };
+    // CR-9: CDR Historical joins -- its live reader is cdr-report's Custom
+    // Report Builder (Q Path has NO reader, so it stays unguarded).
+    const forceDeleted = { qcd: false, csr: false, dqe: false, cdr: false };
 
     // P-1 (broad-scan 2026-09-17): every write that does NOT depend on the
     // five-sheet delete runs BEFORE it -- the Raw Data staging rewrite and the
@@ -554,6 +588,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       forceDeleted.qcd = !!existsInQCD;
       forceDeleted.csr = !!existsInCSR;
       forceDeleted.dqe = !!existsInDQE;
+      forceDeleted.cdr = !!existsInCDR;   // CR-9
       if (existsInCDR) {
         const obcHD = targetSS.getSheetByName("CDR Historical Data");
         if (obcHD) { deleteHistoricalRowsForDate(obcHD, dateObj, 3); if (histDateCache) histDateCache.cdr.delete(dateKey); }
@@ -618,6 +653,8 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         force && forceDeleted.qcd, (queued && queued.byType && queued.byType.QCD) || 0);
       guardForceRebuildLoss_(targetSS, 'bulkBackfill:CSR', dateObj,
         force && forceDeleted.csr, (queued && queued.byType && queued.byType.CSR_TRANSFER) || 0);
+      guardForceRebuildLoss_(targetSS, 'bulkBackfill:CDR', dateObj,   // CR-9
+        force && forceDeleted.cdr, (queued && queued.byType && queued.byType.CDR) || 0);
 
       if (willBuildDQE) {
         const dqeHD = targetSS.getSheetByName("DQE Historical Data");
@@ -1928,7 +1965,7 @@ function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipC
   // P26: which sheets the caller's force-delete ACTUALLY cleared. Defaults to
   // all-true so a caller that doesn't pass it keeps the old (over-eager but
   // safe-direction) guard behavior.
-  const fdel = forceDeleted || { qcd: true, csr: true, dqe: true };
+  const fdel = forceDeleted || { qcd: true, csr: true, dqe: true, cdr: true };
   const summaryLog = [];
   const salesHD    = targetSS.getSheetByName("Q Path Historical Data");
   const obcHD      = targetSS.getSheetByName("CDR Historical Data");
@@ -2127,6 +2164,10 @@ if (!skipCDR && obcHD) {
     });
     }
   }
+  // CR-9 (broad-scan 2026-10-01): CDR Historical has a LIVE reader --
+  // cdr-report's Custom Report Builder -- so a force rebuild that
+  // wrote zero rows after deleting the date must surface (the M2 convention).
+  guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CDR', dateObj, force && fdel.cdr, cdrCount);
 }
 
 // 2. Q Path History

@@ -305,6 +305,29 @@ test('core: comparison mode — (C)/(P)/Diff header shape, prev-bucket values, a
   assert.equal(b6.getDate(), 31);
 });
 
+// CR-10: the window was extended by the current window's MILLISECOND length,
+// so a window holding the US fall-back (Nov 1 2026: 7 days + 1 h) gave an
+// 8-day comparison. Bites only where the process TZ observes DST -- the suite
+// runs under America/Chicago (npm test / CI); under bare UTC it is vacuous.
+test('CR-10: the comparison window is the same number of CALENDAR days across a DST change', function () {
+  const f = standardRows_();
+  const r = runCore_(f.rows, f.durDisplays, {
+    dept: 'Sales', start: D(2026, 10, 26), end: D(2026, 11, 1),   // 7 days, holds the fall-back
+    compStart: D(2026, 10, 5),
+    cats: { OB_EXT: true },
+  });
+  const b6 = r.dash.get(6, 2);
+  assert.ok(b6 instanceof Date);
+  assert.deepEqual([b6.getMonth(), b6.getDate()], [9, 11], 'Oct 5 + 6 days = Oct 11, not Oct 12');
+  const r2 = runCore_(f.rows, f.durDisplays, {
+    dept: 'Sales', start: D(2026, 10, 5), end: D(2026, 10, 11),
+    compStart: D(2026, 10, 26),                                   // the COMPARISON window holds it
+    cats: { OB_EXT: true },
+  });
+  const b6b = r2.dash.get(6, 2);
+  assert.deepEqual([b6b.getMonth(), b6b.getDate()], [10, 1], 'Oct 26 + 6 days = Nov 1');
+});
+
 test('core: the specificAgent filter narrows to one agent', function () {
   const f = standardRows_();
   const rows = f.rows.concat([

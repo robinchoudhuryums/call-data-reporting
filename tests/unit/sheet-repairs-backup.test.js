@@ -137,3 +137,59 @@ test('1b: every bulk apply in sheetRepairs.js calls the backup before its first 
 test('CRT-5: HR_BACKUP_KEEP_ covers the five-apply DQE chain', function () {
   assert.ok(h.ctx.HR_BACKUP_KEEP_ >= 5, 'keep=' + h.ctx.HR_BACKUP_KEEP_);
 });
+
+// ---- broad-scan 2026-10-01 Batch 9 (CR-1 / CR-2 / CR-3 / CR-4 / CR-7) -------
+
+test('CR-1: every DQE bulk apply snapshots FIRST, then re-verifies, then writes (source pin)', function () {
+  const fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'sheetRepairs.js'), 'utf8');
+  [['repairDqeAbandonedIds_', 'repairDqeAbandonedIds'], ['repairDqeOldPstTimestampShift_', 'repairDqeOldPstTimestampShift'],
+   ['mergeDqeDuplicateRows_', 'repairDqeDuplicateMerge'], ['normalizeDqeDateColumn_', 'repairDqeDateNormalize'],
+   ['repairDqeSlotTimestamps_', 'repairDqeSlotTimestamps']].forEach(function (p) {
+    const start = src.indexOf('function ' + p[0] + '(');
+    const end = src.indexOf('\nfunction ', start + 1);
+    const body = src.slice(start, end > 0 ? end : undefined);
+    const backup = body.indexOf('hrBackupBeforeApply_(');
+    const reverify = body.indexOf("hrReverifyRows_(sheet, rowSnap, '" + p[1] + "')");
+    const firstWrite = body.search(/\.setValues\(|\.deleteRow\(|\.setValue\(/);
+    assert.ok(backup > 0 && reverify > 0, p[0] + ' has both');
+    assert.ok(backup < reverify, p[0] + ': the snapshot (a long copy) runs BEFORE the re-check, never after it');
+    assert.ok(reverify < firstWrite, p[0] + ': the re-check is the last step before the first write');
+  });
+});
+
+test('CR-4: the backup prunes to KEEP-1 BEFORE copying, so the workbook never holds KEEP+1 copies', function () {
+  const keep = h.ctx.HR_BACKUP_KEEP_;
+  const ss = install({ 'DQE Historical Data': dqeGrid(2) });
+  const sheet = ss.getSheetByName('DQE Historical Data');
+  let peak = 0;
+  const realCopy = sheet.copyTo;
+  sheet.copyTo = function (target) {
+    const mine = target.getSheets().filter(function (t) { return t.getName().indexOf('DQE Historical Data|') === 0; });
+    peak = Math.max(peak, mine.length + 1);   // the tabs already there + the one being copied
+    return realCopy.call(this, target);
+  };
+  for (let i = 0; i < keep + 3; i++) h.call('hrBackupBeforeApply_', ss, sheet, 'run' + i, 600);
+  assert.ok(peak <= keep, 'peak ' + peak + ' copies held during a copy, cap ' + keep);
+  const left = tabsOf(backupSs()).filter(function (t) { return t.indexOf('DQE Historical Data|') === 0; });
+  assert.equal(left.length, keep, 'the newest KEEP survive');
+  assert.ok(left.some(function (t) { return /\|run\d+$/.test(t) && t.endsWith('run' + (keep + 2)); }), 'incl. the newest');
+});
+
+test('CR-7: the col D preview classifies clean / single / merged cells and writes nothing', function () {
+  const ss = install({ 'DQE Historical Data': [
+    ['Month', 'Date', 'Agent', 'Exts'],
+    ['Jun', '06/01/2026', 'A', '103,108'],
+    ['Jun', '06/01/2026', 'B', 103],
+    ['Jun', '06/02/2026', 'C', 103108],
+    ['Jun', '06/02/2026', 'D', ''],
+  ] });
+  const sheet = ss.getSheetByName('DQE Historical Data');
+  sheet.setValues = sheet.setValue = function () { throw new Error('preview wrote'); };
+  const res = h.call('previewDqeQueueExtColumn');
+  assert.equal(res.text, 1);
+  assert.equal(res.singleNumeric, 1, 'a single ext stored as a number is lossless');
+  assert.equal(res.mergedNumeric, 1, '103108 is a merged "103,108"');
+  assert.equal(res.empty, 1);
+  assert.deepEqual(Array.from(res.mergedDates), ['06/02/2026']);
+});
