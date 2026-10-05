@@ -171,12 +171,14 @@ tests/
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
                               abandoned-filter (AF-1: the "Filter abandoned
-                              calls…" dialog -- every preset matches its old
-                              menu item, run through the OLD engine against a
-                              recording fake filter, minus the blank-queue legs
-                              the old engine never hides; per-queue + custom
-                              thresholds, backup queues, the R49 window, the
-                              generated formula, request validation, the page's
+                              calls…" dialog -- every preset leaves EXACTLY its
+                              old item's rows, the OLD engine run against a
+                              recording fake filter, no-queue-name legs
+                              included as it includes them; the generated
+                              FORMULA evaluated by an independent Sheets-rules
+                              evaluator on every dialog shape and window edge;
+                              the on-tab check (afRunCheck_) end to end, CLEAN
+                              / MISMATCH / INCONCLUSIVE; validation, the page's
                               server calls and no HTML injection),
                               transfer-filter (the read-only transfer-shape
                               probe: queue vs direct transfers, the customer

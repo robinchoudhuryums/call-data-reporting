@@ -50,6 +50,10 @@
     <input type="number" id="customSec" min="0" max="86399" step="1" value="59" disabled aria-label="Custom threshold in seconds"> seconds
   </div>
   <div class="row">
+    <label><input type="checkbox" id="blankQ" checked> Include legs with no queue name</label>
+    <span class="muted">(the old menu items include them; they take the lowest ticked threshold)</span>
+  </div>
+  <div class="row">
     <label><input type="checkbox" id="window"> Work window only</label>
     <span class="muted" id="windowNote"></span>
   </div>
@@ -150,7 +154,7 @@
       return { name: cb.dataset.name, thresholdSec: custom ? sec : defaultFor(cb.dataset.name) };
     });
     if (!queues.length) throw new Error('Tick at least one queue.');
-    return { queues: queues, workWindow: $('window').checked };
+    return { queues: queues, workWindow: $('window').checked, includeBlankQueue: $('blankQ').checked };
   }
 
   function busy(on) { ['apply', 'clear'].forEach(function (id) { $(id).disabled = on; }); }

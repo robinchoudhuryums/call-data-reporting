@@ -102,7 +102,13 @@ function timeToDecimal(timeStr) {
 // What it filters, the old engine's rule exactly:
 //   Abandoned (col Y) = "Abandoned"            (case-insensitive)
 //   queue name (col L) is a ticked queue       (case-insensitive)
-//   call time (col H) is MORE THAN that queue's threshold
+//                    -- OR is EMPTY: the old engine hides every OTHER queue
+//                    name it finds, and it never lists an empty cell, so a row
+//                    with no queue name passes its queue step. Kept by default
+//                    (owner, 2026-10-05: no exclusion the old items lacked);
+//                    the dialog's "no queue name" box turns it off
+//   call time (col H) is MORE THAN that queue's threshold (an empty-queue row
+//                    takes the LOWEST ticked threshold -- the old items had one)
 // as ONE custom-formula criterion, so ticked queues can carry different
 // thresholds (Sales and PAP 19 s beside everyone else's 59 s), plus an
 // optional work-window clause (the pipeline's own INV-06 / R49 floor per
@@ -112,7 +118,9 @@ function timeToDecimal(timeStr) {
 //
 // AF_PRESETS_ carries today's fourteen items verbatim (queues + threshold,
 // and the wrapper each one replaces); abandoned-filter.test.js runs every old
-// wrapper through the OLD engine and fails if a preset stops matching it.
+// wrapper through the OLD engine and fails if a preset stops matching it, and
+// evaluates the generated formula itself. runAbandonedFilterCheck() (menu)
+// does the same on a REAL tab, reading which rows Sheets actually hides.
 // =========================================================================
 
 var AF_DEFAULT_THRESHOLD_SEC_ = 59;
@@ -177,7 +185,12 @@ function afNormalizeSpec_(spec) {
     seen[k] = true;
     out.push({ name: name, thresholdSec: t });
   });
-  return { queues: out, workWindow: !!spec.workWindow };
+  return { queues: out, workWindow: !!spec.workWindow, includeBlankQueue: spec.includeBlankQueue !== false };
+}
+
+// The threshold an empty-queue row is held to: the lowest ticked one.
+function afBlankThreshold_(s) {
+  return s.queues.reduce(function (m, q) { return Math.min(m, q.thresholdSec); }, Infinity);
 }
 
 // The work window for a leg delivered by `queueName`: the pipeline's own
@@ -214,6 +227,14 @@ function afBuildFormula_(spec) {
     }
     return 'AND(' + parts.join(',') + ')';
   });
+  if (s.includeBlankQueue) {
+    var bparts = [L + '=""', H + '>' + afBlankThreshold_(s) + '/86400'];
+    if (s.workWindow) {
+      var bw = afWindowFor_(null);
+      bparts.push(tod + '>=' + bw.start, tod + '<' + bw.end);
+    }
+    arms.push('AND(' + bparts.join(',') + ')');
+  }
   return '=AND(LOWER(' + Y + ')="abandoned",ISNUMBER(' + H + '),OR(' + arms.join(',') + '))';
 }
 
@@ -228,14 +249,18 @@ function afRowVisible_(row, spec) {
   var h = String(row[AF_COL_.CALL_TIME - 1] == null ? '' : row[AF_COL_.CALL_TIME - 1]).trim();
   if (!/^\d+:\d{2}:\d{2}$/.test(h)) return false;          // ISNUMBER: a duration cell
   var hSec = icTimeToSec_(h);
-  var qn = String(row[AF_COL_.QUEUE - 1] == null ? '' : row[AF_COL_.QUEUE - 1]).toLowerCase();
+  var rawQ = String(row[AF_COL_.QUEUE - 1] == null ? '' : row[AF_COL_.QUEUE - 1]);
+  var qn = rawQ.toLowerCase();
   var m = /\s(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(row[AF_COL_.START - 1] == null ? '' : row[AF_COL_.START - 1]).trim());
   var tod = m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : -1;
-  return s.queues.some(function (q) {
-    if (qn !== q.name.toLowerCase() || !(hSec > q.thresholdSec)) return false;
+  var inWin = function (name) {
     if (!s.workWindow) return true;
-    var w = afWindowFor_(q.name);
+    var w = afWindowFor_(name);
     return tod >= w.start && tod < w.end;
+  };
+  if (rawQ === '') return s.includeBlankQueue && hSec > afBlankThreshold_(s) && inWin(null);
+  return s.queues.some(function (q) {
+    return qn === q.name.toLowerCase() && hSec > q.thresholdSec && inWin(q.name);
   });
 }
 
@@ -292,17 +317,172 @@ function afGetDialogState() {
 /** Dialog apply: replaces the active tab's filter with the one criterion. */
 function afApplyFromDialog(spec) {
   var s = afNormalizeSpec_(spec);
-  var formula = afBuildFormula_(s);
   var a = afActiveRows_();
-  if (a.sheet.getFilter()) a.sheet.getFilter().remove();
-  var filter = a.sheet.getDataRange().createFilter();
-  filter.setColumnFilterCriteria(1, SpreadsheetApp.newFilterCriteria().whenFormulaSatisfied(formula).build());
+  afApplySpec_(a.sheet, s);
   var expected = a.rows.filter(function (r) { return afRowVisible_(r, s); }).length;
   return { sheetName: a.sheet.getName(), expected: expected, total: a.rows.length, queues: s.queues.length };
+}
+
+/** Replaces `sheet`'s filter with the one formula criterion for spec `s`. */
+function afApplySpec_(sheet, s) {
+  var formula = afBuildFormula_(s);
+  if (sheet.getFilter()) sheet.getFilter().remove();
+  var filter = sheet.getDataRange().createFilter();
+  filter.setColumnFilterCriteria(1, SpreadsheetApp.newFilterCriteria().whenFormulaSatisfied(formula).build());
+  return formula;
 }
 
 /** Dialog: Clear filter (the menu's own Clear Filters, callable from the dialog). */
 function afClearFromDialog() {
   clearAllFilters();
   return { cleared: true };
+}
+
+// ---- AF-1 check: the dialog against the old items, as SHEETS evaluates them ----
+//
+// Tests can run the old engine and evaluate the formula, but only Sheets can
+// say what a filter actually hides on a real tab. This applies each old menu
+// item and the dialog's filter for the same department in turn, reads
+// Sheet.isRowHiddenByFilter for every abandoned leg (+ an even sample of the
+// rest, which every filter must hide), and compares three things per check:
+//   OLD (Sheets) vs NEW (Sheets)  -- the dialog matches the item it replaces
+//   NEW (Sheets) vs MIRROR        -- the formula does what the tested rule says
+// plus dialog-only checks (a mixed selection, backup, custom threshold, work
+// window, no-queue-name off) where only the second comparison applies. It
+// changes NO cell; it does replace the tab's filter, and leaves it CLEARED.
+
+var AF_CHECK_SAMPLE_ = 40;                 // non-abandoned rows sampled per filter
+var AF_CHECK_BUDGET_MS_ = 4.5 * 60 * 1000; // under a menu run's 6-minute ceiling
+
+/** PURE. The checks to run: every preset vs its old item, then dialog-only ones. */
+function afCheckPlan_() {
+  var t = function (p) { return afThresholdSec_(p.threshold); };
+  var byId = {};
+  AF_PRESETS_.forEach(function (p) { byId[p.id] = p; });
+  var spec = function (p) {
+    return { queues: p.queues.map(function (q) { return { name: q, thresholdSec: t(p) }; }) };
+  };
+  var plan = AF_PRESETS_.map(function (p) {
+    return { label: p.label + ' vs "' + p.fn + '"', fn: p.fn, spec: spec(p) };
+  });
+  var csr = spec(byId.csr), sales = spec(byId.sales);
+  plan.push({ label: 'CSR + Sales together (own thresholds)', spec: { queues: csr.queues.concat(sales.queues) } });
+  plan.push({ label: 'CSR with backup queue', spec: { queues: csr.queues.concat([{ name: 'Backup CSR', thresholdSec: 59 }]) } });
+  plan.push({ label: 'CSR, custom threshold 120 s', spec: { queues: csr.queues.map(function (q) { return { name: q.name, thresholdSec: 120 }; }) } });
+  plan.push({ label: 'CSR + Sales, work window only', spec: { queues: csr.queues.concat(sales.queues), workWindow: true } });
+  plan.push({ label: 'CSR, no-queue-name rows off', spec: { queues: csr.queues, includeBlankQueue: false } });
+  return plan;
+}
+
+/** PURE. Which rows to read: every abandoned leg + an even sample of the rest (0-based). */
+function afCheckRows_(rows, sampleN) {
+  var hit = [], rest = [];
+  rows.forEach(function (r, i) {
+    (String(r[AF_COL_.ABANDONED - 1] == null ? '' : r[AF_COL_.ABANDONED - 1]).toLowerCase() === 'abandoned' ? hit : rest).push(i);
+  });
+  var n = Math.min(sampleN, rest.length), sample = [];
+  for (var k = 0; k < n; k++) sample.push(rest[Math.floor(k * rest.length / n)]);
+  return hit.concat(sample).sort(function (a, b) { return a - b; });
+}
+
+/** PURE. Compares visible-row sets; returns {ok, onlyA, onlyB} (0-based row indexes). */
+function afDiff_(a, b) {
+  var A = {}, B = {};
+  a.forEach(function (i) { A[i] = true; });
+  b.forEach(function (i) { B[i] = true; });
+  var onlyA = a.filter(function (i) { return !B[i]; }), onlyB = b.filter(function (i) { return !A[i]; });
+  return { ok: !onlyA.length && !onlyB.length, onlyA: onlyA, onlyB: onlyB };
+}
+
+/**
+ * Runs the plan on `sheet` (which must be the ACTIVE sheet -- the old engine
+ * filters the active one). Returns {rows, checked, results:[{label, old?, neu,
+ * mirror, vsOld?, vsMirror, skipped?}], budgetHit}.
+ */
+function afRunCheck_(sheet, opts) {
+  opts = opts || {};
+  var last = sheet.getLastRow();
+  var rows = last >= 2 ? sheet.getRange(2, 1, last - 1, AF_COL_.ABANDONED).getDisplayValues() : [];
+  var check = afCheckRows_(rows, opts.sample == null ? AF_CHECK_SAMPLE_ : opts.sample);
+  var deadline = Date.now() + (opts.budgetMs || AF_CHECK_BUDGET_MS_);
+  var visible = function () {
+    SpreadsheetApp.flush();
+    return check.filter(function (i) { return !sheet.isRowHiddenByFilter(i + 2); });
+  };
+  var results = [], budgetHit = false;
+  afCheckPlan_().forEach(function (c) {
+    if (Date.now() > deadline) { budgetHit = true; results.push({ label: c.label, skipped: true }); return; }
+    var s = afNormalizeSpec_(c.spec);
+    var r = { label: c.label };
+    if (c.fn) {
+      var p = AF_PRESETS_.filter(function (x) { return x.fn === c.fn; })[0];
+      applyAbandonedFilter(p.queues.slice(), p.threshold);     // the old engine, exactly as its item runs it
+      r.old = visible();
+    }
+    afApplySpec_(sheet, s);
+    r.neu = visible();
+    r.mirror = check.filter(function (i) { return afRowVisible_(rows[i], s); });
+    r.vsMirror = afDiff_(r.neu, r.mirror);
+    if (r.old) r.vsOld = afDiff_(r.old, r.neu);
+    r.blankRows = r.neu.filter(function (i) { return String(rows[i][AF_COL_.QUEUE - 1] == null ? '' : rows[i][AF_COL_.QUEUE - 1]) === ''; }).length;
+    results.push(r);
+  });
+  if (sheet.getFilter()) sheet.getFilter().remove();
+  return { sheetName: sheet.getName(), rows: rows, checked: check.length, results: results, budgetHit: budgetHit };
+}
+
+/** PURE. The check's report lines. Names queues and call times, nothing else. */
+function afCheckReportLines_(res) {
+  var rows = res.rows;
+  var desc = function (i) {
+    var r = rows[i];
+    return 'row ' + (i + 2) + ' [' + (r[AF_COL_.QUEUE - 1] || '(no queue name)') + ', call time ' + r[AF_COL_.CALL_TIME - 1]
+      + ', ' + (r[AF_COL_.ABANDONED - 1] || '-') + ']';
+  };
+  var list = function (ids) { return ids.slice(0, 8).map(desc).join('; ') + (ids.length > 8 ? '; … +' + (ids.length - 8) + ' more' : ''); };
+  var L = [], bad = 0, skipped = 0;
+  L.push('Abandoned filter check -- ' + res.sheetName + ': ' + rows.length + ' rows, ' + res.checked
+    + ' read per filter (every abandoned leg + a sample of the rest). No cell was changed; the tab is left UNFILTERED.');
+  L.push('');
+  res.results.forEach(function (r) {
+    if (r.skipped) { skipped++; L.push('SKIPPED (time budget): ' + r.label); return; }
+    var ok = r.vsMirror.ok && (!r.vsOld || r.vsOld.ok);
+    if (!ok) bad++;
+    L.push((ok ? 'OK       ' : 'MISMATCH ') + r.label + ' -- ' + r.neu.length + ' visible'
+      + (r.old ? ' (old item: ' + r.old.length + ')' : '') + (r.blankRows ? '; ' + r.blankRows + ' with no queue name' : ''));
+    if (r.vsOld && !r.vsOld.ok) {
+      if (r.vsOld.onlyA.length) L.push('   only the OLD item shows: ' + list(r.vsOld.onlyA));
+      if (r.vsOld.onlyB.length) L.push('   only the DIALOG shows:   ' + list(r.vsOld.onlyB));
+    }
+    if (!r.vsMirror.ok) {
+      if (r.vsMirror.onlyA.length) L.push('   Sheets shows, the tested rule does not: ' + list(r.vsMirror.onlyA));
+      if (r.vsMirror.onlyB.length) L.push('   the tested rule shows, Sheets does not: ' + list(r.vsMirror.onlyB));
+    }
+  });
+  L.push('');
+  L.push('VERDICT: ' + (bad ? 'MISMATCH -- ' + bad + ' check(s) differ; send this report before relying on the dialog.'
+    : skipped ? 'INCONCLUSIVE -- clean so far, but ' + skipped + ' check(s) ran out of time; re-run on a smaller tab.'
+    : 'CLEAN -- on this tab the dialog leaves exactly the rows each old item leaves, and Sheets evaluates the formula as tested.'));
+  return L;
+}
+
+/** Menu: CDR Tools -> Abandoned Filters -> Check the dialog against the old items (this tab)… */
+function runAbandonedFilterCheck() {
+  var ui = SpreadsheetApp.getUi();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var go = ui.alert('Check the abandoned filter dialog',
+    'This applies each of the 14 old filters, then the dialog\'s filter for the same department, to "'
+    + sheet.getName() + '", and compares which rows Sheets hides. It changes no data, but it REPLACES any filter on '
+    + 'this tab and leaves it unfiltered. It can take a few minutes. Continue?', ui.ButtonSet.YES_NO);
+  if (go !== ui.Button.YES) return;
+  if (sheet.getLastColumn() < AF_COL_.ABANDONED) {
+    ui.alert('"' + sheet.getName() + '" has fewer than ' + AF_COL_.ABANDONED + ' columns -- open a Call_Legs tab first.');
+    return;
+  }
+  var lines = afCheckReportLines_(afRunCheck_(sheet));
+  lines.forEach(function (t) { Logger.log(t); });
+  var esc = function (x) { return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  ui.showModalDialog(HtmlService.createHtmlOutput(
+    '<textarea readonly style="width:100%;height:520px;font:12px monospace;white-space:pre">'
+    + esc(lines.join('\n')) + '</textarea>').setWidth(1000).setHeight(580), 'Abandoned filter check');
 }

@@ -8,7 +8,14 @@
   thresholds with an optional custom one, an optional R49 work window, ONE
   custom-formula filter. Parity test runs the OLD engine: the only difference is
   the blank-queue legs every old item shows (old engine never hides a blank
-  cell). 2186/2186. **Owner-side:** deploy cdr-import, walk S55. **Next:** step 3
+  cell). 2186/2186. **Follow-up same day (owner: no exclusion the old items
+  lacked):** no-queue-name legs now INCLUDED by default (lowest ticked
+  threshold; a dialog box turns it off), so parity is EXACT; the generated
+  formula is evaluated by an independent Sheets-rules evaluator in the suite;
+  and CDR Tools -> Abandoned Filters -> "Check the dialog against the old
+  items (this tab)…" (runAbandonedFilterCheck) reads Sheet.isRowHiddenByFilter
+  on a real tab for all 14 items + 5 dialog-only shapes -> VERDICT. 2191/2191.
+  **Owner-side:** deploy cdr-import, walk S55 (run the check first). **Next:** step 3
   (retire the fourteen items + wrappers) after S55; step 4 (Transfers mode) after
   the Phase 0 transfer shapes are confirmed.
 - **2026-10-05 — also this session (no blocks):** transfer filter Phase 0

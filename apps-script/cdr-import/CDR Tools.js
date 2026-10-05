@@ -16,6 +16,7 @@ function onOpen() {
   // until the owner's side-by-side check (Regression Scenario S55) passes.
   const filterSubMenu = ui.createMenu('🧹 Abandoned Filters')
     .addItem('Filter abandoned calls…', 'showAbandonedFilterDialog')
+    .addItem('Check the dialog against the old items (this tab)…', 'runAbandonedFilterCheck')
     .addSeparator()
     .addItem('A_Q_CSR & Intake (59s)', 'filterCSRAbandoned')
     .addItem('A_Q_PowerChairs (59s)', 'filterPowerAbandoned')
