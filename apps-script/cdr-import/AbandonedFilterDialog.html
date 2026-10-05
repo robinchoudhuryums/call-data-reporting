@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<!-- AF-1: CDR Tools -> Abandoned Filters -> Filter abandoned calls… Server side:
+     AbandonedFilter.js (afGetDialogState / afApplyFromDialog / afClearFromDialog).
+     Every sheet-sourced string is written with textContent, never innerHTML. -->
+<style>
+  body { font: 13px/1.4 Arial, sans-serif; color: #202124; margin: 0; padding: 12px 14px; }
+  h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: #5f6368; }
+  .tab { font-weight: bold; }
+  .warn { color: #b06000; margin-top: 4px; }
+  .muted { color: #5f6368; }
+  select, input[type=number] { font: inherit; padding: 3px 4px; }
+  input[type=number] { width: 70px; }
+  #queues { max-height: 250px; overflow-y: auto; border: 1px solid #dadce0; padding: 4px 6px; }
+  .q { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+  .q .name { flex: 1; }
+  .q.absent .name { color: #80868b; }
+  .q .meta { color: #5f6368; font-size: 12px; white-space: nowrap; }
+  .row { margin: 6px 0; }
+  .buttons { margin-top: 14px; display: flex; gap: 8px; }
+  button { font: inherit; padding: 5px 12px; cursor: pointer; }
+  button.primary { background: #1a73e8; color: #fff; border: 1px solid #1a73e8; border-radius: 3px; }
+  #result { margin-top: 10px; min-height: 2.6em; }
+  #result.error { color: #c5221f; }
+</style>
+</head>
+<body>
+  <div>Tab: <span class="tab" id="tab">loading…</span></div>
+  <div class="warn" id="tabWarn" hidden>This is not a Call_Legs tab -- the columns may not be the ones the filter expects.</div>
+
+  <h2>Department</h2>
+  <div class="row">
+    <select id="preset" aria-label="Department preset">
+      <option value="">Choose a department to tick its queues…</option>
+    </select>
+  </div>
+  <div class="row" id="backupRow" hidden>
+    <label><input type="checkbox" id="backup"> Include the backup queue (<span id="backupNames"></span>)</label>
+  </div>
+
+  <h2>Queues</h2>
+  <div class="muted row">Ticked queues are filtered. Each uses its department's default threshold unless you set a custom one below.</div>
+  <div id="queues" role="group" aria-label="Queues"></div>
+
+  <h2>Options</h2>
+  <div class="row">
+    <label><input type="checkbox" id="customOn"> Custom threshold for every ticked queue: more than</label>
+    <input type="number" id="customSec" min="0" max="86399" step="1" value="59" disabled aria-label="Custom threshold in seconds"> seconds
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="window"> Work window only</label>
+    <span class="muted" id="windowNote"></span>
+  </div>
+
+  <div class="buttons">
+    <button class="primary" id="apply">Apply filter</button>
+    <button id="clear">Clear filter</button>
+    <button id="close">Close</button>
+  </div>
+  <div id="result" role="status" aria-live="polite"></div>
+
+<script>
+  var STATE = null;
+
+  function $(id) { return document.getElementById(id); }
+  function fmtClock(sec) {
+    var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+    var ap = h >= 12 ? 'PM' : 'AM', h12 = ((h + 11) % 12) + 1;
+    return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+  function defaultFor(name) {
+    var k = name.toLowerCase();
+    return (k in STATE.defaults) ? STATE.defaults[k] : STATE.defaultThresholdSec;
+  }
+  function say(text, isError) {
+    var r = $('result');
+    r.textContent = text;
+    r.className = isError ? 'error' : '';
+  }
+
+  function render(state) {
+    STATE = state;
+    $('tab').textContent = state.sheetName;
+    $('tabWarn').hidden = !!state.isCallLegs;
+    $('windowNote').textContent = '(' + fmtClock(state.window.start) + ' - ' + fmtClock(state.window.end)
+      + ' PST; ' + (state.window.earlyQueues.join(', ') || 'the CSR queues') + ' from 6:00 AM)';
+
+    var sel = $('preset');
+    state.presets.forEach(function (p) {
+      var o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.label + ' -- ' + p.queues.join(', ') + ' (> ' + p.thresholdSec + 's)';
+      sel.appendChild(o);
+    });
+
+    // Every queue on the tab, plus every preset queue (greyed when absent).
+    var names = {};
+    state.tabQueues.forEach(function (q) { names[q.name.toLowerCase()] = { name: q.name, legs: q.legs, abandoned: q.abandoned, onTab: true }; });
+    state.presets.forEach(function (p) {
+      p.queues.concat(p.backup).forEach(function (n) {
+        var k = n.toLowerCase();
+        if (!names[k]) names[k] = { name: n, legs: 0, abandoned: 0, onTab: false };
+      });
+    });
+    var box = $('queues');
+    Object.keys(names).sort().forEach(function (k) {
+      var q = names[k];
+      var row = document.createElement('label');
+      row.className = 'q' + (q.onTab ? '' : ' absent');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.name = q.name;
+      var nm = document.createElement('span');
+      nm.className = 'name';
+      nm.textContent = q.name;
+      var meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = (q.onTab ? q.abandoned + ' abandoned leg(s)' : 'not on this tab') + ' · > ' + defaultFor(q.name) + 's';
+      row.appendChild(cb); row.appendChild(nm); row.appendChild(meta);
+      box.appendChild(row);
+    });
+  }
+
+  function queueBoxes() { return Array.prototype.slice.call($('queues').querySelectorAll('input[type=checkbox]')); }
+  function currentPreset() {
+    var id = $('preset').value;
+    return STATE.presets.filter(function (p) { return p.id === id; })[0] || null;
+  }
+  function applyPreset() {
+    var p = currentPreset();
+    var want = {};
+    if (p) {
+      p.queues.forEach(function (n) { want[n.toLowerCase()] = true; });
+      if ($('backup').checked) p.backup.forEach(function (n) { want[n.toLowerCase()] = true; });
+    }
+    queueBoxes().forEach(function (cb) { cb.checked = !!want[cb.dataset.name.toLowerCase()]; });
+    $('backupRow').hidden = !(p && p.backup.length);
+    $('backupNames').textContent = p ? p.backup.join(', ') : '';
+  }
+
+  function buildSpec() {
+    var custom = $('customOn').checked;
+    var sec = Number($('customSec').value);
+    if (custom && (!isFinite(sec) || sec < 0 || sec > 86399 || Math.floor(sec) !== sec)) {
+      throw new Error('The custom threshold must be a whole number of seconds (0-86399).');
+    }
+    var queues = queueBoxes().filter(function (cb) { return cb.checked; }).map(function (cb) {
+      return { name: cb.dataset.name, thresholdSec: custom ? sec : defaultFor(cb.dataset.name) };
+    });
+    if (!queues.length) throw new Error('Tick at least one queue.');
+    return { queues: queues, workWindow: $('window').checked };
+  }
+
+  function busy(on) { ['apply', 'clear'].forEach(function (id) { $(id).disabled = on; }); }
+
+  $('preset').addEventListener('change', function () { $('backup').checked = false; applyPreset(); });
+  $('backup').addEventListener('change', applyPreset);
+  $('customOn').addEventListener('change', function () { $('customSec').disabled = !this.checked; });
+  $('close').addEventListener('click', function () { google.script.host.close(); });
+  $('clear').addEventListener('click', function () {
+    busy(true); say('Clearing…');
+    google.script.run
+      .withSuccessHandler(function () { busy(false); say('Filter cleared.'); })
+      .withFailureHandler(function (e) { busy(false); say(e && e.message ? e.message : String(e), true); })
+      .afClearFromDialog();
+  });
+  $('apply').addEventListener('click', function () {
+    var spec;
+    try { spec = buildSpec(); } catch (e) { say(e.message, true); return; }
+    busy(true); say('Applying…');
+    google.script.run
+      .withSuccessHandler(function (r) {
+        busy(false);
+        say('Filter applied to ' + r.sheetName + ' for ' + r.queues + ' queue(s): expect ' + r.expected
+          + ' of ' + r.total + ' row(s) to stay visible. The tab\'s own row count should match.');
+      })
+      .withFailureHandler(function (e) { busy(false); say(e && e.message ? e.message : String(e), true); })
+      .afApplyFromDialog(spec);
+  });
+
+  google.script.run
+    .withSuccessHandler(render)
+    .withFailureHandler(function (e) { say(e && e.message ? e.message : String(e), true); })
+    .afGetDialogState();
+</script>
+</body>
+</html>

@@ -480,3 +480,13 @@ S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Dep
     - Watch the address bar: each step shows the route after `#`, and any `?` query the URL was opened with is kept.
   Expected: Back / Forward step through views in the order visited; no step needs two presses; no console errors; the "Open in new tab" button still opens the current view.
   Fails if: Back leaves the dashboard while views remain in history; a step needs two presses (a duplicate entry); a modal stays open after Back to a page; the wrong tab is lit; anything differs between the two browsers (record which -- this API was once noted as spotty).
+
+S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
+  Steps:
+    - Deploy cdr-import, open the CDR Import workbook, reload it, and open a recent Call_Legs_<date> tab.
+    - Run CDR Tools -> Abandoned Filters -> "A_Q_CSR & Intake (59s)" and note the visible row count (the status bar's count, or select column A).
+    - Clear Filters. Open CDR Tools -> Abandoned Filters -> "Filter abandoned calls…", choose CSR, Apply. Compare the visible row count with the old item's, and with the "expect N of M rows" line the dialog prints.
+    - Repeat for Sales (19 s) and Field Ops, then tick CSR AND Sales together and check each keeps its own threshold (a 0:00:20 Sales leg shows; a 0:00:20 CSR leg does not).
+    - Tick "Include the backup queue" for CSR: Backup CSR legs over 59 s appear. Set a custom threshold (e.g. 120 s): only legs over 2 minutes stay. Tick "Work window only": legs before 6:00 AM PST (CSR) / 6:30 AM (others) and from 3:00 PM disappear.
+  Expected: the dialog's count equals the old item's, EXCEPT abandoned legs with a BLANK queue name, which every old item shows and the dialog does not (the old engine never hides a blank queue cell) -- if the counts differ, filter column L for blanks to confirm that is the whole difference. The dialog's "expect N" line equals the tab's own count.
+  Fails if: counts differ by anything other than blank-queue legs; a mixed selection applies one threshold to both queues; the dialog's expected count disagrees with what Sheets shows (the generated formula and the tested mirror have diverged -- report the tab and the selection); the backup queue appears without the box ticked.

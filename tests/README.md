@@ -170,6 +170,14 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
+                              abandoned-filter (AF-1: the "Filter abandoned
+                              calls…" dialog -- every preset matches its old
+                              menu item, run through the OLD engine against a
+                              recording fake filter, minus the blank-queue legs
+                              the old engine never hides; per-queue + custom
+                              thresholds, backup queues, the R49 window, the
+                              generated formula, request validation, the page's
+                              server calls and no HTML injection),
                               transfer-filter (the read-only transfer-shape
                               probe: queue vs direct transfers, the customer
                               link by the capture's own concurrency index,
