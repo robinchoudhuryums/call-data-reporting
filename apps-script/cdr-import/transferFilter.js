@@ -435,77 +435,178 @@ function tfFindCallLegsSheet_(ss, dateIso) {
 }
 
 /**
- * READ-ONLY. Reports how the transfer filter would classify one Call_Legs tab
- * for one dept, with sample call ids to check. No arg date -> the ACTIVE tab
- * when it is a Call_Legs tab, else the most recent one. `queuesCsv` overrides
- * the dept's Dept Config queues. Returns the report lines.
+ * Shared probe runner (editor function + dialog). `queues` = an array of names
+ * to count, or empty/null for the dept's Dept Config queues. Returns
+ * {error} or {res, meta}. Reads only.
  */
-function previewTransferShapes(dateIso, dept, queuesCsv) {
+function tfRunProbe_(dateIso, dept, queues) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = tfFindCallLegsSheet_(ss, dateIso);
-  if (!sheet) { Logger.log('previewTransferShapes: no Call_Legs sheet for ' + (dateIso || '(latest)') + '.'); return null; }
+  if (!sheet) return { error: 'No Call_Legs sheet for ' + (dateIso || '(latest)') + '.' };
   var target = SpreadsheetApp.openById(getTargetSsId_());
   var cfg = target.getSheetByName('DO NOT EDIT!');
-  if (!cfg) throw new Error('previewTransferShapes: "DO NOT EDIT!" not found in the CDR Report spreadsheet.');
+  if (!cfg) return { error: '"DO NOT EDIT!" not found in the CDR Report spreadsheet.' };
   var roster = tfReadRoster_(cfg);
   dept = tfStr_(dept);
   if (!roster.byDept[dept]) {
-    var msg = 'previewTransferShapes: "' + dept + '" is not a roster department. Departments: ' + roster.depts.join(', ');
-    Logger.log(msg);
-    return [msg];
+    return { error: '"' + dept + '" is not a roster department. Departments: ' + roster.depts.join(', ') };
   }
 
   icResetConfigMemos_();
   icLoadConfiguredQueueNames_();   // queue recognition exactly as the import run has it
-  var queues, source;
-  if (tfStr_(queuesCsv)) {
-    queues = tfStr_(queuesCsv).split(',').map(tfStr_).filter(String);
-    source = 'given';
-  } else {
-    queues = tfDeptQueuesFromConfig_(dept, icDeptConfigActiveRows_());
+  var list = (queues || []).map(tfStr_).filter(String), source = 'chosen';
+  if (!list.length) {
+    list = tfDeptQueuesFromConfig_(dept, icDeptConfigActiveRows_());
     source = 'Dept Config';
   }
   var queueExts = {};
   try {
     if (typeof dcBuildExtMaps_ === 'function') dcBuildExtMaps_(cfg).queueExtSet.forEach(function (e) { queueExts[e] = true; });
-  } catch (e) { Logger.log('previewTransferShapes: queue-ext map unavailable (' + (e && e.message ? e.message : e) + ').'); }
+  } catch (e) { Logger.log('tfRunProbe_: queue-ext map unavailable (' + (e && e.message ? e.message : e) + ').'); }
 
   var rows = sheet.getDataRange().getDisplayValues();
   rows.shift();
   var res = tfClassifyTransfers_(rows, {
-    queues: queues, roster: roster, dept: dept, canon: icAgentCanonicalizer_(), queueExts: queueExts
+    queues: list, roster: roster, dept: dept, canon: icAgentCanonicalizer_(), queueExts: queueExts
   });
   var m = sheet.getName().match(/(\d{4}-\d{2}-\d{2})$/);
-  var lines = tfReportLines_(res, {
-    date: m ? m[1] : sheet.getName(), dept: dept, queues: queues, queueSource: source,
+  return { res: res, meta: {
+    date: m ? m[1] : sheet.getName(), dept: dept, queues: list, queueSource: source,
     rosterCount: Object.keys(roster.byDept[dept].names).length,
     rosterExtCount: Object.keys(roster.byDept[dept].exts).length
-  });
+  } };
+}
+
+/**
+ * READ-ONLY, editor entry point. Reports how the transfer filter would
+ * classify one Call_Legs tab for one dept, with sample call ids to check. No
+ * date -> the ACTIVE tab when it is a Call_Legs tab, else the most recent one.
+ * `queuesCsv` overrides the dept's Dept Config queues. Returns the report lines.
+ * (The menu opens the dialog instead: showTransferShapesDialog.)
+ */
+function previewTransferShapes(dateIso, dept, queuesCsv) {
+  var r = tfRunProbe_(dateIso, dept, tfStr_(queuesCsv) ? tfStr_(queuesCsv).split(',') : null);
+  if (r.error) { Logger.log('previewTransferShapes: ' + r.error); return [r.error]; }
+  var lines = tfReportLines_(r.res, r.meta);
   lines.forEach(function (t) { Logger.log(t); });
   return lines;
 }
 
-/** Menu wrapper: prompts for the date, the dept and an optional queue list. */
-function previewTransferShapesForDate() {
-  var arg = icPreviewDateArg_();
-  if (arg.cancelled) return;
-  var ui = SpreadsheetApp.getUi();
+// ---- the dialog (CDR Tools -> Diagnostics -> Transfer shapes for a dept…) ----
+
+/** PURE. Queue names on a tab's CALLEE NAME column with their leg counts, sorted. */
+function tfTabQueueCounts_(names) {
+  var by = {};
+  (names || []).forEach(function (n) {
+    var q = tfStr_(Array.isArray(n) ? n[0] : n);
+    if (q && icIsQueueName_(q)) by[q] = (by[q] || 0) + 1;
+  });
+  return Object.keys(by).sort().map(function (q) { return { name: q, legs: by[q] }; });
+}
+
+/**
+ * PURE. The dialog's structured result: header facts, one section per
+ * transfer kind (counts, the link breakdown and EVERY matching call, in time
+ * order) and the possible-blind lists in full, plus the plain-text summary
+ * for copying (that one keeps tfReportLines_' samples). Employees and call
+ * ids only; customers are never named (the same contract as tfReportLines_).
+ */
+function tfDialogPayload_(res, meta) {
+  meta = meta || {};
+  var counted = {};
+  (meta.queues || []).forEach(function (q) { counted[String(q).toLowerCase()] = true; });
+  var section = function (key, title, list) {
+    var t = tfLinkTally_(list);
+    return {
+      key: key, title: title, total: list.length, inWindow: t.inWindow,
+      links: { tree: t.tree, inbound: t.inbound, outbound: t.outbound, ambiguous: t.ambiguous, none: t.none },
+      rows: list.map(function (x) {
+        return { time: x.time, root: x.root, leg: x.legId, from: x.caller.name, fromExt: x.caller.ext,
+                 rostered: !!x.caller.rostered, to: x.target, linkKind: x.link.kind, linkText: tfLinkText_(x.link),
+                 linkRoot: x.link.root || null, outcome: x.outcome.state, by: x.outcome.by || null, inWindow: !!x.inWindow };
+      })
+    };
+  };
+  var blind = function (key, title, list) {
+    return {
+      key: key, title: title, total: list.length,
+      inWindow: list.filter(function (b) { return b.inWindow; }).length,
+      rows: list.map(function (b) {
+        return { time: b.time, root: b.root, leg: b.legId, answeredBy: b.answeredBy, target: b.target, inWindow: !!b.inWindow };
+      })
+    };
+  };
+  var dept = meta.dept || '?';
+  return {
+    header: {
+      date: meta.date || '', dept: dept, queues: (meta.queues || []).slice(), queueSource: meta.queueSource || '',
+      legs: res.totals.legs, calls: res.totals.calls, customerCalls: res.totals.customerCalls,
+      rosterCount: meta.rosterCount, rosterExtCount: meta.rosterExtCount,
+      tabQueues: Object.keys(res.queueTabCounts || {}).sort().map(function (q) {
+        return { name: q, legs: res.queueTabCounts[q], counted: !!counted[q.toLowerCase()] };
+      })
+    },
+    sections: [
+      section('queue', 'Queue transfers into ' + dept + "'s queues", res.queue),
+      section('direct', 'Direct transfers to a ' + dept + ' employee', res.direct)
+    ],
+    blind: [
+      blind('blindQueue', 'Re-entered a ' + dept + ' queue after someone answered', res.blindQueue),
+      blind('blindDirect', 'Rang a ' + dept + ' employee directly after someone else answered', res.blindDirect)
+    ],
+    checks: [
+      'Queue and direct transfers: is each one really a transfer, and is the linked customer call the right one?',
+      'Unlinked direct transfers are what the "allow unlinked" option would add -- colleague calls, or real transfers?',
+      'Possible blind transfers: blind transfers (the filter should include them) or re-routes (it should not)?'
+    ],
+    text: tfReportLines_(res, meta).join('\n')
+  };
+}
+
+/** Menu item: CDR Tools -> Diagnostics -> Transfer shapes for a dept… */
+function showTransferShapesDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('TransferShapesDialog').setWidth(1060).setHeight(720);
+  SpreadsheetApp.getUi().showModalDialog(html, 'CDR Tools');
+}
+
+/** Dialog init: the Call_Legs tabs (newest first), the default one, and the roster depts. */
+function tfDialogInit() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var dates = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) dates.push(m[1]);
+  });
+  dates.sort().reverse();
+  var active = ss.getActiveSheet();
+  var am = active ? active.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i) : null;
   var depts = [];
   try {
     var cfg = SpreadsheetApp.openById(getTargetSsId_()).getSheetByName('DO NOT EDIT!');
     if (cfg) depts = tfReadRoster_(cfg).depts;
-  } catch (e) { /* the run below reports it */ }
-  var d = ui.prompt('Transfer shapes -- department',
-    'Roster department (exactly as its header):\n' + depts.join(', '), ui.ButtonSet.OK_CANCEL);
-  if (d.getSelectedButton() !== ui.Button.OK) return;
-  var q = ui.prompt('Transfer shapes -- queues (optional)',
-    "Comma-separated queue names to count for that department.\nLeave blank to use its Dept Config queues.",
-    ui.ButtonSet.OK_CANCEL);
-  if (q.getSelectedButton() !== ui.Button.OK) return;
-  var lines = previewTransferShapes(arg.dateIso, d.getResponseText(), q.getResponseText()) || ['No Call_Legs sheet for that date.'];
-  var esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
-  var html = HtmlService.createHtmlOutput(
-    '<textarea readonly style="width:100%;height:520px;font:12px monospace;white-space:pre">'
-    + esc(lines.join('\n')) + '</textarea>').setWidth(1000).setHeight(580);
-  ui.showModalDialog(html, 'Transfer shapes (read-only)');
+  } catch (e) { Logger.log('tfDialogInit: roster unavailable (' + (e && e.message ? e.message : e) + ').'); }
+  return { dates: dates, defaultDate: am ? am[1] : (dates[0] || ''), depts: depts };
+}
+
+/** Dialog: the queue checklist for a tab + dept (the dept's Dept Config queues pre-ticked). */
+function tfDialogQueues(dateIso, dept) {
+  var sheet = tfFindCallLegsSheet_(SpreadsheetApp.getActiveSpreadsheet(), tfStr_(dateIso));
+  if (!sheet) throw new Error('No Call_Legs sheet for ' + dateIso + '.');
+  icResetConfigMemos_();
+  icLoadConfiguredQueueNames_();
+  var last = sheet.getLastRow();
+  var names = last >= 2 ? sheet.getRange(2, IC_COL.CALLEE_NAME + 1, last - 1, 1).getDisplayValues() : [];
+  return {
+    configured: tfDeptQueuesFromConfig_(tfStr_(dept), icDeptConfigActiveRows_()),
+    onTab: tfTabQueueCounts_(names)
+  };
+}
+
+/** Dialog: run the probe. req = {date, dept, queues: [...]}. */
+function tfDialogRun(req) {
+  req = req || {};
+  var queues = Array.isArray(req.queues) ? req.queues.slice(0, 80) : [];
+  var r = tfRunProbe_(tfStr_(req.date), req.dept, queues);
+  if (r.error) throw new Error(r.error);
+  return tfDialogPayload_(r.res, r.meta);
 }
