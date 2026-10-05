@@ -43,7 +43,7 @@
  * PHI: the report never prints an external number or a customer's caller-ID
  * name. Employees are named; customers are "customer".
  *
- * CDR Import editor / CDR Tools menu:
+ * CDR Import editor / CDR Tools -> Diagnostics:
  *   previewTransferShapes('2026-10-02', 'CSR')                 // Dept Config queues
  *   previewTransferShapes('2026-10-02', 'CSR', 'A_Q_CSR,A_Q_Intake')
  *   previewTransferShapesForDate()                             // prompts

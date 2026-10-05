@@ -420,7 +420,7 @@ When something looks wrong, before assuming a code bug, check:
 22. Deferred Neon mirror (optional; `NeonMirror.js`, CDR Import). Defaults OFF
     -- the daily import mirrors to Neon inline as before until you opt in.
     To move the mirror off the synchronous import path: (a) run **CDR Tools →
-    Install Neon Mirror Trigger** in the cdr-import project (installs
+    🔁 Neon Mirror → Install trigger** in the cdr-import project (installs
     `runNeonMirror_`, every 15 min; needs `script.scriptapp`), then (b) set the
     cdr-import Script Property `NEON_MIRROR_MODE=deferred`. The import then
     enqueues each date to the `Neon Mirror Queue` tab and the trigger mirrors
@@ -1462,8 +1462,8 @@ When something looks wrong, before assuming a code bug, check:
     dimension, INV-10) and does not reach the QCD queue counters.
 
 43. **The `Call_Legs_*` retention prune (`DeleteOldSheets.js`, cdr-import) —
-    install `runRetentionPrune_` via the CDR Tools menu ("Install Retention
-    Prune Trigger", daily ~3 AM) and REMOVE any pre-existing hand-made
+    install `runRetentionPrune_` via the CDR Tools menu ("🗑️ Retention
+    Prune → Install trigger (daily)", ~3 AM) and REMOVE any pre-existing hand-made
     trigger on `deleteOldCDRSheets` so it doesn't run twice.** The ~14-day
     per-day-sheet retention it enforces is load-bearing well beyond disk
     hygiene: the inbound/outbound journey backfills, the per-queue split
@@ -2559,8 +2559,8 @@ When something looks wrong, before assuming a code bug, check:
       the old number forward.
 
 66. **The QCD-vs-DQE reconciliation diagnostic (`diagnoseQcdVsDqe`).**
-    Read-only, editor- or menu-run from **cdr-import** (CDR Tools → "QCD vs
-    DQE diagnostic (pick date)…"), file `apps-script/cdr-import/qcdDqeDiagnostic.js`.
+    Read-only, editor- or menu-run from **cdr-import** (CDR Tools → 🔍 Diagnostics →
+    "QCD vs DQE diagnostic (pick date)…"), file `apps-script/cdr-import/qcdDqeDiagnostic.js`.
     - **The question it answers.** A dept's QCD "Queue Calls" answered and the
       dashboard's per-agent answered sum are computed from the SAME raw legs
       and keyed on the SAME person (the callee), yet they differ — for CSR on
@@ -2642,7 +2642,7 @@ When something looks wrong, before assuming a code bug, check:
       hardcoded).
 
 67. **Work-window edge census (`runWorkWindowCensus` / `probeWorkWindowEdges`).**
-    Read-only, cdr-import → CDR Tools → "Work-window edge census", file
+    Read-only, cdr-import → CDR Tools → 🔍 Diagnostics → "Work-window edge census", file
     `apps-script/cdr-import/qcdDqeDiagnostic.js`. Writes only its own
     `Work Window Census` tab; sets no Script Properties.
     - **Why it exists.** It is the PRE-FLIGHT for widening the work window for
@@ -2831,12 +2831,12 @@ When something looks wrong, before assuming a code bug, check:
     inbound-backfill comments, 6 min in the dashboard docs and an OBSERVED
     kill). A wrong budget is not a tuning problem: a run killed at the ceiling
     dies PAST its catch blocks, so the bulk pause never fires and the in-flight
-    date's failure row is never written. MEASURE it once per account: CDR
-    Import -> CDR Tools -> **Measure execution ceiling (one-shot probe)**
-    installs a one-shot time trigger that runs `runExecCeilingProbe_` in ~1 min
+    date's failure row is never written. MEASURE it once per account: in the
+    CDR Import editor, run **`installExecCeilingProbeTrigger`** (off the CDR
+    Tools menu since 2026-10-05 -- measured, see below), which installs a one-shot time trigger that runs `runExecCeilingProbe_` in ~1 min
     (a TRIGGER, the ceiling the daily import lives under) and sleeps in 10 s
     steps writing `EXEC_CEILING_PROBE_LAST_MS` until the platform kills it (or
-    40 min pass); ~45 min later **Read execution-ceiling probe result** says
+    40 min pass); ~45 min later **`readExecCeilingProbe`** says
     `KILLED at ~N s` with a recommended budget (ceiling minus ~2 min for the
     in-flight date + the final archive), `ABOVE-MAX`, `RUNNING` or `NO-DATA`.
     Then set the cdr-import Script Properties `BULK_TIME_LIMIT_MS` (the bulk
@@ -3081,7 +3081,7 @@ When something looks wrong, before assuming a code bug, check:
       the tool only draws the sample and withholds the key.
 
 72. **Per-call agent-name rewrite (PC-1 / PC-2, broad-scan 2026-10-01;
-    cdr-import CDR Tools menu).** The per-call capture writers now store the
+    cdr-import CDR Tools → 🪪 Per-call Agent Names).** The per-call capture writers now store the
     ROSTER-canonical agent name (the same INV-24 rule the DQE build applies:
     alias override, exact roster match, else a UNIQUE strip/flatten paren
     match; ambiguous and unknown names stay as captured). Rows captured BEFORE
@@ -3089,14 +3089,14 @@ When something looks wrong, before assuming a code bug, check:
     Paulose" for roster "Roman (Robin) Paulose") reads "Unrostered" in the
     Outbound report and matches nothing in Agent Day / the agent app until
     they are rewritten. One-time, after deploying cdr-import:
-    - **Preview first:** CDR Tools -> "Preview per-call agent-name rewrite"
+    - **Preview first:** CDR Tools -> 🪪 Per-call Agent Names -> "Preview rewrite (read-only)"
       (`previewPerCallAgentNameRewrite`). Read-only; the execution log lists
       every raw -> canonical pair per column (`outbound_calls.agent_name`,
       `inbound_calls.first_agent` / `origin_agent`) and per journey table,
       with row counts. Only names that would CHANGE are listed.
     - **Back up:** dashboard Health page -> "Back up now"
       (`runNeonBackupNow`, #28) -- both tables are in the backup set.
-    - **Apply:** "Rewrite per-call agent names (Neon)"
+    - **Apply:** "Rewrite in Neon"
       (`rewritePerCallAgentNames`). Bound `UPDATE ... WHERE col = raw` per
       pair; journey entries are rewritten in place by name, NEVER a
       `kind:'queue'` entry. Idempotent, so a run that stops at the

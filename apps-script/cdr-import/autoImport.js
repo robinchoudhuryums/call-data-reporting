@@ -3487,7 +3487,8 @@ function countRow34OverlapRows_(cleanData) {
  * (execution log) how many rows would be double-counted in QCDR Output row
  * 34's sum. Zero across the retention window = row 34 is provably clean for
  * those dates and the known-issues item can be closed as "latent only".
- * Writes nothing; sets no properties. Also on the CDR Tools menu.
+ * Writes nothing; sets no properties. Editor-run (off the CDR Tools menu since
+ * the 2026-10-05 tidy; the 2026-08-21 run closed the question at zero).
  */
 function previewRow34Overlap() {
   const sourceSS = SpreadsheetApp.getActiveSpreadsheet();

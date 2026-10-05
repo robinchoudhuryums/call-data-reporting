@@ -895,7 +895,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   which had drifted, are pinned by cross-file-pins instead, DD-6) and
   window-edge shapes beyond the fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
   row: the sidebar now refuses it like every total row (parity-pinned), and
-  the read-only `previewRow34Overlap` (cdr-import, CDR Tools menu) measures
+  the read-only `previewRow34Overlap` (cdr-import, editor-run) measures
   the latent 35+37 double-count -- see docs/known-issues.md "QCDR Output
   row 34". Still diff
   both files when you touch either; the suite tells you WHICH cell drifted.

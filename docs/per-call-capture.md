@@ -134,7 +134,8 @@ a manager reaches outbound call O only if an internal record links to it AND
 that record passes the unchanged F-4 gate on their own dept. Full ruling +
 what is disclosed: docs/known-issues.md. Editor diagnostics
 `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
-(CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4), and
+(editor-run since the 2026-10-05 menu tidy -- R11-N is closed --
+with the `TRANSFER_PREVIEW_DATE` property; R11-N4), and
 `previewOutboundAssistLinks` validates the Step-4 link by running the REAL
 record builder over a Call_Legs sheet (never a parallel implementation --
 the chain diagnostic's hand-written rule is what once "resolved" a
@@ -775,7 +776,7 @@ the call twice. Pinned by `agent-day.test.js`.
 **In progress -- Phase 0 (the probe) shipped.** **A CDR Tools filter that narrows the active `Call_Legs_*` tab to calls
 TRANSFERRED to a chosen department** (owner request + rulings, 2026-10-05).
 Phase 0 is the read-only probe `previewTransferShapes(date, dept, queues?)`
-(`cdr-import/transferFilter.js`; CDR Tools -> "Preview transfer shapes for a
+(`cdr-import/transferFilter.js`; CDR Tools -> Diagnostics -> "Transfer shapes for a
 dept"), which reports how the rule below classifies a real day with sample call
 ids for the owner to check BEFORE any filter is built on it. **The CDR has no
 transfer field**, so the rule reads leg shapes: a QUEUE transfer is an internal

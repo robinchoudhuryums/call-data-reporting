@@ -2189,7 +2189,7 @@ function previewOutboundAssistLinksForDate() {
  *     in CALLER), 0 neither -- so the matchers now read that leg's CALLER
  *     (icAnswerLegAgent_) and count matches per CALL (icDistinctRoots_).
  *
- * CDR Import editor / CDR Tools menu:
+ * CDR Import editor (off the CDR Tools menu since the 2026-10-05 tidy):
  *   previewCallLegShapes('2026-09-24')   // no arg -> latest Call_Legs sheet
  */
 function previewCallLegShapes(dateIso) {

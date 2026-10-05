@@ -1582,8 +1582,8 @@ double-count in the 35+37 sum (an internal, status-3 abandon >1min lands in
 both children) is now a property of the RULED definition — surface it to the
 owner separately if the total is ever used for a decision; do not "fix" it
 unilaterally. **Resolution instrument (owner-requested, 2026-08-20):** the
-read-only `previewRow34Overlap` (cdr-import, CDR Tools menu → "Preview QCD
-row-34 overlap") scans every surviving `Call_Legs_*` sheet and counts the
+read-only `previewRow34Overlap` (cdr-import; editor-run since the 2026-10-05
+menu tidy, it was CDR Tools → "Preview QCD row-34 overlap") scans every surviving `Call_Legs_*` sheet and counts the
 internal+status-3 overlap shape per date, ending with a plain verdict
 ("provably CLEAN" / "OVERSTATES by N"). Its pure core is behaviorally pinned
 to `calcQcdReport`'s own row 35/37 counters (`qcd-sidebar-parity.test.js`).
@@ -1601,8 +1601,8 @@ observation that the counts were accurate. Because `cOverlapMax` is a
 SUPERSET of the col-C condition, column C is proven clean by the same run.
 The double-count remains a LATENT property of the ruled definition: no
 predicate change is warranted on a zero measurement. If the phone system
-ever starts emitting internal-type status-3 abandons, the probe (still on
-the CDR Tools menu) re-measures in one run — re-open this note only on a
+ever starts emitting internal-type status-3 abandons, the probe (editor-run
+`previewRow34Overlap`) re-measures in one run — re-open this note only on a
 non-zero result.
 
 ## QCD Report engine

@@ -2,11 +2,10 @@
  * CDRTools.gs
  * Menu builder for CDR Tools.
  *
- * Changes in v28:
- * - Added "📋 View Pending Archive Status"  [IMPROVEMENT 4]
- * - Added "📊 Check Coverage Gaps"          [IMPROVEMENT 8]
- * - Added "Remove Duplicate CDR Rows"       [IMPROVEMENT 7]
- * - Added nested "🧹 Abandoned Filters" submenu
+ * Top level: Manual Export plus one submenu per job (bulk export, abandoned
+ * filters, Neon mirror, retention prune, per-call agent names, diagnostics).
+ * tests/unit/cdr-import-menu.test.js pins that every item names a function
+ * this project defines.
  */
 
 function onOpen() {
@@ -31,81 +30,62 @@ function onOpen() {
     .addSeparator()
     .addItem('❌ Clear Filters', 'clearAllFilters');
 
-  // 2. Build the Main Menu and attach the Submenu
+  // 2. Grouped submenus (2026-10-05 tidy). Every item is one click deep; the
+  // read-only diagnostics share one submenu. Retired from the menu but still
+  // EDITOR-runnable (Run picker): previewInternalTransferChainsForDate /
+  // previewInternalTransferPathsForDate (R11-N, closed by R11-N5),
+  // previewCallLegShapesForDate (S2C-1/S2C-5, answered 2026-09-28),
+  // previewRow34Overlap (closed 2026-08-21 at zero), and
+  // installExecCeilingProbeTrigger / readExecCeilingProbe (measured 2026-09-21,
+  // Operator State #70).
+  const bulkSubMenu = ui.createMenu('📦 Bulk Export')
+    .addItem('Bulk Export',                     'bulkHistoricalUpdate')
+    .addItem('Resume Bulk Processing',          'processBulkQueue')
+    .addSeparator()
+    .addItem('📋 View Pending Archive Status',  'viewPendingArchiveStatus')
+    .addItem('Process Batch Archive',           'processBatchArchive')
+    .addItem('Clear Pending Archive',           'clearPendingArchive');
+
+  // Deferred Neon mirror (NeonMirror.js, Operator State #22). Install the
+  // trigger once, then set NEON_MIRROR_MODE=deferred to move the mirror off the
+  // synchronous import path. "Run now" drains the queue on demand.
+  const neonSubMenu = ui.createMenu('🔁 Neon Mirror')
+    .addItem('Install trigger',   'installNeonMirrorTrigger')
+    .addItem('Uninstall trigger', 'uninstallNeonMirrorTrigger')
+    .addItem('Run now',           'runNeonMirrorNow');
+
+  // C-3: the Call_Legs_* retention prune (DeleteOldSheets.js, Operator State
+  // #43) -- the ~14-day window everything assumes rests on it.
+  const pruneSubMenu = ui.createMenu('🗑️ Retention Prune')
+    .addItem('Install trigger (daily)', 'installRetentionPruneTrigger')
+    .addItem('Uninstall trigger',       'uninstallRetentionPruneTrigger')
+    .addItem('Run now',                 'runRetentionPruneNow');
+
+  // PC-1: stored per-call agent names -> roster-canonical (Operator State #72).
+  // Preview is read-only; take a Neon backup before the rewrite. Re-run after
+  // adding an Agent Alias Override.
+  const namesSubMenu = ui.createMenu('🪪 Per-call Agent Names')
+    .addItem('Preview rewrite (read-only)', 'previewPerCallAgentNameRewrite')
+    .addItem('Rewrite in Neon',             'rewritePerCallAgentNames');
+
+  // Read-only diagnostics. The "(pick date)" ones prompt for a Call_Legs date
+  // (blank = latest). QCD vs DQE writes only its own detail tab.
+  const diagSubMenu = ui.createMenu('🔍 Diagnostics (read-only)')
+    .addItem('QCD vs DQE diagnostic (pick date)…',               'diagnoseQcdVsDqe')
+    .addItem('Work-window edge census',                          'runWorkWindowCensus')
+    .addItem('Outbound assist links (pick date)…',               'previewOutboundAssistLinksForDate')
+    .addItem('Transfer shapes for a dept (pick date)…',          'previewTransferShapesForDate');
+
   ui.createMenu("CDR Tools")
-    .addItem("Manual Export",            "runManualExport")
-    
-    .addSeparator()
-    
-    .addItem("Bulk Export",              "bulkHistoricalUpdate")
-    .addItem("Resume Bulk Processing",   "processBulkQueue")
-    
-    .addSeparator()
-    
-    .addItem("📋 View Pending Archive Status", "viewPendingArchiveStatus") // [IMPROVEMENT 4]
-    .addItem("Process Batch Archive",          "processBatchArchive")
-    .addItem("Clear Pending Archive",          "clearPendingArchive")
-    
-    .addSeparator()
-
-    // Attach the submenu right here
+    .addItem("Manual Export", "runManualExport")
+    .addSubMenu(bulkSubMenu)
     .addSubMenu(filterSubMenu)
-
     .addSeparator()
-
-    // Deferred Neon mirror (NeonMirror.js). Install the trigger once, then set
-    // Script Property NEON_MIRROR_MODE=deferred to move the mirror off the
-    // synchronous import path. "Run Neon Mirror Now" drains the queue on demand.
-    .addItem("Install Neon Mirror Trigger",   "installNeonMirrorTrigger")
-    .addItem("Uninstall Neon Mirror Trigger", "uninstallNeonMirrorTrigger")
-    .addItem("Run Neon Mirror Now",           "runNeonMirrorNow")
-
+    .addSubMenu(neonSubMenu)
+    .addSubMenu(pruneSubMenu)
+    .addSubMenu(namesSubMenu)
     .addSeparator()
-
-    // C-3: the Call_Legs_* retention prune (DeleteOldSheets.js). The ~14-day
-    // window everything assumes (journey backfills, queue-split backfill,
-    // pruned-sheet detection) now has an in-repo installer + telemetry
-    // (`retentionPrune` Pipeline Health rows) -- Operator State #43.
-    .addItem("Install Retention Prune Trigger (daily)", "installRetentionPruneTrigger")
-    .addItem("Uninstall Retention Prune Trigger",       "uninstallRetentionPruneTrigger")
-    .addItem("Run Retention Prune Now",                 "runRetentionPruneNow")
-
-    .addSeparator()
-
-    // Read-only transfer-path diagnostics (inboundCalls.js). Each prompts for
-    // a Call_Legs date (blank = latest sheet); results in the execution log.
-    .addItem("Preview transfer chains (pick date)…", "previewInternalTransferChainsForDate")
-    .addItem("Preview transfer paths (pick date)…",  "previewInternalTransferPathsForDate")
-    .addItem("Preview outbound assist links (pick date)…", "previewOutboundAssistLinksForDate")
-    .addItem("Preview call-leg shapes (pick date)…", "previewCallLegShapesForDate")
-    .addItem("Preview transfer shapes for a dept (pick date)…", "previewTransferShapesForDate")
-    // PC-1 (broad-scan 2026-10-01): stored per-call agent names -> roster-canonical.
-    // Preview is read-only; take a Neon backup before the rewrite (Operator State #72).
-    .addItem("Preview per-call agent-name rewrite",  "previewPerCallAgentNameRewrite")
-    .addItem("Rewrite per-call agent names (Neon)",  "rewritePerCallAgentNames")
-    // Read-only row-34 double-count probe (owner request 2026-08-20): scans
-    // every surviving Call_Legs_* sheet; results in the execution log.
-    .addItem("Preview QCD row-34 overlap",           "previewRow34Overlap")
-
-    .addSeparator()
-
-    // Read-only QCD-vs-DQE reconciliation (qcdDqeDiagnostic.js): explains why a
-    // dept's QCD "Queue Calls" answered and the dashboard's per-agent answered
-    // sum differ, leg by leg. Reconciles itself against calcQcdReport AND the
-    // stored DQE rows before reporting; writes only its own detail tab.
-    .addItem("QCD vs DQE diagnostic (pick date)…", "diagnoseQcdVsDqe")
-
-    // Read-only work-window edge census (qcdDqeDiagnostic.js): per-queue traffic
-    // at each window edge, the legs whose queue the DQE gate cannot recognise
-    // (the R18e shape), and the size of the existing AJ/AK after-hours capture.
-    .addItem("Work-window edge census", "runWorkWindowCensus")
-
-    .addSeparator()
-
-    // P-3: measure the execution ceiling ONCE (execCeilingProbe.js), then align
-    // BULK_TIME_LIMIT_MS / IC_BACKFILL_TIME_LIMIT_MS to it (Script Properties).
-    .addItem("Measure execution ceiling (one-shot probe)", "installExecCeilingProbeTrigger")
-    .addItem("Read execution-ceiling probe result",        "readExecCeilingProbe")
+    .addSubMenu(diagSubMenu)
 
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions

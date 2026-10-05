@@ -540,7 +540,7 @@ ships both, and the stamp says `+dirty`) or the branch is not `main`;
   `NEON_MIRROR_MODE` Script Property to `deferred` (unset / `inline` =
   the original behavior, unchanged).
 - First install the trigger: in the CDR Import project, **CDR Tools →
-  Install Neon Mirror Trigger** (installs `runNeonMirror_`, every 15
+  🔁 Neon Mirror → Install trigger** (installs `runNeonMirror_`, every 15
   min; needs the `script.scriptapp` scope — grant on first run). In
   `deferred` mode the import writes only the sheets and enqueues each
   date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet; the
