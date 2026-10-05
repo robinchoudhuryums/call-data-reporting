@@ -1,6 +1,20 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-05 — CDR Import tools round MERGED + DEPLOYED (#354, #355), then
+  /sync-docs.** #354: transfer filter Phase 0 probe, both CDR Tools menus
+  grouped, AF-1 abandoned-filter dialog + on-tab check (blocks 229-230). #355:
+  the Transfer shapes probe became one dialog, both cdr-import dialogs were
+  restyled after the dashboard's report modals (tokens copied inline, which the
+  sync recorded in per-call-capture + client-ui-conventions), and the dialog now
+  lists EVERY call, filterable by link type (only the copyable summary
+  samples). Owner deployed cdr-import and confirmed it works. The sync added a
+  fix-history section and a next-steps row; CLAUDE.md unchanged (171 KB, 29 KB
+  headroom). **Where I left off:** all merged; branch reset to main.
+  **Owner-side next:** walk S55 (run "Check the dialog against the old items"
+  first), then AF-1 step 3 (retire the fourteen items + wrappers); confirm the
+  Phase 0 transfer shapes (incl. whether possible blind transfers belong), then
+  transfer filter Phase 1. LEG-2 still waits on the decommission date.
 - **2026-10-05 — AF-1 IMPLEMENTED (block 229): the "Filter abandoned calls…"
   dialog (cdr-import AbandonedFilter.js + AbandonedFilterDialog.html), steps 1-2
   of the owner-approved plan.** Department presets carry the fourteen old items
