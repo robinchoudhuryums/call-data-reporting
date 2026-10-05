@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<!-- Transfer filter Phase 0: CDR Tools -> Diagnostics -> Transfer shapes for a dept…
+     Server side: transferFilter.js (tfDialogInit / tfDialogQueues / tfDialogRun).
+     READ-ONLY. Every sheet-sourced string is written with textContent. -->
+<style>
+  :root { --ink: #202124; --muted: #5f6368; --line: #dadce0; --soft: #f1f3f4; --accent: #1a73e8;
+          --tree: #188038; --inbound: #1a73e8; --outbound: #8430ce; --ambiguous: #e37400; --none: #9aa0a6; }
+  * { box-sizing: border-box; }
+  body { font: 13px/1.45 Arial, sans-serif; color: var(--ink); margin: 0; padding: 12px 16px 20px; }
+  h2 { font-size: 15px; margin: 18px 0 8px; }
+  h3 { font-size: 12px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .form { display: grid; grid-template-columns: auto 1fr auto 1fr auto; gap: 8px 10px; align-items: center;
+          background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  .form label { font-weight: bold; }
+  select { font: inherit; padding: 4px 6px; min-width: 0; width: 100%; }
+  button { font: inherit; padding: 6px 14px; cursor: pointer; border-radius: 4px; border: 1px solid var(--line); background: #fff; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .55; cursor: default; }
+  #queueBox { margin-top: 8px; }
+  #queueList { display: flex; flex-wrap: wrap; gap: 4px 14px; max-height: 120px; overflow-y: auto;
+               border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; background: #fff; }
+  #queueList label { white-space: nowrap; font-weight: normal; }
+  #queueList .n { color: var(--muted); font-size: 11px; }
+  #status { margin: 10px 0 0; min-height: 1.4em; }
+  #status.error { color: #c5221f; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0 4px; }
+  .tile { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  .tile .v { font-size: 24px; font-weight: bold; }
+  .tile .k { color: var(--muted); font-size: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; font-size: 12px; color: var(--muted); }
+  .chip.on { border-color: var(--accent); color: var(--accent); font-weight: bold; }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
+  .card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .card .head .t { font-weight: bold; font-size: 14px; }
+  .bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--soft); margin: 8px 0 4px; }
+  .bar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
+  th { text-align: left; color: var(--muted); font-weight: normal; border-bottom: 1px solid var(--line); padding: 4px 6px; }
+  td { border-bottom: 1px solid var(--soft); padding: 4px 6px; vertical-align: top; }
+  td.mono { font-family: monospace; }
+  tr.warn td { background: #fef7e0; }
+  .tag { display: inline-block; border-radius: 3px; padding: 0 5px; font-size: 11px; color: #fff; }
+  .tag.tree { background: var(--tree); } .tag.inbound { background: var(--inbound); } .tag.outbound { background: var(--outbound); }
+  .tag.ambiguous { background: var(--ambiguous); } .tag.none { background: var(--none); }
+  .off { color: var(--muted); font-size: 11px; }
+  .empty { color: var(--muted); font-style: italic; margin-top: 6px; }
+  ol.checks { margin: 6px 0 0 18px; padding: 0; }
+  details { margin-top: 14px; }
+  textarea { width: 100%; height: 220px; font: 11px monospace; white-space: pre; }
+</style>
+</head>
+<body>
+  <div class="form" role="group" aria-label="Probe settings">
+    <label for="date">Tab</label>
+    <select id="date" aria-label="Call_Legs tab"><option>loading…</option></select>
+    <label for="dept">Department</label>
+    <select id="dept" aria-label="Department"><option value="">loading…</option></select>
+    <button class="primary" id="run" disabled>Run</button>
+  </div>
+  <div id="queueBox" hidden>
+    <div class="muted">Queues to count for this department (its Dept Config queues are pre-ticked; the count is legs on this tab):</div>
+    <div id="queueList" role="group" aria-label="Queues"></div>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
+  <div id="out"></div>
+
+<script>
+  var LINK = [
+    { k: 'tree', label: 'Same call tree' },
+    { k: 'inbound', label: 'Concurrent inbound call' },
+    { k: 'outbound', label: 'Concurrent outbound call' },
+    { k: 'ambiguous', label: 'Ambiguous' },
+    { k: 'none', label: 'Unlinked' }
+  ];
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = String(text);
+    return e;
+  }
+  function say(text, isError) { var s = $('status'); s.textContent = text || ''; s.className = isError ? 'error' : ''; }
+  function fail(e) { busy(false); say(e && e.message ? e.message : String(e), true); }
+  function busy(on) { $('run').disabled = on || !$('dept').value; $('date').disabled = on; $('dept').disabled = on; }
+
+  function fillSelect(sel, values, current, placeholder) {
+    sel.textContent = '';
+    if (placeholder) { var p = el('option', null, placeholder); p.value = ''; sel.appendChild(p); }
+    values.forEach(function (v) { var o = el('option', null, v); o.value = v; if (v === current) o.selected = true; sel.appendChild(o); });
+  }
+
+  function loadQueues() {
+    var dept = $('dept').value, date = $('date').value;
+    $('run').disabled = !dept;
+    if (!dept) { $('queueBox').hidden = true; return; }
+    say('Reading the queues on ' + date + '…');
+    google.script.run.withSuccessHandler(function (q) {
+      var want = {};
+      q.configured.forEach(function (n) { want[n.toLowerCase()] = true; });
+      var names = {};
+      q.onTab.forEach(function (x) { names[x.name.toLowerCase()] = x; });
+      q.configured.forEach(function (n) { if (!names[n.toLowerCase()]) names[n.toLowerCase()] = { name: n, legs: 0 }; });
+      var box = $('queueList');
+      box.textContent = '';
+      Object.keys(names).sort().forEach(function (k) {
+        var x = names[k];
+        var lab = el('label');
+        var cb = el('input'); cb.type = 'checkbox'; cb.dataset.name = x.name; cb.checked = !!want[k];
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(' ' + x.name + ' '));
+        lab.appendChild(el('span', 'n', '(' + x.legs + ')'));
+        box.appendChild(lab);
+      });
+      $('queueBox').hidden = false;
+      say(q.configured.length ? '' : 'This department has no Dept Config queues -- tick the ones to count.');
+    }).withFailureHandler(fail).tfDialogQueues(date, dept);
+  }
+
+  function tile(value, label, sub) {
+    var t = el('div', 'tile');
+    t.appendChild(el('div', 'v', value));
+    t.appendChild(el('div', 'k', label));
+    if (sub) t.appendChild(el('div', 'k', sub));
+    return t;
+  }
+
+  function linkBar(links, total) {
+    var wrap = el('div');
+    var bar = el('div', 'bar');
+    bar.setAttribute('aria-hidden', 'true');
+    LINK.forEach(function (L) {
+      var n = links[L.k] || 0;
+      if (!n || !total) return;
+      var s = el('span'); s.style.width = (100 * n / total) + '%'; s.style.background = 'var(--' + L.k + ')';
+      s.title = L.label + ': ' + n;
+      bar.appendChild(s);
+    });
+    wrap.appendChild(bar);
+    var leg = el('div', 'legend');
+    LINK.forEach(function (L) {
+      var item = el('span');
+      var sw = el('i'); sw.style.background = 'var(--' + L.k + ')';
+      item.appendChild(sw);
+      item.appendChild(document.createTextNode(L.label + ': ' + (links[L.k] || 0)));
+      leg.appendChild(item);
+    });
+    wrap.appendChild(leg);
+    return wrap;
+  }
+
+  function table(headers, rows) {
+    var t = el('table');
+    var tr = el('tr');
+    headers.forEach(function (h) { tr.appendChild(el('th', null, h)); });
+    var thead = el('thead'); thead.appendChild(tr); t.appendChild(thead);
+    var tb = el('tbody');
+    rows.forEach(function (r) { tb.appendChild(r); });
+    t.appendChild(tb);
+    return t;
+  }
+  function cell(text, cls) { return el('td', cls || null, text); }
+
+  function renderSection(s) {
+    var card = el('div', 'card');
+    var head = el('div', 'head');
+    head.appendChild(el('span', 't', s.title + ': ' + s.total));
+    head.appendChild(el('span', 'muted', s.inWindow + ' in the work window'));
+    card.appendChild(head);
+    if (!s.total) { card.appendChild(el('div', 'empty', 'None on this tab.')); return card; }
+    card.appendChild(linkBar(s.links, s.total));
+    var rows = s.samples.map(function (x) {
+      var tr = el('tr', x.linkKind === 'none' || x.linkKind === 'ambiguous' ? 'warn' : null);
+      tr.appendChild(cell(x.time, 'mono'));
+      var c = cell(x.root, 'mono'); c.appendChild(el('div', 'off', 'leg ' + x.leg)); tr.appendChild(c);
+      var f = cell(x.from); f.appendChild(el('div', 'off', 'ext ' + x.fromExt + (x.rostered ? '' : ' · not on roster'))); tr.appendChild(f);
+      tr.appendChild(cell(x.to));
+      var l = el('td'); l.appendChild(el('span', 'tag ' + x.linkKind, (LINK.filter(function (L) { return L.k === x.linkKind; })[0] || {}).label || x.linkKind));
+      if (x.linkRoot && x.linkKind !== 'tree') l.appendChild(el('div', 'off mono', x.linkRoot));
+      tr.appendChild(l);
+      var o = cell(x.outcome + (x.by ? ' by ' + x.by : ''));
+      if (!x.inWindow) o.appendChild(el('div', 'off', 'outside the work window'));
+      tr.appendChild(o);
+      return tr;
+    });
+    card.appendChild(el('div', 'muted', 'Samples (up to 3 per link type) -- look these call ids up in the phone system:'));
+    card.appendChild(table(['Time', 'Call', 'Transferred by', 'To', 'Linked to', 'Outcome'], rows));
+    return card;
+  }
+
+  function renderBlind(b) {
+    var card = el('div', 'card');
+    var head = el('div', 'head');
+    head.appendChild(el('span', 't', 'Possible blind transfer -- ' + b.title + ': ' + b.total));
+    head.appendChild(el('span', 'muted', b.inWindow + ' in the work window'));
+    card.appendChild(head);
+    if (!b.total) { card.appendChild(el('div', 'empty', 'None on this tab.')); return card; }
+    var rows = b.samples.map(function (x) {
+      var tr = el('tr');
+      tr.appendChild(cell(x.time, 'mono'));
+      var c = cell(x.root, 'mono'); c.appendChild(el('div', 'off', 'leg ' + x.leg)); tr.appendChild(c);
+      tr.appendChild(cell('Customer, answered by ' + x.answeredBy));
+      var t = cell(x.target); if (!x.inWindow) t.appendChild(el('div', 'off', 'outside the work window'));
+      tr.appendChild(t);
+      return tr;
+    });
+    card.appendChild(table(['Time', 'Call', 'Before', 'Then'], rows));
+    return card;
+  }
+
+  function render(p) {
+    var out = $('out');
+    out.textContent = '';
+    var h = p.header;
+    out.appendChild(el('h2', null, h.dept + ' -- ' + h.date));
+    out.appendChild(el('div', 'muted', h.legs + ' legs · ' + h.calls + ' call trees · ' + h.customerCalls + ' customer inbound calls · roster '
+      + h.rosterCount + ' employees / ' + h.rosterExtCount + ' extensions · queues from ' + h.queueSource + '. Read-only -- nothing was changed.'));
+    var tiles = el('div', 'tiles');
+    tiles.appendChild(tile(p.sections[0].total, 'Queue transfers', p.sections[0].inWindow + ' in the work window'));
+    tiles.appendChild(tile(p.sections[1].total, 'Direct transfers', p.sections[1].inWindow + ' in the work window'));
+    tiles.appendChild(tile(p.blind[0].total, 'Possible blind: re-entered a queue'));
+    tiles.appendChild(tile(p.blind[1].total, 'Possible blind: rang an employee'));
+    out.appendChild(tiles);
+    out.appendChild(el('h3', null, 'Queues on this tab (counted ones highlighted)'));
+    var chips = el('div', 'chips');
+    h.tabQueues.forEach(function (q) { chips.appendChild(el('span', 'chip' + (q.counted ? ' on' : ''), q.name + ' · ' + q.legs)); });
+    if (!h.tabQueues.length) chips.appendChild(el('span', 'muted', 'none recognised'));
+    out.appendChild(chips);
+    p.sections.forEach(function (s) { out.appendChild(renderSection(s)); });
+    p.blind.forEach(function (b) { out.appendChild(renderBlind(b)); });
+    out.appendChild(el('h3', null, 'What to check'));
+    var ol = el('ol', 'checks');
+    p.checks.forEach(function (c) { ol.appendChild(el('li', null, c)); });
+    out.appendChild(ol);
+    var det = el('details');
+    det.appendChild(el('summary', null, 'Plain-text report (to copy and send)'));
+    var ta = el('textarea'); ta.readOnly = true; ta.value = p.text;
+    var copy = el('button', null, 'Copy');
+    copy.addEventListener('click', function () {
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      copy.textContent = ok ? 'Copied' : 'Selected -- press Ctrl/Cmd+C';
+    });
+    det.appendChild(ta);
+    det.appendChild(copy);
+    out.appendChild(det);
+  }
+
+  $('date').addEventListener('change', loadQueues);
+  $('dept').addEventListener('change', loadQueues);
+  $('run').addEventListener('click', function () {
+    var queues = Array.prototype.slice.call($('queueList').querySelectorAll('input:checked')).map(function (cb) { return cb.dataset.name; });
+    busy(true); say('Classifying ' + $('date').value + ' for ' + $('dept').value + '… (this reads the whole tab)');
+    google.script.run.withSuccessHandler(function (p) { busy(false); say(''); render(p); })
+      .withFailureHandler(fail)
+      .tfDialogRun({ date: $('date').value, dept: $('dept').value, queues: queues });
+  });
+
+  google.script.run.withSuccessHandler(function (init) {
+    fillSelect($('date'), init.dates, init.defaultDate, init.dates.length ? null : 'No Call_Legs tabs');
+    fillSelect($('dept'), init.depts, null, 'Choose a department…');
+    busy(false);
+    if (!init.dates.length) say('No Call_Legs tabs in this workbook.', true);
+  }).withFailureHandler(fail).tfDialogInit();
+</script>
+</body>
+</html>

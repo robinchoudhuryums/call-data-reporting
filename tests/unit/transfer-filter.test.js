@@ -8,6 +8,9 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
 const { loadGas } = require('../harness/loadGas');
 
 const h = loadGas({ project: 'cdr-import', files: ['buildDQEHistoricalData.js', 'inboundCalls.js', 'transferFilter.js'] });
@@ -230,4 +233,122 @@ test('same-tree link: a transfer leg under the customer call\'s own root is link
   assert.equal(res.queue.length, 1);
   assert.equal(res.queue[0].link.kind, 'tree');
   assert.equal(res.queue[0].link.root, '900900');
+});
+
+// ---- the one-page dialog (owner request 2026-10-05) --------------------------
+
+// A busy little tab: a linked queue transfer, an unlinked one, a linked direct
+// transfer, an unlinked colleague call and a possible blind transfer.
+function dialogRows() {
+  return customerAnsweredBy215('901000').concat([
+    leg({ callId: '901001', legId: 1, start: D + '10:03:00', stop: D + '10:03:20', direction: 'Internal',
+          caller: '215', callee: '400', calleeName: 'A_Q_Sales' }),
+    leg({ callId: '901002', legId: 1, start: D + '13:00:00', stop: D + '13:01:00', direction: 'Internal',
+          caller: '279', callee: '400', calleeName: 'A_Q_Sales', abandoned: 'Abandoned' }),
+    leg({ callId: '901003', legId: 1, start: D + '10:04:00', connected: D + '10:04:02', stop: D + '10:06:00',
+          direction: 'Internal', talk: '0:01:58', caller: '215', callee: '301', calleeName: 'Pat Lee', answered: 'Answered' }),
+    leg({ callId: '901004', legId: 1, start: D + '16:00:00', connected: D + '16:00:02', stop: D + '16:01:00',
+          direction: 'Internal', talk: '0:00:58', caller: '279', callee: '302', calleeName: 'Pat (P) Lee', answered: 'Answered' }),
+    leg({ callId: '901000', legId: 3, start: D + '10:05:00', stop: D + '10:05:40', direction: 'Incoming',
+          caller: '12145559999', callerName: 'WIRELESS CALLER', callee: '400', calleeName: 'A_Q_Sales' }),
+  ]);
+}
+
+test('dialog: tfTabQueueCounts_ counts queue names only, from a column read', function () {
+  const out = Array.from(h.call('tfTabQueueCounts_', [['A_Q_Sales'], ['A_Q_Sales'], ['Pat Lee'], [''], ['Backup CSR'], ['Introduction - New']]));
+  assert.deepEqual(out.map(q => q.name + ':' + q.legs), ['A_Q_Sales:2', 'Backup CSR:1']);
+});
+
+test('dialog: the structured result carries the same counts as the classifier, and no customer data', function () {
+  const res = classify(dialogRows(), 'Sales', ['A_Q_Sales']);
+  const meta = { date: '2026-06-04', dept: 'Sales', queues: ['A_Q_Sales'], queueSource: 'chosen', rosterCount: 3, rosterExtCount: 4 };
+  const p = h.call('tfDialogPayload_', res, meta);
+  const [q, d] = Array.from(p.sections);
+  assert.equal(q.total, res.queue.length);
+  assert.equal(d.total, res.direct.length);
+  assert.equal(q.total, 2);
+  assert.equal(d.total, 2);
+  [q, d].forEach(sec => {
+    const sum = Object.keys(sec.links).reduce((n, k) => n + sec.links[k], 0);
+    assert.equal(sum, sec.total, sec.key + ': the link breakdown accounts for every transfer');
+  });
+  assert.equal(q.links.inbound, 1);
+  assert.equal(q.links.none, 1);
+  const linked = Array.from(q.samples).filter(x => x.linkKind === 'inbound')[0];
+  assert.equal(linked.root, '901001');
+  assert.equal(linked.linkRoot, '901000');
+  assert.equal(linked.from, 'Raymond (Ray) Mathews');
+  assert.equal(linked.to, 'A_Q_Sales');
+  const late = Array.from(d.samples).filter(x => x.root === '901004')[0];
+  assert.equal(late.inWindow, false, '4:00 PM PST is outside the window');
+  assert.equal(p.blind[0].total, 1);
+  assert.equal(p.blind[0].samples[0].answeredBy, 'Raymond (Ray) Mathews');
+  const tq = Array.from(p.header.tabQueues);
+  assert.ok(tq.some(x => x.name === 'A_Q_Sales' && x.counted) && tq.some(x => x.name === 'A_Q_CSR' && !x.counted));
+  assert.equal(p.text, Array.from(h.call('tfReportLines_', res, meta)).join('\n'), 'the copyable text is the editor report');
+  assert.doesNotMatch(JSON.stringify(p), /2145559999|WIRELESS CALLER/, 'no customer number or caller-ID name anywhere');
+});
+
+test('dialog: the server functions run end to end against a tab and the roster (read-only)', function () {
+  const rows = dialogRows();
+  const header = new Array(44).fill('h');
+  const tab = {
+    getName: () => 'Call_Legs_2026-06-04',
+    getLastRow: () => rows.length + 1,
+    getDataRange: () => ({ getDisplayValues: () => [header].concat(rows.map(r => r.slice())) }),
+    getRange: (r, c, n, w) => ({ getDisplayValues: () => rows.slice(r - 2, r - 2 + n).map(row => row.slice(c - 1, c - 1 + w)) }),
+  };
+  const other = { getName: () => 'Raw notes' };
+  const rosterHeader = ['', '', '', '', '', 'CSR', 'Sales', 'FieldOps'];
+  const rosterRows = [['', '', '', '', '', 'Raymond (Ray) Mathews, 215', 'Sam Seller, 300', 'Marie (Muskaan) Jindal, 279'],
+                      ['', '', '', '', '', 'Dana Desk, 352', 'Pat (P) Lee, 301, 302', '']];
+  const cfg = {
+    getLastRow: () => 3, getLastColumn: () => 8,
+    getRange: (r, c, n, w) => ({ getValues: () => (r === 1 ? [rosterHeader] : rosterRows).slice(0, n).map(row => row.slice(c - 1, c - 1 + w)) }),
+  };
+  const deptConfig = {
+    getLastRow: () => 2,
+    getRange: () => ({ getValues: () => [['Sales', 'A_Q_Sales', '', '', '', true, '', '', '', '']] }),
+  };
+  // The fakes expose READ methods only, so any write the dialog attempted would throw.
+  const target = { getSheetByName: n => (n === 'DO NOT EDIT!' ? cfg : n === 'Dept Config' ? deptConfig : null) };
+  const ss = { getSheets: () => [other, tab], getActiveSheet: () => other, getSheetByName: n => (n === tab.getName() ? tab : null) };
+  const saved = { SpreadsheetApp: h.ctx.SpreadsheetApp, getTargetSsId_: h.ctx.getTargetSsId_, canon: h.ctx.icAgentCanonicalizer_ };
+  h.ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ss, openById: () => target };
+  h.ctx.getTargetSsId_ = () => 'target';
+  h.ctx.icAgentCanonicalizer_ = () => (n => n);
+  try {
+    const init = h.call('tfDialogInit');
+    assert.deepEqual(Array.from(init.dates), ['2026-06-04']);
+    assert.equal(init.defaultDate, '2026-06-04', 'the newest tab when the active sheet is not a Call_Legs tab');
+    assert.deepEqual(Array.from(init.depts), ['CSR', 'Sales', 'FieldOps']);
+    const qs = h.call('tfDialogQueues', '2026-06-04', 'Sales');
+    assert.deepEqual(Array.from(qs.configured), ['A_Q_Sales'], 'the Dept Config queues are the pre-ticked ones');
+    assert.ok(Array.from(qs.onTab).some(q => q.name === 'A_Q_CSR'));
+    const p = h.call('tfDialogRun', { date: '2026-06-04', dept: 'Sales', queues: [] });
+    assert.equal(p.header.queueSource, 'Dept Config', 'nothing ticked -> the Dept Config queues');
+    assert.equal(p.sections[0].total, 2);
+    const p2 = h.call('tfDialogRun', { date: '2026-06-04', dept: 'Sales', queues: ['A_Q_CSR'] });
+    assert.equal(p2.header.queueSource, 'chosen');
+    assert.equal(p2.sections[0].total, 0, 'a different queue choice changes what counts');
+    assert.throws(() => h.call('tfDialogRun', { date: '2026-06-04', dept: 'Nope' }), /not a roster department/);
+    assert.throws(() => h.call('tfDialogRun', { date: '2026-01-01', dept: 'Sales' }), /No Call_Legs sheet/);
+  } finally {
+    h.ctx.SpreadsheetApp = saved.SpreadsheetApp;
+    h.ctx.getTargetSsId_ = saved.getTargetSsId_;
+    h.ctx.icAgentCanonicalizer_ = saved.canon;
+  }
+});
+
+test('dialog: the page calls only the dialog functions and never writes sheet text as HTML', function () {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'TransferShapesDialog.html'), 'utf8');
+  const js = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
+  const calls = Array.from(new Set(Array.from(js.matchAll(/\.(tf\w+)\(/g)).map(m => m[1]))).sort();
+  assert.deepEqual(calls, ['tfDialogInit', 'tfDialogQueues', 'tfDialogRun']);
+  calls.forEach(fn => assert.equal(typeof h.ctx[fn], 'function', fn));
+  assert.doesNotMatch(js, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.doesNotThrow(() => new vm.Script(js), 'the inline script parses');
+  const menu = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'CDR Tools.js'), 'utf8');
+  assert.ok(menu.indexOf("'showTransferShapesDialog'") !== -1);
+  assert.ok(menu.indexOf('previewTransferShapesForDate') === -1, 'the three-prompt wrapper is gone from the menu');
 });

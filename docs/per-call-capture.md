@@ -775,9 +775,12 @@ the call twice. Pinned by `agent-day.test.js`.
 
 **In progress -- Phase 0 (the probe) shipped.** **A CDR Tools filter that narrows the active `Call_Legs_*` tab to calls
 TRANSFERRED to a chosen department** (owner request + rulings, 2026-10-05).
-Phase 0 is the read-only probe `previewTransferShapes(date, dept, queues?)`
-(`cdr-import/transferFilter.js`; CDR Tools -> Diagnostics -> "Transfer shapes for a
-dept"), which reports how the rule below classifies a real day with sample call
+Phase 0 is the read-only probe: CDR Tools -> Diagnostics -> "Transfer shapes
+for a dept…" opens ONE dialog (`TransferShapesDialog.html`: tab, department and a
+queue checklist with the Dept Config queues pre-ticked; the result renders as
+tiles, a link breakdown and sample tables, with the plain-text report to copy),
+and `previewTransferShapes(date, dept, queues?)` is the editor twin
+(`cdr-import/transferFilter.js`, both through `tfRunProbe_`), which reports how the rule below classifies a real day with sample call
 ids for the owner to check BEFORE any filter is built on it. **The CDR has no
 transfer field**, so the rule reads leg shapes: a QUEUE transfer is an internal
 party's leg whose callee name is one of the dept's queues (the CSR Transfer
