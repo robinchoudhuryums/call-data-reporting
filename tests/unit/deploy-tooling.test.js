@@ -73,7 +73,11 @@ test('DEP-2: deploy.sh resolves every spelling of a project dir to one canonical
     }
     assert.match(probe(os.tmpdir()).out, /outside this repo/);
     assert.match(probe('no/such/dir').out, /no such project dir/);
-    ['apps-script/cdr-import', '.'].forEach(function (d) { assert.doesNotMatch(probe(d).out, /STUB CALLED/); });
+    // Same skip rule as above: on a developer box a project with a real
+    // .clasp.json goes PAST the probe point and reaches the stub, by design --
+    // asserting "never called" there failed the deploy gate itself.
+    ['apps-script/cdr-import', '.'].filter(function (d) { return !has(d); })
+      .forEach(function (d) { assert.doesNotMatch(probe(d).out, /STUB CALLED/); });
   } finally { fs.rmSync(bin, { recursive: true, force: true }); }
 });
 
