@@ -945,6 +945,11 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `font-variant-numeric: tabular-nums`) use `letter-spacing: 0`.
   Swept across 47 selectors in commit 99e7253; new mono+uppercase
   selectors should match.
+  *Copies outside this project:* the two cdr-import CDR Tools dialogs
+  (`TransferShapesDialog.html`, `AbandonedFilterDialog.html`) carry a
+  hand-copied light-palette token block, since they cannot include
+  `styles.html`. A token change here is NOT inherited there; nothing
+  enforces it.
   *INV-42 follow-on:* `--bad` / `--bad-soft` are CSS-only — not yet
   mirrored into the JS `THEME` object or `refreshChartTheme()` in
   `script.html`. If a future phase surfaces error states in chart

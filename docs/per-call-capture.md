@@ -773,7 +773,7 @@ the call twice. Pinned by `agent-day.test.js`.
 
 ### Transfer filter
 
-**In progress -- Phase 0 (the probe) shipped.** **A CDR Tools filter that narrows the active `Call_Legs_*` tab to calls
+**In progress -- Phase 0 (the probe) shipped and deployed 2026-10-05.** **A CDR Tools filter that narrows the active `Call_Legs_*` tab to calls
 TRANSFERRED to a chosen department** (owner request + rulings, 2026-10-05).
 Phase 0 is the read-only probe: CDR Tools -> Diagnostics -> "Transfer shapes
 for a dept…" opens ONE dialog (`TransferShapesDialog.html`: tab, department and a
@@ -800,4 +800,8 @@ The probe also lists POSSIBLE BLIND transfers (the customer's own legs
 re-entering a dept queue, or ringing a dept employee, after someone else
 answered) -- whether those belong in the filter is the question Phase 0 asks.
 The report prints employees and call ids, never a customer number or caller-ID
-name. Pinned by `transfer-filter.test.js`.
+name. Pinned by `transfer-filter.test.js`. **Both CDR Tools dialogs**
+(`TransferShapesDialog.html`, `AbandonedFilterDialog.html`) **copy the
+dashboard's light-palette tokens inline**: cdr-import cannot include
+`styles.html`, so a token change there does not reach them. Prose only;
+nothing enforces it.
