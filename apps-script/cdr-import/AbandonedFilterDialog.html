@@ -5,65 +5,127 @@
 <!-- AF-1: CDR Tools -> Abandoned Filters -> Filter abandoned calls… Server side:
      AbandonedFilter.js (afGetDialogState / afApplyFromDialog / afClearFromDialog).
      Every sheet-sourced string is written with textContent, never innerHTML. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body { font: 13px/1.4 Arial, sans-serif; color: #202124; margin: 0; padding: 12px 14px; }
-  h2 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: #5f6368; }
-  .tab { font-weight: bold; }
-  .warn { color: #b06000; margin-top: 4px; }
-  .muted { color: #5f6368; }
-  select, input[type=number] { font: inherit; padding: 3px 4px; }
-  input[type=number] { width: 70px; }
-  #queues { max-height: 250px; overflow-y: auto; border: 1px solid #dadce0; padding: 4px 6px; }
-  .q { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+  /* Tokens + components copied from department-dashboard/styles.html (light
+     palette) so the CDR Tools dialogs read like the dashboard's report modals;
+     TransferShapesDialog.html carries the same block. */
+  :root {
+    --paper: #f7f2e6; --paper-2: #ede6d3; --paper-card: #ffffff;
+    --ink: #101418; --muted: #606872; --line: #d6d1c2;
+    --accent: #4e7bc4; --accent-soft: #e3edf8;
+    --good: #3d9476; --good-soft: #e0efe6;
+    --bad: #b23a2c; --bad-soft: #f1d7d2;
+    --stale: #a97a12; --stale-soft: #f6ecd0;
+    --display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --r: 2px; --r-pill: 999px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper-card); color: var(--ink); font: 14px/1.55 var(--ui); -webkit-font-smoothing: antialiased; }
+  button, select, input { font: inherit; color: inherit; }
+  .panel-header { padding: 18px 24px 14px; border-bottom: 1px solid var(--line); }
+  .kicker, .label {
+    font: 500 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted);
+  }
+  .kicker { margin-bottom: 4px; }
+  h1 { margin: 0; font: 500 22px/1.15 var(--display); letter-spacing: -0.4px; }
+  .tab { font-family: var(--mono); font-size: 12px; letter-spacing: 0; color: var(--ink); }
+  .tab-line { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .panel-body { padding: 4px 24px 20px; }
+  .label { display: block; margin: 16px 0 6px; }
+  .muted { color: var(--muted); }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .status-warn {
+    margin-top: 10px; padding: 8px 12px; border-radius: var(--r); font-size: 12px;
+    background: var(--stale-soft); color: var(--stale); border-left: 3px solid var(--stale);
+  }
+  .status-warn[hidden] { display: none; }
+  select {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); font-size: 13px;
+  }
+  input[type=number] {
+    width: 76px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r);
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0; background: var(--paper-card);
+  }
+  input[type=number]:disabled { background: var(--paper-2); color: var(--muted); }
+  input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+  #queues {
+    max-height: 230px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card);
+  }
+  .q { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+  .q:first-child { border-top: 0; }
+  .q:nth-child(even) { background: var(--paper); }
+  .q:hover { background: var(--accent-soft); }
   .q .name { flex: 1; }
-  .q.absent .name { color: #80868b; }
-  .q .meta { color: #5f6368; font-size: 12px; white-space: nowrap; }
-  .row { margin: 6px 0; }
-  .buttons { margin-top: 14px; display: flex; gap: 8px; }
-  button { font: inherit; padding: 5px 12px; cursor: pointer; }
-  button.primary { background: #1a73e8; color: #fff; border: 1px solid #1a73e8; border-radius: 3px; }
-  #result { margin-top: 10px; min-height: 2.6em; }
-  #result.error { color: #c5221f; }
+  .q.absent .name { color: var(--muted); }
+  .q .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0; color: var(--muted); white-space: nowrap; }
+  .row { margin: 8px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; }
+  .row label { cursor: pointer; }
+  .row label input[type=checkbox] { vertical-align: -2px; margin-right: 8px; }
+  .row .hint { flex-basis: 100%; padding-left: 21px; }
+  .buttons { margin-top: 18px; display: flex; gap: 8px; }
+  .btn {
+    padding: 7px 14px; background: var(--ink); color: var(--paper); border: 0;
+    border-radius: var(--r); font-weight: 500; cursor: pointer;
+  }
+  .btn:hover { opacity: 0.88; }
+  .btn:disabled { background: var(--muted); color: var(--paper); cursor: not-allowed; }
+  .btn-secondary { background: var(--paper-card); color: var(--ink); border: 1px solid var(--line); }
+  .btn-secondary:hover { background: var(--paper-2); }
+  #result { margin-top: 12px; font-size: 13px; }
+  #result:empty { display: none; }
+  #result { padding: 10px 14px; border-radius: var(--r); border-left: 3px solid var(--good); background: var(--good-soft); color: var(--good); }
+  #result.busy { border-left-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  #result.error { border-left-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
 </style>
 </head>
 <body>
-  <div>Tab: <span class="tab" id="tab">loading…</span></div>
-  <div class="warn" id="tabWarn" hidden>This is not a Call_Legs tab -- the columns may not be the ones the filter expects.</div>
-
-  <h2>Department</h2>
-  <div class="row">
-    <select id="preset" aria-label="Department preset">
+  <div class="panel-header">
+    <div class="kicker">CDR Tools &middot; Abandoned Filters</div>
+    <h1>Filter abandoned calls</h1>
+    <div class="tab-line">Tab <span class="tab" id="tab">loading…</span></div>
+    <div class="status-warn" id="tabWarn" hidden>This is not a Call_Legs tab -- the columns may not be the ones the filter expects.</div>
+  </div>
+  <div class="panel-body">
+    <label class="label" for="preset">Department</label>
+    <select id="preset">
       <option value="">Choose a department to tick its queues…</option>
     </select>
-  </div>
-  <div class="row" id="backupRow" hidden>
-    <label><input type="checkbox" id="backup"> Include the backup queue (<span id="backupNames"></span>)</label>
-  </div>
+    <div class="row" id="backupRow" hidden>
+      <label><input type="checkbox" id="backup"> Include the backup queue (<span id="backupNames"></span>)</label>
+    </div>
 
-  <h2>Queues</h2>
-  <div class="muted row">Ticked queues are filtered. Each uses its department's default threshold unless you set a custom one below.</div>
-  <div id="queues" role="group" aria-label="Queues"></div>
+    <span class="label" id="queuesLabel">Queues</span>
+    <div class="hint" style="margin-bottom:6px">Ticked queues are filtered. Each uses its department's default threshold unless you set a custom one below.</div>
+    <div id="queues" role="group" aria-labelledby="queuesLabel"></div>
 
-  <h2>Options</h2>
-  <div class="row">
-    <label><input type="checkbox" id="customOn"> Custom threshold for every ticked queue: more than</label>
-    <input type="number" id="customSec" min="0" max="86399" step="1" value="59" disabled aria-label="Custom threshold in seconds"> seconds
-  </div>
-  <div class="row">
-    <label><input type="checkbox" id="blankQ" checked> Include legs with no queue name</label>
-    <span class="muted">(the old menu items include them; they take the lowest ticked threshold)</span>
-  </div>
-  <div class="row">
-    <label><input type="checkbox" id="window"> Work window only</label>
-    <span class="muted" id="windowNote"></span>
-  </div>
+    <span class="label">Options</span>
+    <div class="row">
+      <label><input type="checkbox" id="customOn"> Custom threshold for every ticked queue: more than</label>
+      <input type="number" id="customSec" min="0" max="86399" step="1" value="59" disabled aria-label="Custom threshold in seconds"> <span class="muted">seconds</span>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="blankQ" checked> Include legs with no queue name</label>
+      <span class="hint">The old menu items include them; they take the lowest ticked threshold.</span>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="window"> Work window only</label>
+      <span class="hint" id="windowNote"></span>
+    </div>
 
-  <div class="buttons">
-    <button class="primary" id="apply">Apply filter</button>
-    <button id="clear">Clear filter</button>
-    <button id="close">Close</button>
+    <div class="buttons">
+      <button class="btn" id="apply" type="button">Apply filter</button>
+      <button class="btn btn-secondary" id="clear" type="button">Clear filter</button>
+      <button class="btn btn-secondary" id="close" type="button">Close</button>
+    </div>
+    <div id="result" role="status" aria-live="polite"></div>
   </div>
-  <div id="result" role="status" aria-live="polite"></div>
 
 <script>
   var STATE = null;
@@ -78,10 +140,10 @@
     var k = name.toLowerCase();
     return (k in STATE.defaults) ? STATE.defaults[k] : STATE.defaultThresholdSec;
   }
-  function say(text, isError) {
+  function say(text, isError, isBusy) {
     var r = $('result');
     r.textContent = text;
-    r.className = isError ? 'error' : '';
+    r.className = isError ? 'error' : (isBusy ? 'busy' : '');
   }
 
   function render(state) {
@@ -164,7 +226,7 @@
   $('customOn').addEventListener('change', function () { $('customSec').disabled = !this.checked; });
   $('close').addEventListener('click', function () { google.script.host.close(); });
   $('clear').addEventListener('click', function () {
-    busy(true); say('Clearing…');
+    busy(true); say('Clearing…', false, true);
     google.script.run
       .withSuccessHandler(function () { busy(false); say('Filter cleared.'); })
       .withFailureHandler(function (e) { busy(false); say(e && e.message ? e.message : String(e), true); })
@@ -173,7 +235,7 @@
   $('apply').addEventListener('click', function () {
     var spec;
     try { spec = buildSpec(); } catch (e) { say(e.message, true); return; }
-    busy(true); say('Applying…');
+    busy(true); say('Applying…', false, true);
     google.script.run
       .withSuccessHandler(function (r) {
         busy(false);

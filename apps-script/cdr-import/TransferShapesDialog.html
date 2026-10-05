@@ -4,72 +4,237 @@
 <base target="_top">
 <!-- Transfer filter Phase 0: CDR Tools -> Diagnostics -> Transfer shapes for a dept…
      Server side: transferFilter.js (tfDialogInit / tfDialogQueues / tfDialogRun).
-     READ-ONLY. Every sheet-sourced string is written with textContent. -->
+     READ-ONLY. Every sheet-sourced string is written with textContent.
+     Styled after the Department Dashboard's report modals (Caller Lookup): the
+     tokens, the kicker + display title, mono uppercase labels, the ir-form-grid
+     control row, ds-kpi tiles and ds-table rows are copied from
+     department-dashboard/styles.html (light palette, hex values) -- this
+     project cannot include that file, so a token change there is not inherited
+     here. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --ink: #202124; --muted: #5f6368; --line: #dadce0; --soft: #f1f3f4; --accent: #1a73e8;
-          --tree: #188038; --inbound: #1a73e8; --outbound: #8430ce; --ambiguous: #e37400; --none: #9aa0a6; }
+  :root {
+    --paper: #f7f2e6; --paper-2: #ede6d3; --paper-card: #ffffff;
+    --ink: #101418; --muted: #606872; --line: #d6d1c2;
+    --accent: #4e7bc4; --accent-soft: #e3edf8;
+    --good: #3d9476; --good-soft: #e0efe6;
+    --warn: #c66b4b; --warn-soft: #f6e2d4;
+    --bad: #b23a2c; --bad-soft: #f1d7d2;
+    --stale: #a97a12; --stale-soft: #f6ecd0;
+    --display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --r: 2px; --r-lg: 12px; --r-pill: 999px;
+    /* How each transfer was tied to a customer call: strongest link first. */
+    --link-tree: var(--good);
+    --link-inbound: var(--accent);
+    --link-outbound: #8fa9d6;
+    --link-ambiguous: var(--stale);
+    --link-none: #b9b3a3;
+  }
   * { box-sizing: border-box; }
-  body { font: 13px/1.45 Arial, sans-serif; color: var(--ink); margin: 0; padding: 12px 16px 20px; }
-  h2 { font-size: 15px; margin: 18px 0 8px; }
-  h3 { font-size: 12px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-  .muted { color: var(--muted); }
-  .form { display: grid; grid-template-columns: auto 1fr auto 1fr auto; gap: 8px 10px; align-items: center;
-          background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
-  .form label { font-weight: bold; }
-  select { font: inherit; padding: 4px 6px; min-width: 0; width: 100%; }
-  button { font: inherit; padding: 6px 14px; cursor: pointer; border-radius: 4px; border: 1px solid var(--line); background: #fff; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button:disabled { opacity: .55; cursor: default; }
-  #queueBox { margin-top: 8px; }
-  #queueList { display: flex; flex-wrap: wrap; gap: 4px 14px; max-height: 120px; overflow-y: auto;
-               border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; background: #fff; }
-  #queueList label { white-space: nowrap; font-weight: normal; }
-  #queueList .n { color: var(--muted); font-size: 11px; }
-  #status { margin: 10px 0 0; min-height: 1.4em; }
-  #status.error { color: #c5221f; }
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0 4px; }
-  .tile { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
-  .tile .v { font-size: 24px; font-weight: bold; }
-  .tile .k { color: var(--muted); font-size: 12px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
-  .chip { border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; font-size: 12px; color: var(--muted); }
-  .chip.on { border-color: var(--accent); color: var(--accent); font-weight: bold; }
-  .card { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
-  .card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-  .card .head .t { font-weight: bold; font-size: 14px; }
-  .bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--soft); margin: 8px 0 4px; }
-  .bar span { display: block; height: 100%; }
-  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
-  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
-  th { text-align: left; color: var(--muted); font-weight: normal; border-bottom: 1px solid var(--line); padding: 4px 6px; }
-  td { border-bottom: 1px solid var(--soft); padding: 4px 6px; vertical-align: top; }
-  td.mono { font-family: monospace; }
-  tr.warn td { background: #fef7e0; }
-  .tag { display: inline-block; border-radius: 3px; padding: 0 5px; font-size: 11px; color: #fff; }
-  .tag.tree { background: var(--tree); } .tag.inbound { background: var(--inbound); } .tag.outbound { background: var(--outbound); }
-  .tag.ambiguous { background: var(--ambiguous); } .tag.none { background: var(--none); }
-  .off { color: var(--muted); font-size: 11px; }
-  .empty { color: var(--muted); font-style: italic; margin-top: 6px; }
-  ol.checks { margin: 6px 0 0 18px; padding: 0; }
-  details { margin-top: 14px; }
-  textarea { width: 100%; height: 220px; font: 11px monospace; white-space: pre; }
+  body {
+    margin: 0; background: var(--paper-card); color: var(--ink);
+    font: 14px/1.55 var(--ui); -webkit-font-smoothing: antialiased;
+  }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+
+  /* Header: kicker over the display title (dashboard .modal-panel-header). */
+  .panel-header { padding: 18px 28px 14px; border-bottom: 1px solid var(--line); }
+  .kicker, .label, .section-title {
+    font: 500 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted);
+  }
+  .kicker { margin-bottom: 4px; }
+  h1 { margin: 0; font: 500 24px/1.15 var(--display); letter-spacing: -0.4px; }
+  .panel-body { padding: 14px 28px 24px; }
+
+  /* Controls row (dashboard .ir-form-grid / .ir-col). */
+  .form-grid { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+  .col { display: flex; flex-direction: column; min-width: 0; }
+  .col .label { margin-bottom: 6px; }
+  .col select {
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); font-size: 13px; min-width: 200px;
+  }
+  .btn {
+    padding: 7px 14px; background: var(--ink); color: var(--paper); border: 0;
+    border-radius: var(--r); font-weight: 500; cursor: pointer;
+  }
+  .btn:hover { opacity: 0.88; }
+  .btn:disabled { background: var(--muted); color: var(--paper); cursor: not-allowed; opacity: 1; }
+  .btn-secondary { background: var(--paper-card); color: var(--ink); border: 1px solid var(--line); }
+  .btn-secondary:hover { background: var(--paper-2); }
+  .btn-small { padding: 5px 11px; font-size: 12px; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 10px 0 0; }
+  .hint code { font-family: var(--mono); font-size: 11px; letter-spacing: 0; color: var(--ink); }
+
+  /* Queue picker: toggle pills (dashboard .cl-tok / .cl-tok-queue). */
+  #queueBox { margin-top: 14px; }
+  #queueBox .label { display: block; margin-bottom: 6px; }
+  #queueList { display: flex; flex-wrap: wrap; gap: 6px; max-height: 108px; overflow-y: auto; }
+  .tok {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    font-size: 12px; padding: 3px 10px; border-radius: var(--r-pill);
+    border: 1px solid var(--line); background: var(--paper-2); color: var(--ink);
+  }
+  label.tok { cursor: pointer; }
+  label.tok input { margin: 0; accent-color: var(--accent); }
+  .tok.is-on { border-color: var(--accent); background: var(--accent-soft); }
+  .tok .n { font-family: var(--mono); font-size: 11px; letter-spacing: 0; color: var(--muted); }
+
+  /* Status banners (dashboard .status). */
+  .status {
+    margin: 14px 0 0; padding: 10px 14px; border-radius: var(--r); font-size: 13px;
+    border-left: 3px solid var(--line);
+  }
+  .status[hidden] { display: none; }
+  .status-loading { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
+  .status-error   { background: var(--bad-soft);    color: var(--bad);    border-left-color: var(--bad); }
+  .status-empty   { background: var(--paper-2);     color: var(--muted);  border-left-color: var(--muted); }
+
+  /* Empty state before the first run (dashboard .empty-state). */
+  .empty-state { text-align: center; padding: 44px 24px 20px; color: var(--muted); }
+  .empty-state-icon {
+    display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px;
+    margin-bottom: 12px; font-size: 22px; background: var(--paper-2); border-radius: var(--r-lg);
+  }
+  .empty-state-title { font: 600 15px/1.3 var(--display); color: var(--ink); margin-bottom: 6px; }
+  .empty-state-hint { font-size: 12px; line-height: 1.5; max-width: 440px; margin: 0 auto; }
+
+  /* Results header (dashboard .ir-results-header). */
+  .results-header {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line); padding-bottom: 12px; margin: 22px 0 16px;
+  }
+  .results-title-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+  .results-title { font: 500 20px/1.2 var(--display); letter-spacing: -0.3px; }
+  .results-date { font: 500 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); }
+  .results-meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; font: 600 11px/1 var(--ui); white-space: nowrap;
+    border-radius: var(--r-pill); padding: 4px 10px; color: var(--muted); background: var(--paper-2);
+  }
+  .chip--good { color: var(--good); background: var(--good-soft); }
+
+  /* KPI tiles (dashboard .ds-kpi). */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .kpi { background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px; min-width: 0; }
+  .kpi__label { font: 500 10px/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); }
+  .kpi__value { font: 700 32px/1 var(--display); letter-spacing: -1px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .kpi__foot { font: 400 10px/1.4 var(--mono); letter-spacing: 0; color: var(--muted); margin-top: 6px; }
+  .kpi--muted .kpi__value { color: var(--muted); }
+
+  .section-title { margin: 22px 0 8px; }
+  .toks { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* Section cards (dashboard .cl-call-card). */
+  .card { border: 1px solid var(--line); border-radius: var(--r); background: var(--paper-card); margin-top: 12px; }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 12px 14px 0; }
+  .card-title { font: 600 15px/1.3 var(--display); letter-spacing: -0.2px; }
+  .card-title .count { font-family: var(--mono); font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 6px; }
+  .card-sub { font: 400 11px/1.4 var(--mono); letter-spacing: 0; color: var(--muted); }
+  .card-body { padding: 8px 14px 12px; }
+  .card-empty { padding: 4px 14px 14px; font-size: 12px; color: var(--muted); }
+
+  .linkbar { display: flex; height: 8px; border-radius: var(--r-pill); overflow: hidden; background: var(--paper-2); margin: 4px 0 8px; }
+  .linkbar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+  .legend .n { font-family: var(--mono); letter-spacing: 0; color: var(--ink); margin-left: 4px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .samples-note { font-size: 12px; color: var(--muted); margin: 12px 0 2px; }
+
+  /* Sample table (dashboard .ds-table, compact, text left-aligned). */
+  .table-wrap { overflow-x: auto; margin: 0 -14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th {
+    font: 500 10px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted);
+    text-align: left; padding: 10px 14px 8px; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  td { padding: 8px 14px; border-top: 1px solid var(--line); vertical-align: top; }
+  tbody tr:first-child td { border-top: 0; }
+  tbody tr:nth-child(even) { background: var(--paper); }
+  tbody tr:hover { background: var(--accent-soft); }
+  tbody tr.flag td:first-child { box-shadow: inset 3px 0 0 var(--stale); }
+  td .sub { display: block; font-size: 11px; color: var(--muted); }
+  .off { color: var(--warn); }
+  .tag {
+    display: inline-block; font: 500 9px/1.6 var(--mono); text-transform: uppercase; letter-spacing: 0.18em;
+    padding: 1px 8px; border-radius: var(--r-pill); white-space: nowrap;
+  }
+  .tag-tree      { background: var(--good-soft);   color: var(--good); }
+  .tag-inbound   { background: var(--accent-soft); color: var(--accent); }
+  .tag-outbound  { background: transparent; color: var(--accent); border: 1px solid #c4d3ec; }
+  .tag-ambiguous { background: var(--stale-soft);  color: var(--stale); }
+  .tag-none      { background: var(--paper-2);     color: var(--muted); }
+
+  /* What to check (dashboard .ds-note, accent rail). */
+  .note {
+    margin-top: 10px; padding: 10px 14px 10px 12px; background: var(--paper-2);
+    border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px;
+    font-size: 12.5px; line-height: 1.55; color: var(--ink);
+  }
+  .note ol { margin: 0; padding-left: 20px; }
+  .note li + li { margin-top: 4px; }
+
+  /* Plain-text copy (dashboard .cl-day disclosure). */
+  details.plain { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper-2); }
+  details.plain > summary {
+    cursor: pointer; list-style: none; padding: 8px 12px; font-size: 13px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  details.plain > summary::-webkit-details-marker { display: none; }
+  details.plain > summary::after { content: '\25B8'; color: var(--muted); font-size: 10px; }
+  details.plain[open] > summary::after { transform: rotate(90deg); }
+  .plain-body { padding: 0 12px 12px; }
+  textarea {
+    width: 100%; height: 220px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); font: 11px/1.5 var(--mono); letter-spacing: 0; white-space: pre; resize: vertical;
+  }
+  .plain-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .plain-actions .hint { margin: 0; }
 </style>
 </head>
 <body>
-  <div class="form" role="group" aria-label="Probe settings">
-    <label for="date">Tab</label>
-    <select id="date" aria-label="Call_Legs tab"><option>loading…</option></select>
-    <label for="dept">Department</label>
-    <select id="dept" aria-label="Department"><option value="">loading…</option></select>
-    <button class="primary" id="run" disabled>Run</button>
+  <div class="panel-header">
+    <div class="kicker">CDR Tools &middot; Diagnostics &middot; Read-only</div>
+    <h1>Transfer shapes</h1>
   </div>
-  <div id="queueBox" hidden>
-    <div class="muted">Queues to count for this department (its Dept Config queues are pre-ticked; the count is legs on this tab):</div>
-    <div id="queueList" role="group" aria-label="Queues"></div>
+  <div class="panel-body">
+    <div class="form-grid" role="group" aria-label="Probe settings">
+      <div class="col">
+        <label class="label" for="date">Call_Legs tab</label>
+        <select id="date"><option>loading…</option></select>
+      </div>
+      <div class="col">
+        <label class="label" for="dept">Department</label>
+        <select id="dept"><option value="">loading…</option></select>
+      </div>
+      <div class="col">
+        <button class="btn" id="run" type="button" disabled>Run</button>
+      </div>
+    </div>
+    <div id="queueBox" hidden>
+      <span class="label" id="queueLabel">Queues to count &middot; legs on this tab</span>
+      <div id="queueList" role="group" aria-labelledby="queueLabel"></div>
+    </div>
+    <p class="hint">
+      Counts the calls on one <code>Call_Legs</code> tab that an employee transferred to this
+      department's queues, or directly to one of its rostered employees, and shows how each was
+      tied back to a customer call. Its Dept Config queues are pre-ticked. Nothing on the tab is
+      changed or filtered.
+    </p>
+    <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+    <div id="out">
+      <div class="empty-state">
+        <div class="empty-state-icon" aria-hidden="true">&#8644;</div>
+        <div class="empty-state-title">Pick a tab and a department</div>
+        <div class="empty-state-hint">The run reads the whole tab, so a busy day can take a few seconds.</div>
+      </div>
+    </div>
   </div>
-  <div id="status" role="status" aria-live="polite"></div>
-  <div id="out"></div>
 
 <script>
   var LINK = [
@@ -86,9 +251,15 @@
     if (text != null) e.textContent = String(text);
     return e;
   }
-  function say(text, isError) { var s = $('status'); s.textContent = text || ''; s.className = isError ? 'error' : ''; }
-  function fail(e) { busy(false); say(e && e.message ? e.message : String(e), true); }
+  function say(text, kind) {
+    var s = $('status');
+    s.textContent = text || '';
+    s.hidden = !text;
+    s.className = 'status' + (kind ? ' status-' + kind : '');
+  }
+  function fail(e) { busy(false); say(e && e.message ? e.message : String(e), 'error'); }
   function busy(on) { $('run').disabled = on || !$('dept').value; $('date').disabled = on; $('dept').disabled = on; }
+  function linkLabel(k) { return (LINK.filter(function (L) { return L.k === k; })[0] || {}).label || k; }
 
   function fillSelect(sel, values, current, placeholder) {
     sel.textContent = '';
@@ -100,7 +271,7 @@
     var dept = $('dept').value, date = $('date').value;
     $('run').disabled = !dept;
     if (!dept) { $('queueBox').hidden = true; return; }
-    say('Reading the queues on ' + date + '…');
+    say('Reading the queues on ' + date + '…', 'loading');
     google.script.run.withSuccessHandler(function (q) {
       var want = {};
       q.configured.forEach(function (n) { want[n.toLowerCase()] = true; });
@@ -111,34 +282,38 @@
       box.textContent = '';
       Object.keys(names).sort().forEach(function (k) {
         var x = names[k];
-        var lab = el('label');
+        var lab = el('label', 'tok');
         var cb = el('input'); cb.type = 'checkbox'; cb.dataset.name = x.name; cb.checked = !!want[k];
+        var sync = function () { lab.classList.toggle('is-on', cb.checked); };
+        cb.addEventListener('change', sync);
+        sync();
         lab.appendChild(cb);
-        lab.appendChild(document.createTextNode(' ' + x.name + ' '));
-        lab.appendChild(el('span', 'n', '(' + x.legs + ')'));
+        lab.appendChild(el('span', null, x.name));
+        lab.appendChild(el('span', 'n', x.legs));
         box.appendChild(lab);
       });
       $('queueBox').hidden = false;
-      say(q.configured.length ? '' : 'This department has no Dept Config queues -- tick the ones to count.');
+      if (q.configured.length) say('');
+      else say('This department has no Dept Config queues -- tick the ones to count.', 'empty');
     }).withFailureHandler(fail).tfDialogQueues(date, dept);
   }
 
-  function tile(value, label, sub) {
-    var t = el('div', 'tile');
-    t.appendChild(el('div', 'v', value));
-    t.appendChild(el('div', 'k', label));
-    if (sub) t.appendChild(el('div', 'k', sub));
+  function kpi(value, label, foot, muted) {
+    var t = el('div', 'kpi' + (muted ? ' kpi--muted' : ''));
+    t.appendChild(el('div', 'kpi__label', label));
+    t.appendChild(el('div', 'kpi__value', value));
+    if (foot) t.appendChild(el('div', 'kpi__foot', foot));
     return t;
   }
 
   function linkBar(links, total) {
     var wrap = el('div');
-    var bar = el('div', 'bar');
+    var bar = el('div', 'linkbar');
     bar.setAttribute('aria-hidden', 'true');
     LINK.forEach(function (L) {
       var n = links[L.k] || 0;
       if (!n || !total) return;
-      var s = el('span'); s.style.width = (100 * n / total) + '%'; s.style.background = 'var(--' + L.k + ')';
+      var s = el('span'); s.style.width = (100 * n / total) + '%'; s.style.background = 'var(--link-' + L.k + ')';
       s.title = L.label + ': ' + n;
       bar.appendChild(s);
     });
@@ -146,9 +321,10 @@
     var leg = el('div', 'legend');
     LINK.forEach(function (L) {
       var item = el('span');
-      var sw = el('i'); sw.style.background = 'var(--' + L.k + ')';
+      var sw = el('i'); sw.style.background = 'var(--link-' + L.k + ')';
       item.appendChild(sw);
-      item.appendChild(document.createTextNode(L.label + ': ' + (links[L.k] || 0)));
+      item.appendChild(document.createTextNode(L.label));
+      item.appendChild(el('span', 'n', links[L.k] || 0));
       leg.appendChild(item);
     });
     wrap.appendChild(leg);
@@ -156,6 +332,7 @@
   }
 
   function table(headers, rows) {
+    var wrap = el('div', 'table-wrap');
     var t = el('table');
     var tr = el('tr');
     headers.forEach(function (h) { tr.appendChild(el('th', null, h)); });
@@ -163,54 +340,64 @@
     var tb = el('tbody');
     rows.forEach(function (r) { tb.appendChild(r); });
     t.appendChild(tb);
-    return t;
+    wrap.appendChild(t);
+    return wrap;
   }
   function cell(text, cls) { return el('td', cls || null, text); }
+  function sub(td, text, cls) { td.appendChild(el('span', 'sub' + (cls ? ' ' + cls : ''), text)); return td; }
+
+  function cardShell(title, total, inWindow) {
+    var card = el('div', 'card');
+    var head = el('div', 'card-head');
+    var t = el('div', 'card-title', title);
+    t.appendChild(el('span', 'count', total));
+    head.appendChild(t);
+    head.appendChild(el('div', 'card-sub', inWindow + ' in the work window'));
+    card.appendChild(head);
+    return card;
+  }
 
   function renderSection(s) {
-    var card = el('div', 'card');
-    var head = el('div', 'head');
-    head.appendChild(el('span', 't', s.title + ': ' + s.total));
-    head.appendChild(el('span', 'muted', s.inWindow + ' in the work window'));
-    card.appendChild(head);
-    if (!s.total) { card.appendChild(el('div', 'empty', 'None on this tab.')); return card; }
-    card.appendChild(linkBar(s.links, s.total));
+    var card = cardShell(s.title, s.total, s.inWindow);
+    if (!s.total) { card.appendChild(el('div', 'card-empty', 'None on this tab.')); return card; }
+    var body = el('div', 'card-body');
+    body.appendChild(linkBar(s.links, s.total));
     var rows = s.samples.map(function (x) {
-      var tr = el('tr', x.linkKind === 'none' || x.linkKind === 'ambiguous' ? 'warn' : null);
+      var tr = el('tr', x.linkKind === 'none' || x.linkKind === 'ambiguous' ? 'flag' : null);
       tr.appendChild(cell(x.time, 'mono'));
-      var c = cell(x.root, 'mono'); c.appendChild(el('div', 'off', 'leg ' + x.leg)); tr.appendChild(c);
-      var f = cell(x.from); f.appendChild(el('div', 'off', 'ext ' + x.fromExt + (x.rostered ? '' : ' · not on roster'))); tr.appendChild(f);
+      tr.appendChild(sub(cell(x.root, 'mono'), 'leg ' + x.leg, 'mono'));
+      tr.appendChild(sub(cell(x.from), 'ext ' + x.fromExt + (x.rostered ? '' : ' · not on roster')));
       tr.appendChild(cell(x.to));
-      var l = el('td'); l.appendChild(el('span', 'tag ' + x.linkKind, (LINK.filter(function (L) { return L.k === x.linkKind; })[0] || {}).label || x.linkKind));
-      if (x.linkRoot && x.linkKind !== 'tree') l.appendChild(el('div', 'off mono', x.linkRoot));
+      var l = el('td'); l.appendChild(el('span', 'tag tag-' + x.linkKind, linkLabel(x.linkKind)));
+      if (x.linkRoot && x.linkKind !== 'tree') sub(l, x.linkRoot, 'mono');
       tr.appendChild(l);
       var o = cell(x.outcome + (x.by ? ' by ' + x.by : ''));
-      if (!x.inWindow) o.appendChild(el('div', 'off', 'outside the work window'));
+      if (!x.inWindow) sub(o, 'outside the work window', 'off');
       tr.appendChild(o);
       return tr;
     });
-    card.appendChild(el('div', 'muted', 'Samples (up to 3 per link type) -- look these call ids up in the phone system:'));
-    card.appendChild(table(['Time', 'Call', 'Transferred by', 'To', 'Linked to', 'Outcome'], rows));
+    body.appendChild(el('div', 'samples-note', 'Samples, up to 3 per link type -- look these call ids up in the phone system.'));
+    body.appendChild(table(['Time', 'Call', 'Transferred by', 'To', 'Linked to', 'Outcome'], rows));
+    card.appendChild(body);
     return card;
   }
 
   function renderBlind(b) {
-    var card = el('div', 'card');
-    var head = el('div', 'head');
-    head.appendChild(el('span', 't', 'Possible blind transfer -- ' + b.title + ': ' + b.total));
-    head.appendChild(el('span', 'muted', b.inWindow + ' in the work window'));
-    card.appendChild(head);
-    if (!b.total) { card.appendChild(el('div', 'empty', 'None on this tab.')); return card; }
+    var card = cardShell('Possible blind transfer -- ' + b.title, b.total, b.inWindow);
+    if (!b.total) { card.appendChild(el('div', 'card-empty', 'None on this tab.')); return card; }
+    var body = el('div', 'card-body');
     var rows = b.samples.map(function (x) {
       var tr = el('tr');
       tr.appendChild(cell(x.time, 'mono'));
-      var c = cell(x.root, 'mono'); c.appendChild(el('div', 'off', 'leg ' + x.leg)); tr.appendChild(c);
+      tr.appendChild(sub(cell(x.root, 'mono'), 'leg ' + x.leg, 'mono'));
       tr.appendChild(cell('Customer, answered by ' + x.answeredBy));
-      var t = cell(x.target); if (!x.inWindow) t.appendChild(el('div', 'off', 'outside the work window'));
+      var t = cell(x.target);
+      if (!x.inWindow) sub(t, 'outside the work window', 'off');
       tr.appendChild(t);
       return tr;
     });
-    card.appendChild(table(['Time', 'Call', 'Before', 'Then'], rows));
+    body.appendChild(table(['Time', 'Call', 'Before', 'Then'], rows));
+    card.appendChild(body);
     return card;
   }
 
@@ -218,38 +405,69 @@
     var out = $('out');
     out.textContent = '';
     var h = p.header;
-    out.appendChild(el('h2', null, h.dept + ' -- ' + h.date));
-    out.appendChild(el('div', 'muted', h.legs + ' legs · ' + h.calls + ' call trees · ' + h.customerCalls + ' customer inbound calls · roster '
-      + h.rosterCount + ' employees / ' + h.rosterExtCount + ' extensions · queues from ' + h.queueSource + '. Read-only -- nothing was changed.'));
-    var tiles = el('div', 'tiles');
-    tiles.appendChild(tile(p.sections[0].total, 'Queue transfers', p.sections[0].inWindow + ' in the work window'));
-    tiles.appendChild(tile(p.sections[1].total, 'Direct transfers', p.sections[1].inWindow + ' in the work window'));
-    tiles.appendChild(tile(p.blind[0].total, 'Possible blind: re-entered a queue'));
-    tiles.appendChild(tile(p.blind[1].total, 'Possible blind: rang an employee'));
-    out.appendChild(tiles);
-    out.appendChild(el('h3', null, 'Queues on this tab (counted ones highlighted)'));
-    var chips = el('div', 'chips');
-    h.tabQueues.forEach(function (q) { chips.appendChild(el('span', 'chip' + (q.counted ? ' on' : ''), q.name + ' · ' + q.legs)); });
-    if (!h.tabQueues.length) chips.appendChild(el('span', 'muted', 'none recognised'));
-    out.appendChild(chips);
+
+    var head = el('div', 'results-header');
+    var left = el('div');
+    var line = el('div', 'results-title-line');
+    line.appendChild(el('span', 'results-title', h.dept));
+    line.appendChild(el('span', 'results-date', h.date));
+    left.appendChild(line);
+    left.appendChild(el('div', 'results-meta', h.legs + ' legs · ' + h.calls + ' call trees · ' + h.customerCalls
+      + ' customer inbound calls · roster ' + h.rosterCount + ' employees / ' + h.rosterExtCount
+      + ' extensions · queues from ' + h.queueSource));
+    head.appendChild(left);
+    head.appendChild(el('span', 'chip chip--good', 'Read-only · nothing changed'));
+    out.appendChild(head);
+
+    var grid = el('div', 'kpi-grid');
+    grid.appendChild(kpi(p.sections[0].total, 'Queue transfers', p.sections[0].inWindow + ' in the work window'));
+    grid.appendChild(kpi(p.sections[1].total, 'Direct transfers', p.sections[1].inWindow + ' in the work window'));
+    grid.appendChild(kpi(p.blind[0].total, 'Possible blind · queue', 're-entered a queue', true));
+    grid.appendChild(kpi(p.blind[1].total, 'Possible blind · employee', 'rang an employee', true));
+    out.appendChild(grid);
+
+    out.appendChild(el('div', 'section-title', 'Queues on this tab · counted ones highlighted'));
+    var toks = el('div', 'toks');
+    h.tabQueues.forEach(function (q) {
+      var t = el('span', 'tok' + (q.counted ? ' is-on' : ''), q.name);
+      t.appendChild(el('span', 'n', q.legs));
+      toks.appendChild(t);
+    });
+    if (!h.tabQueues.length) toks.appendChild(el('span', 'hint', 'None recognised.'));
+    out.appendChild(toks);
+
+    out.appendChild(el('div', 'section-title', 'Transfers'));
     p.sections.forEach(function (s) { out.appendChild(renderSection(s)); });
+    out.appendChild(el('div', 'section-title', 'Possible blind transfers'));
     p.blind.forEach(function (b) { out.appendChild(renderBlind(b)); });
-    out.appendChild(el('h3', null, 'What to check'));
-    var ol = el('ol', 'checks');
+
+    out.appendChild(el('div', 'section-title', 'What to check'));
+    var note = el('div', 'note');
+    var ol = el('ol');
     p.checks.forEach(function (c) { ol.appendChild(el('li', null, c)); });
-    out.appendChild(ol);
-    var det = el('details');
-    det.appendChild(el('summary', null, 'Plain-text report (to copy and send)'));
+    note.appendChild(ol);
+    out.appendChild(note);
+
+    var det = el('details', 'plain');
+    det.appendChild(el('summary', null, 'Plain-text report'));
+    var pb = el('div', 'plain-body');
     var ta = el('textarea'); ta.readOnly = true; ta.value = p.text;
-    var copy = el('button', null, 'Copy');
+    ta.setAttribute('aria-label', 'Plain-text report');
+    var actions = el('div', 'plain-actions');
+    var copy = el('button', 'btn btn-secondary btn-small', 'Copy');
+    copy.type = 'button';
+    var copied = el('span', 'hint', 'To paste into an email or a ticket.');
     copy.addEventListener('click', function () {
       ta.select();
       var ok = false;
       try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      copy.textContent = ok ? 'Copied' : 'Selected -- press Ctrl/Cmd+C';
+      copied.textContent = ok ? 'Copied.' : 'Selected -- press Ctrl/Cmd+C.';
     });
-    det.appendChild(ta);
-    det.appendChild(copy);
+    actions.appendChild(copy);
+    actions.appendChild(copied);
+    pb.appendChild(ta);
+    pb.appendChild(actions);
+    det.appendChild(pb);
     out.appendChild(det);
   }
 
@@ -257,7 +475,7 @@
   $('dept').addEventListener('change', loadQueues);
   $('run').addEventListener('click', function () {
     var queues = Array.prototype.slice.call($('queueList').querySelectorAll('input:checked')).map(function (cb) { return cb.dataset.name; });
-    busy(true); say('Classifying ' + $('date').value + ' for ' + $('dept').value + '… (this reads the whole tab)');
+    busy(true); say('Classifying ' + $('date').value + ' for ' + $('dept').value + '… (this reads the whole tab)', 'loading');
     google.script.run.withSuccessHandler(function (p) { busy(false); say(''); render(p); })
       .withFailureHandler(fail)
       .tfDialogRun({ date: $('date').value, dept: $('dept').value, queues: queues });
@@ -267,7 +485,7 @@
     fillSelect($('date'), init.dates, init.defaultDate, init.dates.length ? null : 'No Call_Legs tabs');
     fillSelect($('dept'), init.depts, null, 'Choose a department…');
     busy(false);
-    if (!init.dates.length) say('No Call_Legs tabs in this workbook.', true);
+    if (!init.dates.length) say('No Call_Legs tabs in this workbook.', 'error');
   }).withFailureHandler(fail).tfDialogInit();
 </script>
 </body>

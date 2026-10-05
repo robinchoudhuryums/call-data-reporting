@@ -567,7 +567,7 @@ function tfDialogPayload_(res, meta) {
 /** Menu item: CDR Tools -> Diagnostics -> Transfer shapes for a dept… */
 function showTransferShapesDialog() {
   var html = HtmlService.createHtmlOutputFromFile('TransferShapesDialog').setWidth(1060).setHeight(720);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Transfer shapes (read-only)');
+  SpreadsheetApp.getUi().showModalDialog(html, 'CDR Tools');
 }
 
 /** Dialog init: the Call_Legs tabs (newest first), the default one, and the roster depts. */
