@@ -4,7 +4,7 @@
  *
  * Top level: Manual Export plus one submenu per job (bulk export, abandoned
  * filters, Neon mirror, retention prune, per-call agent names, diagnostics).
- * tests/unit/cdr-import-menu.test.js pins that every item names a function
+ * tests/unit/cdr-tools-menus.test.js pins that every item names a function
  * this project defines.
  */
 

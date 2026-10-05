@@ -22,7 +22,8 @@ figure, the same way the DQE drilldown is used to audit DQE rows today.
 
 There is **no existing QCD drilldown** anywhere in the four projects — confirmed
 by enumerating every custom menu and every `HtmlService` sidebar. Only the DQE
-drilldown exists (cdr-report "DQE Tools" menu).
+drilldown exists (cdr-report "DQE Tools" menu -- since 2026-10-05 an item in
+CDR Tools → 🔎 Trace a Cell).
 
 The QCD numbers are NOT produced by a simple "filter Raw Data by queue + status"
 rule that a sidebar could re-implement. They come from `calcQcdReport`
@@ -148,7 +149,9 @@ Two placement options:
 
 - **3a (recommended): selection-driven, in CDR Report.** Add a "QCD Drill-Down"
   item to a CDR Report menu (its own menu, NOT the frozen DQE Tools — built via
-  the existing `onOpen`/`installDQEDrilldownMenu_` composition pattern so we
+  the existing `onOpen`/`installDQEDrilldownMenu_` composition pattern -- that
+  helper was removed 2026-10-05; add the item to the "🔎 Trace a Cell" submenu
+  instead -- so we
   don't clobber menus, per the "one onOpen wins" gotcha). It reads the active
   cell in `QCD Historical Data`, derives `(date=colC, queue=colD, source=colE,
   metric=which column was selected)`, and calls across to the CDR Import project

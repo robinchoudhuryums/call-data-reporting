@@ -176,10 +176,12 @@ tests/
                               queue deliveries never read as employees, the
                               R49 window, possible blind transfers, and a
                               report that prints no customer data),
-                              cdr-import-menu (every CDR Tools menu item names
-                              a defined, public function -- a typo'd string is
-                              invisible to lint; the top level stays grouped;
-                              tools retired from the menu stay editor-runnable),
+                              cdr-tools-menus (both pipeline projects' CDR Tools
+                              menus: every item names a defined, public
+                              function -- a typo'd string is invisible to lint;
+                              the top level stays grouped; one menu per project;
+                              cdr-import's retired tools stay editor-runnable;
+                              cdr-report labels other surfaces quote stay put),
                               percall-agent-canon (PC-1: the ONE INV-24
                               canonicalizer shared by the DQE build and
                               the capture writers, capture-time rewrite

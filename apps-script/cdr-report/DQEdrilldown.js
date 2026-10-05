@@ -1,9 +1,9 @@
 // ============================================================================
 // DQE Drill-Down Tool
 // ----------------------------------------------------------------------------
-// Adds a "DQE Tools -> Show source rows for selection" menu item that opens
-// a sidebar showing the Raw Data rows contributing to a selected metric in
-// the DQE Historical Data sheet.
+// Opens a sidebar (CDR Tools -> Trace a Cell -> "DQE cell -> source rows")
+// showing the Raw Data rows contributing to a selected metric in the DQE
+// Historical Data sheet.
 //
 // Features:
 //   - Refresh button (re-reads current selection)
@@ -29,19 +29,12 @@ var DQE_DD_EARLY_WINDOW_START = 6 * 60 * 60;
 var DQE_DD_EARLY_QUEUES = ["A_Q_CSR", "A_Q_Intake", "Backup CSR", "A_Q_Spanish"];
 
 
-// -- Menu installation -------------------------------------------------------
-// The project's single onOpen lives in "CDR Tools menu.js" and calls
-// installDQEDrilldownMenu_ from there. Apps Script shares one global
-// scope across every .gs file in a project, so a second top-level
-// `function onOpen()` here would silently override the canonical one
-// (last-loaded wins).
-
-function installDQEDrilldownMenu_(ui) {
-  (ui || SpreadsheetApp.getUi())
-    .createMenu('DQE Tools')
-    .addItem('Show source rows for selection', 'showDQEDrilldownSidebar')
-    .addToUi();
-}
+// -- Menu --------------------------------------------------------------------
+// The project's single onOpen lives in "CDR Tools menu.js"; the entry point
+// below is an item in its "Trace a Cell" submenu (it once had its own one-item
+// "DQE Tools" menu, installed from there by a helper). Never add a second
+// top-level `function onOpen()` here -- Apps Script shares one global scope,
+// so it would silently override the canonical one.
 
 
 // -- Entry point: open sidebar -----------------------------------------------

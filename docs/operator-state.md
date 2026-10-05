@@ -1447,8 +1447,8 @@ When something looks wrong, before assuming a code bug, check:
     **Two diagnostics, two different questions -- don't substitute one for the
     other.** `auditQueueSplitAttribution()` (#41) asks *is a raw queue name
     mapped to no department* (a configuration fault that silently drops
-    calls). `queueOverlapAudit()` (cdr-report, CDR Tools -> "🔀 Queue Overlap
-    Audit", read-only) asks *does one CALL get counted by two departments, and
+    calls). `queueOverlapAudit()` (cdr-report, CDR Tools -> 🔍 Diagnostics ->
+    "Queue Overlap Audit", read-only) asks *does one CALL get counted by two departments, and
     by how much* -- it reports cross-queue call overlap, parent/sub-queue
     summation, which queues each roster actually worked, and the crossover
     agents. It is what sizes the paragraph above.
@@ -1642,7 +1642,7 @@ When something looks wrong, before assuming a code bug, check:
     cdr-report project** (`cdrNoteEgress_`, `neonEgress.js`), under the SAME
     `NEON_EGRESS_MTD` key in that project's own store -- Script Properties are
     per-project, so the Health page structurally CANNOT see it. Read that one
-    from CDR Tools -> "📈 Neon Read Volume (this project)"
+    from CDR Tools -> 🔍 Diagnostics -> "Neon Read Volume (this project)"
     (`showNeonEgress()`); the real month-to-date total is the SUM of the two.
     Why it matters: when the allowance blew a second time the dashboard
     counter read ~196 MB against a 5 GB cap -- about 4% of the overage -- and
@@ -1684,8 +1684,8 @@ When something looks wrong, before assuming a code bug, check:
     (`InboundReport.gs::inboundHeatmapSheetFallback_`), and that tab is a COPY
     of Neon refreshed by `exportInboundCalls` — so an outage shows data only
     through the last export run. Install the daily refresh from the CDR
-    Report spreadsheet: CDR Tools → "⏰ Daily Inbound Export Trigger" →
-    Install (runs `runInboundCallsExport_` at 9 AM script-TZ: incremental
+    Report spreadsheet: CDR Tools → "📥 Inbound Calls Tab" →
+    "Install daily export" (runs `runInboundCallsExport_` at 9 AM script-TZ: incremental
     export + retention prune, one `inboundExport` Pipeline Health row per
     run; a Neon-down day is a LOG-ONLY failure row — expected during an
     outage, never an email). **One-time after deploying the schema
@@ -1723,7 +1723,7 @@ When something looks wrong, before assuming a code bug, check:
     per-call outbound section. `cdr-report/outboundCallsExport.js` mirrors the
     table into an "Outbound Calls" tab and those three now degrade to it.
     Install the daily refresh from the CDR Report spreadsheet: CDR Tools →
-    "⏰ Daily Outbound Export Trigger" → Install (runs
+    "📤 Outbound Calls Tab" → "Install daily export" (runs
     `runOutboundCallsExport_` at 9 AM script-TZ: incremental export +
     retention prune, one `outboundExport` Pipeline Health row per run; a
     Neon-down day is a LOG-ONLY failure row — expected during an outage,

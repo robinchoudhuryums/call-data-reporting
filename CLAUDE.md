@@ -877,7 +877,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `sheet-repairs-merge.test.js`.
 - **The Extraction Sidebar mirrors the pipeline's QCD rules BY HAND -- a THIRD
   duplication, and it has already drifted.** `cdr-report/dataFilters.js`
-  (CDR Tools -> Open Extraction Sidebar: "which raw CDR rows produced this
+  (CDR Tools -> Trace a Cell -> Extraction Sidebar: "which raw CDR rows produced this
   cell?") re-implements `cdr-import/autoImport.js`'s raw-CSV time decoding
   (`simulateSplitCol2` / `parseDurationDecimal`, now guarded by
   `check-duplicated-files.sh` -- compared on CODE, since dataFilters' copies are
@@ -1217,7 +1217,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   same-named global) declarations silently override each other --
   the last-loaded file's definition wins. If a project needs more
   than one menu, build them all from one `onOpen` (see
-  `cdr-report/CDR Tools menu.js` calling `installDQEDrilldownMenu_`).
+  `cdr-report/CDR Tools menu.js`, which also holds the DQE drill-down's item).
   ENFORCED (H3): `cross-file-pins.test.js` fails on a top-level name declared
   in two files of the same project, and `npm run lint:gas` fails on a name
   declared in none (the ReferenceError class no selective-load suite sees).
