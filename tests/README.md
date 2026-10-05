@@ -170,6 +170,12 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
+                              transfer-filter (the read-only transfer-shape
+                              probe: queue vs direct transfers, the customer
+                              link by the capture's own concurrency index,
+                              queue deliveries never read as employees, the
+                              R49 window, possible blind transfers, and a
+                              report that prints no customer data),
                               percall-agent-canon (PC-1: the ONE INV-24
                               canonicalizer shared by the DQE build and
                               the capture writers, capture-time rewrite

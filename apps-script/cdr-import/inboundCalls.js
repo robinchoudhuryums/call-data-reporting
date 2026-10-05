@@ -390,13 +390,12 @@ function icChunkTuplesByChars_(tuples, budgetChars) {
  * PURE. rawRows = array of Raw Data leg rows (each an array indexed per
  * IC_COL). Returns one record per distinct INBOUND call.
  */
-function buildInboundCallRecords_(rawRows) {
-  if (!rawRows || !rawRows.length) return [];
-
-  // 1) Group legs by ROOT call id (Parent if present, else own) -- stitches
-  //    CallForking satellites onto the main inbound call.
+// PURE. Group legs by ROOT call id (Parent if present, else own) -- stitches
+// CallForking satellites onto the main call. Shared with the transfer filter
+// (transferFilter.js) so both see the same trees.
+function icGroupLegsByRoot_(rawRows) {
   var groups = {};
-  for (var i = 0; i < rawRows.length; i++) {
+  for (var i = 0; i < (rawRows || []).length; i++) {
     var r = rawRows[i];
     var parent = String(r[IC_COL.PARENT_CALL_ID] == null ? '' : r[IC_COL.PARENT_CALL_ID]).trim();
     var own = String(r[IC_COL.CALL_ID] == null ? '' : r[IC_COL.CALL_ID]).trim();
@@ -404,6 +403,81 @@ function buildInboundCallRecords_(rawRows) {
     var root = (parent && parent.toUpperCase() !== 'N/A') ? parent : own;
     (groups[root] = groups[root] || []).push(r);
   }
+  return groups;
+}
+
+// The +/- slack a concurrent-call match allows around the answered talk leg.
+var IC_CONCURRENT_SLACK_MS_ = 5000;
+
+/**
+ * PURE. The two "who was on a customer call when" indexes the related-call
+ * matchers key on, built once per run. Shared with the transfer filter so a
+ * transfer is linked to its customer call by exactly the capture's rule.
+ *   agentBusy    -- answered talk legs of CAPTURED inbound calls (roots in
+ *                   `capturedRoots`), keyed on the agent (icAnswerLegAgent_).
+ *   outboundBusy -- answered Outgoing legs to an external number on groups with
+ *                   no Incoming leg (outboundCalls.js's notion of an outbound call).
+ */
+function icBusyIndexes_(groups, capturedRoots) {
+  // Index: agent extension -> the captured inbound call they were talking on.
+  var agentBusy = [];
+  Object.keys(groups).forEach(function (root) {
+    if (!capturedRoots[root]) return;   // only captured inbound calls carry a record
+    groups[root].forEach(function (l) {
+      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered'
+          || icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      var who = icAnswerLegAgent_(l);   // S2C-1: CALLEE, or CALLER on the agent's own Outgoing leg
+      var as = icParseTs_(l[IC_COL.CONNECTED]), ae = icParseTs_(l[IC_COL.STOP]);
+      if (!who || isNaN(as) || isNaN(ae)) return;
+      agentBusy.push({ root: root, ext: who.ext, startMs: as, endMs: ae,
+                       name: who.name, viaCallee: who.viaCallee });
+    });
+  });
+
+  // Step 4 (owner ruling 2026-08-24): the SAME index for OUTBOUND calls. An
+  // assisting agent's concurrent call is often outbound -- a rep with a patient
+  // on the line dials a queue for translation (validated: the 2026-08-21 legs).
+  // agentBusy keys on the CALLEE ext, so those agents are invisible to it.
+  // Group shape mirrors outboundCalls.js exactly (no Incoming leg + an
+  // Answered Outgoing leg to an external number) so the two captures agree on
+  // what an outbound call IS.
+  var outboundBusy = [];
+  Object.keys(groups).forEach(function (root) {
+    var g = groups[root];
+    var hasIncoming = g.some(function (l) {
+      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
+    });
+    if (hasIncoming) return;
+    g.forEach(function (l) {
+      if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
+      if (!icExternalNumber_(l[IC_COL.CALLEE])) return;
+      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered') return;
+      if (icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      var oext = icDigits_(l[IC_COL.CALLER]);
+      var os = icParseTs_(l[IC_COL.CONNECTED]), oe = icParseTs_(l[IC_COL.STOP]);
+      if (!oext || isNaN(os) || isNaN(oe)) return;
+      outboundBusy.push({ root: root, ext: oext, startMs: os, endMs: oe });
+    });
+  });
+  return { agentBusy: agentBusy, outboundBusy: outboundBusy };
+}
+
+// PURE. The busy-index entries for extension `ext` whose call spans instant
+// `tMs` (+/- the slack), excluding the group the event itself belongs to.
+// Callers apply their own uniqueness rule (per call for inbound, per entry
+// for outbound) -- this only selects candidates.
+function icConcurrentMatches_(busy, ext, tMs, excludeRoot) {
+  return (busy || []).filter(function (a) {
+    return a.ext === ext && a.root !== excludeRoot
+      && tMs >= a.startMs - IC_CONCURRENT_SLACK_MS_ && tMs <= a.endMs + IC_CONCURRENT_SLACK_MS_;
+  });
+}
+
+function buildInboundCallRecords_(rawRows) {
+  if (!rawRows || !rawRows.length) return [];
+
+  // 1) Group legs by ROOT call id (icGroupLegsByRoot_).
+  var groups = icGroupLegsByRoot_(rawRows);
 
   var records = [];
   var internalPending = [];   // internal-origin queue records, merged after the R11-N pass
@@ -674,46 +748,8 @@ function buildInboundCallRecords_(rawRows) {
   var enrichedRoots = {};
   records.forEach(function (rr) { recordByRoot[rr.callId] = rr; });
 
-  // Index: agent extension -> the captured inbound call they were talking on.
-  var agentBusy = [];
-  Object.keys(groups).forEach(function (root) {
-    if (!recordByRoot[root]) return;   // only captured inbound calls carry a record
-    groups[root].forEach(function (l) {
-      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered'
-          || icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
-      var who = icAnswerLegAgent_(l);   // S2C-1: CALLEE, or CALLER on the agent's own Outgoing leg
-      var as = icParseTs_(l[IC_COL.CONNECTED]), ae = icParseTs_(l[IC_COL.STOP]);
-      if (!who || isNaN(as) || isNaN(ae)) return;
-      agentBusy.push({ root: root, ext: who.ext, startMs: as, endMs: ae,
-                       name: who.name, viaCallee: who.viaCallee });
-    });
-  });
-
-  // Step 4 (owner ruling 2026-08-24): the SAME index for OUTBOUND calls. An
-  // assisting agent's concurrent call is often outbound -- a rep with a patient
-  // on the line dials a queue for translation (validated: the 2026-08-21 legs).
-  // agentBusy keys on the CALLEE ext, so those agents are invisible to it.
-  // Group shape mirrors outboundCalls.js exactly (no Incoming leg + an
-  // Answered Outgoing leg to an external number) so the two captures agree on
-  // what an outbound call IS.
-  var outboundBusy = [];
-  Object.keys(groups).forEach(function (root) {
-    var g = groups[root];
-    var hasIncoming = g.some(function (l) {
-      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
-    });
-    if (hasIncoming) return;
-    g.forEach(function (l) {
-      if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
-      if (!icExternalNumber_(l[IC_COL.CALLEE])) return;
-      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered') return;
-      if (icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
-      var oext = icDigits_(l[IC_COL.CALLER]);
-      var os = icParseTs_(l[IC_COL.CONNECTED]), oe = icParseTs_(l[IC_COL.STOP]);
-      if (!oext || isNaN(os) || isNaN(oe)) return;
-      outboundBusy.push({ root: root, ext: oext, startMs: os, endMs: oe });
-    });
-  });
+  var busy = icBusyIndexes_(groups, recordByRoot);
+  var agentBusy = busy.agentBusy, outboundBusy = busy.outboundBusy;
 
   Object.keys(groups).forEach(function (root) {
     if (recordByRoot[root]) return;    // captured inbound -> not a transfer-abandon source
@@ -728,9 +764,7 @@ function buildInboundCallRecords_(rawRows) {
     if (!xext) return;
     var tMs = icParseTs_(ab[IC_COL.START]);
     if (isNaN(tMs)) return;
-    var matches = agentBusy.filter(function (a) {
-      return a.ext === xext && a.root !== root && tMs >= a.startMs - 5000 && tMs <= a.endMs + 5000;
-    });
+    var matches = icConcurrentMatches_(agentBusy, xext, tMs, root);
     // 0 calls = no path; >1 CALLS = ambiguous -> no guessing. Counted per
     // call (icDistinctRoots_): the agent's ring leg + own talk leg on ONE
     // call are one candidate, not two.
@@ -807,10 +841,7 @@ function buildInboundCallRecords_(rawRows) {
       // the R11-N matcher -- the customer parked on hold), link that call so
       // the path drill can present the full context. UNIQUE match only; an
       // ambiguous or absent match leaves the record standalone.
-      var ctxMatches = agentBusy.filter(function (a) {
-        return a.ext === ir._originExt && a.root !== ir.callId
-          && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
-      });
+      var ctxMatches = icConcurrentMatches_(agentBusy, ir._originExt, ir._startMs, ir.callId);
       var ctxRoots = icDistinctRoots_(ctxMatches);   // S2C-1: unique per CALL
       if (ctxRoots.length === 1) {
         ir.relatedCallId = ctxRoots[0];
@@ -822,10 +853,7 @@ function buildInboundCallRecords_(rawRows) {
         // rather than guessing. An inbound match always WINS -- it is the
         // stronger relationship (the customer was handed over, not merely
         // co-present).
-        var obMatches = outboundBusy.filter(function (a) {
-          return a.ext === ir._originExt && a.root !== ir.callId
-            && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
-        });
+        var obMatches = icConcurrentMatches_(outboundBusy, ir._originExt, ir._startMs, ir.callId);
         if (obMatches.length === 1) {
           ir.relatedCallId = obMatches[0].root;
           ir.relatedCallKind = 'outbound';

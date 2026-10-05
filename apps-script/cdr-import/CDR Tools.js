@@ -78,6 +78,7 @@ function onOpen() {
     .addItem("Preview transfer paths (pick date)…",  "previewInternalTransferPathsForDate")
     .addItem("Preview outbound assist links (pick date)…", "previewOutboundAssistLinksForDate")
     .addItem("Preview call-leg shapes (pick date)…", "previewCallLegShapesForDate")
+    .addItem("Preview transfer shapes for a dept (pick date)…", "previewTransferShapesForDate")
     // PC-1 (broad-scan 2026-10-01): stored per-call agent names -> roster-canonical.
     // Preview is read-only; take a Neon backup before the rewrite (Operator State #72).
     .addItem("Preview per-call agent-name rewrite",  "previewPerCallAgentNameRewrite")
