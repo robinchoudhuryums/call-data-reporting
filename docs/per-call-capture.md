@@ -778,7 +778,8 @@ TRANSFERRED to a chosen department** (owner request + rulings, 2026-10-05).
 Phase 0 is the read-only probe: CDR Tools -> Diagnostics -> "Transfer shapes
 for a dept…" opens ONE dialog (`TransferShapesDialog.html`: tab, department and a
 queue checklist with the Dept Config queues pre-ticked; the result renders as
-tiles, a link breakdown and sample tables, with the plain-text report to copy),
+tiles, a link breakdown and a table of EVERY matching call, filterable by link
+type -- the plain-text summary to copy is the only part that samples),
 and `previewTransferShapes(date, dept, queues?)` is the editor twin
 (`cdr-import/transferFilter.js`, both through `tfRunProbe_`), which reports how the rule below classifies a real day with sample call
 ids for the owner to check BEFORE any filter is built on it. **The CDR has no

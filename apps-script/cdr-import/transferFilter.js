@@ -494,8 +494,6 @@ function previewTransferShapes(dateIso, dept, queuesCsv) {
 
 // ---- the dialog (CDR Tools -> Diagnostics -> Transfer shapes for a dept…) ----
 
-var TF_DIALOG_BLIND_SAMPLES_ = 6;
-
 /** PURE. Queue names on a tab's CALLEE NAME column with their leg counts, sorted. */
 function tfTabQueueCounts_(names) {
   var by = {};
@@ -508,9 +506,10 @@ function tfTabQueueCounts_(names) {
 
 /**
  * PURE. The dialog's structured result: header facts, one section per
- * transfer kind (counts, the link breakdown, samples) and the possible-blind
- * lists, plus the plain-text report for copying. Employees and call ids only;
- * customers are never named (the same contract as tfReportLines_).
+ * transfer kind (counts, the link breakdown and EVERY matching call, in time
+ * order) and the possible-blind lists in full, plus the plain-text summary
+ * for copying (that one keeps tfReportLines_' samples). Employees and call
+ * ids only; customers are never named (the same contract as tfReportLines_).
  */
 function tfDialogPayload_(res, meta) {
   meta = meta || {};
@@ -521,7 +520,7 @@ function tfDialogPayload_(res, meta) {
     return {
       key: key, title: title, total: list.length, inWindow: t.inWindow,
       links: { tree: t.tree, inbound: t.inbound, outbound: t.outbound, ambiguous: t.ambiguous, none: t.none },
-      samples: tfPickSamples_(list).map(function (x) {
+      rows: list.map(function (x) {
         return { time: x.time, root: x.root, leg: x.legId, from: x.caller.name, fromExt: x.caller.ext,
                  rostered: !!x.caller.rostered, to: x.target, linkKind: x.link.kind, linkText: tfLinkText_(x.link),
                  linkRoot: x.link.root || null, outcome: x.outcome.state, by: x.outcome.by || null, inWindow: !!x.inWindow };
@@ -532,7 +531,7 @@ function tfDialogPayload_(res, meta) {
     return {
       key: key, title: title, total: list.length,
       inWindow: list.filter(function (b) { return b.inWindow; }).length,
-      samples: list.slice(0, TF_DIALOG_BLIND_SAMPLES_).map(function (b) {
+      rows: list.map(function (b) {
         return { time: b.time, root: b.root, leg: b.legId, answeredBy: b.answeredBy, target: b.target, inWindow: !!b.inWindow };
       })
     };
@@ -556,7 +555,7 @@ function tfDialogPayload_(res, meta) {
       blind('blindDirect', 'Rang a ' + dept + ' employee directly after someone else answered', res.blindDirect)
     ],
     checks: [
-      'Queue and direct transfers: was each sample really a transfer, and is the linked customer call the right one?',
+      'Queue and direct transfers: is each one really a transfer, and is the linked customer call the right one?',
       'Unlinked direct transfers are what the "allow unlinked" option would add -- colleague calls, or real transfers?',
       'Possible blind transfers: blind transfers (the filter should include them) or re-routes (it should not)?'
     ],

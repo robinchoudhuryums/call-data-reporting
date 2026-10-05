@@ -274,19 +274,37 @@ test('dialog: the structured result carries the same counts as the classifier, a
   });
   assert.equal(q.links.inbound, 1);
   assert.equal(q.links.none, 1);
-  const linked = Array.from(q.samples).filter(x => x.linkKind === 'inbound')[0];
+  const linked = Array.from(q.rows).filter(x => x.linkKind === 'inbound')[0];
   assert.equal(linked.root, '901001');
   assert.equal(linked.linkRoot, '901000');
   assert.equal(linked.from, 'Raymond (Ray) Mathews');
   assert.equal(linked.to, 'A_Q_Sales');
-  const late = Array.from(d.samples).filter(x => x.root === '901004')[0];
+  const late = Array.from(d.rows).filter(x => x.root === '901004')[0];
   assert.equal(late.inWindow, false, '4:00 PM PST is outside the window');
   assert.equal(p.blind[0].total, 1);
-  assert.equal(p.blind[0].samples[0].answeredBy, 'Raymond (Ray) Mathews');
+  assert.equal(p.blind[0].rows[0].answeredBy, 'Raymond (Ray) Mathews');
   const tq = Array.from(p.header.tabQueues);
   assert.ok(tq.some(x => x.name === 'A_Q_Sales' && x.counted) && tq.some(x => x.name === 'A_Q_CSR' && !x.counted));
   assert.equal(p.text, Array.from(h.call('tfReportLines_', res, meta)).join('\n'), 'the copyable text is the editor report');
   assert.doesNotMatch(JSON.stringify(p), /2145559999|WIRELESS CALLER/, 'no customer number or caller-ID name anywhere');
+});
+
+test('dialog: every matching call is listed, not a sample (the plain-text summary keeps its samples)', function () {
+  const item = (i, kind) => ({ time: '10:0' + i + ':00', root: '9' + i, legId: 1, caller: { name: 'Emp ' + i, ext: '2' + i, rostered: true },
+                               target: 'A_Q_Sales', link: { kind: kind, root: kind === 'tree' ? null : '8' + i },
+                               outcome: { state: 'abandoned', by: null }, inWindow: i % 2 === 0 });
+  const queue = [0, 1, 2, 3, 4, 5, 6].map(i => item(i, 'none'));      // 7 of one link kind: past the 3-per-kind sample cap
+  const blindQueue = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(i => ({ time: '11:0' + i + ':00', root: '7' + i, legId: 2,
+                                                         answeredBy: 'Emp ' + i, target: 'A_Q_Sales', inWindow: true }));
+  const res = { totals: { legs: 40, calls: 20, customerCalls: 9 }, queueTabCounts: { A_Q_Sales: 16 },
+                queue: queue, direct: [], blindQueue: blindQueue, blindDirect: [] };
+  const p = h.call('tfDialogPayload_', res, { date: '2026-06-04', dept: 'Sales', queues: ['A_Q_Sales'] });
+  assert.equal(p.sections[0].rows.length, 7);
+  assert.deepEqual(Array.from(p.sections[0].rows, r => r.root), queue.map(x => x.root), 'every call, in the classifier order');
+  assert.equal(p.sections[1].rows.length, 0);
+  assert.equal(p.blind[0].rows.length, 9);
+  const text = p.text.split('\n');
+  assert.equal(text.filter(l => /call 9\d \(leg/.test(l)).length, 3, 'the copyable summary still samples 3 per link kind');
 });
 
 test('dialog: the server functions run end to end against a tab and the roster (read-only)', function () {

@@ -186,7 +186,8 @@ tests/
                               queue deliveries never read as employees, the
                               R49 window, possible blind transfers, and a
                               report that prints no customer data; plus its
-                              one-page dialog -- the structured payload, the
+                              one-page dialog -- the structured payload, which
+                              lists every call rather than a sample, the
                               server functions end to end against fake
                               workbooks, and the page's calls / no HTML
                               injection),
