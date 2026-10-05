@@ -1,6 +1,32 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-05 — AF-1 IMPLEMENTED (block 229): the "Filter abandoned calls…"
+  dialog (cdr-import AbandonedFilter.js + AbandonedFilterDialog.html), steps 1-2
+  of the owner-approved plan.** Department presets carry the fourteen old items
+  verbatim (+ optional Backup CSR / A_Q_BackUp_FieldOps), per-queue default
+  thresholds with an optional custom one, an optional R49 work window, ONE
+  custom-formula filter. Parity test runs the OLD engine: the only difference is
+  the blank-queue legs every old item shows (old engine never hides a blank
+  cell). 2186/2186. **Follow-up same day (owner: no exclusion the old items
+  lacked):** no-queue-name legs now INCLUDED by default (lowest ticked
+  threshold; a dialog box turns it off), so parity is EXACT; the generated
+  formula is evaluated by an independent Sheets-rules evaluator in the suite;
+  and CDR Tools -> Abandoned Filters -> "Check the dialog against the old
+  items (this tab)…" (runAbandonedFilterCheck) reads Sheet.isRowHiddenByFilter
+  on a real tab for all 14 items + 5 dialog-only shapes -> VERDICT. 2191/2191.
+  **Owner-side:** deploy cdr-import, walk S55 (run the check first). **Next:** step 3
+  (retire the fourteen items + wrappers) after S55; step 4 (Transfers mode) after
+  the Phase 0 transfer shapes are confirmed.
+- **2026-10-05 — also this session (no blocks):** transfer filter Phase 0
+  (read-only `previewTransferShapes` probe, cdr-import transferFilter.js; the
+  inbound capture's concurrency index extracted into icBusyIndexes_ /
+  icConcurrentMatches_), and both CDR Tools menus regrouped into one-click
+  submenus (cdr-tools-menus.test.js pins both; six closed probes left the
+  cdr-import menu but stay editor-runnable; the cdr-report "DQE Tools" menu
+  folded into "Trace a Cell"). **Where I left off:** all on
+  claude/optimistic-lamport-92xm9l, pushed, no PR; owner to run the transfer
+  probe and S55.
 - **2026-10-02 — /sync-docs after the rulings round.** CLAUDE.md: the Health
   `backup-scrub` row, the delete's backup scrub, Back/Forward in the router
   index + drive-smoke line, a third "rule that bites" (the CH-4 payload

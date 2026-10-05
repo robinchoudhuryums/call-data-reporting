@@ -231,7 +231,7 @@ Health bullet; per-call table semantics are in
   (the cross-project shared channel -- cdr-import / cdr-report have separate
   Script Properties but share the workbook), and the `runNeonMirror_`
   time-driven trigger (install via the cdr-import **CDR Tools** menu ->
-  "Install Neon Mirror Trigger", every 15 min) drains the queue, re-deriving
+  Neon Mirror -> "Install trigger", every 15 min) drains the queue, re-deriving
   each payload from the Historical Data sheets (durations via
   `getDisplayValues`, INV-02-safe) and upserting via the SAME local writers
   (`writeCDRRowsToNeon` / `writeQCDRowsToNeon` / `writeDQERowsToNeon` /

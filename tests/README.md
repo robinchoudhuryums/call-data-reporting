@@ -170,6 +170,28 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
+                              abandoned-filter (AF-1: the "Filter abandoned
+                              calls…" dialog -- every preset leaves EXACTLY its
+                              old item's rows, the OLD engine run against a
+                              recording fake filter, no-queue-name legs
+                              included as it includes them; the generated
+                              FORMULA evaluated by an independent Sheets-rules
+                              evaluator on every dialog shape and window edge;
+                              the on-tab check (afRunCheck_) end to end, CLEAN
+                              / MISMATCH / INCONCLUSIVE; validation, the page's
+                              server calls and no HTML injection),
+                              transfer-filter (the read-only transfer-shape
+                              probe: queue vs direct transfers, the customer
+                              link by the capture's own concurrency index,
+                              queue deliveries never read as employees, the
+                              R49 window, possible blind transfers, and a
+                              report that prints no customer data),
+                              cdr-tools-menus (both pipeline projects' CDR Tools
+                              menus: every item names a defined, public
+                              function -- a typo'd string is invisible to lint;
+                              the top level stays grouped; one menu per project;
+                              cdr-import's retired tools stay editor-runnable;
+                              cdr-report labels other surfaces quote stay put),
                               percall-agent-canon (PC-1: the ONE INV-24
                               canonicalizer shared by the DQE build and
                               the capture writers, capture-time rewrite

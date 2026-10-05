@@ -480,3 +480,12 @@ S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Dep
     - Watch the address bar: each step shows the route after `#`, and any `?` query the URL was opened with is kept.
   Expected: Back / Forward step through views in the order visited; no step needs two presses; no console errors; the "Open in new tab" button still opens the current view.
   Fails if: Back leaves the dashboard while views remain in history; a step needs two presses (a duplicate entry); a modal stays open after Back to a page; the wrong tab is lit; anything differs between the two browsers (record which -- this API was once noted as spotty).
+
+S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
+  Steps:
+    - Deploy cdr-import, open the CDR Import workbook, reload it, and open a recent Call_Legs_<date> tab.
+    - Run CDR Tools -> Abandoned Filters -> "Check the dialog against the old items (this tab)…" and confirm. It applies each of the 14 old filters and the dialog's filter for the same department in turn, reads which rows SHEETS hides, and ends with a VERDICT (it changes no data; it leaves the tab unfiltered). Repeat on a second, busy date.
+    - Then by hand: Clear Filters, run "A_Q_CSR & Intake (59s)" and note the visible row count; Clear, open "Filter abandoned calls…", choose CSR, Apply, and compare with both the old count and the dialog's "expect N of M rows" line.
+    - In the dialog: tick CSR AND Sales together (a 0:00:20 Sales leg shows, a 0:00:20 CSR leg does not); tick "Include the backup queue" (Backup CSR legs over 59 s appear); set a custom threshold of 120 s (only legs over 2 minutes stay); tick "Work window only" (legs before 6:00 AM PST for CSR / 6:30 AM for others, and from 3:00 PM, disappear).
+  Expected: the check's VERDICT is CLEAN on both dates; the hand counts match the old item AND the dialog's expected count. Legs with NO queue name are included, as the old items include them (the report counts them per filter); unticking "Include legs with no queue name" removes exactly those.
+  Fails if: the VERDICT is MISMATCH (send the report -- it names each differing row: queue, call time, row number, and which side shows it); a mixed selection applies one threshold to both queues; the backup queue appears without the box ticked; the dialog's expected count disagrees with what the tab shows.

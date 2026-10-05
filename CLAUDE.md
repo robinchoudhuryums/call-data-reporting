@@ -877,7 +877,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `sheet-repairs-merge.test.js`.
 - **The Extraction Sidebar mirrors the pipeline's QCD rules BY HAND -- a THIRD
   duplication, and it has already drifted.** `cdr-report/dataFilters.js`
-  (CDR Tools -> Open Extraction Sidebar: "which raw CDR rows produced this
+  (CDR Tools -> Trace a Cell -> Extraction Sidebar: "which raw CDR rows produced this
   cell?") re-implements `cdr-import/autoImport.js`'s raw-CSV time decoding
   (`simulateSplitCol2` / `parseDurationDecimal`, now guarded by
   `check-duplicated-files.sh` -- compared on CODE, since dataFilters' copies are
@@ -895,7 +895,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   which had drifted, are pinned by cross-file-pins instead, DD-6) and
   window-edge shapes beyond the fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
   row: the sidebar now refuses it like every total row (parity-pinned), and
-  the read-only `previewRow34Overlap` (cdr-import, CDR Tools menu) measures
+  the read-only `previewRow34Overlap` (cdr-import, editor-run) measures
   the latent 35+37 double-count -- see docs/known-issues.md "QCDR Output
   row 34". Still diff
   both files when you touch either; the suite tells you WHICH cell drifted.
@@ -947,7 +947,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Insurer labels and the Inbound report gate · QCD vs inbound abandons ·
   Dept attribution contract · Outbound-call capture · Outbound report ·
   Temporal abandon heatmap · Direct-extension call metrics ·
-  CSR transfer detail · Agent-day interaction view (6d).
+  CSR transfer detail · Agent-day interaction view (6d) · Transfer filter.
   **Three rules stayed HERE, because each bites from OUTSIDE that subsystem:**
   (1) **⚠ The DQE and INBOUND queue-name recognizers diverge ON PURPOSE -- do
   not "harmonize" them.** The DQE regex
@@ -1217,7 +1217,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   same-named global) declarations silently override each other --
   the last-loaded file's definition wins. If a project needs more
   than one menu, build them all from one `onOpen` (see
-  `cdr-report/CDR Tools menu.js` calling `installDQEDrilldownMenu_`).
+  `cdr-report/CDR Tools menu.js`, which also holds the DQE drill-down's item).
   ENFORCED (H3): `cross-file-pins.test.js` fails on a top-level name declared
   in two files of the same project, and `npm run lint:gas` fails on a name
   declared in none (the ReferenceError class no selective-load suite sees).
@@ -2179,7 +2179,7 @@ CDR Reporting Tools:
   apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js, apps-script/cdr-report/propRegistry.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/execCeilingProbe.js, apps-script/cdr-import/propRegistry.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/AbandonedFilterDialog.html, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/transferFilter.js, apps-script/cdr-import/execCeilingProbe.js, apps-script/cdr-import/propRegistry.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
@@ -2310,6 +2310,7 @@ S51 | One escalation assigned to several departments -- linked copies (ESC-L1) |
 S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC-L2) | Subsystem: Department Dashboard
 S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
 S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Department Dashboard
+S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

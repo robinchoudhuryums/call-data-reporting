@@ -134,7 +134,8 @@ a manager reaches outbound call O only if an internal record links to it AND
 that record passes the unchanged F-4 gate on their own dept. Full ruling +
 what is disclosed: docs/known-issues.md. Editor diagnostics
 `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
-(CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4), and
+(editor-run since the 2026-10-05 menu tidy -- R11-N is closed --
+with the `TRANSFER_PREVIEW_DATE` property; R11-N4), and
 `previewOutboundAssistLinks` validates the Step-4 link by running the REAL
 record builder over a Call_Legs sheet (never a parallel implementation --
 the chain diagnostic's hand-written rule is what once "resolved" a
@@ -769,3 +770,30 @@ in `script-10-escalations.html` and reuses them. Pinned by
 A transfer leg in the inbound role is NOT counted again (PC-3): the transferred
 call is cross-referenced from its own record, so counting the leg too showed
 the call twice. Pinned by `agent-day.test.js`.
+
+### Transfer filter
+
+**In progress -- Phase 0 (the probe) shipped.** **A CDR Tools filter that narrows the active `Call_Legs_*` tab to calls
+TRANSFERRED to a chosen department** (owner request + rulings, 2026-10-05).
+Phase 0 is the read-only probe `previewTransferShapes(date, dept, queues?)`
+(`cdr-import/transferFilter.js`; CDR Tools -> Diagnostics -> "Transfer shapes for a
+dept"), which reports how the rule below classifies a real day with sample call
+ids for the owner to check BEFORE any filter is built on it. **The CDR has no
+transfer field**, so the rule reads leg shapes: a QUEUE transfer is an internal
+party's leg whose callee name is one of the dept's queues (the CSR Transfer
+report's caller -> queue rule, one per root); a DIRECT transfer is an internal
+party's leg ringing a rostered dept employee. A queue DELIVERING a call (its ext
+or `CallQueue (n)` as CALLER) is never an employee -- its CALLER NAME can be the
+customer's caller ID. The customer LINK reuses the capture's own concurrency
+index (`icBusyIndexes_` / `icConcurrentMatches_`, extracted from
+`buildInboundCallRecords_` for exactly this), unique match only; a transfer
+under the customer call's own root links as "tree". Rulings the later phases
+implement: queue transfers count linked or not (with a linked-only option);
+direct transfers default to linked-only (an unlinked one is indistinguishable
+from a colleague call), with an allow-unlinked option; whole call shown by
+default; no sub-queue folding; whole day by default with a work-window option.
+The probe also lists POSSIBLE BLIND transfers (the customer's own legs
+re-entering a dept queue, or ringing a dept employee, after someone else
+answered) -- whether those belong in the filter is the question Phase 0 asks.
+The report prints employees and call ids, never a customer number or caller-ID
+name. Pinned by `transfer-filter.test.js`.

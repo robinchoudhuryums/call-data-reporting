@@ -10,7 +10,8 @@
  * never written. The number depends on the account type and is not derivable
  * from code, so it is measured:
  *
- *   1. CDR Tools -> "Measure execution ceiling (one-shot probe)" installs a
+ *   1. installExecCeilingProbeTrigger (editor-run; off the CDR Tools menu
+ *      since the 2026-10-05 tidy -- measured 2026-09-21, Operator State #70) installs a
  *      one-shot time trigger that runs `runExecCeilingProbe_` in ~1 min (a
  *      TRIGGER, not an editor run -- the trigger ceiling is the one the daily
  *      import and the mirror drain live under).
@@ -18,7 +19,7 @@
  *      writing its elapsed time to `EXEC_CEILING_PROBE_LAST_MS` after every
  *      step. When the platform kills it, the last value written IS the
  *      ceiling (to within 10 s). If it finishes, the ceiling is above the max.
- *   3. CDR Tools -> "Read execution-ceiling probe result" reads the properties
+ *   3. readExecCeilingProbe (editor-run) reads the properties
  *      and says what to set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
  *      to (ceiling minus ~2 min for the in-flight date + the final archive).
  *
