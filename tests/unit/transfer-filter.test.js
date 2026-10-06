@@ -343,6 +343,13 @@ test('dialog: the server functions run end to end against a tab and the roster (
     const qs = h.call('tfDialogQueues', '2026-06-04', 'Sales');
     assert.deepEqual(Array.from(qs.configured), ['A_Q_Sales'], 'the Dept Config queues are the pre-ticked ones');
     assert.ok(Array.from(qs.onTab).some(q => q.name === 'A_Q_CSR'));
+    // A range of tabs sums the leg counts (the same tab twice = doubled counts).
+    const one = Object.fromEntries(Array.from(qs.onTab, q => [q.name, q.legs]));
+    const two = h.call('tfDialogQueues', ['2026-06-04', '2026-06-04'], 'Sales');
+    Array.from(two.onTab).forEach(q => assert.equal(q.legs, 2 * one[q.name], q.name));
+    assert.throws(() => h.call('tfDialogQueues', ['2026-06-04', '2026-01-01'], 'Sales'), /No Call_Legs sheet for 2026-01-01/);
+    assert.throws(() => h.call('tfDialogQueues', new Array(32).fill('2026-06-04'), 'Sales'), /31 tabs or fewer/);
+    assert.throws(() => h.call('tfDialogQueues', [], 'Sales'), /Choose a Call_Legs tab/);
     const p = h.call('tfDialogRun', { date: '2026-06-04', dept: 'Sales', queues: [] });
     assert.equal(p.header.queueSource, 'Dept Config', 'nothing ticked -> the Dept Config queues');
     assert.equal(p.sections[0].total, 2);
@@ -369,4 +376,67 @@ test('dialog: the page calls only the dialog functions and never writes sheet te
   const menu = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'CDR Tools.js'), 'utf8');
   assert.ok(menu.indexOf("'showTransferShapesDialog'") !== -1);
   assert.ok(menu.indexOf('previewTransferShapesForDate') === -1, 'the three-prompt wrapper is gone from the menu');
+});
+
+// The dialog combines a range client-side (one server call per tab). The
+// combining code is a marked, self-contained block of the page; run it here.
+function loadMergeDays() {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'TransferShapesDialog.html'), 'utf8');
+  const start = html.indexOf('// ---- combining days'), end = html.indexOf('// ---- end combining days ----');
+  assert.ok(start > 0 && end > start, 'the combining block is marked in the page');
+  const sandbox = {};
+  vm.runInNewContext(html.slice(start, end) + '\nthis.tfMergeDays = tfMergeDays;', sandbox);
+  return sandbox.tfMergeDays;
+}
+
+test('dialog: a range of tabs combines into one result -- sums, every row dated, one summary row per tab', function () {
+  const merge = loadMergeDays();
+  const res = classify(dialogRows(), 'Sales', ['A_Q_Sales']);
+  const meta = d => ({ date: d, dept: 'Sales', queues: ['A_Q_Sales'], queueSource: 'Dept Config', rosterCount: 3, rosterExtCount: 4 });
+  const p3 = JSON.parse(JSON.stringify(h.call('tfDialogPayload_', res, meta('2026-06-03'))));
+  const p4 = JSON.parse(JSON.stringify(h.call('tfDialogPayload_', res, meta('2026-06-04'))));
+  // JSON round-trip: the page code runs in its own vm realm, whose arrays fail strict deepEqual.
+  const m = JSON.parse(JSON.stringify(merge([{ date: '2026-06-03', payload: p3 }, { date: '2026-06-04', payload: p4 }])));
+
+  assert.equal(m.header.date, '2026-06-03 to 2026-06-04');
+  assert.equal(m.header.legs, 2 * p4.header.legs);
+  assert.equal(m.header.customerCalls, 2 * p4.header.customerCalls);
+  p4.header.tabQueues.forEach(q => {
+    const mq = m.header.tabQueues.filter(x => x.name === q.name)[0];
+    assert.equal(mq.legs, 2 * q.legs, q.name);
+    assert.equal(mq.counted, q.counted, q.name);
+  });
+  [0, 1].forEach(i => {
+    const s = p4.sections[i], ms = m.sections[i];
+    assert.equal(ms.total, 2 * s.total, s.key);
+    assert.equal(ms.inWindow, 2 * s.inWindow, s.key);
+    Object.keys(s.links).forEach(k => assert.equal(ms.links[k], 2 * s.links[k], s.key + ' ' + k));
+    assert.equal(ms.rows.length, ms.total, s.key + ': every call is listed');
+    assert.deepEqual(ms.rows.map(r => r.date), s.rows.map(() => '2026-06-03').concat(s.rows.map(() => '2026-06-04')),
+      s.key + ': rows are dated, oldest tab first');
+    const { date: _d, ...rest } = ms.rows[0];
+    assert.deepEqual(rest, s.rows[0],
+      s.key + ': a row keeps every field it had');
+    assert.equal(p4.sections[i].rows[0].date, undefined, 'the per-tab payload is not modified');
+  });
+  [0, 1].forEach(i => assert.equal(m.blind[i].total, 2 * p4.blind[i].total));
+  assert.equal(m.blind[0].rows[0].date, '2026-06-03');
+
+  assert.equal(m.days.length, 2);
+  const d = m.days[1];
+  assert.equal(d.date, '2026-06-04');
+  assert.equal(d.queue, p4.sections[0].total);
+  assert.equal(d.direct, p4.sections[1].total);
+  assert.equal(d.blind, p4.blind[0].total + p4.blind[1].total);
+  assert.equal(d.transfers, d.queue + d.direct);
+  assert.equal(d.linked, [0, 1].reduce((n, i) => n + p4.sections[i].links.tree + p4.sections[i].links.inbound + p4.sections[i].links.outbound, 0));
+  assert.ok(m.text.indexOf('=== 2026-06-03 ===\n' + p3.text) !== -1 && m.text.indexOf('=== 2026-06-04 ===\n' + p4.text) !== -1,
+    'the plain-text summary carries each tab\'s own summary');
+  assert.doesNotMatch(JSON.stringify(m), /2145559999|WIRELESS CALLER/, 'still no customer number or caller-ID name');
+
+  // One tab through the combiner keeps its own totals (the page renders a
+  // single tab's payload directly, so this is the same numbers either way).
+  const one = merge([{ date: '2026-06-04', payload: p4 }]);
+  [0, 1].forEach(i => assert.equal(one.sections[i].total, p4.sections[i].total));
+  assert.equal(one.header.legs, p4.header.legs);
 });

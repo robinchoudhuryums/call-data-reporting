@@ -238,6 +238,17 @@
     background: var(--paper-card); font: 11px/1.5 var(--mono); letter-spacing: 0; white-space: pre; resize: vertical;
   }
   .plain-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+
+  /* Multi-day runs: progress in the status banner, the per-day table, and the
+     note when a run is stopped or a day fails. */
+  .status .grow { flex: 1; min-width: 0; }
+  .progress { height: 4px; border-radius: var(--r-pill); background: rgba(78, 123, 196, .18); margin-top: 6px; overflow: hidden; }
+  .progress span { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+  .range-count { font: 400 11px/1.4 var(--mono); letter-spacing: 0; color: var(--muted); padding-bottom: 9px; }
+  .note--warn { border-left-color: var(--stale); background: var(--stale-soft); }
+  table.days td.num, table.days th.num { text-align: right; font-family: var(--mono); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  table.days th.num { font-family: var(--mono); }
+  .days-wrap { border: 1px solid var(--line); border-radius: var(--r); overflow: auto; max-height: 300px; }
   .plain-actions .hint { margin: 0; }
 </style>
 </head>
@@ -249,8 +260,12 @@
   <div class="panel-body">
     <div class="form-grid" role="group" aria-label="Probe settings">
       <div class="col">
-        <label class="label" for="date">Call_Legs tab</label>
-        <select id="date"><option>loading…</option></select>
+        <label class="label" for="from">From tab</label>
+        <select id="from"><option>loading…</option></select>
+      </div>
+      <div class="col">
+        <label class="label" for="to">To tab</label>
+        <select id="to"><option>loading…</option></select>
       </div>
       <div class="col">
         <label class="label" for="dept">Department</label>
@@ -259,23 +274,30 @@
       <div class="col">
         <button class="btn" id="run" type="button" disabled>Run</button>
       </div>
+      <div class="col">
+        <button class="btn btn-secondary" id="stop" type="button" hidden>Stop</button>
+      </div>
+      <div class="col">
+        <span class="range-count" id="rangeCount"></span>
+      </div>
     </div>
     <div id="queueBox" hidden>
-      <span class="label" id="queueLabel">Queues to count &middot; legs on this tab</span>
+      <span class="label" id="queueLabel">Queues to count &middot; legs on the chosen tabs</span>
       <div id="queueList" role="group" aria-labelledby="queueLabel"></div>
     </div>
     <p class="hint">
-      Counts the calls on one <code>Call_Legs</code> tab that an employee transferred to this
-      department's queues, or directly to one of its rostered employees, and shows how each was
-      tied back to a customer call. Its Dept Config queues are pre-ticked. Nothing on the tab is
-      changed or filtered.
+      Counts the calls on the chosen <code>Call_Legs</code> tabs that an employee transferred to
+      this department's queues, or directly to one of its rostered employees, and shows how each
+      was tied back to a customer call. Its Dept Config queues are pre-ticked. Pick the same tab
+      in From and To for one day; a range is read one tab at a time (about 10-15 seconds each)
+      and can be stopped part-way. Nothing on any tab is changed or filtered.
     </p>
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
     <div id="out">
       <div class="empty-state">
         <div class="empty-state-icon" aria-hidden="true">&#8644;</div>
-        <div class="empty-state-title">Pick a tab and a department</div>
-        <div class="empty-state-hint">The run reads the whole tab, so a busy day can take a few seconds.</div>
+        <div class="empty-state-title">Pick the tabs and a department</div>
+        <div class="empty-state-hint">Each tab is read in full, so a busy day takes a few seconds.</div>
       </div>
     </div>
   </div>
@@ -295,7 +317,8 @@
     if (text != null) e.textContent = String(text);
     return e;
   }
-  function say(text, kind) {
+  // progress: an optional 0..1 fraction, drawn as a bar under the text.
+  function say(text, kind, progress) {
     var s = $('status');
     s.textContent = '';
     s.hidden = !text;
@@ -307,7 +330,17 @@
       for (var i = 0; i < 4; i++) eq.appendChild(el('i'));
       s.appendChild(eq);
     }
-    s.appendChild(el('span', null, text));
+    var body = el('div', 'grow');
+    body.appendChild(el('div', null, text));
+    if (progress != null) {
+      var bar = el('div', 'progress');
+      bar.setAttribute('aria-hidden', 'true');
+      var fill = el('span');
+      fill.style.width = Math.round(100 * Math.max(0, Math.min(1, progress))) + '%';
+      bar.appendChild(fill);
+      body.appendChild(bar);
+    }
+    s.appendChild(body);
   }
   function fail(e) { busy(false); say(e && e.message ? e.message : String(e), 'error'); }
   // While a call is in flight every control is disabled, and a run shows a
@@ -318,7 +351,8 @@
     run.textContent = '';
     if (on && running) run.appendChild(el('span', 'btn-spinner'));
     run.appendChild(document.createTextNode(on && running ? 'Running…' : 'Run'));
-    $('date').disabled = on;
+    $('from').disabled = on;
+    $('to').disabled = on;
     $('dept').disabled = on;
     Array.prototype.forEach.call($('queueList').querySelectorAll('input'), function (cb) { cb.disabled = on; });
   }
@@ -348,18 +382,93 @@
     values.forEach(function (v) { var o = el('option', null, v); o.value = v; if (v === current) o.selected = true; sel.appendChild(o); });
   }
 
+  var ALL_DATES = [];   // every Call_Legs tab, newest first (tfDialogInit)
+  var MAX_TABS = 31;    // TF_DIALOG_MAX_TABS_ in transferFilter.js
+  // The tabs between From and To (either order), oldest first.
+  function tabsInRange() {
+    var a = $('from').value, b = $('to').value;
+    if (!a || !b) return [];
+    var lo = a < b ? a : b, hi = a < b ? b : a;
+    return ALL_DATES.filter(function (d) { return d >= lo && d <= hi; }).sort();
+  }
+  function showRangeCount() {
+    var n = tabsInRange().length;
+    $('rangeCount').textContent = n > 1 ? n + ' tabs' : '';
+  }
+
+  // ---- combining days (pure; transfer-filter.test.js runs this block) ----
+  // days = [{date, payload}] oldest first, each payload one tab's
+  // tfDialogPayload_. Returns the same shape for the whole range, every row
+  // tagged with its date, plus `days` (one summary row per tab).
+  function tfMergeDays(days) {
+    var first = days[0].payload, last = days[days.length - 1].payload;
+    var tagged = function (r, date) {
+      var o = { date: date };
+      Object.keys(r).forEach(function (k) { o[k] = r[k]; });
+      return o;
+    };
+    var header = {
+      date: days[0].date + ' to ' + days[days.length - 1].date, dept: first.header.dept,
+      queues: first.header.queues, queueSource: first.header.queueSource,
+      legs: 0, calls: 0, customerCalls: 0,
+      rosterCount: last.header.rosterCount, rosterExtCount: last.header.rosterExtCount, tabQueues: []
+    };
+    var sections = first.sections.map(function (s) {
+      return { key: s.key, title: s.title, total: 0, inWindow: 0,
+               links: { tree: 0, inbound: 0, outbound: 0, ambiguous: 0, none: 0 }, rows: [] };
+    });
+    var blind = first.blind.map(function (b) { return { key: b.key, title: b.title, total: 0, inWindow: 0, rows: [] }; });
+    var tq = {}, byDay = [], text = [];
+    days.forEach(function (d) {
+      var p = d.payload, h = p.header;
+      header.legs += h.legs; header.calls += h.calls; header.customerCalls += h.customerCalls;
+      h.tabQueues.forEach(function (q) {
+        var k = q.name.toLowerCase();
+        if (!tq[k]) tq[k] = { name: q.name, legs: 0, counted: false };
+        tq[k].legs += q.legs;
+        tq[k].counted = tq[k].counted || !!q.counted;
+      });
+      var transfers = 0, linked = 0;
+      p.sections.forEach(function (s, i) {
+        var m = sections[i];
+        m.total += s.total; m.inWindow += s.inWindow;
+        Object.keys(m.links).forEach(function (k) { m.links[k] += s.links[k] || 0; });
+        s.rows.forEach(function (r) { m.rows.push(tagged(r, d.date)); });
+        transfers += s.total;
+        linked += (s.links.tree || 0) + (s.links.inbound || 0) + (s.links.outbound || 0);
+      });
+      p.blind.forEach(function (b, i) {
+        var m = blind[i];
+        m.total += b.total; m.inWindow += b.inWindow;
+        b.rows.forEach(function (r) { m.rows.push(tagged(r, d.date)); });
+      });
+      byDay.push({ date: d.date, queue: p.sections[0].total, direct: p.sections[1].total,
+                   blind: p.blind[0].total + p.blind[1].total, transfers: transfers, linked: linked });
+      text.push('=== ' + d.date + ' ===\n' + p.text);
+    });
+    header.tabQueues = Object.keys(tq).sort().map(function (k) { return tq[k]; });
+    return {
+      header: header, sections: sections, blind: blind, checks: first.checks, days: byDay,
+      text: 'Transfer shapes -- ' + header.dept + ' -- ' + days.length + ' tabs, ' + header.date
+        + ' (one summary per tab below)\n\n' + text.join('\n\n')
+    };
+  }
+  // ---- end combining days ----
+
   var queueSeq = 0;
   function loadQueues() {
-    var dept = $('dept').value, date = $('date').value;
+    var dept = $('dept').value, tabs = tabsInRange();
     var seq = ++queueSeq;
+    showRangeCount();
     $('run').disabled = true;
-    if (!dept) { $('queueBox').hidden = true; say(''); return; }
+    if (!dept || !tabs.length) { $('queueBox').hidden = true; say(''); return; }
+    if (tabs.length > MAX_TABS) { $('queueBox').hidden = true; say('Choose ' + MAX_TABS + ' tabs or fewer.', 'error'); return; }
     var box = $('queueList');
     box.textContent = '';
     box.setAttribute('aria-busy', 'true');
     for (var i = 0; i < 3; i++) box.appendChild(el('span', 'sk sk-pill'));
     $('queueBox').hidden = false;
-    say('Reading the queues on ' + date + '…', 'loading');
+    say('Reading the queues on ' + (tabs.length > 1 ? tabs.length + ' tabs' : tabs[0]) + '…', 'loading');
     google.script.run.withSuccessHandler(function (q) {
       if (seq !== queueSeq) return;   // a newer tab/department choice superseded this read
       box.removeAttribute('aria-busy');
@@ -390,7 +499,7 @@
       box.removeAttribute('aria-busy');
       box.textContent = '';
       fail(e);
-    }).tfDialogQueues(date, dept);
+    }).tfDialogQueues(tabs, dept);
   }
 
   function kpi(value, label, foot, muted) {
@@ -467,16 +576,18 @@
     return card;
   }
 
-  function renderSection(s) {
+  function renderSection(s, multi) {
     var card = cardShell(s.title, s.total, s.inWindow);
-    if (!s.total) { card.appendChild(el('div', 'card-empty', 'None on this tab.')); return card; }
+    if (!s.total) { card.appendChild(el('div', 'card-empty', multi ? 'None on these tabs.' : 'None on this tab.')); return card; }
     var body = el('div', 'card-body');
     var note = el('div', 'rows-note');
     var showing = function (n) {
-      note.textContent = 'Showing ' + n + ' of ' + s.total + ' -- every call on the tab, in time order. Look the call ids up in the phone system.';
+      note.textContent = 'Showing ' + n + ' of ' + s.total + ' -- every call on ' + (multi ? 'these tabs' : 'the tab')
+        + ', in time order. Look the call ids up in the phone system.';
     };
     var rows = s.rows.map(function (x) {
       var tr = el('tr', x.linkKind === 'none' || x.linkKind === 'ambiguous' ? 'flag' : null);
+      if (multi) tr.appendChild(cell(x.date, 'mono'));
       tr.appendChild(cell(x.time, 'mono'));
       tr.appendChild(sub(cell(x.root, 'mono'), 'leg ' + x.leg, 'mono'));
       tr.appendChild(sub(cell(x.from), 'ext ' + x.fromExt + (x.rostered ? '' : ' · not on roster')));
@@ -497,18 +608,19 @@
     }));
     showing(rows.length);
     body.appendChild(note);
-    body.appendChild(table(['Time', 'Call', 'Transferred by', 'To', 'Linked to', 'Outcome'], rows));
+    body.appendChild(table((multi ? ['Date'] : []).concat(['Time', 'Call', 'Transferred by', 'To', 'Linked to', 'Outcome']), rows));
     card.appendChild(body);
     return card;
   }
 
-  function renderBlind(b) {
+  function renderBlind(b, multi) {
     var card = cardShell('Possible blind transfer -- ' + b.title, b.total, b.inWindow);
-    if (!b.total) { card.appendChild(el('div', 'card-empty', 'None on this tab.')); return card; }
+    if (!b.total) { card.appendChild(el('div', 'card-empty', multi ? 'None on these tabs.' : 'None on this tab.')); return card; }
     var body = el('div', 'card-body');
     body.appendChild(el('div', 'rows-note', 'All ' + b.total + ', in time order.'));
     var rows = b.rows.map(function (x) {
       var tr = el('tr');
+      if (multi) tr.appendChild(cell(x.date, 'mono'));
       tr.appendChild(cell(x.time, 'mono'));
       tr.appendChild(sub(cell(x.root, 'mono'), 'leg ' + x.leg, 'mono'));
       tr.appendChild(cell('Customer, answered by ' + x.answeredBy));
@@ -517,12 +629,35 @@
       tr.appendChild(t);
       return tr;
     });
-    body.appendChild(table(['Time', 'Call', 'Before', 'Then'], rows));
+    body.appendChild(table((multi ? ['Date'] : []).concat(['Time', 'Call', 'Before', 'Then']), rows));
     card.appendChild(body);
     return card;
   }
 
-  function render(p) {
+  function renderDays(days) {
+    var wrap = el('div', 'days-wrap');
+    var t = el('table', 'days');
+    var tr = el('tr');
+    [['Date', ''], ['Queue transfers', 'num'], ['Direct transfers', 'num'], ['Possible blind', 'num'], ['Customer-linked', 'num']]
+      .forEach(function (h) { tr.appendChild(el('th', h[1] || null, h[0])); });
+    var thead = el('thead'); thead.appendChild(tr); t.appendChild(thead);
+    var tb = el('tbody');
+    days.forEach(function (d) {
+      var r = el('tr');
+      r.appendChild(cell(d.date, 'mono'));
+      r.appendChild(cell(d.queue, 'num'));
+      r.appendChild(cell(d.direct, 'num'));
+      r.appendChild(cell(d.blind, 'num'));
+      r.appendChild(cell(d.transfers ? d.linked + ' of ' + d.transfers + ' (' + Math.round(100 * d.linked / d.transfers) + '%)' : '--', 'num'));
+      tb.appendChild(r);
+    });
+    t.appendChild(tb);
+    wrap.appendChild(t);
+    return wrap;
+  }
+
+  function render(p, incomplete) {
+    var multi = !!p.days;
     var out = $('out');
     out.textContent = '';
     var h = p.header;
@@ -533,7 +668,7 @@
     line.appendChild(el('span', 'results-title', h.dept));
     line.appendChild(el('span', 'results-date', h.date));
     left.appendChild(line);
-    left.appendChild(el('div', 'results-meta', h.legs + ' legs · ' + h.calls + ' call trees · ' + h.customerCalls
+    left.appendChild(el('div', 'results-meta', (multi ? p.days.length + ' tabs · ' : '') + h.legs + ' legs · ' + h.calls + ' call trees · ' + h.customerCalls
       + ' customer inbound calls · roster ' + h.rosterCount + ' employees / ' + h.rosterExtCount
       + ' extensions · queues from ' + h.queueSource));
     head.appendChild(left);
@@ -547,7 +682,19 @@
     grid.appendChild(kpi(p.blind[1].total, 'Possible blind · employee', 'rang an employee', true));
     out.appendChild(grid);
 
-    out.appendChild(el('div', 'section-title', 'Queues on this tab · counted ones highlighted'));
+    if (incomplete && (incomplete.failed.length || incomplete.stopped)) {
+      var warn = el('div', 'note note--warn');
+      if (incomplete.stopped) warn.appendChild(el('div', null, 'Stopped after ' + p.days.length + ' of ' + incomplete.planned
+        + ' tabs. The totals cover only the tabs listed by day below.'));
+      incomplete.failed.forEach(function (f) { warn.appendChild(el('div', null, f.date + ' was not read: ' + f.message)); });
+      out.appendChild(warn);
+    }
+    if (multi) {
+      out.appendChild(el('div', 'section-title', 'By day'));
+      out.appendChild(renderDays(p.days));
+    }
+
+    out.appendChild(el('div', 'section-title', multi ? 'Queues on these tabs · counted ones highlighted' : 'Queues on this tab · counted ones highlighted'));
     var toks = el('div', 'toks');
     h.tabQueues.forEach(function (q) {
       var t = el('span', 'tok' + (q.counted ? ' is-on' : ''), q.name);
@@ -558,9 +705,9 @@
     out.appendChild(toks);
 
     out.appendChild(el('div', 'section-title', 'Transfers'));
-    p.sections.forEach(function (s) { out.appendChild(renderSection(s)); });
+    p.sections.forEach(function (s) { out.appendChild(renderSection(s, multi)); });
     out.appendChild(el('div', 'section-title', 'Possible blind transfers'));
-    p.blind.forEach(function (b) { out.appendChild(renderBlind(b)); });
+    p.blind.forEach(function (b) { out.appendChild(renderBlind(b, multi)); });
 
     out.appendChild(el('div', 'section-title', 'What to check'));
     var note = el('div', 'note');
@@ -570,7 +717,7 @@
     out.appendChild(note);
 
     var det = el('details', 'plain');
-    det.appendChild(el('summary', null, 'Plain-text summary (with samples)'));
+    det.appendChild(el('summary', null, multi ? 'Plain-text summary (one per tab, with samples)' : 'Plain-text summary (with samples)'));
     var pb = el('div', 'plain-body');
     var ta = el('textarea'); ta.readOnly = true; ta.value = p.text;
     ta.setAttribute('aria-label', 'Plain-text summary');
@@ -592,32 +739,76 @@
     out.appendChild(det);
   }
 
-  $('date').addEventListener('change', loadQueues);
+  $('from').addEventListener('change', loadQueues);
+  $('to').addEventListener('change', loadQueues);
   $('dept').addEventListener('change', loadQueues);
+
+  var stopRequested = false;
+  $('stop').addEventListener('click', function () {
+    stopRequested = true;
+    $('stop').disabled = true;
+    $('stop').textContent = 'Stopping after this tab…';
+  });
+
+  // One server call per tab, oldest first; the dialog combines them. A failed
+  // tab is reported and the others still count; Stop keeps the finished ones.
   $('run').addEventListener('click', function () {
     var queues = Array.prototype.slice.call($('queueList').querySelectorAll('input:checked')).map(function (cb) { return cb.dataset.name; });
+    var tabs = tabsInRange(), dept = $('dept').value;
+    if (!tabs.length || tabs.length > MAX_TABS) return;
     var out = $('out');
     var previous = document.createDocumentFragment();
     while (out.firstChild) previous.appendChild(out.firstChild);
     out.appendChild(resultSkeleton());
     out.setAttribute('aria-busy', 'true');
     busy(true, true);
-    say('Classifying ' + $('date').value + ' for ' + $('dept').value + '… this reads the whole tab, so a busy day takes a few seconds.', 'loading');
-    google.script.run.withSuccessHandler(function (p) {
+    stopRequested = false;
+    var stop = $('stop');
+    stop.hidden = tabs.length < 2;
+    stop.disabled = false;
+    stop.textContent = 'Stop';
+    var done = [], failed = [];
+
+    var finish = function () {
       out.removeAttribute('aria-busy');
-      busy(false); say(''); render(p);
-    }).withFailureHandler(function (e) {
-      out.removeAttribute('aria-busy');
-      out.textContent = '';
-      out.appendChild(previous);
-      fail(e);
-    }).tfDialogRun({ date: $('date').value, dept: $('dept').value, queues: queues });
+      stop.hidden = true;
+      busy(false);
+      if (!done.length) {
+        out.textContent = '';
+        out.appendChild(previous);
+        say(failed.length ? failed.map(function (f) { return f.date + ': ' + f.message; }).join(' · ') : 'Stopped before any tab was read.',
+            failed.length ? 'error' : 'empty');
+        return;
+      }
+      say('');
+      var single = tabs.length === 1;
+      render(single ? done[0].payload : tfMergeDays(done),
+             single ? null : { failed: failed, stopped: stopRequested && done.length + failed.length < tabs.length, planned: tabs.length });
+    };
+    var next = function (i) {
+      if (i >= tabs.length || (stopRequested && i > 0)) { finish(); return; }
+      var d = tabs[i];
+      say(tabs.length > 1
+            ? 'Reading ' + d + ' · tab ' + (i + 1) + ' of ' + tabs.length + ' for ' + dept + '…'
+            : 'Classifying ' + d + ' for ' + dept + '… this reads the whole tab, so a busy day takes a few seconds.',
+          'loading', tabs.length > 1 ? i / tabs.length : null);
+      google.script.run.withSuccessHandler(function (p) {
+        done.push({ date: d, payload: p });
+        next(i + 1);
+      }).withFailureHandler(function (e) {
+        failed.push({ date: d, message: e && e.message ? e.message : String(e) });
+        next(i + 1);
+      }).tfDialogRun({ date: d, dept: dept, queues: queues });
+    };
+    next(0);
   });
 
   say('Loading the Call_Legs tabs and departments…', 'loading');
   google.script.run.withSuccessHandler(function (init) {
     say('');
-    fillSelect($('date'), init.dates, init.defaultDate, init.dates.length ? null : 'No Call_Legs tabs');
+    ALL_DATES = init.dates.slice();
+    fillSelect($('from'), init.dates, init.defaultDate, init.dates.length ? null : 'No Call_Legs tabs');
+    fillSelect($('to'), init.dates, init.defaultDate, init.dates.length ? null : 'No Call_Legs tabs');
     fillSelect($('dept'), init.depts, null, 'Choose a department…');
     busy(false);
     if (!init.dates.length) say('No Call_Legs tabs in this workbook.', 'error');

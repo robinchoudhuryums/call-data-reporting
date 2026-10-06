@@ -776,8 +776,13 @@ the call twice. Pinned by `agent-day.test.js`.
 **In progress -- Phase 0 (the probe) shipped and deployed 2026-10-05.** **A CDR Tools filter that narrows the active `Call_Legs_*` tab to calls
 TRANSFERRED to a chosen department** (owner request + rulings, 2026-10-05).
 Phase 0 is the read-only probe: CDR Tools -> Diagnostics -> "Transfer shapes
-for a dept…" opens ONE dialog (`TransferShapesDialog.html`: tab, department and a
-queue checklist with the Dept Config queues pre-ticked; the result renders as
+for a dept…" opens ONE dialog (`TransferShapesDialog.html`: a From/To range of
+tabs, department and a queue checklist with the Dept Config queues pre-ticked;
+a range runs ONE server call per tab, oldest first, and the page combines them
+-- the combining block is run by the suite -- so no call reads more than one
+~15k-row tab and none nears the execution ceiling (#70); a failed tab is named
+and the rest still count, Stop keeps the finished tabs, and a range adds a
+per-day table and a Date column; the result renders as
 tiles, a link breakdown and a table of EVERY matching call, filterable by link
 type -- the plain-text summary to copy is the only part that samples),
 and `previewTransferShapes(date, dept, queues?)` is the editor twin
