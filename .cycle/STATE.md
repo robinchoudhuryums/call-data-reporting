@@ -1,6 +1,22 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-06 — Batch A IMPLEMENTED (block 231): My Department ans/day + the
+  Agent Day tiles.** Owner plan (5 batches, A-E, agreed 2026-10-06 after the
+  inline-panel mock). A1 ans/day counts only days with rings (`summary:v23`).
+  A2 the figure sits beside the "(rung)" total; subtotal/total rows show the
+  team's answered per AGENT per day (floaters + team-average excludes out,
+  combined view sums the pair); hidden Ans / day column gone, CSV keeps it
+  after Answer %. A3 the bar's duplicate inline % removed. A4 Agent Day:
+  Inbound row (DQE four + journey Transferred / Hold) and Outbound row
+  (Placed / Connected / Talk / Unconnected brief-vs-rang-out / Attempts), "not
+  captured" before 2026-07-10, Neon down or no capture rows. 2200/2200 +
+  ci:ui green, 5 bites red. **Owner-side:** deploy the dashboard, walk S47.
+  **Next:** Batch B (inline agent panel: row click -> Agent Day under the row,
+  31-day strip, Individual report button), Batch C (outbound probe, any time),
+  then D, E (admin-only outbound views). The PR #354/#355-era items below
+  (S55, AF-1 step 3, transfer filter Phase 1) still stand. **Where I left
+  off:** committed + pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-05 — CDR Import tools round MERGED + DEPLOYED (#354, #355), then
   /sync-docs.** #354: transfer filter Phase 0 probe, both CDR Tools menus
   grouped, AF-1 abandoned-filter dialog + on-tab check (blocks 229-230). #355:

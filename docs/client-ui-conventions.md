@@ -285,7 +285,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v22). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v23). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -2114,18 +2114,22 @@ stay pinned by INV-39, INV-53 and INV-06.
   classic proportional bar; there is no separate Rung / Missed / Answered /
   **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
-  counts and the rung total as a muted "(N)", answer-rate gets the R23
-  three-tier dept-standard tint, sorts by answered VOLUME (`totalAnswered`,
+  counts and the rung total as a muted "(N)", followed (owner 2026-10,
+  `ansPerDayHtml_`) by "· N.N ans/day" -- answered per day WITH RINGS on an
+  agent row, answered per AGENT per day on a total/subtotal row (the team pair
+  `ansPerDayAnswered`/`ansPerDayAgentDays`; floaters and team-average excludes
+  out). The bar no longer prints an inline answer rate: the Answer % column
+  beside it is the same figure. Sorts by answered VOLUME (`totalAnswered`,
   owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
   `sortRows`). **The CSV still emits a numeric Total calls column** spliced
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; the `answerRate`
-  sort key and the default landing) · Ans / day (owner 2026-09: answered per
-  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`; the combined
-  total row divides by the UNION of the depts' active days, D-6) · Unique ·
-  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
-  columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
+  sort key and the default landing) · Unique ·
+  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
+  (owner 2026-10; the figure lives in the bar cell, `summary:v23`), but the
+  CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
+  columns (Source / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle
   (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
   `hide-extra` class + `.col-extra` cells through the shared `cellClass_`

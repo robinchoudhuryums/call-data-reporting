@@ -1600,11 +1600,10 @@
     // the muted "(N)"), saving a column; the CSV still emits a numeric
     // Total calls column (exportTableCsv_ splices it after the bar).
     { key: 'answerRate',           label: 'Answer %',        type: 'pct', sortKey: 'answerRate' },
-    // Owner (2026-09): answered calls per ACTIVE day -- days the agent had any
-    // rung activity in the window, so PTO does not drag it down. The day count
-    // rides in the tooltip. Server: Data.gs computeSummary_ (the existing
-    // daysActive + new ansPerDay, summary:v22). Folds away with the other detail columns.
-    { key: 'ansPerDay',            label: 'Ans / day',       type: 'num1',     hideable: true },
+    // Owner (2026-10): the "Ans / day" column is GONE from the table -- the
+    // figure renders beside the rung total in the bar cell (ansPerDayHtml_),
+    // and the CSV/TSV export still carries an "Ans / day" column, spliced in
+    // after Answer % (deptTableGrid_).
     { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
     { key: 'attSeconds',           label: 'ATT (daily avg)', type: 'duration' },
@@ -1758,6 +1757,24 @@
   // this row (agent rows -- callers compute it per cohort via
   // ansTallyUnitFor_); 0/omitted keeps the classic proportional bar
   // (totals + subtotal rows, and any legacy caller).
+  // Owner (2026-10, summary:v23): answered per day WITH RINGS, beside the rung
+  // total. An agent row divides by its own ring-days (`daysActive`); a total or
+  // subtotal row carries the team pair and shows answered per AGENT per day
+  // (floaters and the dept's team-average excludes left out, server-side). The
+  // pair's presence is what tells the two apart. Null -> nothing rendered.
+  function ansPerDayHtml_(row) {
+    var v = row ? row.ansPerDay : null;
+    if (v == null || v === '' || !isFinite(Number(v))) return '';
+    var team = row.ansPerDayAgentDays != null;
+    var days = Number(team ? row.ansPerDayAgentDays : row.daysActive) || 0;
+    var ans = Number(team ? row.ansPerDayAnswered : row.totalAnswered) || 0;
+    var title = team
+      ? ans + ' answered over ' + days + ' agent-days with rings (per agent; floaters and team-average exclusions left out)'
+      : ans + ' answered over ' + days + ' day' + (days === 1 ? '' : 's') + ' with rings';
+    return '<span class="ans-perday" title="' + escapeHtml(title) + '">&middot; '
+      + Number(v).toFixed(1) + ' ans/day</span>';
+  }
+
   function answeredBarHtml_(row, tallyUnit) {
     var a = Number(row.totalAnswered) || 0;
     var m = Number(row.totalMissed)   || 0;
@@ -1777,7 +1794,6 @@
     // R23: judged against the row's own dept standard (combined-view rows
     // carry `dept`; otherwise the page's current dept).
     var deptCtx = row.dept || (typeof getRequestedDept === 'function' ? getRequestedDept() : null);
-    var rateCls = total ? benchValueCls_('% answered', rate + '%', true, null, deptCtx) : '';
     // R10-4: threshold-aware red -- passing the dept's answer standard renders
     // the missed segment light/translucent so healthy rows recede; failing
     // keeps the full red + a bold value (styles.html .ans-bar--pass/--fail).
@@ -1802,7 +1818,10 @@
          +     '<span class="ans-slash">/</span>'
          +     '<span class="miss-n">' + m + mChip + '</span>'
          +     '<span class="ans-total" title="Total calls (rung)">(' + rung + ')</span>'
-         +     '<span class="ans-rate' + rateCls + '">' + (total ? rate + '%' : '–') + '</span>'
+         // Owner (2026-10): the inline answer rate is gone -- the Answer %
+         // column beside this cell shows the same figure (both are answered ÷
+         // (answered + missed), rounded). The per-day figure takes its place.
+         +     ansPerDayHtml_(row)
          +   '</div>'
          + '</div>';
   }

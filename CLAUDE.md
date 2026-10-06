@@ -646,7 +646,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `'CSR': ['Robin Choudhury']`). Match is exact on the roster name.
   **Scope (owner ruling, R18): the exclusion applies to PER-AGENT AVERAGES
   AND BENCHMARKS only -- manager volume stays in dept TOTALS and RATES.**
-  Consumers are the IR team-average and, since R18, Insights via
+  Consumers are the IR team-average, the My Department team "ans/day"
+  (`summary:v23`, answered per agent per day), and, since R18, Insights via
   `meta.teamAvgBasis` (the gap-vs-team baseline, the call-share equal-share
   benchmark, the behind-team classification); Insights' `teamStats`,
   `rosterAgentCount`, trends and dept rates deliberately keep every agent.
@@ -1781,7 +1782,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ROSTER, because the tag does not move when the roster is edited and a stale
   ext set silently changes which floaters are recognized (INV-53). Only the
   SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
-  (Batch 6) the `summary:v22` and `individual_active:v2` keys carry the same
+  (Batch 6) the `summary:v23` and `individual_active:v2` keys carry the same
   roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
   reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:`,
   and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /
@@ -1795,7 +1796,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" it or hardcode that default in a second
   place. `subScope` is a cache-key
-  dimension (`summary:v22`); `cdr.dept.subscope` is now an orphan key.
+  dimension (`summary:v23`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the

@@ -72,6 +72,13 @@
 
 var AGENT_DAY_MAX_CALLS_ = 300;
 
+// Owner (2026-10, Batch A): the outbound capture's first date (Operator State
+// #57: "capture start 2026-07-10"). Before it the outbound_calls table holds
+// nothing for ANY agent, so an empty outbound list on an earlier day means
+// "not captured", never "placed no calls" -- even on a full-tier inbound day,
+// because inbound capture began earlier.
+var AGENT_DAY_OUTBOUND_CAPTURE_START_ = '2026-07-10';
+
 /**
  * PURE. The agent's ROSTER homes, alphabetical. Empty for an unrostered name.
  * Split out so the auth test can drive it without a spreadsheet.
@@ -181,10 +188,44 @@ function agentDayInboundRole_(journey, agentName) {
       ringSec: (typeof ev.secs === 'number') ? ev.secs : null,
       talkSec: (typeof ev.talk === 'number') ? ev.talk : null,
       order: i,
+      // Owner (2026-10, Batch A): the hold on THIS agent's own leg (the
+      // capture's per-leg `hold`), not the call's total hold.
+      holdSec: (typeof ev.hold === 'number') ? ev.hold : 0,
+      t: ev.t || null,
     };
     if (!best || rank[role] > rank[best.role]) best = cand;
   }
+  if (best && best.role === 'answered') best.transferredOn = agentDayTransferredOn_(journey, agentName, best);
   return best;
+}
+
+/**
+ * PURE. Did a call this agent ANSWERED move on to someone else afterwards?
+ *
+ * True when the journey holds a later leg -- starting more than a second after
+ * the agent's answered leg -- that is not the agent's own. A queue rings its
+ * agents in the same second, so the 1 s margin keeps those simultaneous rings
+ * from reading as a transfer (the transfer probe's "after someone answered"
+ * rule, cdr-import/transferFilter.js). Cross-referenced `transfer:true`
+ * events count: the R11-N append records the queue the caller was sent to.
+ * Times are the journey's HH:MM:SS; a leg without one is never counted.
+ */
+function agentDayTransferredOn_(journey, agentName, answered) {
+  var t0 = agentDayClockSec_(answered && answered.t);
+  if (t0 == null) return false;
+  for (var i = 0; i < journey.length; i++) {
+    var ev = journey[i];
+    if (!ev || i === answered.order || ev.name === agentName) continue;
+    var t = agentDayClockSec_(ev.t);
+    if (t != null && t > t0 + 1) return true;
+  }
+  return false;
+}
+
+/** PURE. "HH:MM:SS" -> seconds of the day, or null. */
+function agentDayClockSec_(t) {
+  var m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(t == null ? '' : t).trim());
+  return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : null;
 }
 
 /**
@@ -209,6 +250,11 @@ function agentDayShapeInbound_(r, roleInfo) {
     holdSeconds:  Number(r.hold_seconds) || 0,
     isInternal:   !!r.is_internal,
     numTransfers: Number(r.num_transfers) || 0,
+    // Owner (2026-10, Batch A): this agent's own hold and whether the call
+    // moved on after they answered. Journey-derived, so absent (0 / false)
+    // on a degraded day -- the client shows those tiles on a full day only.
+    agentHoldSec:  roleInfo ? (Number(roleInfo.holdSec) || 0) : 0,
+    transferredOn: !!(roleInfo && roleInfo.transferredOn),
   };
 }
 
@@ -255,19 +301,52 @@ function agentDayShapeOutbound_(r) {
  */
 function agentDayCounts_(inbound, outbound) {
   var c = { inboundTotal: 0, answered: 0, missed: 0, rang: 0,
-            outboundTotal: 0, outboundConnected: 0, talkSec: 0 };
+            outboundTotal: 0, outboundConnected: 0, talkSec: 0,
+            // Owner (2026-10, Batch A): the two directions kept apart for the
+            // tile rows. `talkSec` stays their sum for existing readers.
+            inboundTalkSec: 0, outboundTalkSec: 0,
+            agentHoldSec: 0, holdCalls: 0, transferredOn: 0,
+            outboundAttempts: 0, outboundUnconnectedBrief: 0,
+            outboundUnconnectedReal: 0, outboundUnconnectedUnknown: 0 };
   (inbound || []).forEach(function (e) {
     c.inboundTotal++;
-    if (e.role === 'answered') { c.answered++; c.talkSec += Number(e.talkSec) || 0; }
+    if (e.role === 'answered') {
+      c.answered++;
+      var t = Number(e.talkSec) || 0;
+      c.talkSec += t; c.inboundTalkSec += t;
+      var hold = Number(e.agentHoldSec) || 0;
+      if (hold > 0) { c.agentHoldSec += hold; c.holdCalls++; }
+      if (e.transferredOn) c.transferredOn++;
+    }
     else if (e.role === 'missed') c.missed++;
     else c.rang++;
   });
   (outbound || []).forEach(function (e) {
     c.outboundTotal++;
-    if (e.connected) c.outboundConnected++;
-    c.talkSec += Number(e.talkSec) || 0;
+    c.outboundAttempts += Number(e.attempts) || 1;
+    var t = Number(e.talkSec) || 0;
+    c.talkSec += t; c.outboundTalkSec += t;
+    if (e.connected) { c.outboundConnected++; return; }
+    // The Outbound report's ring split (OUTBOUND_BRIEF_RING_SEC_), so an
+    // agent's day and the report bucket an unconnected call the same way.
+    var cls = (typeof outboundClassifyRing_ === 'function')
+      ? outboundClassifyRing_(e.ringSec) : 'unknown';
+    if (cls === 'brief') c.outboundUnconnectedBrief++;
+    else if (cls === 'real') c.outboundUnconnectedReal++;
+    else c.outboundUnconnectedUnknown++;
   });
   return c;
+}
+
+/**
+ * PURE. Can this day's outbound list be read as the agent's whole outbound
+ * day? No when Neon was unreachable, when no capture rows came back at all
+ * (the 'dqe-only' tier), or when the date is before outbound capture began --
+ * in all three an empty list means "not captured", not "placed no calls".
+ */
+function agentDayOutboundCaptured_(meta, dateIso) {
+  if (!meta || !meta.neonAvailable || meta.tier === 'dqe-only') return false;
+  return String(dateIso || '') >= AGENT_DAY_OUTBOUND_CAPTURE_START_;
 }
 
 /**
@@ -304,7 +383,8 @@ function emptyAgentDay_(scope, horizons) {
       unrostered: !!scope.unrostered, rosterHomes: scope.homes || [],
       available: true, tier: 'dqe-only', degradedReason: null,
       journeyHorizonDays: horizons.journeyDays, captureHorizonDays: horizons.callDays,
-      ageDays: null, truncated: false, neonAvailable: false,
+      ageDays: null, truncated: false, neonAvailable: false, outboundCaptured: false,
+      outboundCaptureStart: AGENT_DAY_OUTBOUND_CAPTURE_START_,
       tzLabel: 'CST', computeMs: 0,
     },
     day: null,
@@ -485,6 +565,7 @@ function getAgentDay(req) {
   out.meta.ageDays = agentDayAgeDays_(scope.date,
     Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'));
   out.meta.degradedReason = agentDayDegradedReason_(out.meta, cap.available);
+  out.meta.outboundCaptured = agentDayOutboundCaptured_(out.meta, scope.date);
   out.reconcile = agentDayReconcile_(out.counts, out.day, out.meta.tier);
   out.meta.computeMs = new Date().getTime() - t0;
 

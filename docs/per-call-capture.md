@@ -753,6 +753,19 @@ header lying, and it makes the figures the SAME ones My Department shows.
 `agentDayReconcile_` states the gap rather than reconciling it away, and never
 claims `exact` on a degraded day even when the numbers coincide.
 
+**Two tile rows (owner 2026-10, Batch A).** INBOUND = the four DQE daily totals
+plus Transferred (answered calls with a later leg -- more than a second after
+the agent's answer -- that is someone else's, `agentDayTransferredOn_`) and
+Hold (the agent's OWN leg hold). Both are journey-derived, so they show only on
+a `full` day and read "–" otherwise. OUTBOUND = Placed / Connected ("talk > 0")
+/ Talk / Unconnected (the Outbound report's 8 s brief-vs-rang-out split,
+`outboundClassifyRing_`) / Attempts, from the outbound capture. It renders only
+when `meta.outboundCaptured` -- Neon reachable, some capture rows back, and the
+date on or after `AGENT_DAY_OUTBOUND_CAPTURE_START_` (2026-07-10, later than the
+inbound capture, so a full inbound day can still be an uncaptured outbound one)
+-- and otherwise says "Outbound not captured", never a row of zeros. `counts.talkSec`
+stays the two directions' sum; `inboundTalkSec` / `outboundTalkSec` split it.
+
 **Auth is server-derived from the ROSTER** (`buildDeptsByAgent_` -> the shared
 `assertDeptAccess_`), so it inherits the R-3 allDepts and Tier C multi-dept
 fixes. A CROSSOVER agent has several homes and ANY of them entitles (the homes

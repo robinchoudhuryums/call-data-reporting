@@ -2884,15 +2884,6 @@
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
-    if (col.type === 'num1') {
-      // One decimal (Ans / day). Null = no active days; the day count rides
-      // in the title so the divisor is never a mystery.
-      if (v == null || !isFinite(Number(v))) return zeroCell_('–');
-      const days = Number(row.daysActive) || 0;
-      const t = days ? ' title="' + escapeHtml(fmtNumber(row.totalAnswered || 0) + ' answered over ' + days + ' active day' + (days === 1 ? '' : 's')) + '"' : '';
-      const txt = Number(v).toFixed(1);
-      return Number(v) === 0 ? zeroCell_(txt) : '<span' + t + '>' + txt + '</span>';
-    }
     if (col.type === 'duration') {
       const dur = fmtDuration(v);
       return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
@@ -3718,12 +3709,17 @@
         else if (col.type === 'duration') out.push(fmtDuration(row[col.key]));
         else out.push(row[col.key]);
         if (col.type === 'bar') out.push(row.totalRung != null ? row.totalRung : '');
+        // Owner (2026-10): Ans / day left the on-screen columns (it renders in
+        // the bar cell) but the export keeps it, in its old place after
+        // Answer %, so a spreadsheet built on the old column order still lines up.
+        if (col.type === 'pct') out.push(row.ansPerDay != null ? row.ansPerDay : '');
       });
       return out;
     };
     var header = COLUMNS.reduce(function (acc, c) {
       acc.push(c.label);
       if (c.type === 'bar') acc.push('Total calls');
+      if (c.type === 'pct') acc.push('Ans / day');
       return acc;
     }, multiDept ? ['Department'] : []);
     var rows = [];

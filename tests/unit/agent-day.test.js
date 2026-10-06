@@ -27,7 +27,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
 
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'AgentDay.gs'] });
+// OutboundReport.gs for outboundClassifyRing_ -- the day's unconnected split uses
+// the report's own 8 s rule (Batch A).
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'OutboundReport.gs', 'AgentDay.gs'] });
 
 // Objects built inside the vm have a different Object prototype, so strict
 // deepEqual reports "same structure but not reference-equal". Round-trip
@@ -182,13 +184,59 @@ test('an exact journey role always wins over the first_agent fallback', function
 
 // ── Counts + the reconciliation disclosure ──────────────────────────────────
 
-test('counts fold the day by role, and outbound talk joins the talk total', function () {
+test('counts fold the day by role, keep the two directions apart, and still total the talk', function () {
   const c = h.ctx.agentDayCounts_(
-    [{ role: 'answered', talkSec: 100 }, { role: 'missed' }, { role: 'rang' },
-     { role: 'answered', talkSec: 50 }],
-    [{ connected: true, talkSec: 20 }, { connected: false, talkSec: 0 }]);
+    [{ role: 'answered', talkSec: 100, agentHoldSec: 30, transferredOn: true }, { role: 'missed' }, { role: 'rang' },
+     { role: 'answered', talkSec: 50, agentHoldSec: 0, transferredOn: false }],
+    [{ connected: true, talkSec: 20, attempts: 2 }, { connected: false, talkSec: 0, ringSec: 3 },
+     { connected: false, talkSec: 0, ringSec: 8 }, { connected: false, talkSec: 0, ringSec: null }]);
   assert.deepEqual(plain(c), { inboundTotal: 4, answered: 2, missed: 1, rang: 1,
-    outboundTotal: 2, outboundConnected: 1, talkSec: 170 });
+    outboundTotal: 4, outboundConnected: 1, talkSec: 170,
+    inboundTalkSec: 150, outboundTalkSec: 20,
+    agentHoldSec: 30, holdCalls: 1, transferredOn: 1,
+    outboundAttempts: 5, outboundUnconnectedBrief: 1, outboundUnconnectedReal: 1, outboundUnconnectedUnknown: 1 },
+    'an 8 s ring is a REAL attempt (the Outbound report\'s boundary); a missing ring is unknown, not brief');
+});
+
+// Owner (2026-10, Batch A): the Agent Day tiles. Hold is the agent's OWN leg
+// hold; "transferred" is a later leg, more than a second after their answer,
+// that is somebody else's.
+test('an answered call is "transferred on" only when a later leg is someone else\'s', function () {
+  const role = h.ctx.agentDayInboundRole_;
+  const moved = role([
+    { t: '10:00:00', name: 'A_Q_CSR', kind: 'queue' },
+    { t: '10:00:05', name: 'Ann Agent', kind: 'answer', talk: 120, hold: 15 },
+    { t: '10:00:05', name: 'Bob Other', kind: 'leg', missed: true },   // rang in the same second: not a transfer
+    { t: '10:02:10', name: 'A_Q_Billing', kind: 'queue' },
+  ], 'Ann Agent');
+  assert.equal(moved.role, 'answered');
+  assert.equal(moved.holdSec, 15, 'the agent\'s own leg hold');
+  assert.equal(moved.transferredOn, true);
+  const stayed = role([
+    { t: '10:00:00', name: 'A_Q_CSR', kind: 'queue' },
+    { t: '10:00:05', name: 'Ann Agent', kind: 'answer', talk: 120 },
+    { t: '10:00:06', name: 'Bob Other', kind: 'leg', missed: true },   // within the 1 s margin
+  ], 'Ann Agent');
+  assert.equal(stayed.transferredOn, false);
+  assert.equal(stayed.holdSec, 0);
+  const missed = role([{ t: '10:00:05', name: 'Ann Agent', kind: 'leg', missed: true },
+                       { t: '10:03:00', name: 'Bob Other', kind: 'answer', talk: 60 }], 'Ann Agent');
+  assert.equal(missed.transferredOn, undefined, 'only an ANSWERED call can be transferred on by this agent');
+  const shaped = h.ctx.agentDayShapeInbound_({ call_id: 'c1', hold_seconds: 90 }, moved);
+  assert.equal(shaped.agentHoldSec, 15, 'the call-level hold stays in holdSeconds');
+  assert.equal(shaped.holdSeconds, 90);
+  assert.equal(shaped.transferredOn, true);
+});
+
+test('outbound reads as "not captured" before capture began, with Neon down, or on a dqe-only day', function () {
+  const cap = h.ctx.agentDayOutboundCaptured_;
+  assert.equal(cap({ neonAvailable: true, tier: 'full' }, '2026-07-10'), true, 'the first captured day counts');
+  assert.equal(cap({ neonAvailable: true, tier: 'full' }, '2026-07-09'), false,
+    'a full INBOUND day before outbound capture is still not an outbound day');
+  assert.equal(cap({ neonAvailable: false, tier: 'full' }, '2026-09-01'), false);
+  assert.equal(cap({ neonAvailable: true, tier: 'dqe-only' }, '2026-09-01'), false);
+  assert.equal(cap({ neonAvailable: true, tier: 'degraded' }, '2026-09-01'), true,
+    'outbound stays exact when only the inbound journey is pruned');
 });
 
 test('THE RULE: a short list is DISCLOSED against the daily total, never silently served', function () {
