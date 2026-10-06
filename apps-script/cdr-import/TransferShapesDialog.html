@@ -95,6 +95,42 @@
   .status-error   { background: var(--bad-soft);    color: var(--bad);    border-left-color: var(--bad); }
   .status-empty   { background: var(--paper-2);     color: var(--muted);  border-left-color: var(--muted); }
 
+  .status-loading { display: flex; align-items: center; gap: 10px; }
+
+  /* Loaders (dashboard .ds-loader--eq, .btn-spinner, .skeleton-*). */
+  .eq { display: inline-flex; align-items: flex-end; gap: 3px; height: 0.9em; flex: none; }
+  .eq i {
+    width: 3px; height: 100%; background: currentColor; border-radius: 1px;
+    transform-origin: center bottom; animation: eq 1s ease-in-out infinite;
+  }
+  .eq i:nth-child(2) { animation-delay: .15s; }
+  .eq i:nth-child(3) { animation-delay: .30s; }
+  .eq i:nth-child(4) { animation-delay: .45s; }
+  @keyframes eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+  .btn-spinner {
+    display: inline-block; width: 12px; height: 12px; margin-right: 7px; vertical-align: -1px;
+    border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+  .sk {
+    border-radius: 4px; background: linear-gradient(90deg, var(--paper-2) 25%, var(--paper) 50%, var(--paper-2) 75%);
+    background-size: 800px 100%; animation: shimmer 1.6s ease-in-out infinite;
+  }
+  .sk-line { height: 12px; }
+  .sk-title { height: 20px; width: 220px; margin: 22px 0 10px; }
+  .sk-meta { width: 60%; margin-bottom: 18px; }
+  .sk-tile { height: 98px; border-radius: var(--r-lg); }
+  .sk-pill { display: inline-block; width: 110px; height: 24px; border-radius: var(--r-pill); }
+  .sk-card { border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin-top: 22px; }
+  .sk-card .sk-line + .sk-line { margin-top: 12px; }
+  @media (prefers-reduced-motion: reduce) {
+    .eq i { animation: none; transform: scaleY(.6); }
+    .btn-spinner { animation-duration: 1.6s; }
+    .sk { animation: none; }
+  }
+
   /* Empty state before the first run (dashboard .empty-state). */
   .empty-state { text-align: center; padding: 44px 24px 20px; color: var(--muted); }
   .empty-state-icon {
@@ -261,12 +297,49 @@
   }
   function say(text, kind) {
     var s = $('status');
-    s.textContent = text || '';
+    s.textContent = '';
     s.hidden = !text;
     s.className = 'status' + (kind ? ' status-' + kind : '');
+    if (!text) return;
+    if (kind === 'loading') {
+      var eq = el('span', 'eq');
+      eq.setAttribute('aria-hidden', 'true');
+      for (var i = 0; i < 4; i++) eq.appendChild(el('i'));
+      s.appendChild(eq);
+    }
+    s.appendChild(el('span', null, text));
   }
   function fail(e) { busy(false); say(e && e.message ? e.message : String(e), 'error'); }
-  function busy(on) { $('run').disabled = on || !$('dept').value; $('date').disabled = on; $('dept').disabled = on; }
+  // While a call is in flight every control is disabled, and a run shows a
+  // spinner on its own button.
+  function busy(on, running) {
+    var run = $('run');
+    run.disabled = on || !$('dept').value;
+    run.textContent = '';
+    if (on && running) run.appendChild(el('span', 'btn-spinner'));
+    run.appendChild(document.createTextNode(on && running ? 'Running…' : 'Run'));
+    $('date').disabled = on;
+    $('dept').disabled = on;
+    Array.prototype.forEach.call($('queueList').querySelectorAll('input'), function (cb) { cb.disabled = on; });
+  }
+
+  // Placeholder shapes where the result will land: the results header, the
+  // four tiles and a section card (the dashboard's skeleton loaders).
+  function resultSkeleton() {
+    var wrap = el('div');
+    wrap.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(el('div', 'sk sk-title'));
+    wrap.appendChild(el('div', 'sk sk-line sk-meta'));
+    var grid = el('div', 'kpi-grid');
+    for (var i = 0; i < 4; i++) grid.appendChild(el('div', 'sk sk-tile'));
+    wrap.appendChild(grid);
+    var card = el('div', 'sk-card');
+    [100, 92, 96, 88, 94].forEach(function (w) {
+      var l = el('div', 'sk sk-line'); l.style.width = w + '%'; card.appendChild(l);
+    });
+    wrap.appendChild(card);
+    return wrap;
+  }
   function linkLabel(k) { return (LINK.filter(function (L) { return L.k === k; })[0] || {}).label || k; }
 
   function fillSelect(sel, values, current, placeholder) {
@@ -275,18 +348,27 @@
     values.forEach(function (v) { var o = el('option', null, v); o.value = v; if (v === current) o.selected = true; sel.appendChild(o); });
   }
 
+  var queueSeq = 0;
   function loadQueues() {
     var dept = $('dept').value, date = $('date').value;
-    $('run').disabled = !dept;
-    if (!dept) { $('queueBox').hidden = true; return; }
+    var seq = ++queueSeq;
+    $('run').disabled = true;
+    if (!dept) { $('queueBox').hidden = true; say(''); return; }
+    var box = $('queueList');
+    box.textContent = '';
+    box.setAttribute('aria-busy', 'true');
+    for (var i = 0; i < 3; i++) box.appendChild(el('span', 'sk sk-pill'));
+    $('queueBox').hidden = false;
     say('Reading the queues on ' + date + '…', 'loading');
     google.script.run.withSuccessHandler(function (q) {
+      if (seq !== queueSeq) return;   // a newer tab/department choice superseded this read
+      box.removeAttribute('aria-busy');
+      $('run').disabled = false;
       var want = {};
       q.configured.forEach(function (n) { want[n.toLowerCase()] = true; });
       var names = {};
       q.onTab.forEach(function (x) { names[x.name.toLowerCase()] = x; });
       q.configured.forEach(function (n) { if (!names[n.toLowerCase()]) names[n.toLowerCase()] = { name: n, legs: 0 }; });
-      var box = $('queueList');
       box.textContent = '';
       Object.keys(names).sort().forEach(function (k) {
         var x = names[k];
@@ -303,7 +385,12 @@
       $('queueBox').hidden = false;
       if (q.configured.length) say('');
       else say('This department has no Dept Config queues -- tick the ones to count.', 'empty');
-    }).withFailureHandler(fail).tfDialogQueues(date, dept);
+    }).withFailureHandler(function (e) {
+      if (seq !== queueSeq) return;
+      box.removeAttribute('aria-busy');
+      box.textContent = '';
+      fail(e);
+    }).tfDialogQueues(date, dept);
   }
 
   function kpi(value, label, foot, muted) {
@@ -509,13 +596,27 @@
   $('dept').addEventListener('change', loadQueues);
   $('run').addEventListener('click', function () {
     var queues = Array.prototype.slice.call($('queueList').querySelectorAll('input:checked')).map(function (cb) { return cb.dataset.name; });
-    busy(true); say('Classifying ' + $('date').value + ' for ' + $('dept').value + '… (this reads the whole tab)', 'loading');
-    google.script.run.withSuccessHandler(function (p) { busy(false); say(''); render(p); })
-      .withFailureHandler(fail)
-      .tfDialogRun({ date: $('date').value, dept: $('dept').value, queues: queues });
+    var out = $('out');
+    var previous = document.createDocumentFragment();
+    while (out.firstChild) previous.appendChild(out.firstChild);
+    out.appendChild(resultSkeleton());
+    out.setAttribute('aria-busy', 'true');
+    busy(true, true);
+    say('Classifying ' + $('date').value + ' for ' + $('dept').value + '… this reads the whole tab, so a busy day takes a few seconds.', 'loading');
+    google.script.run.withSuccessHandler(function (p) {
+      out.removeAttribute('aria-busy');
+      busy(false); say(''); render(p);
+    }).withFailureHandler(function (e) {
+      out.removeAttribute('aria-busy');
+      out.textContent = '';
+      out.appendChild(previous);
+      fail(e);
+    }).tfDialogRun({ date: $('date').value, dept: $('dept').value, queues: queues });
   });
 
+  say('Loading the Call_Legs tabs and departments…', 'loading');
   google.script.run.withSuccessHandler(function (init) {
+    say('');
     fillSelect($('date'), init.dates, init.defaultDate, init.dates.length ? null : 'No Call_Legs tabs');
     fillSelect($('dept'), init.depts, null, 'Choose a department…');
     busy(false);
