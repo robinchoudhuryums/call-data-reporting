@@ -588,21 +588,40 @@ function tfDialogInit() {
   return { dates: dates, defaultDate: am ? am[1] : (dates[0] || ''), depts: depts };
 }
 
-/** Dialog: the queue checklist for a tab + dept (the dept's Dept Config queues pre-ticked). */
-function tfDialogQueues(dateIso, dept) {
-  var sheet = tfFindCallLegsSheet_(SpreadsheetApp.getActiveSpreadsheet(), tfStr_(dateIso));
-  if (!sheet) throw new Error('No Call_Legs sheet for ' + dateIso + '.');
+// The most tabs one dialog run reads (one server call per tab). The workbook
+// keeps ~14 days of Call_Legs tabs (#43), so this only bounds a runaway.
+var TF_DIALOG_MAX_TABS_ = 31;
+
+/**
+ * Dialog: the queue checklist for one tab or a range of tabs + a dept (the
+ * dept's Dept Config queues pre-ticked). `dates` is one ISO date or an array;
+ * leg counts are summed across the tabs. Reads only the CALLEE NAME column.
+ */
+function tfDialogQueues(dates, dept) {
+  var list = (Array.isArray(dates) ? dates : [dates]).map(tfStr_).filter(String);
+  if (!list.length) throw new Error('Choose a Call_Legs tab.');
+  if (list.length > TF_DIALOG_MAX_TABS_) throw new Error('Choose ' + TF_DIALOG_MAX_TABS_ + ' tabs or fewer.');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
   icResetConfigMemos_();
   icLoadConfiguredQueueNames_();
-  var last = sheet.getLastRow();
-  var names = last >= 2 ? sheet.getRange(2, IC_COL.CALLEE_NAME + 1, last - 1, 1).getDisplayValues() : [];
+  var names = [];
+  list.forEach(function (d) {
+    var sheet = tfFindCallLegsSheet_(ss, d);
+    if (!sheet) throw new Error('No Call_Legs sheet for ' + d + '.');
+    var last = sheet.getLastRow();
+    if (last >= 2) names = names.concat(sheet.getRange(2, IC_COL.CALLEE_NAME + 1, last - 1, 1).getDisplayValues());
+  });
   return {
     configured: tfDeptQueuesFromConfig_(tfStr_(dept), icDeptConfigActiveRows_()),
     onTab: tfTabQueueCounts_(names)
   };
 }
 
-/** Dialog: run the probe. req = {date, dept, queues: [...]}. */
+/**
+ * Dialog: run the probe on ONE tab. req = {date, dept, queues: [...]}. A range
+ * is run by the dialog one tab per call (and combined there), so no call reads
+ * more than one tab and none comes near the execution ceiling (#70).
+ */
 function tfDialogRun(req) {
   req = req || {};
   var queues = Array.isArray(req.queues) ? req.queues.slice(0, 80) : [];

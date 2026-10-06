@@ -188,6 +188,7 @@ tests/
                               report that prints no customer data; plus its
                               one-page dialog -- the structured payload, which
                               lists every call rather than a sample, the
+                              page's own combining of a multi-tab range, the
                               server functions end to end against fake
                               workbooks, and the page's calls / no HTML
                               injection),
