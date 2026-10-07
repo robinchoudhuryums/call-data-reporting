@@ -478,6 +478,20 @@ Caller Lookup communication history (above) and the Outbound report
 
 ### Outbound report
 
+**The My Department outbound view (Batch D) is this report's per-agent half.**
+`getDeptOutboundSummary` reads the SAME per-agent SQL (`outboundAgentsSel_`,
+now shared) and the SAME sheet fallback (`obAgentsFromGrid_` over the
+Outbound Calls tab), shapes through the same `outboundShapeReport_` (roster
+attribution, PC-12 scope) and resolves through the same gate
+(`outboundResolveRequest_`), but skips the callback queries -- so a My
+Department row always equals that agent's row in the report for the same dept
+and dates. Both paths now also return `ob_days` (days with at least one call;
+`obPerDay` = placed per such day). Cached as `deptOutbound:v1:` (freshness tag
++ roster hash; fallback payloads never cached). It does NOT read the CDR
+Historical sheet: its duration is leg duration and its "answered" is >= 20 s,
+so talk time and connects need the per-call table whatever Batch C's probe
+(Operator State #74) says. Pinned in `outbound-fallback.test.js`.
+
 **Outbound report (`OutboundReport.gs`, route `#/report/outbound`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**
 TEMPORARILY admin-only while vetted (the Inbound/Direct resolver model --

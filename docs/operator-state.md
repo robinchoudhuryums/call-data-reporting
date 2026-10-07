@@ -2248,7 +2248,9 @@ When something looks wrong, before assuming a code bug, check:
     4. **Release — both halves in ONE commit.** Flip
        `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false` AND remove
        `data-admin-only` + `style="display:none;"` from `#outbound-report-btn`
-       in `dashboard.html`. The per-dept manager path underneath was kept
+       AND from `#dept-dir-switch` (the My Department Inbound | Outbound | Both
+       switch, Batch D -- it reads the same gate) in `dashboard.html`. The
+       per-dept manager path underneath was kept
        intact the whole time, so nothing else changes. `cross-file-pins.test.js`
        ("6c: the outbound vetting gate and its menu item are released
        TOGETHER") FAILS on either half alone — a visible item over a throwing

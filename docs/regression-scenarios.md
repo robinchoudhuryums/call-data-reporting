@@ -504,3 +504,16 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
     - NEGATIVE, in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getAgentDayStrip({ agentName: '<an agent on a dept you do NOT own>', from: '2026-09-01', to: '2026-09-30' })` -> "Not authorized for this department."
   Expected: as described; the selected day's tiles equal that agent's single-day row in My Department.
   Fails if: a click on a group head / subtotal / total row opens a panel; the strip shows a zero-activity day or more than 31 boxes without the note; an uncaptured day reads "0 outbound"; the panel widens the table or the page; a re-sort leaves two panels or an orphaned one; or the export carries any panel text.
+
+S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN (admin-only until the Outbound report is released), open My Department for a parent dept (e.g. CSR) over a month. Next to the table title, the Inbound | Outbound | Both switch shows; Inbound is selected and the table is the usual one.
+    - Click Outbound: the table becomes Connected / Not connected (violet tallies, placed total in brackets, "N / day"), Connect %, Talk time, Avg talk, Attempts, grouped per dept with subtotals and a Total row. The side column shows Team Outbound Data instead of Team Rings.
+    - Reconcile: open Reports -> Outbound for the same dept and dates. Every agent's placed / connected / talk equals the My Department row; the Total equals the report's tiles.
+    - Click Both: one row per agent with the inbound bar + Answer % and the outbound bar + Connect % + Out talk; Team Rings and Team Outbound stack without overlapping.
+    - Click any row in Outbound or Both: the inline agent panel opens under it (S56).
+    - Export / Copy while in Outbound: the file is the INBOUND table (the note above the table says so).
+    - View as a manager: the switch disappears and the page shows the Inbound table. As a real MANAGER: no switch, Inbound only, even with "Outbound" chosen earlier on that browser.
+    - NEGATIVE, as a manager in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getDeptOutboundSummary({ department: '<your dept>', from: '2026-09-01', to: '2026-09-30' })` -> "The Outbound report is admin-only while it is being vetted."
+  Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
+  Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table or Team Rings shows in the Outbound view; the panels overlap; a manager sees the switch or the outbound view; or Both adds inbound and outbound together anywhere.

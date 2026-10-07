@@ -2102,6 +2102,26 @@ stay pinned by INV-39, INV-53 and INV-06.
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
   stripped by `personalizeOverview_` (`companyOverview:v26`).
+- **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
+  `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
+  6c pin in `cross-file-pins.test.js` moves it with `#outbound-report-btn`).
+  The client's permission IS the switch's visibility (`obAllowed_`), so
+  view-as-manager falls back to Inbound with no role check. Outbound and Both
+  render a SEPARATE table, `#agents-ob-table` (`obViewRender_`, script-5), so
+  the inbound `COLUMNS` model, its sort and its exports are untouched -- and
+  Export / Copy still produce the inbound table (the view's note says so).
+  `body[data-dir]` (set by `obViewSync_` at the end of every `render()`) picks
+  the table and the side panel in CSS, so a late Team Rings repaint cannot
+  reappear over the Outbound view. Outbound: a connected / not-connected tally
+  in `--dir-out` violet with the placed total and "N / day" (days with a call),
+  Connect %, talk, average talk per connected call, attempts; per-dept groups
+  and subtotals on a parent dept. Both: the inbound bar + Answer % and the
+  outbound bar + Connect % + talk on ONE row per agent, never added together.
+  Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
+  Outbound view and stacks under it in Both (natural height there; the aside
+  scrolls rather than the two overlapping). Rows open the inline agent panel
+  (`apTbody_` follows the visible table). The choice persists in
+  `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's

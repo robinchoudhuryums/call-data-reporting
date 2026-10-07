@@ -364,6 +364,36 @@ function outboundBucketDelays_(delays) {
   return out;
 }
 
+/**
+ * The per-agent outbound sub-select over [f, t] (validated ISO dates, safe to
+ * inline). SHARED by the Outbound report and the My Department outbound view
+ * (getDeptOutboundSummary, Batch D) so the two can never disagree on what an
+ * agent placed, connected or talked: one SQL text, one definition.
+ *
+ * Groups by agent_name ONLY and never touches outbound_calls.department (the
+ * raw CDR org label) -- roster attribution happens dashboard-side.
+ * `ob_days` (Batch D) counts the days the agent placed at least one call, the
+ * denominator of the "/ day" figure.
+ */
+function outboundAgentsSel_(f, t) {
+  return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
+    + 'SELECT agent_name AS agent, count(*) AS ob_total, '
+    +   'count(*) FILTER (WHERE connected) AS ob_connected, '
+    // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
+    // not brief -- it falls into neither bucket, and the shaper derives
+    // "real" by subtraction so the unknowns stay visible as the remainder
+    // rather than being quietly filed as effort.
+    +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
+    +     'AND ring_seconds < ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_brief, '
+    +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
+    +     'AND ring_seconds >= ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_real, '
+    +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
+    +   'COALESCE(sum(attempts),0) AS attempts, '
+    +   'count(DISTINCT call_date) AS ob_days '
+    + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
+    + 'GROUP BY agent_name) t)';
+}
+
 function computeOutboundReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyOutboundReport_(scope);
@@ -416,23 +446,7 @@ function computeOutboundReport_(scope) {
     // happens below, dashboard-side. The callback match is likewise
     // deliberately NOT limited to the report window's `to` (a last-day
     // abandon's callback may land after it) nor to the scoped dept's agents.
-    const agentsSel = function (f, t) {
-      return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
-        + 'SELECT agent_name AS agent, count(*) AS ob_total, '
-        +   'count(*) FILTER (WHERE connected) AS ob_connected, '
-        // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
-        // not brief -- it falls into neither bucket, and the shaper derives
-        // "real" by subtraction so the unknowns stay visible as the remainder
-        // rather than being quietly filed as effort.
-        +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
-        +     'AND ring_seconds < ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_brief, '
-        +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
-        +     'AND ring_seconds >= ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_real, '
-        +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
-        +   'COALESCE(sum(attempts),0) AS attempts '
-        + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
-        + 'GROUP BY agent_name) t)';
-    };
+    const agentsSel = outboundAgentsSel_;   // shared with getDeptOutboundSummary (Batch D)
     const callbackSel = function (where, withDetail) {
       return "(SELECT json_build_object("
         + "'abandonedTotal', count(*), "
@@ -562,6 +576,9 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept) {
         obTalkSec: obTalkSec,
         obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
         attempts: Number(r.attempts) || 0,
+        // Batch D: days with at least one call, and calls per such day.
+        obDays: Number(r.ob_days) || 0,
+        obPerDay: (Number(r.ob_days) || 0) ? Math.round(obTotal / Number(r.ob_days) * 10) / 10 : null,
         obUnconnectedBrief: obBrief,
         obUnconnectedReal: obReal,
         obUnconnectedUnknown: Math.max(0, obTotal - obConnected - obBrief - obReal),
@@ -4010,37 +4027,46 @@ function obDaysAfterIso_(iso, n) {
  *               talkSec, ringSec, attempts, callStart, journey]
  * ibGrid rows: the Inbound Calls tab's cols 1..17 (ihRowInDept_'s shape).
  */
-function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
-  var agentsFor = function (fromIso, toIso) {
-    var byAgent = {};
-    for (var i = 0; i < obGrid.length; i++) {
-      var row = obGrid[i];
-      var iso = ncCellDateIso_(row[0]);
-      if (!iso || iso < fromIso || iso > toIso) continue;
-      var agent = String(row[3] == null ? '' : row[3]).trim();
-      var a = byAgent[agent] || (byAgent[agent] = {
-        agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
-        ob_unconn_brief: 0, ob_unconn_real: 0,
-      });
-      a.ob_total++;
-      var connected = String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE';
-      if (connected) a.ob_connected++;
-      else {
-        // (4) SQL parity via the shared classifier -- see its docstring for
-        // why the boundary is strict.
-        var cls = outboundClassifyRing_(row[8]);
-        if (cls === 'brief') a.ob_unconn_brief++;
-        else if (cls === 'real') a.ob_unconn_real++;
-      }
-      a.ob_talk_sec += Number(row[7]) || 0;
-      a.attempts += Number(row[9]) || 0;
+/**
+ * The sheet twin of outboundAgentsSel_: the same per-agent rows from the
+ * Outbound Calls tab grid. Shared by the report's fallback and
+ * getDeptOutboundSummary's (Batch D), pinned to the SQL by
+ * outbound-fallback.test.js.
+ */
+function obAgentsFromGrid_(obGrid, fromIso, toIso) {
+  var byAgent = {};
+  for (var i = 0; i < obGrid.length; i++) {
+    var row = obGrid[i];
+    var iso = ncCellDateIso_(row[0]);
+    if (!iso || iso < fromIso || iso > toIso) continue;
+    var agent = String(row[3] == null ? '' : row[3]).trim();
+    var a = byAgent[agent] || (byAgent[agent] = {
+      agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
+      ob_unconn_brief: 0, ob_unconn_real: 0, ob_days: 0, _days: {},
+    });
+    a.ob_total++;
+    if (!a._days[iso]) { a._days[iso] = true; a.ob_days++; }
+    var connected = String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE';
+    if (connected) a.ob_connected++;
+    else {
+      // (4) SQL parity via the shared classifier -- see its docstring for
+      // why the boundary is strict.
+      var cls = outboundClassifyRing_(row[8]);
+      if (cls === 'brief') a.ob_unconn_brief++;
+      else if (cls === 'real') a.ob_unconn_real++;
     }
-    // Same ORDER BY as agentsSel: ob_total DESC, then agent.
-    return Object.keys(byAgent).map(function (k) { return byAgent[k]; })
-      .sort(function (x, y) {
-        return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
-      });
-  };
+    a.ob_talk_sec += Number(row[7]) || 0;
+    a.attempts += Number(row[9]) || 0;
+  }
+  // Same ORDER BY as outboundAgentsSel_: ob_total DESC, then agent.
+  return Object.keys(byAgent).map(function (k) { var a = byAgent[k]; delete a._days; return a; })
+    .sort(function (x, y) {
+      return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
+    });
+}
+
+function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
+  var agentsFor = function (fromIso, toIso) { return obAgentsFromGrid_(obGrid, fromIso, toIso); };
 
   // Callback index: hash -> ordinal-sorted outbound calls (the cbLateral
   // "earliest qualifying outbound" rule, evaluated in JS).
@@ -4624,4 +4650,158 @@ function probeOutboundSourceAgreement() {
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
   }
+}
+
+// ── My Department outbound view (Batch D, owner plan 2026-10) ───────────────
+//
+// getDeptOutboundSummary({ department, from, to }) feeds the Inbound |
+// Outbound | Both switch on the My Department agent table and its Team
+// Outbound side panel. It is the Outbound report's per-agent half, WITHOUT
+// the callback queries:
+//   - the SAME SQL (outboundAgentsSel_) and the SAME sheet fallback
+//     (obAgentsFromGrid_ over the Outbound Calls tab), so the table always
+//     reconciles with the Outbound report for the same dept and dates;
+//   - the SAME roster attribution and PC-12 scope (outboundShapeReport_ --
+//     the dept plus its one-level sub-queues, each agent under one dept);
+//   - the SAME gate (outboundResolveRequest_ -> OUTBOUND_VETTING_GATE_), so
+//     it releases to managers in the 6c commit and not before.
+// Why not the CDR Historical sheet (Batch C): its duration column is LEG
+// duration and its "answered" is >= 20 s, so talk time and connects need the
+// per-call table whatever the probe says; a CLEAN verdict would only let
+// PLACED move, which is not worth a second definition beside the report's.
+//
+// Cached on the 6 h tier under `deptOutbound:v1:` with the freshness tag and a
+// roster hash (DL-5: attribution changes when a roster does). A sheet-served
+// or unavailable payload is never cached. No prior-window chips yet.
+
+const DEPT_OUTBOUND_CACHE_KEY_PREFIX = 'deptOutbound:v1:';
+
+/**
+ * PURE. Totals for a list of shaped agent rows, plus the team "per day"
+ * pair the inbound ans/day uses (Batch A): placed per AGENT per day, over
+ * agents NOT on their dept's team-average exclusion list. `excl` maps
+ * dept -> { name: true }.
+ */
+function deptObTotals_(agents, excl) {
+  var t = { agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null, obTalkSec: 0,
+            obAttSec: 0, attempts: 0, obUnconnectedBrief: 0, obUnconnectedReal: 0,
+            obUnconnectedUnknown: 0, obPerDay: null, obPerDayPlaced: 0, obPerDayAgentDays: 0 };
+  (agents || []).forEach(function (a) {
+    t.agents++;
+    t.obTotal += a.obTotal || 0; t.obConnected += a.obConnected || 0;
+    t.obTalkSec += a.obTalkSec || 0; t.attempts += a.attempts || 0;
+    t.obUnconnectedBrief += a.obUnconnectedBrief || 0;
+    t.obUnconnectedReal += a.obUnconnectedReal || 0;
+    t.obUnconnectedUnknown += a.obUnconnectedUnknown || 0;
+    var ex = (excl && excl[a.scopeDept]) || {};
+    if (!ex[a.agent]) { t.obPerDayPlaced += a.obTotal || 0; t.obPerDayAgentDays += a.obDays || 0; }
+  });
+  t.obConnectRate = t.obTotal ? Math.round(t.obConnected / t.obTotal * 1000) / 10 : null;
+  t.obAttSec = t.obConnected ? Math.round(t.obTalkSec / t.obConnected) : 0;
+  t.obPerDay = t.obPerDayAgentDays ? Math.round(t.obPerDayPlaced / t.obPerDayAgentDays * 10) / 10 : null;
+  return t;
+}
+
+/** PURE. The client payload from a shaped Outbound report. */
+function deptOutboundProject_(scope, shaped, excl) {
+  var agents = (shaped.agents || []).map(function (a) {
+    var c = {};
+    Object.keys(a).forEach(function (k) { c[k] = a[k]; });
+    c.excludedFromTeamAvg = !!((excl && excl[a.scopeDept]) || {})[a.agent];
+    return c;
+  });
+  var depts = (scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept];
+  var groups = depts.map(function (d) {
+    return { dept: d, totals: deptObTotals_(agents.filter(function (a) { return a.scopeDept === d; }), excl) };
+  });
+  return {
+    meta: {
+      department: scope.dept, from: scope.from, to: scope.to, scopeDepts: depts.slice(),
+      available: shaped.meta.available !== false,
+      fallbackSource: shaped.meta.fallbackSource || null,
+      fallbackThrough: shaped.meta.fallbackThrough || null,
+      coverageStart: shaped.meta.coverageStart || null,
+      offRosterAgents: shaped.meta.offRosterAgents || 0,
+      briefRingSec: OUTBOUND_BRIEF_RING_SEC_,
+      cacheHit: false, computeMs: 0,
+    },
+    agents: agents,
+    totals: deptObTotals_(agents, excl),
+    deptGroups: depts.length > 1 ? groups : null,
+  };
+}
+
+/** Neon first (the report's own SQL), the Outbound Calls tab when Neon is down. */
+function computeDeptOutbound_(scope) {
+  var deptsByAgent = buildDeptsByAgent_();
+  var conn = null, shaped = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (conn) {
+      var sql = "SELECT json_build_object('agents', " + outboundAgentsSel_(scope.from, scope.to)
+        + ", 'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls))::text AS j";
+      var stmt = conn.createStatement();
+      var rs = stmt.executeQuery(sql);
+      var json = rs.next() ? rs.getString('j') : null;
+      rs.close(); stmt.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'deptOutbound');
+      if (json) shaped = outboundShapeReport_(scope, JSON.parse(json), deptsByAgent, null);
+    }
+  } catch (e) {
+    Logger.log('computeDeptOutbound_ Neon read failed (falling back to the sheet): '
+      + (e && e.message ? e.message : e));
+    shaped = null;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
+  }
+  if (!shaped) {
+    var empty = emptyOutboundReport_(scope);
+    try {
+      var ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, scope.from);
+      if (!ob) { empty.meta.available = false; shaped = empty; }
+      else {
+        shaped = outboundShapeReport_(scope, { agents: obAgentsFromGrid_(ob.grid, scope.from, scope.to) },
+          deptsByAgent, null);
+        shaped.meta.fallbackSource = 'sheet';
+        shaped.meta.fallbackThrough = ob.through || null;
+      }
+    } catch (e2) {
+      Logger.log('computeDeptOutbound_ sheet fallback failed: ' + (e2 && e2.message ? e2.message : e2));
+      empty.meta.available = false;
+      shaped = empty;
+    }
+  }
+  var excl = {};
+  ((scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept]).forEach(function (d) {
+    excl[d] = (typeof teamAvgExcludeSet_ === 'function') ? teamAvgExcludeSet_(d) : {};
+  });
+  return deptOutboundProject_(scope, shaped, excl);
+}
+
+function getDeptOutboundSummary(req) {
+  var scope = outboundResolveRequest_(req);           // the 6c gate + validation
+  if (scope.companyView) throw new Error('department is required.');
+  assertReportRangeCap_(scope.from, scope.to);        // SEC-1
+  var cache = CacheService.getScriptCache();
+  var rosterTag = (typeof rosterSetHash_ === 'function') ? rosterSetHash_(scope.scopeDepts) : 'na';
+  var key = DEPT_OUTBOUND_CACHE_KEY_PREFIX + scope.dept + ':' + scope.from + ':' + scope.to
+    + ':' + reportFreshnessTag_() + ':' + rosterTag;
+  var hit = cache.get(key);
+  if (hit) {
+    try {
+      var p = JSON.parse(hit);
+      p.meta.cacheHit = true;
+      logReportUsage_('deptOutbound', scope.dept, scope.user, true);
+      return p;
+    } catch (e) { /* recompute */ }
+  }
+  var t0 = Date.now();
+  var out = computeDeptOutbound_(scope);
+  out.meta.computeMs = Date.now() - t0;
+  if (out.meta.available && !out.meta.fallbackSource) {
+    try { cache.put(key, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('deptOutbound cache put failed: %s', e); }
+  }
+  logReportUsage_('deptOutbound', scope.dept, scope.user, false);
+  return out;
 }

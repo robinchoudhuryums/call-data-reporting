@@ -284,7 +284,8 @@ test('UD-4 / UD-5 / UD-6 / UD-9 / UD-10 / C2-13: the markup-level fixes', functi
   const summaryEnd = card.indexOf("'</summary>'");
   assert.ok(summaryEnd > 0 && card.indexOf('agent-scope-btn') > summaryEnd, 'UD-5: the scope button renders AFTER </summary>, not inside it');
   const dash = src('dashboard.html');
-  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 2, 'UD-6: both side hints are notes on the styled tooltip layer');
+  // Batch D added the Team Outbound panel's hint: three side panels now.
+  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 3, 'UD-6: every side-panel hint is a note on the styled tooltip layer');
   assert.ok(/<h1 id="page-title" tabindex="-1">/.test(dash), 'UD-9: the page h1 can take focus');
   const s6 = src('script-6-ir.html');
   assert.ok(/const h1 = \$\('page-title'\);\s*\n\s*if \(h1\) \{ try \{ h1\.focus\(\); \}/.test(s6), 'UD-9: the from-Insights close focuses the h1');

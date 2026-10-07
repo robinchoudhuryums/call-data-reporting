@@ -1474,6 +1474,22 @@
     .dept-side > #dept-team-rings .trp-table-wrap {
       flex: 1 1 auto; min-height: 108px; max-height: none;
     }
+    /* Batch D: Team Outbound Data takes Team Rings' place in the Outbound
+       view (same flex treatment). In the Both view the two panels would each
+       shrink to their floors and paint over each other, so there they keep
+       their natural height with a capped, scrolling table, and the aside's
+       own scrollbar is the last resort -- the R18b rule above. */
+    .dept-side > #dept-team-outbound {
+      flex: 1 1 auto; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .dept-side > #dept-team-outbound .trp-table-wrap {
+      flex: 1 1 auto; min-height: 108px; max-height: none;
+    }
+    body[data-dir="both"] .dept-side > #dept-team-rings,
+    body[data-dir="both"] .dept-side > #dept-team-outbound { flex: 0 0 auto; }
+    body[data-dir="both"] .dept-side > #dept-team-rings .trp-table-wrap,
+    body[data-dir="both"] .dept-side > #dept-team-outbound .trp-table-wrap { flex: 0 0 auto; max-height: 200px; }
   }
   /* In the narrow side column the per-queue tiles stack rather than squeeze.
      R17c (owner): two tiles per row + a two-line Total-Calls split + a
@@ -3631,6 +3647,27 @@
   .agents .ap-calls td.m { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .agents .ap-calls tr:hover { background: var(--paper-2); }
   .agents .ap-path { color: var(--accent); font-size: 11.5px; }
+
+  /* Batch D: Inbound | Outbound | Both on the agent table. The body's
+     data-dir (set by obViewSync_) decides which table and which side panel
+     show -- CSS, so a late Team Rings repaint cannot bring the inbound panel
+     back over the outbound view. Direction hues follow the Agent Day tiles:
+     inbound = --accent, outbound = --dir-out. */
+  .dept-dir-switch { margin-left: 8px; }
+  body[data-dir="out"] #agents-in-wrap,
+  body[data-dir="both"] #agents-in-wrap { display: none; }
+  body[data-dir="out"] #dept-team-rings { display: none !important; }
+  .tly.oc { background: var(--dir-out); }
+  .tly.ou { background: var(--line); }
+  .ob-c { color: var(--dir-out); font-weight: 600; }
+  .ob-u { color: var(--muted); }
+  .ans-seg.ob-conn { background: var(--dir-out); }
+  .ans-seg.ob-unconn { background: var(--line); }
+  .agents-ob thead th.ob-dir-in { box-shadow: inset 0 -2px 0 var(--accent); }
+  .agents-ob thead th.ob-dir-out { box-shadow: inset 0 -2px 0 var(--dir-out); }
+  .agents-ob td.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
+  .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
+  #agents-ob-note { margin: 0 0 8px; }
   @media (max-width: 700px) {
     .agents .ap { padding: 12px 10px 14px; }
     .agents .ap-act { margin-left: 0; }

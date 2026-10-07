@@ -212,7 +212,8 @@ const SHEETS = {
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
-          'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs'],
+          'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs',
+          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs'],
 });
 
 function install(email) {
@@ -258,6 +259,38 @@ dump('summary-mtd', h.call('getDepartmentSummary',
   { department: 'CSR', from: LATEST.slice(0, 8) + '01', to: LATEST }));
 const s30 = span(30);
 dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s30.from, to: s30.to }));
+// Batch D: the My Department Outbound / Both view, served by the REAL
+// getDeptOutboundSummary (roster attribution, PC-12 grouping, team per-day)
+// over a deterministic outbound_calls blob built from the same agents, plus
+// one dialler on no roster (left out, and counted in the disclosure note).
+{
+  const sum = JSON.parse(fs.readFileSync(path.join(OUT, 'summary-30d.json'), 'utf8'));
+  const agents = (sum.rows || []).map(function (r, i) {
+    const total = 4 + ((i * 7) % 23);
+    const conn = Math.max(1, Math.round(total * (0.45 + (i % 4) * 0.1)));
+    return { agent: r.agent, ob_total: total, ob_connected: Math.min(conn, total),
+      ob_unconn_brief: Math.floor((total - Math.min(conn, total)) / 2),
+      ob_unconn_real: Math.ceil((total - Math.min(conn, total)) / 2),
+      ob_talk_sec: Math.min(conn, total) * (90 + i * 13), attempts: total + (i % 3), ob_days: 3 + (i % 9) };
+  });
+  agents.push({ agent: 'Off Roster Dialler', ob_total: 9, ob_connected: 4, ob_unconn_brief: 2,
+    ob_unconn_real: 3, ob_talk_sec: 600, attempts: 10, ob_days: 2 });
+  const blob = JSON.stringify({ agents: agents, coverageStart: '2026-07-10' });
+  const realConn = h.ctx.getDashboardNeonConn_;
+  h.ctx.getDashboardNeonConn_ = function () {
+    return {
+      createStatement: function () {
+        return { executeQuery: function () {
+          let n = 0;
+          return { next: function () { return n++ === 0; }, getString: function () { return blob; }, close: function () {} };
+        }, close: function () {} };
+      },
+      close: function () {},
+    };
+  };
+  dump('dept-outbound-30d', h.call('getDeptOutboundSummary', { department: 'CSR', from: s30.from, to: s30.to }));
+  h.ctx.getDashboardNeonConn_ = realConn;
+}
 const yStart = iso(new Date(today.getFullYear(), 0, 1));
 dump('summary-ytd', h.call('getDepartmentSummary', { department: 'CSR', from: yStart, to: LATEST }));
 // Sub-queue scopes. The fixture roster already nests Spanish under CSR (the

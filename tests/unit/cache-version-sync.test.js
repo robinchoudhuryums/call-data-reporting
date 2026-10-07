@@ -70,6 +70,7 @@ const SPECS = [
   ['neonAgentExts',     'NeonRead.gs',            /'neonAgentExts:v(\d+):'/],
   // Batch G: the Outbound report (callback linkage + per-agent activity).
   ['outboundReport',    'OutboundReport.gs',      /'outboundReport:v(\d+)'/],
+  ['deptOutbound',      'OutboundReport.gs',      /'deptOutbound:v(\d+):'/],
   // S2 (broad-scan 2026-08-27): the four prefixes the completeness sweep
   // below found untracked -- documented in current-truth docs, invisible to
   // this suite (the third recurrence of the B5/F3b class).
@@ -211,6 +212,7 @@ const ANCHOR_SPECS = {
   agentHist:           'exception: embeds the latest DQE date directly in the key',
   neonAgentExts:       'tag',
   outboundReport:      'tag',
+  deptOutbound:        'tag',
   overviewChartYtd:    'exception: embeds latestDate in the key (equivalent anchor)',
   presence:            'exception: CacheService presence map, ~15-min prune -- not a report cache',
   mailThrottle:        'exception: SEC-2 per-user report-email counter (rolling 6 h window) -- not a report cache',

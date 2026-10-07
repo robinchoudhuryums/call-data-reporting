@@ -451,7 +451,20 @@
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
-        <span class="dept-qcd-hint">Click a row to open that agent’s Individual Report for the selected range.</span>
+        <span class="dept-qcd-hint">Click a row to see that agent’s days; the Individual Report is one click inside.</span>
+        <!-- Batch D (owner plan 2026-10): Inbound | Outbound | Both. ADMIN-ONLY
+             while the Outbound report is vetted -- this switch is released in
+             the SAME commit as #outbound-report-btn and
+             OutboundReport.gs::OUTBOUND_VETTING_GATE_ (Operator State #63);
+             cross-file-pins fails if the three disagree. The client reads the
+             switch's own visibility as the permission, so view-as-manager
+             (which hides [data-admin-only]) drops back to Inbound too. -->
+        <div id="dept-dir-switch" class="dept-qcd-period dept-dir-switch" role="group" aria-label="Call direction"
+             data-admin-only style="display:none;">
+          <button type="button" class="dept-qcd-period-btn active" data-dir="in" aria-pressed="true">Inbound</button>
+          <button type="button" class="dept-qcd-period-btn" data-dir="out" aria-pressed="false">Outbound</button>
+          <button type="button" class="dept-qcd-period-btn" data-dir="both" aria-pressed="false">Both</button>
+        </div>
         <button class="link-btn dept-cols-toggle" id="dept-cols-toggle" type="button"
                 aria-expanded="false"
                 title="Show or hide the Unique / TTT / Avg Abd Wait detail columns">Show all columns</button>
@@ -463,7 +476,7 @@
            page body (the .pr-agent-table-wrap / .ds-heatmap-wrap pattern). The
            table keeps its id/structure, so the render + sort JS is unchanged. -->
       <div id="dept-subq-bar" class="subq-bar" style="display:none;"></div>
-      <div class="agents-table-wrap">
+      <div class="agents-table-wrap" id="agents-in-wrap">
       <table id="agents-table" class="agents">
         <thead>
           <tr>
@@ -481,6 +494,17 @@
         <tbody id="agents-tfoot" class="agents-totals"></tbody>
         <tbody id="agents-tbody"></tbody>
       </table>
+      </div>
+      <!-- Batch D: the Outbound and Both views of the agent table. A separate
+           table (rendered by obViewRender_, script-5) so the inbound table, its
+           COLUMNS model and its exports stay exactly as they are. -->
+      <div id="agents-ob-wrap" class="agents-table-wrap" style="display:none;">
+        <div id="agents-ob-note" class="ds-note" style="display:none;"></div>
+        <table id="agents-ob-table" class="agents agents-ob">
+          <thead id="agents-ob-thead"></thead>
+          <tbody id="agents-ob-tfoot" class="agents-totals"></tbody>
+          <tbody id="agents-ob-tbody"></tbody>
+        </table>
       </div>
 
       <div id="info-line" class="info-line" style="display:none;"></div>
@@ -1331,6 +1355,26 @@
             <span id="trp-row-action-desc" class="sr-only">Activate to jump to this agent’s full row in the agent table.</span>
           </div>
           <div id="trp-legend" class="ans-tally-legend" style="display:none;"></div>
+        </div>
+        <!-- Batch D3: the outbound counterpart of Team Rings Data, shown only in
+             the Outbound and Both views (so only to whoever can see the
+             direction switch). The page's own dates; no period toggle yet. -->
+        <div id="dept-team-outbound" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong>Team Outbound Data</strong>
+            <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Outbound calls the team placed in the page's dates, from the same data as the Outbound report. Connected = the far end answered (a person, voicemail or a phone menu).">&#9432;</span>
+            <span class="dept-qcd-date" id="tob-date"></span>
+          </div>
+          <div class="trp-tiles" id="tob-tiles"></div>
+          <div class="trp-table-wrap">
+            <table class="trp-table">
+              <thead><tr>
+                <th>Agent</th><th class="trp-num">Placed</th><th class="trp-num">Conn / Not</th><th class="trp-num">%</th>
+              </tr></thead>
+              <tbody id="tob-tbody"></tbody>
+            </table>
+            <span id="tob-row-action-desc" class="sr-only">Activate to jump to this agent’s full row in the agent table.</span>
+          </div>
         </div>
       </aside>
       </div><!-- /.dept-layout -->

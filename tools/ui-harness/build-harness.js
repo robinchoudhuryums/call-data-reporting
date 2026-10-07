@@ -127,6 +127,19 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       if (d <= 45) return P['summary-30d'];
       return P['summary-ytd'];
     },
+    // Batch D: the Outbound / Both view. The 30-day CSR window is served the
+    // payload the REAL getDeptOutboundSummary produced in gen-payloads; any
+    // other dept or window gets an empty-but-valid payload, so the view's
+    // "no outbound calls" state renders instead of an unmocked call.
+    getDeptOutboundSummary: function (req) {
+      var p = P['dept-outbound-30d'];
+      if (p && req && req.department === 'CSR' && req.from === p.meta.from && req.to === p.meta.to) return p;
+      return { meta: { department: (req && req.department) || '', from: (req && req.from) || '', to: (req && req.to) || '',
+          scopeDepts: [(req && req.department) || ''], available: true, fallbackSource: null, fallbackThrough: null,
+          coverageStart: '2026-07-10', offRosterAgents: 0, briefRingSec: 8, cacheHit: false, computeMs: 3 },
+        agents: [], totals: { agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null, obTalkSec: 0, obAttSec: 0,
+          attempts: 0, obPerDay: null, obPerDayPlaced: 0, obPerDayAgentDays: 0 }, deptGroups: null };
+    },
     getMissedCallsReport: function (req) {
       return spanDays(req) <= 2 ? P['missed-day'] : P['missed-30d'];
     },

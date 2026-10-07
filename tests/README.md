@@ -452,6 +452,12 @@ tests/
                               run scored ONLY by the rule, never the refit;
                               plus SOURCE
                               pins on SQL the mocked connection never runs),
+                              outbound-fallback also pins Batch D's
+                              getDeptOutboundSummary: the same rows as the
+                              Outbound report on both the Neon and sheet
+                              paths, ob_days parity, the 6c gate, no cache
+                              on a fallback, team per-day excludes,
+                              per-dept groups,
                               outbound-source-probe (Batch C:
                               probeOutboundSourceAgreement -- the verdict
                               PRE-REGISTERED on placed counts only, duration

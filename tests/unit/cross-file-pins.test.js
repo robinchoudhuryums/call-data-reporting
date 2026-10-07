@@ -984,6 +984,20 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
       + '#outbound-report-btn is still hidden — the release reaches nobody. '
       + 'Drop data-admin-only + style="display:none;" from the button.');
   }
+
+  // Batch D: the My Department Inbound | Outbound | Both switch reads the
+  // same server gate (getDeptOutboundSummary -> outboundResolveRequest_) and
+  // its own visibility IS the client permission, so it moves with the button.
+  const sw = html.match(/<div[^>]*id="dept-dir-switch"[\s\S]*?>/);
+  assert.ok(sw, '#dept-dir-switch is missing from dashboard.html');
+  const swHidden = /data-admin-only/.test(sw[0]) && /style="display:none;"/.test(sw[0]);
+  const swShown = !/data-admin-only/.test(sw[0]) && !/style="display:none;"/.test(sw[0]);
+  assert.ok(gated ? swHidden : swShown,
+    'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #dept-dir-switch is '
+    + (swHidden ? 'hidden' : 'visible') + ' -- release (or hold) the direction switch '
+    + 'in the same commit as the Outbound report (Operator State #63).');
+  assert.match(gs, /function getDeptOutboundSummary\(req\) \{\n  var scope = outboundResolveRequest_\(req\);/,
+    'the dept outbound view must resolve through the SAME gate as the report');
 });
 
 // R49 (owner ruling 2026-09-16): the CSR queue family's work window floors at
@@ -1206,6 +1220,7 @@ test('SEC-1: every public DQE/QCD report RPC caps its client window', function (
     'QueueReportEmail.gs': ['sendQcdAllDeptEmail'],
     'AgentHome.gs': ['getAgentHome'],
     'AgentDay.gs': ['getAgentDayStrip'],
+    'OutboundReport.gs': ['getDeptOutboundSummary'],
   };
   const missing = [];
   Object.keys(RPCS).forEach(function (f) {

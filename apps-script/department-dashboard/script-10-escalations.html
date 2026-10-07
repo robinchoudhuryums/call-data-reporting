@@ -2553,8 +2553,15 @@
     };
   }
 
+  // Batch D: rows live in whichever agent table is showing -- the inbound one,
+  // or the Outbound / Both one (#agents-ob-tbody).
+  function apTbody_() {
+    const dir = document.body.getAttribute('data-dir');
+    return (dir === 'out' || dir === 'both') ? $('agents-ob-tbody') : $('agents-tbody');
+  }
+
   function apRowsFor_(agent) {
-    const tb = $('agents-tbody');
+    const tb = apTbody_();
     if (!tb) return [];
     return Array.prototype.filter.call(tb.querySelectorAll('tr[data-agent]'), function (tr) {
       return tr.getAttribute('data-agent') === agent;

@@ -86,8 +86,9 @@ function neonBlobFromFixture(dept) {
     const by = {};
     OB_ROWS.filter((r) => r[0] >= f && r[0] <= t).forEach((r) => {
       const a = by[r[3]] || (by[r[3]] = { agent: r[3], ob_total: 0, ob_connected: 0,
-        ob_talk_sec: 0, attempts: 0, ob_unconn_brief: 0, ob_unconn_real: 0 });
+        ob_talk_sec: 0, attempts: 0, ob_unconn_brief: 0, ob_unconn_real: 0, ob_days: 0, _d: {} });
       a.ob_total++;
+      if (!a._d[r[0]]) { a._d[r[0]] = true; a.ob_days++; }   // count(DISTINCT call_date)
       if (r[6] === 'TRUE') a.ob_connected++;
       // (4) the ring split, as the SQL FILTERs would compute it. Only a
       // PRESENT ring classifies; blank stays unknown.
@@ -96,7 +97,7 @@ function neonBlobFromFixture(dept) {
       }
       a.ob_talk_sec += r[7]; a.attempts += r[9];
     });
-    return Object.keys(by).map((k) => by[k])
+    return Object.keys(by).map((k) => { delete by[k]._d; return by[k]; })
       .sort((x, y) => (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : 1));
   };
   const cbFor = (f, t, detail) => {
@@ -356,4 +357,115 @@ test('PC-9: the fallback counts a 06:10 CSR-family abandon, but not a 06:10 one 
     const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
     assert.equal(fb.callback.abandonedTotal, base + 1, 'only the 06:10 A_Q_CSR abandon joins the denominator');
   } finally { IB_ROWS.splice(IB_ROWS.length - extra.length, extra.length); }
+});
+
+// ── Batch D: the My Department outbound view (getDeptOutboundSummary) ──────
+// It is the Outbound report's per-agent half, so the pins are about staying
+// the SAME numbers through every route: the Neon path, the sheet fallback,
+// and the report itself.
+
+function deptBlob() {
+  const b = neonBlobFromFixture('CSR');
+  return { agents: b.agents, coverageStart: b.coverageStart };
+}
+
+test('Batch D: the dept outbound view agrees with the Outbound report agent-for-agent', function () {
+  install({ conn: connReturning(JSON.stringify(neonBlobFromFixture('CSR'))) });
+  h.ctx.teamAvgExcludeSet_ = function () { return {}; };
+  h.ctx.rosterSetHash_ = function () { return 'r'; };
+  const report = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
+  install({ conn: connReturning(JSON.stringify(deptBlob())) });
+  const view = h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  const strip = (list) => JSON.parse(JSON.stringify(list)).map((a) => {
+    delete a.excludedFromTeamAvg; return a;
+  });
+  assert.deepEqual(strip(view.agents), strip(report.agents), 'same rows, same attribution');
+  assert.equal(view.totals.obTotal, report.kpis.obTotal);
+  assert.equal(view.totals.obConnected, report.kpis.obConnected);
+  assert.equal(view.totals.obTalkSec, report.kpis.obTalkSec);
+  const ann = view.agents.find((a) => a.agent === 'Ann');
+  assert.equal(ann.obDays, 1, 'Ann dialled on one day in the window');
+  assert.equal(ann.obPerDay, 2);
+});
+
+test('Batch D: Neon down -> the Outbound Calls tab serves the SAME rows, and is never cached', function () {
+  install({ conn: connReturning(JSON.stringify(deptBlob())) });
+  h.ctx.teamAvgExcludeSet_ = function () { return {}; };
+  h.ctx.rosterSetHash_ = function () { return 'r'; };
+  const live = h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  assert.ok(!live.meta.fallbackSource);
+  install({ conn: null });
+  h.ctx.teamAvgExcludeSet_ = function () { return {}; };
+  h.ctx.rosterSetHash_ = function () { return 'r'; };
+  const fb = h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  assert.equal(fb.meta.fallbackSource, 'sheet');
+  assert.deepEqual(JSON.parse(JSON.stringify(fb.agents)), JSON.parse(JSON.stringify(live.agents)),
+    'obDays included: the sheet counts distinct dates like count(DISTINCT call_date)');
+  // A second call still recomputes -- the degraded payload was not pinned.
+  const again = h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  assert.equal(again.meta.cacheHit, false);
+  assert.ok(install.connCalls >= 2, 'the recovered-Neon check runs every time');
+});
+
+test('Batch D: a healthy payload is cached on the freshness-tagged, roster-hashed key', function () {
+  install({ conn: connReturning(JSON.stringify(deptBlob())) });
+  h.ctx.teamAvgExcludeSet_ = function () { return {}; };
+  h.ctx.rosterSetHash_ = function () { return 'r'; };
+  h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  const keys = Array.from(h.state.cache.keys());
+  assert.ok(keys.some((k) => k === 'deptOutbound:v1:CSR:' + FROM + ':' + TO + ':tag:r'), keys.join(' | '));
+  const hit = h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  assert.equal(hit.meta.cacheHit, true);
+});
+
+test('Batch D: the same 6c gate as the report -- a manager is refused while it stands; a company view is refused', function () {
+  install({ conn: connReturning(JSON.stringify(deptBlob())) });
+  h.ctx.resolveUser_ = function () { return { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'm@x.com' }; };
+  assert.throws(function () {
+    h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'CSR' });
+  }, /admin-only while it is being vetted/);
+  install({ conn: connReturning(JSON.stringify(deptBlob())) });
+  assert.throws(function () {
+    h.call('getDeptOutboundSummary', { from: FROM, to: TO, department: 'ALL' });
+  }, /department is required/);
+});
+
+test('Batch D: team per-day leaves the dept’s team-average excludes out; totals keep them', function () {
+  const rows = [
+    { agent: 'Ann', scopeDept: 'CSR', obTotal: 20, obConnected: 10, obTalkSec: 600, attempts: 22, obDays: 4 },
+    { agent: 'Mgr', scopeDept: 'CSR', obTotal: 2, obConnected: 1, obTalkSec: 60, attempts: 2, obDays: 2 },
+  ];
+  const t = h.call('deptObTotals_', rows, { CSR: { Mgr: true } });
+  assert.equal(t.obTotal, 22, 'the manager’s calls stay in the totals (R18 rule)');
+  assert.equal(t.obPerDay, 5, 'Ann alone: 20 calls over 4 days');
+  assert.equal(t.obConnectRate, 50);
+  assert.equal(t.obAttSec, 60);
+});
+
+test('Batch D: a parent view groups agents by their in-scope dept with per-dept subtotals', function () {
+  const shaped = { meta: {}, agents: [
+    { agent: 'Ann', scopeDept: 'CSR', obTotal: 3, obConnected: 1, obDays: 1 },
+    { agent: 'Sol', scopeDept: 'Spanish', obTotal: 5, obConnected: 2, obDays: 2 },
+  ] };
+  const out = h.call('deptOutboundProject_', { dept: 'CSR', from: FROM, to: TO, scopeDepts: ['CSR', 'Spanish'] },
+    shaped, { CSR: {}, Spanish: {} });
+  assert.equal(out.deptGroups.length, 2);
+  assert.equal(out.deptGroups[1].dept, 'Spanish');
+  assert.equal(out.deptGroups[1].totals.obTotal, 5);
+  assert.equal(out.totals.obTotal, 8);
+  const single = h.call('deptOutboundProject_', { dept: 'CSR', from: FROM, to: TO, scopeDepts: ['CSR'] },
+    { meta: {}, agents: [] }, { CSR: {} });
+  assert.equal(single.deptGroups, null, 'no grouping for a dept without sub-queues');
+});
+
+test('Batch D: the report and the view read ONE SQL definition and ONE sheet aggregation', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script',
+    'department-dashboard', 'OutboundReport.gs'), 'utf8');
+  const report = src.slice(src.indexOf('function computeOutboundReport_('), src.indexOf('function outboundShapeReport_('));
+  const view = src.slice(src.indexOf('function computeDeptOutbound_('), src.indexOf('function getDeptOutboundSummary('));
+  assert.match(report, /const agentsSel = outboundAgentsSel_;/);
+  assert.match(view, /outboundAgentsSel_\(scope\.from, scope\.to\)/);
+  assert.match(view, /obAgentsFromGrid_\(ob\.grid, scope\.from, scope\.to\)/);
+  assert.match(src, /var agentsFor = function \(fromIso, toIso\) \{ return obAgentsFromGrid_\(obGrid, fromIso, toIso\); \};/);
+  assert.match(view, /neonNoteEgress_\(json \? json\.length : 0, 'deptOutbound'\)/);
 });
