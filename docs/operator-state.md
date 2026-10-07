@@ -3129,3 +3129,27 @@ When something looks wrong, before assuming a code bug, check:
       mid-August, change `QCD_VIOL_GTE_FROM_ISO_` before running -- rows
       between Aug 1 and the real switch day were written under the 5% rule.
 
+74. **Outbound source probe (Batch C, owner plan 2026-10; dashboard).**
+    `probeOutboundSourceAgreement()`, editor-run in the dashboard project,
+    admin-only and read-only. It compares the day-level outbound counts in the
+    `CDR Historical Data` sheet (`OB External Total`) with the per-call
+    `outbound_calls` table in Neon, per agent per day, and its verdict decides
+    where the My Department outbound view (Batch D) reads from.
+    - **Run it once** after a normal import day; the default window is the 28
+      days ending at the latest captured date. To pin a window, set
+      `OUTBOUND_SOURCE_FROM` / `OUTBOUND_SOURCE_TO` (cleared again on a clean
+      run). It never reaches before 2026-07-10, when outbound capture began,
+      and is capped at 92 days.
+    - **`ok CLEAN`** -- placed counts agree (95% of agent-days within a call or
+      5%, company totals within 3%). Batch D may read PLACED from the sheet.
+      Durations and connects are still NOT interchangeable: the sheet sums leg
+      duration (ring included) and counts legs of 20 s or more, while Neon
+      stores talk time and talk > 0. The log prints all of them side by side.
+    - **`MISMATCH`** -- Batch D reads Neon (with the Outbound Calls tab as the
+      fallback). The log lists the largest agent-day differences and any
+      agent-days on one side only; one-sided days usually mean an agent-name
+      difference -- run the #72 rewrite, then re-run this.
+    - **`INCONCLUSIVE`** -- too little data, or too many dates present on one
+      side only (an import that skipped the Neon mirror, or a sheet date never
+      built: fix those first, #35 / #52). Never choose a source on this, or on
+      `FAILED` (Neon unreachable or no sheet).

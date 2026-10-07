@@ -2155,6 +2155,7 @@ items for anything it flags or doesn't cover.)
 71. The answer-quality review sample -- CONCLUDED 2026-09-23: no stored field tells a person from a machine; now research-only, its figures never shown in reporting; blinded worksheet, do NOT open the key until every row is labelled
 72. Per-call agent-name rewrite (PC-1) -- capture now stores the roster-canonical name; run the cdr-import preview, back up Neon, then the rewrite once after deploy, and again after a new alias override
 73. QCD violation-flag repair (QO-2) -- a violation is 4.00% or more; run `previewQcdViolationFlags` then `repairQcdViolationFlags` (cdr-report) once after deploy; dated from 2026-08-01, re-run if Neon was unreachable
+74. Outbound source probe (Batch C) -- `probeOutboundSourceAgreement` (dashboard) compares the CDR Historical sheet's placed counts with Neon `outbound_calls`; its verdict picks Batch D's source, never on INCONCLUSIVE/FAILED
 
 ## Cycle Workflow Config
 

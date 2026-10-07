@@ -452,6 +452,16 @@ tests/
                               run scored ONLY by the rule, never the refit;
                               plus SOURCE
                               pins on SQL the mocked connection never runs),
+                              outbound-source-probe (Batch C:
+                              probeOutboundSourceAgreement -- the verdict
+                              PRE-REGISTERED on placed counts only, duration
+                              and connected reported but never voted; too
+                              few agent-days or too many one-sided dates is
+                              INCONCLUSIVE, a name difference is MISMATCH;
+                              the span-bounded, display-valued sheet read
+                              with its per-row date filter; the bound,
+                              labelled, PHI-free Neon read; admin-first and
+                              read-only),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a

@@ -4280,3 +4280,348 @@ function outboundSheetFallback_(scope) {
     return out;
   }
 }
+
+// ── Outbound SOURCE probe (Batch C, owner plan 2026-10) ──────────────────────
+//
+// `probeOutboundSourceAgreement()` -- editor-run, admin-gated, READ-ONLY. It
+// answers one question before Batch D builds the My Department outbound view:
+// can the day-level outbound counts in the `CDR Historical Data` SHEET stand
+// in for the per-call `outbound_calls` table in Neon, per agent per day?
+//
+// Why it matters: My Department, Insights and Overview reload often (the
+// Overview every 5 minutes, plus the cache warmer), and Neon has hit its
+// monthly read allowance twice. If the sheet agrees, the outbound views can
+// read it the way inbound reads DQE, adding no Neon load; if not, they must
+// read Neon (with the Outbound Calls tab as fallback).
+//
+// WHAT IS COMPARED, AND WHAT IS NOT. The two sources do not measure the same
+// thing in every column, so the verdict is PRE-REGISTERED on the one column
+// whose definitions line up, and everything else is reported as information:
+//   - PLACED (the verdict). Sheet `OB External Total` counts the agent's leg-1
+//     dials to a "+number" (calculateMetricsInMemory, context N/A); Neon counts
+//     distinct outbound call groups with an Outgoing leg to an external
+//     number, attributed to the first such leg's caller. Both mean "calls this
+//     agent placed to an outside number", so they SHOULD agree per agent-day.
+//   - DURATION (information only). The sheet's `OB External Total Duration` is
+//     the sum of LEG durations (ring included); Neon's `talk_seconds` is talk
+//     only. Both sums are logged, plus Neon talk+ring, so the log says which
+//     the sheet tracks -- but a duration that differs is EXPECTED, not a
+//     mismatch, and Batch D must not read the sheet duration as talk time.
+//   - CONNECTED (information only). The sheet has no talk>0 count; its
+//     "answered" column is legs lasting >= 20 s. Logged beside Neon's
+//     connected count for the same reason.
+//
+// Verdicts (OPS-8 prefixes): 'ok ...' (CLEAN), 'MISMATCH ...', 'INCONCLUSIVE
+// ...', 'FAILED ...'. Never decide Batch D's source on INCONCLUSIVE or FAILED
+// (the Operator State #19 / #63 rule).
+//
+// Dates where ONE side has nothing at all (an import that skipped the Neon
+// write, or a sheet date never built) are COVERAGE gaps, not disagreements:
+// they are listed and left out of the per-agent-day comparison, and too many
+// of them make the run INCONCLUSIVE rather than CLEAN.
+//
+// Config (Script Properties, both optional): OUTBOUND_SOURCE_FROM /
+// OUTBOUND_SOURCE_TO -- default the 28 days ending at the latest captured
+// date (else yesterday); the window is floored at the outbound capture start
+// (2026-07-10) and capped at OB_SRC_MAX_DAYS_. Self-cleared on a CLEAN run.
+//
+// PHI: agent names and counts only -- the Neon query selects no hash, number
+// or call id. Neon read labelled 'outbound-source' for the egress ranking.
+
+var OB_SRC_CAPTURE_START_ = '2026-07-10';  // AgentDay.gs's AGENT_DAY_OUTBOUND_CAPTURE_START_ twin
+var OB_SRC_MAX_DAYS_ = 92;
+var OB_SRC_MIN_AGENT_DAYS_ = 20;      // fewer compared agent-days than this proves nothing
+var OB_SRC_TOL_ABS_ = 1;              // an agent-day "matches" within max(1 call, 5%)
+var OB_SRC_TOL_PCT_ = 0.05;
+var OB_SRC_MIN_MATCH_SHARE_ = 0.95;   // CLEAN needs this share of agent-days to match
+var OB_SRC_MAX_TOTAL_DRIFT_ = 0.03;   // ... and company totals within 3%
+var OB_SRC_MAX_ONE_SIDED_ = 0.10;     // agent-days present on ONE side only (names) -- past this, MISMATCH
+var OB_SRC_MAX_GAP_DATES_ = 0.20;     // coverage-gap dates past this share -> INCONCLUSIVE
+
+/**
+ * PURE. "H:MM:SS" / "M:SS" / bare seconds -> seconds; '' / junk -> 0. The
+ * sheet cells are read as DISPLAY strings (INV-02: a duration read via
+ * getValues carries the +36:36 phantom offset).
+ */
+function obSrcDurSec_(s) {
+  var str = String(s == null ? '' : s).trim();
+  if (!str) return 0;
+  if (/^\d+(\.\d+)?$/.test(str)) return Math.round(Number(str));
+  var p = str.split(':').map(Number);
+  if (p.some(function (n) { return !isFinite(n); })) return 0;
+  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return 0;
+}
+
+/**
+ * PURE. The header-resolved column indexes (0-based) for the probe, falling
+ * back to the INV-52 positions when a header is absent -- the same names the
+ * Custom Report Builder resolves (dashboardCDR.js), so a renamed header is
+ * reported rather than silently read from the wrong column.
+ */
+function obSrcColumns_(headerRow) {
+  var map = {};
+  (headerRow || []).forEach(function (h, i) {
+    var k = String(h == null ? '' : h).trim();
+    if (k && !(k in map)) map[k] = i;
+  });
+  var pick = function (names, dflt) {
+    for (var i = 0; i < names.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(map, names[i])) return { idx: map[names[i]], by: names[i] };
+    }
+    return { idx: dflt, by: 'position ' + (dflt + 1) };
+  };
+  return {
+    date:   pick(['Date'], 2),
+    dept:   pick(['Dept', 'Department'], 3),
+    agent:  pick(['AgentName', 'Agent Name', 'Name'], 4),
+    placed: pick(['OB External Total'], 19),
+    over20: pick(['OB External Answered', 'OB External Total Answered'], 20),
+    dur:    pick(['OB External Total Duration', 'OB External TTT'], 21),
+  };
+}
+
+/**
+ * PURE. Compare the two per-agent-day maps and decide the verdict.
+ *   sheet: { 'YYYY-MM-DD|Agent': { placed, over20, durSec } }
+ *   neon:  { 'YYYY-MM-DD|Agent': { placed, connected, talkSec, ringSec } }
+ * Returns { verdict: 'CLEAN'|'MISMATCH'|'INCONCLUSIVE', reasons: [...], stats }.
+ */
+function obSrcCompare_(sheet, neon) {
+  sheet = sheet || {}; neon = neon || {};
+  var dateTot = {};   // date -> { s, n }
+  var add = function (key, side, v) {
+    var d = key.split('|')[0];
+    var t = dateTot[d] || (dateTot[d] = { s: 0, n: 0 });
+    t[side] += v;
+  };
+  Object.keys(sheet).forEach(function (k) { add(k, 's', Number(sheet[k].placed) || 0); });
+  Object.keys(neon).forEach(function (k) { add(k, 'n', Number(neon[k].placed) || 0); });
+  var dates = Object.keys(dateTot).sort();
+  var gapDates = dates.filter(function (d) {
+    return (dateTot[d].s > 0) !== (dateTot[d].n > 0);   // exactly one side has the date
+  });
+  var gapSet = {};
+  gapDates.forEach(function (d) { gapSet[d] = true; });
+
+  var keys = {};
+  Object.keys(sheet).forEach(function (k) { keys[k] = true; });
+  Object.keys(neon).forEach(function (k) { keys[k] = true; });
+
+  var st = { compared: 0, matched: 0, oneSided: 0, sheetPlaced: 0, neonPlaced: 0,
+             sheetDurSec: 0, neonTalkSec: 0, neonTalkRingSec: 0,
+             sheetOver20: 0, neonConnected: 0,
+             datesCompared: 0, gapDates: gapDates.map(function (d) {
+               return { date: d, sheet: dateTot[d].s, neon: dateTot[d].n };
+             }),
+             worst: [], sheetOnly: [], neonOnly: [] };
+  st.datesCompared = dates.length - gapDates.length;
+  Object.keys(keys).sort().forEach(function (k) {
+    var d = k.split('|')[0];
+    if (gapSet[d]) return;
+    var s = sheet[k], n = neon[k];
+    var sp = s ? (Number(s.placed) || 0) : 0;
+    var np = n ? (Number(n.placed) || 0) : 0;
+    if (!sp && !np) return;   // an agent row with no outbound on either side
+    st.compared++;
+    st.sheetPlaced += sp; st.neonPlaced += np;
+    if (s) { st.sheetDurSec += Number(s.durSec) || 0; st.sheetOver20 += Number(s.over20) || 0; }
+    if (n) {
+      st.neonTalkSec += Number(n.talkSec) || 0;
+      st.neonTalkRingSec += (Number(n.talkSec) || 0) + (Number(n.ringSec) || 0);
+      st.neonConnected += Number(n.connected) || 0;
+    }
+    if (!sp || !np) {
+      st.oneSided++;
+      (sp ? st.sheetOnly : st.neonOnly).push({ key: k, placed: sp || np });
+    }
+    var tol = Math.max(OB_SRC_TOL_ABS_, Math.round(Math.max(sp, np) * OB_SRC_TOL_PCT_));
+    if (Math.abs(sp - np) <= tol) st.matched++;
+    else st.worst.push({ key: k, sheet: sp, neon: np, diff: np - sp });
+  });
+  st.worst.sort(function (a, b) { return Math.abs(b.diff) - Math.abs(a.diff) || (a.key < b.key ? -1 : 1); });
+
+  var reasons = [];
+  var verdict;
+  var gapShare = dates.length ? gapDates.length / dates.length : 0;
+  var matchShare = st.compared ? st.matched / st.compared : 0;
+  var totalDrift = Math.max(st.sheetPlaced, st.neonPlaced)
+    ? Math.abs(st.sheetPlaced - st.neonPlaced) / Math.max(st.sheetPlaced, st.neonPlaced) : 0;
+  var oneSidedShare = st.compared ? st.oneSided / st.compared : 0;
+  st.matchShare = matchShare; st.totalDrift = totalDrift;
+  st.oneSidedShare = oneSidedShare; st.gapShare = gapShare;
+
+  if (st.compared < OB_SRC_MIN_AGENT_DAYS_) {
+    verdict = 'INCONCLUSIVE';
+    reasons.push(st.compared + ' agent-days compared (need ' + OB_SRC_MIN_AGENT_DAYS_ + ') -- widen the window');
+  } else if (gapShare > OB_SRC_MAX_GAP_DATES_) {
+    verdict = 'INCONCLUSIVE';
+    reasons.push(gapDates.length + ' of ' + dates.length + ' dates are on one side only (coverage gaps) -- '
+      + 'fix the missing imports/mirrors and re-run');
+  } else {
+    if (matchShare < OB_SRC_MIN_MATCH_SHARE_) {
+      reasons.push(Math.round(matchShare * 1000) / 10 + '% of agent-days match (need '
+        + OB_SRC_MIN_MATCH_SHARE_ * 100 + '%)');
+    }
+    if (totalDrift > OB_SRC_MAX_TOTAL_DRIFT_) {
+      reasons.push('placed totals differ by ' + Math.round(totalDrift * 1000) / 10 + '% (sheet '
+        + st.sheetPlaced + ', Neon ' + st.neonPlaced + ')');
+    }
+    if (oneSidedShare > OB_SRC_MAX_ONE_SIDED_) {
+      reasons.push(st.oneSided + ' agent-days appear on one side only -- likely an agent-NAME '
+        + 'difference between the sheet roster name and the captured name (Operator State #72)');
+    }
+    verdict = reasons.length ? 'MISMATCH' : 'CLEAN';
+  }
+  st.worst = st.worst.slice(0, 15);
+  st.sheetOnly = st.sheetOnly.slice(0, 15);
+  st.neonOnly = st.neonOnly.slice(0, 15);
+  return { verdict: verdict, reasons: reasons, stats: st };
+}
+
+/** The probe window: explicit props win; else 28 days ending at the anchor (or yesterday). */
+function obSrcWindow_(props, anchorIso, nowMs) {
+  var msDay = 24 * 3600 * 1000;
+  var iso = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
+  var yesterdayIso = iso(new Date((nowMs || Date.now()) - msDay));
+  var defaultTo = (isIsoDate_(anchorIso) && anchorIso < yesterdayIso) ? anchorIso : yesterdayIso;
+  var to = String(props.getProperty('OUTBOUND_SOURCE_TO') || defaultTo).trim();
+  var from = String(props.getProperty('OUTBOUND_SOURCE_FROM')
+    || iso(new Date(new Date(to + 'T12:00:00Z').getTime() - 27 * msDay))).trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
+    throw new Error('OUTBOUND_SOURCE_FROM/_TO must be YYYY-MM-DD with from <= to (got '
+      + from + ' .. ' + to + ').');
+  }
+  if (from < OB_SRC_CAPTURE_START_) from = OB_SRC_CAPTURE_START_;   // nothing to compare before capture
+  if (from > to) throw new Error('The window ends before outbound capture began (' + OB_SRC_CAPTURE_START_ + ').');
+  if (reportRangeDays_(from, to) > OB_SRC_MAX_DAYS_) {
+    throw new Error('The probe window is capped at ' + OB_SRC_MAX_DAYS_ + ' days (got ' + from + ' .. ' + to + ').');
+  }
+  return { from: from, to: to };
+}
+
+/**
+ * Sheet side: CDR Historical Data rows in [from, to], summed per agent-day.
+ * Bounded by a min/max SPAN of the date column (the dated-sheet read rule --
+ * this sheet is not reliably date-ordered, so a span, never a tail scan), and
+ * read as DISPLAY values throughout (INV-02 for the duration column; F-3 for
+ * the date cells). Returns { map, cols, rows, unparsedDates } or null when the
+ * sheet is missing.
+ */
+function obSrcReadSheet_(ss, from, to) {
+  var sheet = ss.getSheetByName('CDR Historical Data');
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  var width = Math.min(sheet.getMaxColumns(), Math.max(sheet.getLastColumn(), 22));
+  var header = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+  var cols = obSrcColumns_(header);
+  var out = { map: {}, cols: cols, rows: 0, unparsedDates: 0 };
+  if (lastRow < 2) return out;
+  var tz = (typeof ss.getSpreadsheetTimeZone === 'function') ? ss.getSpreadsheetTimeZone() : TZ;
+  var dateVals = sheet.getRange(2, cols.date.idx + 1, lastRow - 1, 1).getDisplayValues();
+  var first = -1, last = -1;
+  var isoAt = [];
+  for (var i = 0; i < dateVals.length; i++) {
+    var raw = dateVals[i][0];
+    var d = (raw === '' || raw == null) ? null : ncCellDateIso_(raw, tz);
+    if (raw !== '' && raw != null && !d) out.unparsedDates++;
+    isoAt.push(d);
+    if (d && d >= from && d <= to) { if (first < 0) first = i; last = i; }
+  }
+  if (first < 0) return out;
+  var need = Math.max(cols.placed.idx, cols.over20.idx, cols.dur.idx, cols.agent.idx) + 1;
+  var grid = sheet.getRange(2 + first, 1, last - first + 1, Math.min(need, width)).getDisplayValues();
+  for (var r = 0; r < grid.length; r++) {
+    var iso = isoAt[first + r];
+    if (!iso || iso < from || iso > to) continue;   // the span bounds the read; this filter decides
+    var agent = String(grid[r][cols.agent.idx] == null ? '' : grid[r][cols.agent.idx]).trim();
+    if (!agent) continue;
+    var placed = Number(String(grid[r][cols.placed.idx] || '').replace(/,/g, '')) || 0;
+    var over20 = Number(String(grid[r][cols.over20.idx] || '').replace(/,/g, '')) || 0;
+    var dur = obSrcDurSec_(grid[r][cols.dur.idx]);
+    var key = iso + '|' + agent;
+    var e = out.map[key] || (out.map[key] = { placed: 0, over20: 0, durSec: 0 });
+    e.placed += placed; e.over20 += over20; e.durSec += dur;
+    out.rows++;
+  }
+  return out;
+}
+
+/** Neon side: outbound_calls grouped per agent-day, one bound, labelled read. */
+function obSrcReadNeon_(conn, from, to) {
+  var st = conn.prepareStatement(
+    "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+    + "SELECT to_char(call_date, 'YYYY-MM-DD') AS d, agent_name AS a, count(*) AS n, "
+    +        'count(*) FILTER (WHERE connected) AS c, '
+    +        'COALESCE(sum(talk_seconds), 0) AS t, COALESCE(sum(ring_seconds), 0) AS r '
+    + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+    + 'AND agent_name IS NOT NULL GROUP BY call_date, agent_name) t');
+  st.setString(1, from);
+  st.setString(2, to);
+  var rs = st.executeQuery();
+  var j = rs.next() ? rs.getString('j') : '[]';
+  rs.close(); st.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'outbound-source');
+  var map = {};
+  JSON.parse(j || '[]').forEach(function (row) {
+    var key = row.d + '|' + String(row.a).trim();
+    var e = map[key] || (map[key] = { placed: 0, connected: 0, talkSec: 0, ringSec: 0 });
+    e.placed += Number(row.n) || 0; e.connected += Number(row.c) || 0;
+    e.talkSec += Number(row.t) || 0; e.ringSec += Number(row.r) || 0;
+  });
+  return map;
+}
+
+function probeOutboundSourceAgreement() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) -- re-run when it is back' });
+    var win = obSrcWindow_(props, obProbeAnchorDate_(conn));
+    var label = win.from + '..' + win.to + ' (all departments)';
+    var sheetSide = obSrcReadSheet_(openSpreadsheet_(), win.from, win.to);
+    if (!sheetSide) return logStatusReturn_({ result: 'FAILED (no "CDR Historical Data" sheet) ' + label });
+    var neonMap = obSrcReadNeon_(conn, win.from, win.to);
+    var cmp = obSrcCompare_(sheetSide.map, neonMap);
+    var s = cmp.stats;
+
+    Logger.log('[outbound-source] window %s; sheet rows %s (unparsed date cells %s); columns: %s',
+      label, sheetSide.rows, sheetSide.unparsedDates, JSON.stringify(sheetSide.cols));
+    Logger.log('[outbound-source] PLACED: %s agent-days compared, %s match (%s%%); totals sheet %s vs Neon %s (drift %s%%); one-sided %s',
+      s.compared, s.matched, Math.round(s.matchShare * 1000) / 10, s.sheetPlaced, s.neonPlaced,
+      Math.round(s.totalDrift * 1000) / 10, s.oneSided);
+    Logger.log('[outbound-source] INFO duration: sheet leg-duration sum %ss; Neon talk %ss; Neon talk+ring %ss '
+      + '(the sheet sums LEG duration, so expect it nearer talk+ring -- never read it as talk time)',
+      s.sheetDurSec, s.neonTalkSec, s.neonTalkRingSec);
+    Logger.log('[outbound-source] INFO connected: sheet legs >= 20s %s; Neon connected (talk > 0) %s -- different definitions',
+      s.sheetOver20, s.neonConnected);
+    if (s.gapDates.length) Logger.log('[outbound-source] coverage-gap dates (one side only): %s', JSON.stringify(s.gapDates));
+    if (s.worst.length) Logger.log('[outbound-source] largest agent-day differences: %s', JSON.stringify(s.worst));
+    if (s.sheetOnly.length) Logger.log('[outbound-source] on the SHEET only: %s', JSON.stringify(s.sheetOnly));
+    if (s.neonOnly.length) Logger.log('[outbound-source] in NEON only: %s', JSON.stringify(s.neonOnly));
+
+    var summary = s.compared + ' agent-days, ' + Math.round(s.matchShare * 1000) / 10 + '% match, totals '
+      + s.sheetPlaced + ' vs ' + s.neonPlaced;
+    if (cmp.verdict === 'CLEAN') {
+      if (typeof clearToolParamsAfterCleanRun_ === 'function') {
+        clearToolParamsAfterCleanRun_(['OUTBOUND_SOURCE_FROM', 'OUTBOUND_SOURCE_TO'], 'probeOutboundSourceAgreement');
+      }
+      return logStatusReturn_({ result: 'ok CLEAN placed counts agree (' + summary + ', ' + label
+        + ') -- the sheet can serve PLACED per agent-day; durations and connects are NOT interchangeable (see log).',
+        stats: s });
+    }
+    if (cmp.verdict === 'MISMATCH') {
+      return logStatusReturn_({ result: 'MISMATCH ' + cmp.reasons.join('; ') + ' (' + summary + ', ' + label
+        + ') -- Batch D must read Neon; the log lists the differing agent-days.', stats: s });
+    }
+    return logStatusReturn_({ result: 'INCONCLUSIVE ' + cmp.reasons.join('; ') + ' (' + label
+      + ') -- do not choose a source on this run.', stats: s });
+  } catch (e) {
+    return logStatusReturn_({ result: 'FAILED ' + (e && e.message ? e.message : e) });
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
+  }
+}
