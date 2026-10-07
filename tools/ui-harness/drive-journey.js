@@ -149,7 +149,13 @@ function record(name, pass, detail) {
   record('the refusal shows no call payload', !/outbound call/i.test(refused));
 
   // ---- hygiene ------------------------------------------------------------
-  const unmocked = await page.evaluate(() => (window.__UNMOCKED__ || []).slice());
+  // build-harness records unmocked RPCs in __HARNESS__.unmocked (there is no
+  // __UNMOCKED__ global, so reading one made this check unable to fail). The
+  // exemptions are drive-smoke's UNMOCKED_OK, the RPCs the fixtures leave
+  // unmocked on purpose -- a new unmocked call gets a mock, not an exemption.
+  const unmocked = await page.evaluate(() => ((window.__HARNESS__ || {}).unmocked || [])
+    .filter((n) => ['getInboundHeatmap', 'getInboundReport', 'getDirectCallReport',
+      'getCallerLookup', 'logReportUsage'].indexOf(n) === -1));
   record('no unmocked server calls during the walk',
     !unmocked.length, unmocked.join(', '));
 
