@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-07 — Batch C IMPLEMENTED (block 233): outbound source probe.**
+  `probeOutboundSourceAgreement()` (dashboard, editor-run, read-only) compares
+  the CDR Historical sheet's `OB External Total` with Neon `outbound_calls`
+  per agent-day.
+  - The verdict is pre-registered on PLACED only; duration and connected are information only.
+  - Coverage-gap dates are listed and excluded; too many make the run INCONCLUSIVE.
+  - Operator State #74 is the runbook. 2219/2219 tests, ci:ui green, six pins bite.
+  **Owner-side:** deploy the dashboard (A + B + C together), run the probe once, and send back the verdict line plus the log.
+  **Next:** Batch D, whose read source depends on that verdict.
+  **Where I left off:** committed and pushed, no PR.
 - **2026-10-07 — Batch B IMPLEMENTED (block 232): the inline agent panel on
   My Department.** A row click, Enter or Space opens a panel below the row with:
   - the agent's days with activity in the loaded window (`getAgentDayStrip`, newest first, at most 31, with "31 most recent of N" when cut);
