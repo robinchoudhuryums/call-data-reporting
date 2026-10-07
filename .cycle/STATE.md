@@ -1,6 +1,15 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-07 — Batch B IMPLEMENTED (block 232): the inline agent panel on
+  My Department.** A row click, Enter or Space opens a panel below the row with:
+  - the agent's days with activity in the loaded window (`getAgentDayStrip`, newest first, at most 31, with "31 most recent of N" when cut);
+  - the selected day's Agent Day view (the modal's own helpers, with Inbound / Outbound / Missed-rings tabs);
+  - the Individual Report as its first button.
+  New gate stage drive-agentpanel.js (21 checks); drive-f13 walks row -> panel -> IR. 2206/2206 tests, every ci:ui stage green, six pins bite, and the driver bites.
+  **Owner-side:** deploy the dashboard (Batch A + B together), then walk S56, S39 and S47.
+  **Next:** Batch C (outbound probe), then D, then E.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-06 — Batch A IMPLEMENTED (block 231): My Department ans/day + the
   Agent Day tiles.** Owner plan (5 batches, A-E, agreed 2026-10-06 after the
   inline-panel mock). A1 ans/day counts only days with rings (`summary:v23`).
