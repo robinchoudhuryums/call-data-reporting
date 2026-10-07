@@ -1253,3 +1253,35 @@ test('SEC-1: every public DQE/QCD report RPC caps its client window', function (
   });
   assert.deepEqual(missing, [], 'report RPCs without the SEC-1 window cap: ' + missing.join(', '));
 });
+
+test('json_agg(X) over a subquery aliased X never selects a COLUMN named X', function () {
+  // Postgres resolves a bare name to a COLUMN before a whole-row table
+  // reference, so `SELECT json_agg(t) FROM (SELECT ... AS t ...) t` aggregates
+  // that column, not the rows. It shipped once (probeOutboundSourceAgreement's
+  // talk column was `AS t`): every row arrived as a bare number and the probe
+  // read Neon as 0 on every date. Swept across every project's server code.
+  const roots = ['department-dashboard', 'cdr-import', 'cdr-report']
+    .map(function (d) { return path.join(ROOT, 'apps-script', d); });
+  const hits = [];
+  let seen = 0;
+  roots.forEach(function (dir) {
+    fs.readdirSync(dir).filter(function (f) { return /\.(gs|js)$/.test(f); }).forEach(function (f) {
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      const re = /json_agg\((\w+)\)/g;
+      let m;
+      while ((m = re.exec(src))) {
+        seen++;
+        const alias = m[1];
+        // The statement body runs to the subquery's closing `) <alias>`.
+        const close = new RegExp('\\)\\s*' + alias + '\\b').exec(src.slice(m.index + m[0].length));
+        if (!close) continue;
+        const body = src.slice(m.index + m[0].length, m.index + m[0].length + close.index);
+        if (new RegExp('\\bAS\\s+' + alias + '\\b', 'i').test(body)) {
+          hits.push(path.basename(dir) + '/' + f + ': json_agg(' + alias + ') selects a column AS ' + alias);
+        }
+      }
+    });
+  });
+  assert.ok(seen >= 20, 'the sweep found the json_agg readers (saw ' + seen + ')');
+  assert.deepEqual(hits, []);
+});
