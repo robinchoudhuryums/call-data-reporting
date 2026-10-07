@@ -452,6 +452,36 @@ tests/
                               run scored ONLY by the rule, never the refit;
                               plus SOURCE
                               pins on SQL the mocked connection never runs),
+                              outbound-fallback also pins Batch D's
+                              getDeptOutboundSummary: the same rows as the
+                              Outbound report on both the Neon and sheet
+                              paths, ob_days parity, the 6c gate, no cache
+                              on a fallback, team per-day excludes,
+                              per-dept groups,
+                              outbound-source-probe (Batch C:
+                              probeOutboundSourceAgreement -- the verdict
+                              PRE-REGISTERED on placed counts only, duration
+                              and connected reported but never voted; too
+                              few agent-days or too many one-sided dates is
+                              INCONCLUSIVE, a name difference is MISMATCH;
+                              the span-bounded, display-valued sheet read
+                              with its per-row date filter; the bound,
+                              labelled, PHI-free Neon read; admin-first and
+                              read-only),
+                              overview-outbound (Batch E2: the Overview
+                              tiles' outbound line -- one grouped read over
+                              the SAME five card periods and read window,
+                              roster-attributed, served from the cached blob
+                              so the auto-refresh never reaches Neon,
+                              stripped for managers / View-as / all-dept
+                              managers while the 6c gate stands and released
+                              without mutating the shared blob; no Neon =
+                              no field and an otherwise identical payload;
+                              Batch F: each period's INV-28 prior window in
+                              the SAME read, null before capture, stripped
+                              with the line, and the client chip RUN for
+                              real -- valence, noise muting, the thin-window
+                              rate rule, never on totals),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a
@@ -496,7 +526,13 @@ tests/
                               superset that only an exact INV-04 match may
                               narrow, the roster-derived auth incl. crossover
                               homes and the admin-only unrostered case, and
-                              the subset DISCLOSURE against the daily total),
+                              the subset DISCLOSURE against the daily total;
+                              Batch B: the inline panel's day strip --
+                              active = a ring or an outbound call, the 31
+                              most recent with the total beside them,
+                              NULL outbound on an uncaptured day, the
+                              shared auth + SEC-1 cap, no Neon query for a
+                              pre-capture window),
                               overview-dqe-silence, overview-qcd-snapshot
                               (computeQcdSnapshots_ + the L4 prior-window
                               read), overview-chart-answered (6b: the

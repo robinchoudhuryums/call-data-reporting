@@ -210,20 +210,22 @@ test('meta + diagnostics: roster size, no-data list, queue-only matched', functi
   assert.equal(data.qcd, null);                   // Alpha unmapped in QCD
 });
 
-// Owner (2026-09), summary:v22: answered per ACTIVE day. The divisor is the
-// number of days the agent had ANY row in the USER window -- never the E5
-// prior window, which accumulates separately -- so PTO does not drag it down.
-// totals.ansPerDay divides by the dept's distinct ROSTER-active days so the
-// team figure reconciles with totals.totalAnswered (a mean of per-agent rates
-// would not).
-test('v22: daysActive / ansPerDay per row + on totals; prior-window and floater days never count', function () {
+// Owner (2026-09), summary:v22, refined in v23 (owner 2026-10): answered per
+// ACTIVE day. An active day is a day in the USER window on which the agent
+// had at least one RING -- never the E5 prior window, and never a DQE row
+// with no rings -- so PTO and logged-in-but-idle days do not drag it down.
+// The TEAM figure on totals is answered per AGENT per day: the roster agents'
+// answered over their summed ring-days, floaters and the dept's team-average
+// excludes left out (the R18 per-agent-average rule).
+test('v23: daysActive counts only days with rings; prior-window and floater days never count', function () {
   install([
     dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8 }),
     dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5,  missed: 0, answered: 5 }),
+    // Present in the sheet but no rings: not a day for the per-day figure.
+    dqeRow({ date: '2026-03-11', agent: 'Anna', ext: '501', rung: 0,  missed: 0, answered: 0 }),
     dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '501', rung: 4,  missed: 1, answered: 3 }),
-    // Cara is Beta's agent ringing Alpha's ext on a day NO Alpha roster agent
-    // worked: a queue-only floater (INV-53). She gets her own row under 'both'
-    // scope, but her day must not enter the dept's roster-active day count.
+    // Cara is Beta's agent ringing Alpha's ext: a queue-only floater (INV-53).
+    // Her own row is honest, but she never enters the team figure.
     dqeRow({ date: '2026-03-11', agent: 'Cara', ext: '501', rung: 7,  missed: 1, answered: 6 }),
     // Prior-window rows (R24 working-day prior of Mon-Wed 9-11 is Wed-Fri 4-6):
     // they feed the E5 chips and must NOT count as active days.
@@ -232,7 +234,7 @@ test('v22: daysActive / ansPerDay per row + on totals; prior-window and floater 
   ]);
   const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-11', 'both');
   const anna = rowFor(data, 'Anna'), ben = rowFor(data, 'Ben'), cara = rowFor(data, 'Cara');
-  assert.equal(anna.daysActive, 2);
+  assert.equal(anna.daysActive, 2, 'the no-ring day on 03-11 is not an active day');
   assert.equal(anna.ansPerDay, 6.5);          // (8 + 5) / 2
   assert.equal(anna.priorHasData, true);      // the prior row still feeds the chip...
   assert.equal(ben.daysActive, 1);            // ...but never the day count
@@ -240,39 +242,45 @@ test('v22: daysActive / ansPerDay per row + on totals; prior-window and floater 
   assert.equal(cara.matchedViaRoster, false); // floater
   assert.equal(cara.daysActive, 1);           // her OWN figure is still honest
   assert.equal(cara.ansPerDay, 6);
-  // Totals (roster only, INV-53): 16 answered over the dept's 2 distinct
-  // roster-active days -- NOT 3 (Cara's day), NOT the mean of the rates, and
-  // NOT the sum of per-agent days.
+  // Team: (13 + 3) answered over (2 + 1) agent ring-days -- NOT Cara's day,
+  // NOT the mean of the two rates (4.75), NOT the dept's distinct days.
   assert.equal(data.totals.totalAnswered, 16);
-  assert.equal(data.totals.daysActive, 2);
-  assert.equal(data.totals.ansPerDay, 8);
+  assert.equal(data.totals.ansPerDayAnswered, 16);
+  assert.equal(data.totals.ansPerDayAgentDays, 3);
+  assert.equal(data.totals.ansPerDay, 5.3);
+  assert.equal(data.totals.daysActive, undefined, 'the old team-volume day count is gone');
+  assert.ok(!('activeDayKeys' in data.totals), 'and so is its day set');
 });
 
-test('v22: a dept with no active days carries totals.ansPerDay=null, never 0.0', function () {
+test('v23: the team per-agent-day figure leaves out the dept\'s team-average excludes', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8 }),
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5,  missed: 0, answered: 5 }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '501', rung: 4,  missed: 1, answered: 3 }),
+  ]);
+  const saved = h.ctx.getTeamAvgExcludes_;
+  h.ctx.getTeamAvgExcludes_ = function (dept) { return dept === 'Alpha' ? ['Ben'] : []; };
+  try {
+    const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'roster');
+    assert.equal(data.totals.totalAnswered, 16, 'dept TOTALS keep everyone (R18)');
+    assert.equal(data.totals.ansPerDayAnswered, 13);
+    assert.equal(data.totals.ansPerDayAgentDays, 2);
+    assert.equal(data.totals.ansPerDay, 6.5, 'Ben (excluded) is out of the per-agent average only');
+    assert.equal(rowFor(data, 'Ben').ansPerDay, 3, 'his own row still shows his figure');
+  } finally {
+    h.ctx.getTeamAvgExcludes_ = saved;
+  }
+});
+
+test('v23: a dept with no active days carries totals.ansPerDay=null, never 0.0', function () {
   // A roster member with NO rows in range never reaches the row list (they
   // land in diagnostics.rosterWithNoData); the null contract is exercised on
-  // totals when the dept had no roster-active day at all.
+  // totals when the dept had no roster agent-day with rings at all.
   install([]);
   const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'roster');
   assert.equal(data.rows.length, 0);
-  assert.equal(data.totals.daysActive, 0);
+  assert.equal(data.totals.ansPerDayAgentDays, 0);
   assert.equal(data.totals.ansPerDay, null);
-});
-
-// ---- Batch 4 (broad-scan 2026-09-17): D-6 ---------------------------------
-
-test('D-6: computeSummary_ attaches the active-day SET non-enumerably (never serialized)', function () {
-  install([
-    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 }),
-    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '501', rung: 2, answered: 2, missed: 0 }),
-  ]);
-  const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'roster');
-  assert.equal(data.totals.daysActive, 2);
-  assert.equal(data.totals.activeDayKeys.slice().sort().join(','), '2026-03-09,2026-03-10',
-    'combineSummaries_ unions this set for the combined grand total');
-  assert.ok(!Object.prototype.propertyIsEnumerable.call(data.totals, 'activeDayKeys'));
-  assert.ok(!('activeDayKeys' in JSON.parse(JSON.stringify(data.totals))),
-    'the set must not reach the cache put or the client payload');
 });
 
 // ---- Batch 6 (broad-scan 2026-09-17): D-3 counts, D-5 no-pin, D-7 roster key --

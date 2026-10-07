@@ -974,6 +974,35 @@
       + '</div>';
   }
 
+  // Batch E2: the tile's OUTBOUND line for the selected card period. The
+  // server ships `dept.outbound` to admins only while the Outbound report is
+  // admin-only (6c) and only when its Neon read succeeded, so "render when
+  // present" is the whole gate -- a manager or a View-as preview never gets
+  // the field. Violet (--dir-out), the outbound hue everywhere else.
+  function ovBuildOutboundLine_(dept) {
+    var ob = dept && dept.outbound && dept.outbound[ovCardPeriod];
+    if (!ob) return '';
+    var since = (ob.partial && ovLastData && ovLastData.outboundCoverageStart)
+      ? '<span class="ov-dept-ob-since">since ' + escapeHtml(isoDateShort_(ovLastData.outboundCoverageStart)) + '</span>' : '';
+    // Batch F1: vs the INV-28 prior window (server-shipped `prior`, null when
+    // that window predates capture -> no chips). Placed up = good; the rate
+    // chip is in points and mutes on a thin window (obRateChip_).
+    var pr = ob.prior || null;
+    var pw = (ovLastData && ovLastData.outboundPriorWindows && ovLastData.outboundPriorWindows[ovCardPeriod]) || {};
+    var tip = pr ? obPriorTip_(pr, pw.from, pw.to) : '';
+    var body = ob.placed > 0
+      ? '<span><span class="ov-dept-stat-label">Placed</span> ' + fmtNumber(ob.placed)
+        + (pr ? obPriorChip_(ob.placed - pr.placed, 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '') + '</span>'
+        + '<span><span class="ov-dept-stat-label">Conn</span> ' + fmtNumber(ob.connected)
+        + (ob.pct != null ? ' <span class="ov-dept-ob-pct">' + Number(ob.pct).toFixed(1) + '%</span>' : '')
+        + (pr ? obRateChip_(ob.pct, pr.pct, ob.placed, pr.placed, tip) : '') + '</span>'
+      : '<span class="ov-dept-ob-none">no outbound calls</span>'
+        + (pr && pr.placed ? obPriorChip_(-pr.placed, 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '');
+    return '<div class="ov-dept-tile-row ov-dept-ob" title="' + escapeHtml('Outbound calls placed by this department\u2019s roster agents in the selected window. ' + OB_CONNECTED_DEF_) + '">'
+      +   '<span class="ov-dir-pill">Outbound</span>' + body + since
+      + '</div>';
+  }
+
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
     const st = ovPeriodStats_(dept);
     // Round-16 (owner, Option 3): the grid tiles' trend corner is a GOAL-GAP
@@ -1030,6 +1059,7 @@
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
          +   '</div>'
+         +   ovBuildOutboundLine_(dept)
          +   '<div class="ov-dept-tile-spark">' + spark + '</div>'
          + '</div>';
   }
@@ -1097,6 +1127,7 @@
          +       '<div class="ov-dept-tile-row">'
          +         '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
          +       '</div>'
+         +       ovBuildOutboundLine_(dept)
          +       '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
          +       routeBtn
          +     '</div>'

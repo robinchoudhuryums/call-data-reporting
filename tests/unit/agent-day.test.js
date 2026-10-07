@@ -27,7 +27,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
 
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'AgentDay.gs'] });
+// OutboundReport.gs for outboundClassifyRing_ -- the day's unconnected split uses
+// the report's own 8 s rule (Batch A).
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'OutboundReport.gs', 'AgentDay.gs'] });
 
 // Objects built inside the vm have a different Object prototype, so strict
 // deepEqual reports "same structure but not reference-equal". Round-trip
@@ -182,13 +184,59 @@ test('an exact journey role always wins over the first_agent fallback', function
 
 // ── Counts + the reconciliation disclosure ──────────────────────────────────
 
-test('counts fold the day by role, and outbound talk joins the talk total', function () {
+test('counts fold the day by role, keep the two directions apart, and still total the talk', function () {
   const c = h.ctx.agentDayCounts_(
-    [{ role: 'answered', talkSec: 100 }, { role: 'missed' }, { role: 'rang' },
-     { role: 'answered', talkSec: 50 }],
-    [{ connected: true, talkSec: 20 }, { connected: false, talkSec: 0 }]);
+    [{ role: 'answered', talkSec: 100, agentHoldSec: 30, transferredOn: true }, { role: 'missed' }, { role: 'rang' },
+     { role: 'answered', talkSec: 50, agentHoldSec: 0, transferredOn: false }],
+    [{ connected: true, talkSec: 20, attempts: 2 }, { connected: false, talkSec: 0, ringSec: 3 },
+     { connected: false, talkSec: 0, ringSec: 8 }, { connected: false, talkSec: 0, ringSec: null }]);
   assert.deepEqual(plain(c), { inboundTotal: 4, answered: 2, missed: 1, rang: 1,
-    outboundTotal: 2, outboundConnected: 1, talkSec: 170 });
+    outboundTotal: 4, outboundConnected: 1, talkSec: 170,
+    inboundTalkSec: 150, outboundTalkSec: 20,
+    agentHoldSec: 30, holdCalls: 1, transferredOn: 1,
+    outboundAttempts: 5, outboundUnconnectedBrief: 1, outboundUnconnectedReal: 1, outboundUnconnectedUnknown: 1 },
+    'an 8 s ring is a REAL attempt (the Outbound report\'s boundary); a missing ring is unknown, not brief');
+});
+
+// Owner (2026-10, Batch A): the Agent Day tiles. Hold is the agent's OWN leg
+// hold; "transferred" is a later leg, more than a second after their answer,
+// that is somebody else's.
+test('an answered call is "transferred on" only when a later leg is someone else\'s', function () {
+  const role = h.ctx.agentDayInboundRole_;
+  const moved = role([
+    { t: '10:00:00', name: 'A_Q_CSR', kind: 'queue' },
+    { t: '10:00:05', name: 'Ann Agent', kind: 'answer', talk: 120, hold: 15 },
+    { t: '10:00:05', name: 'Bob Other', kind: 'leg', missed: true },   // rang in the same second: not a transfer
+    { t: '10:02:10', name: 'A_Q_Billing', kind: 'queue' },
+  ], 'Ann Agent');
+  assert.equal(moved.role, 'answered');
+  assert.equal(moved.holdSec, 15, 'the agent\'s own leg hold');
+  assert.equal(moved.transferredOn, true);
+  const stayed = role([
+    { t: '10:00:00', name: 'A_Q_CSR', kind: 'queue' },
+    { t: '10:00:05', name: 'Ann Agent', kind: 'answer', talk: 120 },
+    { t: '10:00:06', name: 'Bob Other', kind: 'leg', missed: true },   // within the 1 s margin
+  ], 'Ann Agent');
+  assert.equal(stayed.transferredOn, false);
+  assert.equal(stayed.holdSec, 0);
+  const missed = role([{ t: '10:00:05', name: 'Ann Agent', kind: 'leg', missed: true },
+                       { t: '10:03:00', name: 'Bob Other', kind: 'answer', talk: 60 }], 'Ann Agent');
+  assert.equal(missed.transferredOn, undefined, 'only an ANSWERED call can be transferred on by this agent');
+  const shaped = h.ctx.agentDayShapeInbound_({ call_id: 'c1', hold_seconds: 90 }, moved);
+  assert.equal(shaped.agentHoldSec, 15, 'the call-level hold stays in holdSeconds');
+  assert.equal(shaped.holdSeconds, 90);
+  assert.equal(shaped.transferredOn, true);
+});
+
+test('outbound reads as "not captured" before capture began, with Neon down, or on a dqe-only day', function () {
+  const cap = h.ctx.agentDayOutboundCaptured_;
+  assert.equal(cap({ neonAvailable: true, tier: 'full' }, '2026-07-10'), true, 'the first captured day counts');
+  assert.equal(cap({ neonAvailable: true, tier: 'full' }, '2026-07-09'), false,
+    'a full INBOUND day before outbound capture is still not an outbound day');
+  assert.equal(cap({ neonAvailable: false, tier: 'full' }, '2026-09-01'), false);
+  assert.equal(cap({ neonAvailable: true, tier: 'dqe-only' }, '2026-09-01'), false);
+  assert.equal(cap({ neonAvailable: true, tier: 'degraded' }, '2026-09-01'), true,
+    'outbound stays exact when only the inbound journey is pruned');
 });
 
 test('THE RULE: a short list is DISCLOSED against the daily total, never silently served', function () {
@@ -360,4 +408,91 @@ test('the DQE half goes through the DAL, so DQE_READ_SOURCE is honored', functio
   assert.match(SRC, /sheetFetchDqeRows_/);
   assert.match(SRC, /neonDqeRowsUsable_/,
     'the LM2 rule: a reachable-but-empty Neon read is trusted, not fallen back on');
+});
+
+// ── The day strip (Batch B: the inline agent panel) ─────────────────────────
+
+const dq = function (dateIso, agent, rung, answered, missed) {
+  return { dateIso: dateIso, agent: agent, totalRung: rung, totalAnswered: answered, totalMissed: missed };
+};
+
+test('THE RULE: a strip day is ACTIVE on a ring or an outbound call; a zero-ring DQE row is not a day', function () {
+  const r = h.call('agentDayStripDays_', [
+    dq('2026-09-01', 'Ann Agent', 10, 8, 2),
+    dq('2026-09-02', 'Ann Agent', 0, 0, 0),         // on the sheet, never present
+    dq('2026-09-03', 'Ann Agent', 0, 0, 0),         // outbound only
+    dq('2026-09-03', 'Anna Agent', 9, 9, 0),        // another agent (INV-04 exact)
+  ], 'Ann Agent', [{ d: '2026-09-03', n: 4, c: 3 }],
+  { outboundAvailable: true, captureStart: '2026-07-10', maxDays: 31 });
+  const days = plain(r.days);
+  assert.deepEqual(days.map(function (d) { return d.date; }), ['2026-09-03', '2026-09-01'],
+    'newest first; the zero-activity day is dropped');
+  assert.equal(r.totalActiveDays, 2);
+  assert.equal(days[0].rung, 0, 'Anna’s rings must not land on Ann');
+  assert.equal(days[0].outbound, 4);
+  assert.equal(days[0].outboundConnected, 3);
+  assert.equal(days[1].outbound, 0, 'a captured day with no calls is a real 0');
+});
+
+test('THE RULE: the strip keeps the 31 MOST RECENT active days and reports how many there were', function () {
+  const rows = [];
+  for (let i = 1; i <= 40; i++) {
+    const d = new Date(Date.UTC(2026, 7, 1 + i)).toISOString().slice(0, 10);
+    rows.push(dq(d, 'Ann Agent', 3, 2, 1));
+  }
+  const r = h.call('agentDayStripDays_', rows, 'Ann Agent', [],
+    { outboundAvailable: true, captureStart: '2026-07-10', maxDays: 31 });
+  assert.equal(r.days.length, 31);
+  assert.equal(r.totalActiveDays, 40, 'the client says "31 of 40", so the cut is never silent');
+  assert.equal(r.days[0].date, '2026-09-10', 'the newest day leads');
+  assert.equal(r.days[30].date, '2026-08-11', 'the oldest days are the ones left out');
+});
+
+test('outbound on an uncaptured day is NULL, never 0 (before capture start, or Neon down)', function () {
+  const before = h.call('agentDayStripDays_', [dq('2026-07-01', 'Ann Agent', 5, 5, 0)], 'Ann Agent',
+    [{ d: '2026-07-01', n: 9, c: 9 }], { outboundAvailable: true, captureStart: '2026-07-10' });
+  assert.equal(before.days[0].outbound, null);
+  assert.equal(before.days[0].outboundCaptured, false);
+  const down = h.call('agentDayStripDays_', [dq('2026-09-01', 'Ann Agent', 5, 5, 0)], 'Ann Agent',
+    [], { outboundAvailable: false, captureStart: '2026-07-10' });
+  assert.equal(down.days[0].outbound, null, 'an outage must not read as "placed no calls"');
+});
+
+test('getAgentDayStrip: validates, caps the window, and gates through the day view’s own auth', function () {
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  h.ctx.agentDayFetchDalRows_ = function () { return [dq('2026-09-01', 'Ann Agent', 4, 3, 1)]; };
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // Neon down -> inbound-only
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: 'x', to: '2026-09-01' }); },
+    /YYYY-MM-DD/);
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: '2026-09-02', to: '2026-09-01' }); },
+    /on or before/);
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: '2023-01-01', to: '2026-09-01' }); },
+    /capped/, 'SEC-1: a client window is capped');
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Sal Seller', from: '2026-09-01', to: '2026-09-01' }); },
+    /Not authorized/, 'a CSR manager cannot strip a Sales-only agent');
+  const out = h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: '2026-08-01', to: '2026-09-01' });
+  assert.equal(out.meta.department, 'CSR');
+  assert.equal(out.meta.outboundAvailable, false);
+  assert.equal(out.meta.totalActiveDays, 1);
+  assert.equal(out.days[0].outbound, null);
+  h.state.testUser = null;
+  delete h.ctx.getDashboardNeonConn_;
+});
+
+test('a window wholly before outbound capture costs no Neon query', function () {
+  let opened = 0;
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return null; };
+  const r = h.call('agentDayFetchOutboundByDay_', 'Ann Agent', '2026-06-01', '2026-06-30');
+  assert.equal(opened, 0);
+  assert.equal(r.available, true, 'nothing to read is not an outage');
+  delete h.ctx.getDashboardNeonConn_;
+});
+
+test('the strip’s Neon read is bound, grouped by day, and LABELLED', function () {
+  assert.match(SRC, /AND agent_name = \? GROUP BY call_date/);
+  assert.match(SRC, /neonNoteEgress_\(j \? j\.length : 0, 'agentDay'\)/);
+  const body = SRC.slice(SRC.indexOf('\nfunction getAgentDayStrip('));
+  assert.ok(body.indexOf('agentDayAuthorize_(') !== -1, 'the strip shares the day view’s entitlement');
+  assert.ok(body.indexOf('logReportUsage_') === -1,
+    'not usage-logged: the newest day’s getAgentDay call already logs the open');
 });

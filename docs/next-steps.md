@@ -1,4 +1,4 @@
-# Next steps — the sequenced roadmap (as of 2026-10-05, CDR Import tools; Batches 1–2 SHIPPED 2026-09-11)
+# Next steps — the sequenced roadmap (as of 2026-10-07, agent + outbound views; Batches 1–2 SHIPPED 2026-09-11)
 
 **What this is.** The one place that says what is queued, in which batch, and
 why in that order. Detailed designs stay in their own plan docs (linked); the
@@ -25,6 +25,7 @@ batch, items are independent unless marked.
 | ∥ | **Broad scan 2026-10-01** — IMPLEMENTED (blocks 214-225) | Batches 1-12: ingest safety · lock discipline · per-call identity · Neon gates + figures · escalations integrity · backups, timeouts + signals · client correctness · client a11y + hardening · cdr-report repair safety · performance · harness strictness + CI · docs + code health; deferred items (AC-2, PC-12, QO-2, ESC-D8, CL-20, CL-23, CH-4, LEG-2, DX-11) need owner rulings | all three | MERGED #351 (2026-10-02); deploy per each block's OPERATOR ACTIONS. Owner rulings on the deferred items: next section's "Rulings round" |
 | ∥ | **Rulings round (scan 2026-10-01 deferred items)** — IMPLEMENTED (blocks 226-228) | Batch 13 (QO-2 ≥ 4% violations + history repair · DX-11 · PC-12 sub-queue Outbound rosters · AC-2 server-side agent email) · Batch 14 (ESC-D8 backup scrub on delete · CL-23 browser Back/Forward) · Batch 15 (CH-4 split of getSystemHealth + getCompanyOverview behind payload goldens); CL-20 accepted; LEG-2 waits on the decommission date | dashboard + cdr-import + cdr-report | MERGED #352 (2026-10-02); deploy per blocks 226-228; run Operator State #73 after the cdr-report deploy; walk S54 in two browsers before releasing Back/Forward |
 | ∥ | **CDR Import tools** (owner asks 2026-10-05) — SHIPPED | transfer filter Phase 0 (read-only probe + its dialog) · both CDR Tools menus grouped into submenus · AF-1 abandoned-filter dialog + on-tab check | cdr-import + cdr-report (menus) | MERGED #354, #355; cdr-import DEPLOYED 2026-10-05. Next: walk S55, then retire the fourteen per-queue items (AF-1 step 3); transfer filter Phase 1 once the owner confirms the Phase 0 shapes |
+| ∥ | **Agent + outbound views** (owner plan 2026-10-07) — IMPLEMENTED (blocks 231-236) | A ans/day + Agent Day tile rows · B inline agent panel · C outbound source probe (Operator State #74) · D Inbound \| Outbound \| Both + Team Outbound · E Overview tile outbound line + Insights Outbound fold · F prior-period chips on the outbound figures | dashboard (DEPLOY pending; walk S56-S58) | done; D-F admin-only until the 6c release (#63) |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 

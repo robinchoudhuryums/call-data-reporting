@@ -226,7 +226,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# EIGHT ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# ELEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -245,6 +245,15 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # RENDERED until this driver clicked one, the dept-selector class of bug; the
 # drill was unreachable by any driver until getCallJourney was mocked, since
 # drive-smoke's unmocked-RPC check would have flagged the call),
+# drive-agentpanel.js (the My Department row-click inline agent panel:
+# open, day/tab switch, survives a re-sort, IR button, Escape/Collapse focus
+# return, one at a time, CSV untouched, 360 px -- Batch B), drive-deptoutbound.js
+# (the Inbound | Outbound | Both switch + Team Outbound panel: payload totals,
+# manager/view-as fall back to Inbound, panels never overlap, prior-period
+# chips on agent rows only -- Batches D/F),
+# drive-outbound-e.js (the Overview tiles' outbound line per card window +
+# the Insights Outbound fold's two-window deltas; neither reaches a manager
+# or View-as -- Batch E),
 # drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
 # Outbound and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
@@ -646,7 +655,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `'CSR': ['Robin Choudhury']`). Match is exact on the roster name.
   **Scope (owner ruling, R18): the exclusion applies to PER-AGENT AVERAGES
   AND BENCHMARKS only -- manager volume stays in dept TOTALS and RATES.**
-  Consumers are the IR team-average and, since R18, Insights via
+  Consumers are the IR team-average, the My Department team "ans/day"
+  (`summary:v23`, answered per agent per day), the Team Outbound per-day
+  figure (`deptOutbound:v1`, Batch D), and, since R18, Insights via
   `meta.teamAvgBasis` (the gap-vs-team baseline, the call-share equal-share
   benchmark, the behind-team classification); Insights' `teamStats`,
   `rosterAgentCount`, trends and dept rates deliberately keep every agent.
@@ -1150,7 +1161,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the full compute (`OVERVIEW_CACHE_MAX_BYTES` = 100 KB documents the
   cap; it is not enforced). MEASURED at ~27 KB for the 14 visible depts
   (16 on the roster, 2 in `OVERVIEW_HIDDEN_DEPTS`; ~1.9
-  KB/dept) -- roughly 50+ depts away, so this is instrumentation, not
+  KB/dept) before Batches E/F added the tiles' outbound block (~0.5 KB/dept,
+  so ~34 KB est.) -- roughly 40+ depts away, so this is instrumentation, not
   a live risk, and it is LOG-only: nothing surfaces on the Health
   page.
 - **CSV exports must neutralize formula injection.** Agent names
@@ -1633,18 +1645,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   has not recorded past its allowance (O-4) -- a killed run records nothing.
   This page is the PULL view; the **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email.
-  Three other sections share the page, each with its own operator
+  Four other sections share the page, each with its own operator
   item: **"Report usage (last 30 days)"** (`computeReportUsageSummary_`; a
   bounded tail read, cap 5000); **`SmokeCheck.gs::runLiveSmoke`** (editor-run,
   admin-gated sweep of seven live READ PATHS -- sheet, latest date, summary,
   Missed, Insights, all-dept QCD, Neon; it emails admins + stamps
   `SMOKE_LAST*`, no data writes; **run it after every deploy**, then walk the client-side
   Regression Scenarios by hand); **`runNeonCoverageCheck`** (NeonCoverage.gs,
-  Op State #35: per-date sheet-vs-Neon row counts + zero-row-weekday gaps on
-  the no-sheet-primary tables; a not-yet-created table is a clean SKIP via
+  Op State #35; a not-yet-created table is a clean SKIP via
   `ncMissingTableError_`); **`runSheetCoverageCheck`** (SheetCoverage.gs, Op
-  State #52: the SHEET-side twin, business days with ZERO rows in a
-  dashboard-read sheet; no Neon connection, so it works mid-outage). All four store
+  State #52). The watchdog and those three tools store
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, classified
   by the ONE table `healthOutcomeIsBad_` / `HEALTH_BAD_PREFIXES_` (O-9: a new
   bad prefix goes there, nowhere else). Pinned by `system-health.test.js` /
@@ -1781,7 +1791,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ROSTER, because the tag does not move when the roster is edited and a stale
   ext set silently changes which floaters are recognized (INV-53). Only the
   SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
-  (Batch 6) the `summary:v22` and `individual_active:v2` keys carry the same
+  (Batch 6) the `summary:v23` and `individual_active:v2` keys carry the same
   roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
   reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:`,
   and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /
@@ -1795,7 +1805,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" it or hardcode that default in a second
   place. `subScope` is a cache-key
-  dimension (`summary:v22`); `cdr.dept.subscope` is now an orphan key.
+  dimension (`summary:v23`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -1981,7 +1991,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   fields (`pipelineFreshness`, `orphanNag`, `unmappedQcd`) and caches
   them in the shared blob, but `personalizeOverview_` strips all four
   (`companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd`)
-  on serve for non-admins. Viewer-personalized fields (`viewerRole`,
+  on serve for non-admins -- and, while `OUTBOUND_VETTING_GATE_` stands, the
+  tiles' outbound line too (`dept.outbound`, `outboundCoverageStart`,
+  `outboundPriorWindows`; INV-39). Viewer-personalized fields (`viewerRole`,
   `viewerDept`) are injected per-request so a payload warmed by
   user A still personalizes correctly for user B. Adding a new
   admin-only Overview field means adding it to the strip list
@@ -2151,6 +2163,7 @@ items for anything it flags or doesn't cover.)
 71. The answer-quality review sample -- CONCLUDED 2026-09-23: no stored field tells a person from a machine; now research-only, its figures never shown in reporting; blinded worksheet, do NOT open the key until every row is labelled
 72. Per-call agent-name rewrite (PC-1) -- capture now stores the roster-canonical name; run the cdr-import preview, back up Neon, then the rewrite once after deploy, and again after a new alias override
 73. QCD violation-flag repair (QO-2) -- a violation is 4.00% or more; run `previewQcdViolationFlags` then `repairQcdViolationFlags` (cdr-report) once after deploy; dated from 2026-08-01, re-run if Neon was unreachable
+74. Outbound source probe (Batch C) -- `probeOutboundSourceAgreement` (dashboard) compares the CDR Historical sheet's placed counts with Neon `outbound_calls`; its verdict picks Batch D's source, never on INCONCLUSIVE/FAILED
 
 ## Cycle Workflow Config
 
@@ -2311,6 +2324,9 @@ S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC
 S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
 S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Department Dashboard
 S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
+S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
+S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
+S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

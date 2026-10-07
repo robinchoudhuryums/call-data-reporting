@@ -984,6 +984,38 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
       + '#outbound-report-btn is still hidden — the release reaches nobody. '
       + 'Drop data-admin-only + style="display:none;" from the button.');
   }
+
+  // Batch D: the My Department Inbound | Outbound | Both switch reads the
+  // same server gate (getDeptOutboundSummary -> outboundResolveRequest_) and
+  // its own visibility IS the client permission, so it moves with the button.
+  const sw = html.match(/<div[^>]*id="dept-dir-switch"[\s\S]*?>/);
+  assert.ok(sw, '#dept-dir-switch is missing from dashboard.html');
+  const swHidden = /data-admin-only/.test(sw[0]) && /style="display:none;"/.test(sw[0]);
+  const swShown = !/data-admin-only/.test(sw[0]) && !/style="display:none;"/.test(sw[0]);
+  assert.ok(gated ? swHidden : swShown,
+    'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #dept-dir-switch is '
+    + (swHidden ? 'hidden' : 'visible') + ' -- release (or hold) the direction switch '
+    + 'in the same commit as the Outbound report (Operator State #63).');
+  assert.match(gs, /function getDeptOutboundSummary\(req\) \{\n  var scope = outboundResolveRequest_\(req\);/,
+    'the dept outbound view must resolve through the SAME gate as the report');
+
+  // Batch E1: the Insights Outbound fold rides the same pair -- same markup
+  // rule, and its JS shows it only through the direction switch's visibility.
+  const fold = html.match(/<details[^>]*id="ins-ob-fold"[\s\S]*?>/);
+  assert.ok(fold, '#ins-ob-fold is missing from dashboard.html');
+  const foldHidden = /data-admin-only/.test(fold[0]) && /style="display:none;"/.test(fold[0]);
+  const foldShown = !/data-admin-only/.test(fold[0]) && !/style="display:none;"/.test(fold[0]);
+  assert.ok(gated ? foldHidden : foldShown,
+    'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-ob-fold is ' + (foldHidden ? 'hidden' : 'visible')
+    + ' -- release (or hold) the Insights Outbound fold with the report (Operator State #63).');
+  assert.match(read('script-8-insights.html', DASH), /if \(!obAllowed_\(\) \|\| !meta \|\| !meta\.department/,
+    'the Insights Outbound fold must take its permission from obAllowed_ (the ONE client gate for D and E)');
+
+  // Batch E2: the Overview tiles' outbound line is stripped on serve while the
+  // gate stands, and FAILS CLOSED when OutboundReport.gs is not loaded.
+  assert.match(read('CompanyOverview.gs', DASH),
+    /if \(typeof OUTBOUND_VETTING_GATE_ === 'undefined' \|\| OUTBOUND_VETTING_GATE_\) \{\n\s*delete out\.outboundCoverageStart;\n\s*if \(Array\.isArray\(out\.depts\)\) out\.depts\.forEach\(function \(d\) \{ if \(d\) delete d\.outbound; \}\);/,
+    'personalizeOverview_ must strip the tiles\' outbound line for non-admins while OUTBOUND_VETTING_GATE_ stands');
 });
 
 // R49 (owner ruling 2026-09-16): the CSR queue family's work window floors at
@@ -1205,6 +1237,8 @@ test('SEC-1: every public DQE/QCD report RPC caps its client window', function (
     'QCDReport.gs': ['getQcdAllDepartments'],
     'QueueReportEmail.gs': ['sendQcdAllDeptEmail'],
     'AgentHome.gs': ['getAgentHome'],
+    'AgentDay.gs': ['getAgentDayStrip'],
+    'OutboundReport.gs': ['getDeptOutboundSummary'],
   };
   const missing = [];
   Object.keys(RPCS).forEach(function (f) {

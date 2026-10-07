@@ -1428,7 +1428,7 @@ When something looks wrong, before assuming a code bug, check:
     the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
     real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
     the canonical pair to spot-check. Reversible
-    either way with no redeploy — the scope is part of the `summary:v22` cache
+    either way with no redeploy — the scope is part of the `summary:v23` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
@@ -1555,7 +1555,7 @@ When something looks wrong, before assuming a code bug, check:
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
     Overview tile's companion surface is the per-dept `dqeSilence`
-    queue-lens badge (`companyOverview:v26`) — the PULL view to this
+    queue-lens badge (`companyOverview:v28`) — the PULL view to this
     engine's PUSH, same detector shape over the trailing 7 chart days.
 
 45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by
@@ -2248,7 +2248,12 @@ When something looks wrong, before assuming a code bug, check:
     4. **Release — both halves in ONE commit.** Flip
        `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false` AND remove
        `data-admin-only` + `style="display:none;"` from `#outbound-report-btn`
-       in `dashboard.html`. The per-dept manager path underneath was kept
+       AND from `#dept-dir-switch` (the My Department Inbound | Outbound | Both
+       switch, Batch D -- it reads the same gate) AND from `#ins-ob-fold` (the
+       Insights Outbound fold, Batch E) in `dashboard.html`. The Overview
+       tiles' outbound line needs no edit: `personalizeOverview_` stops
+       stripping it the moment the gate flips (it reads the same switch). The
+       per-dept manager path underneath was kept
        intact the whole time, so nothing else changes. `cross-file-pins.test.js`
        ("6c: the outbound vetting gate and its menu item are released
        TOGETHER") FAILS on either half alone — a visible item over a throwing
@@ -3129,3 +3134,27 @@ When something looks wrong, before assuming a code bug, check:
       mid-August, change `QCD_VIOL_GTE_FROM_ISO_` before running -- rows
       between Aug 1 and the real switch day were written under the 5% rule.
 
+74. **Outbound source probe (Batch C, owner plan 2026-10; dashboard).**
+    `probeOutboundSourceAgreement()`, editor-run in the dashboard project,
+    admin-only and read-only. It compares the day-level outbound counts in the
+    `CDR Historical Data` sheet (`OB External Total`) with the per-call
+    `outbound_calls` table in Neon, per agent per day, and its verdict decides
+    where the My Department outbound view (Batch D) reads from.
+    - **Run it once** after a normal import day; the default window is the 28
+      days ending at the latest captured date. To pin a window, set
+      `OUTBOUND_SOURCE_FROM` / `OUTBOUND_SOURCE_TO` (cleared again on a clean
+      run). It never reaches before 2026-07-10, when outbound capture began,
+      and is capped at 92 days.
+    - **`ok CLEAN`** -- placed counts agree (95% of agent-days within a call or
+      5%, company totals within 3%). Batch D may read PLACED from the sheet.
+      Durations and connects are still NOT interchangeable: the sheet sums leg
+      duration (ring included) and counts legs of 20 s or more, while Neon
+      stores talk time and talk > 0. The log prints all of them side by side.
+    - **`MISMATCH`** -- Batch D reads Neon (with the Outbound Calls tab as the
+      fallback). The log lists the largest agent-day differences and any
+      agent-days on one side only; one-sided days usually mean an agent-name
+      difference -- run the #72 rewrite, then re-run this.
+    - **`INCONCLUSIVE`** -- too little data, or too many dates present on one
+      side only (an import that skipped the Neon mirror, or a sheet date never
+      built: fix those first, #35 / #52). Never choose a source on this, or on
+      `FAILED` (Neon unreachable or no sheet).

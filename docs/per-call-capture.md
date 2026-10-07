@@ -478,6 +478,51 @@ Caller Lookup communication history (above) and the Outbound report
 
 ### Outbound report
 
+**The My Department outbound view (Batch D) is this report's per-agent half.**
+`getDeptOutboundSummary` reads the SAME per-agent SQL (`outboundAgentsSel_`,
+now shared) and the SAME sheet fallback (`obAgentsFromGrid_` over the
+Outbound Calls tab), shapes through the same `outboundShapeReport_` (roster
+attribution, PC-12 scope) and resolves through the same gate
+(`outboundResolveRequest_`), but skips the callback queries -- so a My
+Department row always equals that agent's row in the report for the same dept
+and dates. Both paths now also return `ob_days` (days with at least one call;
+`obPerDay` = placed per such day). Cached as `deptOutbound:v1:` (freshness tag
++ roster hash; fallback payloads never cached). It does NOT read the CDR
+Historical sheet: its duration is leg duration and its "answered" is >= 20 s,
+so talk time and connects need the per-call table whatever Batch C's probe
+(Operator State #74) says. Pinned in `outbound-fallback.test.js`.
+
+**Batch E puts the same figures in two more places, both admin-only until 6c.**
+The **Insights Outbound fold** calls `getDeptOutboundSummary` for the region's
+window and for its prior window, so it adds no SQL of its own. The **Overview
+tiles' outbound line** is the one new read. `ovReadOutboundByDept_`
+(CompanyOverview.gs) runs ONE grouped query over the Overview's existing read
+window: per agent, `count(*) FILTER` placed and connected for each of the five
+card periods (Yesterday / 30 / 60 / 90 / YTD, the same starts as the inbound
+stats). It attributes through the same `deptsForAgent` roster map as the DQE
+tiles, so an agent on two rosters counts in both and an off-roster dialler in
+none. These are dept TOTALS, so `TEAM_AVG_EXCLUDES` does not apply. The result
+rides the cached `companyOverview:v28` blob, so the 5-minute auto-refresh never
+reaches Neon. The read is metered as `overviewOutbound`. It has NO sheet
+fallback, on purpose: a YTD tail of the Outbound Calls tab costs far more than
+the line is worth. A failed read omits the field, the tiles show no line, and
+the blob still caches. A period that starts before `coverageStart` is flagged
+`partial`. `personalizeOverview_` strips `dept.outbound` and
+`outboundCoverageStart` for every non-admin while `OUTBOUND_VETTING_GATE_`
+stands, and fails closed when OutboundReport.gs is not loaded. Pinned in
+`overview-outbound.test.js` and the 6c pin.
+
+**Batch F adds prior-period chips to both.** The Overview's grouped read gains
+`pp_<period>` / `pc_<period>` FILTER columns for each card period's INV-28
+prior window (`ovOutboundPriorWindows_` -> the shared `computePriorWindow_`),
+widening the read's lower bound to the earliest prior start -- still ONE
+statement, still metered `overviewOutbound`. Each period's `prior` is null
+when its window starts before `coverageStart` (comparing against an
+uncaptured period would read as pure growth); `outboundPriorWindows` carries
+the windows for the hover text and is stripped with the line (companyOverview:v28).
+My Department needs no server change: it calls `getDeptOutboundSummary` a
+second time for the summary's own `meta.priorFrom/priorTo`.
+
 **Outbound report (`OutboundReport.gs`, route `#/report/outbound`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**
 TEMPORARILY admin-only while vetted (the Inbound/Direct resolver model --
@@ -752,6 +797,38 @@ counting the per-call list -- that is what lets the list be a subset without the
 header lying, and it makes the figures the SAME ones My Department shows.
 `agentDayReconcile_` states the gap rather than reconciling it away, and never
 claims `exact` on a degraded day even when the numbers coincide.
+
+**Two tile rows (owner 2026-10, Batch A).** INBOUND = the four DQE daily totals
+plus Transferred (answered calls with a later leg -- more than a second after
+the agent's answer -- that is someone else's, `agentDayTransferredOn_`) and
+Hold (the agent's OWN leg hold). Both are journey-derived, so they show only on
+a `full` day and read "–" otherwise. OUTBOUND = Placed / Connected ("talk > 0")
+/ Talk / Unconnected (the Outbound report's 8 s brief-vs-rang-out split,
+`outboundClassifyRing_`) / Attempts, from the outbound capture. It renders only
+when `meta.outboundCaptured` -- Neon reachable, some capture rows back, and the
+date on or after `AGENT_DAY_OUTBOUND_CAPTURE_START_` (2026-07-10, later than the
+inbound capture, so a full inbound day can still be an uncaptured outbound one)
+-- and otherwise says "Outbound not captured", never a row of zeros. `counts.talkSec`
+stays the two directions' sum; `inboundTalkSec` / `outboundTalkSec` split it.
+
+**The inline agent panel (owner 2026-10, Batch B) is this view's second
+entrance.** A click / Enter / Space on a My Department agent row opens it in
+the row below (`apToggleFromRow_`, script-10): a strip of the agent's days in
+the LOADED window, newest first, and the selected day's view underneath,
+rendered by the SAME helpers as the modal (`adTierNote_` / `adKpiRowsHtml_` /
+`adRoleChip_` / `adOutboundOutcomeChip_`). The strip is
+`getAgentDayStrip({ agentName, from, to })` -- per-day rung / answered / missed
+from the DQE DAL plus ONE grouped `outbound_calls` count query (labelled
+`agentDay`; skipped entirely for a window before the outbound capture start),
+the same entitlement (`agentDayAuthorize_`, split out of `agentDayResolve_`)
+and the SEC-1 window cap. Three rules: (1) a strip day is ACTIVE on a ring or
+an outbound call -- a zero-ring DQE row is not a day; (2) at most the 31 MOST
+RECENT active days ship, with `totalActiveDays` beside them so the client says
+"31 most recent of N" whenever it cut days off; (3) outbound on an uncaptured
+day (before 2026-07-10, or Neon down) is NULL, never 0. Not cached and not
+usage-logged -- the panel opens on its newest day, and that `getAgentDay` call
+logs the `agentDay` row. A one-day window skips the strip. The Individual
+Report the row used to open directly is the panel's first button.
 
 **Auth is server-derived from the ROSTER** (`buildDeptsByAgent_` -> the shared
 `assertDeptAccess_`), so it inherits the R-3 allDepts and Tier C multi-dept

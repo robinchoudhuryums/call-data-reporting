@@ -1,6 +1,70 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-07 — Batch F IMPLEMENTED (block 236): prior-period chips on outbound, admin-only.**
+  - Tiles: a Placed chip and a connect-rate chip (in points) against each card period's INV-28 prior window, counted in the same Overview read (companyOverview:v28). A period whose prior window predates capture shows no chip (YTD, 60/90 today).
+  - My Department Outbound / Both rows: chips on Connected, Not connected (always gray) and Connect %, against the summary's own prior window via a second cached RPC. Never on totals.
+  - Muting: counts under 3 calls; the rate under 2 pts or when either window placed under 10 calls.
+  - 2239 tests, every ci:ui stage green, four pins and the driver bite.
+
+  **Owner-side:** deploy the dashboard (A to F) and walk S56, S57 and S58.
+  **Next:** the 6c release when vetting is clean (Operator State #63).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-07 — Batch E IMPLEMENTED (block 235): outbound on the Overview tiles + an Outbound fold in Insights, admin-only.**
+  - E2: one grouped Neon read inside the cached Overview blob (companyOverview:v27). Each tile gets placed / connected / connect % for the selected card window, with "since Jul 10" on a pre-capture window. It is stripped for every non-admin while OUTBOUND_VETTING_GATE_ stands, and fails closed.
+  - E1: `#ins-ob-fold` compares the region's window with its prior window through getDeptOutboundSummary, keeping the dept's OWN group. It is gated by obAllowed_ like Batch D.
+  - The 6c pin now moves the fold too. New stage drive-outbound-e.js (18 checks). 2234 tests, every ci:ui stage green, three pins and the driver bite.
+  - Two vacuous checks in the B/D drivers are fixed.
+  - Decision: no sheet fallback for the tile line. A failed read omits the line and the blob still caches.
+
+  **Owner-side:** deploy the dashboard (A to E) and walk S56, S57 and S58 as the admin; watch the first cold Overview load.
+  **Next:** the 6c release when the vetting run is clean (Operator State #63), or the follow-ons in block 235.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-07 — Batch D IMPLEMENTED (block 234): Inbound | Outbound | Both on My Department, admin-only.**
+  - `getDeptOutboundSummary` is the Outbound report's per-agent half: shared SQL and sheet aggregation, plus `ob_days`; the same 6c gate; cache `deptOutbound:v1:`.
+  - The switch renders a separate outbound/both table; the Team Outbound panel sits alongside it.
+  - The 6c pin now moves the switch with the report.
+  - New stage drive-deptoutbound.js (23 checks). 2226 tests, all ten ci:ui stages green, six pins bite.
+  - Decision: D reads Neon (with the Outbound Calls tab fallback) regardless of the Batch C verdict, because talk time and connects cannot come from the CDR Historical sheet.
+
+  **Owner-side:** deploy the dashboard (A to D) and walk S56 and S57 as admin.
+  **Next:** Batch E (done, block 235).
+  **Where I left off:** committed and pushed, no PR.
+- **2026-10-07 — Batch C IMPLEMENTED (block 233): outbound source probe.**
+  `probeOutboundSourceAgreement()` (dashboard, editor-run, read-only) compares
+  the CDR Historical sheet's `OB External Total` with Neon `outbound_calls`
+  per agent-day.
+  - The verdict is pre-registered on PLACED only; duration and connected are information only.
+  - Coverage-gap dates are listed and excluded; too many make the run INCONCLUSIVE.
+  - Operator State #74 is the runbook. 2219/2219 tests, ci:ui green, six pins bite.
+  **Owner-side:** deploy the dashboard (A + B + C together), run the probe once, and send back the verdict line plus the log.
+  **Next:** Batch D, whose read source depends on that verdict.
+  **Where I left off:** committed and pushed, no PR.
+- **2026-10-07 — Batch B IMPLEMENTED (block 232): the inline agent panel on
+  My Department.** A row click, Enter or Space opens a panel below the row with:
+  - the agent's days with activity in the loaded window (`getAgentDayStrip`, newest first, at most 31, with "31 most recent of N" when cut);
+  - the selected day's Agent Day view (the modal's own helpers, with Inbound / Outbound / Missed-rings tabs);
+  - the Individual Report as its first button.
+  New gate stage drive-agentpanel.js (21 checks); drive-f13 walks row -> panel -> IR. 2206/2206 tests, every ci:ui stage green, six pins bite, and the driver bites.
+  **Owner-side:** deploy the dashboard (Batch A + B together), then walk S56, S39 and S47.
+  **Next:** Batch C (outbound probe), then D, then E.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-06 — Batch A IMPLEMENTED (block 231): My Department ans/day + the
+  Agent Day tiles.** Owner plan (5 batches, A-E, agreed 2026-10-06 after the
+  inline-panel mock). A1 ans/day counts only days with rings (`summary:v23`).
+  A2 the figure sits beside the "(rung)" total; subtotal/total rows show the
+  team's answered per AGENT per day (floaters + team-average excludes out,
+  combined view sums the pair); hidden Ans / day column gone, CSV keeps it
+  after Answer %. A3 the bar's duplicate inline % removed. A4 Agent Day:
+  Inbound row (DQE four + journey Transferred / Hold) and Outbound row
+  (Placed / Connected / Talk / Unconnected brief-vs-rang-out / Attempts), "not
+  captured" before 2026-07-10, Neon down or no capture rows. 2200/2200 +
+  ci:ui green, 5 bites red. **Owner-side:** deploy the dashboard, walk S47.
+  **Next:** Batch B (inline agent panel: row click -> Agent Day under the row,
+  31-day strip, Individual report button), Batch C (outbound probe, any time),
+  then D, E (admin-only outbound views). The PR #354/#355-era items below
+  (S55, AF-1 step 3, transfer filter Phase 1) still stand. **Where I left
+  off:** committed + pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-05 — CDR Import tools round MERGED + DEPLOYED (#354, #355), then
   /sync-docs.** #354: transfer filter Phase 0 probe, both CDR Tools menus
   grouped, AF-1 abandoned-filter dialog + on-tab check (blocks 229-230). #355:

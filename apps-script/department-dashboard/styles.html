@@ -57,6 +57,12 @@
        the export override) so it never resolves only inside one block. */
     --stale:       #a97a12;
     --stale-soft:  #f6ecd0;
+    /* Call DIRECTION hues (Batch B follow-up). Inbound reuses the accent --
+       it already means inbound on Caller Lookup's chip -- and outbound gets
+       its own violet, a hue no status token uses, so neither reads as
+       good/bad. Defined at every site --accent is (pinned). */
+    --dir-out:      #7a5bb8;
+    --dir-out-soft: #ece4f7;
 
     --display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --ui:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -100,6 +106,8 @@
       --bad-soft:    oklch(91% 0.04 25);
       --stale:       oklch(58% 0.13 80);
       --stale-soft:  oklch(94% 0.04 85);
+      --dir-out:      oklch(52% 0.13 300);
+      --dir-out-soft: oklch(93% 0.04 300);
     }
   }
   /* Light-mode theme variants -- swapped via body[data-theme="..."]
@@ -150,6 +158,8 @@
     --on-warn: #101418;
     --bad:    #e06a56;
     --stale:  #e2b04e;
+    --dir-out:      #b39be6;
+    --dir-out-soft: #2a2140;
   }
   /* Native calendar-picker icon: by default the WebKit/Chromium
      SVG is black, which disappears against the dark paper. Invert
@@ -172,6 +182,8 @@
       --warn:   oklch(73% 0.13 45);
       --bad:    oklch(67% 0.16 28);
       --stale:  oklch(78% 0.13 85);
+      --dir-out:      oklch(74% 0.11 300);
+      --dir-out-soft: oklch(27% 0.05 300);
     }
   }
 
@@ -913,6 +925,9 @@
   /* Round-4 fold: the rung total rides the bar cell as a muted "(N)" now
      that the dedicated Total-calls column is gone. */
   .ans-nums .ans-total { color: var(--muted); font-size: 0.92em; margin-left: 4px; }
+  /* Owner (2026-10): answered per day with rings, beside the rung total
+     (ansPerDayHtml_); replaced the inline rate the Answer % column duplicates. */
+  .ans-nums .ans-perday { color: var(--muted); font-size: 0.85em; margin-left: 6px; white-space: nowrap; letter-spacing: 0; }
   /* R5: per-call facts (wait time / insurer) on queue-only abandoned rows. */
   .queue-only-list .qo-facts { color: var(--muted); font-size: 0.92em; }
   /* R5: the missed section hosts a frost-and-ripple while its fetch runs;
@@ -1459,6 +1474,22 @@
     .dept-side > #dept-team-rings .trp-table-wrap {
       flex: 1 1 auto; min-height: 108px; max-height: none;
     }
+    /* Batch D: Team Outbound Data takes Team Rings' place in the Outbound
+       view (same flex treatment). In the Both view the two panels would each
+       shrink to their floors and paint over each other, so there they keep
+       their natural height with a capped, scrolling table, and the aside's
+       own scrollbar is the last resort -- the R18b rule above. */
+    .dept-side > #dept-team-outbound {
+      flex: 1 1 auto; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .dept-side > #dept-team-outbound .trp-table-wrap {
+      flex: 1 1 auto; min-height: 108px; max-height: none;
+    }
+    body[data-dir="both"] .dept-side > #dept-team-rings,
+    body[data-dir="both"] .dept-side > #dept-team-outbound { flex: 0 0 auto; }
+    body[data-dir="both"] .dept-side > #dept-team-rings .trp-table-wrap,
+    body[data-dir="both"] .dept-side > #dept-team-outbound .trp-table-wrap { flex: 0 0 auto; max-height: 200px; }
   }
   /* In the narrow side column the per-queue tiles stack rather than squeeze.
      R17c (owner): two tiles per row + a two-line Total-Calls split + a
@@ -3527,6 +3558,120 @@
   /* KPI tile row at the top of the report: 6 tiles, big number +
      delta vs prior period. Distinct from the Individual Report's
      KPI tiles -- no sparkline, no team-avg context. */
+  /* Owner (2026-10, Batch A): Agent Day's Inbound / Outbound tile-row labels. */
+  .ad-kpi-group { font: 500 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--muted); margin: 4px 0 6px; }
+  .ad-kpi-group span { color: var(--ink); }
+  /* The direction word as a coloured pill, and a matching top stripe on each
+     tile of its row, so Inbound and Outbound read apart at a glance. Shared
+     by the Agent Day modal and the inline agent panel (adKpiRowsHtml_). */
+  .ad-kpi-group .ad-dir { display: inline-block; padding: 2px 8px; border-radius: var(--r-pill);
+    font-weight: 600; letter-spacing: 0.14em; }
+  .ad-kpi-group .ad-dir--in  { background: var(--accent-soft); color: var(--accent); }
+  .ad-kpi-group .ad-dir--out { background: var(--dir-out-soft); color: var(--dir-out); }
+  .ad-kpi-row--in .ds-kpi  { border-top: 3px solid var(--accent); }
+  .ad-kpi-row--out .ds-kpi { border-top: 3px solid var(--dir-out); }
+
+  /* Batch B: the inline agent panel under a My Department agent row
+     (apToggleFromRow_, script-10). The panel is a <tr> inside .agents, so
+     every rule here is scoped under .agents and placed AFTER the table's own
+     rules -- otherwise .agents td's right-align / padding and the sticky
+     thead styling bleed into the nested call tables. The inner .ap is
+     sticky-left, sized to the scroll wrapper by JS, and contain:inline-size
+     so it can never widen the table it sits in. */
+  .agents tbody tr.ap-open > td { background: var(--accent-soft); }
+  .agents tbody tr.ap-open > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .agents tbody tr.ap-row:hover { background: transparent; }
+  .agents tbody tr.ap-row > td { padding: 0; text-align: left; background: var(--paper);
+    border-bottom: 2px solid var(--accent); }
+  .agents .ap { position: sticky; left: 0; box-sizing: border-box; padding: 14px 18px 16px;
+    contain: inline-size; text-align: left; white-space: normal; cursor: default; }
+  .agents .ap-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .agents .ap-title { font: 500 16px/1.2 var(--display); letter-spacing: -0.2px; color: var(--ink); }
+  .agents .ap-sub { font: 500 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); }
+  .agents .ap-act { margin-left: auto; display: flex; gap: 6px; }
+  .agents .ap-act .btn { padding: 5px 11px; font-size: 12px; }
+  .agents .ap-loading { font-size: 12px; color: var(--muted); padding: 6px 0 10px; }
+  .agents .ap-strip-wrap { display: flex; align-items: stretch; gap: 6px; margin-bottom: 6px; }
+  .agents .ap-arrow { border: 1px solid var(--line); background: var(--paper-card); border-radius: var(--r);
+    width: 26px; flex: 0 0 26px; cursor: pointer; color: var(--muted); font: inherit; }
+  .agents .ap-arrow:hover { color: var(--ink); }
+  .agents .ap-strip { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; flex: 1 1 auto;
+    min-width: 0; padding-bottom: 4px; }
+  .agents .ap-day { flex: 0 0 106px; display: flex; flex-direction: column; align-items: flex-start;
+    border: 1px solid var(--line); border-radius: var(--r); background: var(--paper-card);
+    padding: 5px 8px; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+  .agents .ap-day:hover { border-color: var(--accent); }
+  .agents .ap-day.is-on { border-color: var(--accent); background: var(--accent-soft);
+    box-shadow: inset 0 -2px 0 var(--accent); }
+  .agents .ap-day-top { display: flex; justify-content: space-between; align-items: baseline; align-self: stretch; gap: 6px; }
+  /* No colour here: the .bm-* tint class on the same span carries it. */
+  .agents .ap-day-rate { font: 600 10.5px/1.3 var(--mono); font-variant-numeric: tabular-nums; }
+  .agents .ap-day-w { font: 500 9px/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); }
+  .agents .ap-day-d { font: 600 11px/1.3 var(--mono); }
+  .agents .ap-day-f { font: 400 10px/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
+  .agents .ap-day-f b { color: var(--good); font-weight: 600; }
+  .agents .ap-day-f i { font-style: normal; color: var(--warn); }
+  .agents .ap-day-f.ap-day-ob { color: var(--dir-out); }
+  .agents .ap-note { font-size: 11.5px; color: var(--muted); margin: 0 0 12px; }
+  .agents .ap-daybar { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
+  .agents .ap-daybar-t { font: 600 13px/1.2 var(--mono); }
+  .agents .ap-kpis .pr-kpi-row { gap: 6px; margin-bottom: 8px; }
+  /* Compact tiles inside the panel (the mock): the modal keeps the full size.
+     Specificity beats .ds-kpi's base rules, which sit later in the file. */
+  .agents .ap-kpis .ds-kpi { padding: 6px 9px; border-radius: var(--r); }
+  .agents .ap-kpis .ds-kpi__label { font-size: 9px; letter-spacing: 0.14em; }
+  .agents .ap-kpis .ds-kpi__value { font-size: 18px; letter-spacing: -0.3px; margin-top: 2px; }
+  .agents .ap-kpis .ds-kpi__foot { font-size: 9.5px; margin-top: 2px; }
+  .agents .ap-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .agents .ap-tab { border: 0; background: transparent; padding: 6px 10px; font: 500 12px var(--ui);
+    color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; }
+  .agents .ap-tab.is-on { color: var(--ink); border-bottom-color: var(--accent); }
+  .agents .ap-tab-n { font-family: var(--mono); font-size: 11px; margin-left: 4px; color: var(--muted); }
+  /* Direction tabs carry the same hue as their tile row: a dot always, and
+     the underline + label colour when selected. */
+  .agents .ap-tab--in::before, .agents .ap-tab--out::before { content: ''; display: inline-block;
+    width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .agents .ap-tab--in::before  { background: var(--accent); }
+  .agents .ap-tab--out::before { background: var(--dir-out); }
+  .agents .ap-tab--in.is-on  { color: var(--accent); border-bottom-color: var(--accent); }
+  .agents .ap-tab--out.is-on { color: var(--dir-out); border-bottom-color: var(--dir-out); }
+  .agents .ap-list { max-height: 240px; overflow: auto; background: var(--paper-card);
+    border: 1px solid var(--line); border-top: 0; }
+  .agents .ap-list > .ds-note { margin: 8px; }
+  .agents .ap-rings { padding: 10px 12px; font: 400 12px/1.6 var(--mono); }
+  .agents .ap-calls { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .agents .ap-calls th, .agents .ap-calls td { padding: 6px 10px; text-align: left; white-space: nowrap; }
+  .agents .ap-calls thead th { cursor: default; padding: 8px 10px; font-size: 9.5px; letter-spacing: 0.16em; }
+  .agents .ap-calls td { border-top: 1px solid var(--line); border-bottom: 0; }
+  .agents .ap-calls td.m { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .agents .ap-calls tr:hover { background: var(--paper-2); }
+  .agents .ap-path { color: var(--accent); font-size: 11.5px; }
+
+  /* Batch D: Inbound | Outbound | Both on the agent table. The body's
+     data-dir (set by obViewSync_) decides which table and which side panel
+     show -- CSS, so a late Team Rings repaint cannot bring the inbound panel
+     back over the outbound view. Direction hues follow the Agent Day tiles:
+     inbound = --accent, outbound = --dir-out. */
+  .dept-dir-switch { margin-left: 8px; }
+  body[data-dir="out"] #agents-in-wrap,
+  body[data-dir="both"] #agents-in-wrap { display: none; }
+  body[data-dir="out"] #dept-team-rings { display: none !important; }
+  .tly.oc { background: var(--dir-out); }
+  .tly.ou { background: var(--line); }
+  .ob-c { color: var(--dir-out); font-weight: 600; }
+  .ob-u { color: var(--muted); }
+  .ans-seg.ob-conn { background: var(--dir-out); }
+  .ans-seg.ob-unconn { background: var(--line); }
+  .agents-ob thead th.ob-dir-in { box-shadow: inset 0 -2px 0 var(--accent); }
+  .agents-ob thead th.ob-dir-out { box-shadow: inset 0 -2px 0 var(--dir-out); }
+  .agents-ob td.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
+  .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
+  #agents-ob-note { margin: 0 0 8px; }
+  @media (max-width: 700px) {
+    .agents .ap { padding: 12px 10px 14px; }
+    .agents .ap-act { margin-left: 0; }
+  }
   .pr-kpi-row {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -5482,6 +5627,8 @@
       --bad-soft:    #f1d7d2 !important;
       --stale:       #a97a12 !important;
       --stale-soft:  #f6ecd0 !important;
+      --dir-out:      #7a5bb8 !important;
+      --dir-out-soft: #ece4f7 !important;
     }
     body {
       background: #ffffff !important;
@@ -6029,6 +6176,20 @@
     letter-spacing: 0.04em;
     margin-right: 3px;
   }
+  /* Batch E2: the tile's outbound line (admin-only until 6c) -- the violet
+     outbound hue (--dir-out), so it never reads as more inbound figures. */
+  .ov-dept-tile-row.ov-dept-ob { align-items: center; gap: 10px; margin-top: 2px; }
+  .ov-dir-pill { display: inline-block; padding: 1px 7px; border-radius: var(--r-pill);
+    background: var(--dir-out-soft); color: var(--dir-out); font-family: var(--sans);
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .ov-dept-ob-pct { color: var(--dir-out); font-weight: 600; }
+  .ov-dept-ob-since, .ov-dept-ob-none { color: var(--muted); font-size: 11px; }
+  /* Batch E1: the Insights Outbound fold (admin-only until 6c). */
+  #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #ins-ob-fold .ins-ob-scroll { overflow-x: auto; max-width: 100%; margin-top: 4px; }
+  #ins-ob-fold .ins-ob-table { min-width: 520px; }
+  #ins-ob-fold .ds-note { margin-top: 10px; }
+  @media (max-width: 900px) { #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .ov-dept-tile-spark {
     margin-top: 4px;
     border-top: 1px dashed var(--line);

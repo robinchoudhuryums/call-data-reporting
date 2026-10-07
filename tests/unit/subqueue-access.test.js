@@ -456,33 +456,60 @@ test('picker: an unreadable parent map yields no groups rather than throwing', f
 
 // ---- Batch 4 (broad-scan 2026-09-17): D-6 + D-9 ---------------------------
 
-test('D-6: the combined grand total UNIONS active days and carries ansPerDay', function () {
-  function withDays(p, days) {
-    Object.defineProperty(p.totals, 'activeDayKeys', { value: days, enumerable: false });
-    return p;
-  }
-  const a = withDays(part('Sales', [{ agent: 'A', totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9, tttSeconds: 100, matchedViaRoster: true }],
-    { totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9, tttSeconds: 100,
-      rosterAgentCount: 1, queueOnlyAgentCount: 0, daysActive: 2, ansPerDay: 4 }),
-    ['2026-09-01', '2026-09-02']);
-  const b = withDays(part('PAP', [{ agent: 'C', totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4, tttSeconds: 40, matchedViaRoster: true }],
-    { totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4, tttSeconds: 40,
-      rosterAgentCount: 1, queueOnlyAgentCount: 0, daysActive: 2, ansPerDay: 1.5 }),
-    ['2026-09-02', '2026-09-03']);
+// summary:v23 (owner 2026-10): the team's answered per AGENT per day is a
+// ratio of two sums, so the combined grand total sums each dept's pair and
+// divides once (never a mean of the depts' ratios), with a crossover agent's
+// repeat appearance removed from the pair like it is from the totals.
+function teamRow(dept, agent, answered, days) {
+  return { agent: agent, dept: dept, matchedViaRoster: true, queueScoped: false,
+           totalRung: answered + 1, totalMissed: 1, totalAnswered: answered, totalUnique: answered,
+           tttSeconds: 10 * answered, daysActive: days };
+}
+function teamPart(dept, rows, excluded) {
+  let ans = 0, days = 0;
+  rows.forEach(function (r) { if ((excluded || []).indexOf(r.agent) === -1) { ans += r.totalAnswered; days += r.daysActive; } });
+  const t = { totalRung: 0, totalMissed: 0, totalAnswered: 0, totalUnique: 0, tttSeconds: 0,
+              rosterAgentCount: rows.length, queueOnlyAgentCount: 0,
+              ansPerDayAnswered: ans, ansPerDayAgentDays: days, ansPerDay: days ? Math.round(ans / days * 10) / 10 : null };
+  rows.forEach(function (r) { ['totalRung', 'totalMissed', 'totalAnswered', 'totalUnique', 'tttSeconds'].forEach(function (k) { t[k] += r[k]; }); });
+  return part(dept, rows, t);
+}
+
+test('v23: the combined grand total sums the depts\' answered-per-agent-day pairs', function () {
+  const a = teamPart('Sales', [teamRow('Sales', 'A', 8, 2)]);
+  const b = teamPart('PAP', [teamRow('PAP', 'C', 3, 1)]);
   const r = hData.call('combineSummaries_', a, [a, b]);
-  assert.equal(r.totals.daysActive, 3, 'a day both depts were active on is ONE day (union), not two (sum)');
-  assert.equal(r.totals.ansPerDay, 3.7, '11 answered / 3 days, 1 dp -- no longer a dash on the combined total row');
-  assert.equal(r.deptGroups[0].totals.daysActive, 2, 'per-dept subtotals keep their own count');
-  assert.ok(!Object.keys(r.totals).some(function (k) { return k === 'activeDayKeys'; }),
-    'the day set never becomes an enumerable payload field');
+  assert.equal(r.totals.ansPerDayAnswered, 11);
+  assert.equal(r.totals.ansPerDayAgentDays, 3);
+  assert.equal(r.totals.ansPerDay, 3.7, '11 answered / 3 agent-days -- not the mean of 4 and 3');
+  assert.equal(r.deptGroups[0].totals.ansPerDay, 4, 'per-dept subtotals keep their own figure');
 });
 
-test('D-6: parts built without the day set fall back to the largest per-dept count', function () {
-  const a = part('Sales', [], { totalAnswered: 8, rosterAgentCount: 1, daysActive: 2 });
-  const b = part('PAP', [], { totalAnswered: 3, rosterAgentCount: 1, daysActive: 5 });
+test('v23: a crossover agent counted by both depts is removed once from the pair', function () {
+  const x = function (d) { return teamRow(d, 'X', 8, 2); };
+  const a = teamPart('Sales', [teamRow('Sales', 'A', 8, 2), x('Sales')]);
+  const b = teamPart('PAP', [x('PAP'), teamRow('PAP', 'C', 3, 1)]);
   const r = hData.call('combineSummaries_', a, [a, b]);
-  assert.equal(r.totals.daysActive, 5, 'a union can never be below the largest part');
-  assert.equal(r.totals.ansPerDay, 2.2);
+  assert.equal(r.totals.crossoverAgentCount, 1);
+  assert.equal(r.totals.ansPerDayAnswered, 19, '8 (A) + 8 (X, once) + 3 (C)');
+  assert.equal(r.totals.ansPerDayAgentDays, 5);
+  assert.equal(r.totals.ansPerDay, 3.8);
+});
+
+test('v23: a crossover agent one dept excludes is not subtracted twice', function () {
+  const saved = hData.ctx.getTeamAvgExcludes_;
+  hData.ctx.getTeamAvgExcludes_ = function (dept) { return dept === 'PAP' ? ['X'] : []; };
+  try {
+    const x = function (d) { return teamRow(d, 'X', 8, 2); };
+    const a = teamPart('Sales', [teamRow('Sales', 'A', 8, 2), x('Sales')]);
+    const b = teamPart('PAP', [x('PAP'), teamRow('PAP', 'C', 3, 1)], ['X']);
+    const r = hData.call('combineSummaries_', a, [a, b]);
+    assert.equal(r.totals.crossoverAgentCount, 1, 'the totals still de-dupe X');
+    assert.equal(r.totals.ansPerDayAnswered, 19, 'PAP never counted X, so nothing comes off the pair');
+    assert.equal(r.totals.ansPerDayAgentDays, 5);
+  } finally {
+    hData.ctx.getTeamAvgExcludes_ = saved;
+  }
 });
 
 test('D-9: the single-part path grafts the REQUESTED dept\'s qcd / csrTransfer / diagnostics', function () {

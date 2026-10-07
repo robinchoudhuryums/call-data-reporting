@@ -99,7 +99,12 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
   var handlers = {
     getLatestDataDates: function () { return P.latestDates; },
     getLatestDataDate: function () { return P.latestDates.latest; },
-    getCompanyOverview: function () { return P[${JSON.stringify(role)} === 'admin' ? 'ov-admin' : 'ov-manager']; },
+    // Batch E2: View-as is a MANAGER payload server-side (personalizeOverview_
+    // strips the admin-only fields, the tiles' outbound line among them), so
+    // the mock serves the manager capture for it rather than the admin one.
+    getCompanyOverview: function (req) {
+      return P[(${JSON.stringify(role)} === 'admin' && !(req && req.viewAsDept)) ? 'ov-admin' : 'ov-manager'];
+    },
     getDepartmentSummary: function (req) {
       var d = spanDays(req);
       // A dept with NO sub-queues, so the single-dept render + CSV stay covered.
@@ -126,6 +131,22 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       if (d <= 2) return P['summary-day'];
       if (d <= 45) return P['summary-30d'];
       return P['summary-ytd'];
+    },
+    // Batch D: the Outbound / Both view. The 30-day CSR window is served the
+    // payload the REAL getDeptOutboundSummary produced in gen-payloads; any
+    // other dept or window gets an empty-but-valid payload, so the view's
+    // "no outbound calls" state renders instead of an unmocked call.
+    getDeptOutboundSummary: function (req) {
+      var p = P['dept-outbound-30d'];
+      if (p && req && req.department === 'CSR' && req.from === p.meta.from && req.to === p.meta.to) return p;
+      // Batch E1: the Insights Outbound fold's current + prior windows.
+      var pw = (P['dept-outbound-windows'] || {})[(req && req.from) + '|' + (req && req.to)];
+      if (pw && req.department === 'CSR') return pw;
+      return { meta: { department: (req && req.department) || '', from: (req && req.from) || '', to: (req && req.to) || '',
+          scopeDepts: [(req && req.department) || ''], available: true, fallbackSource: null, fallbackThrough: null,
+          coverageStart: '2026-07-10', offRosterAgents: 0, briefRingSec: 8, cacheHit: false, computeMs: 3 },
+        agents: [], totals: { agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null, obTalkSec: 0, obAttSec: 0,
+          attempts: 0, obPerDay: null, obPerDayPlaced: 0, obPerDayAgentDays: 0 }, deptGroups: null };
     },
     getMissedCallsReport: function (req) {
       return spanDays(req) <= 2 ? P['missed-day'] : P['missed-30d'];
@@ -293,10 +314,12 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           department: 'CSR', unrostered: false, rosterHomes: ['CSR'],
           available: true, tier: 'full', degradedReason: null,
           journeyHorizonDays: 90, captureHorizonDays: 400, ageDays: 3,
-          truncated: false, neonAvailable: true, tzLabel: 'CST', computeMs: 18 },
+          truncated: false, neonAvailable: true, outboundCaptured: true, outboundCaptureStart: '2026-07-10', tzLabel: 'CST', computeMs: 18 },
         day: { rung: 14, missed: 3, answered: 11, tttSec: 2640, attSec: 240, source: 'dqe' },
         counts: { inboundTotal: 3, answered: 1, missed: 1, rang: 1,
-          outboundTotal: 2, outboundConnected: 1, talkSec: 300 },
+          outboundTotal: 2, outboundConnected: 1, talkSec: 540,
+          inboundTalkSec: 240, outboundTalkSec: 300, agentHoldSec: 45, holdCalls: 1, transferredOn: 1,
+          outboundAttempts: 4, outboundUnconnectedBrief: 0, outboundUnconnectedReal: 1, outboundUnconnectedUnknown: 0 },
         reconcile: { checked: true, exact: false,
           note: 'Per-call list shows 1 answered; the daily total says 11. '
             + 'Calls outside the work window are counted by one and not the other.' },
@@ -317,6 +340,35 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         ],
         missedRings: [],
       };
+    },
+    // Batch B: the inline agent panel's day strip -- every WEEKDAY in the
+    // window is an active day, newest first, capped at 31 like the server, so
+    // a 30-day harness window exercises the strip and a longer one the
+    // "31 most recent of N" note.
+    getAgentDayStrip: function (req) {
+      const from = (req && req.from) || '2026-07-21', to = (req && req.to) || '2026-08-19';
+      const days = [];
+      const p = to.split('-').map(Number);
+      const d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+      let n = 0;
+      for (let guard = 0; guard < 800; guard++) {
+        const iso = d.toISOString().slice(0, 10);
+        if (iso < from) break;
+        const wd = d.getUTCDay();
+        if (wd !== 0 && wd !== 6) {
+          days.push({ date: iso, rung: 12 + (n % 5), answered: 10 + (n % 4), missed: 2 + (n % 3),
+            outbound: iso >= '2026-07-10' ? 3 + (n % 6) : null,
+            outboundConnected: iso >= '2026-07-10' ? 2 + (n % 3) : null,
+            outboundCaptured: iso >= '2026-07-10' });
+          n++;
+        }
+        d.setUTCDate(d.getUTCDate() - 1);
+      }
+      return { meta: { agentName: (req && req.agentName) || 'Test Agent', department: 'CSR',
+          unrostered: false, rosterHomes: ['CSR'], from: from, to: to, maxDays: 31,
+          totalActiveDays: days.length, shown: Math.min(days.length, 31),
+          outboundAvailable: true, outboundCaptureStart: '2026-07-10', computeMs: 12 },
+        days: days.slice(0, 31) };
     },
     getCoachingWorklist: function (req) {
       return { available: true, rows: [

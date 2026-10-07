@@ -1647,6 +1647,7 @@
     // outlive an explicit Refresh -- pressing Refresh and still reading
     // pre-refresh MTD numbers is the one way this panel could lie.
     trpFetched_ = {};
+    OB_VIEW_.key = null;   // Batch D: an explicit Refresh refetches the outbound view too
     // Sub-queue: the client no longer sends `subScope` at all. The scope
     // switcher is retired -- collapsing a group in the combined table gives
     // every view it offered, instantly and without a round trip -- so the
@@ -2884,15 +2885,6 @@
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
-    if (col.type === 'num1') {
-      // One decimal (Ans / day). Null = no active days; the day count rides
-      // in the title so the divisor is never a mystery.
-      if (v == null || !isFinite(Number(v))) return zeroCell_('–');
-      const days = Number(row.daysActive) || 0;
-      const t = days ? ' title="' + escapeHtml(fmtNumber(row.totalAnswered || 0) + ' answered over ' + days + ' active day' + (days === 1 ? '' : 's')) + '"' : '';
-      const txt = Number(v).toFixed(1);
-      return Number(v) === 0 ? zeroCell_(txt) : '<span' + t + '>' + txt + '</span>';
-    }
     if (col.type === 'duration') {
       const dur = fmtDuration(v);
       return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
@@ -3316,7 +3308,7 @@
     var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
     return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
       + (rowClass ? ' class="' + rowClass + '"' : '')
-      + ' title="Open ' + escapeHtml(row.agent) + '\u2019s Individual Report">'
+      + ' title="Show ' + escapeHtml(row.agent) + '\u2019s days (the Individual Report is inside)">'
       + COLUMNS.map(function (col, i) {
           var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
           return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
@@ -3540,6 +3532,8 @@
       tfoot.innerHTML = '';
       renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
       renderTeamRingsPanel_(state);  // R17b: ditto -- the 2nd sticky panel
+      if (typeof apReattach_ === 'function') apReattach_();   // closes it: no rows
+      obViewSync_();
       return;
     }
 
@@ -3562,13 +3556,13 @@
       // keep it so any consumer that styles whole-row queue-only
       // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
-      // data-agent powers the row drill-through to the Individual Report.
+      // data-agent powers the row's inline agent panel (Batch B, apToggleFromRow_).
       // F13: tabindex makes the drill keyboard-reachable (the delegated
       // keydown on #agents-tbody activates it); no role override -- see
       // makeActivatable_'s note on preserving table row semantics.
       return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
            + (rowClass ? ' class="' + rowClass + '"' : '')
-           + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
+           + ' title="Show ' + escapeHtml(row.agent) + '’s days (the Individual Report is inside)">'
            + COLUMNS.map(function (col, i) {
         // B1: tag the Answered/Missed bar cell so a date-range refresh flashes
         // the agents whose volume actually changed (key by agent name, stable).
@@ -3633,6 +3627,10 @@
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.
     dsFlashChanged_($('agents-tbody'), 'dept:' + getRequestedDept());
+    // Batch B: this paint wiped the inline agent panel's row -- put it back.
+    if (typeof apReattach_ === 'function') apReattach_();
+    // Batch D: keep the Outbound / Both view in step with the inbound data.
+    obViewSync_();
   }
 
   // Round-16 (owner): "Email me this report" -- the styled EmailKit summary
@@ -3718,12 +3716,17 @@
         else if (col.type === 'duration') out.push(fmtDuration(row[col.key]));
         else out.push(row[col.key]);
         if (col.type === 'bar') out.push(row.totalRung != null ? row.totalRung : '');
+        // Owner (2026-10): Ans / day left the on-screen columns (it renders in
+        // the bar cell) but the export keeps it, in its old place after
+        // Answer %, so a spreadsheet built on the old column order still lines up.
+        if (col.type === 'pct') out.push(row.ansPerDay != null ? row.ansPerDay : '');
       });
       return out;
     };
     var header = COLUMNS.reduce(function (acc, c) {
       acc.push(c.label);
       if (c.type === 'bar') acc.push('Total calls');
+      if (c.type === 'pct') acc.push('Ans / day');
       return acc;
     }, multiDept ? ['Department'] : []);
     var rows = [];
@@ -3921,4 +3924,502 @@
       }
     }
   }
+  // ── Batch D (owner plan 2026-10): Inbound | Outbound | Both ───────────────
+  //
+  // A switch over the My Department agent table. Inbound is the table every
+  // manager has always seen, untouched. Outbound and Both render a SEPARATE
+  // table (#agents-ob-table) so the inbound COLUMNS model, its sort and its
+  // exports cannot be disturbed; the Team Outbound side panel joins it.
+  //
+  // Rules that bite:
+  //   - PERMISSION = the switch's own visibility. It carries data-admin-only
+  //     and is released with the Outbound report (6c); view-as-manager hides
+  //     [data-admin-only], so a preview falls back to Inbound by itself. Never
+  //     add a role check here -- one source of truth.
+  //   - Outbound figures come from getDeptOutboundSummary, the Outbound
+  //     report's own per-agent SQL, so a row here equals that agent's row in
+  //     the report for the same dept and dates. Connected means the far end
+  //     answered (OB_CONNECTED_DEF_), never "reached".
+  //   - Both shows the two side by side and never adds them: "answered +
+  //     placed" is not a meaningful total.
+  //   - Export and Copy still produce the INBOUND table (said in the note).
+  var OB_DIR_KEY_ = 'cdr.dept.direction';
+  var obDir_ = (function () {
+    try {
+      var v = localStorage.getItem(OB_DIR_KEY_);
+      return (v === 'out' || v === 'both') ? v : 'in';
+    } catch (e) { return 'in'; }
+  })();
+  var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, sortKey: 'obTotal', sortDir: 'desc' };
+  var obWired_ = false;
+
+  function obAllowed_() {
+    var sw = $('dept-dir-switch');
+    if (!sw) return false;
+    try { return getComputedStyle(sw).display !== 'none'; } catch (e) { return false; }
+  }
+  function obEffectiveDir_() { return obAllowed_() ? obDir_ : 'in'; }
+
+  function obSyncButtons_(dir) {
+    var sw = $('dept-dir-switch');
+    if (!sw) return;
+    sw.querySelectorAll('[data-dir]').forEach(function (b) {
+      var on = b.getAttribute('data-dir') === dir;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function obWire_() {
+    if (obWired_) return;
+    obWired_ = true;
+    var sw = $('dept-dir-switch');
+    if (sw) sw.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-dir]');
+      if (!b) return;
+      obDir_ = b.getAttribute('data-dir') || 'in';
+      try { localStorage.setItem(OB_DIR_KEY_, obDir_); } catch (err) {}
+      obViewSync_();
+    });
+    var thead = $('agents-ob-thead');
+    var sortBy = function (th) {
+      var k = th.getAttribute('data-ob-sort');
+      if (!k) return;
+      if (OB_VIEW_.sortKey === k) OB_VIEW_.sortDir = OB_VIEW_.sortDir === 'asc' ? 'desc' : 'asc';
+      else { OB_VIEW_.sortKey = k; OB_VIEW_.sortDir = (k === 'agent') ? 'asc' : 'desc'; }
+      obViewRender_();
+      var again = document.querySelector('#agents-ob-thead th[data-ob-sort="' + k + '"]');
+      if (again) again.focus();
+    };
+    if (thead) {
+      thead.addEventListener('click', function (e) {
+        var th = e.target.closest && e.target.closest('th[data-ob-sort]');
+        if (th) sortBy(th);
+      });
+      thead.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var th = e.target.closest && e.target.closest('th[data-ob-sort]');
+        if (th) { e.preventDefault(); sortBy(th); }
+      });
+    }
+    // Rows open the same inline agent panel the inbound rows do (Batch B).
+    var tb = $('agents-ob-tbody');
+    var open = function (e) {
+      var tr = e.target.closest && e.target.closest('tr[data-agent]');
+      if (!tr) return;
+      if (e.type === 'click' && window.getSelection) {
+        var sel = window.getSelection();
+        if (sel && !sel.isCollapsed && tr.contains(sel.anchorNode)) return;
+      }
+      if (typeof apToggleFromRow_ === 'function') apToggleFromRow_(tr);
+    };
+    if (tb) {
+      tb.addEventListener('click', open);
+      tb.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && e.target.closest('tr.ap-open')) {
+          e.preventDefault();
+          if (typeof apClose_ === 'function') apClose_(true);
+          return;
+        }
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (!e.target.closest('tr[data-agent]')) return;
+        e.preventDefault();
+        open(e);
+      });
+    }
+    var panel = $('dept-team-outbound');
+    var jump = function (tr) {
+      var name = tr.getAttribute('data-tob-agent') || '';
+      var target = Array.prototype.find.call(
+        document.querySelectorAll('#agents-ob-tbody tr[data-agent]'),
+        function (r) { return r.getAttribute('data-agent') === name; });
+      if (!target) return;
+      try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (err) {}
+      target.classList.remove('trp-jump-hit');
+      void target.offsetWidth;
+      target.classList.add('trp-jump-hit');
+    };
+    if (panel) {
+      panel.addEventListener('click', function (e) {
+        var tr = e.target.closest && e.target.closest('tr.trp-row');
+        if (tr) jump(tr);
+      });
+      panel.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var tr = e.target.closest && e.target.closest('tr.trp-row');
+        if (tr) { e.preventDefault(); jump(tr); }
+      });
+    }
+  }
+
+  /**
+   * Called at the end of every render() (and on a switch click / view-as
+   * change): decide which table shows, fetch the outbound summary for the
+   * page's loaded window when it is not already held, and paint.
+   */
+  function obViewSync_() {
+    obWire_();
+    var dir = obEffectiveDir_();
+    obSyncButtons_(dir);
+    document.body.setAttribute('data-dir', dir);
+    var obWrap = $('agents-ob-wrap');
+    var tob = $('dept-team-outbound');
+    if (dir === 'in') {
+      if (obWrap) obWrap.style.display = 'none';
+      if (tob) tob.style.display = 'none';
+      return;
+    }
+    if (obWrap) obWrap.style.display = '';
+    var m = state.meta || {};
+    var dept = getRequestedDept();
+    if (!dept || !m.from || !m.to) { obViewRender_(); return; }
+    var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '');
+    if (OB_VIEW_.key === key && (OB_VIEW_.data || OB_VIEW_.error)) { obViewRender_(); return; }
+    var seq = ++OB_VIEW_.seq;
+    OB_VIEW_.key = key; OB_VIEW_.data = null; OB_VIEW_.prior = null; OB_VIEW_.error = null;
+    // Batch F: the prior-period chips read the SAME INV-28 window the inbound
+    // E5 chips use (state.meta.priorFrom/priorTo, server-resolved), through
+    // the same cached RPC. A failed prior read just means no chips.
+    if (m.priorFrom && m.priorTo) {
+      google.script.run
+        .withSuccessHandler(function (p) {
+          if (seq !== OB_VIEW_.seq) return;
+          OB_VIEW_.prior = p || null;
+          if (OB_VIEW_.data) obViewRender_();
+        })
+        .withFailureHandler(function () { /* no chips */ })
+        .getDeptOutboundSummary({ department: dept, from: m.priorFrom, to: m.priorTo });
+    }
+    if (obWrap) dsFrostShow_(obWrap, 'Loading outbound…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (seq !== OB_VIEW_.seq) return;
+        OB_VIEW_.data = data || null;
+        if (obWrap) dsFrostHide_(obWrap);
+        obViewRender_();
+      })
+      .withFailureHandler(function (err) {
+        if (seq !== OB_VIEW_.seq) return;
+        OB_VIEW_.error = (err && err.message) ? err.message : String(err);
+        if (obWrap) dsFrostHide_(obWrap);
+        obViewRender_();
+      })
+      .getDeptOutboundSummary({ department: dept, from: m.from, to: m.to });
+  }
+
+  function obTallyUnitFor_(list, cap) {
+    var max = 0;
+    (list || []).forEach(function (a) { var t = Number(a && a.obTotal) || 0; if (t > max) max = t; });
+    if (!max) return 0;
+    for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) {
+      if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= cap) return ANS_TALLY_UNITS_[i];
+    }
+    return ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
+  }
+
+  /** The outbound twin of answeredBarHtml_: connected / not connected (placed). */
+  function obBarHtml_(a, unit, isTeam, p, tip) {
+    if (!a || !(Number(a.obTotal) > 0)) {
+      return '<span class="cell-zero" title="No outbound calls in this range">–</span>';
+    }
+    var placed = Number(a.obTotal) || 0, c = Number(a.obConnected) || 0, n = Math.max(0, placed - c);
+    var split = [];
+    if (a.obUnconnectedBrief) split.push(a.obUnconnectedBrief + ' brief');
+    if (a.obUnconnectedReal) split.push(a.obUnconnectedReal + ' rang out');
+    if (a.obUnconnectedUnknown) split.push(a.obUnconnectedUnknown + ' ring unknown');
+    var title = c + ' connected · ' + n + ' not connected' + (split.length ? ' (' + split.join(', ') + ')' : '')
+      + ' · ' + placed + ' placed. ' + OB_CONNECTED_DEF_;
+    var track = (unit > 0)
+      ? '<div class="ans-tally" aria-hidden="true">' + ansTallyBlocks_(c, unit, 'oc') + ansTallyBlocks_(n, unit, 'ou') + '</div>'
+      : '<div class="ans-track"><span class="ans-seg ob-conn" style="width:' + (c / placed * 100) + '%"></span>'
+        + '<span class="ans-seg ob-unconn" style="width:' + (n / placed * 100) + '%"></span></div>';
+    var perDay = (a.obPerDay != null)
+      ? '<span class="ans-perday" title="' + escapeHtml(isTeam
+          ? 'Calls placed per agent per day with outbound calls; team-average excludes left out'
+          : 'Calls placed per day, counting only days with outbound calls') + '">· '
+        + a.obPerDay + ' / day</span>'
+      : '';
+    return '<div class="ans-bar ob-bar" title="' + escapeHtml(title) + '">' + track
+      + '<div class="ans-nums"><span class="ob-c">' + c + '</span>'
+      // Batch F: connected is valenced; not-connected stays neutral (more
+      // dialling naturally means more unanswered calls -- not a regression).
+      + (p ? obPriorChip_(c - (Number(p.obConnected) || 0), 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '')
+      + '<span class="ans-slash">/</span>'
+      + '<span class="ob-u">' + n + '</span>'
+      + (p ? obPriorChip_(n - Math.max(0, (Number(p.obTotal) || 0) - (Number(p.obConnected) || 0)), 'neutral', WOW_NOISE_THRESHOLD, false, false, tip) : '')
+      + '<span class="ans-total" title="Calls placed">(' + placed + ')</span>'
+      + perDay + '</div></div>';
+  }
+
+  // ── Batch F: prior-period chips on outbound ─────────────────────────────
+  // The E5 chip (wow-chip, same valence + noise muting) for the outbound
+  // figures, shared by the My Department Outbound / Both rows and the
+  // Overview tiles' outbound line. Counts mute under WOW_NOISE_THRESHOLD;
+  // a connect-rate chip is in percentage points and mutes under
+  // OB_CHIP_RATE_PTS_ or when either window placed fewer than
+  // OB_CHIP_MIN_PLACED_ calls (one call out of four moves a rate 25 pts).
+  var OB_CHIP_RATE_PTS_ = 2;
+  var OB_CHIP_MIN_PLACED_ = 10;
+
+  // valence 'good' = up is good (sage), down warn; 'neutral' = always muted.
+  function obPriorChip_(delta, valence, threshold, pts, forceMuted, tip) {
+    if (delta == null || !isFinite(delta)) return '';
+    var d = pts ? Math.round(delta * 10) / 10 : Math.round(delta);
+    var abs = Math.abs(d);
+    var cls, arrow;
+    if (d === 0) { cls = 'wow-chip-muted'; arrow = '\u2192'; }
+    else if (valence !== 'good' || forceMuted || abs < threshold) { cls = 'wow-chip-muted'; arrow = d > 0 ? '\u25b2' : '\u25bc'; }
+    else { cls = d > 0 ? 'wow-chip-good' : 'wow-chip-warn'; arrow = d > 0 ? '\u25b2' : '\u25bc'; }
+    var sign = d > 0 ? '+' : (d < 0 ? '\u2212' : '');
+    var label = pts ? (sign + abs.toFixed(1) + ' pts') : (d === 0 ? '0' : sign + abs);
+    return ' <span class="wow-chip ' + cls + '" title="' + escapeHtml(tip || '') + '">' + arrow + label + '</span>';
+  }
+
+  // The connect-rate chip from two {placed, pct} pairs.
+  function obRateChip_(curPct, priorPct, curPlaced, priorPlaced, tip) {
+    if (curPct == null || priorPct == null) return '';
+    var thin = (Number(curPlaced) || 0) < OB_CHIP_MIN_PLACED_ || (Number(priorPlaced) || 0) < OB_CHIP_MIN_PLACED_;
+    return obPriorChip_(Number(curPct) - Number(priorPct), 'good', OB_CHIP_RATE_PTS_, true, thin,
+      tip + (thin ? ' Fewer than ' + OB_CHIP_MIN_PLACED_ + ' calls in a window, so the change is shown muted.' : ''));
+  }
+
+  function obPriorTip_(p, pf, pt) {
+    return 'Prior period ' + (pf || '') + ' \u2013 ' + (pt || '') + ': ' + (Number(p.placed) || 0) + ' placed, '
+      + (Number(p.connected) || 0) + ' connected' + (p.pct != null ? ' (' + Number(p.pct).toFixed(1) + '%)' : '') + '.';
+  }
+
+  function obPctHtml_(a, p, tip) {
+    if (!a || !(Number(a.obTotal) > 0)) return zeroCell_('–');
+    return '<span class="ob-rate" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">'
+      + Math.round(Number(a.obConnectRate) || 0) + '%</span>'
+      + (p ? obRateChip_(a.obConnectRate, p.obConnectRate, a.obTotal, p.obTotal, tip) : '');
+  }
+
+  function obSortList_(list) {
+    var k = OB_VIEW_.sortKey, dir = OB_VIEW_.sortDir === 'asc' ? 1 : -1;
+    return list.slice().sort(function (x, y) {
+      if (k === 'agent') return String(x.agent).localeCompare(String(y.agent)) * dir;
+      var xv = (k in (x.ob || {})) ? x.ob[k] : x.inb ? x.inb[k] : null;
+      var yv = (k in (y.ob || {})) ? y.ob[k] : y.inb ? y.inb[k] : null;
+      if (k === 'answerRate') {
+        var xt = x.inb ? (Number(x.inb.totalAnswered) || 0) + (Number(x.inb.totalMissed) || 0) : 0;
+        var yt = y.inb ? (Number(y.inb.totalAnswered) || 0) + (Number(y.inb.totalMissed) || 0) : 0;
+        xv = xt ? x.inb.totalAnswered / xt : null; yv = yt ? y.inb.totalAnswered / yt : null;
+      }
+      var xn = (xv == null || xv === '') ? null : Number(xv), yn = (yv == null || yv === '') ? null : Number(yv);
+      if (xn === null && yn === null) return String(x.agent).localeCompare(String(y.agent));
+      if (xn === null) return 1;            // nothing to compare sinks, either direction
+      if (yn === null) return -1;
+      return ((xn - yn) * dir) || String(x.agent).localeCompare(String(y.agent));
+    });
+  }
+
+  function obThHtml_(key, label, cls) {
+    var on = OB_VIEW_.sortKey === key;
+    return '<th data-ob-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
+      + (on ? ' aria-sort="' + (OB_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
+      + escapeHtml(label) + ' <span class="arrow">' + (on ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
+  }
+
+  function obViewRender_() {
+    var dir = obEffectiveDir_();
+    var thead = $('agents-ob-thead'), tbody = $('agents-ob-tbody'), tfoot = $('agents-ob-tfoot');
+    var note = $('agents-ob-note');
+    if (!thead || !tbody || !tfoot || dir === 'in') return;
+    var both = dir === 'both';
+    var data = OB_VIEW_.data;
+    var dept = getRequestedDept();
+    var cols = both ? 6 : 6;
+    thead.innerHTML = '<tr>' + obThHtml_('agent', 'Agent')
+      + (both
+        ? obThHtml_('totalAnswered', 'Inbound · Answered / Missed', 'ob-dir-in') + obThHtml_('answerRate', 'Answer %', 'ob-dir-in')
+          + obThHtml_('obTotal', 'Outbound · Connected / Not', 'ob-dir-out') + obThHtml_('obConnectRate', 'Connect %', 'ob-dir-out')
+          + obThHtml_('obTalkSec', 'Out talk', 'ob-dir-out')
+        : obThHtml_('obTotal', 'Connected / Not connected') + obThHtml_('obConnectRate', 'Connect %')
+          + obThHtml_('obTalkSec', 'Talk time') + obThHtml_('obAttSec', 'Avg talk') + obThHtml_('attempts', 'Attempts'))
+      + '</tr>';
+
+    var notes = [];
+    if (OB_VIEW_.error) notes.push('Could not load outbound calls: ' + OB_VIEW_.error);
+    if (data && data.meta) {
+      if (data.meta.available === false) notes.push('Outbound calls could not be read just now (Neon and the Outbound Calls tab were both unavailable).');
+      if (data.meta.fallbackSource === 'sheet') notes.push('Neon is unreachable, so these figures come from the Outbound Calls tab copy'
+        + (data.meta.fallbackThrough ? ', which runs through ' + data.meta.fallbackThrough : '') + '.');
+      var capStart = data.meta.coverageStart;
+      if (capStart && data.meta.from < capStart) notes.push('Outbound capture began ' + capStart + '; days before it have no outbound calls.');
+      if (data.meta.offRosterAgents) notes.push(data.meta.offRosterAgents + ' dialler' + (data.meta.offRosterAgents === 1 ? '' : 's')
+        + ' on no roster of this department ' + (data.meta.offRosterAgents === 1 ? 'is' : 'are') + ' left out.');
+    }
+    notes.push('Connected means the far end answered — a person, voicemail or a phone menu. Export and Copy still produce the inbound table.');
+    if (note) { note.textContent = notes.join(' '); note.style.display = ''; }
+
+    if (!data && !OB_VIEW_.error) { tbody.innerHTML = ''; tfoot.innerHTML = ''; obPanelRender_(null); return; }
+    var obAgents = (data && data.agents) || [];
+    var deptsShown = (data && data.meta && data.meta.scopeDepts && data.meta.scopeDepts.length)
+      ? data.meta.scopeDepts : [dept];
+    var multi = deptsShown.length > 1;
+    var obKey = function (d, name) { return (multi ? d : '') + '|' + name; };
+    var obBy = {};
+    obAgents.forEach(function (a) { obBy[obKey(a.scopeDept || dept, a.agent)] = a; });
+    // Batch F: the prior window's agents, when that window is comparable --
+    // loaded, available, and starting on/after outbound capture began.
+    var sm = state.meta || {};
+    var pr = OB_VIEW_.prior;
+    var priorOk = !!(pr && pr.meta && pr.meta.available !== false && sm.priorFrom
+      && !(pr.meta.coverageStart && sm.priorFrom < pr.meta.coverageStart));
+    var priorBy = {};
+    if (priorOk) (pr.agents || []).forEach(function (a) { priorBy[obKey(a.scopeDept || dept, a.agent)] = a; });
+    var priorTipFor = function (p) {
+      return p ? obPriorTip_({ placed: p.obTotal, connected: p.obConnected, pct: p.obConnectRate }, sm.priorFrom, sm.priorTo) : '';
+    };
+
+    // Entries per dept group. Outbound: every agent who placed a call. Both:
+    // every inbound row (its dept group) plus outbound-only agents.
+    var groups = {};
+    deptsShown.forEach(function (d) { groups[d] = []; });
+    if (both) {
+      var seen = {};
+      (state.rows || []).forEach(function (r) {
+        var d = (multi && r.dept) ? r.dept : deptsShown[0];
+        var k = obKey(d, r.agent);
+        seen[k] = true;
+        (groups[d] = groups[d] || []).push({ dept: d, agent: r.agent, inb: r, ob: obBy[k] || null });
+      });
+      obAgents.forEach(function (a) {
+        var d = multi ? (a.scopeDept || deptsShown[0]) : deptsShown[0];
+        if (seen[obKey(d, a.agent)]) return;
+        (groups[d] = groups[d] || []).push({ dept: d, agent: a.agent, inb: null, ob: a });
+      });
+    } else {
+      obAgents.forEach(function (a) {
+        var d = multi ? (a.scopeDept || deptsShown[0]) : deptsShown[0];
+        (groups[d] = groups[d] || []).push({ dept: d, agent: a.agent, inb: null, ob: a });
+      });
+    }
+    var all = [];
+    Object.keys(groups).forEach(function (d) { all = all.concat(groups[d]); });
+    var obUnit = obTallyUnitFor_(all.map(function (e) { return e.ob; }), both ? 18 : ANS_TALLY_MAX_BLOCKS_);
+    var inUnit = both ? ansTallyUnitFor_(all.map(function (e) { return e.inb || {}; }), 18) : 0;
+    var barCol = COLUMNS.find(function (c) { return c.type === 'bar'; });
+    var pctCol = COLUMNS.find(function (c) { return c.type === 'pct'; });
+
+    var rowHtml = function (e) {
+      var o = e.ob;
+      // E5's rule: an agent with no row in the prior window gets no chip.
+      var po = (priorOk && o) ? (priorBy[obKey(e.dept, e.agent)] || null) : null;
+      var ptip = priorTipFor(po);
+      var cells = '<td class="agent-name">' + escapeHtml(e.agent) + '</td>';
+      if (both) {
+        cells += '<td class="ans-bar-cell ob-dir-in">' + (e.inb ? fmtCell(barCol, e.inb, { tallyUnit: inUnit }) : zeroCell_('–')) + '</td>'
+          + '<td class="num ob-dir-in">' + (e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–')) + '</td>'
+          + '<td class="ans-bar-cell ob-dir-out">' + obBarHtml_(o, obUnit, false, po, ptip) + '</td>'
+          + '<td class="num ob-dir-out">' + obPctHtml_(o, po, ptip) + '</td>'
+          + '<td class="num ob-dir-out">' + (o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–')) + '</td>';
+      } else {
+        cells += '<td class="ans-bar-cell">' + obBarHtml_(o, obUnit, false, po, ptip) + '</td>'
+          + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>'
+          + '<td class="num">' + (o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('0:00:00')) + '</td>'
+          + '<td class="num">' + (o && o.obAttSec ? fmtDuration(o.obAttSec) : zeroCell_('–')) + '</td>'
+          + '<td class="num">' + fmtNumber((o && o.attempts) || 0) + '</td>';
+      }
+      return '<tr data-agent="' + escapeHtml(e.agent) + '" tabindex="0" title="Show '
+        + escapeHtml(e.agent) + '’s days (the Individual Report is inside)">' + cells + '</tr>';
+    };
+    var totalRow = function (label, t, inT, cls) {
+      var cells = '<td class="agents-total-label">' + escapeHtml(label) + '</td>';
+      if (both) {
+        cells += '<td class="ans-bar-cell ob-dir-in">' + (inT ? fmtCell(barCol, inT, {}) : '') + '</td>'
+          + '<td class="num ob-dir-in">' + (inT ? fmtCell(pctCol, inT) : '') + '</td>'
+          + '<td class="ans-bar-cell ob-dir-out">' + obBarHtml_(t, 0, true) + '</td>'
+          + '<td class="num ob-dir-out">' + obPctHtml_(t) + '</td>'
+          + '<td class="num ob-dir-out">' + (t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '') + '</td>';
+      } else {
+        cells += '<td class="ans-bar-cell">' + obBarHtml_(t, 0, true) + '</td><td class="num">' + obPctHtml_(t) + '</td>'
+          + '<td class="num">' + (t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '') + '</td>'
+          + '<td class="num">' + (t && t.obAttSec ? fmtDuration(t.obAttSec) : '') + '</td>'
+          + '<td class="num">' + fmtNumber((t && t.attempts) || 0) + '</td>';
+      }
+      return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
+    };
+
+    var body = '';
+    var inGroupTotals = {};
+    (state.deptGroups || []).forEach(function (g) { inGroupTotals[g.dept] = g.totals; });
+    deptsShown.forEach(function (d) {
+      var list = groups[d] || [];
+      if (multi) {
+        body += '<tr class="subq-group-head ob-group-head"><td colspan="' + cols + '">' + escapeHtml(d)
+          + ' <span class="subq-count">' + list.length + ' agent' + (list.length === 1 ? '' : 's') + '</span></td></tr>';
+      }
+      body += obSortList_(list).map(rowHtml).join('');
+      if (multi) {
+        var gt = ((data && data.deptGroups) || []).find(function (g) { return g.dept === d; });
+        body += totalRow(d + ' subtotal', gt ? gt.totals : null, inGroupTotals[d] || null, 'subq-subtotal');
+      }
+    });
+    if (!all.length) {
+      body = '<tr><td colspan="' + cols + '" class="ob-empty">'
+        + (OB_VIEW_.error ? 'Outbound calls are unavailable.' : 'No outbound calls by this department’s agents in this range.')
+        + '</td></tr>';
+    }
+    tbody.innerHTML = body;
+    tfoot.innerHTML = (data && data.totals && all.length) ? totalRow('Total', data.totals, state.totals, '') : '';
+    obPanelRender_(data);
+    if (typeof apReattach_ === 'function') apReattach_();
+  }
+
+  // D3: the Team Outbound side panel -- the outbound counterpart of Team Rings
+  // Data, from the same payload as the table (no extra fetch).
+  function obPanelRender_(data) {
+    var panel = $('dept-team-outbound');
+    if (!panel) return;
+    var agents = (data && data.agents) || [];
+    if (obEffectiveDir_() === 'in' || !data || !agents.length) { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    var t = data.totals || {};
+    var dateEl = $('tob-date');
+    if (dateEl) dateEl.textContent = data.meta.from === data.meta.to ? data.meta.from : (data.meta.from + ' – ' + data.meta.to);
+    var tiles = $('tob-tiles');
+    if (tiles) {
+      tiles.innerHTML =
+          '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Placed</span></div>'
+        + '<div class="ds-kpi__value">' + fmtNumber(t.obTotal || 0) + '</div>'
+        + '<div class="ds-kpi__foot">' + fmtNumber(t.obConnected || 0) + ' connected · '
+        +   (t.obPerDay != null ? t.obPerDay + ' / agent-day' : '–') + '</div></div>'
+        + '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Connect %</span></div>'
+        + '<div class="ds-kpi__value">' + (t.obConnectRate != null ? Math.round(t.obConnectRate) + '%' : '–') + '</div>'
+        + '<div class="ds-kpi__foot" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">talk &gt; 0 · avg '
+        +   fmtDuration(t.obAttSec || 0) + '</div></div>';
+    }
+    var unit = obTallyUnitFor_(agents, 12);
+    var row = function (a) {
+      var c = Number(a.obConnected) || 0, n = Math.max(0, (Number(a.obTotal) || 0) - c);
+      var tally = unit > 0 ? '<div class="ans-tally trp-tally" aria-hidden="true">'
+        + ansTallyBlocks_(c, unit, 'oc') + ansTallyBlocks_(n, unit, 'ou') + '</div>' : '';
+      return '<tr class="trp-row" data-tob-agent="' + escapeHtml(a.agent) + '" tabindex="0"'
+        + ' title="' + escapeHtml(a.agent) + ' — click to jump to the full row" aria-describedby="tob-row-action-desc">'
+        + '<td class="trp-name">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
+        + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
+        + '<td class="trp-num"><span class="ob-c">' + fmtNumber(c) + '</span><span class="trp-sep"> / </span>'
+        +   '<span class="ob-u">' + fmtNumber(n) + '</span></td>'
+        + '<td class="trp-num">' + (a.obTotal ? Math.round(Number(a.obConnectRate) || 0) + '%' : '–') + '</td></tr>';
+    };
+    var sorted = agents.slice().sort(function (x, y) {
+      return (Number(y.obTotal) || 0) - (Number(x.obTotal) || 0) || String(x.agent).localeCompare(String(y.agent));
+    });
+    var groups = data.deptGroups;
+    var html = '';
+    if (groups && groups.length > 1) {
+      groups.forEach(function (g) {
+        var mine = sorted.filter(function (a) { return a.scopeDept === g.dept; });
+        if (!mine.length) return;
+        html += '<tr class="trp-group-head"><td colspan="4">' + escapeHtml(g.dept) + '</td></tr>' + mine.map(row).join('');
+      });
+    } else {
+      html = sorted.map(row).join('');
+    }
+    var tb = $('tob-tbody');
+    if (tb) tb.innerHTML = html;
+  }
+
 </script>

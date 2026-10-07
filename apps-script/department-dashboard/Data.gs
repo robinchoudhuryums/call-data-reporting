@@ -677,6 +677,24 @@ function queueSplitNarrowedCopy_(rows, dept, opts) {
 }
 
 /**
+ * The dept's team-average exclusion list as a lookup ({name: true}), read
+ * through getTeamAvgExcludes_ (Dept Config over the TEAM_AVG_EXCLUDES seed).
+ * Empty when the accessor is unavailable or throws: a missing list leaves
+ * every agent in, which is the figure's meaning without exclusions.
+ */
+function teamAvgExcludeSet_(dept) {
+  const out = {};
+  try {
+    if (typeof getTeamAvgExcludes_ === 'function') {
+      (getTeamAvgExcludes_(dept) || []).forEach(function (n) { out[String(n)] = true; });
+    }
+  } catch (e) {
+    Logger.log('teamAvgExcludeSet_(' + dept + '): ' + (e && e.message ? e.message : e));
+  }
+  return out;
+}
+
+/**
  * Sub-queue Phase 1: merge per-department summaries into ONE payload.
  *
  * Deliberately built by calling `computeSummary_` once PER DEPARTMENT and
@@ -716,7 +734,7 @@ function combineSummaries_(primary, parts) {
   const groups = [];
   const grand = { totalUnique: 0, totalRung: 0, totalMissed: 0,
                   totalAnswered: 0, tttSeconds: 0, rosterAgentCount: 0,
-                  queueOnlyAgentCount: 0 };
+                  queueOnlyAgentCount: 0, ansPerDayAnswered: 0, ansPerDayAgentDays: 0 };
   // Sub-queue Phase 0 (the CROSSOVER-AGENT double count). A DQE row is keyed
   // on (date, agent) with NO queue dimension, so an agent on two depts'
   // rosters -- CSR + Spanish here -- is returned by BOTH depts'
@@ -732,7 +750,7 @@ function combineSummaries_(primary, parts) {
     const t = p.totals || {};
     groups.push({ dept: p.meta.department, rowCount: (p.rows || []).length, totals: t });
     ['totalUnique', 'totalRung', 'totalMissed', 'totalAnswered', 'tttSeconds',
-     'rosterAgentCount', 'queueOnlyAgentCount'].forEach(function (k) {
+     'rosterAgentCount', 'queueOnlyAgentCount', 'ansPerDayAnswered', 'ansPerDayAgentDays'].forEach(function (k) {
       grand[k] += Number(t[k]) || 0;
     });
   });
@@ -772,7 +790,8 @@ function combineSummaries_(primary, parts) {
         if (!seenRoster[name]) {
           seenRoster[name] = { u: Number(r.totalUnique) || 0, rg: Number(r.totalRung) || 0,
                                m: Number(r.totalMissed) || 0, a: Number(r.totalAnswered) || 0,
-                               t: Number(r.tttSeconds) || 0 };
+                               t: Number(r.tttSeconds) || 0,
+                               inTeam: !teamAvgExcludeSet_(r.dept)[name] };
           return;
         }
         // L7: the subtraction's premise is that both appearances carry the
@@ -791,6 +810,13 @@ function combineSummaries_(primary, parts) {
           return;
         }
         crossoverAgentCount++;
+        // The team per-agent-day pair counted this agent once per dept that
+        // includes them; drop the repeat only when BOTH appearances counted
+        // (a dept that excludes the agent contributed nothing to remove).
+        if (first.inTeam && !teamAvgExcludeSet_(r.dept)[name]) {
+          grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
+          grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+        }
         grand.totalUnique   -= Number(r.totalUnique) || 0;
         grand.totalRung     -= Number(r.totalRung) || 0;
         grand.totalMissed   -= Number(r.totalMissed) || 0;
@@ -804,24 +830,11 @@ function combineSummaries_(primary, parts) {
     });
   });
   grand.crossoverAgentCount = crossoverAgentCount;
-  // D-6 (broad-scan 2026-09-17): daysActive is the UNION of the parts' active
-  // days (computeSummary_ attaches the set non-enumerably), and ansPerDay is
-  // the deduped grand answered over it -- so the combined total row carries
-  // the same two figures a single-dept view does instead of a dash. A part
-  // built without the set (a hand-built fixture) falls back to the largest
-  // per-dept count, which a union can never be below.
-  const dayUnion = {};
-  let sawDayKeys = false, maxDays = 0;
-  parts.forEach(function (p) {
-    const t = p.totals || {};
-    maxDays = Math.max(maxDays, Number(t.daysActive) || 0);
-    if (Array.isArray(t.activeDayKeys)) {
-      sawDayKeys = true;
-      t.activeDayKeys.forEach(function (d) { dayUnion[d] = true; });
-    }
-  });
-  grand.daysActive = sawDayKeys ? Object.keys(dayUnion).length : maxDays;
-  grand.ansPerDay = grand.daysActive ? round1_(grand.totalAnswered / grand.daysActive) : null;
+  // summary:v23 (owner 2026-10): the team's answered per AGENT per day is a
+  // ratio of two sums, so the combined figure sums each dept's pair (above,
+  // crossover repeats removed) and divides once -- never a mean of the depts'
+  // own ratios, which would weight a small dept like a big one.
+  grand.ansPerDay = grand.ansPerDayAgentDays ? round1_(grand.ansPerDayAnswered / grand.ansPerDayAgentDays) : null;
   // The three DURATION means are per-agent averages, so the grand total is the
   // weighted mean of each dept's mean -- NOT a mean of means, which would
   // over-weight a small dept. D-3 (broad-scan 2026-09-17): the weight is the
@@ -990,7 +1003,7 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
-  const cacheKey = 'summary:v22:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v23:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_() + ':' + rosterHash;
   const cached = cache.get(cacheKey);
@@ -1219,11 +1232,6 @@ function computeSummary_(dept, from, to, scope) {
 
   const acc = {};
 
-  // Owner (2026-09): dept-level distinct ROSTER-active days in the window,
-
-  // the divisor for totals.ansPerDay (a per-agent mean would not reconcile).
-
-  const deptDays = {};
   let rowsMatched = 0;
   // For diagnostics: agents that matched only via queue extension
   // overlap (not on the dept roster). Empty when scope === 'roster'.
@@ -1342,8 +1350,11 @@ function computeSummary_(dept, from, to, scope) {
     const caw = row.csrAvgAbdWaitSec;
     if (caw) { a.csrAvgAbdWaitSecondsSum += caw; a.csrAvgAbdWaitSecondsCount++; }
 
-    a.days[dateIso] = true;
-    if (a.matchedViaRoster) deptDays[dateIso] = true;
+    // summary:v23 (owner 2026-10): a day counts toward the agent's per-day
+    // average only when they had at least one ring. A DQE row with no rings
+    // (logged in but not present, or a narrowed row with none of this dept's
+    // queues) is not a working day for this figure.
+    if ((Number(row.totalRung) || 0) > 0) a.days[dateIso] = true;
   }
 
   // Build the agent -> [other-depts] lookup used to populate
@@ -1399,10 +1410,10 @@ function computeSummary_(dept, from, to, scope) {
       totalMissed: a.totalMissed,
       totalAnswered: a.totalAnswered,
       // Owner (2026-09): answered per ACTIVE day -- the `daysActive` count
-      // emitted below (days with any row in the USER window; a.days is
-      // user-window only, the E5 prior window accumulates in priorAcc), so
-      // PTO does not drag it down. 1 dp; null when no active day so the
-      // client renders a dash, never 0.0.
+      // emitted below (since summary:v23, days with at least one RING in the
+      // USER window; a.days is user-window only, the E5 prior window
+      // accumulates in priorAcc), so PTO does not drag it down. 1 dp; null
+      // when no active day so the client renders a dash, never 0.0.
       ansPerDay: Object.keys(a.days).length ? round1_(a.totalAnswered / Object.keys(a.days).length) : null,
       priorRung:     priorHasData ? priorBucket.rung     : 0,
       priorMissed:   priorHasData ? priorBucket.missed   : 0,
@@ -1466,17 +1477,22 @@ function computeSummary_(dept, from, to, scope) {
   totals.avgAbdWaitNonzeroCount = countNonzero_(rosterRows, 'avgAbdWaitSeconds');
   totals.csrAvgAbdWaitNonzeroCount = countNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
-  // Owner (2026-09): team answered per roster-active day (distinct days on
-  // which ANY roster agent had a row), so the totals figure reconciles with
-  // totals.totalAnswered rather than averaging the per-agent rates.
-  totals.daysActive = Object.keys(deptDays).length;
-  totals.ansPerDay = totals.daysActive ? round1_(totals.totalAnswered / totals.daysActive) : null;
-  // D-6 (broad-scan 2026-09-17): the day SET rides along NON-ENUMERABLE so
-  // combineSummaries_ can UNION it across depts for the combined grand total
-  // (two depts active on the same day are one day, not two -- a count cannot
-  // be summed). Non-enumerable means it never serializes into the cache or a
-  // payload and never shows up in a test's deep-equal of `totals`.
-  Object.defineProperty(totals, 'activeDayKeys', { value: Object.keys(deptDays), enumerable: false });
+  // summary:v23 (owner 2026-10): the team's answered per AGENT per day --
+  // the roster agents' answered ÷ their summed ring-days. Floaters are already
+  // out (rosterRows); the dept's team-average excludes come out too, the R18
+  // rule for per-agent averages (TEAM_AVG_EXCLUDES / Dept Config "Team Avg
+  // Excludes", getTeamAvgExcludes_). The numerator and denominator ride along
+  // so combineSummaries_ can sum them across depts.
+  const teamExcl = teamAvgExcludeSet_(dept);
+  let teamAns = 0, teamDays = 0;
+  rosterRows.forEach(function (r) {
+    if (teamExcl[r.agent]) return;
+    teamAns  += Number(r.totalAnswered) || 0;
+    teamDays += Number(r.daysActive) || 0;
+  });
+  totals.ansPerDayAnswered = teamAns;
+  totals.ansPerDayAgentDays = teamDays;
+  totals.ansPerDay = teamDays ? round1_(teamAns / teamDays) : null;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
   // Sub-queue Phase 1: every row names its OWN department, so a combined
   // parent+child table can group and label rows without inferring ownership.
@@ -1760,7 +1776,7 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0,
       // CORE-8: mirror the populated path's INV-53 count fields so client
       // code reading them never sees undefined on a no-data day.
-      daysActive: 0, ansPerDay: null,   // v22: same shape as the populated totals
+      ansPerDay: null, ansPerDayAnswered: 0, ansPerDayAgentDays: 0,   // v23: same shape as the populated totals
       attNonzeroCount: 0, avgAbdWaitNonzeroCount: 0, csrAvgAbdWaitNonzeroCount: 0,   // D-3
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
     },

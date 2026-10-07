@@ -364,6 +364,36 @@ function outboundBucketDelays_(delays) {
   return out;
 }
 
+/**
+ * The per-agent outbound sub-select over [f, t] (validated ISO dates, safe to
+ * inline). SHARED by the Outbound report and the My Department outbound view
+ * (getDeptOutboundSummary, Batch D) so the two can never disagree on what an
+ * agent placed, connected or talked: one SQL text, one definition.
+ *
+ * Groups by agent_name ONLY and never touches outbound_calls.department (the
+ * raw CDR org label) -- roster attribution happens dashboard-side.
+ * `ob_days` (Batch D) counts the days the agent placed at least one call, the
+ * denominator of the "/ day" figure.
+ */
+function outboundAgentsSel_(f, t) {
+  return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
+    + 'SELECT agent_name AS agent, count(*) AS ob_total, '
+    +   'count(*) FILTER (WHERE connected) AS ob_connected, '
+    // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
+    // not brief -- it falls into neither bucket, and the shaper derives
+    // "real" by subtraction so the unknowns stay visible as the remainder
+    // rather than being quietly filed as effort.
+    +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
+    +     'AND ring_seconds < ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_brief, '
+    +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
+    +     'AND ring_seconds >= ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_real, '
+    +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
+    +   'COALESCE(sum(attempts),0) AS attempts, '
+    +   'count(DISTINCT call_date) AS ob_days '
+    + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
+    + 'GROUP BY agent_name) t)';
+}
+
 function computeOutboundReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyOutboundReport_(scope);
@@ -416,23 +446,7 @@ function computeOutboundReport_(scope) {
     // happens below, dashboard-side. The callback match is likewise
     // deliberately NOT limited to the report window's `to` (a last-day
     // abandon's callback may land after it) nor to the scoped dept's agents.
-    const agentsSel = function (f, t) {
-      return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
-        + 'SELECT agent_name AS agent, count(*) AS ob_total, '
-        +   'count(*) FILTER (WHERE connected) AS ob_connected, '
-        // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
-        // not brief -- it falls into neither bucket, and the shaper derives
-        // "real" by subtraction so the unknowns stay visible as the remainder
-        // rather than being quietly filed as effort.
-        +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
-        +     'AND ring_seconds < ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_brief, '
-        +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
-        +     'AND ring_seconds >= ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_real, '
-        +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
-        +   'COALESCE(sum(attempts),0) AS attempts '
-        + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
-        + 'GROUP BY agent_name) t)';
-    };
+    const agentsSel = outboundAgentsSel_;   // shared with getDeptOutboundSummary (Batch D)
     const callbackSel = function (where, withDetail) {
       return "(SELECT json_build_object("
         + "'abandonedTotal', count(*), "
@@ -562,6 +576,9 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept) {
         obTalkSec: obTalkSec,
         obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
         attempts: Number(r.attempts) || 0,
+        // Batch D: days with at least one call, and calls per such day.
+        obDays: Number(r.ob_days) || 0,
+        obPerDay: (Number(r.ob_days) || 0) ? Math.round(obTotal / Number(r.ob_days) * 10) / 10 : null,
         obUnconnectedBrief: obBrief,
         obUnconnectedReal: obReal,
         obUnconnectedUnknown: Math.max(0, obTotal - obConnected - obBrief - obReal),
@@ -4010,37 +4027,46 @@ function obDaysAfterIso_(iso, n) {
  *               talkSec, ringSec, attempts, callStart, journey]
  * ibGrid rows: the Inbound Calls tab's cols 1..17 (ihRowInDept_'s shape).
  */
-function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
-  var agentsFor = function (fromIso, toIso) {
-    var byAgent = {};
-    for (var i = 0; i < obGrid.length; i++) {
-      var row = obGrid[i];
-      var iso = ncCellDateIso_(row[0]);
-      if (!iso || iso < fromIso || iso > toIso) continue;
-      var agent = String(row[3] == null ? '' : row[3]).trim();
-      var a = byAgent[agent] || (byAgent[agent] = {
-        agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
-        ob_unconn_brief: 0, ob_unconn_real: 0,
-      });
-      a.ob_total++;
-      var connected = String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE';
-      if (connected) a.ob_connected++;
-      else {
-        // (4) SQL parity via the shared classifier -- see its docstring for
-        // why the boundary is strict.
-        var cls = outboundClassifyRing_(row[8]);
-        if (cls === 'brief') a.ob_unconn_brief++;
-        else if (cls === 'real') a.ob_unconn_real++;
-      }
-      a.ob_talk_sec += Number(row[7]) || 0;
-      a.attempts += Number(row[9]) || 0;
+/**
+ * The sheet twin of outboundAgentsSel_: the same per-agent rows from the
+ * Outbound Calls tab grid. Shared by the report's fallback and
+ * getDeptOutboundSummary's (Batch D), pinned to the SQL by
+ * outbound-fallback.test.js.
+ */
+function obAgentsFromGrid_(obGrid, fromIso, toIso) {
+  var byAgent = {};
+  for (var i = 0; i < obGrid.length; i++) {
+    var row = obGrid[i];
+    var iso = ncCellDateIso_(row[0]);
+    if (!iso || iso < fromIso || iso > toIso) continue;
+    var agent = String(row[3] == null ? '' : row[3]).trim();
+    var a = byAgent[agent] || (byAgent[agent] = {
+      agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
+      ob_unconn_brief: 0, ob_unconn_real: 0, ob_days: 0, _days: {},
+    });
+    a.ob_total++;
+    if (!a._days[iso]) { a._days[iso] = true; a.ob_days++; }
+    var connected = String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE';
+    if (connected) a.ob_connected++;
+    else {
+      // (4) SQL parity via the shared classifier -- see its docstring for
+      // why the boundary is strict.
+      var cls = outboundClassifyRing_(row[8]);
+      if (cls === 'brief') a.ob_unconn_brief++;
+      else if (cls === 'real') a.ob_unconn_real++;
     }
-    // Same ORDER BY as agentsSel: ob_total DESC, then agent.
-    return Object.keys(byAgent).map(function (k) { return byAgent[k]; })
-      .sort(function (x, y) {
-        return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
-      });
-  };
+    a.ob_talk_sec += Number(row[7]) || 0;
+    a.attempts += Number(row[9]) || 0;
+  }
+  // Same ORDER BY as outboundAgentsSel_: ob_total DESC, then agent.
+  return Object.keys(byAgent).map(function (k) { var a = byAgent[k]; delete a._days; return a; })
+    .sort(function (x, y) {
+      return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
+    });
+}
+
+function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
+  var agentsFor = function (fromIso, toIso) { return obAgentsFromGrid_(obGrid, fromIso, toIso); };
 
   // Callback index: hash -> ordinal-sorted outbound calls (the cbLateral
   // "earliest qualifying outbound" rule, evaluated in JS).
@@ -4279,4 +4305,503 @@ function outboundSheetFallback_(scope) {
     out.meta.available = false;
     return out;
   }
+}
+
+// ── Outbound SOURCE probe (Batch C, owner plan 2026-10) ──────────────────────
+//
+// `probeOutboundSourceAgreement()` -- editor-run, admin-gated, READ-ONLY. It
+// answers one question before Batch D builds the My Department outbound view:
+// can the day-level outbound counts in the `CDR Historical Data` SHEET stand
+// in for the per-call `outbound_calls` table in Neon, per agent per day?
+//
+// Why it matters: My Department, Insights and Overview reload often (the
+// Overview every 5 minutes, plus the cache warmer), and Neon has hit its
+// monthly read allowance twice. If the sheet agrees, the outbound views can
+// read it the way inbound reads DQE, adding no Neon load; if not, they must
+// read Neon (with the Outbound Calls tab as fallback).
+//
+// WHAT IS COMPARED, AND WHAT IS NOT. The two sources do not measure the same
+// thing in every column, so the verdict is PRE-REGISTERED on the one column
+// whose definitions line up, and everything else is reported as information:
+//   - PLACED (the verdict). Sheet `OB External Total` counts the agent's leg-1
+//     dials to a "+number" (calculateMetricsInMemory, context N/A); Neon counts
+//     distinct outbound call groups with an Outgoing leg to an external
+//     number, attributed to the first such leg's caller. Both mean "calls this
+//     agent placed to an outside number", so they SHOULD agree per agent-day.
+//   - DURATION (information only). The sheet's `OB External Total Duration` is
+//     the sum of LEG durations (ring included); Neon's `talk_seconds` is talk
+//     only. Both sums are logged, plus Neon talk+ring, so the log says which
+//     the sheet tracks -- but a duration that differs is EXPECTED, not a
+//     mismatch, and Batch D must not read the sheet duration as talk time.
+//   - CONNECTED (information only). The sheet has no talk>0 count; its
+//     "answered" column is legs lasting >= 20 s. Logged beside Neon's
+//     connected count for the same reason.
+//
+// Verdicts (OPS-8 prefixes): 'ok ...' (CLEAN), 'MISMATCH ...', 'INCONCLUSIVE
+// ...', 'FAILED ...'. Never decide Batch D's source on INCONCLUSIVE or FAILED
+// (the Operator State #19 / #63 rule).
+//
+// Dates where ONE side has nothing at all (an import that skipped the Neon
+// write, or a sheet date never built) are COVERAGE gaps, not disagreements:
+// they are listed and left out of the per-agent-day comparison, and too many
+// of them make the run INCONCLUSIVE rather than CLEAN.
+//
+// Config (Script Properties, both optional): OUTBOUND_SOURCE_FROM /
+// OUTBOUND_SOURCE_TO -- default the 28 days ending at the latest captured
+// date (else yesterday); the window is floored at the outbound capture start
+// (2026-07-10) and capped at OB_SRC_MAX_DAYS_. Self-cleared on a CLEAN run.
+//
+// PHI: agent names and counts only -- the Neon query selects no hash, number
+// or call id. Neon read labelled 'outbound-source' for the egress ranking.
+
+var OB_SRC_CAPTURE_START_ = '2026-07-10';  // AgentDay.gs's AGENT_DAY_OUTBOUND_CAPTURE_START_ twin
+var OB_SRC_MAX_DAYS_ = 92;
+var OB_SRC_MIN_AGENT_DAYS_ = 20;      // fewer compared agent-days than this proves nothing
+var OB_SRC_TOL_ABS_ = 1;              // an agent-day "matches" within max(1 call, 5%)
+var OB_SRC_TOL_PCT_ = 0.05;
+var OB_SRC_MIN_MATCH_SHARE_ = 0.95;   // CLEAN needs this share of agent-days to match
+var OB_SRC_MAX_TOTAL_DRIFT_ = 0.03;   // ... and company totals within 3%
+var OB_SRC_MAX_ONE_SIDED_ = 0.10;     // agent-days present on ONE side only (names) -- past this, MISMATCH
+var OB_SRC_MAX_GAP_DATES_ = 0.20;     // coverage-gap dates past this share -> INCONCLUSIVE
+
+/**
+ * PURE. "H:MM:SS" / "M:SS" / bare seconds -> seconds; '' / junk -> 0. The
+ * sheet cells are read as DISPLAY strings (INV-02: a duration read via
+ * getValues carries the +36:36 phantom offset).
+ */
+function obSrcDurSec_(s) {
+  var str = String(s == null ? '' : s).trim();
+  if (!str) return 0;
+  if (/^\d+(\.\d+)?$/.test(str)) return Math.round(Number(str));
+  var p = str.split(':').map(Number);
+  if (p.some(function (n) { return !isFinite(n); })) return 0;
+  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return 0;
+}
+
+/**
+ * PURE. The header-resolved column indexes (0-based) for the probe, falling
+ * back to the INV-52 positions when a header is absent -- the same names the
+ * Custom Report Builder resolves (dashboardCDR.js), so a renamed header is
+ * reported rather than silently read from the wrong column.
+ */
+function obSrcColumns_(headerRow) {
+  var map = {};
+  (headerRow || []).forEach(function (h, i) {
+    var k = String(h == null ? '' : h).trim();
+    if (k && !(k in map)) map[k] = i;
+  });
+  var pick = function (names, dflt) {
+    for (var i = 0; i < names.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(map, names[i])) return { idx: map[names[i]], by: names[i] };
+    }
+    return { idx: dflt, by: 'position ' + (dflt + 1) };
+  };
+  return {
+    date:   pick(['Date'], 2),
+    dept:   pick(['Dept', 'Department'], 3),
+    agent:  pick(['AgentName', 'Agent Name', 'Name'], 4),
+    placed: pick(['OB External Total'], 19),
+    over20: pick(['OB External Answered', 'OB External Total Answered'], 20),
+    dur:    pick(['OB External Total Duration', 'OB External TTT'], 21),
+  };
+}
+
+/**
+ * PURE. Compare the two per-agent-day maps and decide the verdict.
+ *   sheet: { 'YYYY-MM-DD|Agent': { placed, over20, durSec } }
+ *   neon:  { 'YYYY-MM-DD|Agent': { placed, connected, talkSec, ringSec } }
+ * Returns { verdict: 'CLEAN'|'MISMATCH'|'INCONCLUSIVE', reasons: [...], stats }.
+ */
+function obSrcCompare_(sheet, neon) {
+  sheet = sheet || {}; neon = neon || {};
+  var dateTot = {};   // date -> { s, n }
+  var add = function (key, side, v) {
+    var d = key.split('|')[0];
+    var t = dateTot[d] || (dateTot[d] = { s: 0, n: 0 });
+    t[side] += v;
+  };
+  Object.keys(sheet).forEach(function (k) { add(k, 's', Number(sheet[k].placed) || 0); });
+  Object.keys(neon).forEach(function (k) { add(k, 'n', Number(neon[k].placed) || 0); });
+  var dates = Object.keys(dateTot).sort();
+  var gapDates = dates.filter(function (d) {
+    return (dateTot[d].s > 0) !== (dateTot[d].n > 0);   // exactly one side has the date
+  });
+  var gapSet = {};
+  gapDates.forEach(function (d) { gapSet[d] = true; });
+
+  var keys = {};
+  Object.keys(sheet).forEach(function (k) { keys[k] = true; });
+  Object.keys(neon).forEach(function (k) { keys[k] = true; });
+
+  var st = { compared: 0, matched: 0, oneSided: 0, sheetPlaced: 0, neonPlaced: 0,
+             sheetDurSec: 0, neonTalkSec: 0, neonTalkRingSec: 0,
+             sheetOver20: 0, neonConnected: 0,
+             datesCompared: 0, gapDates: gapDates.map(function (d) {
+               return { date: d, sheet: dateTot[d].s, neon: dateTot[d].n };
+             }),
+             worst: [], sheetOnly: [], neonOnly: [] };
+  st.datesCompared = dates.length - gapDates.length;
+  Object.keys(keys).sort().forEach(function (k) {
+    var d = k.split('|')[0];
+    if (gapSet[d]) return;
+    var s = sheet[k], n = neon[k];
+    var sp = s ? (Number(s.placed) || 0) : 0;
+    var np = n ? (Number(n.placed) || 0) : 0;
+    if (!sp && !np) return;   // an agent row with no outbound on either side
+    st.compared++;
+    st.sheetPlaced += sp; st.neonPlaced += np;
+    if (s) { st.sheetDurSec += Number(s.durSec) || 0; st.sheetOver20 += Number(s.over20) || 0; }
+    if (n) {
+      st.neonTalkSec += Number(n.talkSec) || 0;
+      st.neonTalkRingSec += (Number(n.talkSec) || 0) + (Number(n.ringSec) || 0);
+      st.neonConnected += Number(n.connected) || 0;
+    }
+    if (!sp || !np) {
+      st.oneSided++;
+      (sp ? st.sheetOnly : st.neonOnly).push({ key: k, placed: sp || np });
+    }
+    var tol = Math.max(OB_SRC_TOL_ABS_, Math.round(Math.max(sp, np) * OB_SRC_TOL_PCT_));
+    if (Math.abs(sp - np) <= tol) st.matched++;
+    else st.worst.push({ key: k, sheet: sp, neon: np, diff: np - sp });
+  });
+  st.worst.sort(function (a, b) { return Math.abs(b.diff) - Math.abs(a.diff) || (a.key < b.key ? -1 : 1); });
+
+  var reasons = [];
+  var verdict;
+  var gapShare = dates.length ? gapDates.length / dates.length : 0;
+  var matchShare = st.compared ? st.matched / st.compared : 0;
+  var totalDrift = Math.max(st.sheetPlaced, st.neonPlaced)
+    ? Math.abs(st.sheetPlaced - st.neonPlaced) / Math.max(st.sheetPlaced, st.neonPlaced) : 0;
+  var oneSidedShare = st.compared ? st.oneSided / st.compared : 0;
+  st.matchShare = matchShare; st.totalDrift = totalDrift;
+  st.oneSidedShare = oneSidedShare; st.gapShare = gapShare;
+
+  if (st.compared < OB_SRC_MIN_AGENT_DAYS_) {
+    verdict = 'INCONCLUSIVE';
+    reasons.push(st.compared + ' agent-days compared (need ' + OB_SRC_MIN_AGENT_DAYS_ + ') -- widen the window');
+  } else if (gapShare > OB_SRC_MAX_GAP_DATES_) {
+    verdict = 'INCONCLUSIVE';
+    reasons.push(gapDates.length + ' of ' + dates.length + ' dates are on one side only (coverage gaps) -- '
+      + 'fix the missing imports/mirrors and re-run');
+  } else {
+    if (matchShare < OB_SRC_MIN_MATCH_SHARE_) {
+      reasons.push(Math.round(matchShare * 1000) / 10 + '% of agent-days match (need '
+        + OB_SRC_MIN_MATCH_SHARE_ * 100 + '%)');
+    }
+    if (totalDrift > OB_SRC_MAX_TOTAL_DRIFT_) {
+      reasons.push('placed totals differ by ' + Math.round(totalDrift * 1000) / 10 + '% (sheet '
+        + st.sheetPlaced + ', Neon ' + st.neonPlaced + ')');
+    }
+    if (oneSidedShare > OB_SRC_MAX_ONE_SIDED_) {
+      reasons.push(st.oneSided + ' agent-days appear on one side only -- likely an agent-NAME '
+        + 'difference between the sheet roster name and the captured name (Operator State #72)');
+    }
+    verdict = reasons.length ? 'MISMATCH' : 'CLEAN';
+  }
+  st.worst = st.worst.slice(0, 15);
+  st.sheetOnly = st.sheetOnly.slice(0, 15);
+  st.neonOnly = st.neonOnly.slice(0, 15);
+  return { verdict: verdict, reasons: reasons, stats: st };
+}
+
+/** The probe window: explicit props win; else 28 days ending at the anchor (or yesterday). */
+function obSrcWindow_(props, anchorIso, nowMs) {
+  var msDay = 24 * 3600 * 1000;
+  var iso = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
+  var yesterdayIso = iso(new Date((nowMs || Date.now()) - msDay));
+  var defaultTo = (isIsoDate_(anchorIso) && anchorIso < yesterdayIso) ? anchorIso : yesterdayIso;
+  var to = String(props.getProperty('OUTBOUND_SOURCE_TO') || defaultTo).trim();
+  var from = String(props.getProperty('OUTBOUND_SOURCE_FROM')
+    || iso(new Date(new Date(to + 'T12:00:00Z').getTime() - 27 * msDay))).trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
+    throw new Error('OUTBOUND_SOURCE_FROM/_TO must be YYYY-MM-DD with from <= to (got '
+      + from + ' .. ' + to + ').');
+  }
+  if (from < OB_SRC_CAPTURE_START_) from = OB_SRC_CAPTURE_START_;   // nothing to compare before capture
+  if (from > to) throw new Error('The window ends before outbound capture began (' + OB_SRC_CAPTURE_START_ + ').');
+  if (reportRangeDays_(from, to) > OB_SRC_MAX_DAYS_) {
+    throw new Error('The probe window is capped at ' + OB_SRC_MAX_DAYS_ + ' days (got ' + from + ' .. ' + to + ').');
+  }
+  return { from: from, to: to };
+}
+
+/**
+ * Sheet side: CDR Historical Data rows in [from, to], summed per agent-day.
+ * Bounded by a min/max SPAN of the date column (the dated-sheet read rule --
+ * this sheet is not reliably date-ordered, so a span, never a tail scan), and
+ * read as DISPLAY values throughout (INV-02 for the duration column; F-3 for
+ * the date cells). Returns { map, cols, rows, unparsedDates } or null when the
+ * sheet is missing.
+ */
+function obSrcReadSheet_(ss, from, to) {
+  var sheet = ss.getSheetByName('CDR Historical Data');
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  var width = Math.min(sheet.getMaxColumns(), Math.max(sheet.getLastColumn(), 22));
+  var header = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+  var cols = obSrcColumns_(header);
+  var out = { map: {}, cols: cols, rows: 0, unparsedDates: 0 };
+  if (lastRow < 2) return out;
+  var tz = (typeof ss.getSpreadsheetTimeZone === 'function') ? ss.getSpreadsheetTimeZone() : TZ;
+  var dateVals = sheet.getRange(2, cols.date.idx + 1, lastRow - 1, 1).getDisplayValues();
+  var first = -1, last = -1;
+  var isoAt = [];
+  for (var i = 0; i < dateVals.length; i++) {
+    var raw = dateVals[i][0];
+    var d = (raw === '' || raw == null) ? null : ncCellDateIso_(raw, tz);
+    if (raw !== '' && raw != null && !d) out.unparsedDates++;
+    isoAt.push(d);
+    if (d && d >= from && d <= to) { if (first < 0) first = i; last = i; }
+  }
+  if (first < 0) return out;
+  var need = Math.max(cols.placed.idx, cols.over20.idx, cols.dur.idx, cols.agent.idx) + 1;
+  var grid = sheet.getRange(2 + first, 1, last - first + 1, Math.min(need, width)).getDisplayValues();
+  for (var r = 0; r < grid.length; r++) {
+    var iso = isoAt[first + r];
+    if (!iso || iso < from || iso > to) continue;   // the span bounds the read; this filter decides
+    var agent = String(grid[r][cols.agent.idx] == null ? '' : grid[r][cols.agent.idx]).trim();
+    if (!agent) continue;
+    var placed = Number(String(grid[r][cols.placed.idx] || '').replace(/,/g, '')) || 0;
+    var over20 = Number(String(grid[r][cols.over20.idx] || '').replace(/,/g, '')) || 0;
+    var dur = obSrcDurSec_(grid[r][cols.dur.idx]);
+    var key = iso + '|' + agent;
+    var e = out.map[key] || (out.map[key] = { placed: 0, over20: 0, durSec: 0 });
+    e.placed += placed; e.over20 += over20; e.durSec += dur;
+    out.rows++;
+  }
+  return out;
+}
+
+/** Neon side: outbound_calls grouped per agent-day, one bound, labelled read. */
+function obSrcReadNeon_(conn, from, to) {
+  var st = conn.prepareStatement(
+    "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+    + "SELECT to_char(call_date, 'YYYY-MM-DD') AS d, agent_name AS a, count(*) AS n, "
+    +        'count(*) FILTER (WHERE connected) AS c, '
+    +        'COALESCE(sum(talk_seconds), 0) AS t, COALESCE(sum(ring_seconds), 0) AS r '
+    + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+    + 'AND agent_name IS NOT NULL GROUP BY call_date, agent_name) t');
+  st.setString(1, from);
+  st.setString(2, to);
+  var rs = st.executeQuery();
+  var j = rs.next() ? rs.getString('j') : '[]';
+  rs.close(); st.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'outbound-source');
+  var map = {};
+  JSON.parse(j || '[]').forEach(function (row) {
+    var key = row.d + '|' + String(row.a).trim();
+    var e = map[key] || (map[key] = { placed: 0, connected: 0, talkSec: 0, ringSec: 0 });
+    e.placed += Number(row.n) || 0; e.connected += Number(row.c) || 0;
+    e.talkSec += Number(row.t) || 0; e.ringSec += Number(row.r) || 0;
+  });
+  return map;
+}
+
+function probeOutboundSourceAgreement() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) -- re-run when it is back' });
+    var win = obSrcWindow_(props, obProbeAnchorDate_(conn));
+    var label = win.from + '..' + win.to + ' (all departments)';
+    var sheetSide = obSrcReadSheet_(openSpreadsheet_(), win.from, win.to);
+    if (!sheetSide) return logStatusReturn_({ result: 'FAILED (no "CDR Historical Data" sheet) ' + label });
+    var neonMap = obSrcReadNeon_(conn, win.from, win.to);
+    var cmp = obSrcCompare_(sheetSide.map, neonMap);
+    var s = cmp.stats;
+
+    Logger.log('[outbound-source] window %s; sheet rows %s (unparsed date cells %s); columns: %s',
+      label, sheetSide.rows, sheetSide.unparsedDates, JSON.stringify(sheetSide.cols));
+    Logger.log('[outbound-source] PLACED: %s agent-days compared, %s match (%s%%); totals sheet %s vs Neon %s (drift %s%%); one-sided %s',
+      s.compared, s.matched, Math.round(s.matchShare * 1000) / 10, s.sheetPlaced, s.neonPlaced,
+      Math.round(s.totalDrift * 1000) / 10, s.oneSided);
+    Logger.log('[outbound-source] INFO duration: sheet leg-duration sum %ss; Neon talk %ss; Neon talk+ring %ss '
+      + '(the sheet sums LEG duration, so expect it nearer talk+ring -- never read it as talk time)',
+      s.sheetDurSec, s.neonTalkSec, s.neonTalkRingSec);
+    Logger.log('[outbound-source] INFO connected: sheet legs >= 20s %s; Neon connected (talk > 0) %s -- different definitions',
+      s.sheetOver20, s.neonConnected);
+    if (s.gapDates.length) Logger.log('[outbound-source] coverage-gap dates (one side only): %s', JSON.stringify(s.gapDates));
+    if (s.worst.length) Logger.log('[outbound-source] largest agent-day differences: %s', JSON.stringify(s.worst));
+    if (s.sheetOnly.length) Logger.log('[outbound-source] on the SHEET only: %s', JSON.stringify(s.sheetOnly));
+    if (s.neonOnly.length) Logger.log('[outbound-source] in NEON only: %s', JSON.stringify(s.neonOnly));
+
+    var summary = s.compared + ' agent-days, ' + Math.round(s.matchShare * 1000) / 10 + '% match, totals '
+      + s.sheetPlaced + ' vs ' + s.neonPlaced;
+    if (cmp.verdict === 'CLEAN') {
+      if (typeof clearToolParamsAfterCleanRun_ === 'function') {
+        clearToolParamsAfterCleanRun_(['OUTBOUND_SOURCE_FROM', 'OUTBOUND_SOURCE_TO'], 'probeOutboundSourceAgreement');
+      }
+      return logStatusReturn_({ result: 'ok CLEAN placed counts agree (' + summary + ', ' + label
+        + ') -- the sheet can serve PLACED per agent-day; durations and connects are NOT interchangeable (see log).',
+        stats: s });
+    }
+    if (cmp.verdict === 'MISMATCH') {
+      return logStatusReturn_({ result: 'MISMATCH ' + cmp.reasons.join('; ') + ' (' + summary + ', ' + label
+        + ') -- Batch D must read Neon; the log lists the differing agent-days.', stats: s });
+    }
+    return logStatusReturn_({ result: 'INCONCLUSIVE ' + cmp.reasons.join('; ') + ' (' + label
+      + ') -- do not choose a source on this run.', stats: s });
+  } catch (e) {
+    return logStatusReturn_({ result: 'FAILED ' + (e && e.message ? e.message : e) });
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
+  }
+}
+
+// ── My Department outbound view (Batch D, owner plan 2026-10) ───────────────
+//
+// getDeptOutboundSummary({ department, from, to }) feeds the Inbound |
+// Outbound | Both switch on the My Department agent table and its Team
+// Outbound side panel. It is the Outbound report's per-agent half, WITHOUT
+// the callback queries:
+//   - the SAME SQL (outboundAgentsSel_) and the SAME sheet fallback
+//     (obAgentsFromGrid_ over the Outbound Calls tab), so the table always
+//     reconciles with the Outbound report for the same dept and dates;
+//   - the SAME roster attribution and PC-12 scope (outboundShapeReport_ --
+//     the dept plus its one-level sub-queues, each agent under one dept);
+//   - the SAME gate (outboundResolveRequest_ -> OUTBOUND_VETTING_GATE_), so
+//     it releases to managers in the 6c commit and not before.
+// Why not the CDR Historical sheet (Batch C): its duration column is LEG
+// duration and its "answered" is >= 20 s, so talk time and connects need the
+// per-call table whatever the probe says; a CLEAN verdict would only let
+// PLACED move, which is not worth a second definition beside the report's.
+//
+// Cached on the 6 h tier under `deptOutbound:v1:` with the freshness tag and a
+// roster hash (DL-5: attribution changes when a roster does). A sheet-served
+// or unavailable payload is never cached. No prior-window chips yet.
+
+const DEPT_OUTBOUND_CACHE_KEY_PREFIX = 'deptOutbound:v1:';
+
+/**
+ * PURE. Totals for a list of shaped agent rows, plus the team "per day"
+ * pair the inbound ans/day uses (Batch A): placed per AGENT per day, over
+ * agents NOT on their dept's team-average exclusion list. `excl` maps
+ * dept -> { name: true }.
+ */
+function deptObTotals_(agents, excl) {
+  var t = { agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null, obTalkSec: 0,
+            obAttSec: 0, attempts: 0, obUnconnectedBrief: 0, obUnconnectedReal: 0,
+            obUnconnectedUnknown: 0, obPerDay: null, obPerDayPlaced: 0, obPerDayAgentDays: 0 };
+  (agents || []).forEach(function (a) {
+    t.agents++;
+    t.obTotal += a.obTotal || 0; t.obConnected += a.obConnected || 0;
+    t.obTalkSec += a.obTalkSec || 0; t.attempts += a.attempts || 0;
+    t.obUnconnectedBrief += a.obUnconnectedBrief || 0;
+    t.obUnconnectedReal += a.obUnconnectedReal || 0;
+    t.obUnconnectedUnknown += a.obUnconnectedUnknown || 0;
+    var ex = (excl && excl[a.scopeDept]) || {};
+    if (!ex[a.agent]) { t.obPerDayPlaced += a.obTotal || 0; t.obPerDayAgentDays += a.obDays || 0; }
+  });
+  t.obConnectRate = t.obTotal ? Math.round(t.obConnected / t.obTotal * 1000) / 10 : null;
+  t.obAttSec = t.obConnected ? Math.round(t.obTalkSec / t.obConnected) : 0;
+  t.obPerDay = t.obPerDayAgentDays ? Math.round(t.obPerDayPlaced / t.obPerDayAgentDays * 10) / 10 : null;
+  return t;
+}
+
+/** PURE. The client payload from a shaped Outbound report. */
+function deptOutboundProject_(scope, shaped, excl) {
+  var agents = (shaped.agents || []).map(function (a) {
+    var c = {};
+    Object.keys(a).forEach(function (k) { c[k] = a[k]; });
+    c.excludedFromTeamAvg = !!((excl && excl[a.scopeDept]) || {})[a.agent];
+    return c;
+  });
+  var depts = (scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept];
+  var groups = depts.map(function (d) {
+    return { dept: d, totals: deptObTotals_(agents.filter(function (a) { return a.scopeDept === d; }), excl) };
+  });
+  return {
+    meta: {
+      department: scope.dept, from: scope.from, to: scope.to, scopeDepts: depts.slice(),
+      available: shaped.meta.available !== false,
+      fallbackSource: shaped.meta.fallbackSource || null,
+      fallbackThrough: shaped.meta.fallbackThrough || null,
+      coverageStart: shaped.meta.coverageStart || null,
+      offRosterAgents: shaped.meta.offRosterAgents || 0,
+      briefRingSec: OUTBOUND_BRIEF_RING_SEC_,
+      cacheHit: false, computeMs: 0,
+    },
+    agents: agents,
+    totals: deptObTotals_(agents, excl),
+    deptGroups: depts.length > 1 ? groups : null,
+  };
+}
+
+/** Neon first (the report's own SQL), the Outbound Calls tab when Neon is down. */
+function computeDeptOutbound_(scope) {
+  var deptsByAgent = buildDeptsByAgent_();
+  var conn = null, shaped = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (conn) {
+      var sql = "SELECT json_build_object('agents', " + outboundAgentsSel_(scope.from, scope.to)
+        + ", 'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls))::text AS j";
+      var stmt = conn.createStatement();
+      var rs = stmt.executeQuery(sql);
+      var json = rs.next() ? rs.getString('j') : null;
+      rs.close(); stmt.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'deptOutbound');
+      if (json) shaped = outboundShapeReport_(scope, JSON.parse(json), deptsByAgent, null);
+    }
+  } catch (e) {
+    Logger.log('computeDeptOutbound_ Neon read failed (falling back to the sheet): '
+      + (e && e.message ? e.message : e));
+    shaped = null;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
+  }
+  if (!shaped) {
+    var empty = emptyOutboundReport_(scope);
+    try {
+      var ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, scope.from);
+      if (!ob) { empty.meta.available = false; shaped = empty; }
+      else {
+        shaped = outboundShapeReport_(scope, { agents: obAgentsFromGrid_(ob.grid, scope.from, scope.to) },
+          deptsByAgent, null);
+        shaped.meta.fallbackSource = 'sheet';
+        shaped.meta.fallbackThrough = ob.through || null;
+      }
+    } catch (e2) {
+      Logger.log('computeDeptOutbound_ sheet fallback failed: ' + (e2 && e2.message ? e2.message : e2));
+      empty.meta.available = false;
+      shaped = empty;
+    }
+  }
+  var excl = {};
+  ((scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept]).forEach(function (d) {
+    excl[d] = (typeof teamAvgExcludeSet_ === 'function') ? teamAvgExcludeSet_(d) : {};
+  });
+  return deptOutboundProject_(scope, shaped, excl);
+}
+
+function getDeptOutboundSummary(req) {
+  var scope = outboundResolveRequest_(req);           // the 6c gate + validation
+  if (scope.companyView) throw new Error('department is required.');
+  assertReportRangeCap_(scope.from, scope.to);        // SEC-1
+  var cache = CacheService.getScriptCache();
+  var rosterTag = (typeof rosterSetHash_ === 'function') ? rosterSetHash_(scope.scopeDepts) : 'na';
+  var key = DEPT_OUTBOUND_CACHE_KEY_PREFIX + scope.dept + ':' + scope.from + ':' + scope.to
+    + ':' + reportFreshnessTag_() + ':' + rosterTag;
+  var hit = cache.get(key);
+  if (hit) {
+    try {
+      var p = JSON.parse(hit);
+      p.meta.cacheHit = true;
+      logReportUsage_('deptOutbound', scope.dept, scope.user, true);
+      return p;
+    } catch (e) { /* recompute */ }
+  }
+  var t0 = Date.now();
+  var out = computeDeptOutbound_(scope);
+  out.meta.computeMs = Date.now() - t0;
+  if (out.meta.available && !out.meta.fallbackSource) {
+    try { cache.put(key, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('deptOutbound cache put failed: %s', e); }
+  }
+  logReportUsage_('deptOutbound', scope.dept, scope.user, false);
+  return out;
 }

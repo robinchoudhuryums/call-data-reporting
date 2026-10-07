@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v26` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v28` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -94,7 +94,13 @@
 // answered COUNT) feeding the chart's new Answered calls metric view.
 // v26 (QO-1, broad-scan 2026-10-01): qcd.violationsMtd is month-to-date through
 // the LATEST QCD date (the D-8 rule), not through today.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v26';
+// v27 (Batch E2): each dept tile may carry an `outbound` block (placed /
+// connected per card period, from Neon outbound_calls) + the top-level
+// `outboundCoverageStart`; admin-only while OUTBOUND_VETTING_GATE_ stands.
+// v28 (Batch F1): each tile outbound period gains `prior` (the INV-28
+// preceding window's placed / connected / pct, null when that window starts
+// before outbound capture) + the top-level `outboundPriorWindows`.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v28';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -401,6 +407,10 @@ function getCompanyOverview(req) {
   const company = ovAccumulateCompany_(dqeRows, w, latestDate, companyRosterUnion);
   const deptStats = ovAccumulateDeptStats_(dqeRows, allDepts, deptsForAgent, w.trendStartIso, latestDate);
   const periods = ovAccumulatePeriods_(dqeRows, allDepts, deptsForAgent, w, latestDate);
+  // Batch E2: the tiles' outbound line, read ONCE here so it rides the cached
+  // blob (the 5-min auto-refresh never reaches Neon). Best-effort: null when
+  // Neon is unreachable/unconfigured, and the tiles then show no line.
+  const outbound = ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate);
 
   // Format per-dept output. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
   // are skipped entirely; sub-queues get a `parent` reference and
@@ -424,7 +434,8 @@ function getCompanyOverview(req) {
   const companyQcdDaily = qcdSnapshotsByDept._companyDaily || {};
   const tileCtx = { deptStats: deptStats, trendIsoLabels: trendIsoLabels, chartTrendIsoLabels: chartTrendIsoLabels,
     qcdSnapshotsByDept: qcdSnapshotsByDept, deptChartDaily: periods.deptChartDaily, overviewParentMap: overviewParentMap,
-    rosterByDept: rosterByDept, alertedSet: alertedSet, latestDate: latestDate, deptPeriodAcc: periods.deptPeriodAcc };
+    rosterByDept: rosterByDept, alertedSet: alertedSet, latestDate: latestDate, deptPeriodAcc: periods.deptPeriodAcc,
+    outboundByDept: outbound ? outbound.byDept : null };
   const allFormatted = allDepts
     .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
     .map(function (d) { return ovFormatDept_(d, tileCtx); });
@@ -450,6 +461,12 @@ function getCompanyOverview(req) {
     // injects them per-request so a payload warmed by user A still
     // serves user B's identity correctly.
   };
+  // Batch E2: present only when the outbound read succeeded, so a payload
+  // without Neon is unchanged (the CH-4 goldens pin that shape).
+  if (outbound) {
+    result.outboundCoverageStart = outbound.coverageStart;
+    result.outboundPriorWindows = outbound.priorWindows;   // Batch F1: the chips' hover windows
+  }
 
   ovCacheOverview_(cache, ovCacheKey, result, dqeRows, depts);
 
@@ -878,7 +895,7 @@ function ovFormatDept_(d, c) {
   // semantic, DQE counts RINGS, and the two are not the same species.
   const dqeSilence = ovDqeSilence_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily, 7);
   if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
-  return {
+  const tile = {
     name: d,
     parent: overviewParentMap[d] || null,
     activeAgents: Object.keys(ld.activeAgents).length,
@@ -924,6 +941,150 @@ function ovFormatDept_(d, c) {
       ytd:       ovFmtPeriod_(deptPeriodAcc[d].ytd),
     },
   };
+  // Batch E2: the outbound line, per card period. Absent (not null) when the
+  // read failed, so the client's "render only when present" needs no flag.
+  if (c.outboundByDept) tile.outbound = c.outboundByDept[d] || ovOutboundEmpty_();
+  return tile;
+}
+
+// ── Batch E2: outbound line on the dept tiles ───────────────────────────────
+// One grouped Neon read of outbound_calls over the Overview's existing read
+// window, bucketed per agent into the SAME five card periods the inbound stats
+// use, then attributed to depts through the SAME deptsForAgent roster map (an
+// agent on two rosters counts in both, like the DQE tiles). Dept TOTALS, so
+// TEAM_AVG_EXCLUDES does not apply (INV-26 scopes it to per-agent averages).
+// "Connected" is the outbound_calls.connected column -- the definition the
+// Outbound report and the Team Outbound panel read (OB_CONNECTED_DEF_).
+// Admin-only while OUTBOUND_VETTING_GATE_ stands: personalizeOverview_ strips
+// it for everyone else. No sheet fallback on purpose: the Outbound Calls tab
+// tail for a YTD window is far heavier than the line is worth, and the
+// tiles stay honest by simply omitting it.
+var OV_OUTBOUND_PERIODS_ = ['yesterday', 'last30', 'last60', 'last90', 'ytd'];
+
+/** PURE. The zero block a dept with no outbound calls carries. */
+function ovOutboundEmpty_() {
+  const out = {};
+  OV_OUTBOUND_PERIODS_.forEach(function (k) { out[k] = { placed: 0, connected: 0, pct: null, partial: false, prior: null }; });
+  return out;
+}
+
+/**
+ * PURE. Batch F1: each card period's PRIOR window -- the immediately-preceding
+ * window of the same working-day count (INV-28, the one shared
+ * computePriorWindow_, so the chips compare what the inbound E5 chips
+ * compare). Empty when Data.gs is not loaded: no prior, no chips.
+ */
+function ovOutboundPriorWindows_(w, latestDate) {
+  const out = {};
+  if (typeof computePriorWindow_ !== 'function') return out;
+  const starts = ovOutboundPeriodStarts_(w, latestDate);
+  OV_OUTBOUND_PERIODS_.forEach(function (k) { out[k] = computePriorWindow_(starts[k], latestDate); });
+  return out;
+}
+
+/** PURE. Each card period's first day (the same starts ovAccumulatePeriods_ uses). */
+function ovOutboundPeriodStarts_(w, latestDate) {
+  return { yesterday: latestDate, last30: w.trendStartIso, last60: w.last60StartIso,
+           last90: w.last90StartIso, ytd: w.ytdStartIso };
+}
+
+/** PURE. The grouped SQL. Every date is an internal validated ISO string. */
+function ovOutboundSql_(w, latestDate, priorWindows) {
+  const starts = ovOutboundPeriodStarts_(w, latestDate);
+  const pw = priorWindows || {};
+  let lo = w.readFromIso;
+  const cols = OV_OUTBOUND_PERIODS_.map(function (k) {
+    const cond = k === 'yesterday' ? "call_date = '" + latestDate + "'::date"
+      : "call_date >= '" + starts[k] + "'::date";
+    let sel = 'count(*) FILTER (WHERE ' + cond + ') AS p_' + k + ', '
+      + 'count(*) FILTER (WHERE ' + cond + ' AND connected) AS c_' + k;
+    // Batch F1: the prior window's counts, in the SAME grouped pass.
+    if (pw[k]) {
+      const pcond = "call_date BETWEEN '" + pw[k].from + "'::date AND '" + pw[k].to + "'::date";
+      sel += ', count(*) FILTER (WHERE ' + pcond + ') AS pp_' + k
+        + ', count(*) FILTER (WHERE ' + pcond + ' AND connected) AS pc_' + k;
+      if (pw[k].from < lo) lo = pw[k].from;
+    }
+    return sel;
+  }).join(', ');
+  return "SELECT json_build_object('agents', (SELECT COALESCE(json_agg(t), '[]') FROM ("
+    + 'SELECT agent_name AS agent, ' + cols + ' FROM outbound_calls '
+    + "WHERE call_date BETWEEN '" + lo + "'::date AND '" + latestDate + "'::date "
+    + 'GROUP BY agent_name) t), '
+    + "'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls))::text AS j";
+}
+
+/**
+ * PURE. Per-agent period counts -> per-dept blocks. `partial` marks a period
+ * that starts before capture began (outbound_calls has no rows before its
+ * coverage start, so a YTD figure there is "since <coverageStart>").
+ */
+function ovOutboundShape_(raw, allDepts, deptsForAgent, w, latestDate, priorWindows) {
+  const starts = ovOutboundPeriodStarts_(w, latestDate);
+  const cov = (raw && raw.coverageStart) || null;
+  const pw = priorWindows || {};
+  // Batch F1: a prior window is comparable only when it starts ON or AFTER
+  // capture began -- before that, outbound_calls simply has no rows and the
+  // chip would compare against an empty period.
+  const priorOk = {};
+  OV_OUTBOUND_PERIODS_.forEach(function (k) { priorOk[k] = !!(cov && pw[k] && pw[k].from >= cov); });
+  const byDept = {};
+  const priorAcc = {};
+  allDepts.forEach(function (d) {
+    byDept[d] = ovOutboundEmpty_();
+    priorAcc[d] = {};
+    OV_OUTBOUND_PERIODS_.forEach(function (k) { priorAcc[d][k] = { placed: 0, connected: 0 }; });
+  });
+  ((raw && raw.agents) || []).forEach(function (a) {
+    const owners = deptsForAgent[a.agent];
+    if (!owners) return;   // off-roster: no dept to attribute it to
+    owners.forEach(function (d) {
+      const b = byDept[d];
+      if (!b) return;
+      OV_OUTBOUND_PERIODS_.forEach(function (k) {
+        b[k].placed += Number(a['p_' + k]) || 0;
+        b[k].connected += Number(a['c_' + k]) || 0;
+        priorAcc[d][k].placed += Number(a['pp_' + k]) || 0;
+        priorAcc[d][k].connected += Number(a['pc_' + k]) || 0;
+      });
+    });
+  });
+  Object.keys(byDept).forEach(function (d) {
+    OV_OUTBOUND_PERIODS_.forEach(function (k) {
+      const p = byDept[d][k];
+      p.pct = p.placed ? round1_(p.connected / p.placed * 100) : null;
+      p.partial = !!(cov && starts[k] < cov);
+      const q = priorAcc[d][k];
+      p.prior = priorOk[k]
+        ? { placed: q.placed, connected: q.connected, pct: q.placed ? round1_(q.connected / q.placed * 100) : null }
+        : null;
+    });
+  });
+  return { byDept: byDept, coverageStart: cov, priorWindows: pw };
+}
+
+/** Best-effort Neon read; null when Neon is unconfigured, unreachable or the read throws. */
+function ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate) {
+  if (typeof getDashboardNeonConn_ !== 'function') return null;
+  let conn = null;
+  try {
+    conn = getDashboardNeonConn_();
+    if (!conn) return null;
+    const stmt = conn.createStatement();
+    const priorWindows = ovOutboundPriorWindows_(w, latestDate);
+    const rs = stmt.executeQuery(ovOutboundSql_(w, latestDate, priorWindows));
+    const json = rs.next() ? rs.getString('j') : null;
+    rs.close(); stmt.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'overviewOutbound');
+    if (!json) return null;
+    return ovOutboundShape_(JSON.parse(json), allDepts, deptsForAgent, w, latestDate, priorWindows);
+  } catch (e) {
+    Logger.log('Overview outbound read failed (tiles render without the line): '
+      + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
+  }
 }
 
 /** CH-4: Overview stage -- tile order: top-level by latest rung, children after their parent, orphans surfaced. */
@@ -1508,6 +1669,13 @@ function personalizeOverview_(blob, user) {
     delete out.pipelineFreshness;
     delete out.orphanNag;
     delete out.unmappedQcd;
+    // Batch E2: the tiles' outbound line is admin-only while the Outbound
+    // report is (6c). FAIL CLOSED: OutboundReport.gs absent = still gated.
+    if (typeof OUTBOUND_VETTING_GATE_ === 'undefined' || OUTBOUND_VETTING_GATE_) {
+      delete out.outboundCoverageStart;
+      if (Array.isArray(out.depts)) out.depts.forEach(function (d) { if (d) delete d.outbound; });
+      delete out.outboundPriorWindows;   // Batch F1
+    }
     // INV-48: managers see the WoW "driver" (a named individual agent +
     // delta) only for their OWN dept; admins see drivers for all depts.
     // The dept aggregate tiles stay cross-dept-visible by design, but the

@@ -211,7 +211,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   agent's **gap vs the team average** as diverging bars (colored by
   favourability -- Missed is inverse), value as a datalabel, **click a bar
   to drill into IR**. Both views persist in `cdr.ins.prefs`; single-agent
-  reports force Cards view. **IR drill-through (`irDrillToAgent_`):**
+  reports force Cards view. **IR drill-through (`irDrillToAgent_`; on My Department it is the inline agent panel's "Individual report" button since Batch B):**
   Insights is a full PAGE (modal->page conversion,
   docs/insights-page-plan.md), so the IR modal simply OVERLAYS it -- the
   rendered report stays put behind the overlay, nothing is hidden or
@@ -285,7 +285,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v22). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v23). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -872,7 +872,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v26` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v28` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1106,7 +1106,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
-  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v26`.
+  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v28`.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a
@@ -2101,7 +2101,91 @@ stay pinned by INV-39, INV-53 and INV-06.
   180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v26`).
+  stripped by `personalizeOverview_` (`companyOverview:v28`).
+- **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
+  `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
+  6c pin in `cross-file-pins.test.js` moves it with `#outbound-report-btn`).
+  The client's permission IS the switch's visibility (`obAllowed_`), so
+  view-as-manager falls back to Inbound with no role check. Outbound and Both
+  render a SEPARATE table, `#agents-ob-table` (`obViewRender_`, script-5), so
+  the inbound `COLUMNS` model, its sort and its exports are untouched -- and
+  Export / Copy still produce the inbound table (the view's note says so).
+  `body[data-dir]` (set by `obViewSync_` at the end of every `render()`) picks
+  the table and the side panel in CSS, so a late Team Rings repaint cannot
+  reappear over the Outbound view. Outbound: a connected / not-connected tally
+  in `--dir-out` violet with the placed total and "N / day" (days with a call),
+  Connect %, talk, average talk per connected call, attempts; per-dept groups
+  and subtotals on a parent dept. Both: the inbound bar + Answer % and the
+  outbound bar + Connect % + talk on ONE row per agent, never added together.
+  Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
+  Outbound view and stacks under it in Both (natural height there; the aside
+  scrolls rather than the two overlapping). Rows open the inline agent panel
+  (`apTbody_` follows the visible table). The choice persists in
+  `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
+- **Outbound on the Overview tiles and in Insights (owner 2026-10, Batch E).**
+  Both admin-only until the 6c release. **Tiles (E2):** `ovBuildOutboundLine_`
+  (script-3) adds one violet line (`.ov-dir-pill` "Outbound", Placed, Conn +
+  connect %) under ATT on every grid tile and expanded sub-queue card, for the
+  SAME card window the inbound stats show; a window that starts before outbound
+  capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
+  only to admins and only when its Neon read worked, so "render when present"
+  is the whole client gate. **Insights (E1):** the `#ins-ob-fold` fold
+  (`insObSync_`, script-8) sits after Queue health. It reads
+  `getDeptOutboundSummary` twice -- the region's window and its prior window
+  -- keeps only the dept's OWN group (`insObOwnScope_`: its `deptGroups`
+  subtotal and agents, since Insights is one department per run while the
+  summary folds a parent's sub-queues in for My Department), and renders
+  five tiles with `insDeltaBadge_` deltas (per day when the
+  windows differ in length, CL-2) plus a per-agent table in a horizontal
+  scroller (`.ins-ob-scroll`; the bare table pushed the page to 510 px at
+  360). It shows only while `obAllowed_()` is true, the same gate as Batch D,
+  so View-as and managers never fetch. A prior window that starts before capture shows
+  no comparison and says why. It is not fetched on the SWR pre-paint, and a
+  repeat render of the same windows repaints from the last result. The fold
+  persists as `ob` in the Insights folds store and is open by default.
+  Rendered-gated by `drive-outbound-e.js`.
+- **Prior-period chips on outbound (owner 2026-10, Batch F).** The E5
+  `wow-chip` dialect, via ONE helper pair in script-5 (`obPriorChip_` /
+  `obRateChip_`) shared by the Overview tile line and the My Department
+  Outbound / Both rows. Counts mute under `WOW_NOISE_THRESHOLD` (3); the
+  connect-rate chip is in points and mutes under `OB_CHIP_RATE_PTS_` (2) or
+  when EITHER window placed fewer than `OB_CHIP_MIN_PLACED_` (10) calls.
+  Tiles: Placed (up = good) + rate, against the server-shipped `prior`
+  (null = no chips, e.g. YTD before a year of capture). Rows: Connected (up =
+  good), Not connected (ALWAYS muted: more dialling means more unanswered
+  calls, not a regression) and Connect %. The table compares the SAME INV-28
+  window as the inbound chips (`state.meta.priorFrom/priorTo`) through a
+  second cached `getDeptOutboundSummary` call; an agent with no prior row
+  gets no chip (E5's rule), Total / subtotal rows get none, and a prior
+  window starting before outbound capture shows none. Pinned by
+  `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
+- **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
+  click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
+  (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's
+  days in the loaded window (`getAgentDayStrip`, newest first, at most 31 with
+  a "most recent 31 of N" note) and the selected day's Agent Day view with
+  Inbound / Outbound / Missed-rings tabs. The Individual Report the row used to
+  open directly is the panel's first button (`irDrillToAgent_`, same window).
+  ONE agent at a time; Escape or Collapse close it and return focus to the row;
+  a drag-select inside a row is not a click. Every `render()` wipes the tbody,
+  so `apReattach_` (end of `render()`) re-inserts the SAME node under the
+  agent's row, re-opens it on a changed window, and closes it when the agent
+  is gone (dept switch, a collapsed sub-queue group). The inner `.ap` is
+  sticky-left, sized to `.agents-table-wrap` by JS and `contain: inline-size`,
+  so it never widens the table; its CSS is scoped under `.agents` AFTER the
+  table's rules so `.agents td`'s right-align and the sticky thead do not bleed
+  into the nested call tables. Exports read `state.rows`, never the DOM.
+  Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:
+  the Answer % column's formula and `answerTierCls_` dept-standard tint).
+  Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
+  **Call DIRECTION has its own hue** (owner 2026-10): inbound = `--accent`
+  (already "inbound" on Caller Lookup's chip), outbound = `--dir-out`, a
+  violet no status token uses, so neither direction reads as good/bad. Both
+  show as the pill on the tile-row label (`.ad-dir--in/--out`), a top stripe
+  on that row's tiles (`.ad-kpi-row--in/--out`, the modal too), the dot +
+  selected colour on the panel tabs (`.ap-tab--in/--out`) and the strip's
+  outbound line. `--dir-out(-soft)` must be defined at every site `--accent`
+  is (light, oklch, dark x2, print) -- pinned in `html-include-structure.test.js`.
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
@@ -2114,18 +2198,22 @@ stay pinned by INV-39, INV-53 and INV-06.
   classic proportional bar; there is no separate Rung / Missed / Answered /
   **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
-  counts and the rung total as a muted "(N)", answer-rate gets the R23
-  three-tier dept-standard tint, sorts by answered VOLUME (`totalAnswered`,
+  counts and the rung total as a muted "(N)", followed (owner 2026-10,
+  `ansPerDayHtml_`) by "· N.N ans/day" -- answered per day WITH RINGS on an
+  agent row, answered per AGENT per day on a total/subtotal row (the team pair
+  `ansPerDayAnswered`/`ansPerDayAgentDays`; floaters and team-average excludes
+  out). The bar no longer prints an inline answer rate: the Answer % column
+  beside it is the same figure. Sorts by answered VOLUME (`totalAnswered`,
   owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
   `sortRows`). **The CSV still emits a numeric Total calls column** spliced
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; the `answerRate`
-  sort key and the default landing) · Ans / day (owner 2026-09: answered per
-  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`; the combined
-  total row divides by the UNION of the depts' active days, D-6) · Unique ·
-  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
-  columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
+  sort key and the default landing) · Unique ·
+  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
+  (owner 2026-10; the figure lives in the bar cell, `summary:v23`), but the
+  CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
+  columns (Source / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle
   (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
   `hide-extra` class + `.col-extra` cells through the shared `cellClass_`
