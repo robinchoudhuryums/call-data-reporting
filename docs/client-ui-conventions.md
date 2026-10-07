@@ -2119,6 +2119,14 @@ stay pinned by INV-39, INV-53 and INV-06.
   table's rules so `.agents td`'s right-align and the sticky thead do not bleed
   into the nested call tables. Exports read `state.rows`, never the DOM.
   Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
+  **Call DIRECTION has its own hue** (owner 2026-10): inbound = `--accent`
+  (already "inbound" on Caller Lookup's chip), outbound = `--dir-out`, a
+  violet no status token uses, so neither direction reads as good/bad. Both
+  show as the pill on the tile-row label (`.ad-dir--in/--out`), a top stripe
+  on that row's tiles (`.ad-kpi-row--in/--out`, the modal too), the dot +
+  selected colour on the panel tabs (`.ap-tab--in/--out`) and the strip's
+  outbound line. `--dir-out(-soft)` must be defined at every site `--accent`
+  is (light, oklch, dark x2, print) -- pinned in `html-include-structure.test.js`.
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table

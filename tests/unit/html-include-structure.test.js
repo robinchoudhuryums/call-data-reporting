@@ -237,6 +237,25 @@ test('freshness pill: .is-stale uses --stale, defined everywhere --warn is', fun
   assert.equal((css.match(/^\s*--stale-soft:\s/gm) || []).length, (css.match(/^\s*--warn-soft:\s/gm) || []).length);
 });
 
+// Owner (2026-10, Batch B follow-up): Inbound and Outbound each carry a hue
+// on the Agent Day tile rows and the inline panel's tabs. Outbound's violet is
+// its OWN token so it never borrows a status meaning, and like --stale it must
+// exist at every site the palette is redefined -- a missing dark-mode or print
+// value would fall back to the LIGHT violet on a dark surface.
+test('call direction hues: --dir-out is defined wherever --accent is, and both directions use their token', function () {
+  const css = fs.readFileSync(path.join(DIR, 'styles.html'), 'utf8');
+  const accentSites = (css.match(/^\s*--accent:\s/gm) || []).length;
+  assert.equal((css.match(/^\s*--dir-out:\s/gm) || []).length, accentSites,
+    '--dir-out defined at every site --accent is (' + accentSites + ')');
+  assert.equal((css.match(/^\s*--dir-out-soft:\s/gm) || []).length, accentSites);
+  assert.match(css, /\.ad-kpi-row--out \.ds-kpi \{ border-top: 3px solid var\(--dir-out\); \}/);
+  assert.match(css, /\.ad-kpi-row--in \.ds-kpi\s+\{ border-top: 3px solid var\(--accent\); \}/);
+  const js = fs.readFileSync(path.join(DIR, 'script-10-escalations.html'), 'utf8');
+  assert.match(js, /pr-kpi-row ad-kpi-row--in/);
+  assert.match(js, /pr-kpi-row ad-kpi-row--out/);
+  assert.match(js, /class="ap-tab ap-tab--' \+ key/);
+});
+
 // Owner (2026-09-10 notes #2 + #1; roadmap 2b): the quick-start chip is
 // "How is my team doing?" and runs over WHATEVER window the dept controls hold
 // -- its old last-30-days override defeated the report cache and contradicted

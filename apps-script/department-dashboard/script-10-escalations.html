@@ -2286,14 +2286,17 @@
   function adKpiRowsHtml_(meta, day, counts) {
     const c = counts || {};
     const full = meta.tier === 'full';
-    const group = function (label, sub) {
-      return '<div class="ad-kpi-group"><span>' + escapeHtml(label) + '</span> &middot; ' + escapeHtml(sub) + '</div>';
+    // Each direction carries its own hue (owner 2026-10): a coloured pill on
+    // the label and a matching stripe on its tiles (.ad-kpi-row--in / --out).
+    const group = function (label, sub, dir) {
+      return '<div class="ad-kpi-group"><span class="ad-dir ad-dir--' + dir + '">' + escapeHtml(label)
+        + '</span> &middot; ' + escapeHtml(sub) + '</div>';
     };
-    let html = group('Inbound', 'queue calls this agent rang on');
+    let html = group('Inbound', 'queue calls this agent rang on', 'in');
     if (day) {
       const den = (Number(day.answered) || 0) + (Number(day.missed) || 0);
       const pct = den ? Math.round(day.answered / den * 100) + '% answered' : 'daily total';
-      html += '<div class="pr-kpi-row">'
+      html += '<div class="pr-kpi-row ad-kpi-row--in">'
         + inboundKpiTile_('Rung', fmtNumber(day.rung), 'daily total', '')
         + inboundKpiTile_('Answered', fmtNumber(day.answered), pct, '')
         + inboundKpiTile_('Missed', fmtNumber(day.missed), 'daily total', '')
@@ -2308,7 +2311,7 @@
     } else {
       html += '<div class="ds-note">No daily totals for this agent on this date.</div>';
     }
-    html += group('Outbound', 'calls this agent placed');
+    html += group('Outbound', 'calls this agent placed', 'out');
     if (meta.outboundCaptured) {
       const placed = Number(c.outboundTotal) || 0, conn = Number(c.outboundConnected) || 0;
       const unconn = placed - conn;
@@ -2316,7 +2319,7 @@
       if (c.outboundUnconnectedBrief) split.push(c.outboundUnconnectedBrief + ' brief');
       if (c.outboundUnconnectedReal) split.push(c.outboundUnconnectedReal + ' rang out');
       if (c.outboundUnconnectedUnknown) split.push(c.outboundUnconnectedUnknown + ' ring unknown');
-      html += '<div class="pr-kpi-row">'
+      html += '<div class="pr-kpi-row ad-kpi-row--out">'
         + inboundKpiTile_('Placed', fmtNumber(placed), 'external calls', '')
         + inboundKpiTile_('Connected', fmtNumber(conn), placed ? Math.round(conn / placed * 100) + '% · talk > 0' : 'talk > 0', '')
         + inboundKpiTile_('Talk time', fmtDuration(c.outboundTalkSec || 0),
@@ -2693,7 +2696,7 @@
         + '<span class="ap-day-w">' + escapeHtml(apWeekday_(d.date)) + '</span>'
         + '<span class="ap-day-d">' + escapeHtml(apShortDate_(d.date)) + '</span>'
         + '<span class="ap-day-f"><b>' + fmtNumber(d.answered || 0) + '</b> ans · <i>' + fmtNumber(d.missed || 0) + '</i> miss</span>'
-        + '<span class="ap-day-f">' + ob + '</span>'
+        + '<span class="ap-day-f' + (d.outboundCaptured ? ' ap-day-ob' : '') + '">' + ob + '</span>'
         + '</button>';
     }).join('');
     const total = Number(meta.totalActiveDays) || days.length;
@@ -2794,7 +2797,7 @@
     const tier = adTierNote_(meta);
     const tabBtn = function (key, label, n) {
       const on = key === tab;
-      return '<button type="button" role="tab" class="ap-tab' + (on ? ' is-on' : '') + '" data-ap-tab="' + key + '"'
+      return '<button type="button" role="tab" class="ap-tab ap-tab--' + key + (on ? ' is-on' : '') + '" data-ap-tab="' + key + '"'
         + ' aria-selected="' + (on ? 'true' : 'false') + '">' + escapeHtml(label)
         + '<span class="ap-tab-n">' + fmtNumber(n) + '</span></button>';
     };
