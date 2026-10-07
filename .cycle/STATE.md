@@ -1,6 +1,15 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-07 — Batch F IMPLEMENTED (block 236): prior-period chips on outbound, admin-only.**
+  - Tiles: a Placed chip and a connect-rate chip (in points) against each card period's INV-28 prior window, counted in the same Overview read (companyOverview:v28). A period whose prior window predates capture shows no chip (YTD, 60/90 today).
+  - My Department Outbound / Both rows: chips on Connected, Not connected (always gray) and Connect %, against the summary's own prior window via a second cached RPC. Never on totals.
+  - Muting: counts under 3 calls; the rate under 2 pts or when either window placed under 10 calls.
+  - 2239 tests, every ci:ui stage green, four pins and the driver bite.
+
+  **Owner-side:** deploy the dashboard (A to F) and walk S56, S57 and S58.
+  **Next:** the 6c release when vetting is clean (Operator State #63).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-07 — Batch E IMPLEMENTED (block 235): outbound on the Overview tiles + an Outbound fold in Insights, admin-only.**
   - E2: one grouped Neon read inside the cached Overview blob (companyOverview:v27). Each tile gets placed / connected / connect % for the selected card window, with "since Jul 10" on a pre-capture window. It is stripped for every non-admin while OUTBOUND_VETTING_GATE_ stands, and fails closed.
   - E1: `#ins-ob-fold` compares the region's window with its prior window through getDeptOutboundSummary, keeping the dept's OWN group. It is gated by obAllowed_ like Batch D.
