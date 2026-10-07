@@ -78,6 +78,12 @@ jobs:
   # reports the next one just as quietly.
   ui-harness:
     runs-on: ubuntu-latest
+    # A stalled download (npm / the browser CDN / apt) otherwise hangs until
+    # GitHub's 6-hour default -- run 601 sat on "Install playwright" for over
+    # an hour. A healthy run of the whole job takes ~8 min; a timeout fails
+    # fast so a re-run (the documented one-retry for an install-step death)
+    # can be issued. Raise these only if green runs start nearing them.
+    timeout-minutes: 25
     env:
       TZ: America/Chicago
     steps:
@@ -96,6 +102,7 @@ jobs:
       # couple to a chromium path.
       - name: Install playwright
         working-directory: tools/ui-harness
+        timeout-minutes: 10
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-audit --no-fund playwright@1.62.1
