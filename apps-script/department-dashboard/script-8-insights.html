@@ -2072,6 +2072,8 @@
         INS_OB_.key = null;   // let the next render retry
         return;
       }
+      cur = insObOwnScope_(cur, meta.department);
+      prior = insObOwnScope_(prior, meta.department);
       INS_OB_.cur = cur; INS_OB_.prior = prior;
       insObRender_(cur, prior, meta);
     }
@@ -2092,6 +2094,22 @@
     if (!n) return;
     n.style.display = text ? '' : 'none';
     n.textContent = text || '';
+  }
+
+  // PURE. Insights is ONE department per run (the team average is per dept,
+  // INV-25/27), but getDeptOutboundSummary folds a parent's one-level
+  // sub-queue rosters in (PC-12, for the My Department combined view). Take
+  // the dept's OWN group: its deptGroups subtotal and its own agents.
+  function insObOwnScope_(p, dept) {
+    if (!p) return p;
+    var g = (p.deptGroups || []).filter(function (x) { return x.dept === dept; })[0];
+    if (!g) return p;
+    var out = {};
+    Object.keys(p).forEach(function (k) { out[k] = p[k]; });
+    out.totals = g.totals;
+    out.agents = (p.agents || []).filter(function (a) { return a.scopeDept === dept; });
+    out.deptGroups = null;
+    return out;
   }
 
   // PURE. Is the prior window comparable? Not when it starts before outbound
@@ -2171,14 +2189,13 @@
     if (!agents.length) return '';
     var priorBy = {};
     (priorAgents || []).forEach(function (a) { priorBy[a.scopeDept + '|' + a.agent] = a; });
-    var multi = agents.some(function (a) { return a.scopeDept && a.scopeDept !== meta.department; });
     var rows = agents.slice().sort(function (a, b) {
       return (b.obTotal || 0) - (a.obTotal || 0) || String(a.agent).localeCompare(String(b.agent));
     }).map(function (a) {
       var p = priorAgents ? priorBy[a.scopeDept + '|' + a.agent] : null;
       var delta = priorAgents ? insObDelta_(a.obTotal || 0, p ? (p.obTotal || 0) : 0, 'volume', 'neu', meta, 'volume') : '';
       return '<tr>'
-        + '<td>' + escapeHtml(a.agent) + (multi && a.scopeDept ? ' <span class="ins-ob-subdept">' + escapeHtml(a.scopeDept) + '</span>' : '') + '</td>'
+        + '<td>' + escapeHtml(a.agent) + '</td>'
         + '<td class="num">' + fmtNumber(a.obTotal || 0) + (delta ? ' ' + delta : '') + '</td>'
         + '<td class="num">' + fmtNumber(a.obConnected || 0) + '</td>'
         + '<td class="num">' + (a.obConnectRate != null ? escapeHtml(Number(a.obConnectRate).toFixed(1) + '%') : '–') + '</td>'
@@ -2186,12 +2203,12 @@
         + '<td class="num">' + (a.obConnected ? escapeHtml(fmtDuration(a.obAttSec || 0)) : '–') + '</td>'
         + '</tr>';
     }).join('');
-    return '<table class="ds-table ins-ob-table">'
+    return '<div class="ins-ob-scroll"><table class="ds-table ins-ob-table">'
       + '<thead><tr><th scope="col">Agent</th><th scope="col" class="num">Placed</th>'
       + '<th scope="col" class="num" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">Connected</th>'
       + '<th scope="col" class="num">Connect %</th><th scope="col" class="num">Per day</th>'
       + '<th scope="col" class="num">Avg talk</th></tr></thead>'
-      + '<tbody>' + rows + '</tbody></table>';
+      + '<tbody>' + rows + '</tbody></table></div>';
   }
 
   // Round-16: sync the Queue-health FOLD around the section -- visibility +

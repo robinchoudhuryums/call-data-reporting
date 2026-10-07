@@ -226,7 +226,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# TEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# ELEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -250,6 +250,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # return, one at a time, CSV untouched, 360 px -- Batch B), drive-deptoutbound.js
 # (the Inbound | Outbound | Both switch + Team Outbound panel: payload totals,
 # manager/view-as fall back to Inbound, panels never overlap -- Batch D),
+# drive-outbound-e.js (the Overview tiles' outbound line per card window +
+# the Insights Outbound fold's two-window deltas; neither reaches a manager
+# or View-as -- Batch E),
 # drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
 # Outbound and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
@@ -2320,6 +2323,7 @@ S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Dep
 S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
 S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
 S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
+S58 | Outbound on the Overview tiles and in Insights (Batch E) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

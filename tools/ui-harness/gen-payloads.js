@@ -239,13 +239,44 @@ function span(nDays) {
   return { from: iso(f), to };
 }
 
+// Batch E2: a fake Neon connection that answers ONLY the Overview's grouped
+// outbound read (the SQL carries p_yesterday), so the tiles' outbound line is
+// produced by the REAL ovReadOutboundByDept_ + shaper + strip. Every other
+// statement throws, so nothing else in the Overview silently reads it.
+function withOverviewOutboundConn(fn) {
+  const per = Object.keys(DEPT_OF).map(function (a, i) {
+    const r = { agent: a };
+    [['yesterday', 1], ['last30', 22], ['last60', 44], ['last90', 66], ['ytd', 70]].forEach(function (kv) {
+      const placed = (3 + (i * 5) % 11) * kv[1];
+      r['p_' + kv[0]] = placed;
+      r['c_' + kv[0]] = Math.round(placed * (0.4 + (i % 5) * 0.08));
+    });
+    return r;
+  });
+  const blob = JSON.stringify({ agents: per, coverageStart: '2026-07-10' });
+  const realConn = h.ctx.getDashboardNeonConn_;
+  h.ctx.getDashboardNeonConn_ = function () {
+    return {
+      createStatement: function () {
+        return { executeQuery: function (sql) {
+          if (String(sql).indexOf('p_yesterday') === -1) throw new Error('harness: only the outbound read is faked');
+          let n = 0;
+          return { next: function () { return n++ === 0; }, getString: function () { return blob; }, close: function () {} };
+        }, close: function () {} };
+      },
+      close: function () {},
+    };
+  };
+  try { return fn(); } finally { h.ctx.getDashboardNeonConn_ = realConn; }
+}
+
 // ------------------------------------------------------------------ calls --
 install('admin@ums.com');
 dump('latestDates', h.call('getLatestDataDates'));
-dump('ov-admin', h.call('getCompanyOverview', {}));
+dump('ov-admin', withOverviewOutboundConn(function () { return h.call('getCompanyOverview', {}); }));
 
 install('manager@ums.com');
-dump('ov-manager', h.call('getCompanyOverview', {}));
+dump('ov-manager', withOverviewOutboundConn(function () { return h.call('getCompanyOverview', {}); }));
 
 // Dept summaries (CSR): single latest day (page default, INV-43), last-30, YTD.
 install('admin@ums.com');
@@ -275,7 +306,17 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
   });
   agents.push({ agent: 'Off Roster Dialler', ob_total: 9, ob_connected: 4, ob_unconn_brief: 2,
     ob_unconn_real: 3, ob_talk_sec: 600, attempts: 10, ob_days: 2 });
-  const blob = JSON.stringify({ agents: agents, coverageStart: '2026-07-10' });
+  // Batch E1: the Insights Outbound fold compares the current window with its
+  // prior window, so each window gets its own scaled blob (identical blobs
+  // would render every delta as "no change" and hide the delta path).
+  let blob = JSON.stringify({ agents: agents, coverageStart: '2026-07-10' });
+  function scaled(f) {
+    return JSON.stringify({ coverageStart: '2026-07-10', agents: agents.map(function (a) {
+      const t = Math.max(1, Math.round(a.ob_total * f)); const c = Math.min(t, Math.round(a.ob_connected * f * 0.95));
+      return Object.assign({}, a, { ob_total: t, ob_connected: c, ob_unconn_brief: Math.floor((t - c) / 2),
+        ob_unconn_real: Math.ceil((t - c) / 2), ob_talk_sec: c * 100 });
+    }) });
+  }
   const realConn = h.ctx.getDashboardNeonConn_;
   h.ctx.getDashboardNeonConn_ = function () {
     return {
@@ -289,6 +330,19 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
     };
   };
   dump('dept-outbound-30d', h.call('getDeptOutboundSummary', { department: 'CSR', from: s30.from, to: s30.to }));
+  // Batch E1: the Insights fold's OTHER windows (the 30-day one is
+  // dept-outbound-30d above, which the mock serves first): its prior, and the
+  // single-day payload's current + prior, by exact from|to. Scaled so the
+  // prior differs and the delta path renders.
+  const pw = h.call('computePriorWindow_', s30.from, s30.to);
+  const pwDay = h.call('computePriorWindow_', LATEST, LATEST);
+  const windows = {};
+  [[pw.from, pw.to, 0.85], [LATEST, LATEST, 0.2], [pwDay.from, pwDay.to, 0.25]].forEach(function (w) {
+    blob = scaled(w[2]);
+    h.state.cache.clear();
+    windows[w[0] + '|' + w[1]] = h.call('getDeptOutboundSummary', { department: 'CSR', from: w[0], to: w[1] });
+  });
+  dump('dept-outbound-windows', windows);
   h.ctx.getDashboardNeonConn_ = realConn;
 }
 const yStart = iso(new Date(today.getFullYear(), 0, 1));

@@ -2249,7 +2249,10 @@ When something looks wrong, before assuming a code bug, check:
        `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false` AND remove
        `data-admin-only` + `style="display:none;"` from `#outbound-report-btn`
        AND from `#dept-dir-switch` (the My Department Inbound | Outbound | Both
-       switch, Batch D -- it reads the same gate) in `dashboard.html`. The
+       switch, Batch D -- it reads the same gate) AND from `#ins-ob-fold` (the
+       Insights Outbound fold, Batch E) in `dashboard.html`. The Overview
+       tiles' outbound line needs no edit: `personalizeOverview_` stops
+       stripping it the moment the gate flips (it reads the same switch). The
        per-dept manager path underneath was kept
        intact the whole time, so nothing else changes. `cross-file-pins.test.js`
        ("6c: the outbound vetting gate and its menu item are released

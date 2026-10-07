@@ -99,7 +99,12 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
   var handlers = {
     getLatestDataDates: function () { return P.latestDates; },
     getLatestDataDate: function () { return P.latestDates.latest; },
-    getCompanyOverview: function () { return P[${JSON.stringify(role)} === 'admin' ? 'ov-admin' : 'ov-manager']; },
+    // Batch E2: View-as is a MANAGER payload server-side (personalizeOverview_
+    // strips the admin-only fields, the tiles' outbound line among them), so
+    // the mock serves the manager capture for it rather than the admin one.
+    getCompanyOverview: function (req) {
+      return P[(${JSON.stringify(role)} === 'admin' && !(req && req.viewAsDept)) ? 'ov-admin' : 'ov-manager'];
+    },
     getDepartmentSummary: function (req) {
       var d = spanDays(req);
       // A dept with NO sub-queues, so the single-dept render + CSV stay covered.
@@ -134,6 +139,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getDeptOutboundSummary: function (req) {
       var p = P['dept-outbound-30d'];
       if (p && req && req.department === 'CSR' && req.from === p.meta.from && req.to === p.meta.to) return p;
+      // Batch E1: the Insights Outbound fold's current + prior windows.
+      var pw = (P['dept-outbound-windows'] || {})[(req && req.from) + '|' + (req && req.to)];
+      if (pw && req.department === 'CSR') return pw;
       return { meta: { department: (req && req.department) || '', from: (req && req.from) || '', to: (req && req.to) || '',
           scopeDepts: [(req && req.department) || ''], available: true, fallbackSource: null, fallbackThrough: null,
           coverageStart: '2026-07-10', offRosterAgents: 0, briefRingSec: 8, cacheHit: false, computeMs: 3 },

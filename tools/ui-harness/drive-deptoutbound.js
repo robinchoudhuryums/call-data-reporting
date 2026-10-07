@@ -57,7 +57,7 @@ async function openDept(page, meta) {
       sw: getComputedStyle(document.getElementById('dept-dir-switch')).display,
       inShown: getComputedStyle(document.getElementById('agents-in-wrap')).display !== 'none',
       obShown: getComputedStyle(document.getElementById('agents-ob-wrap')).display !== 'none',
-      called: (window.__HARNESS__.calls || []).filter((c) => (c.name || c) === 'getDeptOutboundSummary').length,
+      called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length,
     }));
     record('manager: the direction switch is hidden', st.sw === 'none', st.sw);
     record('manager: a stored "outbound" preference still shows the INBOUND table',
@@ -172,7 +172,10 @@ async function openDept(page, meta) {
   record('at 360 px the outbound view causes no horizontal page overflow', over.doc <= over.win + 1, JSON.stringify(over));
 
   // ---- hygiene ------------------------------------------------------------
-  const unmocked = await page.evaluate(() => (window.__UNMOCKED__ || []).slice());
+  // drive-smoke's UNMOCKED_OK: getInboundHeatmap is Neon-backed and must hide
+  // silently on failure, so its "unmocked" report is part of the audit.
+  const unmocked = await page.evaluate(() => ((window.__HARNESS__ || {}).unmocked || [])
+    .filter((n) => ['getInboundHeatmap', 'logReportUsage'].indexOf(n) === -1));
   record('no unmocked server calls during the walk', !unmocked.length, unmocked.join(', '));
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
   record('no page/console errors during the walk', realErrors.length === 0,

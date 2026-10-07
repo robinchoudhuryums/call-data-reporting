@@ -517,3 +517,16 @@ S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department 
     - NEGATIVE, as a manager in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getDeptOutboundSummary({ department: '<your dept>', from: '2026-09-01', to: '2026-09-30' })` -> "The Outbound report is admin-only while it is being vetted."
   Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
   Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table or Team Rings shows in the Outbound view; the panels overlap; a manager sees the switch or the outbound view; or Both adds inbound and outbound together anywhere.
+
+S58 | Outbound on the Overview tiles and in Insights (Batch E) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN (admin-only until the Outbound report is released), land on the Overview. Every dept tile shows a violet "Outbound" line under ATT: Placed N · Conn M P%. Expand a sub-queue card: the same line shows in it.
+    - Switch the card Window to Last 30 days, then YTD: the line's figures change with the window. On YTD the line adds "since Jul 10" (capture start).
+    - Reconcile one dept: Reports -> Outbound for that dept, dates = the card window. Placed and Connected equal the tile's line, except that the report's agent table also counts the dept's one-level sub-queue rosters (PC-12) while the tile counts the dept's own roster, like the inbound tile.
+    - Wait for the 5-minute auto-refresh (or reload): the line is still there and no slower (it rides the cached Overview).
+    - Open My Department over a month and scroll to Insights. After Queue health, an "Outbound" fold reads "N placed · P% connected" when closed. Open it: five tiles (Placed, Connected, Connect rate, Per agent-day, Avg talk), each with a ▲/▼ vs the prior window, and a per-agent table. Placed and Connected equal the dept's OWN subtotal in the My Department Outbound view (S57) for the same dates. For a parent dept that subtotal excludes its sub-queues, because Insights covers one department.
+    - Pick a custom comparison that starts before 2026-07-10: the fold shows no comparison and says the prior window predates capture.
+    - View as a manager: no tile shows the outbound line and the Insights fold is gone. As a real MANAGER: the same.
+    - On a phone-width window: the Insights fold's table scrolls sideways inside the fold; the page does not.
+  Expected: as described; with Neon unreachable the tiles show no line (no error) and the fold reads from the Outbound Calls tab with a note saying so.
+  Fails if: a manager or a View-as preview sees either surface; a tile's line does not change with the card window; the fold's totals differ from the dept's own S57 subtotal for the same dates, or a parent dept's fold lists its sub-queues' agents; or the page scrolls sideways at phone width.

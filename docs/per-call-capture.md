@@ -492,6 +492,26 @@ Historical sheet: its duration is leg duration and its "answered" is >= 20 s,
 so talk time and connects need the per-call table whatever Batch C's probe
 (Operator State #74) says. Pinned in `outbound-fallback.test.js`.
 
+**Batch E puts the same figures in two more places, both admin-only until 6c.**
+The **Insights Outbound fold** calls `getDeptOutboundSummary` for the region's
+window and for its prior window, so it adds no SQL of its own. The **Overview
+tiles' outbound line** is the one new read. `ovReadOutboundByDept_`
+(CompanyOverview.gs) runs ONE grouped query over the Overview's existing read
+window: per agent, `count(*) FILTER` placed and connected for each of the five
+card periods (Yesterday / 30 / 60 / 90 / YTD, the same starts as the inbound
+stats). It attributes through the same `deptsForAgent` roster map as the DQE
+tiles, so an agent on two rosters counts in both and an off-roster dialler in
+none. These are dept TOTALS, so `TEAM_AVG_EXCLUDES` does not apply. The result
+rides the cached `companyOverview:v27` blob, so the 5-minute auto-refresh never
+reaches Neon. The read is metered as `overviewOutbound`. It has NO sheet
+fallback, on purpose: a YTD tail of the Outbound Calls tab costs far more than
+the line is worth. A failed read omits the field, the tiles show no line, and
+the blob still caches. A period that starts before `coverageStart` is flagged
+`partial`. `personalizeOverview_` strips `dept.outbound` and
+`outboundCoverageStart` for every non-admin while `OUTBOUND_VETTING_GATE_`
+stands, and fails closed when OutboundReport.gs is not loaded. Pinned in
+`overview-outbound.test.js` and the 6c pin.
+
 **Outbound report (`OutboundReport.gs`, route `#/report/outbound`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**
 TEMPORARILY admin-only while vetted (the Inbound/Direct resolver model --

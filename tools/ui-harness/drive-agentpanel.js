@@ -208,7 +208,10 @@ function record(name, pass, detail) {
     over.doc <= over.win + 1 && over.panel > 0 && over.panel <= over.win, JSON.stringify(over));
 
   // ---- hygiene ------------------------------------------------------------
-  const unmocked = await page.evaluate(() => (window.__UNMOCKED__ || []).slice());
+  // drive-smoke's UNMOCKED_OK: getInboundHeatmap is Neon-backed and must hide
+  // silently on failure, so its "unmocked" report is part of the audit.
+  const unmocked = await page.evaluate(() => ((window.__HARNESS__ || {}).unmocked || [])
+    .filter((n) => ['getInboundHeatmap', 'logReportUsage'].indexOf(n) === -1));
   record('no unmocked server calls during the walk', !unmocked.length, unmocked.join(', '));
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
   record('no page/console errors during the walk', realErrors.length === 0,

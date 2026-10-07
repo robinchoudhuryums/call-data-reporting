@@ -2122,6 +2122,28 @@ stay pinned by INV-39, INV-53 and INV-06.
   scrolls rather than the two overlapping). Rows open the inline agent panel
   (`apTbody_` follows the visible table). The choice persists in
   `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
+- **Outbound on the Overview tiles and in Insights (owner 2026-10, Batch E).**
+  Both admin-only until the 6c release. **Tiles (E2):** `ovBuildOutboundLine_`
+  (script-3) adds one violet line (`.ov-dir-pill` "Outbound", Placed, Conn +
+  connect %) under ATT on every grid tile and expanded sub-queue card, for the
+  SAME card window the inbound stats show; a window that starts before outbound
+  capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
+  only to admins and only when its Neon read worked, so "render when present"
+  is the whole client gate. **Insights (E1):** the `#ins-ob-fold` fold
+  (`insObSync_`, script-8) sits after Queue health. It reads
+  `getDeptOutboundSummary` twice -- the region's window and its prior window
+  -- keeps only the dept's OWN group (`insObOwnScope_`: its `deptGroups`
+  subtotal and agents, since Insights is one department per run while the
+  summary folds a parent's sub-queues in for My Department), and renders
+  five tiles with `insDeltaBadge_` deltas (per day when the
+  windows differ in length, CL-2) plus a per-agent table in a horizontal
+  scroller (`.ins-ob-scroll`; the bare table pushed the page to 510 px at
+  360). It shows only while `obAllowed_()` is true, the same gate as Batch D,
+  so View-as and managers never fetch. A prior window that starts before capture shows
+  no comparison and says why. It is not fetched on the SWR pre-paint, and a
+  repeat render of the same windows repaints from the last result. The fold
+  persists as `ob` in the Insights folds store and is open by default.
+  Rendered-gated by `drive-outbound-e.js`.
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's
