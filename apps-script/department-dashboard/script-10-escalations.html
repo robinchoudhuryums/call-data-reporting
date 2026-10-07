@@ -2680,6 +2680,19 @@
       .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to });
   }
 
+  // Owner (2026-10): the day's INBOUND answer rate in the box's top-right
+  // corner -- answered / (answered + missed), whole percent, tinted against the
+  // dept standard: the Answer % column's formula and tint exactly (H2 / R23),
+  // so a day box and the table never disagree. Nothing on a day with no rings
+  // (an outbound-only day has no inbound rate to show).
+  function apDayRateHtml_(d, dept) {
+    const a = Number(d.answered) || 0, m = Number(d.missed) || 0;
+    if (!(a + m)) return '';
+    const rate = Math.round(a / (a + m) * 100);
+    return '<span class="ap-day-rate' + answerTierCls_(rate, dept) + '" title="Inbound answer rate: '
+      + a + ' answered, ' + m + ' missed">' + rate + '%</span>';
+  }
+
   function apStripHtml_(strip, selected) {
     const meta = (strip && strip.meta) || {};
     const days = (strip && strip.days) || [];
@@ -2687,13 +2700,17 @@
     if (!days.length) {
       return '<div class="ds-note">No days with activity for this agent in ' + span + '.</div>';
     }
+    // The agent's roster home the server resolved (its entitlement), so the
+    // tint is that dept's standard -- the same one the Answer % column uses.
+    const dept = meta.department || (typeof getRequestedDept === 'function' ? getRequestedDept() : '');
     const boxes = days.map(function (d) {
       const on = d.date === selected;
       const ob = d.outboundCaptured ? fmtNumber(d.outbound || 0) + ' outbound' : 'outbound –';
       return '<button type="button" class="ap-day' + (on ? ' is-on' : '') + '" data-ap-date="' + escapeHtml(d.date) + '"'
         + ' aria-pressed="' + (on ? 'true' : 'false') + '"'
         + ' title="' + escapeHtml(d.date) + (d.outboundCaptured ? '' : ' · outbound not captured') + '">'
-        + '<span class="ap-day-w">' + escapeHtml(apWeekday_(d.date)) + '</span>'
+        + '<span class="ap-day-top"><span class="ap-day-w">' + escapeHtml(apWeekday_(d.date)) + '</span>'
+        +   apDayRateHtml_(d, dept) + '</span>'
         + '<span class="ap-day-d">' + escapeHtml(apShortDate_(d.date)) + '</span>'
         + '<span class="ap-day-f"><b>' + fmtNumber(d.answered || 0) + '</b> ans · <i>' + fmtNumber(d.missed || 0) + '</i> miss</span>'
         + '<span class="ap-day-f' + (d.outboundCaptured ? ' ap-day-ob' : '') + '">' + ob + '</span>'

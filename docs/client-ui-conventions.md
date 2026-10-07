@@ -2118,6 +2118,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   so it never widens the table; its CSS is scoped under `.agents` AFTER the
   table's rules so `.agents td`'s right-align and the sticky thead do not bleed
   into the nested call tables. Exports read `state.rows`, never the DOM.
+  Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:
+  the Answer % column's formula and `answerTierCls_` dept-standard tint).
   Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
   **Call DIRECTION has its own hue** (owner 2026-10): inbound = `--accent`
   (already "inbound" on Caller Lookup's chip), outbound = `--dir-out`, a

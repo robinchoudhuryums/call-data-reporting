@@ -84,6 +84,18 @@ function record(name, pass, detail) {
   record('the open row says it is expanded', st.expanded === 'true');
   record('the strip renders days, newest first, one selected',
     st.days > 1 && st.onDays === 1, 'days=' + st.days + ' on=' + st.onDays);
+  // Each day box carries its inbound answer rate top-right, computed exactly
+  // as the Answer % column does (answered / (answered + missed), whole %).
+  const rates = await page.evaluate(() => Array.from(document.querySelectorAll('#ap-panel .ap-day')).map((b) => {
+    const a = Number((b.querySelector('.ap-day-f b') || {}).textContent || 0);
+    const m = Number((b.querySelector('.ap-day-f i') || {}).textContent || 0);
+    const r = b.querySelector('.ap-day-top .ap-day-rate');
+    const tinted = !!r && /\bbm-(target|watch|bad)\b/.test(r.className);
+    return { want: (a + m) ? Math.round(a / (a + m) * 100) + '%' : null, got: r ? r.textContent : null, tinted };
+  }));
+  const badRate = rates.find((x) => x.want !== x.got || (x.want && !x.tinted));
+  record('every day box shows its answer rate (Answer % formula, tinted)', rates.length > 0 && !badRate,
+    badRate ? JSON.stringify(badRate) : rates.length + ' boxes');
   record('the strip says what it shows', /days? with activity/.test(st.note), st.note.slice(0, 90));
   record('the selected day renders its tile rows', st.tiles >= 10, 'tiles=' + st.tiles);
   record('the day opens on the Inbound tab with its calls', st.onTab === 'in' && st.callRows > 0,

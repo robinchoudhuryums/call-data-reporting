@@ -3588,6 +3588,9 @@
   .agents .ap-day:hover { border-color: var(--accent); }
   .agents .ap-day.is-on { border-color: var(--accent); background: var(--accent-soft);
     box-shadow: inset 0 -2px 0 var(--accent); }
+  .agents .ap-day-top { display: flex; justify-content: space-between; align-items: baseline; align-self: stretch; gap: 6px; }
+  /* No colour here: the .bm-* tint class on the same span carries it. */
+  .agents .ap-day-rate { font: 600 10.5px/1.3 var(--mono); font-variant-numeric: tabular-nums; }
   .agents .ap-day-w { font: 500 9px/1.3 var(--mono); text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); }
   .agents .ap-day-d { font: 600 11px/1.3 var(--mono); }
   .agents .ap-day-f { font: 400 10px/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
