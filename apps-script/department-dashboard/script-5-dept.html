@@ -3950,7 +3950,7 @@
       return (v === 'out' || v === 'both') ? v : 'in';
     } catch (e) { return 'in'; }
   })();
-  var OB_VIEW_ = { key: null, data: null, seq: 0, error: null, sortKey: 'obTotal', sortDir: 'desc' };
+  var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, sortKey: 'obTotal', sortDir: 'desc' };
   var obWired_ = false;
 
   function obAllowed_() {
@@ -4073,10 +4073,23 @@
     var m = state.meta || {};
     var dept = getRequestedDept();
     if (!dept || !m.from || !m.to) { obViewRender_(); return; }
-    var key = dept + '|' + m.from + '|' + m.to;
+    var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '');
     if (OB_VIEW_.key === key && (OB_VIEW_.data || OB_VIEW_.error)) { obViewRender_(); return; }
     var seq = ++OB_VIEW_.seq;
-    OB_VIEW_.key = key; OB_VIEW_.data = null; OB_VIEW_.error = null;
+    OB_VIEW_.key = key; OB_VIEW_.data = null; OB_VIEW_.prior = null; OB_VIEW_.error = null;
+    // Batch F: the prior-period chips read the SAME INV-28 window the inbound
+    // E5 chips use (state.meta.priorFrom/priorTo, server-resolved), through
+    // the same cached RPC. A failed prior read just means no chips.
+    if (m.priorFrom && m.priorTo) {
+      google.script.run
+        .withSuccessHandler(function (p) {
+          if (seq !== OB_VIEW_.seq) return;
+          OB_VIEW_.prior = p || null;
+          if (OB_VIEW_.data) obViewRender_();
+        })
+        .withFailureHandler(function () { /* no chips */ })
+        .getDeptOutboundSummary({ department: dept, from: m.priorFrom, to: m.priorTo });
+    }
     if (obWrap) dsFrostShow_(obWrap, 'Loading outbound…');
     google.script.run
       .withSuccessHandler(function (data) {
@@ -4105,7 +4118,7 @@
   }
 
   /** The outbound twin of answeredBarHtml_: connected / not connected (placed). */
-  function obBarHtml_(a, unit, isTeam) {
+  function obBarHtml_(a, unit, isTeam, p, tip) {
     if (!a || !(Number(a.obTotal) > 0)) {
       return '<span class="cell-zero" title="No outbound calls in this range">–</span>';
     }
@@ -4127,15 +4140,59 @@
         + a.obPerDay + ' / day</span>'
       : '';
     return '<div class="ans-bar ob-bar" title="' + escapeHtml(title) + '">' + track
-      + '<div class="ans-nums"><span class="ob-c">' + c + '</span><span class="ans-slash">/</span>'
-      + '<span class="ob-u">' + n + '</span><span class="ans-total" title="Calls placed">(' + placed + ')</span>'
+      + '<div class="ans-nums"><span class="ob-c">' + c + '</span>'
+      // Batch F: connected is valenced; not-connected stays neutral (more
+      // dialling naturally means more unanswered calls -- not a regression).
+      + (p ? obPriorChip_(c - (Number(p.obConnected) || 0), 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '')
+      + '<span class="ans-slash">/</span>'
+      + '<span class="ob-u">' + n + '</span>'
+      + (p ? obPriorChip_(n - Math.max(0, (Number(p.obTotal) || 0) - (Number(p.obConnected) || 0)), 'neutral', WOW_NOISE_THRESHOLD, false, false, tip) : '')
+      + '<span class="ans-total" title="Calls placed">(' + placed + ')</span>'
       + perDay + '</div></div>';
   }
 
-  function obPctHtml_(a) {
+  // ── Batch F: prior-period chips on outbound ─────────────────────────────
+  // The E5 chip (wow-chip, same valence + noise muting) for the outbound
+  // figures, shared by the My Department Outbound / Both rows and the
+  // Overview tiles' outbound line. Counts mute under WOW_NOISE_THRESHOLD;
+  // a connect-rate chip is in percentage points and mutes under
+  // OB_CHIP_RATE_PTS_ or when either window placed fewer than
+  // OB_CHIP_MIN_PLACED_ calls (one call out of four moves a rate 25 pts).
+  var OB_CHIP_RATE_PTS_ = 2;
+  var OB_CHIP_MIN_PLACED_ = 10;
+
+  // valence 'good' = up is good (sage), down warn; 'neutral' = always muted.
+  function obPriorChip_(delta, valence, threshold, pts, forceMuted, tip) {
+    if (delta == null || !isFinite(delta)) return '';
+    var d = pts ? Math.round(delta * 10) / 10 : Math.round(delta);
+    var abs = Math.abs(d);
+    var cls, arrow;
+    if (d === 0) { cls = 'wow-chip-muted'; arrow = '\u2192'; }
+    else if (valence !== 'good' || forceMuted || abs < threshold) { cls = 'wow-chip-muted'; arrow = d > 0 ? '\u25b2' : '\u25bc'; }
+    else { cls = d > 0 ? 'wow-chip-good' : 'wow-chip-warn'; arrow = d > 0 ? '\u25b2' : '\u25bc'; }
+    var sign = d > 0 ? '+' : (d < 0 ? '\u2212' : '');
+    var label = pts ? (sign + abs.toFixed(1) + ' pts') : (d === 0 ? '0' : sign + abs);
+    return ' <span class="wow-chip ' + cls + '" title="' + escapeHtml(tip || '') + '">' + arrow + label + '</span>';
+  }
+
+  // The connect-rate chip from two {placed, pct} pairs.
+  function obRateChip_(curPct, priorPct, curPlaced, priorPlaced, tip) {
+    if (curPct == null || priorPct == null) return '';
+    var thin = (Number(curPlaced) || 0) < OB_CHIP_MIN_PLACED_ || (Number(priorPlaced) || 0) < OB_CHIP_MIN_PLACED_;
+    return obPriorChip_(Number(curPct) - Number(priorPct), 'good', OB_CHIP_RATE_PTS_, true, thin,
+      tip + (thin ? ' Fewer than ' + OB_CHIP_MIN_PLACED_ + ' calls in a window, so the change is shown muted.' : ''));
+  }
+
+  function obPriorTip_(p, pf, pt) {
+    return 'Prior period ' + (pf || '') + ' \u2013 ' + (pt || '') + ': ' + (Number(p.placed) || 0) + ' placed, '
+      + (Number(p.connected) || 0) + ' connected' + (p.pct != null ? ' (' + Number(p.pct).toFixed(1) + '%)' : '') + '.';
+  }
+
+  function obPctHtml_(a, p, tip) {
     if (!a || !(Number(a.obTotal) > 0)) return zeroCell_('–');
     return '<span class="ob-rate" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">'
-      + Math.round(Number(a.obConnectRate) || 0) + '%</span>';
+      + Math.round(Number(a.obConnectRate) || 0) + '%</span>'
+      + (p ? obRateChip_(a.obConnectRate, p.obConnectRate, a.obTotal, p.obTotal, tip) : '');
   }
 
   function obSortList_(list) {
@@ -4204,6 +4261,17 @@
     var obKey = function (d, name) { return (multi ? d : '') + '|' + name; };
     var obBy = {};
     obAgents.forEach(function (a) { obBy[obKey(a.scopeDept || dept, a.agent)] = a; });
+    // Batch F: the prior window's agents, when that window is comparable --
+    // loaded, available, and starting on/after outbound capture began.
+    var sm = state.meta || {};
+    var pr = OB_VIEW_.prior;
+    var priorOk = !!(pr && pr.meta && pr.meta.available !== false && sm.priorFrom
+      && !(pr.meta.coverageStart && sm.priorFrom < pr.meta.coverageStart));
+    var priorBy = {};
+    if (priorOk) (pr.agents || []).forEach(function (a) { priorBy[obKey(a.scopeDept || dept, a.agent)] = a; });
+    var priorTipFor = function (p) {
+      return p ? obPriorTip_({ placed: p.obTotal, connected: p.obConnected, pct: p.obConnectRate }, sm.priorFrom, sm.priorTo) : '';
+    };
 
     // Entries per dept group. Outbound: every agent who placed a call. Both:
     // every inbound row (its dept group) plus outbound-only agents.
@@ -4215,17 +4283,17 @@
         var d = (multi && r.dept) ? r.dept : deptsShown[0];
         var k = obKey(d, r.agent);
         seen[k] = true;
-        (groups[d] = groups[d] || []).push({ agent: r.agent, inb: r, ob: obBy[k] || null });
+        (groups[d] = groups[d] || []).push({ dept: d, agent: r.agent, inb: r, ob: obBy[k] || null });
       });
       obAgents.forEach(function (a) {
         var d = multi ? (a.scopeDept || deptsShown[0]) : deptsShown[0];
         if (seen[obKey(d, a.agent)]) return;
-        (groups[d] = groups[d] || []).push({ agent: a.agent, inb: null, ob: a });
+        (groups[d] = groups[d] || []).push({ dept: d, agent: a.agent, inb: null, ob: a });
       });
     } else {
       obAgents.forEach(function (a) {
         var d = multi ? (a.scopeDept || deptsShown[0]) : deptsShown[0];
-        (groups[d] = groups[d] || []).push({ agent: a.agent, inb: null, ob: a });
+        (groups[d] = groups[d] || []).push({ dept: d, agent: a.agent, inb: null, ob: a });
       });
     }
     var all = [];
@@ -4237,16 +4305,19 @@
 
     var rowHtml = function (e) {
       var o = e.ob;
+      // E5's rule: an agent with no row in the prior window gets no chip.
+      var po = (priorOk && o) ? (priorBy[obKey(e.dept, e.agent)] || null) : null;
+      var ptip = priorTipFor(po);
       var cells = '<td class="agent-name">' + escapeHtml(e.agent) + '</td>';
       if (both) {
         cells += '<td class="ans-bar-cell ob-dir-in">' + (e.inb ? fmtCell(barCol, e.inb, { tallyUnit: inUnit }) : zeroCell_('–')) + '</td>'
           + '<td class="num ob-dir-in">' + (e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–')) + '</td>'
-          + '<td class="ans-bar-cell ob-dir-out">' + obBarHtml_(o, obUnit) + '</td>'
-          + '<td class="num ob-dir-out">' + obPctHtml_(o) + '</td>'
+          + '<td class="ans-bar-cell ob-dir-out">' + obBarHtml_(o, obUnit, false, po, ptip) + '</td>'
+          + '<td class="num ob-dir-out">' + obPctHtml_(o, po, ptip) + '</td>'
           + '<td class="num ob-dir-out">' + (o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–')) + '</td>';
       } else {
-        cells += '<td class="ans-bar-cell">' + obBarHtml_(o, obUnit) + '</td>'
-          + '<td class="num">' + obPctHtml_(o) + '</td>'
+        cells += '<td class="ans-bar-cell">' + obBarHtml_(o, obUnit, false, po, ptip) + '</td>'
+          + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>'
           + '<td class="num">' + (o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('0:00:00')) + '</td>'
           + '<td class="num">' + (o && o.obAttSec ? fmtDuration(o.obAttSec) : zeroCell_('–')) + '</td>'
           + '<td class="num">' + fmtNumber((o && o.attempts) || 0) + '</td>';

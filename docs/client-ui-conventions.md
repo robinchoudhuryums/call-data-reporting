@@ -872,7 +872,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v27` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v28` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1106,7 +1106,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
-  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v27`.
+  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v28`.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a
@@ -2101,7 +2101,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v27`).
+  stripped by `personalizeOverview_` (`companyOverview:v28`).
 - **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
   `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
   6c pin in `cross-file-pins.test.js` moves it with `#outbound-report-btn`).
@@ -2144,6 +2144,21 @@ stay pinned by INV-39, INV-53 and INV-06.
   repeat render of the same windows repaints from the last result. The fold
   persists as `ob` in the Insights folds store and is open by default.
   Rendered-gated by `drive-outbound-e.js`.
+- **Prior-period chips on outbound (owner 2026-10, Batch F).** The E5
+  `wow-chip` dialect, via ONE helper pair in script-5 (`obPriorChip_` /
+  `obRateChip_`) shared by the Overview tile line and the My Department
+  Outbound / Both rows. Counts mute under `WOW_NOISE_THRESHOLD` (3); the
+  connect-rate chip is in points and mutes under `OB_CHIP_RATE_PTS_` (2) or
+  when EITHER window placed fewer than `OB_CHIP_MIN_PLACED_` (10) calls.
+  Tiles: Placed (up = good) + rate, against the server-shipped `prior`
+  (null = no chips, e.g. YTD before a year of capture). Rows: Connected (up =
+  good), Not connected (ALWAYS muted: more dialling means more unanswered
+  calls, not a regression) and Connect %. The table compares the SAME INV-28
+  window as the inbound chips (`state.meta.priorFrom/priorTo`) through a
+  second cached `getDeptOutboundSummary` call; an agent with no prior row
+  gets no chip (E5's rule), Total / subtotal rows get none, and a prior
+  window starting before outbound capture shows none. Pinned by
+  `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's

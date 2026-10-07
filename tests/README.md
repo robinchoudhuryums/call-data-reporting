@@ -476,7 +476,12 @@ tests/
                               stripped for managers / View-as / all-dept
                               managers while the 6c gate stands and released
                               without mutating the shared blob; no Neon =
-                              no field and an otherwise identical payload),
+                              no field and an otherwise identical payload;
+                              Batch F: each period's INV-28 prior window in
+                              the SAME read, null before capture, stripped
+                              with the line, and the client chip RUN for
+                              real -- valence, noise muting, the thin-window
+                              rate rule, never on totals),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a

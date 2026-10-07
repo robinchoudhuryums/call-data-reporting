@@ -73,6 +73,18 @@ function tileLines() {
     !!firstLine && firstLine.text.indexOf('Placed ' + fmt(first.outbound.yesterday.placed)) !== -1
       && firstLine.text.indexOf(first.outbound.yesterday.pct.toFixed(1) + '%') !== -1,
     first.name + ': ' + (firstLine && firstLine.text));
+  // Batch F1: the tile line's prior-period chips (Yesterday vs the business day before).
+  {
+    const pr = first.outbound.yesterday.prior;
+    const chips = await page.evaluate((name) => {
+      const t = document.querySelector('.ov-dept-tile[data-dept="' + name + '"] .ov-dept-ob');
+      return t ? Array.from(t.querySelectorAll('.wow-chip')).map((c) => c.textContent) : [];
+    }, first.name);
+    const want = pr ? first.outbound.yesterday.placed - pr.placed : null;
+    record('Batch F1: the line carries a Placed chip and a connect-rate chip vs the prior window',
+      !!pr && chips.length === 2 && Number(chips[0].replace('\u2212', '-').replace(/[^0-9+-]/g, '')) === want && / pts$/.test(chips[1]),
+      JSON.stringify({ chips: chips, want: want }));
+  }
   record('admin: a capture-covered window has no "since" disclosure',
     !!firstLine && firstLine.text.indexOf('since') === -1, firstLine && firstLine.text);
   const pill = await page.evaluate(() => {
@@ -95,6 +107,12 @@ function tileLines() {
     await p2.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
     await p2.waitForTimeout(3000);
     const l2 = (await p2.evaluate(tileLines)).filter((l) => l.dept === first.name)[0];
+    const ytdChips = await p2.evaluate((name) => {
+      const t = document.querySelector('.ov-dept-tile[data-dept="' + name + '"] .ov-dept-ob');
+      return t ? t.querySelectorAll('.wow-chip').length : -1;
+    }, first.name);
+    record('Batch F1: no chips on YTD, whose prior window predates capture', ytdChips === 0 && first.outbound.ytd.prior === null,
+      'chips=' + ytdChips);
     record('admin: the YTD window shows its own figures and says "since" the capture start',
       !!l2 && l2.text.indexOf('Placed ' + fmt(first.outbound.ytd.placed)) !== -1 && /since Jul 10/.test(l2.text),
       l2 && l2.text);

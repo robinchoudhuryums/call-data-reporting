@@ -250,6 +250,11 @@ function withOverviewOutboundConn(fn) {
       const placed = (3 + (i * 5) % 11) * kv[1];
       r['p_' + kv[0]] = placed;
       r['c_' + kv[0]] = Math.round(placed * (0.4 + (i % 5) * 0.08));
+      // Batch F1: the prior window's counts (the real shaper drops the ones
+      // whose window predates capture), varied so chips go both ways.
+      const pp = Math.max(0, Math.round(placed * (0.75 + ((i * 7) % 6) * 0.1)));
+      r['pp_' + kv[0]] = pp;
+      r['pc_' + kv[0]] = Math.round(pp * (0.45 + (i % 3) * 0.06));
     });
     return r;
   });

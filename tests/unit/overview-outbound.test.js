@@ -114,10 +114,10 @@ test('E2: shaping attributes through the roster map -- two rosters count in both
   const by = { Anna: ['CSR', 'Spanish'], Bob: ['CSR'] };
   const out = h.call('ovOutboundShape_', JSON.parse(NEON_JSON), DEPTS, by, w, LATEST);
   assert.equal(out.coverageStart, '2026-07-10');
-  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.CSR.yesterday)), { placed: 8, connected: 5, pct: 62.5, partial: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.CSR.yesterday)), { placed: 8, connected: 5, pct: 62.5, partial: false, prior: null });
   assert.equal(out.byDept.Spanish.last30.placed, 40);
   assert.equal(out.byDept.Spanish.last30.pct, 50);
-  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.Sales.last30)), { placed: 0, connected: 0, pct: null, partial: false },
+  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.Sales.last30)), { placed: 0, connected: 0, pct: null, partial: false, prior: null },
     'a dept with no outbound carries zeros and a null rate, never a divide-by-zero');
   // YTD starts Jan 1, before capture began: flagged so the tile says "since".
   assert.equal(out.byDept.CSR.ytd.partial, true);
@@ -194,3 +194,115 @@ test('E2: the client renders the line ONLY when the server shipped it, in the ou
   const css = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'styles.html'), 'utf8');
   assert.match(css, /\.ov-dir-pill \{[^}]*var\(--dir-out-soft\)[^}]*var\(--dir-out\)/);
 });
+
+// ── Batch F1: prior-period chips on the tile line ───────────────────────────
+
+function agentRowPrior(agent, p, c, pp, pc) {
+  const r = agentRow(agent, p, c);
+  ['yesterday', 'last30', 'last60', 'last90', 'ytd'].forEach(function (k, i) { r['pp_' + k] = pp[i]; r['pc_' + k] = pc[i]; });
+  return r;
+}
+
+test('F1: each period’s prior window is the INV-28 one, counted in the SAME grouped read', function () {
+  const w = h.call('ovWindows_', LATEST);
+  const pw = h.call('ovOutboundPriorWindows_', w, LATEST);
+  const starts = { yesterday: LATEST, last30: w.trendStartIso, last60: w.last60StartIso, last90: w.last90StartIso, ytd: w.ytdStartIso };
+  Object.keys(starts).forEach(function (k) {
+    assert.deepEqual(JSON.parse(JSON.stringify(pw[k])), JSON.parse(JSON.stringify(h.call('computePriorWindow_', starts[k], LATEST))), k);
+  });
+  assert.equal(pw.yesterday.from, '2026-09-18', 'a Monday compares with the Friday before');
+  const sql = h.call('ovOutboundSql_', w, LATEST, pw);
+  Object.keys(pw).forEach(function (k) {
+    assert.ok(sql.indexOf("count(*) FILTER (WHERE call_date BETWEEN '" + pw[k].from + "'::date AND '" + pw[k].to + "'::date) AS pp_" + k) !== -1, 'pp_' + k);
+    assert.ok(sql.indexOf("call_date BETWEEN '" + pw[k].from + "'::date AND '" + pw[k].to + "'::date AND connected) AS pc_" + k) !== -1, 'pc_' + k);
+  });
+  const lo = Object.keys(pw).map(function (k) { return pw[k].from; }).concat([w.readFromIso]).sort()[0];
+  assert.ok(sql.indexOf("WHERE call_date BETWEEN '" + lo + "'::date AND '" + LATEST + "'::date GROUP BY") !== -1,
+    'the read widens to the earliest prior window, so no prior row is cut off');
+  assert.equal(sql.match(/executeQuery|;/g), null, 'still ONE statement');
+});
+
+test('F1: the prior block is attributed like the current one, and NULL when its window predates capture', function () {
+  const w = h.call('ovWindows_', LATEST);
+  const pw = h.call('ovOutboundPriorWindows_', w, LATEST);
+  const raw = { coverageStart: '2026-07-10', agents: [
+    agentRowPrior('Anna', [5, 40, 70, 90, 120], [2, 20, 35, 45, 60], [4, 30, 30, 30, 30], [1, 15, 15, 15, 15]),
+    agentRowPrior('Bob', [3, 10, 10, 10, 10], [3, 5, 5, 5, 5], [2, 8, 8, 8, 8], [2, 4, 4, 4, 4]),
+  ] };
+  const out = h.call('ovOutboundShape_', raw, DEPTS, { Anna: ['CSR', 'Spanish'], Bob: ['CSR'] }, w, LATEST, pw);
+  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.CSR.yesterday.prior)), { placed: 6, connected: 3, pct: 50 });
+  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.Spanish.last30.prior)), { placed: 30, connected: 15, pct: 50 });
+  assert.deepEqual(JSON.parse(JSON.stringify(out.byDept.Sales.yesterday.prior)), { placed: 0, connected: 0, pct: null },
+    'a covered window with no calls is a real zero, not "no data"');
+  ['last60', 'last90', 'ytd'].forEach(function (k) {
+    assert.ok(pw[k].from < '2026-07-10', k + ' fixture: its prior window predates capture');
+    assert.equal(out.byDept.CSR[k].prior, null, k + ': no comparison against an uncaptured period');
+  });
+  const noCov = h.call('ovOutboundShape_', { coverageStart: null, agents: [] }, DEPTS, {}, w, LATEST, pw);
+  assert.equal(noCov.byDept.CSR.yesterday.prior, null, 'no coverage at all = no prior');
+  assert.equal(out.priorWindows, pw);
+});
+
+test('F1: outboundPriorWindows ships to admins and is stripped with the line while the 6c gate stands', function () {
+  install({});
+  const a = h.call('getCompanyOverview', {});
+  assert.ok(a.outboundPriorWindows && a.outboundPriorWindows.last30 && a.outboundPriorWindows.last30.from);
+  assert.ok('prior' in tile(a, 'CSR').outbound.yesterday);
+  install({ user: { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] } });
+  assert.equal(h.call('getCompanyOverview', {}).outboundPriorWindows, undefined);
+  install({ noHelper: true });
+  assert.equal(h.call('getCompanyOverview', {}).outboundPriorWindows, undefined, 'absent with the line when Neon is');
+});
+
+// The client chip, run for real: the functions are lifted out of the
+// assembled fragment so the valence / muting rules are behavioural pins.
+function chipFns() {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-5-dept.html'), 'utf8');
+  const a = src.indexOf('  var OB_CHIP_RATE_PTS_');
+  const b = src.indexOf('  function obPctHtml_');
+  assert.ok(a > 0 && b > a, 'the chip block moved');
+  const ctx = { escapeHtml: (x) => String(x), WOW_NOISE_THRESHOLD: 3 };
+  vm.createContext(ctx);
+  vm.runInContext(src.slice(a, b), ctx);
+  return { src: src, ctx: ctx };
+}
+
+test('F: the chip -- E5 valence and noise muting for counts, points + thin-window muting for the rate', function () {
+  const c = chipFns().ctx;
+  assert.match(c.obPriorChip_(38, 'good', 3, false, false, 't'), /wow-chip-good" title="t">▲\+38</);
+  assert.match(c.obPriorChip_(-21, 'good', 3, false, false, ''), /wow-chip-warn[^>]*>▼−21</);
+  assert.match(c.obPriorChip_(2, 'good', 3, false, false, ''), /wow-chip-muted[^>]*>▲\+2</, 'under 3 calls is noise');
+  assert.match(c.obPriorChip_(0, 'good', 3, false, false, ''), /wow-chip-muted[^>]*>→0</);
+  assert.match(c.obPriorChip_(40, 'neutral', 3, false, false, ''), /wow-chip-muted[^>]*>▲\+40</, 'not-connected never colours');
+  assert.equal(c.obPriorChip_(null, 'good', 3, false, false, ''), '');
+  assert.match(c.obRateChip_(64.2, 61.8, 120, 110, 'p'), /wow-chip-good[^>]*>▲\+2\.4 pts</);
+  assert.match(c.obRateChip_(55, 61.3, 120, 110, ''), /wow-chip-warn[^>]*>▼−6\.3 pts</);
+  assert.match(c.obRateChip_(60, 61.5, 120, 110, ''), /wow-chip-muted[^>]*>▼−1\.5 pts</, 'under 2 pts is noise');
+  assert.match(c.obRateChip_(75, 40, 8, 110, ''), /wow-chip-muted[^>]*Fewer than 10 calls[^>]*>▲\+35\.0 pts</, 'a thin window mutes');
+  assert.match(c.obRateChip_(75, 40, 110, 9, ''), /wow-chip-muted/, 'either window');
+  assert.equal(c.obRateChip_(null, 40, 0, 110, ''), '', 'no rate, no chip');
+});
+
+test('F: wiring -- tiles chip Placed + rate, rows chip both counts + rate, totals never', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const src = chipFns().src;
+  const ov = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-3-overview.html'), 'utf8');
+  const line = ov.slice(ov.indexOf('function ovBuildOutboundLine_'), ov.indexOf('function ovBuildGridTile_'));
+  assert.match(line, /obPriorChip_\(ob\.placed - pr\.placed, 'good', WOW_NOISE_THRESHOLD/);
+  assert.match(line, /obRateChip_\(ob\.pct, pr\.pct, ob\.placed, pr\.placed, tip\)/);
+  const bar = src.slice(src.indexOf('function obBarHtml_'), src.indexOf('function obBarHtml_') + 3000);
+  assert.match(bar, /obPriorChip_\(c - \(Number\(p\.obConnected\) \|\| 0\), 'good'/);
+  assert.match(bar, /'neutral', WOW_NOISE_THRESHOLD/);
+  // Every totals call passes no prior, so Total / subtotal rows carry no chip (E5's rule).
+  assert.equal((src.match(/obBarHtml_\(t, 0, true\)/g) || []).length, 2);
+  assert.equal((src.match(/obPctHtml_\(t\)/g) || []).length, 2);
+  assert.match(src, /var priorOk = !!\(pr && pr\.meta && pr\.meta\.available !== false && sm\.priorFrom\s*&& !\(pr\.meta\.coverageStart && sm\.priorFrom < pr\.meta\.coverageStart\)\);/,
+    'the prior window must start on/after capture');
+  assert.match(src, /getDeptOutboundSummary\(\{ department: dept, from: m\.priorFrom, to: m\.priorTo \}\)/,
+    'the table compares the SAME INV-28 window as the inbound E5 chips');
+});
+

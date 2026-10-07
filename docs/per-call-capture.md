@@ -502,7 +502,7 @@ card periods (Yesterday / 30 / 60 / 90 / YTD, the same starts as the inbound
 stats). It attributes through the same `deptsForAgent` roster map as the DQE
 tiles, so an agent on two rosters counts in both and an off-roster dialler in
 none. These are dept TOTALS, so `TEAM_AVG_EXCLUDES` does not apply. The result
-rides the cached `companyOverview:v27` blob, so the 5-minute auto-refresh never
+rides the cached `companyOverview:v28` blob, so the 5-minute auto-refresh never
 reaches Neon. The read is metered as `overviewOutbound`. It has NO sheet
 fallback, on purpose: a YTD tail of the Outbound Calls tab costs far more than
 the line is worth. A failed read omits the field, the tiles show no line, and
@@ -511,6 +511,17 @@ the blob still caches. A period that starts before `coverageStart` is flagged
 `outboundCoverageStart` for every non-admin while `OUTBOUND_VETTING_GATE_`
 stands, and fails closed when OutboundReport.gs is not loaded. Pinned in
 `overview-outbound.test.js` and the 6c pin.
+
+**Batch F adds prior-period chips to both.** The Overview's grouped read gains
+`pp_<period>` / `pc_<period>` FILTER columns for each card period's INV-28
+prior window (`ovOutboundPriorWindows_` -> the shared `computePriorWindow_`),
+widening the read's lower bound to the earliest prior start -- still ONE
+statement, still metered `overviewOutbound`. Each period's `prior` is null
+when its window starts before `coverageStart` (comparing against an
+uncaptured period would read as pure growth); `outboundPriorWindows` carries
+the windows for the hover text and is stripped with the line (companyOverview:v28).
+My Department needs no server change: it calls `getDeptOutboundSummary` a
+second time for the summary's own `meta.priorFrom/priorTo`.
 
 **Outbound report (`OutboundReport.gs`, route `#/report/outbound`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**

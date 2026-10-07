@@ -114,6 +114,32 @@ async function openDept(page, meta) {
   record('a parent view groups the rows with per-dept subtotals',
     (await page.locator('#agents-ob-tbody tr.subq-subtotal').count()) === (ob.deptGroups ? ob.deptGroups.length : 0));
 
+  // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
+  {
+    const sum30 = require('./payloads/summary-30d.json');
+    const pri = (require('./payloads/dept-outbound-windows.json'))[sum30.meta.priorFrom + '|' + sum30.meta.priorTo];
+    const c = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
+      return {
+        perRow: rows.map((r) => r.querySelectorAll('.wow-chip').length),
+        notConnMuted: rows.every((r) => { const u = r.querySelector('.ob-u'); const ch = u && u.nextElementSibling; return !!ch && ch.classList.contains('wow-chip-muted'); }),
+        first: rows[0] ? { agent: rows[0].getAttribute('data-agent'), conn: Number(rows[0].querySelector('.ob-c').textContent),
+          chip: (rows[0].querySelector('.ob-c').nextElementSibling || {}).textContent || '' } : null,
+        totals: document.querySelectorAll('#agents-ob-tfoot .wow-chip, #agents-ob-tbody tr.subq-subtotal .wow-chip').length,
+      };
+    });
+    record('Batch F: the prior window is captured for this view', !!pri, sum30.meta.priorFrom + '|' + sum30.meta.priorTo);
+    record('Batch F: every agent row carries three chips (connected, not connected, connect %)',
+      c.perRow.length > 0 && c.perRow.every((n) => n === 3), c.perRow.join(','));
+    record('Batch F: the not-connected chip is always neutral', c.notConnMuted);
+    const pa = pri && c.first && pri.agents.filter((a) => a.agent === c.first.agent)[0];
+    const want = pa ? c.first.conn - pa.obConnected : NaN;
+    const got = c.first ? Number(c.first.chip.replace(/[^0-9+\u2212-]/g, '').replace('\u2212', '-')) : NaN;
+    record('Batch F: the connected chip is current minus prior for that agent', pa && got === want,
+      (c.first && c.first.chip) + ' want ' + want);
+    record('Batch F: Total and subtotal rows carry no chips', c.totals === 0, 'chips=' + c.totals);
+  }
+
   // Sorting by a column re-renders and keeps the rows.
   await page.click('#agents-ob-thead th[data-ob-sort="agent"]');
   await page.waitForTimeout(300);
@@ -153,6 +179,11 @@ async function openDept(page, meta) {
     return r ? r.querySelectorAll('td').length : 0;
   });
   record('each Both row carries both directions’ cells', bothRow === 6, 'cells=' + bothRow);
+  const bothChips = await page.evaluate(() => {
+    const r = document.querySelector('#agents-ob-tbody tr[data-agent]');
+    return r ? r.querySelectorAll('td.ob-dir-out .wow-chip').length : -1;
+  });
+  record('Batch F: Both rows carry the outbound chips too', bothChips === 3, 'chips=' + bothChips);
 
   // ---- back to Inbound, and the view-as guard -------------------------------
   await page.click('#dept-dir-switch [data-dir="in"]');

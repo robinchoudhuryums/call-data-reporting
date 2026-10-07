@@ -249,7 +249,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # open, day/tab switch, survives a re-sort, IR button, Escape/Collapse focus
 # return, one at a time, CSV untouched, 360 px -- Batch B), drive-deptoutbound.js
 # (the Inbound | Outbound | Both switch + Team Outbound panel: payload totals,
-# manager/view-as fall back to Inbound, panels never overlap -- Batch D),
+# manager/view-as fall back to Inbound, panels never overlap, prior-period
+# chips on agent rows only -- Batches D/F),
 # drive-outbound-e.js (the Overview tiles' outbound line per card window +
 # the Insights Outbound fold's two-window deltas; neither reaches a manager
 # or View-as -- Batch E),
