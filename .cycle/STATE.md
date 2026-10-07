@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-07 — Batch D IMPLEMENTED (block 234): Inbound | Outbound | Both on My Department, admin-only.**
+  - `getDeptOutboundSummary` is the Outbound report's per-agent half: shared SQL and sheet aggregation, plus `ob_days`; the same 6c gate; cache `deptOutbound:v1:`.
+  - The switch renders a separate outbound/both table; the Team Outbound panel sits alongside it.
+  - The 6c pin now moves the switch with the report.
+  - New stage drive-deptoutbound.js (23 checks). 2226 tests, all ten ci:ui stages green, six pins bite.
+  - Decision: D reads Neon (with the Outbound Calls tab fallback) regardless of the Batch C verdict, because talk time and connects cannot come from the CDR Historical sheet.
+
+  **Owner-side:** deploy the dashboard (A to D) and walk S56 and S57 as admin.
+  **Next:** Batch E (Insights + Overview outbound, admin-only).
+  **Where I left off:** committed and pushed, no PR.
 - **2026-10-07 — Batch C IMPLEMENTED (block 233): outbound source probe.**
   `probeOutboundSourceAgreement()` (dashboard, editor-run, read-only) compares
   the CDR Historical sheet's `OB External Total` with Neon `outbound_calls`
