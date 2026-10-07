@@ -95,18 +95,29 @@ function agentDayRosterHomes_(agentName) {
  * resolvers use.
  */
 function agentDayResolve_(req) {
-  var user = resolveUser_(Session.getActiveUser().getEmail());
   var agentName = String((req && req.agentName) || '').trim();
   var date = String((req && req.date) || '').trim();
   if (!agentName) throw new Error('agentName is required.');
   if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
+  var scope = agentDayAuthorize_(agentName);
+  scope.date = date;
+  return scope;
+}
 
+/**
+ * The entitlement half of agentDayResolve_, shared with getAgentDayStrip
+ * (Batch B) so the day view and the strip that leads to it can never disagree
+ * about who may see an agent. Returns { user, agentName, dept, homes,
+ * unrostered }; the caller has already validated its own inputs.
+ */
+function agentDayAuthorize_(agentName) {
+  var user = resolveUser_(Session.getActiveUser().getEmail());
   var homes = agentDayRosterHomes_(agentName);
   if (!homes.length) {
     // Unrostered: admin-only. assertAdmin_ rather than a role compare, so an
     // unrecognized role is refused by the same allowlist everything else uses.
     assertAdmin_();
-    return { user: user, agentName: agentName, date: date, dept: null,
+    return { user: user, agentName: agentName, dept: null,
              homes: [], unrostered: true };
   }
   // Entitled if ANY roster home passes the shared gate. The LAST failure is
@@ -116,7 +127,7 @@ function agentDayResolve_(req) {
   for (var i = 0; i < homes.length; i++) {
     try {
       assertDeptAccess_(user, homes[i]);
-      return { user: user, agentName: agentName, date: date, dept: homes[i],
+      return { user: user, agentName: agentName, dept: homes[i],
                homes: homes, unrostered: false };
     } catch (e) { lastErr = e; }
   }
@@ -598,4 +609,149 @@ function agentDayFetchDalRows_(fromIso, toIso) {
     if (usable) return rows;
   }
   return sheetFetchDqeRows_(fromIso, toIso, opts);
+}
+
+// ── The day strip (Batch B: the inline agent panel on My Department) ────────
+//
+// Clicking an agent row on My Department opens an inline panel whose first
+// row is a strip of the agent's days in the loaded window, newest first; a
+// day opens the full getAgentDay view underneath. The strip is the cheap half:
+// per-day DQE counts through the DAL (no Neon) plus ONE grouped outbound count
+// query, so a manager scanning a month does not pay a journey read per day.
+//
+// Two owner rules (2026-10):
+//   - At most the 31 MOST RECENT days WITH ACTIVITY (a ring or an outbound
+//     call). `totalActiveDays` ships beside them so the client can say how many
+//     were left out, rather than letting a short strip read as the whole window.
+//   - Same entitlement as the day view (agentDayAuthorize_), and the SEC-1
+//     window cap, since the client sends the window.
+//
+// NOT cached and NOT usage-logged: the panel opens on its newest day, which
+// calls getAgentDay, and that call already logs the `agentDay` usage row --
+// logging here too would count every panel open twice.
+
+var AGENT_DAY_STRIP_MAX_DAYS_ = 31;
+
+/**
+ * PURE. Fold the window's DQE rows and the grouped outbound counts into the
+ * strip. `outboundRows` is [{ d, n, c }] (date, calls, connected).
+ *
+ * A day counts as ACTIVE on a ring (rung > 0) or an outbound call -- the same
+ * "present that day" rule as Batch A's ans/day, plus outbound, since an agent
+ * who only dialled out still had a working day worth opening. Outbound on a
+ * day the capture does not cover is NULL, never 0: 0 would claim "placed no
+ * calls" on a day nothing was recorded (the agentDayOutboundCaptured_ rule).
+ */
+function agentDayStripDays_(dqeRows, agentName, outboundRows, opts) {
+  opts = opts || {};
+  var maxDays = opts.maxDays || AGENT_DAY_STRIP_MAX_DAYS_;
+  var captureStart = opts.captureStart || AGENT_DAY_OUTBOUND_CAPTURE_START_;
+  var obOk = !!opts.outboundAvailable;
+  var byDate = {};
+  var get = function (d) {
+    if (!byDate[d]) {
+      byDate[d] = { date: d, rung: 0, answered: 0, missed: 0,
+                    outbound: null, outboundConnected: null,
+                    outboundCaptured: obOk && d >= captureStart };
+      if (byDate[d].outboundCaptured) { byDate[d].outbound = 0; byDate[d].outboundConnected = 0; }
+    }
+    return byDate[d];
+  };
+  (dqeRows || []).forEach(function (r) {
+    if (!r || r.agent !== agentName) return;   // INV-04 exact
+    var d = String(r.dateIso || '');
+    if (!d) return;
+    var e = get(d);
+    e.rung += Number(r.totalRung) || 0;
+    e.answered += Number(r.totalAnswered) || 0;
+    e.missed += Number(r.totalMissed) || 0;
+  });
+  if (obOk) {
+    (outboundRows || []).forEach(function (o) {
+      var d = String((o && o.d) || '');
+      if (!d) return;
+      var e = get(d);
+      if (!e.outboundCaptured) return;
+      e.outbound += Number(o.n) || 0;
+      e.outboundConnected += Number(o.c) || 0;
+    });
+  }
+  var active = Object.keys(byDate).map(function (k) { return byDate[k]; })
+    .filter(function (e) { return e.rung > 0 || (e.outbound || 0) > 0; })
+    .sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+  return { days: active.slice(0, maxDays), totalActiveDays: active.length };
+}
+
+/**
+ * Per-day outbound counts for one agent over ONE probed connection. The window
+ * is clamped to the capture start first, so a window entirely before outbound
+ * capture began costs no query at all. Best-effort, like agentDayFetchCapture_.
+ */
+function agentDayFetchOutboundByDay_(agentName, fromIso, toIso) {
+  var out = { available: false, rows: [] };
+  var lo = fromIso < AGENT_DAY_OUTBOUND_CAPTURE_START_ ? AGENT_DAY_OUTBOUND_CAPTURE_START_ : fromIso;
+  if (lo > toIso) { out.available = true; return out; }   // nothing captured in range
+  if (typeof getDashboardNeonConn_ !== 'function') return out;
+  var conn = null;
+  try {
+    conn = getDashboardNeonConn_();
+    if (!conn) return out;
+    var st = conn.prepareStatement(
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + "SELECT to_char(call_date, 'YYYY-MM-DD') AS d, count(*) AS n, "
+      +        'count(*) FILTER (WHERE connected) AS c '
+      + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+      + 'AND agent_name = ? GROUP BY call_date) t');
+    st.setString(1, lo);
+    st.setString(2, toIso);
+    st.setString(3, agentName);
+    var rs = st.executeQuery();
+    var j = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); st.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'agentDay');
+    out.rows = JSON.parse(j || '[]');
+    out.available = true;
+  } catch (e) {
+    Logger.log('agentDayFetchOutboundByDay_ best-effort miss: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (conn) { try { conn.close(); } catch (e2) {} }
+  }
+  return out;
+}
+
+/**
+ * Public: the agent's active days in a window, newest first, capped at 31.
+ *   getAgentDayStrip({ agentName, from, to })
+ *     -> { meta: {...}, days: [{ date, rung, answered, missed, outbound,
+ *                                outboundConnected, outboundCaptured }] }
+ */
+function getAgentDayStrip(req) {
+  var t0 = new Date().getTime();
+  var agentName = String((req && req.agentName) || '').trim();
+  var from = String((req && req.from) || '').trim();
+  var to = String((req && req.to) || '').trim();
+  if (!agentName) throw new Error('agentName is required.');
+  if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from and to must be YYYY-MM-DD.');
+  if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
+  var scope = agentDayAuthorize_(agentName);
+
+  var dqe = agentDayFetchDalRows_(from, to);
+  var ob = agentDayFetchOutboundByDay_(scope.agentName, from, to);
+  var folded = agentDayStripDays_(dqe, scope.agentName, ob.rows, {
+    outboundAvailable: ob.available, captureStart: AGENT_DAY_OUTBOUND_CAPTURE_START_,
+    maxDays: AGENT_DAY_STRIP_MAX_DAYS_,
+  });
+  return {
+    meta: {
+      agentName: scope.agentName, department: scope.dept || '',
+      unrostered: !!scope.unrostered, rosterHomes: scope.homes || [],
+      from: from, to: to, maxDays: AGENT_DAY_STRIP_MAX_DAYS_,
+      totalActiveDays: folded.totalActiveDays, shown: folded.days.length,
+      outboundAvailable: ob.available,
+      outboundCaptureStart: AGENT_DAY_OUTBOUND_CAPTURE_START_,
+      computeMs: new Date().getTime() - t0,
+    },
+    days: folded.days,
+  };
 }

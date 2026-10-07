@@ -3307,7 +3307,7 @@
     var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
     return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
       + (rowClass ? ' class="' + rowClass + '"' : '')
-      + ' title="Open ' + escapeHtml(row.agent) + '\u2019s Individual Report">'
+      + ' title="Show ' + escapeHtml(row.agent) + '\u2019s days (the Individual Report is inside)">'
       + COLUMNS.map(function (col, i) {
           var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
           return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
@@ -3531,6 +3531,7 @@
       tfoot.innerHTML = '';
       renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
       renderTeamRingsPanel_(state);  // R17b: ditto -- the 2nd sticky panel
+      if (typeof apReattach_ === 'function') apReattach_();   // closes it: no rows
       return;
     }
 
@@ -3553,13 +3554,13 @@
       // keep it so any consumer that styles whole-row queue-only
       // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
-      // data-agent powers the row drill-through to the Individual Report.
+      // data-agent powers the row's inline agent panel (Batch B, apToggleFromRow_).
       // F13: tabindex makes the drill keyboard-reachable (the delegated
       // keydown on #agents-tbody activates it); no role override -- see
       // makeActivatable_'s note on preserving table row semantics.
       return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
            + (rowClass ? ' class="' + rowClass + '"' : '')
-           + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
+           + ' title="Show ' + escapeHtml(row.agent) + '’s days (the Individual Report is inside)">'
            + COLUMNS.map(function (col, i) {
         // B1: tag the Answered/Missed bar cell so a date-range refresh flashes
         // the agents whose volume actually changed (key by agent name, stable).
@@ -3624,6 +3625,8 @@
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.
     dsFlashChanged_($('agents-tbody'), 'dept:' + getRequestedDept());
+    // Batch B: this paint wiped the inline agent panel's row -- put it back.
+    if (typeof apReattach_ === 'function') apReattach_();
   }
 
   // Round-16 (owner): "Email me this report" -- the styled EmailKit summary

@@ -211,7 +211,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   agent's **gap vs the team average** as diverging bars (colored by
   favourability -- Missed is inverse), value as a datalabel, **click a bar
   to drill into IR**. Both views persist in `cdr.ins.prefs`; single-agent
-  reports force Cards view. **IR drill-through (`irDrillToAgent_`):**
+  reports force Cards view. **IR drill-through (`irDrillToAgent_`; on My Department it is the inline agent panel's "Individual report" button since Batch B):**
   Insights is a full PAGE (modal->page conversion,
   docs/insights-page-plan.md), so the IR modal simply OVERLAYS it -- the
   rendered report stays put behind the overlay, nothing is hidden or
@@ -2102,6 +2102,23 @@ stay pinned by INV-39, INV-53 and INV-06.
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
   stripped by `personalizeOverview_` (`companyOverview:v26`).
+- **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
+  click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
+  (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's
+  days in the loaded window (`getAgentDayStrip`, newest first, at most 31 with
+  a "most recent 31 of N" note) and the selected day's Agent Day view with
+  Inbound / Outbound / Missed-rings tabs. The Individual Report the row used to
+  open directly is the panel's first button (`irDrillToAgent_`, same window).
+  ONE agent at a time; Escape or Collapse close it and return focus to the row;
+  a drag-select inside a row is not a click. Every `render()` wipes the tbody,
+  so `apReattach_` (end of `render()`) re-inserts the SAME node under the
+  agent's row, re-opens it on a changed window, and closes it when the agent
+  is gone (dept switch, a collapsed sub-queue group). The inner `.ap` is
+  sticky-left, sized to `.agents-table-wrap` by JS and `contain: inline-size`,
+  so it never widens the table; its CSS is scoped under `.agents` AFTER the
+  table's rules so `.agents td`'s right-align and the sticky thead do not bleed
+  into the nested call tables. Exports read `state.rows`, never the DOM.
+  Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table

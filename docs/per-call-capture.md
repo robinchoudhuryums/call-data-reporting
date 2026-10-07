@@ -766,6 +766,25 @@ inbound capture, so a full inbound day can still be an uncaptured outbound one)
 -- and otherwise says "Outbound not captured", never a row of zeros. `counts.talkSec`
 stays the two directions' sum; `inboundTalkSec` / `outboundTalkSec` split it.
 
+**The inline agent panel (owner 2026-10, Batch B) is this view's second
+entrance.** A click / Enter / Space on a My Department agent row opens it in
+the row below (`apToggleFromRow_`, script-10): a strip of the agent's days in
+the LOADED window, newest first, and the selected day's view underneath,
+rendered by the SAME helpers as the modal (`adTierNote_` / `adKpiRowsHtml_` /
+`adRoleChip_` / `adOutboundOutcomeChip_`). The strip is
+`getAgentDayStrip({ agentName, from, to })` -- per-day rung / answered / missed
+from the DQE DAL plus ONE grouped `outbound_calls` count query (labelled
+`agentDay`; skipped entirely for a window before the outbound capture start),
+the same entitlement (`agentDayAuthorize_`, split out of `agentDayResolve_`)
+and the SEC-1 window cap. Three rules: (1) a strip day is ACTIVE on a ring or
+an outbound call -- a zero-ring DQE row is not a day; (2) at most the 31 MOST
+RECENT active days ship, with `totalActiveDays` beside them so the client says
+"31 most recent of N" whenever it cut days off; (3) outbound on an uncaptured
+day (before 2026-07-10, or Neon down) is NULL, never 0. Not cached and not
+usage-logged -- the panel opens on its newest day, and that `getAgentDay` call
+logs the `agentDay` row. A one-day window skips the strip. The Individual
+Report the row used to open directly is the panel's first button.
+
 **Auth is server-derived from the ROSTER** (`buildDeptsByAgent_` -> the shared
 `assertDeptAccess_`), so it inherits the R-3 allDepts and Tier C multi-dept
 fixes. A CROSSOVER agent has several homes and ANY of them entitles (the homes

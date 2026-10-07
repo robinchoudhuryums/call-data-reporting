@@ -1205,6 +1205,7 @@ test('SEC-1: every public DQE/QCD report RPC caps its client window', function (
     'QCDReport.gs': ['getQcdAllDepartments'],
     'QueueReportEmail.gs': ['sendQcdAllDeptEmail'],
     'AgentHome.gs': ['getAgentHome'],
+    'AgentDay.gs': ['getAgentDayStrip'],
   };
   const missing = [];
   Object.keys(RPCS).forEach(function (f) {

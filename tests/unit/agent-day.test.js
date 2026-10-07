@@ -409,3 +409,90 @@ test('the DQE half goes through the DAL, so DQE_READ_SOURCE is honored', functio
   assert.match(SRC, /neonDqeRowsUsable_/,
     'the LM2 rule: a reachable-but-empty Neon read is trusted, not fallen back on');
 });
+
+// ── The day strip (Batch B: the inline agent panel) ─────────────────────────
+
+const dq = function (dateIso, agent, rung, answered, missed) {
+  return { dateIso: dateIso, agent: agent, totalRung: rung, totalAnswered: answered, totalMissed: missed };
+};
+
+test('THE RULE: a strip day is ACTIVE on a ring or an outbound call; a zero-ring DQE row is not a day', function () {
+  const r = h.call('agentDayStripDays_', [
+    dq('2026-09-01', 'Ann Agent', 10, 8, 2),
+    dq('2026-09-02', 'Ann Agent', 0, 0, 0),         // on the sheet, never present
+    dq('2026-09-03', 'Ann Agent', 0, 0, 0),         // outbound only
+    dq('2026-09-03', 'Anna Agent', 9, 9, 0),        // another agent (INV-04 exact)
+  ], 'Ann Agent', [{ d: '2026-09-03', n: 4, c: 3 }],
+  { outboundAvailable: true, captureStart: '2026-07-10', maxDays: 31 });
+  const days = plain(r.days);
+  assert.deepEqual(days.map(function (d) { return d.date; }), ['2026-09-03', '2026-09-01'],
+    'newest first; the zero-activity day is dropped');
+  assert.equal(r.totalActiveDays, 2);
+  assert.equal(days[0].rung, 0, 'Anna’s rings must not land on Ann');
+  assert.equal(days[0].outbound, 4);
+  assert.equal(days[0].outboundConnected, 3);
+  assert.equal(days[1].outbound, 0, 'a captured day with no calls is a real 0');
+});
+
+test('THE RULE: the strip keeps the 31 MOST RECENT active days and reports how many there were', function () {
+  const rows = [];
+  for (let i = 1; i <= 40; i++) {
+    const d = new Date(Date.UTC(2026, 7, 1 + i)).toISOString().slice(0, 10);
+    rows.push(dq(d, 'Ann Agent', 3, 2, 1));
+  }
+  const r = h.call('agentDayStripDays_', rows, 'Ann Agent', [],
+    { outboundAvailable: true, captureStart: '2026-07-10', maxDays: 31 });
+  assert.equal(r.days.length, 31);
+  assert.equal(r.totalActiveDays, 40, 'the client says "31 of 40", so the cut is never silent');
+  assert.equal(r.days[0].date, '2026-09-10', 'the newest day leads');
+  assert.equal(r.days[30].date, '2026-08-11', 'the oldest days are the ones left out');
+});
+
+test('outbound on an uncaptured day is NULL, never 0 (before capture start, or Neon down)', function () {
+  const before = h.call('agentDayStripDays_', [dq('2026-07-01', 'Ann Agent', 5, 5, 0)], 'Ann Agent',
+    [{ d: '2026-07-01', n: 9, c: 9 }], { outboundAvailable: true, captureStart: '2026-07-10' });
+  assert.equal(before.days[0].outbound, null);
+  assert.equal(before.days[0].outboundCaptured, false);
+  const down = h.call('agentDayStripDays_', [dq('2026-09-01', 'Ann Agent', 5, 5, 0)], 'Ann Agent',
+    [], { outboundAvailable: false, captureStart: '2026-07-10' });
+  assert.equal(down.days[0].outbound, null, 'an outage must not read as "placed no calls"');
+});
+
+test('getAgentDayStrip: validates, caps the window, and gates through the day view’s own auth', function () {
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  h.ctx.agentDayFetchDalRows_ = function () { return [dq('2026-09-01', 'Ann Agent', 4, 3, 1)]; };
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // Neon down -> inbound-only
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: 'x', to: '2026-09-01' }); },
+    /YYYY-MM-DD/);
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: '2026-09-02', to: '2026-09-01' }); },
+    /on or before/);
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: '2023-01-01', to: '2026-09-01' }); },
+    /capped/, 'SEC-1: a client window is capped');
+  assert.throws(function () { h.call('getAgentDayStrip', { agentName: 'Sal Seller', from: '2026-09-01', to: '2026-09-01' }); },
+    /Not authorized/, 'a CSR manager cannot strip a Sales-only agent');
+  const out = h.call('getAgentDayStrip', { agentName: 'Ann Agent', from: '2026-08-01', to: '2026-09-01' });
+  assert.equal(out.meta.department, 'CSR');
+  assert.equal(out.meta.outboundAvailable, false);
+  assert.equal(out.meta.totalActiveDays, 1);
+  assert.equal(out.days[0].outbound, null);
+  h.state.testUser = null;
+  delete h.ctx.getDashboardNeonConn_;
+});
+
+test('a window wholly before outbound capture costs no Neon query', function () {
+  let opened = 0;
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return null; };
+  const r = h.call('agentDayFetchOutboundByDay_', 'Ann Agent', '2026-06-01', '2026-06-30');
+  assert.equal(opened, 0);
+  assert.equal(r.available, true, 'nothing to read is not an outage');
+  delete h.ctx.getDashboardNeonConn_;
+});
+
+test('the strip’s Neon read is bound, grouped by day, and LABELLED', function () {
+  assert.match(SRC, /AND agent_name = \? GROUP BY call_date/);
+  assert.match(SRC, /neonNoteEgress_\(j \? j\.length : 0, 'agentDay'\)/);
+  const body = SRC.slice(SRC.indexOf('\nfunction getAgentDayStrip('));
+  assert.ok(body.indexOf('agentDayAuthorize_(') !== -1, 'the strip shares the day view’s entitlement');
+  assert.ok(body.indexOf('logReportUsage_') === -1,
+    'not usage-logged: the newest day’s getAgentDay call already logs the open');
+});

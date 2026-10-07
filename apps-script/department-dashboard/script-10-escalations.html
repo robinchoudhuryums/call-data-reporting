@@ -2446,11 +2446,17 @@
          + '</div>';
   }
 
-  function adOutboundCardHtml_(c) {
-    const when = escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?');
-    const outcome = c.connected
+  // Shared by the Agent Day card below and the inline panel's outbound table
+  // (Batch B), so the Connected chip carries its definition in one place.
+  function adOutboundOutcomeChip_(c) {
+    return c.connected
       ? '<span class="cl-chip cl-chip-good" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">Connected</span>'
       : '<span class="cl-chip cl-chip-muted">Not connected</span>';
+  }
+
+  function adOutboundCardHtml_(c) {
+    const when = escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?');
+    const outcome = adOutboundOutcomeChip_(c);
     const facts = [];
     if (c.connected && c.talkSec > 0) facts.push('Talked ' + fmtDuration(c.talkSec));
     if (!c.connected && c.ringSec != null) facts.push('Rang ' + fmtDuration(c.ringSec));
@@ -2508,5 +2514,370 @@
     const runBtn = $('ad-run-btn');
     if (runBtn) runBtn.addEventListener('click', runAgentDay_);
   }
+
+  // ── Inline agent panel on My Department (Batch B, owner 2026-10) ──────────
+  //
+  // A click (or Enter / Space) anywhere on an agent row opens this panel in
+  // the row below: a strip of the agent's days in the LOADED window, newest
+  // first, and the full Agent Day view for the selected day underneath. It
+  // replaced the row's old drill straight to the Individual Report, which now
+  // sits behind the panel's "Individual report" button with the same window.
+  //
+  // Rules worth knowing before changing it:
+  //   - ONE agent open at a time; the open row toggles it shut, and Escape or
+  //     the Collapse button close it and hand focus back to the row.
+  //   - The strip holds at most the 31 MOST RECENT days WITH ACTIVITY and says
+  //     so whenever it cut days off (meta.totalActiveDays) -- a short strip
+  //     must never read as the whole window.
+  //   - The panel is a DOM row inside #agents-tbody, so every render() wipes
+  //     it. apReattach_ (called at the end of render) puts the SAME node back
+  //     under the agent's row when the agent is still on screen and the window
+  //     is unchanged, re-opens it on a new window, and closes it otherwise.
+  //   - Exports read state.rows, never the DOM, so the panel row cannot leak
+  //     into a CSV / TSV.
+  //   - The day view is rendered by the SAME helpers the Reports -> Agent Day
+  //     modal uses (adTierNote_, adKpiRowsHtml_, adRoleChip_), so the two can
+  //     never disagree about what a day means.
+
+  var AP_ = { agent: null, idx: 0, from: '', to: '', seq: 0, strip: null,
+              date: null, tab: 'in', days: {}, node: null };
+
+  function apWindow_() {
+    const m = (state && state.meta) || {};
+    return {
+      from: m.from || ($('from-date') && $('from-date').value) || '',
+      to:   m.to   || ($('to-date')   && $('to-date').value)   || '',
+    };
+  }
+
+  function apRowsFor_(agent) {
+    const tb = $('agents-tbody');
+    if (!tb) return [];
+    return Array.prototype.filter.call(tb.querySelectorAll('tr[data-agent]'), function (tr) {
+      return tr.getAttribute('data-agent') === agent;
+    });
+  }
+
+  function apWeekday_(iso) {
+    const p = String(iso || '').split('-').map(Number);
+    if (p.length !== 3 || !p[0]) return '';
+    return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()];
+  }
+  function apShortDate_(iso) {
+    const p = String(iso || '').split('-');
+    return p.length === 3 ? Number(p[1]) + '/' + Number(p[2]) : String(iso || '');
+  }
+
+  // Pin the panel to the VISIBLE width of the table's scroll wrapper, so a
+  // wide table never makes the panel scroll sideways with it (the panel is
+  // sticky-left and contain:inline-size, so it also never widens the table).
+  function apSizeToWrap_() {
+    if (!AP_.node) return;
+    const inner = AP_.node.querySelector('.ap');
+    const wrap = AP_.node.closest('.agents-table-wrap');
+    if (inner && wrap) inner.style.width = Math.max(wrap.clientWidth, 0) + 'px';
+  }
+
+  function apClose_(focusRow) {
+    const agent = AP_.agent, idx = AP_.idx;
+    AP_.seq++;   // any in-flight strip / day response is now stale
+    if (AP_.node && AP_.node.parentNode) AP_.node.parentNode.removeChild(AP_.node);
+    AP_.node = null; AP_.agent = null; AP_.strip = null; AP_.date = null; AP_.days = {};
+    apRowsFor_(agent).forEach(function (tr) {
+      tr.classList.remove('ap-open'); tr.removeAttribute('aria-expanded'); tr.removeAttribute('aria-controls');
+    });
+    if (focusRow && agent) {
+      const tr = apRowsFor_(agent)[idx] || apRowsFor_(agent)[0];
+      if (tr) tr.focus();
+    }
+  }
+
+  function apMarkRow_(tr) {
+    tr.classList.add('ap-open');
+    tr.setAttribute('aria-expanded', 'true');
+    tr.setAttribute('aria-controls', 'ap-panel');
+  }
+
+  /** Row click / Enter / Space. Toggles; a second agent replaces the first. */
+  function apToggleFromRow_(tr) {
+    const agent = tr && tr.getAttribute('data-agent');
+    if (!agent) return;
+    const idx = Math.max(apRowsFor_(agent).indexOf(tr), 0);
+    if (AP_.agent === agent && AP_.idx === idx) { apClose_(true); return; }
+    if (AP_.agent) apClose_(false);
+    apOpen_(agent, idx);
+  }
+
+  function apOpen_(agent, idx) {
+    const tr = apRowsFor_(agent)[idx];
+    if (!tr) return;
+    const win = apWindow_();
+    AP_.agent = agent; AP_.idx = idx; AP_.from = win.from; AP_.to = win.to;
+    AP_.strip = null; AP_.date = null; AP_.tab = 'in'; AP_.days = {};
+    const row = document.createElement('tr');
+    row.className = 'ap-row';
+    row.id = 'ap-panel';
+    const td = document.createElement('td');
+    td.colSpan = tr.children.length || 1;
+    td.innerHTML = '<div class="ap" role="region" aria-label="' + escapeHtml(agent) + ' — days with activity">'
+      + '<div class="ap-head">'
+      +   '<span class="ap-title">' + escapeHtml(agent) + '</span>'
+      +   '<span class="ap-sub" data-ap-sub>Days with activity</span>'
+      +   '<span class="ap-act">'
+      +     '<button type="button" class="btn btn-secondary ap-ir-btn" data-ap-ir>Individual report ↗</button>'
+      +     '<button type="button" class="btn btn-secondary ap-close-btn" data-ap-close title="Collapse (Esc)">Collapse ▴</button>'
+      +   '</span>'
+      + '</div>'
+      + '<div data-ap-strip></div>'
+      + '<div data-ap-day></div>'
+      + '</div>';
+    row.appendChild(td);
+    AP_.node = row;
+    tr.parentNode.insertBefore(row, tr.nextSibling);
+    apMarkRow_(tr);
+    apWire_(row);
+    apSizeToWrap_();
+    if (win.from && win.from === win.to) {
+      // A one-day window has nothing to choose between -- skip the strip.
+      apSetHtml_('[data-ap-strip]', '');
+      apSelectDay_(win.from);
+      return;
+    }
+    apLoadStrip_();
+  }
+
+  function apSetHtml_(sel, html) {
+    const el = AP_.node && AP_.node.querySelector(sel);
+    if (el) el.innerHTML = html;
+    return el;
+  }
+
+  function apLoadingHtml_(label) {
+    return '<div class="ap-loading">' + DS_EQ_HTML_ + escapeHtml(label) + '</div>';
+  }
+
+  function apLoadStrip_() {
+    const tok = ++AP_.seq;
+    apSetHtml_('[data-ap-strip]', apLoadingHtml_('Loading days…'));
+    apSetHtml_('[data-ap-day]', '');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (tok !== AP_.seq) return;
+        AP_.strip = res || { meta: {}, days: [] };
+        apRenderStrip_();
+        const days = AP_.strip.days || [];
+        if (days.length) apSelectDay_(days[0].date);
+        else apSetHtml_('[data-ap-day]', '');
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== AP_.seq) return;
+        apSetHtml_('[data-ap-strip]', '<div class="ds-note">Could not load this agent’s days: '
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
+      })
+      .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to });
+  }
+
+  function apStripHtml_(strip, selected) {
+    const meta = (strip && strip.meta) || {};
+    const days = (strip && strip.days) || [];
+    const span = escapeHtml(apShortDate_(meta.from || AP_.from)) + ' – ' + escapeHtml(apShortDate_(meta.to || AP_.to));
+    if (!days.length) {
+      return '<div class="ds-note">No days with activity for this agent in ' + span + '.</div>';
+    }
+    const boxes = days.map(function (d) {
+      const on = d.date === selected;
+      const ob = d.outboundCaptured ? fmtNumber(d.outbound || 0) + ' outbound' : 'outbound –';
+      return '<button type="button" class="ap-day' + (on ? ' is-on' : '') + '" data-ap-date="' + escapeHtml(d.date) + '"'
+        + ' aria-pressed="' + (on ? 'true' : 'false') + '"'
+        + ' title="' + escapeHtml(d.date) + (d.outboundCaptured ? '' : ' · outbound not captured') + '">'
+        + '<span class="ap-day-w">' + escapeHtml(apWeekday_(d.date)) + '</span>'
+        + '<span class="ap-day-d">' + escapeHtml(apShortDate_(d.date)) + '</span>'
+        + '<span class="ap-day-f"><b>' + fmtNumber(d.answered || 0) + '</b> ans · <i>' + fmtNumber(d.missed || 0) + '</i> miss</span>'
+        + '<span class="ap-day-f">' + ob + '</span>'
+        + '</button>';
+    }).join('');
+    const total = Number(meta.totalActiveDays) || days.length;
+    let note = total > days.length
+      ? 'Showing the ' + days.length + ' most recent of ' + total + ' days with activity in ' + span
+        + ' (newest first). Narrow the dates above to reach earlier days.'
+      : total + ' day' + (total === 1 ? '' : 's') + ' with activity in ' + span + ' (newest first).';
+    if (meta.outboundAvailable === false) {
+      note += ' Outbound counts could not be read just now, so the strip shows inbound only.';
+    }
+    return '<div class="ap-strip-wrap">'
+      + '<button type="button" class="ap-arrow" data-ap-scroll="-1" aria-label="Newer days">‹</button>'
+      + '<div class="ap-strip" data-ap-stripbox>' + boxes + '</div>'
+      + '<button type="button" class="ap-arrow" data-ap-scroll="1" aria-label="Older days">›</button>'
+      + '</div>'
+      + '<p class="ap-note">' + escapeHtml(note) + '</p>';
+  }
+
+  function apRenderStrip_() {
+    if (!AP_.strip) return;
+    const meta = AP_.strip.meta || {};
+    const sub = AP_.node && AP_.node.querySelector('[data-ap-sub]');
+    if (sub) {
+      sub.textContent = 'Days with activity'
+        + ((Number(meta.totalActiveDays) || 0) > (AP_.strip.days || []).length
+          ? ' · most recent ' + (meta.maxDays || (AP_.strip.days || []).length) : '');
+    }
+    apSetHtml_('[data-ap-strip]', apStripHtml_(AP_.strip, AP_.date));
+  }
+
+  function apSelectDay_(date) {
+    AP_.date = date;
+    AP_.tab = 'in';
+    if (AP_.node) {
+      AP_.node.querySelectorAll('.ap-day').forEach(function (b) {
+        const on = b.getAttribute('data-ap-date') === date;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    if (AP_.days[date]) { apRenderDay_(AP_.days[date]); return; }
+    const tok = ++AP_.seq;
+    apSetHtml_('[data-ap-day]', apLoadingHtml_('Loading ' + date + '…'));
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (tok !== AP_.seq) return;
+        AP_.days[date] = data;
+        apRenderDay_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== AP_.seq) return;
+        apSetHtml_('[data-ap-day]', '<div class="ds-note">Could not load ' + escapeHtml(date) + ': '
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
+      })
+      .getAgentDay({ agentName: AP_.agent, date: date });
+  }
+
+  function apInboundTableHtml_(rows) {
+    if (!rows.length) return '<div class="ds-note">No inbound calls recorded for this agent on this day.</div>';
+    return '<table class="ap-calls"><thead><tr><th>Time</th><th>Path</th><th>Outcome</th><th>Talk</th><th>Waited</th></tr></thead><tbody>'
+      + rows.map(function (c) {
+          const path = escapeHtml(c.entryQueue || '')
+            + (c.finalQueue && c.finalQueue !== c.entryQueue
+              ? ' <span class="ap-path">→ ' + escapeHtml(c.finalQueue) + '</span>' : '')
+            + (c.transferredOn ? ' <span class="ap-path">· moved on</span>' : '')
+            + (c.isInternal ? ' <span class="ap-path">· internal</span>' : '');
+          return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?') + '</td>'
+            + '<td>' + (path || '–') + '</td>'
+            + '<td>' + adRoleChip_(c.role) + '</td>'
+            + '<td class="m">' + (c.talkSec ? fmtDuration(c.talkSec) : '–') + '</td>'
+            + '<td class="m">' + (c.waitSeconds != null ? fmtDuration(c.waitSeconds) : '–') + '</td></tr>';
+        }).join('')
+      + '</tbody></table>';
+  }
+
+  function apOutboundTableHtml_(rows) {
+    if (!rows.length) return '<div class="ds-note">No outbound calls recorded for this agent on this day.</div>';
+    return '<table class="ap-calls"><thead><tr><th>Time</th><th>Outcome</th><th>Talk</th><th>Rang</th><th>Attempts</th></tr></thead><tbody>'
+      + rows.map(function (c) {
+          const outcome = adOutboundOutcomeChip_(c);
+          return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?') + '</td>'
+            + '<td>' + outcome + '</td>'
+            + '<td class="m">' + (c.connected && c.talkSec > 0 ? fmtDuration(c.talkSec) : '–') + '</td>'
+            + '<td class="m">' + (c.ringSec != null ? fmtDuration(c.ringSec) : '–') + '</td>'
+            + '<td class="m">' + fmtNumber(c.attempts || 1) + '</td></tr>';
+        }).join('')
+      + '</tbody></table>';
+  }
+
+  function apDayHtml_(data, tab) {
+    const meta = (data && data.meta) || {};
+    const inbound = (data && data.inbound) || [];
+    const outbound = (data && data.outbound) || [];
+    const rings = (data && data.missedRings) || [];
+    const showRings = rings.length > 0 && meta.tier !== 'full';
+    if (tab === 'rings' && !showRings) tab = 'in';
+    const rec = (data && data.reconcile) || {};
+    const tier = adTierNote_(meta);
+    const tabBtn = function (key, label, n) {
+      const on = key === tab;
+      return '<button type="button" role="tab" class="ap-tab' + (on ? ' is-on' : '') + '" data-ap-tab="' + key + '"'
+        + ' aria-selected="' + (on ? 'true' : 'false') + '">' + escapeHtml(label)
+        + '<span class="ap-tab-n">' + fmtNumber(n) + '</span></button>';
+    };
+    let list;
+    if (tab === 'out') list = apOutboundTableHtml_(outbound);
+    else if (tab === 'rings') list = '<div class="ap-rings">' + rings.map(function (t) { return escapeHtml(String(t)); }).join(' · ') + '</div>';
+    else list = apInboundTableHtml_(inbound);
+    return '<div class="ap-daybar"><span class="ap-daybar-t">' + escapeHtml(apWeekday_(meta.date) + ' ' + (meta.date || '')) + '</span>'
+      + (rec.exact ? '<span class="ap-sub">per-call list matches the daily totals</span>' : '')
+      + '</div>'
+      + (tier ? '<div class="ds-note">' + tier + '</div>' : '')
+      + '<div class="ap-kpis">' + adKpiRowsHtml_(meta, (data && data.day) || null, (data && data.counts) || {}) + '</div>'
+      + (rec.note ? '<p class="ap-note">' + escapeHtml(rec.note) + '</p>' : '')
+      + (meta.truncated ? '<p class="ap-note">This day exceeded the display cap; the lists show the first '
+          + inbound.length + ' inbound and ' + outbound.length + ' outbound calls.</p>' : '')
+      + '<div class="ap-tabs" role="tablist">'
+      +   tabBtn('in', 'Inbound calls', inbound.length)
+      +   tabBtn('out', 'Outbound calls', outbound.length)
+      +   (showRings ? tabBtn('rings', 'Missed rings', rings.length) : '')
+      + '</div>'
+      + '<div class="ap-list" role="tabpanel">' + list + '</div>';
+  }
+
+  function apRenderDay_(data) {
+    apSetHtml_('[data-ap-day]', apDayHtml_(data, AP_.tab));
+  }
+
+  function apWire_(row) {
+    row.addEventListener('click', function (e) {
+      const t = e.target;
+      if (t.closest('[data-ap-close]')) { apClose_(true); return; }
+      if (t.closest('[data-ap-ir]')) {
+        if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(AP_.agent, AP_.from, AP_.to);
+        return;
+      }
+      const day = t.closest('[data-ap-date]');
+      if (day) { apSelectDay_(day.getAttribute('data-ap-date')); return; }
+      const tab = t.closest('[data-ap-tab]');
+      if (tab) {
+        AP_.tab = tab.getAttribute('data-ap-tab');
+        if (AP_.days[AP_.date]) apRenderDay_(AP_.days[AP_.date]);
+        const again = AP_.node && AP_.node.querySelector('[data-ap-tab="' + AP_.tab + '"]');
+        if (again) again.focus();
+        return;
+      }
+      const sc = t.closest('[data-ap-scroll]');
+      if (sc) {
+        const box = AP_.node && AP_.node.querySelector('[data-ap-stripbox]');
+        if (box) box.scrollBy({ left: Number(sc.getAttribute('data-ap-scroll')) * box.clientWidth * 0.8, behavior: 'smooth' });
+      }
+    });
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); apClose_(true); }
+    });
+  }
+
+  /**
+   * Called at the end of render(): every paint wipes #agents-tbody, so put
+   * the panel back under its agent's row -- or re-open it for a new window,
+   * or close it when the agent is no longer on screen (dept switch, a
+   * collapsed sub-queue group).
+   */
+  function apReattach_() {
+    if (!AP_.agent || !AP_.node) return;
+    const rows = apRowsFor_(AP_.agent);
+    if (!rows.length) { apClose_(false); return; }
+    const idx = Math.min(AP_.idx, rows.length - 1);
+    const win = apWindow_();
+    if (win.from !== AP_.from || win.to !== AP_.to) {
+      const agent = AP_.agent;
+      apClose_(false);
+      apOpen_(agent, idx);
+      return;
+    }
+    AP_.idx = idx;
+    const tr = rows[idx];
+    tr.parentNode.insertBefore(AP_.node, tr.nextSibling);
+    const td = AP_.node.firstChild;
+    if (td) td.colSpan = tr.children.length || 1;
+    apMarkRow_(tr);
+    apSizeToWrap_();
+  }
+
+  window.addEventListener('resize', function () { if (AP_.node) apSizeToWrap_(); });
 
 </script>

@@ -320,6 +320,35 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         missedRings: [],
       };
     },
+    // Batch B: the inline agent panel's day strip -- every WEEKDAY in the
+    // window is an active day, newest first, capped at 31 like the server, so
+    // a 30-day harness window exercises the strip and a longer one the
+    // "31 most recent of N" note.
+    getAgentDayStrip: function (req) {
+      const from = (req && req.from) || '2026-07-21', to = (req && req.to) || '2026-08-19';
+      const days = [];
+      const p = to.split('-').map(Number);
+      const d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+      let n = 0;
+      for (let guard = 0; guard < 800; guard++) {
+        const iso = d.toISOString().slice(0, 10);
+        if (iso < from) break;
+        const wd = d.getUTCDay();
+        if (wd !== 0 && wd !== 6) {
+          days.push({ date: iso, rung: 12 + (n % 5), answered: 10 + (n % 4), missed: 2 + (n % 3),
+            outbound: iso >= '2026-07-10' ? 3 + (n % 6) : null,
+            outboundConnected: iso >= '2026-07-10' ? 2 + (n % 3) : null,
+            outboundCaptured: iso >= '2026-07-10' });
+          n++;
+        }
+        d.setUTCDate(d.getUTCDate() - 1);
+      }
+      return { meta: { agentName: (req && req.agentName) || 'Test Agent', department: 'CSR',
+          unrostered: false, rosterHomes: ['CSR'], from: from, to: to, maxDays: 31,
+          totalActiveDays: days.length, shown: Math.min(days.length, 31),
+          outboundAvailable: true, outboundCaptureStart: '2026-07-10', computeMs: 12 },
+        days: days.slice(0, 31) };
+    },
     getCoachingWorklist: function (req) {
       return { available: true, rows: [
         { id: 'cf-1', department: 'CSR', agent_name: 'Test Agent',

@@ -8,7 +8,7 @@
 // Stages: generate payloads from the REAL server code -> build the admin +
 // manager sites from the REAL client -> run the ASSERTING drivers listed in
 // STAGES below (the single source of truth for what gates -- currently the
-// eight CLAUDE.md's "Rendered-UI gate" block names, incl. the agent-app
+// nine CLAUDE.md's "Rendered-UI gate" block names, incl. the agent-app
 // pair). The exploratory drivers (drive.js / drive-insights.js /
 // drive-phase3.js) are NOT run here: they emit screenshots + reports for a human
 // to read, which is not a pass/fail signal.
@@ -48,6 +48,12 @@ const STAGES = [
   // so the driver stubs URL.createObjectURL and asserts the real bytes.
   ['node', ['drive-subqueue.js'], 'sub-queue scope + combined CSV (S35 addendum / S43)'],
   ['node', ['drive-journey.js'], 'call-path drill: origin line, outbound link, refusal'],
+  // Batch B: the inline agent panel an agent-row click opens on My Department
+  // -- a DOM row inside a table that re-renders on every sort, so it is the
+  // shape that renders in review and breaks on a real click. Asserts open /
+  // day + tab switch / survive a re-sort / IR button / Escape + Collapse focus
+  // return / one panel at a time / CSV untouched / no overflow at 360 px.
+  ['node', ['drive-agentpanel.js'], 'inline agent panel (My Department row click)'],
   // The admin modals + the Escalations worklist. These have thorough
   // SERVER-side pins and, until this stage, no assertion that any of them
   // RENDERS -- the gap that shipped the header dept-selector ReferenceError.

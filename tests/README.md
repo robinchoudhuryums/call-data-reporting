@@ -496,7 +496,13 @@ tests/
                               superset that only an exact INV-04 match may
                               narrow, the roster-derived auth incl. crossover
                               homes and the admin-only unrostered case, and
-                              the subset DISCLOSURE against the daily total),
+                              the subset DISCLOSURE against the daily total;
+                              Batch B: the inline panel's day strip --
+                              active = a ring or an outbound call, the 31
+                              most recent with the total beside them,
+                              NULL outbound on an uncaptured day, the
+                              shared auth + SEC-1 cap, no Neon query for a
+                              pre-capture window),
                               overview-dqe-silence, overview-qcd-snapshot
                               (computeQcdSnapshots_ + the L4 prior-window
                               read), overview-chart-answered (6b: the

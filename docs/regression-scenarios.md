@@ -310,7 +310,7 @@ S39 | Keyboard-only walk of the primary drill paths (F13) | Subsystem: Departmen
   Steps:
     - Load the dashboard and use ONLY Tab / Shift-Tab / Enter / Space (no mouse).
     - On Overview: Tab to a dept tile and press Enter -- it should SOLO that dept's line in the trend chart (Shift/Cmd/Ctrl+Enter adds a second dept to the comparison).
-    - Go to My Department; Tab to an agent row and press Enter -- the Individual Report should open. Press Space on a row: it must activate WITHOUT scrolling the page.
+    - Go to My Department; Tab to an agent row and press Enter -- the inline agent panel opens below the row. Tab once: focus lands on its "Individual report" button; Enter opens the report. Escape inside the panel closes it and puts focus back on the row. Press Space on a row: it must open the panel WITHOUT scrolling the page.
     - Open the all-departments Daily Call Queue Report; Tab to a queue row and press Enter -- the per-call-source breakdown should expand, and Enter again collapse it.
     - Same on the Insights Queue health per-queue rows.
     - (Batch 9) Tab to a sub-queue group header on a parent dept's My Department table and press Enter -- the group collapses (drive-subqueue.js asserts this); Tab to any Inbound / Direct / Outbound report column header and press Enter -- the table re-sorts and `aria-sort` follows; open Chart tips from a `?` and Tab -- focus stays inside the popover until Close / Escape; in the guided tour, Enter on a focused button fires it ONCE.
@@ -489,3 +489,18 @@ S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsyste
     - In the dialog: tick CSR AND Sales together (a 0:00:20 Sales leg shows, a 0:00:20 CSR leg does not); tick "Include the backup queue" (Backup CSR legs over 59 s appear); set a custom threshold of 120 s (only legs over 2 minutes stay); tick "Work window only" (legs before 6:00 AM PST for CSR / 6:30 AM for others, and from 3:00 PM, disappear).
   Expected: the check's VERDICT is CLEAN on both dates; the hand counts match the old item AND the dialog's expected count. Legs with NO queue name are included, as the old items include them (the report counts them per filter); unticking "Include legs with no queue name" removes exactly those.
   Fails if: the VERDICT is MISMATCH (send the report -- it names each differing row: queue, call time, row number, and which side shows it); a mixed selection applies one threshold to both queues; the backup queue appears without the box ticked; the dialog's expected count disagrees with what the tab shows.
+
+S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
+  Steps:
+    - As a MANAGER, open My Department over a window of a month or more. Click anywhere on an agent's row (not just the name): a panel opens directly below it, the row tinted with an accent rail. Click the same row again: it closes.
+    - In the open panel: the strip shows that agent's days WITH ACTIVITY, newest first; each box shows answered / missed and the outbound count ("outbound –" on a day before 2026-07-10). A day with no rings and no outbound calls is absent. The newest day is selected and its view renders below: the Inbound and Outbound tile rows, the same as Reports -> Agent day for that agent and date.
+    - Widen the window past ~6 weeks: the note reads "Showing the 31 most recent of N days with activity ... Narrow the dates above to reach earlier days." and the strip holds 31 boxes. Use the ‹ › arrows to scroll it.
+    - Pick an older day: the view below changes to it. Switch the tabs (Inbound calls / Outbound calls; Missed rings only on a day past the journey horizon) -- each shows its own list.
+    - Sort the table by another column: the panel stays open under the same agent. Open a second agent: the first closes (one panel at a time). Collapse the sub-queue group holding the open agent: the panel closes.
+    - Click "Individual report ↗": the Individual Report opens for that agent over the same window.
+    - Export CSV / Copy for spreadsheet with the panel open: the output is the table only, unchanged.
+    - Set the window to ONE day and open a row: no strip, the day view directly.
+    - On a phone-width window: the panel fits the screen, the strip scrolls sideways inside it, the page itself does not scroll sideways.
+    - NEGATIVE, in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getAgentDayStrip({ agentName: '<an agent on a dept you do NOT own>', from: '2026-09-01', to: '2026-09-30' })` -> "Not authorized for this department."
+  Expected: as described; the selected day's tiles equal that agent's single-day row in My Department.
+  Fails if: a click on a group head / subtotal / total row opens a panel; the strip shows a zero-activity day or more than 31 boxes without the note; an uncaptured day reads "0 outbound"; the panel widens the table or the page; a re-sort leaves two panels or an orphaned one; or the export carries any panel text.

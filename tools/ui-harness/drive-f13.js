@@ -75,7 +75,8 @@ function record(name, pass, detail) {
     JSON.stringify(ring));
   await page.keyboard.press('Enter');   // release the solo
 
-  // ---- 2. My Department agent row: Enter opens the Individual Report -------
+  // ---- 2. My Department agent row: Enter opens the inline agent panel, ------
+  //         whose first button opens the Individual Report (Batch B)
   await page.click('#my-dept-btn');
   await page.waitForTimeout(2500);
   const row = page.locator('#agents-tbody tr[data-agent]').first();
@@ -88,12 +89,23 @@ function record(name, pass, detail) {
 
   await row.focus();
   await page.keyboard.press('Enter');
+  await page.waitForTimeout(900);
+  const panelOpen = await page.evaluate(() => !!document.getElementById('ap-panel'));
+  record('agent row Enter opens the inline agent panel', panelOpen);
+  // Keyboard path from the row to the report: Tab reaches the panel's
+  // "Individual report" button first (it leads the panel's header).
+  await page.keyboard.press('Tab');
+  const onIrBtn = await page.evaluate(() =>
+    !!document.activeElement && document.activeElement.hasAttribute('data-ap-ir'));
+  record('Tab from the open row reaches the panel\'s Individual report button', onIrBtn);
+  if (!onIrBtn) await page.focus('#ap-panel [data-ap-ir]').catch(() => {});
+  await page.keyboard.press('Enter');
   await page.waitForTimeout(2000);
   const irOpen = await page.evaluate(() => {
     const m = document.getElementById('individual-modal');
     return !!m && getComputedStyle(m).display !== 'none';
   });
-  record('agent row Enter opens the Individual Report', irOpen);
+  record('the panel\'s Individual report button opens the report on Enter', irOpen);
   if (irOpen) {
     // UI-1 follow-on: Escape on the report's Export MENU closes the menu
     // only. The menu's Escape used to bubble to the modal's own handler, so
@@ -131,6 +143,18 @@ function record(name, pass, detail) {
     await page.waitForTimeout(800);
   }
 
+  // Close the panel from the keyboard before the Space check, so Space below
+  // OPENS it (a toggle) and the scroll assertion measures a real activation.
+  await page.focus('#ap-panel [data-ap-ir]').catch(() => {});
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  const closedToRow = await page.evaluate(() => ({
+    open: !!document.getElementById('ap-panel'),
+    onRow: !!document.activeElement && document.activeElement.hasAttribute('data-agent'),
+  }));
+  record('Escape in the panel closes it and returns focus to the row',
+    !closedToRow.open && closedToRow.onRow, JSON.stringify(closedToRow));
+
   // ---- 3. Space must not scroll the page while a row is focused ------------
   await row.focus();
   const beforeY = await page.evaluate(() => window.scrollY);
@@ -139,11 +163,9 @@ function record(name, pass, detail) {
   const afterY = await page.evaluate(() => window.scrollY);
   record('Space on a row activates without scrolling the page', beforeY === afterY,
     'scrollY ' + beforeY + ' -> ' + afterY);
-  const irOpen2 = await page.evaluate(() => {
-    const m = document.getElementById('individual-modal');
-    return !!m && getComputedStyle(m).display !== 'none';
-  });
-  if (irOpen2) { await page.keyboard.press('Escape'); await page.waitForTimeout(600); }
+  const spaceOpened = await page.evaluate(() => !!document.getElementById('ap-panel'));
+  record('Space on a row opens the panel too', spaceOpened);
+  if (spaceOpened) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
 
   // ---- 4. QCD carousel dots (only when the dept has >1 queue page) --------
   const dots = await page.locator('.dept-qcd-dot').count();
