@@ -3158,3 +3158,9 @@ When something looks wrong, before assuming a code bug, check:
       side only (an import that skipped the Neon mirror, or a sheet date never
       built: fix those first, #35 / #52). Never choose a source on this, or on
       `FAILED` (Neon unreachable or no sheet).
+    - **The first live run (2026-10-06) is VOID** -- it read Neon as 0 on every
+      date while `outbound_calls` held ~3,800 named rows a day. That was a probe
+      bug (a column aliased like its subquery, so `json_agg` returned bare
+      numbers), fixed and swept in `cross-file-pins.test.js`. Re-run after the
+      deploy that carries the fix; a malformed Neon row now reads `FAILED`,
+      never zeros.

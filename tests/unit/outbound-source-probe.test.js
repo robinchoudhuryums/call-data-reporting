@@ -181,6 +181,56 @@ test('the Neon read is bound, grouped per agent-day, selects no PHI, and is LABE
   assert.match(body, /neonNoteEgress_\(j \? j\.length : 0, 'outbound-source'\)/);
 });
 
+// The first live run (2026-10) read Neon as 0 on EVERY date against ~3,800
+// captured rows/day: the talk column was aliased `t`, the subquery's own alias,
+// and Postgres resolved json_agg(t) to THAT column -- the rows came back as bare
+// numbers, all folding into one 'undefined|undefined' key with placed 0. The
+// SQL fix is swept repo-wide in cross-file-pins; this pins the JS side.
+function fakeConn(json) {
+  const binds = [];
+  return {
+    binds: binds,
+    prepareStatement: function () {
+      return {
+        setString: function (i, v) { binds[i] = v; },
+        executeQuery: function () {
+          let done = false;
+          return { next: function () { const r = !done; done = true; return r; },
+                   getString: function () { return json; }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+  };
+}
+
+test('the Neon read maps agent-day rows by their talk / ring keys', function () {
+  const conn = fakeConn(JSON.stringify([
+    { d: '2026-09-08', a: 'Ann Agent ', n: 12, c: 9, talk: 900, ring: 120 },
+    { d: '2026-09-08', a: 'Bo Caller', n: 3, c: 1, talk: 60, ring: 40 },
+  ]));
+  const map = JSON.parse(JSON.stringify(h.call('obSrcReadNeon_', conn, '2026-09-08', '2026-09-09')));
+  assert.deepEqual(map, {
+    '2026-09-08|Ann Agent': { placed: 12, connected: 9, talkSec: 900, ringSec: 120 },
+    '2026-09-08|Bo Caller': { placed: 3, connected: 1, talkSec: 60, ringSec: 40 },
+  });
+  assert.equal(conn.binds[1], '2026-09-08');
+  assert.equal(conn.binds[2], '2026-09-09');
+});
+
+test('a row that is not an agent-day object FAILS the run, never reads as zero', function () {
+  // The exact shape the alias collision produced: an array of bare numbers.
+  assert.throws(function () {
+    h.call('obSrcReadNeon_', fakeConn('[900, 60, 0]'), '2026-09-08', '2026-09-09');
+  }, /unexpected row shape/);
+  assert.throws(function () {
+    h.call('obSrcReadNeon_', fakeConn('[{"a":"Ann Agent","n":3}]'), '2026-09-08', '2026-09-09');
+  }, /unexpected row shape/, 'a row with no ISO date is a query defect too');
+  assert.deepEqual(JSON.parse(JSON.stringify(
+    h.call('obSrcReadNeon_', fakeConn('[]'), '2026-09-08', '2026-09-09'))), {},
+    'an EMPTY window is still a clean empty map (the compare calls it INCONCLUSIVE)');
+});
+
 test('admin-gated FIRST, read-only, and self-clears its window only on CLEAN', function () {
   const body = SRC.slice(SRC.indexOf('\nfunction probeOutboundSourceAgreement('));
   assert.match(body, /^\nfunction probeOutboundSourceAgreement\(\) \{\n  assertAdmin_\(\);/);

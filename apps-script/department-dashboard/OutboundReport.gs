@@ -4580,7 +4580,11 @@ function obSrcReadNeon_(conn, from, to) {
     "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
     + "SELECT to_char(call_date, 'YYYY-MM-DD') AS d, agent_name AS a, count(*) AS n, "
     +        'count(*) FILTER (WHERE connected) AS c, '
-    +        'COALESCE(sum(talk_seconds), 0) AS t, COALESCE(sum(ring_seconds), 0) AS r '
+    // talk/ring are NOT aliased `t`: a column named like the subquery alias
+    // makes json_agg(t) aggregate THAT column (Postgres prefers the column over
+    // the whole-row reference), so the rows arrived as bare numbers and the
+    // first live run read Neon as 0 on every date. cross-file-pins sweeps it.
+    +        'COALESCE(sum(talk_seconds), 0) AS talk, COALESCE(sum(ring_seconds), 0) AS ring '
     + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
     + 'AND agent_name IS NOT NULL GROUP BY call_date, agent_name) t');
   st.setString(1, from);
@@ -4591,10 +4595,16 @@ function obSrcReadNeon_(conn, from, to) {
   if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'outbound-source');
   var map = {};
   JSON.parse(j || '[]').forEach(function (row) {
+    // A row that is not an agent-day object is a QUERY defect, never data --
+    // throw so the run reads FAILED instead of a silent all-zero Neon side.
+    if (!row || typeof row !== 'object' || !isIsoDate_(row.d)) {
+      throw new Error('outbound_calls aggregate returned an unexpected row shape: '
+        + String(JSON.stringify(row)).slice(0, 80));
+    }
     var key = row.d + '|' + String(row.a).trim();
     var e = map[key] || (map[key] = { placed: 0, connected: 0, talkSec: 0, ringSec: 0 });
     e.placed += Number(row.n) || 0; e.connected += Number(row.c) || 0;
-    e.talkSec += Number(row.t) || 0; e.ringSec += Number(row.r) || 0;
+    e.talkSec += Number(row.talk) || 0; e.ringSec += Number(row.ring) || 0;
   });
   return map;
 }
