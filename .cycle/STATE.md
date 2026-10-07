@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-07 — Batch E IMPLEMENTED (block 235): outbound on the Overview tiles + an Outbound fold in Insights, admin-only.**
+  - E2: one grouped Neon read inside the cached Overview blob (companyOverview:v27). Each tile gets placed / connected / connect % for the selected card window, with "since Jul 10" on a pre-capture window. It is stripped for every non-admin while OUTBOUND_VETTING_GATE_ stands, and fails closed.
+  - E1: `#ins-ob-fold` compares the region's window with its prior window through getDeptOutboundSummary, keeping the dept's OWN group. It is gated by obAllowed_ like Batch D.
+  - The 6c pin now moves the fold too. New stage drive-outbound-e.js (18 checks). 2234 tests, every ci:ui stage green, three pins and the driver bite.
+  - Two vacuous checks in the B/D drivers are fixed.
+  - Decision: no sheet fallback for the tile line. A failed read omits the line and the blob still caches.
+
+  **Owner-side:** deploy the dashboard (A to E) and walk S56, S57 and S58 as the admin; watch the first cold Overview load.
+  **Next:** the 6c release when the vetting run is clean (Operator State #63), or the follow-ons in block 235.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-07 — Batch D IMPLEMENTED (block 234): Inbound | Outbound | Both on My Department, admin-only.**
   - `getDeptOutboundSummary` is the Outbound report's per-agent half: shared SQL and sheet aggregation, plus `ob_days`; the same 6c gate; cache `deptOutbound:v1:`.
   - The switch renders a separate outbound/both table; the Team Outbound panel sits alongside it.
@@ -9,7 +19,7 @@
   - Decision: D reads Neon (with the Outbound Calls tab fallback) regardless of the Batch C verdict, because talk time and connects cannot come from the CDR Historical sheet.
 
   **Owner-side:** deploy the dashboard (A to D) and walk S56 and S57 as admin.
-  **Next:** Batch E (Insights + Overview outbound, admin-only).
+  **Next:** Batch E (done, block 235).
   **Where I left off:** committed and pushed, no PR.
 - **2026-10-07 — Batch C IMPLEMENTED (block 233): outbound source probe.**
   `probeOutboundSourceAgreement()` (dashboard, editor-run, read-only) compares
