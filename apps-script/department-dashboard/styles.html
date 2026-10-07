@@ -6176,6 +6176,20 @@
     letter-spacing: 0.04em;
     margin-right: 3px;
   }
+  /* Batch E2: the tile's outbound line (admin-only until 6c) -- the violet
+     outbound hue (--dir-out), so it never reads as more inbound figures. */
+  .ov-dept-tile-row.ov-dept-ob { align-items: center; gap: 10px; margin-top: 2px; }
+  .ov-dir-pill { display: inline-block; padding: 1px 7px; border-radius: var(--r-pill);
+    background: var(--dir-out-soft); color: var(--dir-out); font-family: var(--sans);
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .ov-dept-ob-pct { color: var(--dir-out); font-weight: 600; }
+  .ov-dept-ob-since, .ov-dept-ob-none { color: var(--muted); font-size: 11px; }
+  /* Batch E1: the Insights Outbound fold (admin-only until 6c). */
+  #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #ins-ob-fold .ins-ob-table { margin-top: 4px; }
+  #ins-ob-fold .ins-ob-subdept { color: var(--muted); font-size: 11px; margin-left: 4px; }
+  #ins-ob-fold .ds-note { margin-top: 10px; }
+  @media (max-width: 900px) { #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .ov-dept-tile-spark {
     margin-top: 4px;
     border-top: 1px dashed var(--line);

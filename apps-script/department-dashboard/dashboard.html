@@ -1160,6 +1160,26 @@
           <div id="ins-quiet-cards" class="ins-agent-cards"></div>
         </details>
 
+        <!-- Batch E1: OUTBOUND in Insights -- the dept's outbound calls for
+             the same window vs the same prior window as the inbound
+             sections, from getDeptOutboundSummary (Neon outbound_calls, the
+             Outbound Calls tab when Neon is down). ADMIN-ONLY while the
+             Outbound report is (6c): data-admin-only + display:none, and the
+             JS shows it only while the My Department direction switch is
+             visible (obAllowed_), so View-as hides it too. Releasing it is
+             part of the same 6c change (cross-file-pins pins the pair). -->
+        <details id="ins-ob-fold" class="ins-fold" data-fold="ob" data-admin-only style="display:none;">
+          <summary class="ins-fold-summary">
+            <span class="ds-zone-label"><span class="ov-dir-pill">Outbound</span></span>
+            <span class="ins-fold-head" id="ins-ob-fold-head"></span>
+          </summary>
+          <div class="ins-fold-body">
+            <div id="ins-ob-kpis" class="pr-kpi-row ad-kpi-row--out"></div>
+            <div id="ins-ob-agents"></div>
+            <div id="ins-ob-note" class="ds-note" style="display:none;"></div>
+          </div>
+        </details>
+
         <!-- I4: the 12-month team trend is the ONE view the header window
              controls do NOT govern -- it always spans ~12 months (or the
              selected window in Daily), not the short windowed sections above

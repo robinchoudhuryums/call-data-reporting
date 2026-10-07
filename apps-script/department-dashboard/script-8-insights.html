@@ -119,6 +119,8 @@
         // Pre-R17e blobs lack `detail`; absent means "never chose", and the
         // default for it is OPEN (unlike qh/trend's role-seeded default).
         if (saved.detail === undefined) saved.detail = true;
+        // Batch E1: the Outbound fold is new -- absent means OPEN.
+        if (saved.ob === undefined) saved.ob = true;
         insFolds_ = saved;
         return insFolds_;
       }
@@ -134,7 +136,7 @@
     if (seed === null) {
       seed = (typeof USER !== 'undefined' && USER && USER.role === 'admin');
     }
-    insFolds_ = { qh: !!seed, trend: !!seed, detail: true };
+    insFolds_ = { qh: !!seed, trend: !!seed, detail: true, ob: true };
     return insFolds_;
   }
   function insFoldOpen_(key) { return !!insFoldsLoad_()[key]; }
@@ -149,7 +151,7 @@
   // .ins-fold class (it predates the fold system and keeps its own chrome).
   function insFoldsApply_() {
     const f = insFoldsLoad_();
-    ['qh', 'trend', 'detail'].forEach(function (k) {
+    ['qh', 'trend', 'detail', 'ob'].forEach(function (k) {
       const el = document.querySelector('[data-fold="' + k + '"]');
       if (el && el.open !== !!f[k]) el.open = !!f[k];
     });
@@ -1743,6 +1745,7 @@
 
     insRenderLengthWarning_(data.meta);
     insRenderQueueHealth_(data.queueHealth);
+    insObSync_(data, opts);   // Batch E1: admin-only Outbound fold
     // Temporal abandon heatmap companion to Queue health (sourced from
     // inbound_calls). Admin only -- getInboundHeatmap inherits the inbound
     // report's vetting gate, so managers never call it and the panel stays
@@ -2027,6 +2030,169 @@
   // report's own sticky results header. The #ins-region-head span left the
   // markup; this stub keeps the render-path call site harmless.)
   function insRegionHeadSync_(data) { /* retired -- R24 */ }
+
+  // ── Batch E1: Outbound in Insights ──────────────────────────────────────
+  // The dept's outbound calls over the SAME window and the SAME prior window
+  // the inbound sections compare (meta.from/to, meta.priorFrom/priorTo), via
+  // two getDeptOutboundSummary calls (each cached server-side under
+  // deptOutbound:v1). Admin-only while the Outbound report is (6c): shown only
+  // while the My Department direction switch is visible (obAllowed_, the ONE
+  // client gate for D and E), and the server refuses anyone else regardless.
+  // Not fetched on the SWR pre-paint; a repeat render for the same windows
+  // repaints from the last result instead of re-fetching.
+  var INS_OB_ = { key: null, seq: 0, cur: null, prior: null, meta: null };
+
+  function insObHide_() {
+    var fold = $('ins-ob-fold');
+    if (fold) fold.style.display = 'none';
+  }
+
+  function insObSync_(data, opts) {
+    var meta = data && data.meta;
+    if (!obAllowed_() || !meta || !meta.department || !meta.from || !meta.to) { insObHide_(); return; }
+    if (opts && opts.swr) return;
+    var key = [meta.department, meta.from, meta.to, meta.priorFrom || '', meta.priorTo || ''].join('|');
+    var fold = $('ins-ob-fold');
+    if (fold) fold.style.display = '';
+    if (key === INS_OB_.key && INS_OB_.cur) { insObRender_(INS_OB_.cur, INS_OB_.prior, meta); return; }
+    INS_OB_.key = key; INS_OB_.cur = null; INS_OB_.prior = null;
+    var tok = ++INS_OB_.seq;
+    var head = $('ins-ob-fold-head');
+    if (head) head.textContent = 'loading…';
+    var pending = (meta.priorFrom && meta.priorTo) ? 2 : 1;
+    var cur = null, prior = null, failed = null;
+    function done() {
+      if (tok !== INS_OB_.seq) return;   // superseded by a newer window / dept
+      if (--pending > 0) return;
+      if (!cur) {
+        if (head) head.textContent = 'unavailable';
+        var kp = $('ins-ob-kpis'); if (kp) kp.innerHTML = '';
+        var ag = $('ins-ob-agents'); if (ag) ag.innerHTML = '';
+        insObNote_('Outbound data could not be loaded' + (failed ? ': ' + failed : '.'));
+        INS_OB_.key = null;   // let the next render retry
+        return;
+      }
+      INS_OB_.cur = cur; INS_OB_.prior = prior;
+      insObRender_(cur, prior, meta);
+    }
+    google.script.run
+      .withSuccessHandler(function (r) { cur = r; done(); })
+      .withFailureHandler(function (e) { failed = (e && e.message) ? e.message : String(e || ''); done(); })
+      .getDeptOutboundSummary({ department: meta.department, from: meta.from, to: meta.to });
+    if (meta.priorFrom && meta.priorTo) {
+      google.script.run
+        .withSuccessHandler(function (r) { prior = r; done(); })
+        .withFailureHandler(function () { prior = null; done(); })   // no deltas, the section still renders
+        .getDeptOutboundSummary({ department: meta.department, from: meta.priorFrom, to: meta.priorTo });
+    }
+  }
+
+  function insObNote_(text) {
+    var n = $('ins-ob-note');
+    if (!n) return;
+    n.style.display = text ? '' : 'none';
+    n.textContent = text || '';
+  }
+
+  // PURE. Is the prior window comparable? Not when it starts before outbound
+  // capture began (its counts would be undercounted), or when it failed.
+  function insObPriorUsable_(prior, meta) {
+    if (!prior || !prior.meta || prior.meta.available === false || !prior.totals) return false;
+    var cov = prior.meta.coverageStart;
+    return !(cov && meta.priorFrom && meta.priorFrom < cov);
+  }
+
+  // A delta badge in the Insights dialect (insDeltaBadge_). `kind` 'volume'
+  // compares PER DAY when the two windows differ in length (CL-2); a rate is
+  // passed as percentage points.
+  function insObDelta_(curVal, priorVal, type, valence, meta, kind) {
+    if (curVal == null || priorVal == null) return '';
+    var dp = type === 'pctPoints' ? (curVal - priorVal)
+      : (priorVal === 0 ? (curVal === 0 ? 0 : 100) : (curVal - priorVal) / priorVal * 100);
+    return insDeltaBadge_({ deltaPct: dp, type: type, val: curVal, prev: priorVal }, valence,
+      (type === 'pctPoints' ? Number(priorVal).toFixed(1) + '%' : fmtNumber(priorVal)), meta, kind);
+  }
+
+  function insObRender_(cur, prior, meta) {
+    var head = $('ins-ob-fold-head');
+    var kp = $('ins-ob-kpis');
+    var ag = $('ins-ob-agents');
+    var t = (cur && cur.totals) || {};
+    if (!cur || !cur.meta || cur.meta.available === false) {
+      if (head) head.textContent = 'unavailable';
+      if (kp) kp.innerHTML = '';
+      if (ag) ag.innerHTML = '';
+      insObNote_('Outbound data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
+      return;
+    }
+    var usable = insObPriorUsable_(prior, meta);
+    var pt = usable ? prior.totals : null;
+    if (head) {
+      head.textContent = (t.obTotal || 0) ? (fmtNumber(t.obTotal) + ' placed · '
+        + (t.obConnectRate != null ? Number(t.obConnectRate).toFixed(1) + '% connected' : '–'))
+        : 'no outbound calls in this window';
+    }
+    if (kp) {
+      kp.innerHTML = [
+        insQhKpiTileHtml_('Placed', fmtNumber(t.obTotal || 0), 'outbound calls',
+          pt ? insObDelta_(t.obTotal || 0, pt.obTotal || 0, 'volume', 'neu', meta, 'volume') : ''),
+        insQhKpiTileHtml_('Connected', fmtNumber(t.obConnected || 0), 'the far end answered',
+          pt ? insObDelta_(t.obConnected || 0, pt.obConnected || 0, 'volume', 'neu', meta, 'volume') : ''),
+        insQhKpiTileHtml_('Connect rate', t.obConnectRate != null ? escapeHtml(Number(t.obConnectRate).toFixed(1) + '%') : '–',
+          'connected ÷ placed',
+          (pt && t.obConnectRate != null && pt.obConnectRate != null)
+            ? insObDelta_(t.obConnectRate, pt.obConnectRate, 'pctPoints', 'pos', meta) : ''),
+        insQhKpiTileHtml_('Per agent-day', t.obPerDay != null ? escapeHtml(String(t.obPerDay)) : '–',
+          'placed per day an agent dialed',
+          (pt && t.obPerDay != null && pt.obPerDay != null) ? insObDelta_(t.obPerDay, pt.obPerDay, 'volume', 'neu', meta) : ''),
+        insQhKpiTileHtml_('Avg talk', escapeHtml(fmtDuration(t.obAttSec || 0)), 'per connected call',
+          (pt && t.obConnected && pt.obConnected) ? insObDelta_(t.obAttSec || 0, pt.obAttSec || 0, 'volume', 'neu', meta) : ''),
+      ].join('');
+    }
+    if (ag) ag.innerHTML = insObAgentsHtml_(cur.agents || [], usable ? (prior.agents || []) : null, meta);
+    var notes = [];
+    if (cur.meta.fallbackSource === 'sheet') {
+      notes.push('Neon was unreachable: these figures come from the Outbound Calls tab'
+        + (cur.meta.fallbackThrough ? ' (through ' + cur.meta.fallbackThrough + ')' : '') + '.');
+    }
+    if (prior && !usable && prior.meta && prior.meta.coverageStart && meta.priorFrom < prior.meta.coverageStart) {
+      notes.push('No comparison: the prior window starts before outbound capture began (' + prior.meta.coverageStart + ').');
+    } else if (!prior && meta.priorFrom) {
+      notes.push('The prior window could not be loaded, so no comparison is shown.');
+    }
+    if (cur.meta.offRosterAgents) {
+      notes.push(cur.meta.offRosterAgents + ' outbound caller' + (cur.meta.offRosterAgents === 1 ? ' is' : 's are')
+        + ' on no department roster and not counted here.');
+    }
+    insObNote_(notes.join(' '));
+  }
+
+  function insObAgentsHtml_(agents, priorAgents, meta) {
+    if (!agents.length) return '';
+    var priorBy = {};
+    (priorAgents || []).forEach(function (a) { priorBy[a.scopeDept + '|' + a.agent] = a; });
+    var multi = agents.some(function (a) { return a.scopeDept && a.scopeDept !== meta.department; });
+    var rows = agents.slice().sort(function (a, b) {
+      return (b.obTotal || 0) - (a.obTotal || 0) || String(a.agent).localeCompare(String(b.agent));
+    }).map(function (a) {
+      var p = priorAgents ? priorBy[a.scopeDept + '|' + a.agent] : null;
+      var delta = priorAgents ? insObDelta_(a.obTotal || 0, p ? (p.obTotal || 0) : 0, 'volume', 'neu', meta, 'volume') : '';
+      return '<tr>'
+        + '<td>' + escapeHtml(a.agent) + (multi && a.scopeDept ? ' <span class="ins-ob-subdept">' + escapeHtml(a.scopeDept) + '</span>' : '') + '</td>'
+        + '<td class="num">' + fmtNumber(a.obTotal || 0) + (delta ? ' ' + delta : '') + '</td>'
+        + '<td class="num">' + fmtNumber(a.obConnected || 0) + '</td>'
+        + '<td class="num">' + (a.obConnectRate != null ? escapeHtml(Number(a.obConnectRate).toFixed(1) + '%') : '–') + '</td>'
+        + '<td class="num">' + (a.obPerDay != null ? escapeHtml(String(a.obPerDay)) : '–') + '</td>'
+        + '<td class="num">' + (a.obConnected ? escapeHtml(fmtDuration(a.obAttSec || 0)) : '–') + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<table class="ds-table ins-ob-table">'
+      + '<thead><tr><th scope="col">Agent</th><th scope="col" class="num">Placed</th>'
+      + '<th scope="col" class="num" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">Connected</th>'
+      + '<th scope="col" class="num">Connect %</th><th scope="col" class="num">Per day</th>'
+      + '<th scope="col" class="num">Avg talk</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table>';
+  }
 
   // Round-16: sync the Queue-health FOLD around the section -- visibility +
   // the collapsed summary's headline, so the fold answers its question even

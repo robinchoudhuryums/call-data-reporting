@@ -468,6 +468,15 @@ tests/
                               with its per-row date filter; the bound,
                               labelled, PHI-free Neon read; admin-first and
                               read-only),
+                              overview-outbound (Batch E2: the Overview
+                              tiles' outbound line -- one grouped read over
+                              the SAME five card periods and read window,
+                              roster-attributed, served from the cached blob
+                              so the auto-refresh never reaches Neon,
+                              stripped for managers / View-as / all-dept
+                              managers while the 6c gate stands and released
+                              without mutating the shared blob; no Neon =
+                              no field and an otherwise identical payload),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a
