@@ -468,4 +468,8 @@ test('Batch D: the report and the view read ONE SQL definition and ONE sheet agg
   assert.match(view, /obAgentsFromGrid_\(ob\.grid, scope\.from, scope\.to\)/);
   assert.match(src, /var agentsFor = function \(fromIso, toIso\) \{ return obAgentsFromGrid_\(obGrid, fromIso, toIso\); \};/);
   assert.match(view, /neonNoteEgress_\(json \? json\.length : 0, 'deptOutbound'\)/);
+  // The mocked connection never runs SQL, so the "/ day" denominator's clause
+  // is pinned at the source: it must count DAYS, not rows.
+  const sel = src.slice(src.indexOf('function outboundAgentsSel_('), src.indexOf('function computeOutboundReport_('));
+  assert.match(sel, /'count\(DISTINCT call_date\) AS ob_days '/);
 });
