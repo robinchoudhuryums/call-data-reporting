@@ -518,7 +518,7 @@ S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department 
   Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
   Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table or Team Rings shows in the Outbound view; the panels overlap; a manager sees the switch or the outbound view; or Both adds inbound and outbound together anywhere.
 
-S58 | Outbound on the Overview tiles and in Insights (Batch E) | Subsystem: Department Dashboard
+S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
   Steps:
     - As the ADMIN (admin-only until the Outbound report is released), land on the Overview. Every dept tile shows a violet "Outbound" line under ATT: Placed N · Conn M P%. Expand a sub-queue card: the same line shows in it.
     - Switch the card Window to Last 30 days, then YTD: the line's figures change with the window. On YTD the line adds "since Jul 10" (capture start).
