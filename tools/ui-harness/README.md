@@ -60,9 +60,24 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and
   reads the real bytes. Also the header **department switch**, which threw a
   `ReferenceError` in production until a driver first tried it.
-- `drive-admin.js` — nine **modals** (Alerts, Outlier Fix, Dept Config,
-  Access Control, System Health, Caller Lookup, Coaching, and the Outbound and
-  Agent Day reports, each run past its setup form) and the **Escalations
+- `drive-deptoutbound.js` — the My Department **Inbound | Outbound | Both**
+  switch and Team Outbound panel (Batches D/F): payload totals, manager and
+  View-as fall back to Inbound, panels never overlap, prior-period chips on
+  agent rows only, and one request per window (a Refresh never re-sends one
+  in flight; the table and the Insights fold share one store, FO-3).
+- `drive-outbound-e.js` — the Overview tiles' outbound line per card window
+  and the Insights **Outbound** fold (Batch E): two-window deltas, shown only
+  on Outbound / Both, never for a manager or View-as.
+- `drive-callbacks.js` — the Insights **Callbacks** fold (G1): lazy (one
+  fetch, on open), the shared renderers incl. a drawn chart after a reopen,
+  the not-called-back drill's call path, CSV / email, 360 px, and the retired
+  modal's `#/report/outbound` deep link (G3) for an admin and a manager.
+- `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
+  admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
+  keyboard expand and sort, CSV bytes.
+- `drive-admin.js` — eight **modals** (Alerts, Outlier Fix, Dept Config,
+  Access Control, System Health, Caller Lookup, Coaching, and the Agent Day
+  report, run past its setup form; the Outbound modal is retired, G3) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and
@@ -77,7 +92,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   Escalations init, which must clear the loader, offer Retry, beacon, and
   recover (UI-4). To force a failure a driver sets
   `window.__HARNESS__.failOnce[<rpc>] = N`: the next N calls of that RPC reach
-  the failure handler.
+  the failure handler. To boot on a DEEP LINK a driver sets
+  `window.__HARNESS_HASH__` (e.g. `'/report/outbound'`) in an init script; the
+  stubbed `google.script.url.getLocation` answers ASYNCHRONOUSLY like the real
+  one, so the link lands after boot's default page, as in production.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong

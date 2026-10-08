@@ -481,7 +481,10 @@ tests/
                               the SAME read, null before capture, stripped
                               with the line, and the client chip RUN for
                               real -- valence, noise muting, the thin-window
-                              rate rule, never on totals),
+                              rate rule, never on totals; FO-3: the ONE client
+                              store for getDeptOutboundSummary -- the only
+                              sender, in-flight sharing, async replay, no held
+                              failure, cleared by Refresh),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a

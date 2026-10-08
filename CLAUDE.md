@@ -226,7 +226,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# ELEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# THIRTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -987,8 +987,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `journey` is where a real queue wait is derivable.
 - **Date-range presets NEVER include today, and the rule lives in ONE place.**
   `datePresetRange_` (script-1-core) is the single resolver behind every
-  "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
-  all-dept Queue report) AND the My Department chips. Every OPEN-ENDED preset (`yesterday` / `last7` /
+  "Quick select" dropdown (IR, Insights, Inbound, Direct, the Overview's
+  Callbacks by department, the all-dept Queue report) AND the My Department chips. Every OPEN-ENDED preset (`yesterday` / `last7` /
   `thisWeek` / `thisMonth` / `last30` / `last3Months` / `last12Months`) ends
   YESTERDAY: today's ingest has not landed while a manager is looking (the
   pipeline builds the PREVIOUS day), so including today tacks an empty day
