@@ -1,6 +1,9 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-08 — G2 follow-ons IMPLEMENTED (block 239).** FO-1: Batch D's outbound view no longer re-sends a request for a window already in flight (a Refresh sent each window twice; a new two-round driver check reproduced it and now passes). FO-2: the ui-harness README warns that a stale manager build makes manager checks pass vacuously on hand runs. Gates green.
+  **Next:** G3 (retire the modal) before the 6c release; owner call on sharing one store between the Batch D table and the Insights Outbound fold (they fetch the same windows twice).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-08 — Batch G2 IMPLEMENTED (block 238): Callbacks by department on the Overview + the Insights Outbound fold follows the switch.**
   - Owner: "align it too" -> `#ins-ob-fold` shows only on Outbound / Both (like G1's Callbacks fold).
   - `#ov-cbdept-fold`: the company callback table + five tiles at the bottom of the Overview, ADMIN-ONLY FOREVER (not in the 6c pair), lazy (fetch only while open, own window Last 7/30 days/3 months, one fetch per window, never on the auto-refresh). Drawn by the modal's renderers through a per-surface VIEW (own sort); one shared column list builds both headers.

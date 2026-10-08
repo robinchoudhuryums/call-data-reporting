@@ -208,6 +208,35 @@ async function openDept(page, meta) {
   const unmocked = await page.evaluate(() => ((window.__HARNESS__ || {}).unmocked || [])
     .filter((n) => ['getInboundHeatmap', 'logReportUsage'].indexOf(n) === -1));
   record('no unmocked server calls during the walk', !unmocked.length, unmocked.join(', '));
+  // ---- Refresh never duplicates an in-flight outbound request -------------
+  // An explicit Refresh refetches the view (OB_VIEW_.key = null), and render()
+  // can run obViewSync_ again before the reply lands: the request for a window
+  // still in flight must not be sent a second time. A fresh page, in the order
+  // a user takes: land on Inbound, switch to Outbound, Refresh (twice).
+  {
+    const pr = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    pr.on('pageerror', (e) => errors.push('refresh pageerror: ' + e.message));
+    await skipTour(pr);
+    await pr.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
+    await pr.waitForTimeout(2500);
+    await openDept(pr, meta);
+    await pr.click('#dept-dir-switch [data-dir="out"]');
+    await pr.waitForTimeout(2500);
+    for (let round = 1; round <= 2; round++) {
+      const before = await pr.evaluate(() => (window.__HARNESS__.calls || []).length);
+      await pr.click('#refresh-btn');
+      await pr.waitForTimeout(3000);
+      const sent = await pr.evaluate((n) => (window.__HARNESS__.calls || []).slice(n)
+        .filter((c) => c.fn === 'getDeptOutboundSummary')
+        .map((c) => (c.args && c.args[0]) ? c.args[0].from + '|' + c.args[0].to : '?'), before);
+      const per = {};
+      sent.forEach((k) => { per[k] = (per[k] || 0) + 1; });
+      record('Refresh #' + round + ' sends each outbound window ONCE (current + prior), never a duplicate in flight',
+        Object.keys(per).length === 2 && Object.keys(per).every((k) => per[k] === 1), JSON.stringify(per));
+    }
+    await pr.close();
+  }
+
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
   record('no page/console errors during the walk', realErrors.length === 0,
     Array.from(new Set(realErrors)).slice(0, 3).join(' | '));

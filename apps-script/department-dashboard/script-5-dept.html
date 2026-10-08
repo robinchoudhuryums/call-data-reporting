@@ -3950,7 +3950,7 @@
       return (v === 'out' || v === 'both') ? v : 'in';
     } catch (e) { return 'in'; }
   })();
-  var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, sortKey: 'obTotal', sortDir: 'desc' };
+  var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, inFlight: false, sortKey: 'obTotal', sortDir: 'desc' };
   var obWired_ = false;
 
   function obAllowed_() {
@@ -4078,8 +4078,13 @@
     if (!dept || !m.from || !m.to) { obViewRender_(); return; }
     var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '');
     if (OB_VIEW_.key === key && (OB_VIEW_.data || OB_VIEW_.error)) { obViewRender_(); return; }
+    // render() can run this again before the reply lands (a Refresh's SWR
+    // pre-paint, then its live render): the request for THIS window is
+    // already out, so do not send it a second time -- its reply paints.
+    if (OB_VIEW_.key === key && OB_VIEW_.inFlight) return;
     var seq = ++OB_VIEW_.seq;
     OB_VIEW_.key = key; OB_VIEW_.data = null; OB_VIEW_.prior = null; OB_VIEW_.error = null;
+    OB_VIEW_.inFlight = true;
     // Batch F: the prior-period chips read the SAME INV-28 window the inbound
     // E5 chips use (state.meta.priorFrom/priorTo, server-resolved), through
     // the same cached RPC. A failed prior read just means no chips.
@@ -4097,12 +4102,14 @@
     google.script.run
       .withSuccessHandler(function (data) {
         if (seq !== OB_VIEW_.seq) return;
+        OB_VIEW_.inFlight = false;
         OB_VIEW_.data = data || null;
         if (obWrap) dsFrostHide_(obWrap);
         obViewRender_();
       })
       .withFailureHandler(function (err) {
         if (seq !== OB_VIEW_.seq) return;
+        OB_VIEW_.inFlight = false;
         OB_VIEW_.error = (err && err.message) ? err.message : String(err);
         if (obWrap) dsFrostHide_(obWrap);
         obViewRender_();

@@ -22,6 +22,21 @@ site by `build-harness.js`. `tests/unit/ui-harness-vendor.test.js` pins their
 versions to the CDN versions `dashboard.html` loads, so the harness can never
 quietly verify the client against a different Chart.js than production ships.
 
+### Running ONE asserting driver by hand — rebuild BOTH roles first
+```bash
+node gen-payloads.js && node build-harness.js admin && node build-harness.js manager
+node drive-cbdept.js          # or any drive-*.js below
+```
+`build-harness.js` builds ONE site per run and defaults to admin, so after a
+client edit a bare `node build-harness.js` leaves `site/index-manager.html`
+STALE. That fails two ways, and only one is loud: a manager-side locator for
+new markup never matches (a confusing error), **or a manager-side "never
+sees / never fetches" check passes VACUOUSLY** because the stale page does not
+contain the surface at all (G2: a mutation that removed the admin guard went
+undetected until the manager page was rebuilt). `ci.mjs` always rebuilds both,
+so the gate itself is not affected -- this is the hand-run trap. When
+bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
+
 ### Asserting drivers (pass/fail — these gate CI)
 - `drive-smoke.js` — boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
