@@ -1685,78 +1685,20 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
   }
 
-  // -- Outbound report (Batch G, admin-only while vetted) ------------------
-  // "Did we call back the ones who abandoned?" + per-agent outbound activity
-  // from getOutboundReport (OutboundReport.gs). Mirrors the Direct report's
-  // client shape (form -> results, stale-response token, csvSafeCell_ CSV).
-  // The two caveat captions in the markup are part of the report's contract.
+  // -- Outbound renderers (shared) -----------------------------------------
+  // G3 (owner 2026-10-08): the Outbound report MODAL is retired. Its content
+  // lives on My Department -- the Insights Callbacks fold (G1, script-8) and
+  // the Outbound / Both table (Batch D, script-5) -- and its company-view
+  // callback table on the Overview (G2, script-3). #/report/outbound deep
+  // links land on the Callbacks fold (script-4's router). What stays here is
+  // the shared drawing code those surfaces call: the callback tiles, the two
+  // strips, the daily chart, the not-called-back drill, the per-dept table,
+  // the CSV and the email sender -- each aimed at the CALLER's elements.
 
-  var outboundLastData = null;
-
-  function initOutboundReport() {
-    const btn = $('outbound-report-btn');
-    const modal = $('outbound-modal');
-    if (!btn || !modal) return;
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
-      outboundShowForm();
-      outboundSetDefaultDates();
-      outboundEnsureDeptOptions_();
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
-
-    const preset = $('outbound-preset');
-    if (preset) preset.addEventListener('change', outboundApplyPreset);
-    const fromEl = $('outbound-from'), toEl = $('outbound-to');
-    if (fromEl) fromEl.addEventListener('change', function () { if ($('outbound-preset')) $('outbound-preset').value = 'custom'; });
-    if (toEl)   toEl.addEventListener('change',   function () { if ($('outbound-preset')) $('outbound-preset').value = 'custom'; });
-    const gen = $('outbound-generate-btn');
-    if (gen) gen.addEventListener('click', runOutboundReport);
-    const back = $('outbound-back-btn');
-    if (back) back.addEventListener('click', outboundShowForm);
-    const csv = $('outbound-csv-btn');
-    if (csv) csv.addEventListener('click', function () { outboundDownloadCsv_(); });
-    const unc = $('outbound-uncalled-btn');
-    if (unc) unc.addEventListener('click', outboundLoadUncalled_);
-    const mail = $('outbound-email-btn');
-    if (mail) mail.addEventListener('click', sendOutboundEmail_);   // (5)
-  }
-
-  /**
-   * (5) Email the CURRENT view to the caller. The server recomputes from the
-   * same params rather than trusting a client payload, so the email cannot
-   * drift from the screen; the button only has to send the window.
-   */
-  function sendOutboundEmail_() {
-    const meta = (outboundLastData && outboundLastData.meta) || {};
-    const from = meta.from || ($('outbound-from') ? $('outbound-from').value : '');
-    const to   = meta.to   || ($('outbound-to')   ? $('outbound-to').value   : '');
-    if (!from || !to) { outboundSetError('Generate the report first.'); return; }
-    outboundSendEmailFor_($('outbound-email-btn'), { from: from, to: to, department: meta.department || '' });
-  }
-  // Shared with the Insights Callbacks fold (G1): the button whose busy state
-  // to drive, and the window + scope the server recomputes from.
+  // Email the window on screen to the caller (sendOutboundReportEmail). The
+  // server recomputes from the window + scope rather than trusting a client
+  // payload, so the email cannot drift from the screen; `btn` is the button
+  // whose busy state to drive.
   function outboundSendEmailFor_(btn, req) {
     if (!btn || btn.disabled) return;
     const prev = btn.textContent;
@@ -1772,201 +1714,11 @@
       })
       .sendOutboundReportEmail(req);
   }
-
-  function outboundShowForm()    { $('outbound-form').style.display = ''; $('outbound-results').style.display = 'none'; outboundSetError(''); }
-  function outboundShowResults() { $('outbound-form').style.display = 'none'; $('outbound-results').style.display = ''; }
-  function outboundSetError(msg) {
-    const el = $('outbound-form-error'); if (!el) return;
-    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.textContent = msg; el.style.display = '';
-  }
-  function outboundSetDefaultDates() {
-    if ($('outbound-from') && $('outbound-from').value) return;
-    const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
-    if ($('outbound-from')) $('outbound-from').value = directCallIsoOf_(s);
-    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
-    if ($('outbound-to'))   $('outbound-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
-  }
-  function outboundApplyPreset() {
-    const v = $('outbound-preset').value;
-    if (v === 'custom') return;
-    // Shared resolver (script-1-core): open-ended presets end YESTERDAY.
-    const r = datePresetRange_(v);
-    if (!r) return;
-    $('outbound-from').value = r.from;
-    $('outbound-to').value   = r.to;
-  }
-  function outboundEnsureDeptOptions_() {
-    const sel = $('outbound-dept');
-    if (!sel || sel.options.length) return;
-    if (USER.role === 'admin') {
-      const opts = ['<option value="">All departments</option>'];
-      (USER.departments || []).forEach(function (d) {
-        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
-      });
-      sel.innerHTML = opts.join('');
-    } else {
-      const d = USER.department || '';
-      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
-      sel.disabled = true;
-    }
-  }
-
-  function runOutboundReport() {
-    const from = $('outbound-from').value, to = $('outbound-to').value;
-    if (!from || !to) { outboundSetError('Pick a start and end date.'); return; }
-    if (from > to) { outboundSetError('Start date must be on or before end date.'); return; }
-    outboundSetError('');
-    const dept = $('outbound-dept') ? $('outbound-dept').value : '';
-    const gen = $('outbound-generate-btn'); const prev = gen.textContent;
-    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
-    const __rtok = ++reportReqSeq_.out;   // C-8: stale-response guard
-    google.script.run
-      .withSuccessHandler(function (data) {
-        if (__rtok !== reportReqSeq_.out) return;
-        gen.disabled = false; gen.textContent = prev;
-        outboundRenderReport_(data);
-        outboundShowResults();
-      })
-      .withFailureHandler(function (err) {
-        if (__rtok !== reportReqSeq_.out) return;
-        gen.disabled = false; gen.textContent = prev;
-        outboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
-      })
-      .getOutboundReport({ from: from, to: to, department: dept });
-  }
-
-  function outboundRenderReport_(data) {
-    outboundLastData = data;
-    const meta = (data && data.meta) || {};
-    coverageNoteUpsert_('outbound-body', 'outbound',
-      meta.from || null, null, meta.coverageStart || null);
-    const unavail = $('outbound-unavailable');
-    const empty = $('outbound-empty');
-    const body = $('outbound-body');
-    if (unavail) unavail.style.display = 'none';
-    if (empty) empty.style.display = 'none';
-    if (body) body.style.display = '';
-
-    const dateEl = $('outbound-results-date');
-    if (dateEl) {
-      dateEl.textContent = (meta.from || '') + ' to ' + (meta.to || '')
-        + (meta.companyView ? ' · All departments' : (meta.department ? ' · ' + meta.department : ''));
-    }
-    if (meta.available === false) {
-      if (body) body.style.display = 'none';
-      if (unavail) unavail.style.display = '';
-      return;
-    }
-    const agents = (data && data.agents) || [];
-    const cb = (data && data.callback) || {};
-    if (!agents.length && !cb.abandonedTotal) {
-      if (body) body.style.display = 'none';
-      if (empty) empty.style.display = '';
-      return;
-    }
-
-    // v2 (R11-M): delta chips vs the INV-28 prior window. More outbound
-    // activity = good; a higher callback rate = good.
-    const k = (data && data.kpis) || {};
-    const kp = (data && data.kpisPrior) || null;
-    const cbp = (data && data.callbackPrior) || null;
-    const kpiRow = $('outbound-kpi-row');
-    if (kpiRow) kpiRow.innerHTML = [
-      inboundKpiTile_('Agents', fmtNumber(k.agents), 'with outbound calls', ''),
-      inboundKpiTile_('OB calls', fmtNumber(k.obTotal), fmtNumber(k.attempts) + ' dial attempts',
-        kp ? inboundDelta_(k.obTotal, kp.obTotal, 'pos', false) : ''),
-      // "Connected" includes voicemail and phone menus (OB_CONNECTED_DEF_,
-      // the glossary tooltip on the label) -- the foot says so where the
-      // number is read, not only on hover.
-      inboundKpiTile_('Connected', fmtNumber(k.obConnected),
-        (k.obConnectRate != null ? (k.obConnectRate + '% of calls · ') : '') + 'incl. voicemail',
-        (kp && k.obConnectRate != null && kp.obConnectRate != null)
-          ? inboundDelta_(k.obConnectRate, kp.obConnectRate, 'pos', true) : ''),
-      inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected call', ''),
-      // (4): the unconnected split. The CDR still cannot tell a no-answer
-      // from a voicemail -- that stays disclosed -- but ring LENGTH
-      // separates effort from noise, which is the distinction a manager can
-      // act on. Labelled a heuristic in the caption below, because it is one.
-      inboundKpiTile_('Rang out', fmtNumber(k.obUnconnectedReal),
-        'rang ' + (k.briefRingSec || 8) + 's or more — real attempts', ''),
-      inboundKpiTile_('Brief / misdial', fmtNumber(k.obUnconnectedBrief),
-        'under ' + (k.briefRingSec || 8) + 's'
-        + (k.obUnconnectedUnknown ? ' · ' + fmtNumber(k.obUnconnectedUnknown) + ' unknown' : ''), ''),
-    ].join('');
-
-    // Callback block ("did we call back the ones who abandoned?"). The
-    // pending tail is a COUNT, not a caption guess: tracked abandons still
-    // inside the callback window that could yet be called back.
-    const cbRow = $('outbound-callback-kpis');
-    if (cbRow) cbRow.innerHTML = outboundCallbackTilesHtml_(cb, cbp);
-    const winEl = $('outbound-cb-window');
-    if (winEl) winEl.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
-
-    outboundRenderDelayStrip_(cb);                              // (3)
-    outboundRenderCbChart_((data && data.daily) || []);
-    outboundRenderHourStrip_((data && data.callbackByHour) || []);   // (6)
-    outboundRenderCbDept_(meta.companyView ? (data && data.callbackByDept) : null, meta);   // v5 (CB-1)
-    // Reset the drill panel on every fresh render (scope may have changed).
-    // UI-5: and ORPHAN any drill still in flight -- it was fetched for the
-    // previous range, and used to land on top of this render.
-    outboundUncalledSeq_++;
-    const uncBtn = $('outbound-uncalled-btn');
-    if (uncBtn && uncBtn.dataset.idleLabel) { uncBtn.disabled = false; uncBtn.textContent = uncBtn.dataset.idleLabel; }
-    const uncList = $('outbound-uncalled-list');
-    if (uncList) { uncList.style.display = 'none'; uncList.innerHTML = ''; }
-    const uncStatus = $('outbound-uncalled-status');
-    if (uncStatus) uncStatus.textContent = '';
-
-    // Attribution disclosure (the roster-dept caveat, quantified).
-    const note = $('outbound-attribution-note');
-    if (note) {
-      const bits = [];
-      const subDepts = (meta.scopeDepts || []).slice(1);   // PC-12: the sub-queues this view includes
-      if (!meta.companyView && subDepts.length) {
-        bits.push('Includes the ' + subDepts.join(', ') + ' sub-queue roster' + (subDepts.length === 1 ? '' : 's')
-          + ', grouped under each department.');
-      }
-      if (!meta.companyView && meta.offRosterAgents) {
-        bits.push(fmtNumber(meta.offRosterAgents) + ' dialing agent(s) not on the '
-          + (meta.department || '') + (subDepts.length ? ' or sub-queue rosters' : ' roster')
-          + ' are excluded from this dept view (see All departments).');
-      }
-      if (meta.companyView && meta.unrosteredAgents) {
-        bits.push(fmtNumber(meta.unrosteredAgents) + ' agent(s) on no roster are shown as "Unrostered".');
-      }
-      bits.push('Attribution is by roster department (exact-name match), never the phone system’s org label.');
-      note.textContent = bits.join(' ');
-    }
-
-    // OWNER RULING (2026-08-20, Option C): the company view stays this FLAT
-    // table — deliberately NOT the Direct report's per-dept cards (R11-C5).
-    // Outbound has no queue/dept dimension, so a crossover agent (two roster
-    // homes) would force cards to either double-count them (one card per
-    // home) or misattribute (pick a primary); the flat table's multi-home
-    // "Roster dept" label dodges both honestly. Don't "upgrade" this to
-    // cards without a new ruling.
-    // PC-12: a parent dept's view also covers its sub-queues' rosters, so the
-    // rows are GROUPED per dept (the My Department combined-view shape: each
-    // group a heading with its own subtotal, the sort applied within each
-    // group). A single-dept view renders exactly as before.
-    const scopeDepts = meta.companyView ? [] : (meta.scopeDepts || []);
-    const grouped = scopeDepts.length > 1;
-    const tb = $('outbound-agent-tbody');
-    if (tb) {
-      srtApply_('outbound-agent-tbody', agents, function (sorted) {
-        tb.innerHTML = grouped ? outboundGroupedRowsHtml_(sorted, scopeDepts)
-                               : sorted.map(outboundAgentRowHtml_).join('');
-      }, function (r) { return Number(r.obTotal) || 0; });
-    }
-    const agentSection = $('outbound-agent-section');
-    if (agentSection) agentSection.style.display = agents.length ? '' : 'none';
-  }
-
   /**
    * The callback tile row ("did we call back the ones who abandoned?"),
-   * shared by the Outbound modal and the My Department Insights Callbacks
-   * fold (G1) so the two cannot word or compute a tile differently. `cbp` is
+   * shared by the Insights Callbacks fold (G1) and the Overview's Callbacks
+   * by department section (G2) so the two cannot word or compute a tile
+   * differently. `cbp` is
    * the INV-28 prior window's callback block (null = no delta chips).
    * The pending tail is a COUNT, not a caption guess: tracked abandons still
    * inside the callback window that could yet be called back.
@@ -2006,18 +1758,17 @@
   // its parent whatever the order, the unmapped row stays last, and the total
   // row (a tfoot) never takes part. Default = worst own-rate first (ruling 1).
   //
-  // G2: TWO surfaces render this table -- the modal's company view and the
-  // admin-only Overview section -- through these same functions. Each holds
-  // its own VIEW: its element-id prefix (<prefix>-section / -table / -tbody /
-  // -tfoot), its own sort and the payload it last painted, so sorting one
-  // never reorders the other. The modal's view is the default everywhere.
+  // G2: the surface rendering this table holds its own VIEW -- its element-id
+  // prefix (<prefix>-section / -table / -tbody / -tfoot), its own sort and the
+  // payload it last painted -- so a second surface could never reorder it.
+  // Today the one surface is the admin-only Overview section (G3 retired the
+  // modal's copy).
+  var OB_CBDEPT_DEFAULT_SORT_ = { key: 'ownPct', dir: 'asc' };
   function obCbDeptView_(prefix) {
-    return { prefix: prefix, sort: { key: 'ownPct', dir: 'asc' }, last: null };
+    return { prefix: prefix, sort: { key: OB_CBDEPT_DEFAULT_SORT_.key, dir: OB_CBDEPT_DEFAULT_SORT_.dir }, last: null };
   }
-  var OB_CBDEPT_MODAL_ = obCbDeptView_('outbound-cbdept');
-  var obCbDeptSort_ = OB_CBDEPT_MODAL_.sort;
   function obCbDeptCmp_(a, b, sort) {
-    const srt = sort || obCbDeptSort_;
+    const srt = sort || OB_CBDEPT_DEFAULT_SORT_;
     const k = srt.key, dir = srt.dir === 'asc' ? 1 : -1;
     const va = a[k], vb = b[k];
     // Nulls (no trackable abandons) sink regardless of direction.
@@ -2125,7 +1876,8 @@
     return html;
   }
   function outboundPaintCbDept_(view) {
-    const v = view || OB_CBDEPT_MODAL_;
+    const v = view;
+    if (!v) return;
     const t = v.last;
     const tb = $(v.prefix + '-tbody');
     const tf = $(v.prefix + '-tfoot');
@@ -2160,7 +1912,8 @@
     }
   }
   function outboundRenderCbDept_(t, meta, view) {
-    const v = view || OB_CBDEPT_MODAL_;
+    const v = view;
+    if (!v) return;
     const sec = $(v.prefix + '-section');
     if (!sec) return;
     v.last = t || null;
@@ -2205,45 +1958,6 @@
     outboundPaintCbDept_(v);
   }
 
-  // PC-12: one heading row (dept, agent count, subtotals) per in-scope dept
-  // that has agents, then that dept's rows in the current sort order.
-  function outboundGroupedRowsHtml_(sorted, scopeDepts) {
-    return scopeDepts.map(function (d) {
-      const rows = sorted.filter(function (r) { return r.scopeDept === d; });
-      if (!rows.length) return '';
-      const t = rows.reduce(function (acc, r) {
-        acc.obTotal += Number(r.obTotal) || 0; acc.obConnected += Number(r.obConnected) || 0;
-        acc.obTalkSec += Number(r.obTalkSec) || 0; acc.attempts += Number(r.attempts) || 0;
-        return acc;
-      }, { obTotal: 0, obConnected: 0, obTalkSec: 0, attempts: 0 });
-      const rate = t.obTotal ? Math.round(t.obConnected / t.obTotal * 1000) / 10 : null;
-      const att = t.obConnected ? Math.round(t.obTalkSec / t.obConnected) : 0;
-      return '<tr class="ob-group-head">'
-        + '<td colspan="2">' + escapeHtml(d) + ' <span class="ob-group-count">' + rows.length
-        + ' agent' + (rows.length === 1 ? '' : 's') + '</span></td>'
-        + '<td class="num">' + fmtNumber(t.obTotal) + '</td>'
-        + '<td class="num">' + fmtNumber(t.obConnected) + '</td>'
-        + '<td class="num">' + (rate != null ? rate + '%' : '—') + '</td>'
-        + '<td class="num">' + fmtDuration(t.obTalkSec) + '</td>'
-        + '<td class="num">' + fmtDuration(att) + '</td>'
-        + '<td class="num">' + fmtNumber(t.attempts) + '</td>'
-        + '</tr>' + rows.map(outboundAgentRowHtml_).join('');
-    }).join('');
-  }
-
-  function outboundAgentRowHtml_(r) {
-    return '<tr>'
-      + '<td>' + escapeHtml(r.agent) + '</td>'
-      + '<td>' + escapeHtml(r.dept || '') + '</td>'
-      + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
-      + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
-      + '<td class="num">' + (r.obConnectRate != null ? r.obConnectRate + '%' : '—') + '</td>'
-      + '<td class="num">' + fmtDuration(r.obTalkSec) + '</td>'
-      + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
-      + '<td class="num">' + fmtNumber(r.attempts) + '</td>'
-      + '</tr>';
-  }
-
   // v2: daily callback-rate line (safeChart_ per the chart-callsite rule;
   // THEME colors per INV-42; per-chart datalabels OFF -- a dense daily line
   // makes labels unreadable, the Overview-trend precedent).
@@ -2261,7 +1975,7 @@
     d1: 'within a day', later: 'later',
   };
   function outboundRenderDelayStrip_(cb, target) {
-    const el = target || $('outbound-delay-strip');
+    const el = target;
     if (!el) return;
     const b = cb && cb.delayBuckets;
     const total = Number(cb && cb.calledBack) || 0;
@@ -2306,7 +2020,7 @@
   // Hour-of-day alone is also the right cut here: splitting this volume
   // across five weekdays would leave most cells under the low-signal floor.
   function outboundRenderHourStrip_(rows, target) {
-    const el = target || $('outbound-hour-strip');
+    const el = target;
     if (!el) return;
     const list = (rows || []).filter(function (r) { return Number(r.tracked) > 0; });
     if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -2342,14 +2056,14 @@
       + (maxTracked ? '' : '') + '.</p>';
   }
 
-  // One chart instance PER CANVAS: the modal and the Insights Callbacks fold
-  // (G1) each own one, and rebuilding one must never destroy the other's.
+  // One chart instance PER CANVAS (keyed by its id), so a second surface's
+  // rebuild can never destroy another's chart.
   var outboundCbCharts_ = {};
   function outboundRenderCbChart_(daily, wrapEl, canvasEl) {
-    const wrap = wrapEl || $('outbound-cb-chart-wrap');
-    const canvas = canvasEl || $('outbound-cb-chart');
+    const wrap = wrapEl;
+    const canvas = canvasEl;
     if (!wrap || !canvas) return;
-    const slot = canvas.id || 'outbound-cb-chart';
+    const slot = canvas.id || 'cb-chart';
     if (outboundCbCharts_[slot]) { try { outboundCbCharts_[slot].destroy(); } catch (e) {} outboundCbCharts_[slot] = null; }
     const pts = (daily || []).filter(function (d) { return d.ratePct != null; });
     if (pts.length < 2) { wrap.style.display = 'none'; return; }
@@ -2394,20 +2108,10 @@
   // v2: the not-called-back drill. Reuses the heatmap cell drill's renderer
   // (heatCellDetailHtml_) so rows carry the same stage tick + facts + "↳
   // path" journey chip; initClipboardOnce arms the delegated handler.
-  var outboundUncalledSeq_ = 0;   // UI-5: bumped per request AND per report render
-  function outboundLoadUncalled_() {
-    outboundLoadUncalledInto_({
-      btn: $('outbound-uncalled-btn'), list: $('outbound-uncalled-list'),
-      status: $('outbound-uncalled-status'),
-      meta: (outboundLastData && outboundLastData.meta) || {},
-      nextSeq: function () { return ++outboundUncalledSeq_; },
-      curSeq: function () { return outboundUncalledSeq_; },
-    });
-  }
-  // The drill itself, shared with the Insights Callbacks fold (G1): `ctx`
-  // names the button / list / status elements, the report meta whose window
-  // and scope it re-queries, and the caller's OWN sequence counter (each
-  // surface orphans its own in-flight drill on a fresh render, UI-5).
+  // The not-called-back drill (the Insights Callbacks fold, G1): `ctx` names
+  // the button / list / status elements, the report meta whose window and
+  // scope it re-queries, and the caller's OWN sequence counter (a fresh
+  // render orphans an in-flight drill, UI-5).
   function outboundLoadUncalledInto_(ctx) {
     const btn = ctx.btn;
     const list = ctx.list;
@@ -2456,7 +2160,7 @@
   }
 
   function outboundDownloadCsv_(data, cbDeptSort) {
-    const d = (data && data.meta) ? data : outboundLastData;
+    const d = (data && data.meta) ? data : null;
     if (!d || (d.meta || {}).available === false) return;
     const meta = d.meta || {};
     const cb = d.callback || {};

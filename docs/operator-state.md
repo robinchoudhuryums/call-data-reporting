@@ -2245,27 +2245,31 @@ When something looks wrong, before assuming a code bug, check:
        by construction, so widen the window and re-run. FAILED and MISMATCH
        are stops. A clean run self-clears its window props
        (`clearToolParamsAfterCleanRun_`), so set them again per run.
-    4. **Release — both halves in ONE commit.** Flip
-       `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false` AND remove
-       `data-admin-only` + `style="display:none;"` from `#outbound-report-btn`
-       AND from `#dept-dir-switch` (the My Department Inbound | Outbound | Both
-       switch, Batch D -- it reads the same gate) AND from `#ins-ob-fold` (the
-       Insights Outbound fold, Batch E) AND from `#ins-cb-fold` (the Insights
-       Callbacks fold, Batch G1) in `dashboard.html`. The Overview
-       tiles' outbound line needs no edit: `personalizeOverview_` stops
-       stripping it the moment the gate flips (it reads the same switch). The
-       per-dept manager path underneath was kept
-       intact the whole time, so nothing else changes. `cross-file-pins.test.js`
-       ("6c: the outbound vetting gate and its menu item are released
-       TOGETHER") FAILS on either half alone — a visible item over a throwing
-       server reads as a broken app, a released server behind a hidden button
-       reaches nobody.
+    4. **Release — every piece in ONE commit.** There is no Outbound modal
+       any more (G3, owner 2026-10-08: managers get the My Department
+       version). Flip `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false`
+       AND remove `data-admin-only` + `style="display:none;"` from
+       `#dept-dir-switch` (the My Department Inbound | Outbound | Both switch,
+       Batch D), `#ins-ob-fold` (the Insights Outbound fold, Batch E) and
+       `#ins-cb-fold` (the Insights Callbacks fold, Batch G1) in
+       `dashboard.html`. The Overview tiles' outbound line needs no edit:
+       `personalizeOverview_` stops stripping it the moment the gate flips (it
+       reads the same switch). The Overview's **Callbacks by department**
+       (`#ov-cbdept-fold`, G2) is admin-only FOREVER and is NOT part of this
+       release. The per-dept manager path underneath was kept intact the whole
+       time, so nothing else changes. `cross-file-pins.test.js` ("6c: the
+       outbound vetting gate and the My Department outbound surfaces are
+       released TOGETHER") FAILS on any half alone — a visible surface over a
+       throwing server reads as a broken app, a released server behind hidden
+       surfaces reaches nobody — and fails if the retired modal comes back.
     5. **Verify.** Deploy, then walk **Regression Scenario S46** — it covers
-       both the pre-release state (manager sees nothing, deep link no-ops,
-       console call refused) and the post-release one (pinned dept select,
-       trackable-only callback denominator, roster-filtered agent table, no
-       caller identity in the drill). `drive-admin.js` already opens the modal
-       and asserts it RENDERS on every `npm run ci:ui` run, so a broken
+       both the pre-release state (manager sees no outbound surface, the
+       `#/report/outbound` link is a plain My Department landing, console call
+       refused) and the post-release one (the switch and both folds for the
+       manager's own dept, trackable-only callback denominator,
+       roster-filtered agent table, no caller identity in the drill).
+       `drive-callbacks.js`, `drive-deptoutbound.js` and `drive-outbound-e.js`
+       assert every surface RENDERS on each `npm run ci:ui` run, so a broken
        renderer is caught before this point, not by a manager.
     **Ruled out, do not revive without a fresh owner ruling:** per-dept
     company cards for Outbound. Crossover agents hold multiple roster homes,

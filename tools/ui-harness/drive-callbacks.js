@@ -2,7 +2,7 @@
 /**
  * ASSERTING driver for Batch G1: the Callbacks fold in the My Department
  * Insights region -- the Outbound report's callback analysis moving onto the
- * page (G3 retires the modal). Admin-only while the report is (6c).
+ * page (G3 retired the modal). Admin-only while the report is (6c).
  *
  * What only a browser shows: the fold appearing ONLY on the Outbound / Both
  * direction, staying LAZY (no getOutboundReport until it is opened, one fetch
@@ -11,8 +11,8 @@
  * zero-height trap), the not-called-back drill reaching the call path, the
  * CSV / email actions reading the window on screen, a 360 px page that does
  * not scroll sideways, and -- the 6c half -- no surface for View-as or a
- * manager. It also re-generates the MODAL once, because its renderers are now
- * shared and a refactor that broke the modal would pass every fold check.
+ * manager. G3: the retired modal's #/report/outbound deep link lands on the
+ * fold for an admin and is a plain My Department landing for a manager.
  *
  * Run: node drive-callbacks.js   (after gen-payloads + build-harness)
  */
@@ -188,23 +188,6 @@ async function setDir(page, dir) {
   record('back to Inbound: the fold hides again', !st.shown, JSON.stringify(st));
   record('...and switching direction never re-fetched the report', (await calls(page, 'getOutboundReport')).length === 1);
 
-  // The MODAL still renders through the now-shared helpers (G3 removes it).
-  await setDir(page, 'out');
-  await page.evaluate(() => { const b = document.getElementById('outbound-report-btn'); if (b) b.click(); });
-  await page.waitForTimeout(800);
-  await page.evaluate(() => { const b = document.getElementById('outbound-generate-btn'); if (b) b.click(); });
-  await page.waitForTimeout(1500);
-  const modal = await page.evaluate(() => ({
-    tiles: document.querySelectorAll('#outbound-callback-kpis .ds-kpi').length,
-    segs: document.querySelectorAll('#outbound-delay-strip .ob-delay-seg').length,
-    cells: document.querySelectorAll('#outbound-hour-strip .ob-hour-cell').length,
-    chart: (function () { const w = document.getElementById('outbound-cb-chart-wrap'); return !!w && w.style.display !== 'none'; })(),
-  }));
-  record('the Outbound modal still renders its callback block through the shared helpers',
-    modal.tiles === 5 && modal.segs === 5 && modal.cells === 4 && modal.chart, JSON.stringify(modal));
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-
   // View-as: the fold disappears with the direction switch.
   const opts = await page.evaluate(() => Array.from(document.querySelectorAll('#view-as-select option'))
     .map((o) => o.value).filter(Boolean));
@@ -225,6 +208,43 @@ async function setDir(page, dir) {
     .filter((n) => ['getInboundHeatmap', 'logReportUsage'].indexOf(n) === -1));
   record('admin: no unmocked server calls', !unmocked.length, unmocked.join(', '));
   await page.close();
+
+  // ---- G3: the retired modal's deep link lands on the fold -------------------
+  {
+    const pd = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    pd.on('pageerror', (e) => errors.push('deeplink pageerror: ' + e.message));
+    await pd.addInitScript(() => { window.__HARNESS_HASH__ = '/report/outbound'; });
+    await boot(pd, 'index-admin.html', 'in');   // saved direction: Inbound
+    await pd.waitForTimeout(4000);
+    const dl = await pd.evaluate(() => {
+      const f = document.getElementById('ins-cb-fold');
+      const r = f ? f.getBoundingClientRect() : null;
+      return { page: document.body.getAttribute('data-page'), dir: document.body.getAttribute('data-dir'),
+        shown: !!f && getComputedStyle(f).display !== 'none', open: !!f && f.open,
+        tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
+        inView: !!r && r.top < window.innerHeight && r.bottom > 0,
+        modal: !!document.getElementById('outbound-modal') };
+    });
+    record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and scrolled into view',
+      dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 5 && dl.inView && !dl.modal,
+      JSON.stringify(dl));
+    await pd.close();
+  }
+  {
+    const pm = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    pm.on('pageerror', (e) => errors.push('manager deeplink pageerror: ' + e.message));
+    await pm.addInitScript(() => { window.__HARNESS_HASH__ = '/report/outbound'; });
+    await boot(pm, 'index-manager.html', 'in');
+    await pm.waitForTimeout(3500);
+    const md = await pm.evaluate(() => ({
+      page: document.body.getAttribute('data-page'), dir: document.body.getAttribute('data-dir'),
+      fold: (function () { const f = document.getElementById('ins-cb-fold'); return !!f && getComputedStyle(f).display !== 'none'; })(),
+      called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getOutboundReport' || c.fn === 'getDeptOutboundSummary').length,
+    }));
+    record('G3: for a manager (pre-release) the same link is a plain My Department landing -- Inbound, no fold, no outbound request',
+      md.page === 'dept' && md.dir !== 'out' && !md.fold && md.called === 0, JSON.stringify(md));
+    await pm.close();
+  }
 
   // ---- 360 px ---------------------------------------------------------------
   {

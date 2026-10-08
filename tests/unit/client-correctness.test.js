@@ -146,7 +146,8 @@ test('CL-18: every boot step is guarded, and a throwing step is recorded and bea
   const chrome = src('script-2-chrome.html');
   const init = extractFn(chrome, 'init');
   const steps = between(init, /initStep_\('initHelpModal'/, /bootFailureNotice_\(false\);/);
-  assert.equal((steps.match(/initStep_\(/g) || []).length, 30, 'the 30 surface inits each run under the guard');
+  // 29 since G3 retired the Outbound modal (initOutboundReport left with it).
+  assert.equal((steps.match(/initStep_\(/g) || []).length, 29, 'the 29 surface inits each run under the guard');
   assert.ok(!/^\s+init[A-Za-z_]*\(\);/m.test(steps) && !/^\s+(ovWireTrendCollapse_|loadEscBadge_)\(\);/m.test(steps),
     'no step in the guarded block is called bare');
   assert.match(src('script-11-qcd-boot.html'), /bootInit_\(\);\s*\n\s*devInstallToggle_\(\);/, 'boot enters through bootInit_');

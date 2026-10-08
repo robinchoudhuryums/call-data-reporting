@@ -258,8 +258,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # after a reopen, the drill's call path, CSV/email, 360 px -- Batch G1),
 # drive-cbdept.js (Callbacks by department on the Overview: admin-only, lazy,
 # its own window + sort, grouped rows, keyboard expand, CSV -- Batch G2),
-# drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
-# Outbound and Agent Day -- + the Escalations worklist: each modal
+# drive-admin.js (the EIGHT driven modals -- the admin set plus Caller Lookup
+# and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
 # the F10 no-duplicate-badge property -- these had thorough server-side pins
 # and no assertion that any of them RENDERED, the dept-selector class of bug.
@@ -268,7 +268,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # route is neither driven by an asserting driver nor listed in its
 # DRIVER_MODAL_EXEMPT with a reason. The two REPORT modals Inbound and Direct
 # are the current documented exemptions -- admin-only while vetted, no harness
-# fixture yet (Outbound left the list at 6c). It also walks Help / chart tips /
+# fixture yet (the Outbound modal itself is retired, G3). It also walks Help / chart tips /
 # the call path stacked over a report and a failed Escalations init (Batch 7)),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
@@ -2318,7 +2318,7 @@ S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
 S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
 S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
-S46 | Outbound report reaches a manager (the 6c release) | Subsystem: Department Dashboard
+S46 | Outbound reaches a manager on My Department (the 6c release) | Subsystem: Department Dashboard
 S47 | Agent-day view: fidelity degrades honestly across the three horizons | Subsystem: Department Dashboard
 S48 | Outbound callbacks by department (CB-1, on the Overview since G2) | Subsystem: Department Dashboard
 S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Department Dashboard

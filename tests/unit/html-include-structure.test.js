@@ -514,22 +514,17 @@ test('UI-5/6/7/11: the four late-landing fetches are guarded', function () {
   };
   const s9 = read('script-9-inbound-direct.html');
   // UI-5: the not-called-back drill -- per-request token, orphaned by a render.
-  // G1: the drill is shared (outboundLoadUncalledInto_) by the modal and the
-  // Insights Callbacks fold, each passing its OWN counter.
+  // The drill (outboundLoadUncalledInto_) takes its counter from the caller:
+  // since G3 retired the modal, that is the Insights Callbacks fold.
   const unc = body(s9, 'outboundLoadUncalledInto_');
   assert.match(unc, /const tok = ctx\.nextSeq\(\);/, 'UI-5: the drill takes a token');
   assert.equal((unc.match(/if \(tok !== ctx\.curSeq\(\)\) return;/g) || []).length, 2,
     'UI-5: BOTH handlers drop a superseded response');
-  assert.match(body(s9, 'outboundLoadUncalled_'),
-    /nextSeq: function \(\) \{ return \+\+outboundUncalledSeq_; \}[\s\S]*curSeq: function \(\) \{ return outboundUncalledSeq_; \}/,
-    'UI-5: the modal drives the drill with the counter its render bumps');
   const s8 = read('script-8-insights.html');
   assert.match(s8, /nextSeq: function \(\) \{ return \+\+INS_CB_\.uncSeq; \}/,
     'G1: the Insights Callbacks fold drives the drill with its own counter');
   assert.match(body(s8, 'insCbSync_'), /INS_CB_\.seq\+\+; INS_CB_\.uncSeq\+\+;\s*\n\s*insCbResetUncalled_\(\);/,
     'G1: a new window / dept orphans the fold\'s in-flight fetch AND drill before resetting the panel');
-  assert.ok(/outboundUncalledSeq_\+\+;\s*\n[\s\S]{0,400}outbound-uncalled-list/.test(s9),
-    'UI-5: a report render orphans an in-flight drill before resetting the panel');
   // UI-6: the insurer drill cache is keyed by range + dept + insurer.
   assert.match(s9, /function inboundDrillKey_\(insurer\) \{[\s\S]*?\[m\.from \|\| '', m\.to \|\| '', m\.department \|\| '', insurer\]/,
     'UI-6: the drill key carries the range and dept');

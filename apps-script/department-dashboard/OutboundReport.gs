@@ -97,18 +97,22 @@ function obTodayIso_() {
   return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
 }
 // ── THE RELEASE SWITCH (6c / Operator State #63) ───────────────────────────
-// The report is feature-complete; it is admin-only ONLY while the callback
-// linkage + roster attribution are being vetted against live data. Releasing
-// it to per-dept managers is a TWO-LINE change, and both lines must move
-// TOGETHER:
+// The outbound views are feature-complete; they are admin-only ONLY while the
+// callback linkage + roster attribution are being vetted against live data.
+// Since G3 (owner 2026-10-08) there is no Outbound MODAL: the report's content
+// lives on My Department (the Inbound | Outbound | Both switch, the Insights
+// Outbound and Callbacks folds) and the Overview tiles. Releasing it to
+// per-dept managers is ONE commit that moves every piece together:
 //   1. here: flip OUTBOUND_VETTING_GATE_ to false
-//   2. dashboard.html #outbound-report-btn: drop `data-admin-only` and the
-//      inline `style="display:none;"`
+//   2. dashboard.html: drop `data-admin-only` + the inline `style="display:none;"`
+//      from #dept-dir-switch, #ins-ob-fold and #ins-cb-fold
+//   (the Overview tiles' line needs no edit: personalizeOverview_ reads this
+//   switch; the Overview's Callbacks by department stays admin-only forever.)
 // A half-release is the failure mode this pairing exists to prevent -- a
-// visible menu item over a throwing server reads to a manager as a broken
-// app, and a released server behind a hidden button reaches nobody.
-// `cross-file-pins.test.js` ("6c: the outbound vetting gate and its menu
-// item are released TOGETHER") fails on either half alone.
+// visible surface over a throwing server reads to a manager as a broken app,
+// and a released server behind hidden surfaces reaches nobody.
+// `cross-file-pins.test.js` ("6c: the outbound vetting gate and the My
+// Department outbound surfaces are released TOGETHER") fails on any half.
 //
 // DO NOT flip this on judgement. Operator State #63 is the runbook: backfill,
 // then `runOutboundVettingCheck`, and release ONLY on a CLEAN `ok parity`

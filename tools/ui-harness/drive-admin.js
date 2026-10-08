@@ -61,100 +61,11 @@ const MODALS = [
   // build-harness.js. cross-file-pins.test.js now fails if a NEW modal route
   // joins the router without joining this list or the documented exemptions.
   { name: 'Coaching',       btn: '#coaching-btn',        sel: '#coaching-modal',       adminMenu: true },
-  // 6c: the Outbound report modal. It lives under the REPORTS dropdown, not
-  // the Admin one, hence `menu`. It was on cross-file-pins' documented
-  // exemption list for "no harness fixture yet" -- stale, since
-  // build-harness.js already mocks getOutboundReport + getOutboundUncalled.
-  // The driver goes in BEFORE the manager release (Operator State #63), not
-  // after: a surface reaching managers with zero rendered coverage is the
-  // dept-selector class of bug, and a release runbook is exactly when
-  // "we'll add the driver later" gets skipped. `run` drives the report past
-  // its setup form -- a form-only visit would assert nothing about the
-  // renderer, which is the half that can break.
-  { name: 'Outbound',       btn: '#outbound-report-btn',  sel: '#outbound-modal',
-    menu: '#reports-menu-btn',
-    run: { click: '#outbound-generate-btn', wait: 2200, expect: [
-      ['#outbound-kpi-row .ds-kpi', 'activity KPI tiles'],
-      ['#outbound-callback-kpis .ds-kpi', 'callback KPI tiles'],
-      ['#outbound-agent-tbody tr', 'per-agent rows'],
-      // The six-point round's two new strips. Both hide themselves when
-      // there is nothing to show, so asserting they RENDER on a populated
-      // fixture is what catches a strip that silently never appears.
-      ['#outbound-delay-strip .ob-delay-seg', 'time-to-callback distribution'],
-      ['#outbound-hour-strip .ob-hour-cell', 'callback-by-abandon-hour strip'],
-      ['#outbound-email-btn', 'the Email-to-me control'],
-      // v5 (CB-1): the per-dept callback table (company view only).
-      ['#outbound-cbdept-tbody tr.ob-cbdept-row', 'per-dept callback rows'],
-      ['#outbound-cbdept-tbody tr.ob-cbdept-child', 'a sub-queue indented under its parent'],
-      ['#outbound-cbdept-tfoot tr.ob-cbdept-total', 'the once-counted total row'],
-    ], probe: async function (page, record) {
-      // Behaviour, not presence: the default order is worst OWN-rate first
-      // with the child kept under its parent and the unmapped row last; the
-      // row disclosure opens from the KEYBOARD; a header sort re-orders.
-      const order = await page.evaluate(() => Array.from(
-        document.querySelectorAll('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle'))
-        .map((b) => b.textContent.replace(/[\u21b3\u25b6\u25bc]/g, '').trim()));
-      record('Outbound: callback rows sort worst own-rate first, child under parent, unmapped last',
-        JSON.stringify(order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department']),
-        JSON.stringify(order));
-      await page.focus('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle');
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(150);
-      const opened = await page.evaluate(() => {
-        const btn = document.querySelector('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle');
-        const detail = btn && btn.closest('tr').nextElementSibling;
-        return { exp: btn && btn.getAttribute('aria-expanded'),
-                 shown: !!detail && detail.style.display !== 'none'
-                   && /First callback by/.test(detail.textContent) };
-      });
-      record('Outbound: a callback row expands from the keyboard', opened.exp === 'true' && opened.shown,
-        JSON.stringify(opened));
-      // Twice: ascending by name happens to match the default order, so only
-      // the descending flip proves the rows actually re-sorted.
-      await page.focus('#outbound-cbdept-table th[data-cbsort="dept"]');
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(150);
-      await page.focus('#outbound-cbdept-table th[data-cbsort="dept"]');
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(150);
-      const sorted = await page.evaluate(() => ({
-        aria: document.querySelector('#outbound-cbdept-table th[data-cbsort="dept"]').getAttribute('aria-sort'),
-        first: (document.querySelector('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle') || {}).textContent,
-      }));
-      record('Outbound: a callback header sorts from the keyboard (aria-sort set)',
-        sorted.aria === 'descending' && /Sales/.test(sorted.first || ''), JSON.stringify(sorted));
-
-      // PC-12: a PARENT dept's view renders its agent rows GROUPED per dept
-      // (parent first, then its sub-queue), each heading carrying a subtotal,
-      // and its rows directly beneath it. The company view above is flat.
-      const hasSales = await page.evaluate(() => {
-        const sel = document.getElementById('outbound-dept');
-        if (!sel) return false;
-        if (!Array.from(sel.options).some((o) => o.value === 'Sales')) {
-          const o = document.createElement('option'); o.value = 'Sales'; o.textContent = 'Sales'; sel.appendChild(o);
-        }
-        sel.value = 'Sales';
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      });
-      // The setup form (and its Generate button) is hidden once a report has
-      // rendered, so dispatch the click through the DOM rather than waiting on
-      // a visible target.
-      await page.evaluate(() => { const b = document.getElementById('outbound-generate-btn'); if (b) b.click(); });
-      await page.waitForTimeout(1500);
-      const groups = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('#outbound-agent-tbody tr'));
-        return rows.map((tr) => tr.classList.contains('ob-group-head')
-          ? 'H:' + tr.cells[0].textContent.replace(/\s+/g, ' ').trim() + '|' + tr.cells[1].textContent.trim()
-          : 'R:' + tr.cells[0].textContent.trim());
-      });
-      record('Outbound: a parent dept view groups its rows per dept (PC-12), headings carry subtotals',
-        hasSales && JSON.stringify(groups) === JSON.stringify(
-          ['H:Sales 2 agents|38', 'R:Sam Seller', 'R:Sue Seller', 'H:PAP 1 agent|12', 'R:Pat Papper']),
-        JSON.stringify(groups));
-    } } },
+  // (G3: the Outbound report modal is retired. Its content is driven on My
+  // Department by drive-callbacks.js / drive-deptoutbound.js and its
+  // company-view table on the Overview by drive-cbdept.js.)
   // 6d: the agent-day view. Its RPCs (getAgentDay + getIndividualReportInit
-  // for the picker) are mocked in build-harness.js. Like Outbound it opens on
+  // for the picker) are mocked in build-harness.js. It opens on
   // a setup form, so `run` drives it through to the rendered day -- the
   // fixture is a FULL-tier day, so the tier banner must stay HIDDEN, which is
   // the assertion that catches an over-eager "we apologise on every day"

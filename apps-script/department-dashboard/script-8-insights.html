@@ -2273,6 +2273,7 @@
         INS_CB_.error = (err && err.message) ? err.message : String(err);
         if (head) head.textContent = 'unavailable';
         insCbState_('Callbacks could not be loaded: ' + INS_CB_.error);
+        insCbScrollIfPending_();
       })
       .getOutboundReport(w);
   }
@@ -2314,12 +2315,14 @@
       if (content) content.style.display = 'none';
       if (head) head.textContent = 'unavailable';
       insCbState_('Callback data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
+      insCbScrollIfPending_();
       return;
     }
     if (!cb.abandonedTotal) {
       if (content) content.style.display = 'none';
       if (head) head.textContent = insCbHeadText_(cb);
       insCbState_('No abandoned calls on this department’s queues in this window, so there is nothing to call back.');
+      insCbScrollIfPending_();
       return;
     }
     insCbState_('');
@@ -2346,6 +2349,33 @@
     }
     var note = $('ins-cb-note');
     if (note) { note.style.display = notes.length ? '' : 'none'; note.textContent = notes.join(' '); }
+    insCbScrollIfPending_();
+  }
+
+  // The deep link's one-shot scroll, consumed by the first paint that has
+  // something to show (data, empty or unavailable alike).
+  function insCbScrollIfPending_() {
+    if (!INS_CB_SCROLL_) return;
+    INS_CB_SCROLL_ = false;
+    var fold = $('ins-cb-fold');
+    if (fold) { try { fold.scrollIntoView({ block: 'start' }); } catch (e) { /* old browsers */ } }
+  }
+
+  // G3: the #/report/outbound deep link (script-4's router) lands HERE, the
+  // retired modal's home. Only while the direction switch is visible (admin
+  // until 6c): set the switch to Outbound, open the fold (persisted, so the
+  // render's insFoldsApply_ keeps it open) and scroll to it once its payload
+  // has painted. For anyone else it is a plain My Department landing.
+  var INS_CB_SCROLL_ = false;
+  function insCbDeepLink_() {
+    if (typeof obAllowed_ !== 'function' || !obAllowed_()) return;
+    obDir_ = 'out';
+    try { localStorage.setItem(OB_DIR_KEY_, obDir_); } catch (e) { /* ignore */ }
+    insFoldSet_('cb', true);
+    var fold = $('ins-cb-fold');
+    INS_CB_SCROLL_ = true;
+    if (fold && !fold.open) fold.open = true;   // its toggle runs insCbSync_
+    obViewSync_();
   }
 
   // Wired once (the fold's own buttons). Each action reads the HELD payload,

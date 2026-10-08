@@ -523,11 +523,14 @@ the windows for the hover text and is stripped with the line (companyOverview:v2
 My Department needs no server change: it calls `getDeptOutboundSummary` a
 second time for the summary's own `meta.priorFrom/priorTo`.
 
-**Outbound report (`OutboundReport.gs`, route `#/report/outbound`) --
+**Outbound report (`OutboundReport.gs`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**
-TEMPORARILY admin-only while vetted (the Inbound/Direct resolver model --
-latent per-dept manager path, release = one-line gate removal + un-hiding
-the menu item). Two CONTRACT rules, both test-enforced
+Since G3 (owner 2026-10-08) it has no modal: `getOutboundReport` feeds the My
+Department Insights Callbacks fold and the Overview's Callbacks by department,
+the per-agent half rides `getDeptOutboundSummary`, and the legacy route
+`#/report/outbound` lands on the Callbacks fold. TEMPORARILY admin-only while
+vetted (the Inbound/Direct resolver model -- latent per-dept manager path,
+release = the gate + un-hiding the My Department surfaces, Operator State #63). Two CONTRACT rules, both test-enforced
 (`tests/unit/outbound-report.test.js`): (1) the callback DENOMINATOR is
 exactly the Inbound report's Abandoned population for the same scope --
 it reuses `inboundDeptPredicate_` + `inboundWindowClause_` + the
@@ -573,7 +576,7 @@ block (never the rows' sum). The FIRST callback decides own vs other, with a
 `call_id` tie-break in the lateral that the sheet fallback reproduces.
 `own + other + none === tracked` is pinned on every row and the total
 (`outbound-callback-dept.test.js`); S48 is the walk. **Since G2 (2026-10-08) its
-home is the Overview** (an admin-only, lazy section; the modal's copy goes with
+home is the Overview** (an admin-only, lazy section; the modal's copy went with
 the modal in G3) -- see docs/client-ui-conventions.md. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached

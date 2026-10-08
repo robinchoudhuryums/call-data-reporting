@@ -2104,7 +2104,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   stripped by `personalizeOverview_` (`companyOverview:v28`).
 - **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
   `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
-  6c pin in `cross-file-pins.test.js` moves it with `#outbound-report-btn`).
+  6c pin in `cross-file-pins.test.js` moves it with the gate and the two Insights outbound folds).
   The client's permission IS the switch's visibility (`obAllowed_`), so
   view-as-manager falls back to Inbound with no role check. Outbound and Both
   render a SEPARATE table, `#agents-ob-table` (`obViewRender_`, script-5), so
@@ -2163,28 +2163,29 @@ stay pinned by INV-39, INV-53 and INV-06.
   `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
 - **Callbacks in Insights -- the Outbound report moving onto My Department
   (owner 2026-10, Batch G1).** The `#ins-cb-fold` fold (`insCbSync_`,
-  script-8) sits after the Outbound fold and carries the modal's callback
+  script-8) sits after the Outbound fold and carries the retired modal's callback
   analysis for the region's dept + window: the five callback tiles (prior
   deltas from `callbackPrior`), the "how fast" strip, the daily callback chart,
   the by-hour strip, the not-called-back drill (rows carry the "↳ path" call
   path) and CSV / email export. It reads the SAME `getOutboundReport` payload
-  the modal does and draws it with the modal's OWN renderers aimed at its
+  the modal did and draws it with the shared renderers aimed at its
   elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
   `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one
   chart per canvas), `outboundLoadUncalledInto_` (each surface passes its own
   stale-drill counter, UI-5), `outboundDownloadCsv_(data)` and
-  `outboundSendEmailFor_` (script-9) -- so the two cannot disagree while both
-  exist; G3 deletes the modal. It shows only on the Outbound or Both
+  `outboundSendEmailFor_` (script-9). **G3 retired the modal**: the legacy
+  `#/report/outbound` link lands HERE (`insCbDeepLink_`: switch to Outbound,
+  fold open + persisted, one-shot scroll after the first paint; a plain My
+  Department landing while the switch is hidden). It shows only on the Outbound or Both
   direction (`obEffectiveDir_`, i.e. `obAllowed_`: admin-only until 6c, hidden
   in View-as) and is LAZY: nothing is fetched until the fold is open, one fetch
   per dept + window, a reopen repaints from the held payload (the chart is
   drawn only while open -- the C3 trap), and a new window orphans an in-flight
   fetch and drill. For a parent dept the figures include its sub-queues'
-  abandoned callers (as the modal's dept view does) and a note says so. The
+  abandoned callers (as the modal's dept view did) and a note says so. The
   coverage note's "Adjust range" moves the My Department From date. The fold
   persists as `cb` in the Insights folds store. Rendered-gated by
-  `drive-callbacks.js` (which also re-generates the modal, so a broken shared
-  helper cannot pass).
+  `drive-callbacks.js` (incl. the deep link for an admin and for a manager).
 - **Callbacks by department on the Overview (owner 2026-10-08, Batch G2).**
   The Outbound report's company-view table ("who calls back whose abandoned
   callers", CB-1) as `#ov-cbdept-fold`, a collapsed section at the bottom of
@@ -2196,7 +2197,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   (Last 7 days / Last 30 days / Last 3 months via `datePresetRange_`, so it
   ends yesterday), once per window; `ovLoad_` -- the landing and the 5-minute
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the five
-  company callback tiles above the table, both drawn by the modal's renderers:
+  company callback tiles above the table, both drawn by the shared renderers:
   `outboundCallbackTilesHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The

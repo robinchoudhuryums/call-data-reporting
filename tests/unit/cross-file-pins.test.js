@@ -953,7 +953,7 @@ test('R46: a suite that pins its fixture back to the script timezone says why (s
 // release simply did not work. Nothing compared the two before this pin, and
 // the release runbook's own step 3 names both -- exactly the shape that gets
 // half-done at the end of a long operator session.
-test('6c: the outbound vetting gate and its menu item are released TOGETHER', function () {
+test('6c: the outbound vetting gate and the My Department outbound surfaces are released TOGETHER', function () {
   const gs = read('OutboundReport.gs', DASH);
   const m = gs.match(/var OUTBOUND_VETTING_GATE_ = (true|false);/);
   assert.ok(m, 'OUTBOUND_VETTING_GATE_ is missing from OutboundReport.gs — it is '
@@ -967,23 +967,16 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
     + 'is decorative and the release would be a no-op.');
 
   const html = read('dashboard.html', DASH);
-  const btn = html.match(/<button[^>]*id="outbound-report-btn"[\s\S]*?>/);
-  assert.ok(btn, '#outbound-report-btn is missing from dashboard.html');
-  const hiddenAttr = /data-admin-only/.test(btn[0]);
-  const hiddenStyle = /style="display:none;"/.test(btn[0]);
-
-  if (gated) {
-    assert.ok(hiddenAttr && hiddenStyle,
-      'OUTBOUND_VETTING_GATE_ is true (server refuses managers) but '
-      + '#outbound-report-btn is VISIBLE to them — a manager would see the '
-      + 'menu item and get "admin-only while it is being vetted". Restore '
-      + 'data-admin-only + style="display:none;", or flip the gate.');
-  } else {
-    assert.ok(!hiddenAttr && !hiddenStyle,
-      'OUTBOUND_VETTING_GATE_ is false (server serves managers) but '
-      + '#outbound-report-btn is still hidden — the release reaches nobody. '
-      + 'Drop data-admin-only + style="display:none;" from the button.');
-  }
+  // G3: the Outbound report MODAL and its menu item are retired -- the
+  // release pair is the gate + the My Department surfaces below. A menu item
+  // or modal coming back would be a SECOND release surface this pin does not
+  // move, so their return fails here.
+  assert.ok(!/id="outbound-report-btn"/.test(html) && !/id="outbound-modal"/.test(html),
+    'the retired Outbound modal / menu item is back in dashboard.html (G3) -- '
+    + 'its content lives on My Department; add the surface to this pin if it is intended.');
+  assert.match(read('script-4-nav.html', DASH),
+    /'\/report\/outbound':\s*\{ kind: 'page',\s*page: 'dept', callbacks: true \}/,
+    'legacy #/report/outbound links land on the My Department Callbacks fold (G3)');
 
   // Batch D: the My Department Inbound | Outbound | Both switch reads the
   // same server gate (getDeptOutboundSummary -> outboundResolveRequest_) and

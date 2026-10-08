@@ -2,14 +2,14 @@
 /**
  * ASSERTING driver for Batch G2: Callbacks by department on the Overview --
  * the Outbound report's company-view table, moved out of the modal (G3
- * retires it). ADMIN-ONLY FOREVER and LAZY.
+ * retired it). ADMIN-ONLY FOREVER and LAZY.
  *
  * What only a browser shows: the section revealed for an admin only (never a
  * manager, never View-as), nothing fetched on the Overview landing, ONE
  * company-view fetch when it is opened (for its own window, which the shared
- * preset resolver sets), the modal's renderers painting the tiles and the
+ * preset resolver sets), the shared renderers painting the tiles and the
  * grouped table into it (a sub-queue under its parent whatever the sort, the
- * unmapped row last, the total row), its sort independent of the modal's,
+ * unmapped row last, the total row), keyboard and click sorting,
  * keyboard expand, a window switch re-fetching once, CSV bytes, and no
  * sideways page scroll at 360 px.
  *
@@ -145,25 +145,21 @@ function section() {
   await page.waitForTimeout(800);
   record('closing and reopening the same window does not re-fetch', (await reports(page)).length === 2);
 
-  // The MODAL's company view keeps its OWN sort (the views are independent).
-  await page.evaluate(() => { const b = document.getElementById('outbound-report-btn'); if (b) b.click(); });
-  await page.waitForTimeout(800);
-  await page.evaluate(() => {
-    const sel = document.getElementById('outbound-dept'); if (sel) sel.value = '';
-    const b = document.getElementById('outbound-generate-btn'); if (b) b.click();
-  });
-  await page.waitForTimeout(1500);
-  const modal = await page.evaluate(() => ({
-    ths: document.querySelectorAll('#outbound-cbdept-table thead th[data-cbsort]').length,
-    order: Array.from(document.querySelectorAll('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle'))
-      .map((b) => b.textContent.replace(/[↳▶]/g, '').trim()),
-    aria: (document.querySelector('#outbound-cbdept-table th[data-cbsort="ownPct"]') || { getAttribute: () => null }).getAttribute('aria-sort'),
+  // Keyboard header sort (moved here from drive-admin's retired Outbound
+  // modal entry, G3). Twice: ascending by name matches the default order, so
+  // only the descending flip proves the rows re-sorted.
+  await page.focus('#ov-cbdept-table th[data-cbsort="dept"]');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  await page.focus('#ov-cbdept-table th[data-cbsort="dept"]');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  const ks = await page.evaluate(() => ({
+    aria: document.querySelector('#ov-cbdept-table th[data-cbsort="dept"]').getAttribute('aria-sort'),
+    first: (document.querySelector('#ov-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle') || {}).textContent || '',
   }));
-  record('the modal still renders its table (shared header) in ITS default order, untouched by the Overview sort',
-    modal.ths === 8 && JSON.stringify(modal.order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department'])
-      && modal.aria === 'ascending', JSON.stringify(modal));
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
+  record('a header sorts from the keyboard (aria-sort set, rows re-ordered)',
+    ks.aria === 'descending' && /Sales/.test(ks.first), JSON.stringify(ks));
 
   // View-as hides it.
   const opts = await page.evaluate(() => Array.from(document.querySelectorAll('#view-as-select option'))
