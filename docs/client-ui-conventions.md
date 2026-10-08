@@ -2159,6 +2159,30 @@ stay pinned by INV-39, INV-53 and INV-06.
   gets no chip (E5's rule), Total / subtotal rows get none, and a prior
   window starting before outbound capture shows none. Pinned by
   `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
+- **Callbacks in Insights -- the Outbound report moving onto My Department
+  (owner 2026-10, Batch G1).** The `#ins-cb-fold` fold (`insCbSync_`,
+  script-8) sits after the Outbound fold and carries the modal's callback
+  analysis for the region's dept + window: the five callback tiles (prior
+  deltas from `callbackPrior`), the "how fast" strip, the daily callback chart,
+  the by-hour strip, the not-called-back drill (rows carry the "↳ path" call
+  path) and CSV / email export. It reads the SAME `getOutboundReport` payload
+  the modal does and draws it with the modal's OWN renderers aimed at its
+  elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
+  `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one
+  chart per canvas), `outboundLoadUncalledInto_` (each surface passes its own
+  stale-drill counter, UI-5), `outboundDownloadCsv_(data)` and
+  `outboundSendEmailFor_` (script-9) -- so the two cannot disagree while both
+  exist; G3 deletes the modal. It shows only on the Outbound or Both
+  direction (`obEffectiveDir_`, i.e. `obAllowed_`: admin-only until 6c, hidden
+  in View-as) and is LAZY: nothing is fetched until the fold is open, one fetch
+  per dept + window, a reopen repaints from the held payload (the chart is
+  drawn only while open -- the C3 trap), and a new window orphans an in-flight
+  fetch and drill. For a parent dept the figures include its sub-queues'
+  abandoned callers (as the modal's dept view does) and a note says so. The
+  coverage note's "Adjust range" moves the My Department From date. The fold
+  persists as `cb` in the Insights folds store. Rendered-gated by
+  `drive-callbacks.js` (which also re-generates the modal, so a broken shared
+  helper cannot pass).
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's

@@ -60,6 +60,10 @@ const STAGES = [
   // switch leaking to a manager or surviving view-as).
   ['node', ['drive-deptoutbound.js'], 'My Department outbound view (Batch D)'],
   ['node', ['drive-outbound-e.js'], 'Overview tile outbound line + Insights Outbound fold (Batch E)'],
+  // Batch G1: the Callbacks fold (the Outbound report moving onto My
+  // Department) -- lazy fetch, the shared renderers painting into it, the
+  // chart after a close/reopen, the drill's call path, and the 6c half.
+  ['node', ['drive-callbacks.js'], 'Insights Callbacks fold (Batch G1)'],
   // The admin modals + the Escalations worklist. These have thorough
   // SERVER-side pins and, until this stage, no assertion that any of them
   // RENDERS -- the gap that shipped the header dept-selector ReferenceError.

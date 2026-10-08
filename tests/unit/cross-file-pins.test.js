@@ -1011,6 +1011,20 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
   assert.match(read('script-8-insights.html', DASH), /if \(!obAllowed_\(\) \|\| !meta \|\| !meta\.department/,
     'the Insights Outbound fold must take its permission from obAllowed_ (the ONE client gate for D and E)');
 
+  // G1: the Insights Callbacks fold (the Outbound report moving onto My
+  // Department) rides the same pair, and takes its permission from the
+  // direction switch through obEffectiveDir_ ('in' whenever obAllowed_ is not).
+  const cbFold = html.match(/<details[^>]*id="ins-cb-fold"[\s\S]*?>/);
+  assert.ok(cbFold, '#ins-cb-fold is missing from dashboard.html');
+  const cbHidden = /data-admin-only/.test(cbFold[0]) && /style="display:none;"/.test(cbFold[0]);
+  const cbShown = !/data-admin-only/.test(cbFold[0]) && !/style="display:none;"/.test(cbFold[0]);
+  assert.ok(gated ? cbHidden : cbShown,
+    'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-cb-fold is ' + (cbHidden ? 'hidden' : 'visible')
+    + ' -- release (or hold) the Insights Callbacks fold with the report (Operator State #63).');
+  assert.match(read('script-8-insights.html', DASH),
+    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(!w \|\| dir === 'in'\) \{ fold\.style\.display = 'none'; return; \}/,
+    'the Insights Callbacks fold must take its permission from obEffectiveDir_ and hide on Inbound');
+
   // Batch E2: the Overview tiles' outbound line is stripped on serve while the
   // gate stands, and FAILS CLOSED when OutboundReport.gs is not loaded.
   assert.match(read('CompanyOverview.gs', DASH),

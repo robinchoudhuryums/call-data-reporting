@@ -253,7 +253,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # chips on agent rows only -- Batches D/F),
 # drive-outbound-e.js (the Overview tiles' outbound line per card window +
 # the Insights Outbound fold's two-window deltas; neither reaches a manager
-# or View-as -- Batch E),
+# or View-as -- Batch E), drive-callbacks.js (the Insights Callbacks fold:
+# Outbound/Both only, lazy one fetch, the shared renderers incl. a drawn chart
+# after a reopen, the drill's call path, CSV/email, 360 px -- Batch G1),
 # drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
 # Outbound and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
@@ -2327,6 +2329,7 @@ S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsyste
 S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
 S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
 S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
+S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

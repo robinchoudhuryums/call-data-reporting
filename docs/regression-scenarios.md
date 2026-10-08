@@ -532,3 +532,16 @@ S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: 
     - In My Department's Outbound and Both views, each agent row carries a chip after Connected, a GRAY chip after Not connected, and a chip after Connect %, against the same prior window the inbound chips use. Total and subtotal rows carry none; an agent with no calls in the prior window carries none.
   Expected: as described; with Neon unreachable the tiles show no line (no error) and the fold reads from the Outbound Calls tab with a note saying so.
   Fails if: a manager or a View-as preview sees either surface or a chip; the Not connected chip is ever colored; a chip appears on a pre-capture comparison; a tile's line does not change with the card window; the fold's totals differ from the dept's own S57 subtotal for the same dates, or a parent dept's fold lists its sub-queues' agents; or the page scrolls sideways at phone width.
+
+S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN (admin-only until the Outbound report is released), open My Department over a month with the direction on Inbound and scroll to Insights: there is no "Callbacks" fold.
+    - Switch the direction to Outbound: an "Outbound Callbacks" fold appears after the Outbound fold, closed, reading "open to load abandoned-caller callbacks". Nothing loads until you open it.
+    - Open it: five tiles (Abandoned, Called back, Callback rate, Callbacks connected, Median time to callback), the two rate tiles with a ▲/▼ vs the prior window, the "How fast were the callbacks?" strip, the daily callback chart, and the by-hour strip. Close the fold: its summary now reads "P% called back · N abandoned · median H:MM:SS".
+    - Reconcile: Reports -> Outbound for the same dept and dates. The callback tiles, strips and chart match the fold exactly.
+    - "List not-called-back calls": the same calls the modal lists; a row's "↳ path" opens the call path. Download CSV and Email to me both carry the window on screen.
+    - Switch to Both: the fold stays. Back to Inbound: it hides. Change the dates and re-open: it loads the new window once.
+    - View as a manager: the fold is gone. As a real MANAGER, even with Outbound last chosen: no fold and no outbound request.
+    - On a phone-width window with the fold open: the page does not scroll sideways (the by-hour strip may scroll inside itself).
+  Expected: as described; with Neon unreachable the fold reads from the Outbound Calls tab with a note saying so, and if nothing can be read it says the data is unavailable.
+  Fails if: the fold shows on Inbound, to a manager or in View-as; it fetches before it is opened, or again on a reopen of the same window; its figures differ from the modal's for the same dept and dates; the chart is blank after a close and reopen; or the page scrolls sideways at phone width.

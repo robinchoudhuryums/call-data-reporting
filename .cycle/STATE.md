@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-08 — Batch G1 IMPLEMENTED (block 237): the Callbacks fold in Insights — step 1 of moving the Outbound report onto My Department.**
+  - Owner rulings (2026-10-08): managers get the My Department version, not the modal; Callbacks by department goes to an admin-only Overview section (G2); integrate first, release once (G3 before 6c). `runOutboundVettingCheck` read `ok parity`; the owner is still vetting accuracy before release. The source probe (#74) read MISMATCH, so outbound stays on Neon (already the design).
+  - `#ins-cb-fold`: the modal's callback tiles, strips, chart, not-called-back drill + call path, CSV / email, drawn by the modal's OWN renderers (now target-aware in script-9). Outbound / Both only, admin-only, lazy (fetch on open, one per window).
+  - The 6c pin and the UI-5 pin moved with it; new blocking stage drive-callbacks.js (24 checks); 2242 tests; every ci:ui stage green; two mutations bite.
+
+  **Owner-side:** deploy the dashboard and walk S59.
+  **Next:** G2 (Overview Callbacks by department), then G3 (retire the modal), then the 6c release when vetting is done.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-07 — Batch F IMPLEMENTED (block 236): prior-period chips on outbound, admin-only.**
   - Tiles: a Placed chip and a connect-rate chip (in points) against each card period's INV-28 prior window, counted in the same Overview read (companyOverview:v28). A period whose prior window predates capture shows no chip (YTD, 60/90 today).
   - My Department Outbound / Both rows: chips on Connected, Not connected (always gray) and Connect %, against the summary's own prior window via a second cached RPC. Never on totals.

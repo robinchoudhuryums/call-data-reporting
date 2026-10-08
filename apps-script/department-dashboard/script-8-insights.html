@@ -151,7 +151,7 @@
   // .ins-fold class (it predates the fold system and keeps its own chrome).
   function insFoldsApply_() {
     const f = insFoldsLoad_();
-    ['qh', 'trend', 'detail', 'ob'].forEach(function (k) {
+    ['qh', 'trend', 'detail', 'ob', 'cb'].forEach(function (k) {
       const el = document.querySelector('[data-fold="' + k + '"]');
       if (el && el.open !== !!f[k]) el.open = !!f[k];
     });
@@ -699,6 +699,7 @@
         const key = fold.getAttribute('data-fold') || '';
         if (key) insFoldSet_(key, fold.open);
         if (key === 'trend' && fold.open && insLastData) insDrawTrendChart_(insLastData);
+        if (key === 'cb' && fold.open) insCbSync_();   // G1: lazy fetch / draw-on-open
       });
     });
     const introDismiss = $('ins-intro-dismiss');
@@ -1746,6 +1747,7 @@
     insRenderLengthWarning_(data.meta);
     insRenderQueueHealth_(data.queueHealth);
     insObSync_(data, opts);   // Batch E1: admin-only Outbound fold
+    if (!(opts && opts.swr)) insCbSync_();   // G1: admin-only Callbacks fold (lazy)
     // Temporal abandon heatmap companion to Queue health (sourced from
     // inbound_calls). Admin only -- getInboundHeatmap inherits the inbound
     // report's vetting gate, so managers never call it and the panel stays
@@ -2210,6 +2212,160 @@
       + '<th scope="col" class="num">Avg talk</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div>';
   }
+
+  // ── G1: Callbacks in Insights (the Outbound report moving onto My Dept) ──
+  // The Outbound modal's callback analysis for the dept + window on screen,
+  // from getOutboundReport (the SAME RPC, cache and payload the modal reads),
+  // drawn by the modal's own renderers aimed at this fold's elements -- so
+  // the two cannot disagree while both exist (G3 deletes the modal).
+  // Visible only while the direction switch is visible (obAllowed_, the ONE
+  // client gate for the outbound surfaces -- admin-only until 6c, hidden in
+  // View-as) AND set to Outbound or Both. LAZY: nothing is fetched until the
+  // fold is OPEN, because Insights renders with every dept page load and this
+  // is one of the heavier Neon reads; a reopen for the same window repaints
+  // from the held payload (the chart included -- built while the fold was
+  // closed it would be the C3 zero-height canvas).
+  var INS_CB_ = { key: null, seq: 0, data: null, error: null, uncSeq: 0 };
+
+  function insCbWindow_() {
+    var m = insLastData && insLastData.meta;
+    if (!m || !m.department || !m.from || !m.to) return null;
+    return { department: m.department, from: m.from, to: m.to };
+  }
+
+  function insCbSync_() {
+    var fold = $('ins-cb-fold');
+    if (!fold) return;
+    var w = insCbWindow_();
+    var dir = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() : 'in';
+    if (!w || dir === 'in') { fold.style.display = 'none'; return; }
+    fold.style.display = '';
+    var key = [w.department, w.from, w.to].join('|');
+    var head = $('ins-cb-fold-head');
+    if (key !== INS_CB_.key) {
+      // A new window / dept: drop the held payload and orphan any fetch or
+      // drill still in flight for the old one (each lands only on its own key).
+      INS_CB_.key = key; INS_CB_.data = null; INS_CB_.error = null;
+      INS_CB_.seq++; INS_CB_.uncSeq++;
+      insCbResetUncalled_();
+      var content = $('ins-cb-content'); if (content) content.style.display = 'none';
+      insCbState_('');
+      if (head) head.textContent = 'open to load abandoned-caller callbacks';
+    }
+    if (!fold.open) return;
+    if (INS_CB_.data) { insCbRender_(INS_CB_.data); return; }
+    if (INS_CB_.error) { insCbState_('Callbacks could not be loaded: ' + INS_CB_.error); return; }
+    var tok = ++INS_CB_.seq;
+    if (head) head.textContent = 'loading…';
+    insCbState_('Loading callbacks…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (tok !== INS_CB_.seq) return;   // superseded by a newer window / dept
+        INS_CB_.data = data || {};
+        insCbRender_(INS_CB_.data);
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== INS_CB_.seq) return;
+        INS_CB_.error = (err && err.message) ? err.message : String(err);
+        if (head) head.textContent = 'unavailable';
+        insCbState_('Callbacks could not be loaded: ' + INS_CB_.error);
+      })
+      .getOutboundReport(w);
+  }
+
+  function insCbState_(text) {
+    var el = $('ins-cb-state');
+    if (!el) return;
+    el.style.display = text ? '' : 'none';
+    el.textContent = text || '';
+  }
+
+  function insCbResetUncalled_() {
+    var btn = $('ins-cb-uncalled-btn');
+    if (btn && btn.dataset.idleLabel) { btn.disabled = false; btn.textContent = btn.dataset.idleLabel; }
+    var list = $('ins-cb-uncalled-list');
+    if (list) { list.style.display = 'none'; list.innerHTML = ''; }
+    var st = $('ins-cb-uncalled-status');
+    if (st) st.textContent = '';
+  }
+
+  // PURE. The collapsed-summary headline, so the fold answers its question
+  // even closed once it has loaded.
+  function insCbHeadText_(cb) {
+    if (!cb || !cb.abandonedTotal) return 'no abandoned callers in this window';
+    return (cb.calledBackPct != null ? cb.calledBackPct + '% called back' : 'callback rate –')
+      + ' · ' + fmtNumber(cb.abandonedTotal) + ' abandoned'
+      + (cb.medianCallbackSec != null ? ' · median ' + fmtDuration(cb.medianCallbackSec) : '');
+  }
+
+  function insCbRender_(data) {
+    var meta = (data && data.meta) || {};
+    var cb = (data && data.callback) || {};
+    var head = $('ins-cb-fold-head');
+    var content = $('ins-cb-content');
+    // 'dept': the page's single date authority is the dept controls row (M4),
+    // so "Adjust range" moves the My Department From date and re-runs it.
+    coverageNoteUpsert_('ins-cb-body', 'dept', meta.from || null, null, meta.coverageStart || null);
+    if (meta.available === false) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'unavailable';
+      insCbState_('Callback data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
+      return;
+    }
+    if (!cb.abandonedTotal) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = insCbHeadText_(cb);
+      insCbState_('No abandoned calls on this department’s queues in this window, so there is nothing to call back.');
+      return;
+    }
+    insCbState_('');
+    if (content) content.style.display = '';
+    if (head) head.textContent = insCbHeadText_(cb);
+    var kp = $('ins-cb-kpis');
+    if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
+    var win = $('ins-cb-window');
+    if (win) win.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
+    outboundRenderDelayStrip_(cb, $('ins-cb-delay-strip'));
+    outboundRenderHourStrip_((data && data.callbackByHour) || [], $('ins-cb-hour-strip'));
+    // Draw-on-open: only reached while the fold is open (insCbSync_ returns
+    // early when it is closed), so the canvas has a real size here.
+    outboundRenderCbChart_((data && data.daily) || [], $('ins-cb-chart-wrap'), $('ins-cb-chart'));
+    var notes = [];
+    var subDepts = (meta.scopeDepts || []).slice(1);
+    if (subDepts.length) {
+      notes.push('Includes the abandoned callers of the ' + subDepts.join(', ') + ' sub-queue'
+        + (subDepts.length === 1 ? '' : 's') + ', as the department view of the Outbound report does.');
+    }
+    if (meta.fallbackSource === 'sheet') {
+      notes.push('Neon was unreachable: these figures come from the Outbound Calls tab'
+        + (meta.fallbackThrough ? ' (through ' + meta.fallbackThrough + ')' : '') + '.');
+    }
+    var note = $('ins-cb-note');
+    if (note) { note.style.display = notes.length ? '' : 'none'; note.textContent = notes.join(' '); }
+  }
+
+  // Wired once (the fold's own buttons). Each action reads the HELD payload,
+  // so it always matches what is on screen.
+  (function insCbWire_() {
+    var unc = $('ins-cb-uncalled-btn');
+    if (unc) unc.addEventListener('click', function () {
+      if (!INS_CB_.data) return;
+      outboundLoadUncalledInto_({
+        btn: unc, list: $('ins-cb-uncalled-list'), status: $('ins-cb-uncalled-status'),
+        meta: INS_CB_.data.meta || {},
+        nextSeq: function () { return ++INS_CB_.uncSeq; },
+        curSeq: function () { return INS_CB_.uncSeq; },
+      });
+    });
+    var csv = $('ins-cb-csv-btn');
+    if (csv) csv.addEventListener('click', function () { if (INS_CB_.data) outboundDownloadCsv_(INS_CB_.data); });
+    var mail = $('ins-cb-email-btn');
+    if (mail) mail.addEventListener('click', function () {
+      var m = (INS_CB_.data && INS_CB_.data.meta) || {};
+      if (!m.from || !m.to) return;
+      outboundSendEmailFor_(mail, { from: m.from, to: m.to, department: m.department || '' });
+    });
+  })();
 
   // Round-16: sync the Queue-health FOLD around the section -- visibility +
   // the collapsed summary's headline, so the fold answers its question even

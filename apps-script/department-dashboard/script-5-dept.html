@@ -4062,6 +4062,8 @@
     var dir = obEffectiveDir_();
     obSyncButtons_(dir);
     document.body.setAttribute('data-dir', dir);
+    // G1: the Insights Callbacks fold follows the switch (Outbound / Both).
+    if (typeof insCbSync_ === 'function') insCbSync_();
     var obWrap = $('agents-ob-wrap');
     var tob = $('dept-team-outbound');
     if (dir === 'in') {

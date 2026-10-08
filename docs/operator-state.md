@@ -2250,7 +2250,8 @@ When something looks wrong, before assuming a code bug, check:
        `data-admin-only` + `style="display:none;"` from `#outbound-report-btn`
        AND from `#dept-dir-switch` (the My Department Inbound | Outbound | Both
        switch, Batch D -- it reads the same gate) AND from `#ins-ob-fold` (the
-       Insights Outbound fold, Batch E) in `dashboard.html`. The Overview
+       Insights Outbound fold, Batch E) AND from `#ins-cb-fold` (the Insights
+       Callbacks fold, Batch G1) in `dashboard.html`. The Overview
        tiles' outbound line needs no edit: `personalizeOverview_` stops
        stripping it the moment the gate flips (it reads the same switch). The
        per-dept manager path underneath was kept

@@ -1180,6 +1180,54 @@
           </div>
         </details>
 
+        <!-- G1: CALLBACKS in Insights -- the Outbound report's callback
+             analysis ("did we call back the callers who abandoned?") moving
+             onto My Department (G3 retires the modal). Shown only while the
+             direction switch is visible AND set to Outbound or Both, so it is
+             ADMIN-ONLY until the 6c release exactly like #ins-ob-fold
+             (data-admin-only + display:none; cross-file-pins pins the pair).
+             LAZY: getOutboundReport runs only once the fold is opened --
+             it is one of the heavier Neon reads, and Insights renders with
+             every dept page load. The renderers are the modal's own
+             (outbound* in script-9), aimed at these elements. -->
+        <details id="ins-cb-fold" class="ins-fold" data-fold="cb" data-admin-only style="display:none;">
+          <summary class="ins-fold-summary">
+            <span class="ds-zone-label"><span class="ov-dir-pill">Outbound</span> Callbacks</span>
+            <span class="ins-fold-head" id="ins-cb-fold-head"></span>
+          </summary>
+          <div class="ins-fold-body" id="ins-cb-body">
+            <div id="ins-cb-state" class="ds-note" style="display:none;"></div>
+            <div id="ins-cb-content" style="display:none;">
+              <div id="ins-cb-kpis" class="pr-kpi-row"></div>
+              <div id="ins-cb-delay-strip" style="display:none;"></div>
+              <p class="al-hint">
+                &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
+                <span id="ins-cb-window">3</span> days, whether or not the call connected.
+                &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
+                greeting or a phone menu; the phone records report all three the same way, so
+                &ldquo;Callbacks connected&rdquo; is an upper bound on callers actually reached.
+                Callbacks count no matter which agent or department dialed. Anonymous abandons
+                (no caller ID) cannot be tracked and are excluded from the callback rate.
+              </p>
+              <div id="ins-cb-chart-wrap" style="display:none; max-width:100%; height:140px;">
+                <canvas id="ins-cb-chart"></canvas>
+              </div>
+              <div id="ins-cb-hour-strip" style="display:none;"></div>
+              <div class="esc-resolve-actions">
+                <button class="btn btn-secondary" id="ins-cb-uncalled-btn" type="button">List not-called-back calls</button>
+                <span id="ins-cb-uncalled-status" class="al-hint"></span>
+              </div>
+              <div id="ins-cb-uncalled-list" style="display:none;"></div>
+              <div id="ins-cb-note" class="ds-note" style="display:none;"></div>
+              <div class="esc-resolve-actions ins-cb-actions">
+                <button class="btn btn-secondary" id="ins-cb-csv-btn" type="button">Download CSV</button>
+                <button class="btn btn-secondary" id="ins-cb-email-btn" type="button"
+                        title="Email this outbound report (the window on screen) to yourself">Email to me</button>
+              </div>
+            </div>
+          </div>
+        </details>
+
         <!-- I4: the 12-month team trend is the ONE view the header window
              controls do NOT govern -- it always spans ~12 months (or the
              selected window in Daily), not the short windowed sections above

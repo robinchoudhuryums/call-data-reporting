@@ -1736,7 +1736,7 @@
     const back = $('outbound-back-btn');
     if (back) back.addEventListener('click', outboundShowForm);
     const csv = $('outbound-csv-btn');
-    if (csv) csv.addEventListener('click', outboundDownloadCsv_);
+    if (csv) csv.addEventListener('click', function () { outboundDownloadCsv_(); });
     const unc = $('outbound-uncalled-btn');
     if (unc) unc.addEventListener('click', outboundLoadUncalled_);
     const mail = $('outbound-email-btn');
@@ -1749,12 +1749,16 @@
    * drift from the screen; the button only has to send the window.
    */
   function sendOutboundEmail_() {
-    const btn = $('outbound-email-btn');
-    if (!btn || btn.disabled) return;
     const meta = (outboundLastData && outboundLastData.meta) || {};
     const from = meta.from || ($('outbound-from') ? $('outbound-from').value : '');
     const to   = meta.to   || ($('outbound-to')   ? $('outbound-to').value   : '');
     if (!from || !to) { outboundSetError('Generate the report first.'); return; }
+    outboundSendEmailFor_($('outbound-email-btn'), { from: from, to: to, department: meta.department || '' });
+  }
+  // Shared with the Insights Callbacks fold (G1): the button whose busy state
+  // to drive, and the window + scope the server recomputes from.
+  function outboundSendEmailFor_(btn, req) {
+    if (!btn || btn.disabled) return;
     const prev = btn.textContent;
     btn.disabled = true; btn.innerHTML = DS_EQ_HTML_ + 'Sending…';
     google.script.run
@@ -1766,7 +1770,7 @@
         btn.disabled = false; btn.textContent = prev;
         showToast('Could not send: ' + (err && err.message ? err.message : String(err)), 'error');
       })
-      .sendOutboundReportEmail({ from: from, to: to, department: meta.department || '' });
+      .sendOutboundReportEmail(req);
   }
 
   function outboundShowForm()    { $('outbound-form').style.display = ''; $('outbound-results').style.display = 'none'; outboundSetError(''); }
@@ -1895,32 +1899,7 @@
     // pending tail is a COUNT, not a caption guess: tracked abandons still
     // inside the callback window that could yet be called back.
     const cbRow = $('outbound-callback-kpis');
-    if (cbRow) cbRow.innerHTML = [
-      inboundKpiTile_('Abandoned', fmtNumber(cb.abandonedTotal),
-        fmtNumber(cb.abandonedAnonymous) + ' anonymous (untrackable)', ''),
-      inboundKpiTile_('Called back', fmtNumber(cb.calledBack),
-        'of ' + fmtNumber(cb.abandonedTracked) + ' trackable'
-        + (cb.pendingTail ? ' · ' + fmtNumber(cb.pendingTail) + ' still in window' : ''), ''),
-      inboundKpiTile_('Callback rate', cb.calledBackPct != null ? cb.calledBackPct + '%' : '—',
-        'of trackable abandons',
-        (cbp && cb.calledBackPct != null && cbp.calledBackPct != null)
-          ? inboundDelta_(cb.calledBackPct, cbp.calledBackPct, 'pos', true) : ''),
-      // (2): promoted from a caption. A callback that rang out is not a save,
-      // and burying that under "Callback rate" made the softer number the
-      // headline. SAME denominator as the tile above, deliberately, so the
-      // gap between the two is readable without arithmetic.
-      // Was "Actually reached" -- a claim the data cannot back: a connected
-      // callback includes voicemail and phone menus (owner ruling
-      // 2026-09-23). It is an upper bound on callers reached, and says so.
-      inboundKpiTile_('Callbacks connected',
-        cb.calledBackConnectedPct != null ? cb.calledBackConnectedPct + '%' : '—',
-        fmtNumber(cb.calledBackConnected) + ' · same denominator · incl. voicemail',
-        (cbp && cb.calledBackConnectedPct != null && cbp.calledBackConnectedPct != null)
-          ? inboundDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, 'pos', true) : ''),
-      inboundKpiTile_('Median time to callback',
-        cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
-        'first dial after the abandon', ''),
-    ].join('');
+    if (cbRow) cbRow.innerHTML = outboundCallbackTilesHtml_(cb, cbp);
     const winEl = $('outbound-cb-window');
     if (winEl) winEl.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
 
@@ -1982,6 +1961,44 @@
     }
     const agentSection = $('outbound-agent-section');
     if (agentSection) agentSection.style.display = agents.length ? '' : 'none';
+  }
+
+  /**
+   * The callback tile row ("did we call back the ones who abandoned?"),
+   * shared by the Outbound modal and the My Department Insights Callbacks
+   * fold (G1) so the two cannot word or compute a tile differently. `cbp` is
+   * the INV-28 prior window's callback block (null = no delta chips).
+   * The pending tail is a COUNT, not a caption guess: tracked abandons still
+   * inside the callback window that could yet be called back.
+   */
+  function outboundCallbackTilesHtml_(cb, cbp) {
+    cb = cb || {};
+    return [
+      inboundKpiTile_('Abandoned', fmtNumber(cb.abandonedTotal),
+        fmtNumber(cb.abandonedAnonymous) + ' anonymous (untrackable)', ''),
+      inboundKpiTile_('Called back', fmtNumber(cb.calledBack),
+        'of ' + fmtNumber(cb.abandonedTracked) + ' trackable'
+        + (cb.pendingTail ? ' · ' + fmtNumber(cb.pendingTail) + ' still in window' : ''), ''),
+      inboundKpiTile_('Callback rate', cb.calledBackPct != null ? cb.calledBackPct + '%' : '—',
+        'of trackable abandons',
+        (cbp && cb.calledBackPct != null && cbp.calledBackPct != null)
+          ? inboundDelta_(cb.calledBackPct, cbp.calledBackPct, 'pos', true) : ''),
+      // (2): promoted from a caption. A callback that rang out is not a save,
+      // and burying that under "Callback rate" made the softer number the
+      // headline. SAME denominator as the tile above, deliberately, so the
+      // gap between the two is readable without arithmetic.
+      // Was "Actually reached" -- a claim the data cannot back: a connected
+      // callback includes voicemail and phone menus (owner ruling
+      // 2026-09-23). It is an upper bound on callers reached, and says so.
+      inboundKpiTile_('Callbacks connected',
+        cb.calledBackConnectedPct != null ? cb.calledBackConnectedPct + '%' : '—',
+        fmtNumber(cb.calledBackConnected) + ' · same denominator · incl. voicemail',
+        (cbp && cb.calledBackConnectedPct != null && cbp.calledBackConnectedPct != null)
+          ? inboundDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, 'pos', true) : ''),
+      inboundKpiTile_('Median time to callback',
+        cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
+        'first dial after the abandon', ''),
+    ].join('');
   }
 
   // v5 (CB-1): the per-dept callback table (company view only). Own sort, not
@@ -2203,8 +2220,8 @@
     m15: 'within 15 min', h1: 'within 1 hour', h4: 'within 4 hours',
     d1: 'within a day', later: 'later',
   };
-  function outboundRenderDelayStrip_(cb) {
-    const el = $('outbound-delay-strip');
+  function outboundRenderDelayStrip_(cb, target) {
+    const el = target || $('outbound-delay-strip');
     if (!el) return;
     const b = cb && cb.delayBuckets;
     const total = Number(cb && cb.calledBack) || 0;
@@ -2248,8 +2265,8 @@
   // live surfaces, which is a poor thing to generalise under a deadline.
   // Hour-of-day alone is also the right cut here: splitting this volume
   // across five weekdays would leave most cells under the low-signal floor.
-  function outboundRenderHourStrip_(rows) {
-    const el = $('outbound-hour-strip');
+  function outboundRenderHourStrip_(rows, target) {
+    const el = target || $('outbound-hour-strip');
     if (!el) return;
     const list = (rows || []).filter(function (r) { return Number(r.tracked) > 0; });
     if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -2285,16 +2302,19 @@
       + (maxTracked ? '' : '') + '.</p>';
   }
 
-  var outboundCbChart_ = null;
-  function outboundRenderCbChart_(daily) {
-    const wrap = $('outbound-cb-chart-wrap');
-    const canvas = $('outbound-cb-chart');
+  // One chart instance PER CANVAS: the modal and the Insights Callbacks fold
+  // (G1) each own one, and rebuilding one must never destroy the other's.
+  var outboundCbCharts_ = {};
+  function outboundRenderCbChart_(daily, wrapEl, canvasEl) {
+    const wrap = wrapEl || $('outbound-cb-chart-wrap');
+    const canvas = canvasEl || $('outbound-cb-chart');
     if (!wrap || !canvas) return;
-    if (outboundCbChart_) { try { outboundCbChart_.destroy(); } catch (e) {} outboundCbChart_ = null; }
+    const slot = canvas.id || 'outbound-cb-chart';
+    if (outboundCbCharts_[slot]) { try { outboundCbCharts_[slot].destroy(); } catch (e) {} outboundCbCharts_[slot] = null; }
     const pts = (daily || []).filter(function (d) { return d.ratePct != null; });
     if (pts.length < 2) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
-    outboundCbChart_ = safeChart_(canvas, {
+    outboundCbCharts_[slot] = safeChart_(canvas, {
       type: 'line',
       data: {
         labels: pts.map(function (d) { return d.date; }),
@@ -2336,11 +2356,24 @@
   // path" journey chip; initClipboardOnce arms the delegated handler.
   var outboundUncalledSeq_ = 0;   // UI-5: bumped per request AND per report render
   function outboundLoadUncalled_() {
-    const btn = $('outbound-uncalled-btn');
-    const list = $('outbound-uncalled-list');
-    const status = $('outbound-uncalled-status');
+    outboundLoadUncalledInto_({
+      btn: $('outbound-uncalled-btn'), list: $('outbound-uncalled-list'),
+      status: $('outbound-uncalled-status'),
+      meta: (outboundLastData && outboundLastData.meta) || {},
+      nextSeq: function () { return ++outboundUncalledSeq_; },
+      curSeq: function () { return outboundUncalledSeq_; },
+    });
+  }
+  // The drill itself, shared with the Insights Callbacks fold (G1): `ctx`
+  // names the button / list / status elements, the report meta whose window
+  // and scope it re-queries, and the caller's OWN sequence counter (each
+  // surface orphans its own in-flight drill on a fresh render, UI-5).
+  function outboundLoadUncalledInto_(ctx) {
+    const btn = ctx.btn;
+    const list = ctx.list;
+    const status = ctx.status;
     if (!btn || !list) return;
-    const meta = (outboundLastData && outboundLastData.meta) || {};
+    const meta = ctx.meta || {};
     if (!meta.from) return;
     // Second click toggles the open list closed.
     if (list.style.display !== 'none' && list.innerHTML) {
@@ -2351,10 +2384,10 @@
     if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
     const prev = btn.dataset.idleLabel;
     btn.disabled = true; btn.textContent = 'Loading…';
-    const tok = ++outboundUncalledSeq_;
+    const tok = ctx.nextSeq();
     google.script.run
       .withSuccessHandler(function (resp) {
-        if (tok !== outboundUncalledSeq_) return;   // a newer render / drill owns the panel
+        if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
         btn.disabled = false; btn.textContent = prev;
         initClipboardOnce();
         // Empty here is GOOD news — heatCellDetailHtml_'s generic empty
@@ -2374,7 +2407,7 @@
         }
       })
       .withFailureHandler(function (err) {
-        if (tok !== outboundUncalledSeq_) return;
+        if (tok !== ctx.curSeq()) return;
         btn.disabled = false; btn.textContent = prev;
         if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
       })
@@ -2382,9 +2415,9 @@
         department: meta.companyView ? '' : (meta.department || '') });
   }
 
-  function outboundDownloadCsv_() {
-    if (!outboundLastData || (outboundLastData.meta || {}).available === false) return;
-    const d = outboundLastData;
+  function outboundDownloadCsv_(data) {
+    const d = (data && data.meta) ? data : outboundLastData;
+    if (!d || (d.meta || {}).available === false) return;
     const meta = d.meta || {};
     const cb = d.callback || {};
     const esc = function (v) {
