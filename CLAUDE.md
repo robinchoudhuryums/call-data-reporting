@@ -226,7 +226,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# ELEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# THIRTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -253,9 +253,13 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # chips on agent rows only -- Batches D/F),
 # drive-outbound-e.js (the Overview tiles' outbound line per card window +
 # the Insights Outbound fold's two-window deltas; neither reaches a manager
-# or View-as -- Batch E),
-# drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
-# Outbound and Agent Day -- + the Escalations worklist: each modal
+# or View-as -- Batch E), drive-callbacks.js (the Insights Callbacks fold:
+# Outbound/Both only, lazy one fetch, the shared renderers incl. a drawn chart
+# after a reopen, the drill's call path, CSV/email, 360 px -- Batch G1),
+# drive-cbdept.js (Callbacks by department on the Overview: admin-only, lazy,
+# its own window + sort, grouped rows, keyboard expand, CSV -- Batch G2),
+# drive-admin.js (the EIGHT driven modals -- the admin set plus Caller Lookup
+# and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
 # the F10 no-duplicate-badge property -- these had thorough server-side pins
 # and no assertion that any of them RENDERED, the dept-selector class of bug.
@@ -264,7 +268,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # route is neither driven by an asserting driver nor listed in its
 # DRIVER_MODAL_EXEMPT with a reason. The two REPORT modals Inbound and Direct
 # are the current documented exemptions -- admin-only while vetted, no harness
-# fixture yet (Outbound left the list at 6c). It also walks Help / chart tips /
+# fixture yet (the Outbound modal itself is retired, G3). It also walks Help / chart tips /
 # the call path stacked over a report and a failed Escalations init (Batch 7)),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
@@ -983,8 +987,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `journey` is where a real queue wait is derivable.
 - **Date-range presets NEVER include today, and the rule lives in ONE place.**
   `datePresetRange_` (script-1-core) is the single resolver behind every
-  "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
-  all-dept Queue report) AND the My Department chips. Every OPEN-ENDED preset (`yesterday` / `last7` /
+  "Quick select" dropdown (IR, Insights, Inbound, Direct, the Overview's
+  Callbacks by department, the all-dept Queue report) AND the My Department chips. Every OPEN-ENDED preset (`yesterday` / `last7` /
   `thisWeek` / `thisMonth` / `last30` / `last3Months` / `last12Months`) ends
   YESTERDAY: today's ingest has not landed while a manager is looking (the
   pipeline builds the PREVIOUS day), so including today tacks an empty day
@@ -2314,9 +2318,9 @@ S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
 S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
 S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
-S46 | Outbound report reaches a manager (the 6c release) | Subsystem: Department Dashboard
+S46 | Outbound reaches a manager on My Department (the 6c release) | Subsystem: Department Dashboard
 S47 | Agent-day view: fidelity degrades honestly across the three horizons | Subsystem: Department Dashboard
-S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
+S48 | Outbound callbacks by department (CB-1, on the Overview since G2) | Subsystem: Department Dashboard
 S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Department Dashboard
 S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Department Dashboard
 S51 | One escalation assigned to several departments -- linked copies (ESC-L1) | Subsystem: Department Dashboard
@@ -2327,6 +2331,7 @@ S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsyste
 S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
 S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
 S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
+S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

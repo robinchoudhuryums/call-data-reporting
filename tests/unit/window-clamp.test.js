@@ -160,11 +160,13 @@ test('the dept controls clamp BOTH ends, not just To', function () {
 });
 
 test('the per-call surfaces are deliberately NOT clamped (no latest date exists)', function () {
-  // Inbound / Outbound / Direct / Caller Lookup read the per-call tables, and
+  // Inbound / Direct / Caller Lookup read the per-call tables, and
   // the client holds no latest date for those. Wiring them to latestDqeIso_
   // would clamp away real rows. If a per-call latest is ever added, delete
   // this test in the same commit that wires them up.
-  ['inbound-from', 'outbound-from', 'direct-call-from', 'cl-from'].forEach(function (id) {
+  // (The Outbound modal's 'outbound-from' left with the modal, G3: its views
+  // now take the My Department window.)
+  ['inbound-from', 'direct-call-from', 'cl-from'].forEach(function (id) {
     const hit = ['script-9-inbound-direct.html', 'script-4-nav.html', 'script-2-chrome.html']
       .some(function (f) {
         try { return read(f).indexOf("clampInputsToLatest_('" + id + "'") !== -1; }

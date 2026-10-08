@@ -26,6 +26,7 @@ batch, items are independent unless marked.
 | ∥ | **Rulings round (scan 2026-10-01 deferred items)** — IMPLEMENTED (blocks 226-228) | Batch 13 (QO-2 ≥ 4% violations + history repair · DX-11 · PC-12 sub-queue Outbound rosters · AC-2 server-side agent email) · Batch 14 (ESC-D8 backup scrub on delete · CL-23 browser Back/Forward) · Batch 15 (CH-4 split of getSystemHealth + getCompanyOverview behind payload goldens); CL-20 accepted; LEG-2 waits on the decommission date | dashboard + cdr-import + cdr-report | MERGED #352 (2026-10-02); deploy per blocks 226-228; run Operator State #73 after the cdr-report deploy; walk S54 in two browsers before releasing Back/Forward |
 | ∥ | **CDR Import tools** (owner asks 2026-10-05) — SHIPPED | transfer filter Phase 0 (read-only probe + its dialog) · both CDR Tools menus grouped into submenus · AF-1 abandoned-filter dialog + on-tab check | cdr-import + cdr-report (menus) | MERGED #354, #355; cdr-import DEPLOYED 2026-10-05. Next: walk S55, then retire the fourteen per-queue items (AF-1 step 3); transfer filter Phase 1 once the owner confirms the Phase 0 shapes |
 | ∥ | **Agent + outbound views** (owner plan 2026-10-07) — IMPLEMENTED (blocks 231-236) | A ans/day + Agent Day tile rows · B inline agent panel · C outbound source probe (Operator State #74) · D Inbound \| Outbound \| Both + Team Outbound · E Overview tile outbound line + Insights Outbound fold · F prior-period chips on the outbound figures | dashboard (DEPLOY pending; walk S56-S58) | done; D-F admin-only until the 6c release (#63) |
+| ∥ | **Outbound report → My Department** (owner 2026-10-08: managers get the My Department version, not the modal) — G1, G2, G3 IMPLEMENTED (blocks 237-240) | G1 the Insights Callbacks fold (the modal's callback analysis, shared renderers, lazy) · G2 Callbacks by department → an admin-only, lazy Overview section; S48 rewritten · G3 retire the modal: `#/report/outbound` lands on My Department → Outbound with the fold open, the 6c pin re-pointed, drivers off the modal list, S46 + #63 rewritten | dashboard | done (walk S59, S48, S46's pre-release half); the modal is gone; the 6c release is now the gate + the switch + the two Insights folds (#63) |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 
@@ -326,7 +327,9 @@ never done**. So "enhancing Outbound" is a release runbook:
    vs the Inbound report + per-sample verdict re-verification.
 3. On a CLEAN `ok parity` only: remove the admin throw
    (`OutboundReport.gs:85-86`) and un-hide `#outbound-report-btn`
-   (`dashboard.html:89-91`). **Never un-gate on INCONCLUSIVE / FAILED /
+   (`dashboard.html:89-91`). *(Superseded by G3, 2026-10-08: the modal and its
+   menu item are retired; the release surfaces are now the My Department
+   switch and the two Insights folds -- Operator State #63 step 4.)* **Never un-gate on INCONCLUSIVE / FAILED /
    MISMATCH** — a zero-abandon window is inconclusive by construction.
 4. Add the ci:ui driver visit + a regression scenario in the same change.
 

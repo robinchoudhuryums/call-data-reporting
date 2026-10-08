@@ -22,6 +22,21 @@ site by `build-harness.js`. `tests/unit/ui-harness-vendor.test.js` pins their
 versions to the CDN versions `dashboard.html` loads, so the harness can never
 quietly verify the client against a different Chart.js than production ships.
 
+### Running ONE asserting driver by hand — rebuild BOTH roles first
+```bash
+node gen-payloads.js && node build-harness.js admin && node build-harness.js manager
+node drive-cbdept.js          # or any drive-*.js below
+```
+`build-harness.js` builds ONE site per run and defaults to admin, so after a
+client edit a bare `node build-harness.js` leaves `site/index-manager.html`
+STALE. That fails two ways, and only one is loud: a manager-side locator for
+new markup never matches (a confusing error), **or a manager-side "never
+sees / never fetches" check passes VACUOUSLY** because the stale page does not
+contain the surface at all (G2: a mutation that removed the admin guard went
+undetected until the manager page was rebuilt). `ci.mjs` always rebuilds both,
+so the gate itself is not affected -- this is the hand-run trap. When
+bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
+
 ### Asserting drivers (pass/fail — these gate CI)
 - `drive-smoke.js` — boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
@@ -45,9 +60,24 @@ quietly verify the client against a different Chart.js than production ships.
   the exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and
   reads the real bytes. Also the header **department switch**, which threw a
   `ReferenceError` in production until a driver first tried it.
-- `drive-admin.js` — nine **modals** (Alerts, Outlier Fix, Dept Config,
-  Access Control, System Health, Caller Lookup, Coaching, and the Outbound and
-  Agent Day reports, each run past its setup form) and the **Escalations
+- `drive-deptoutbound.js` — the My Department **Inbound | Outbound | Both**
+  switch and Team Outbound panel (Batches D/F): payload totals, manager and
+  View-as fall back to Inbound, panels never overlap, prior-period chips on
+  agent rows only, and one request per window (a Refresh never re-sends one
+  in flight; the table and the Insights fold share one store, FO-3).
+- `drive-outbound-e.js` — the Overview tiles' outbound line per card window
+  and the Insights **Outbound** fold (Batch E): two-window deltas, shown only
+  on Outbound / Both, never for a manager or View-as.
+- `drive-callbacks.js` — the Insights **Callbacks** fold (G1): lazy (one
+  fetch, on open), the shared renderers incl. a drawn chart after a reopen,
+  the not-called-back drill's call path, CSV / email, 360 px, and the retired
+  modal's `#/report/outbound` deep link (G3) for an admin and a manager.
+- `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
+  admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
+  keyboard expand and sort, CSV bytes.
+- `drive-admin.js` — eight **modals** (Alerts, Outlier Fix, Dept Config,
+  Access Control, System Health, Caller Lookup, Coaching, and the Agent Day
+  report, run past its setup form; the Outbound modal is retired, G3) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and
@@ -62,7 +92,10 @@ quietly verify the client against a different Chart.js than production ships.
   Escalations init, which must clear the loader, offer Retry, beacon, and
   recover (UI-4). To force a failure a driver sets
   `window.__HARNESS__.failOnce[<rpc>] = N`: the next N calls of that RPC reach
-  the failure handler.
+  the failure handler. To boot on a DEEP LINK a driver sets
+  `window.__HARNESS_HASH__` (e.g. `'/report/outbound'`) in an init script; the
+  stubbed `google.script.url.getLocation` answers ASYNCHRONOUSLY like the real
+  one, so the link lands after boot's default page, as in production.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong

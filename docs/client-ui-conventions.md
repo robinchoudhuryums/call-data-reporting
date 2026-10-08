@@ -2104,7 +2104,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   stripped by `personalizeOverview_` (`companyOverview:v28`).
 - **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
   `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
-  6c pin in `cross-file-pins.test.js` moves it with `#outbound-report-btn`).
+  6c pin in `cross-file-pins.test.js` moves it with the gate and the two Insights outbound folds).
   The client's permission IS the switch's visibility (`obAllowed_`), so
   view-as-manager falls back to Inbound with no role check. Outbound and Both
   render a SEPARATE table, `#agents-ob-table` (`obViewRender_`, script-5), so
@@ -2138,8 +2138,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   five tiles with `insDeltaBadge_` deltas (per day when the
   windows differ in length, CL-2) plus a per-agent table in a horizontal
   scroller (`.ins-ob-scroll`; the bare table pushed the page to 510 px at
-  360). It shows only while `obAllowed_()` is true, the same gate as Batch D,
-  so View-as and managers never fetch. A prior window that starts before capture shows
+  360). It shows only on the Outbound or Both direction (`obEffectiveDir_`,
+  i.e. `obAllowed_()`, the same gate as Batch D -- owner 2026-10-08 aligned it
+  with the G1 Callbacks fold; `obViewSync_` re-syncs both folds on a switch),
+  so Inbound, View-as and managers never fetch. A prior window that starts before capture shows
   no comparison and says why. It is not fetched on the SWR pre-paint, and a
   repeat render of the same windows repaints from the last result. The fold
   persists as `ob` in the Insights folds store and is open by default.
@@ -2159,6 +2161,50 @@ stay pinned by INV-39, INV-53 and INV-06.
   gets no chip (E5's rule), Total / subtotal rows get none, and a prior
   window starting before outbound capture shows none. Pinned by
   `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
+- **Callbacks in Insights -- the Outbound report moving onto My Department
+  (owner 2026-10, Batch G1).** The `#ins-cb-fold` fold (`insCbSync_`,
+  script-8) sits after the Outbound fold and carries the retired modal's callback
+  analysis for the region's dept + window: the five callback tiles (prior
+  deltas from `callbackPrior`), the "how fast" strip, the daily callback chart,
+  the by-hour strip, the not-called-back drill (rows carry the "↳ path" call
+  path) and CSV / email export. It reads the SAME `getOutboundReport` payload
+  the modal did and draws it with the shared renderers aimed at its
+  elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
+  `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one
+  chart per canvas), `outboundLoadUncalledInto_` (each surface passes its own
+  stale-drill counter, UI-5), `outboundDownloadCsv_(data)` and
+  `outboundSendEmailFor_` (script-9). **G3 retired the modal**: the legacy
+  `#/report/outbound` link lands HERE (`insCbDeepLink_`: switch to Outbound,
+  fold open + persisted, one-shot scroll after the first paint; a plain My
+  Department landing while the switch is hidden). It shows only on the Outbound or Both
+  direction (`obEffectiveDir_`, i.e. `obAllowed_`: admin-only until 6c, hidden
+  in View-as) and is LAZY: nothing is fetched until the fold is open, one fetch
+  per dept + window, a reopen repaints from the held payload (the chart is
+  drawn only while open -- the C3 trap), and a new window orphans an in-flight
+  fetch and drill. For a parent dept the figures include its sub-queues'
+  abandoned callers (as the modal's dept view did) and a note says so. The
+  coverage note's "Adjust range" moves the My Department From date. The fold
+  persists as `cb` in the Insights folds store. Rendered-gated by
+  `drive-callbacks.js` (incl. the deep link for an admin and for a manager).
+- **Callbacks by department on the Overview (owner 2026-10-08, Batch G2).**
+  The Outbound report's company-view table ("who calls back whose abandoned
+  callers", CB-1) as `#ov-cbdept-fold`, a collapsed section at the bottom of
+  the Overview. **Admin-only FOREVER** -- `data-admin-only` + display:none
+  (revealed by the admin loop, hidden by the View-as rule) and `ovCbDeptSync_`
+  refuses a non-admin -- and deliberately NOT in the 6c release pair: a
+  manager's page is one department. **Lazy:** it reads `getOutboundReport`
+  (department `''`, the company view) only while OPEN, for its own window
+  (Last 7 days / Last 30 days / Last 3 months via `datePresetRange_`, so it
+  ends yesterday), once per window; `ovLoad_` -- the landing and the 5-minute
+  auto-refresh -- never calls it (cross-file-pins "G2"). It shows the five
+  company callback tiles above the table, both drawn by the shared renderers:
+  `outboundCallbackTilesHtml_` and `outboundRenderCbDept_(t, meta, view)` with
+  an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
+  and last payload, so sorting one surface never reorders the other). The
+  column definitions are ONE list (`OB_CBDEPT_COLS_` / `obCbDeptTheadHtml_`)
+  that builds both tables' header row. The CSV is the company report in the
+  section's on-screen order (`outboundDownloadCsv_(data, sort)`). Rendered-gated
+  by `drive-cbdept.js`.
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's

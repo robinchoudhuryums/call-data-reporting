@@ -1685,76 +1685,22 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
   }
 
-  // -- Outbound report (Batch G, admin-only while vetted) ------------------
-  // "Did we call back the ones who abandoned?" + per-agent outbound activity
-  // from getOutboundReport (OutboundReport.gs). Mirrors the Direct report's
-  // client shape (form -> results, stale-response token, csvSafeCell_ CSV).
-  // The two caveat captions in the markup are part of the report's contract.
+  // -- Outbound renderers (shared) -----------------------------------------
+  // G3 (owner 2026-10-08): the Outbound report MODAL is retired. Its content
+  // lives on My Department -- the Insights Callbacks fold (G1, script-8) and
+  // the Outbound / Both table (Batch D, script-5) -- and its company-view
+  // callback table on the Overview (G2, script-3). #/report/outbound deep
+  // links land on the Callbacks fold (script-4's router). What stays here is
+  // the shared drawing code those surfaces call: the callback tiles, the two
+  // strips, the daily chart, the not-called-back drill, the per-dept table,
+  // the CSV and the email sender -- each aimed at the CALLER's elements.
 
-  var outboundLastData = null;
-
-  function initOutboundReport() {
-    const btn = $('outbound-report-btn');
-    const modal = $('outbound-modal');
-    if (!btn || !modal) return;
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
-      outboundShowForm();
-      outboundSetDefaultDates();
-      outboundEnsureDeptOptions_();
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
-
-    const preset = $('outbound-preset');
-    if (preset) preset.addEventListener('change', outboundApplyPreset);
-    const fromEl = $('outbound-from'), toEl = $('outbound-to');
-    if (fromEl) fromEl.addEventListener('change', function () { if ($('outbound-preset')) $('outbound-preset').value = 'custom'; });
-    if (toEl)   toEl.addEventListener('change',   function () { if ($('outbound-preset')) $('outbound-preset').value = 'custom'; });
-    const gen = $('outbound-generate-btn');
-    if (gen) gen.addEventListener('click', runOutboundReport);
-    const back = $('outbound-back-btn');
-    if (back) back.addEventListener('click', outboundShowForm);
-    const csv = $('outbound-csv-btn');
-    if (csv) csv.addEventListener('click', outboundDownloadCsv_);
-    const unc = $('outbound-uncalled-btn');
-    if (unc) unc.addEventListener('click', outboundLoadUncalled_);
-    const mail = $('outbound-email-btn');
-    if (mail) mail.addEventListener('click', sendOutboundEmail_);   // (5)
-  }
-
-  /**
-   * (5) Email the CURRENT view to the caller. The server recomputes from the
-   * same params rather than trusting a client payload, so the email cannot
-   * drift from the screen; the button only has to send the window.
-   */
-  function sendOutboundEmail_() {
-    const btn = $('outbound-email-btn');
+  // Email the window on screen to the caller (sendOutboundReportEmail). The
+  // server recomputes from the window + scope rather than trusting a client
+  // payload, so the email cannot drift from the screen; `btn` is the button
+  // whose busy state to drive.
+  function outboundSendEmailFor_(btn, req) {
     if (!btn || btn.disabled) return;
-    const meta = (outboundLastData && outboundLastData.meta) || {};
-    const from = meta.from || ($('outbound-from') ? $('outbound-from').value : '');
-    const to   = meta.to   || ($('outbound-to')   ? $('outbound-to').value   : '');
-    if (!from || !to) { outboundSetError('Generate the report first.'); return; }
     const prev = btn.textContent;
     btn.disabled = true; btn.innerHTML = DS_EQ_HTML_ + 'Sending…';
     google.script.run
@@ -1766,136 +1712,20 @@
         btn.disabled = false; btn.textContent = prev;
         showToast('Could not send: ' + (err && err.message ? err.message : String(err)), 'error');
       })
-      .sendOutboundReportEmail({ from: from, to: to, department: meta.department || '' });
+      .sendOutboundReportEmail(req);
   }
-
-  function outboundShowForm()    { $('outbound-form').style.display = ''; $('outbound-results').style.display = 'none'; outboundSetError(''); }
-  function outboundShowResults() { $('outbound-form').style.display = 'none'; $('outbound-results').style.display = ''; }
-  function outboundSetError(msg) {
-    const el = $('outbound-form-error'); if (!el) return;
-    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.textContent = msg; el.style.display = '';
-  }
-  function outboundSetDefaultDates() {
-    if ($('outbound-from') && $('outbound-from').value) return;
-    const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
-    if ($('outbound-from')) $('outbound-from').value = directCallIsoOf_(s);
-    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
-    if ($('outbound-to'))   $('outbound-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
-  }
-  function outboundApplyPreset() {
-    const v = $('outbound-preset').value;
-    if (v === 'custom') return;
-    // Shared resolver (script-1-core): open-ended presets end YESTERDAY.
-    const r = datePresetRange_(v);
-    if (!r) return;
-    $('outbound-from').value = r.from;
-    $('outbound-to').value   = r.to;
-  }
-  function outboundEnsureDeptOptions_() {
-    const sel = $('outbound-dept');
-    if (!sel || sel.options.length) return;
-    if (USER.role === 'admin') {
-      const opts = ['<option value="">All departments</option>'];
-      (USER.departments || []).forEach(function (d) {
-        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
-      });
-      sel.innerHTML = opts.join('');
-    } else {
-      const d = USER.department || '';
-      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
-      sel.disabled = true;
-    }
-  }
-
-  function runOutboundReport() {
-    const from = $('outbound-from').value, to = $('outbound-to').value;
-    if (!from || !to) { outboundSetError('Pick a start and end date.'); return; }
-    if (from > to) { outboundSetError('Start date must be on or before end date.'); return; }
-    outboundSetError('');
-    const dept = $('outbound-dept') ? $('outbound-dept').value : '';
-    const gen = $('outbound-generate-btn'); const prev = gen.textContent;
-    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
-    const __rtok = ++reportReqSeq_.out;   // C-8: stale-response guard
-    google.script.run
-      .withSuccessHandler(function (data) {
-        if (__rtok !== reportReqSeq_.out) return;
-        gen.disabled = false; gen.textContent = prev;
-        outboundRenderReport_(data);
-        outboundShowResults();
-      })
-      .withFailureHandler(function (err) {
-        if (__rtok !== reportReqSeq_.out) return;
-        gen.disabled = false; gen.textContent = prev;
-        outboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
-      })
-      .getOutboundReport({ from: from, to: to, department: dept });
-  }
-
-  function outboundRenderReport_(data) {
-    outboundLastData = data;
-    const meta = (data && data.meta) || {};
-    coverageNoteUpsert_('outbound-body', 'outbound',
-      meta.from || null, null, meta.coverageStart || null);
-    const unavail = $('outbound-unavailable');
-    const empty = $('outbound-empty');
-    const body = $('outbound-body');
-    if (unavail) unavail.style.display = 'none';
-    if (empty) empty.style.display = 'none';
-    if (body) body.style.display = '';
-
-    const dateEl = $('outbound-results-date');
-    if (dateEl) {
-      dateEl.textContent = (meta.from || '') + ' to ' + (meta.to || '')
-        + (meta.companyView ? ' · All departments' : (meta.department ? ' · ' + meta.department : ''));
-    }
-    if (meta.available === false) {
-      if (body) body.style.display = 'none';
-      if (unavail) unavail.style.display = '';
-      return;
-    }
-    const agents = (data && data.agents) || [];
-    const cb = (data && data.callback) || {};
-    if (!agents.length && !cb.abandonedTotal) {
-      if (body) body.style.display = 'none';
-      if (empty) empty.style.display = '';
-      return;
-    }
-
-    // v2 (R11-M): delta chips vs the INV-28 prior window. More outbound
-    // activity = good; a higher callback rate = good.
-    const k = (data && data.kpis) || {};
-    const kp = (data && data.kpisPrior) || null;
-    const cbp = (data && data.callbackPrior) || null;
-    const kpiRow = $('outbound-kpi-row');
-    if (kpiRow) kpiRow.innerHTML = [
-      inboundKpiTile_('Agents', fmtNumber(k.agents), 'with outbound calls', ''),
-      inboundKpiTile_('OB calls', fmtNumber(k.obTotal), fmtNumber(k.attempts) + ' dial attempts',
-        kp ? inboundDelta_(k.obTotal, kp.obTotal, 'pos', false) : ''),
-      // "Connected" includes voicemail and phone menus (OB_CONNECTED_DEF_,
-      // the glossary tooltip on the label) -- the foot says so where the
-      // number is read, not only on hover.
-      inboundKpiTile_('Connected', fmtNumber(k.obConnected),
-        (k.obConnectRate != null ? (k.obConnectRate + '% of calls · ') : '') + 'incl. voicemail',
-        (kp && k.obConnectRate != null && kp.obConnectRate != null)
-          ? inboundDelta_(k.obConnectRate, kp.obConnectRate, 'pos', true) : ''),
-      inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected call', ''),
-      // (4): the unconnected split. The CDR still cannot tell a no-answer
-      // from a voicemail -- that stays disclosed -- but ring LENGTH
-      // separates effort from noise, which is the distinction a manager can
-      // act on. Labelled a heuristic in the caption below, because it is one.
-      inboundKpiTile_('Rang out', fmtNumber(k.obUnconnectedReal),
-        'rang ' + (k.briefRingSec || 8) + 's or more — real attempts', ''),
-      inboundKpiTile_('Brief / misdial', fmtNumber(k.obUnconnectedBrief),
-        'under ' + (k.briefRingSec || 8) + 's'
-        + (k.obUnconnectedUnknown ? ' · ' + fmtNumber(k.obUnconnectedUnknown) + ' unknown' : ''), ''),
-    ].join('');
-
-    // Callback block ("did we call back the ones who abandoned?"). The
-    // pending tail is a COUNT, not a caption guess: tracked abandons still
-    // inside the callback window that could yet be called back.
-    const cbRow = $('outbound-callback-kpis');
-    if (cbRow) cbRow.innerHTML = [
+  /**
+   * The callback tile row ("did we call back the ones who abandoned?"),
+   * shared by the Insights Callbacks fold (G1) and the Overview's Callbacks
+   * by department section (G2) so the two cannot word or compute a tile
+   * differently. `cbp` is
+   * the INV-28 prior window's callback block (null = no delta chips).
+   * The pending tail is a COUNT, not a caption guess: tracked abandons still
+   * inside the callback window that could yet be called back.
+   */
+  function outboundCallbackTilesHtml_(cb, cbp) {
+    cb = cb || {};
+    return [
       inboundKpiTile_('Abandoned', fmtNumber(cb.abandonedTotal),
         fmtNumber(cb.abandonedAnonymous) + ' anonymous (untrackable)', ''),
       inboundKpiTile_('Called back', fmtNumber(cb.calledBack),
@@ -1921,77 +1751,25 @@
         cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
         'first dial after the abandon', ''),
     ].join('');
-    const winEl = $('outbound-cb-window');
-    if (winEl) winEl.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
-
-    outboundRenderDelayStrip_(cb);                              // (3)
-    outboundRenderCbChart_((data && data.daily) || []);
-    outboundRenderHourStrip_((data && data.callbackByHour) || []);   // (6)
-    outboundRenderCbDept_(meta.companyView ? (data && data.callbackByDept) : null, meta);   // v5 (CB-1)
-    // Reset the drill panel on every fresh render (scope may have changed).
-    // UI-5: and ORPHAN any drill still in flight -- it was fetched for the
-    // previous range, and used to land on top of this render.
-    outboundUncalledSeq_++;
-    const uncBtn = $('outbound-uncalled-btn');
-    if (uncBtn && uncBtn.dataset.idleLabel) { uncBtn.disabled = false; uncBtn.textContent = uncBtn.dataset.idleLabel; }
-    const uncList = $('outbound-uncalled-list');
-    if (uncList) { uncList.style.display = 'none'; uncList.innerHTML = ''; }
-    const uncStatus = $('outbound-uncalled-status');
-    if (uncStatus) uncStatus.textContent = '';
-
-    // Attribution disclosure (the roster-dept caveat, quantified).
-    const note = $('outbound-attribution-note');
-    if (note) {
-      const bits = [];
-      const subDepts = (meta.scopeDepts || []).slice(1);   // PC-12: the sub-queues this view includes
-      if (!meta.companyView && subDepts.length) {
-        bits.push('Includes the ' + subDepts.join(', ') + ' sub-queue roster' + (subDepts.length === 1 ? '' : 's')
-          + ', grouped under each department.');
-      }
-      if (!meta.companyView && meta.offRosterAgents) {
-        bits.push(fmtNumber(meta.offRosterAgents) + ' dialing agent(s) not on the '
-          + (meta.department || '') + (subDepts.length ? ' or sub-queue rosters' : ' roster')
-          + ' are excluded from this dept view (see All departments).');
-      }
-      if (meta.companyView && meta.unrosteredAgents) {
-        bits.push(fmtNumber(meta.unrosteredAgents) + ' agent(s) on no roster are shown as "Unrostered".');
-      }
-      bits.push('Attribution is by roster department (exact-name match), never the phone system’s org label.');
-      note.textContent = bits.join(' ');
-    }
-
-    // OWNER RULING (2026-08-20, Option C): the company view stays this FLAT
-    // table — deliberately NOT the Direct report's per-dept cards (R11-C5).
-    // Outbound has no queue/dept dimension, so a crossover agent (two roster
-    // homes) would force cards to either double-count them (one card per
-    // home) or misattribute (pick a primary); the flat table's multi-home
-    // "Roster dept" label dodges both honestly. Don't "upgrade" this to
-    // cards without a new ruling.
-    // PC-12: a parent dept's view also covers its sub-queues' rosters, so the
-    // rows are GROUPED per dept (the My Department combined-view shape: each
-    // group a heading with its own subtotal, the sort applied within each
-    // group). A single-dept view renders exactly as before.
-    const scopeDepts = meta.companyView ? [] : (meta.scopeDepts || []);
-    const grouped = scopeDepts.length > 1;
-    const tb = $('outbound-agent-tbody');
-    if (tb) {
-      srtApply_('outbound-agent-tbody', agents, function (sorted) {
-        tb.innerHTML = grouped ? outboundGroupedRowsHtml_(sorted, scopeDepts)
-                               : sorted.map(outboundAgentRowHtml_).join('');
-      }, function (r) { return Number(r.obTotal) || 0; });
-    }
-    const agentSection = $('outbound-agent-section');
-    if (agentSection) agentSection.style.display = agents.length ? '' : 'none';
   }
 
   // v5 (CB-1): the per-dept callback table (company view only). Own sort, not
   // srtApply_, because the rows are GROUPED: a sub-queue stays indented under
   // its parent whatever the order, the unmapped row stays last, and the total
   // row (a tfoot) never takes part. Default = worst own-rate first (ruling 1).
-  var obCbDeptSort_ = { key: 'ownPct', dir: 'asc' };
-  var obCbDeptLast_ = null;
-  function obCbDeptCmp_(a, b) {
-    const k = obCbDeptSort_.key, dir = obCbDeptSort_.dir === 'asc' ? 1 : -1;
+  //
+  // G2: the surface rendering this table holds its own VIEW -- its element-id
+  // prefix (<prefix>-section / -table / -tbody / -tfoot), its own sort and the
+  // payload it last painted -- so a second surface could never reorder it.
+  // Today the one surface is the admin-only Overview section (G3 retired the
+  // modal's copy).
+  var OB_CBDEPT_DEFAULT_SORT_ = { key: 'ownPct', dir: 'asc' };
+  function obCbDeptView_(prefix) {
+    return { prefix: prefix, sort: { key: OB_CBDEPT_DEFAULT_SORT_.key, dir: OB_CBDEPT_DEFAULT_SORT_.dir }, last: null };
+  }
+  function obCbDeptCmp_(a, b, sort) {
+    const srt = sort || OB_CBDEPT_DEFAULT_SORT_;
+    const k = srt.key, dir = srt.dir === 'asc' ? 1 : -1;
     const va = a[k], vb = b[k];
     // Nulls (no trackable abandons) sink regardless of direction.
     if (va == null && vb == null) return String(a.dept).localeCompare(String(b.dept));
@@ -2001,7 +1779,8 @@
       ? (va - vb) : String(va).localeCompare(String(vb));
     return (c * dir) || String(a.dept).localeCompare(String(b.dept));
   }
-  function obCbDeptOrder_(rows) {
+  function obCbDeptOrder_(rows, sort) {
+    const cmp = function (a, b) { return obCbDeptCmp_(a, b, sort); };
     const present = {};
     rows.forEach(function (r) { if (!r.unmapped) present[r.dept] = true; });
     const kids = {};
@@ -2013,11 +1792,36 @@
       else tops.push(r);
     });
     const out = [];
-    tops.sort(obCbDeptCmp_).forEach(function (t) {
+    tops.sort(cmp).forEach(function (t) {
       out.push(t);
-      (kids[t.dept] || []).sort(obCbDeptCmp_).forEach(function (c) { out.push(c); });
+      (kids[t.dept] || []).sort(cmp).forEach(function (c) { out.push(c); });
     });
     return out.concat(tail);
+  }
+  // The column definitions, ONE copy for both surfaces (G2). `tilesWord` names
+  // where the matching tiles sit ('above' in both today).
+  var OB_CBDEPT_COLS_ = [
+    { key: 'dept', label: 'Department', num: false, title: '' },
+    { key: 'tracked', label: 'Trackable abandons', num: true,
+      title: 'Abandoned calls on this department’s queues that carried caller ID (a parent includes its sub-queues). Anonymous abandons cannot be called back and are left out.' },
+    { key: 'ownPct', label: 'Called back by us', num: true,
+      title: 'Trackable abandons whose FIRST callback was dialed by an agent on this department’s roster (or a sub-queue’s). The ranked column.' },
+    { key: 'otherCalledBack', label: 'By another dept', num: true,
+      title: 'The first callback came from someone NOT on this department’s roster: another department, an unrostered dialer, or a call with no agent recorded. The caller was served, but not by the owning department.' },
+    { key: 'notCalledBack', label: 'Not called back', num: true,
+      title: 'No outbound call to the caller within the callback window.' },
+    { key: 'connectedPct', label: 'Callbacks connected (upper bound)', num: true,
+      title: 'Callbacks (by anyone) where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of trackable abandons.' },
+    { key: 'medianCallbackSec', label: 'Median time', num: true,
+      title: 'Median time from the abandoned call to the first callback, measured from the caller’s side: it INCLUDES any internal handoff (e.g. an email to the owning department), so it is not agent responsiveness alone. Same clock as the Median tile above.' },
+    { key: 'pendingTail', label: 'Still in window', num: true,
+      title: 'Not called back yet, but still inside the callback window.' },
+  ];
+  function obCbDeptTheadHtml_() {
+    return '<tr>' + OB_CBDEPT_COLS_.map(function (c) {
+      return '<th' + (c.num ? ' class="num sortable"' : ' class="sortable"') + ' data-cbsort="' + c.key + '" tabindex="0"'
+        + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '') + '>' + escapeHtml(c.label) + '</th>';
+    }).join('') + '</tr>';
   }
   function obCbDeptCellsHtml_(r) {
     const pct = function (v) { return v != null ? v + '%' : '—'; };
@@ -2071,12 +1875,14 @@
     }
     return html;
   }
-  function outboundPaintCbDept_() {
-    const t = obCbDeptLast_;
-    const tb = $('outbound-cbdept-tbody');
-    const tf = $('outbound-cbdept-tfoot');
+  function outboundPaintCbDept_(view) {
+    const v = view;
+    if (!v) return;
+    const t = v.last;
+    const tb = $(v.prefix + '-tbody');
+    const tf = $(v.prefix + '-tfoot');
     if (!t || !tb) return;
-    tb.innerHTML = obCbDeptOrder_(t.rows || []).map(function (r) {
+    tb.innerHTML = obCbDeptOrder_(t.rows || [], v.sort).map(function (r) {
       const child = !!(r.parent && !r.unmapped);
       return '<tr class="qcd-expandable ob-cbdept-row' + (child ? ' ob-cbdept-child' : '')
         + (r.unmapped ? ' ob-cbdept-unmapped' : '') + '">'
@@ -2094,25 +1900,29 @@
           + '<strong>All departments</strong></td>' + obCbDeptCellsHtml_(t.total) + '</tr>'
         : '';
     }
-    const table = $('outbound-cbdept-table');
+    const table = $(v.prefix + '-table');
     if (table) {
       table.querySelectorAll('th[data-cbsort]').forEach(function (th) {
-        const on = th.getAttribute('data-cbsort') === obCbDeptSort_.key;
-        th.classList.toggle('srt-asc', on && obCbDeptSort_.dir === 'asc');
-        th.classList.toggle('srt-desc', on && obCbDeptSort_.dir === 'desc');
-        if (on) th.setAttribute('aria-sort', obCbDeptSort_.dir === 'asc' ? 'ascending' : 'descending');
+        const on = th.getAttribute('data-cbsort') === v.sort.key;
+        th.classList.toggle('srt-asc', on && v.sort.dir === 'asc');
+        th.classList.toggle('srt-desc', on && v.sort.dir === 'desc');
+        if (on) th.setAttribute('aria-sort', v.sort.dir === 'asc' ? 'ascending' : 'descending');
         else th.removeAttribute('aria-sort');
       });
     }
   }
-  function outboundRenderCbDept_(t, meta) {
-    const sec = $('outbound-cbdept-section');
+  function outboundRenderCbDept_(t, meta, view) {
+    const v = view;
+    if (!v) return;
+    const sec = $(v.prefix + '-section');
     if (!sec) return;
-    obCbDeptLast_ = t || null;
+    v.last = t || null;
     if (!t || !(t.rows || []).length) { sec.style.display = 'none'; return; }
     sec.style.display = '';
-    const tb = $('outbound-cbdept-tbody');
-    const table = $('outbound-cbdept-table');
+    const tb = $(v.prefix + '-tbody');
+    const table = $(v.prefix + '-table');
+    const head = table && table.querySelector('thead');
+    if (head && !head.children.length) head.innerHTML = obCbDeptTheadHtml_();
     if (tb && !tb._obCbWired) {
       tb._obCbWired = true;
       // Delegated expand (the qcd-expandable contract: the button owns
@@ -2126,9 +1936,9 @@
       table._obCbWired = true;
       const sortBy = function (th) {
         const key = th.getAttribute('data-cbsort');
-        if (obCbDeptSort_.key === key) obCbDeptSort_.dir = obCbDeptSort_.dir === 'asc' ? 'desc' : 'asc';
-        else { obCbDeptSort_.key = key; obCbDeptSort_.dir = (key === 'dept' || key === 'ownPct' || key === 'connectedPct') ? 'asc' : 'desc'; }
-        outboundPaintCbDept_();
+        if (v.sort.key === key) v.sort.dir = v.sort.dir === 'asc' ? 'desc' : 'asc';
+        else { v.sort.key = key; v.sort.dir = (key === 'dept' || key === 'ownPct' || key === 'connectedPct') ? 'asc' : 'desc'; }
+        outboundPaintCbDept_(v);
       };
       const thead = table.querySelector('thead');
       if (thead) {
@@ -2145,46 +1955,7 @@
         });
       }
     }
-    outboundPaintCbDept_();
-  }
-
-  // PC-12: one heading row (dept, agent count, subtotals) per in-scope dept
-  // that has agents, then that dept's rows in the current sort order.
-  function outboundGroupedRowsHtml_(sorted, scopeDepts) {
-    return scopeDepts.map(function (d) {
-      const rows = sorted.filter(function (r) { return r.scopeDept === d; });
-      if (!rows.length) return '';
-      const t = rows.reduce(function (acc, r) {
-        acc.obTotal += Number(r.obTotal) || 0; acc.obConnected += Number(r.obConnected) || 0;
-        acc.obTalkSec += Number(r.obTalkSec) || 0; acc.attempts += Number(r.attempts) || 0;
-        return acc;
-      }, { obTotal: 0, obConnected: 0, obTalkSec: 0, attempts: 0 });
-      const rate = t.obTotal ? Math.round(t.obConnected / t.obTotal * 1000) / 10 : null;
-      const att = t.obConnected ? Math.round(t.obTalkSec / t.obConnected) : 0;
-      return '<tr class="ob-group-head">'
-        + '<td colspan="2">' + escapeHtml(d) + ' <span class="ob-group-count">' + rows.length
-        + ' agent' + (rows.length === 1 ? '' : 's') + '</span></td>'
-        + '<td class="num">' + fmtNumber(t.obTotal) + '</td>'
-        + '<td class="num">' + fmtNumber(t.obConnected) + '</td>'
-        + '<td class="num">' + (rate != null ? rate + '%' : '—') + '</td>'
-        + '<td class="num">' + fmtDuration(t.obTalkSec) + '</td>'
-        + '<td class="num">' + fmtDuration(att) + '</td>'
-        + '<td class="num">' + fmtNumber(t.attempts) + '</td>'
-        + '</tr>' + rows.map(outboundAgentRowHtml_).join('');
-    }).join('');
-  }
-
-  function outboundAgentRowHtml_(r) {
-    return '<tr>'
-      + '<td>' + escapeHtml(r.agent) + '</td>'
-      + '<td>' + escapeHtml(r.dept || '') + '</td>'
-      + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
-      + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
-      + '<td class="num">' + (r.obConnectRate != null ? r.obConnectRate + '%' : '—') + '</td>'
-      + '<td class="num">' + fmtDuration(r.obTalkSec) + '</td>'
-      + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
-      + '<td class="num">' + fmtNumber(r.attempts) + '</td>'
-      + '</tr>';
+    outboundPaintCbDept_(v);
   }
 
   // v2: daily callback-rate line (safeChart_ per the chart-callsite rule;
@@ -2203,8 +1974,8 @@
     m15: 'within 15 min', h1: 'within 1 hour', h4: 'within 4 hours',
     d1: 'within a day', later: 'later',
   };
-  function outboundRenderDelayStrip_(cb) {
-    const el = $('outbound-delay-strip');
+  function outboundRenderDelayStrip_(cb, target) {
+    const el = target;
     if (!el) return;
     const b = cb && cb.delayBuckets;
     const total = Number(cb && cb.calledBack) || 0;
@@ -2248,8 +2019,8 @@
   // live surfaces, which is a poor thing to generalise under a deadline.
   // Hour-of-day alone is also the right cut here: splitting this volume
   // across five weekdays would leave most cells under the low-signal floor.
-  function outboundRenderHourStrip_(rows) {
-    const el = $('outbound-hour-strip');
+  function outboundRenderHourStrip_(rows, target) {
+    const el = target;
     if (!el) return;
     const list = (rows || []).filter(function (r) { return Number(r.tracked) > 0; });
     if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -2285,16 +2056,19 @@
       + (maxTracked ? '' : '') + '.</p>';
   }
 
-  var outboundCbChart_ = null;
-  function outboundRenderCbChart_(daily) {
-    const wrap = $('outbound-cb-chart-wrap');
-    const canvas = $('outbound-cb-chart');
+  // One chart instance PER CANVAS (keyed by its id), so a second surface's
+  // rebuild can never destroy another's chart.
+  var outboundCbCharts_ = {};
+  function outboundRenderCbChart_(daily, wrapEl, canvasEl) {
+    const wrap = wrapEl;
+    const canvas = canvasEl;
     if (!wrap || !canvas) return;
-    if (outboundCbChart_) { try { outboundCbChart_.destroy(); } catch (e) {} outboundCbChart_ = null; }
+    const slot = canvas.id || 'cb-chart';
+    if (outboundCbCharts_[slot]) { try { outboundCbCharts_[slot].destroy(); } catch (e) {} outboundCbCharts_[slot] = null; }
     const pts = (daily || []).filter(function (d) { return d.ratePct != null; });
     if (pts.length < 2) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
-    outboundCbChart_ = safeChart_(canvas, {
+    outboundCbCharts_[slot] = safeChart_(canvas, {
       type: 'line',
       data: {
         labels: pts.map(function (d) { return d.date; }),
@@ -2334,13 +2108,16 @@
   // v2: the not-called-back drill. Reuses the heatmap cell drill's renderer
   // (heatCellDetailHtml_) so rows carry the same stage tick + facts + "↳
   // path" journey chip; initClipboardOnce arms the delegated handler.
-  var outboundUncalledSeq_ = 0;   // UI-5: bumped per request AND per report render
-  function outboundLoadUncalled_() {
-    const btn = $('outbound-uncalled-btn');
-    const list = $('outbound-uncalled-list');
-    const status = $('outbound-uncalled-status');
+  // The not-called-back drill (the Insights Callbacks fold, G1): `ctx` names
+  // the button / list / status elements, the report meta whose window and
+  // scope it re-queries, and the caller's OWN sequence counter (a fresh
+  // render orphans an in-flight drill, UI-5).
+  function outboundLoadUncalledInto_(ctx) {
+    const btn = ctx.btn;
+    const list = ctx.list;
+    const status = ctx.status;
     if (!btn || !list) return;
-    const meta = (outboundLastData && outboundLastData.meta) || {};
+    const meta = ctx.meta || {};
     if (!meta.from) return;
     // Second click toggles the open list closed.
     if (list.style.display !== 'none' && list.innerHTML) {
@@ -2351,10 +2128,10 @@
     if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
     const prev = btn.dataset.idleLabel;
     btn.disabled = true; btn.textContent = 'Loading…';
-    const tok = ++outboundUncalledSeq_;
+    const tok = ctx.nextSeq();
     google.script.run
       .withSuccessHandler(function (resp) {
-        if (tok !== outboundUncalledSeq_) return;   // a newer render / drill owns the panel
+        if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
         btn.disabled = false; btn.textContent = prev;
         initClipboardOnce();
         // Empty here is GOOD news — heatCellDetailHtml_'s generic empty
@@ -2374,7 +2151,7 @@
         }
       })
       .withFailureHandler(function (err) {
-        if (tok !== outboundUncalledSeq_) return;
+        if (tok !== ctx.curSeq()) return;
         btn.disabled = false; btn.textContent = prev;
         if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
       })
@@ -2382,9 +2159,9 @@
         department: meta.companyView ? '' : (meta.department || '') });
   }
 
-  function outboundDownloadCsv_() {
-    if (!outboundLastData || (outboundLastData.meta || {}).available === false) return;
-    const d = outboundLastData;
+  function outboundDownloadCsv_(data, cbDeptSort) {
+    const d = (data && data.meta) ? data : null;
+    if (!d || (d.meta || {}).available === false) return;
     const meta = d.meta || {};
     const cb = d.callback || {};
     const esc = function (v) {
@@ -2413,7 +2190,7 @@
           r.otherCalledBack, r.notCalledBack, r.calledBackConnected, r.connectedPct != null ? r.connectedPct : '',
           r.medianCallbackSec != null ? r.medianCallbackSec : '', r.pendingTail]);
       };
-      obCbDeptOrder_(cbd.rows).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
+      obCbDeptOrder_(cbd.rows, cbDeptSort).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
       if (cbd.total) lines.push(cbdRow('All departments (each abandon once)', '', cbd.total));
     }
     lines.push('');

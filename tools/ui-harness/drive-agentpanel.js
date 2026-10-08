@@ -181,9 +181,10 @@ function record(name, pass, detail) {
   });
   const menuBtn = page.locator('#csv-export-btn');
   if (await menuBtn.count()) { await menuBtn.click(); await page.waitForTimeout(300); }
+  // The My Department export menu's item specifically (the Overview's
+  // Callbacks by department section has its own, EARLIER, "Download CSV").
   await page.evaluate(() => {
-    const cands = Array.from(document.querySelectorAll('button, a, .menu-item, .header-menu-item'));
-    const hit = cands.find((e) => /download csv/i.test((e.textContent || '').trim()));
+    const hit = document.querySelector('#dept-export-menu [data-action="csv"]');
     if (hit) hit.click();
   });
   await page.waitForTimeout(700);

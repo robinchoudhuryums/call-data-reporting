@@ -89,13 +89,6 @@
             <button class="header-menu-item" id="agent-day-btn" type="button"
                     data-route="/report/agent-day" role="menuitem"
                     title="One agent, one day, call by call: which calls they answered, missed or merely rang on, plus their outbound activity. Managers see their own roster; fidelity degrades past the capture horizons and the view says so.">Agent day</button>
-            <!-- 6c release pairing: this item's `data-admin-only` +
-                 `style="display:none;"` come off in the SAME commit that flips
-                 OutboundReport.gs::OUTBOUND_VETTING_GATE_ to false (Operator
-                 State #63). cross-file-pins fails if only one half moves. -->
-            <button class="header-menu-item" id="outbound-report-btn" type="button"
-                    data-route="/report/outbound" data-admin-only role="menuitem" style="display:none;"
-                    title="Outbound call analytics (admin-only while being vetted): did we call back the callers who abandoned, plus per-agent outbound activity attributed by roster department.">Outbound</button>
           </div>
         </div>
         <button class="header-menu-btn" id="caller-lookup-btn" type="button" data-route="/admin/caller-lookup" data-admin-only style="display:none;"
@@ -299,6 +292,53 @@
             <tbody id="ov-user-tbody"></tbody>
           </table>
         </div>
+        <!-- G2: CALLBACKS BY DEPARTMENT -- the company-wide "who calls back
+             whose abandoned callers" table, moved here from the Outbound
+             report's company view (G3 retires the modal). ADMIN-ONLY FOREVER:
+             data-admin-only + display:none (revealed by the admin loop, hidden
+             in View-as), and NOT part of the 6c release pair -- a manager's
+             page is one department. LAZY: getOutboundReport (company view) runs
+             only once the section is OPEN, and only for its own window -- the
+             5-minute auto-refresh never touches it (ovLoad_ does not call it). -->
+        <details id="ov-cbdept-fold" class="ov-cbdept-fold" data-admin-only style="display:none;">
+          <summary class="ov-cbdept-summary">
+            <span class="ds-zone-label"><span class="ov-dir-pill">Outbound</span> Callbacks by department</span>
+            <span class="ov-cbdept-head" id="ov-cbdept-head">open to load</span>
+          </summary>
+          <div class="ov-cbdept-body" id="ov-cbdept-body">
+            <div class="ov-cbdept-controls">
+              <span class="segmented" id="ov-cbdept-window" role="group" aria-label="Callbacks window">
+                <button type="button" class="seg-btn" data-preset="last7" aria-pressed="false">Last 7 days</button>
+                <button type="button" class="seg-btn active" data-preset="last30" aria-pressed="true">Last 30 days</button>
+                <button type="button" class="seg-btn" data-preset="last3Months" aria-pressed="false">Last 3 months</button>
+              </span>
+              <span class="al-hint" id="ov-cbdept-dates"></span>
+              <button type="button" class="btn btn-secondary" id="ov-cbdept-csv-btn">Download CSV</button>
+            </div>
+            <div id="ov-cbdept-state" class="ds-note" style="display:none;"></div>
+            <div id="ov-cbdept-content" style="display:none;">
+              <div id="ov-cbdept-kpis" class="pr-kpi-row"></div>
+              <div class="al-section" id="ov-cbdept-section" style="display:none;">
+                <p class="al-hint">
+                  Each department is responsible for calling back its own abandoned callers.
+                  &ldquo;Called back by us&rdquo; counts abandons on the department&rsquo;s queues whose
+                  <strong>first</strong> callback came from its own agents (a parent includes its
+                  sub-queues&rsquo; queues and agents). Times run from the abandoned call and include
+                  any internal handoff. Expand a row to see who made the callbacks. The rows do not
+                  sum to the total: a parent includes its sub-queues, and a queue shared by two
+                  departments is in both.
+                </p>
+                <div class="ov-cbdept-scroll">
+                  <table class="al-config-table ob-cbdept-table" id="ov-cbdept-table">
+                    <thead></thead>
+                    <tbody id="ov-cbdept-tbody"></tbody>
+                    <tfoot id="ov-cbdept-tfoot"></tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -453,10 +493,10 @@
         <span id="dqe-table-date" class="dept-qcd-date"></span>
         <span class="dept-qcd-hint">Click a row to see that agent’s days; the Individual Report is one click inside.</span>
         <!-- Batch D (owner plan 2026-10): Inbound | Outbound | Both. ADMIN-ONLY
-             while the Outbound report is vetted -- this switch is released in
-             the SAME commit as #outbound-report-btn and
-             OutboundReport.gs::OUTBOUND_VETTING_GATE_ (Operator State #63);
-             cross-file-pins fails if the three disagree. The client reads the
+             while the outbound views are vetted -- this switch is released in
+             the SAME commit as OutboundReport.gs::OUTBOUND_VETTING_GATE_ and
+             the Insights Outbound + Callbacks folds (Operator State #63);
+             cross-file-pins fails if they disagree. The client reads the
              switch's own visibility as the permission, so view-as-manager
              (which hides [data-admin-only]) drops back to Inbound too. -->
         <div id="dept-dir-switch" class="dept-qcd-period dept-dir-switch" role="group" aria-label="Call direction"
@@ -1177,6 +1217,54 @@
             <div id="ins-ob-kpis" class="pr-kpi-row ad-kpi-row--out"></div>
             <div id="ins-ob-agents"></div>
             <div id="ins-ob-note" class="ds-note" style="display:none;"></div>
+          </div>
+        </details>
+
+        <!-- G1: CALLBACKS in Insights -- the Outbound report's callback
+             analysis ("did we call back the callers who abandoned?") moving
+             onto My Department (G3 retires the modal). Shown only while the
+             direction switch is visible AND set to Outbound or Both, so it is
+             ADMIN-ONLY until the 6c release exactly like #ins-ob-fold
+             (data-admin-only + display:none; cross-file-pins pins the pair).
+             LAZY: getOutboundReport runs only once the fold is opened --
+             it is one of the heavier Neon reads, and Insights renders with
+             every dept page load. The renderers are the modal's own
+             (outbound* in script-9), aimed at these elements. -->
+        <details id="ins-cb-fold" class="ins-fold" data-fold="cb" data-admin-only style="display:none;">
+          <summary class="ins-fold-summary">
+            <span class="ds-zone-label"><span class="ov-dir-pill">Outbound</span> Callbacks</span>
+            <span class="ins-fold-head" id="ins-cb-fold-head"></span>
+          </summary>
+          <div class="ins-fold-body" id="ins-cb-body">
+            <div id="ins-cb-state" class="ds-note" style="display:none;"></div>
+            <div id="ins-cb-content" style="display:none;">
+              <div id="ins-cb-kpis" class="pr-kpi-row"></div>
+              <div id="ins-cb-delay-strip" style="display:none;"></div>
+              <p class="al-hint">
+                &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
+                <span id="ins-cb-window">3</span> days, whether or not the call connected.
+                &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
+                greeting or a phone menu; the phone records report all three the same way, so
+                &ldquo;Callbacks connected&rdquo; is an upper bound on callers actually reached.
+                Callbacks count no matter which agent or department dialed. Anonymous abandons
+                (no caller ID) cannot be tracked and are excluded from the callback rate.
+              </p>
+              <div id="ins-cb-chart-wrap" style="display:none; max-width:100%; height:140px;">
+                <canvas id="ins-cb-chart"></canvas>
+              </div>
+              <div id="ins-cb-hour-strip" style="display:none;"></div>
+              <div class="esc-resolve-actions">
+                <button class="btn btn-secondary" id="ins-cb-uncalled-btn" type="button">List not-called-back calls</button>
+                <span id="ins-cb-uncalled-status" class="al-hint"></span>
+              </div>
+              <div id="ins-cb-uncalled-list" style="display:none;"></div>
+              <div id="ins-cb-note" class="ds-note" style="display:none;"></div>
+              <div class="esc-resolve-actions ins-cb-actions">
+                <button class="btn btn-secondary" id="ins-cb-csv-btn" type="button">Download CSV</button>
+                <button class="btn btn-secondary" id="ins-cb-email-btn" type="button"
+                        title="Email this outbound report (the window on screen) to yourself">Email to me</button>
+              </div>
+            </div>
           </div>
         </details>
 
@@ -2226,185 +2314,6 @@
             </table>
           </div>
           <div id="direct-call-dept-cards" class="direct-dept-cards" style="display:none;"></div>
-        </div>
-      </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Outbound report (Batch G, admin-only while vetted): "did we call back
-       the ones who abandoned?" + per-agent outbound activity, from Neon
-       outbound_calls (OutboundReport.gs). The two caveat captions in the
-       results body are part of the contract -- see the .gs header. -->
-  <div id="outbound-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="outbound-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/outbound"
-                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-        <button class="modal-close" id="outbound-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report &middot; Admin</div>
-        <h2 id="outbound-modal-title">Outbound Calls</h2>
-      </div>
-      <div class="modal-panel-body">
-      <div id="outbound-form" class="ir-form">
-        <div class="ir-section-title">Date Range</div>
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="outbound-preset">Quick select</label>
-            <select id="outbound-preset">
-              <option value="custom">Custom range</option>
-              <option value="last7">Last 7 days</option>
-              <option value="last30" selected>Last 30 days</option>
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last3Months">Last 3 months</option>
-            </select>
-          </div>
-          <div class="ir-col">
-            <label for="outbound-from">Start date</label>
-            <input type="date" id="outbound-from">
-          </div>
-          <div class="ir-col">
-            <label for="outbound-to">End date</label>
-            <input type="date" id="outbound-to">
-          </div>
-          <div class="ir-col">
-            <label for="outbound-dept">Department</label>
-            <select id="outbound-dept"></select>
-          </div>
-        </div>
-        <div class="ir-hint">
-          Outbound calls from <strong>Neon</strong> (<code>outbound_calls</code>):
-          whether abandoned callers were <strong>called back</strong>, plus per-agent
-          outbound activity. Agents are attributed by <strong>roster</strong>
-          department (never the phone system&rsquo;s org label). Admin-only while
-          the numbers are vetted.
-        </div>
-        <div id="outbound-form-error" role="status" class="status status-error" style="display:none;"></div>
-        <button class="btn" id="outbound-generate-btn" type="button">Generate report</button>
-      </div>
-
-      <div id="outbound-results" class="ir-results" style="display:none;">
-        <div class="ds-toolbar">
-          <div>
-            <span class="ir-results-title">Outbound Calls</span>
-            <span class="ir-results-date" id="outbound-results-date"></span>
-          </div>
-          <div>
-            <button class="btn btn-secondary" id="outbound-csv-btn" type="button">Download CSV</button>
-            <!-- (5): Inbound / Individual / Insights all had one; the callback
-                 rate is exactly the number worth arriving rather than being
-                 visited. Sends the CURRENT view to the caller only. -->
-            <button class="btn btn-secondary" id="outbound-email-btn" type="button"
-                    title="Email this report (the window currently on screen) to yourself">Email to me</button>
-            <button class="btn btn-secondary" id="outbound-back-btn" type="button">&laquo; Back</button>
-          </div>
-        </div>
-        <div id="outbound-unavailable" class="empty-state" style="display:none;">
-          Outbound data (Neon) is unavailable right now &mdash; the report has no
-          sheet fallback. Try again in a minute; if it persists, check the
-          <code>NEON_*</code> Script Properties and Neon status.
-        </div>
-        <div id="outbound-empty" class="empty-state" style="display:none;">
-          No outbound calls captured in this range.
-        </div>
-        <div id="outbound-body">
-          <div id="outbound-kpi-row" class="pr-kpi-row"></div>
-          <div class="al-section" id="outbound-callback-section">
-            <h3 class="al-section-title">Abandoned-caller callbacks</h3>
-            <div id="outbound-callback-kpis" class="pr-kpi-row"></div>
-            <!-- (3): the time-to-callback DISTRIBUTION. A median hides the
-                 tail, and a two-day-later callback is not the save a
-                 five-minute one is. Hidden when there are no callbacks to
-                 distribute -- an all-zero strip would read as "all slow". -->
-            <div id="outbound-delay-strip" style="display:none;"></div>
-            <!-- The two contract caveats (see OutboundReport.gs header). -->
-            <p class="al-hint" id="outbound-callback-caption">
-              &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
-              <span id="outbound-cb-window">3</span> days, whether or not the call connected.
-              &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
-              greeting or a phone menu; the phone records report all three the same way, so
-              &ldquo;Callbacks connected&rdquo; is an upper bound on callers actually reached.
-              Callbacks count no matter which agent or department dialed. Anonymous abandons
-              (no caller ID) cannot be tracked and are excluded from the callback rate.
-            </p>
-            <!-- v2: daily callback-rate trend (safeChart_; hidden under 2 days). -->
-            <div id="outbound-cb-chart-wrap" style="display:none; max-width:100%;">
-              <canvas id="outbound-cb-chart" height="110"></canvas>
-            </div>
-            <!-- (6): callback rate by the ABANDON's hour. The daily series
-                 above answers "are we keeping up"; this answers "WHICH
-                 abandons fall through the cracks", which is the actionable
-                 one. Deliberately NOT the shared weekday x hour heatmap --
-                 see the note in outboundRenderHourStrip_. -->
-            <div id="outbound-hour-strip" style="display:none;"></div>
-            <!-- v2: the not-called-back drill (rows reuse the heatmap cell
-                 drill renderer incl. the "↳ path" journey chips). -->
-            <div class="esc-resolve-actions">
-              <button class="btn btn-secondary" id="outbound-uncalled-btn" type="button">List not-called-back calls</button>
-              <span id="outbound-uncalled-status" class="al-hint"></span>
-            </div>
-            <div id="outbound-uncalled-list" style="display:none;"></div>
-          </div>
-          <!-- v5 (CB-1): the per-dept callback table. COMPANY VIEW ONLY (on a
-               single dept it would repeat the tiles above). Rows sort worst
-               own-rate first; a sub-queue sits indented under its parent; the
-               total row counts each abandon ONCE, so the rows never sum to it
-               (a parent includes its sub-queues; a queue shared by two depts
-               is in both). Expand a row for who made the callbacks. -->
-          <div class="al-section" id="outbound-cbdept-section" style="display:none;">
-            <h3 class="al-section-title">Callbacks by department</h3>
-            <p class="al-hint">
-              Each department is responsible for calling back its own abandoned callers.
-              &ldquo;Called back by us&rdquo; counts abandons on the department&rsquo;s queues whose
-              <strong>first</strong> callback came from its own agents (a parent includes its
-              sub-queues&rsquo; queues and agents). Times run from the abandoned call and include
-              any internal handoff. Expand a row to see who made the callbacks.
-            </p>
-            <div style="overflow-x:auto;">
-              <table class="al-config-table ob-cbdept-table" id="outbound-cbdept-table">
-                <thead><tr>
-                  <th data-cbsort="dept" tabindex="0" class="sortable">Department</th>
-                  <th class="num sortable" data-cbsort="tracked" tabindex="0"
-                      title="Abandoned calls on this department&rsquo;s queues that carried caller ID (a parent includes its sub-queues). Anonymous abandons cannot be called back and are left out.">Trackable abandons</th>
-                  <th class="num sortable" data-cbsort="ownPct" tabindex="0"
-                      title="Trackable abandons whose FIRST callback was dialed by an agent on this department&rsquo;s roster (or a sub-queue&rsquo;s). The ranked column.">Called back by us</th>
-                  <th class="num sortable" data-cbsort="otherCalledBack" tabindex="0"
-                      title="The first callback came from someone NOT on this department&rsquo;s roster: another department, an unrostered dialer, or a call with no agent recorded. The caller was served, but not by the owning department.">By another dept</th>
-                  <th class="num sortable" data-cbsort="notCalledBack" tabindex="0"
-                      title="No outbound call to the caller within the callback window.">Not called back</th>
-                  <th class="num sortable" data-cbsort="connectedPct" tabindex="0"
-                      title="Callbacks (by anyone) where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of trackable abandons.">Callbacks connected (upper bound)</th>
-                  <th class="num sortable" data-cbsort="medianCallbackSec" tabindex="0"
-                      title="Median time from the abandoned call to the first callback, measured from the caller&rsquo;s side: it INCLUDES any internal handoff (e.g. an email to the owning department), so it is not agent responsiveness alone. Same clock as the Median tile above.">Median time</th>
-                  <th class="num sortable" data-cbsort="pendingTail" tabindex="0"
-                      title="Not called back yet, but still inside the callback window.">Still in window</th>
-                </tr></thead>
-                <tbody id="outbound-cbdept-tbody"></tbody>
-                <tfoot id="outbound-cbdept-tfoot"></tfoot>
-              </table>
-            </div>
-          </div>
-          <div class="al-section" id="outbound-agent-section">
-            <h3 class="al-section-title">Per-agent outbound activity</h3>
-            <p class="al-hint" id="outbound-attribution-note"></p>
-            <div style="overflow-x:auto;">
-              <table class="al-config-table" id="outbound-agent-table">
-                <thead><tr>
-                  <th data-sort="agent">Agent</th>
-                  <th data-sort="dept">Roster dept</th>
-                  <th class="num" data-sort="obTotal">Calls</th>
-                  <th class="num" data-sort="obConnected">Connected</th>
-                  <th class="num" data-sort="obConnectRate">Connect %</th>
-                  <th class="num" data-sort="obTalkSec">Talk</th>
-                  <th class="num" data-sort="obAttSec">ATT</th>
-                  <th class="num" data-sort="attempts">Attempts</th>
-                </tr></thead>
-                <tbody id="outbound-agent-tbody"></tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
       </div>

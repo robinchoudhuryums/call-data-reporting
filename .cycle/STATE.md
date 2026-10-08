@@ -1,6 +1,32 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-08 — FO-3 + G3 IMPLEMENTED (block 240): the Outbound modal is retired.**
+  - FO-3: one client store (obSummaryFetch_) for getDeptOutboundSummary, shared by the Batch D table and the Insights Outbound fold; a switch to Outbound now sends each window once.
+  - G3: modal markup + menu item + modal-only client code removed; `#/report/outbound` lands on My Department -> Outbound with the Callbacks fold open (admin; a plain landing for anyone else); the 6c pin pairs the gate with #dept-dir-switch / #ins-ob-fold / #ins-cb-fold and fails if the modal returns. Harness getLocation is async + deep-linkable.
+  - 2244 tests; every ci:ui stage green; four bites.
+
+  **Owner-side:** deploy, walk S46's pre-release half, S48, S59. The 6c release (#63 step 4) whenever vetting is done.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-08 — G2 follow-ons IMPLEMENTED (block 239).** FO-1: Batch D's outbound view no longer re-sends a request for a window already in flight (a Refresh sent each window twice; a new two-round driver check reproduced it and now passes). FO-2: the ui-harness README warns that a stale manager build makes manager checks pass vacuously on hand runs. Gates green.
+  **Next:** G3 (retire the modal) before the 6c release; owner call on sharing one store between the Batch D table and the Insights Outbound fold (they fetch the same windows twice).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-08 — Batch G2 IMPLEMENTED (block 238): Callbacks by department on the Overview + the Insights Outbound fold follows the switch.**
+  - Owner: "align it too" -> `#ins-ob-fold` shows only on Outbound / Both (like G1's Callbacks fold).
+  - `#ov-cbdept-fold`: the company callback table + five tiles at the bottom of the Overview, ADMIN-ONLY FOREVER (not in the 6c pair), lazy (fetch only while open, own window Last 7/30 days/3 months, one fetch per window, never on the auto-refresh). Drawn by the modal's renderers through a per-surface VIEW (own sort); one shared column list builds both headers.
+  - New blocking stage drive-cbdept.js (19 checks); a "G2" cross-file pin; drive-subqueue / drive-agentpanel CSV selectors tightened (they clicked the first page-wide "Download CSV"). 2243 tests; every ci:ui stage green; four mutations bite.
+
+  **Owner-side:** deploy the dashboard and walk S48 (now on the Overview), S58's direction step and S59.
+  **Next:** G3 (retire the modal) before the 6c release.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-08 — Batch G1 IMPLEMENTED (block 237): the Callbacks fold in Insights — step 1 of moving the Outbound report onto My Department.**
+  - Owner rulings (2026-10-08): managers get the My Department version, not the modal; Callbacks by department goes to an admin-only Overview section (G2); integrate first, release once (G3 before 6c). `runOutboundVettingCheck` read `ok parity`; the owner is still vetting accuracy before release. The source probe (#74) read MISMATCH, so outbound stays on Neon (already the design).
+  - `#ins-cb-fold`: the modal's callback tiles, strips, chart, not-called-back drill + call path, CSV / email, drawn by the modal's OWN renderers (now target-aware in script-9). Outbound / Both only, admin-only, lazy (fetch on open, one per window).
+  - The 6c pin and the UI-5 pin moved with it; new blocking stage drive-callbacks.js (24 checks); 2242 tests; every ci:ui stage green; two mutations bite.
+
+  **Owner-side:** deploy the dashboard and walk S59.
+  **Next:** G2 (Overview Callbacks by department), then G3 (retire the modal), then the 6c release when vetting is done.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-07 — Batch F IMPLEMENTED (block 236): prior-period chips on outbound, admin-only.**
   - Tiles: a Placed chip and a connect-rate chip (in points) against each card period's INV-28 prior window, counted in the same Overview read (companyOverview:v28). A period whose prior window predates capture shows no chip (YTD, 60/90 today).
   - My Department Outbound / Both rows: chips on Connected, Not connected (always gray) and Connect %, against the summary's own prior window via a second cached RPC. Never on totals.

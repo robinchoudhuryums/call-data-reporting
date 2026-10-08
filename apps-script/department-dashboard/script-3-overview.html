@@ -2387,4 +2387,121 @@
     });
   }
 
+
+  // ── G2: Callbacks by department (admin-only, lazy) ───────────────────────
+  // The Outbound report's company-view callback table, on the Overview (owner
+  // 2026-10-08; G3 retires the modal). Admin-only forever: the fold carries
+  // data-admin-only (revealed by the admin loop, hidden by the View-as rule),
+  // and this code also refuses to fetch for anyone else. LAZY: the company
+  // read runs only while the fold is OPEN, for its own window (the shared
+  // date-preset resolver, so it ends yesterday), one fetch per window; the
+  // 5-minute auto-refresh never calls it. Drawn by the modal's own renderers
+  // (outboundCallbackTilesHtml_ + outboundRenderCbDept_ with an Overview view)
+  // so the two cannot disagree while both exist.
+  var OV_CBDEPT_ = { preset: 'last30', key: null, seq: 0, data: null, error: null, inFlight: false, view: null };
+
+  function ovCbDeptView_() {
+    if (!OV_CBDEPT_.view) OV_CBDEPT_.view = obCbDeptView_('ov-cbdept');
+    return OV_CBDEPT_.view;
+  }
+
+  function ovCbDeptState_(text) {
+    var el = $('ov-cbdept-state');
+    if (!el) return;
+    el.style.display = text ? '' : 'none';
+    el.textContent = text || '';
+  }
+
+  function ovCbDeptSync_() {
+    var fold = $('ov-cbdept-fold');
+    if (!fold || !fold.open || USER.role !== 'admin') return;
+    var r = datePresetRange_(OV_CBDEPT_.preset);
+    if (!r) return;
+    var dates = $('ov-cbdept-dates');
+    if (dates) dates.textContent = r.from + ' to ' + r.to;
+    var key = r.from + '|' + r.to;
+    if (key === OV_CBDEPT_.key) {
+      if (OV_CBDEPT_.data) { ovCbDeptRender_(OV_CBDEPT_.data); return; }
+      if (OV_CBDEPT_.inFlight) return;   // the request for this window is still out
+    }
+    OV_CBDEPT_.key = key; OV_CBDEPT_.data = null; OV_CBDEPT_.error = null; OV_CBDEPT_.inFlight = true;
+    var tok = ++OV_CBDEPT_.seq;
+    var head = $('ov-cbdept-head');
+    if (head) head.textContent = 'loading…';
+    var content = $('ov-cbdept-content'); if (content) content.style.display = 'none';
+    ovCbDeptState_('Loading callbacks by department…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (tok !== OV_CBDEPT_.seq) return;   // a newer window owns the section
+        OV_CBDEPT_.inFlight = false;
+        OV_CBDEPT_.data = data || {};
+        ovCbDeptRender_(OV_CBDEPT_.data);
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== OV_CBDEPT_.seq) return;
+        OV_CBDEPT_.inFlight = false;
+        OV_CBDEPT_.key = null;   // let the next open retry
+        if (head) head.textContent = 'unavailable';
+        ovCbDeptState_('Callbacks by department could not be loaded: '
+          + ((err && err.message) ? err.message : String(err)));
+      })
+      .getOutboundReport({ from: r.from, to: r.to, department: '' });
+  }
+
+  function ovCbDeptRender_(data) {
+    var meta = (data && data.meta) || {};
+    var cb = (data && data.callback) || {};
+    var t = data && data.callbackByDept;
+    var head = $('ov-cbdept-head');
+    var content = $('ov-cbdept-content');
+    if (meta.available === false) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'unavailable';
+      ovCbDeptState_('Callback data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
+      return;
+    }
+    if (!t || !(t.rows || []).length) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'no trackable abandons in this window';
+      ovCbDeptState_('No abandoned calls with caller ID in this window, so there is nothing to call back.');
+      return;
+    }
+    ovCbDeptState_(meta.fallbackSource === 'sheet'
+      ? 'Neon was unreachable: these figures come from the Outbound Calls tab'
+        + (meta.fallbackThrough ? ' (through ' + meta.fallbackThrough + ')' : '') + '.'
+      : '');
+    if (content) content.style.display = '';
+    var tot = t.total || {};
+    if (head) {
+      head.textContent = (tot.ownPct != null ? tot.ownPct + '% called back by the owning department' : 'callbacks by department')
+        + ' · ' + fmtNumber(tot.tracked || 0) + ' trackable abandons';
+    }
+    var kp = $('ov-cbdept-kpis');
+    if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
+    outboundRenderCbDept_(t, meta, ovCbDeptView_());
+  }
+
+  (function ovCbDeptWire_() {
+    var fold = $('ov-cbdept-fold');
+    if (!fold) return;
+    fold.addEventListener('toggle', function () { if (fold.open) ovCbDeptSync_(); });
+    var win = $('ov-cbdept-window');
+    if (win) win.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-preset]');
+      if (!b) return;
+      OV_CBDEPT_.preset = b.getAttribute('data-preset') || 'last30';
+      win.querySelectorAll('[data-preset]').forEach(function (x) {
+        var on = x === b;
+        x.classList.toggle('active', on);
+        x.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      ovCbDeptSync_();
+    });
+    var csv = $('ov-cbdept-csv-btn');
+    if (csv) csv.addEventListener('click', function () {
+      if (OV_CBDEPT_.data) outboundDownloadCsv_(OV_CBDEPT_.data, ovCbDeptView_().sort);
+    });
+    // The qcd-expandable rows open on click (wired once by outboundRenderCbDept_).
+  })();
+
 </script>

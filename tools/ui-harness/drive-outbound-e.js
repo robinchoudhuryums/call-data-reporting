@@ -127,6 +127,17 @@ function tileLines() {
   await pg.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
   await pg.waitForTimeout(2500);
   await openDept(pg, meta);
+  // Owner 2026-10-08: the fold follows the direction switch -- hidden on
+  // Inbound (the default), shown on Outbound / Both.
+  const onInbound = await pg.evaluate(() => {
+    const f = document.getElementById('ins-ob-fold');
+    return { shown: !!f && getComputedStyle(f).display !== 'none',
+      called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length };
+  });
+  record('admin, Inbound: the Insights Outbound fold is hidden and has not fetched',
+    !onInbound.shown && onInbound.called === 0, JSON.stringify(onInbound));
+  await pg.click('#dept-dir-switch [data-dir="out"]');
+  await pg.waitForTimeout(2500);
   const insMeta = require('./payloads/insights.json').meta;
   // The mock's resolution order: the 30-day Batch D capture first, then the windows map.
   const ob30 = require('./payloads/dept-outbound-30d.json');
@@ -158,13 +169,26 @@ function tileLines() {
   record('admin: one agent row per agent of the dept’s OWN roster (no sub-queue agents)',
     !!cur && !!grp && ins.rows === cur.agents.length && cur.agents.length < raw.agents.length,
     'rows=' + ins.rows + ' agents=' + (cur && cur.agents.length));
-  const before = ins.calls.length;
-  await pg.click('#refresh-btn');
-  await pg.waitForTimeout(3000);
-  const after = await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
-    .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'));
-  const insRefetch = after.slice(before).filter((k) => k === insMeta.from + '|' + insMeta.to || k === insMeta.priorFrom + '|' + insMeta.priorTo);
-  record('admin: re-rendering the same windows does not re-fetch them', insRefetch.length === 0, insRefetch.join(', '));
+  // "Same windows never re-fetch" is asserted on a DIRECTION change below, not
+  // on Refresh: on Outbound an explicit Refresh refetches the Batch D table by
+  // design (OB_VIEW_.key = null) with the SAME arguments, so a call count can
+  // no longer tell an Insights re-fetch from the table's.
+  // Inbound hides it again; Both brings it back from the held result.
+  await pg.click('#dept-dir-switch [data-dir="in"]');
+  await pg.waitForTimeout(1000);
+  const hidIn = await pg.evaluate(() => getComputedStyle(document.getElementById('ins-ob-fold')).display === 'none');
+  const nBefore = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length));
+  await pg.click('#dept-dir-switch [data-dir="both"]');
+  await pg.waitForTimeout(1500);
+  const both = await pg.evaluate(() => ({
+    shown: getComputedStyle(document.getElementById('ins-ob-fold')).display !== 'none',
+    tiles: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
+  }));
+  const insCalls = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
+    .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'))).slice(nBefore)
+    .filter((k) => k === insMeta.from + '|' + insMeta.to || k === insMeta.priorFrom + '|' + insMeta.priorTo);
+  record('re-rendering the same windows does not re-fetch them: Inbound hides the fold, Both shows it from the held result',
+    hidIn && both.shown && both.tiles === 5 && insCalls.length === 0, JSON.stringify({ hidIn: hidIn, both: both, refetch: insCalls }));
 
   // View-as hides the fold, and the Overview served to View-as has no line.
   const opts = await pg.evaluate(() => Array.from(document.querySelectorAll('#view-as-select option'))

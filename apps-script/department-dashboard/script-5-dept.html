@@ -1437,7 +1437,7 @@
   // Insights" restored STALE data under a permanent loading note. IR and
   // Insights render into separate containers, so cross-report responses
   // never actually conflict.
-  var reportReqSeq_ = { ir: 0, ins: 0, inb: 0, dir: 0, out: 0 };   // C-8: inbound/direct/outbound join the guard family
+  var reportReqSeq_ = { ir: 0, ins: 0, inb: 0, dir: 0 };   // C-8: inbound/direct join the guard family (outbound's modal is retired, G3)
 
   // D1b: per-report last-good payload cache (localStorage). On a FAILED fetch
   // the report repaints the last good payload for the SAME request (if any)
@@ -1589,7 +1589,6 @@
     qcdAll:   { fromId: 'qcd-alldept-from', rerun: function () { const b = $('qcd-alldept-refresh-btn'); if (b) b.click(); } },
     inbound:  { fromId: 'inbound-from',      rerun: function () { const b = $('inbound-generate-btn'); if (b && !b.disabled) b.click(); } },
     direct:   { fromId: 'direct-call-from',  rerun: function () { const b = $('direct-call-generate-btn'); if (b && !b.disabled) b.click(); } },
-    outbound: { fromId: 'outbound-from',     rerun: function () { const b = $('outbound-generate-btn'); if (b && !b.disabled) b.click(); } },
   };
   function coverageStartFor_(source) {
     if (!dataCoverage_) return null;
@@ -1648,6 +1647,7 @@
     // pre-refresh MTD numbers is the one way this panel could lie.
     trpFetched_ = {};
     OB_VIEW_.key = null;   // Batch D: an explicit Refresh refetches the outbound view too
+    obSummaryStoreClear_();   // FO-3: ...from the server, not the shared client store
     // Sub-queue: the client no longer sends `subScope` at all. The scope
     // switcher is retired -- collapsing a group in the combined table gives
     // every view it offered, instantly and without a round trip -- so the
@@ -3950,7 +3950,7 @@
       return (v === 'out' || v === 'both') ? v : 'in';
     } catch (e) { return 'in'; }
   })();
-  var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, sortKey: 'obTotal', sortDir: 'desc' };
+  var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, inFlight: false, sortKey: 'obTotal', sortDir: 'desc' };
   var obWired_ = false;
 
   function obAllowed_() {
@@ -4052,6 +4052,40 @@
     }
   }
 
+  // FO-3: ONE client store for getDeptOutboundSummary, shared by the Batch D
+  // table (OB_VIEW_) and the Insights Outbound fold (INS_OB_, script-8). Both
+  // ask for the same dept + window (and its prior) and used to send their own
+  // requests -- four on every switch to Outbound where two answer both. Keyed
+  // by department|from|to: a request already IN FLIGHT gets the second caller
+  // queued on it; a held answer is replayed ASYNCHRONOUSLY (setTimeout 0), so
+  // callers keep the ordering they were written for (the table shows its frost
+  // before its reply can land). FIFO-capped; a FAILED read is never held, so
+  // the next sync retries; an explicit Refresh clears it (refresh()).
+  var OB_SUMMARY_STORE_ = { entries: {}, order: [], cap: 8 };
+  function obSummaryStoreClear_() { OB_SUMMARY_STORE_.entries = {}; OB_SUMMARY_STORE_.order = []; }
+  function obSummaryFetch_(req, onOk, onErr) {
+    var st = OB_SUMMARY_STORE_;
+    var k = [req.department, req.from, req.to].join('|');
+    var e = st.entries[k];
+    if (e && e.done) { setTimeout(function () { onOk(e.data); }, 0); return; }
+    if (e) { e.waiters.push({ ok: onOk, err: onErr }); return; }
+    e = st.entries[k] = { done: false, data: null, waiters: [{ ok: onOk, err: onErr }] };
+    st.order.push(k);
+    while (st.order.length > st.cap) delete st.entries[st.order.shift()];
+    google.script.run
+      .withSuccessHandler(function (d) {
+        e.done = true; e.data = d || null;
+        var w = e.waiters; e.waiters = [];
+        w.forEach(function (x) { x.ok(e.data); });
+      })
+      .withFailureHandler(function (err) {
+        if (st.entries[k] === e) delete st.entries[k];
+        var w = e.waiters; e.waiters = [];
+        w.forEach(function (x) { if (x.err) x.err(err); });
+      })
+      .getDeptOutboundSummary(req);
+  }
+
   /**
    * Called at the end of every render() (and on a switch click / view-as
    * change): decide which table shows, fetch the outbound summary for the
@@ -4062,6 +4096,9 @@
     var dir = obEffectiveDir_();
     obSyncButtons_(dir);
     document.body.setAttribute('data-dir', dir);
+    // G1: the Insights Outbound + Callbacks folds follow the switch (Outbound / Both).
+    if (typeof insObSync_ === 'function' && typeof insLastData !== 'undefined' && insLastData) insObSync_(insLastData);
+    if (typeof insCbSync_ === 'function') insCbSync_();
     var obWrap = $('agents-ob-wrap');
     var tob = $('dept-team-outbound');
     if (dir === 'in') {
@@ -4075,36 +4112,37 @@
     if (!dept || !m.from || !m.to) { obViewRender_(); return; }
     var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '');
     if (OB_VIEW_.key === key && (OB_VIEW_.data || OB_VIEW_.error)) { obViewRender_(); return; }
+    // render() can run this again before the reply lands (a Refresh's SWR
+    // pre-paint, then its live render): the request for THIS window is
+    // already out, so do not send it a second time -- its reply paints.
+    if (OB_VIEW_.key === key && OB_VIEW_.inFlight) return;
     var seq = ++OB_VIEW_.seq;
     OB_VIEW_.key = key; OB_VIEW_.data = null; OB_VIEW_.prior = null; OB_VIEW_.error = null;
+    OB_VIEW_.inFlight = true;
     // Batch F: the prior-period chips read the SAME INV-28 window the inbound
     // E5 chips use (state.meta.priorFrom/priorTo, server-resolved), through
     // the same cached RPC. A failed prior read just means no chips.
     if (m.priorFrom && m.priorTo) {
-      google.script.run
-        .withSuccessHandler(function (p) {
-          if (seq !== OB_VIEW_.seq) return;
-          OB_VIEW_.prior = p || null;
-          if (OB_VIEW_.data) obViewRender_();
-        })
-        .withFailureHandler(function () { /* no chips */ })
-        .getDeptOutboundSummary({ department: dept, from: m.priorFrom, to: m.priorTo });
+      obSummaryFetch_({ department: dept, from: m.priorFrom, to: m.priorTo }, function (p) {
+        if (seq !== OB_VIEW_.seq) return;
+        OB_VIEW_.prior = p || null;
+        if (OB_VIEW_.data) obViewRender_();
+      }, function () { /* no chips */ });
     }
     if (obWrap) dsFrostShow_(obWrap, 'Loading outbound…');
-    google.script.run
-      .withSuccessHandler(function (data) {
-        if (seq !== OB_VIEW_.seq) return;
-        OB_VIEW_.data = data || null;
-        if (obWrap) dsFrostHide_(obWrap);
-        obViewRender_();
-      })
-      .withFailureHandler(function (err) {
-        if (seq !== OB_VIEW_.seq) return;
-        OB_VIEW_.error = (err && err.message) ? err.message : String(err);
-        if (obWrap) dsFrostHide_(obWrap);
-        obViewRender_();
-      })
-      .getDeptOutboundSummary({ department: dept, from: m.from, to: m.to });
+    obSummaryFetch_({ department: dept, from: m.from, to: m.to }, function (data) {
+      if (seq !== OB_VIEW_.seq) return;
+      OB_VIEW_.inFlight = false;
+      OB_VIEW_.data = data || null;
+      if (obWrap) dsFrostHide_(obWrap);
+      obViewRender_();
+    }, function (err) {
+      if (seq !== OB_VIEW_.seq) return;
+      OB_VIEW_.inFlight = false;
+      OB_VIEW_.error = (err && err.message) ? err.message : String(err);
+      if (obWrap) dsFrostHide_(obWrap);
+      obViewRender_();
+    });
   }
 
   function obTallyUnitFor_(list, cap) {

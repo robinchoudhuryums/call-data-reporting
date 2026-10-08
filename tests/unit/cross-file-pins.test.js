@@ -953,7 +953,7 @@ test('R46: a suite that pins its fixture back to the script timezone says why (s
 // release simply did not work. Nothing compared the two before this pin, and
 // the release runbook's own step 3 names both -- exactly the shape that gets
 // half-done at the end of a long operator session.
-test('6c: the outbound vetting gate and its menu item are released TOGETHER', function () {
+test('6c: the outbound vetting gate and the My Department outbound surfaces are released TOGETHER', function () {
   const gs = read('OutboundReport.gs', DASH);
   const m = gs.match(/var OUTBOUND_VETTING_GATE_ = (true|false);/);
   assert.ok(m, 'OUTBOUND_VETTING_GATE_ is missing from OutboundReport.gs — it is '
@@ -967,23 +967,16 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
     + 'is decorative and the release would be a no-op.');
 
   const html = read('dashboard.html', DASH);
-  const btn = html.match(/<button[^>]*id="outbound-report-btn"[\s\S]*?>/);
-  assert.ok(btn, '#outbound-report-btn is missing from dashboard.html');
-  const hiddenAttr = /data-admin-only/.test(btn[0]);
-  const hiddenStyle = /style="display:none;"/.test(btn[0]);
-
-  if (gated) {
-    assert.ok(hiddenAttr && hiddenStyle,
-      'OUTBOUND_VETTING_GATE_ is true (server refuses managers) but '
-      + '#outbound-report-btn is VISIBLE to them — a manager would see the '
-      + 'menu item and get "admin-only while it is being vetted". Restore '
-      + 'data-admin-only + style="display:none;", or flip the gate.');
-  } else {
-    assert.ok(!hiddenAttr && !hiddenStyle,
-      'OUTBOUND_VETTING_GATE_ is false (server serves managers) but '
-      + '#outbound-report-btn is still hidden — the release reaches nobody. '
-      + 'Drop data-admin-only + style="display:none;" from the button.');
-  }
+  // G3: the Outbound report MODAL and its menu item are retired -- the
+  // release pair is the gate + the My Department surfaces below. A menu item
+  // or modal coming back would be a SECOND release surface this pin does not
+  // move, so their return fails here.
+  assert.ok(!/id="outbound-report-btn"/.test(html) && !/id="outbound-modal"/.test(html),
+    'the retired Outbound modal / menu item is back in dashboard.html (G3) -- '
+    + 'its content lives on My Department; add the surface to this pin if it is intended.');
+  assert.match(read('script-4-nav.html', DASH),
+    /'\/report\/outbound':\s*\{ kind: 'page',\s*page: 'dept', callbacks: true \}/,
+    'legacy #/report/outbound links land on the My Department Callbacks fold (G3)');
 
   // Batch D: the My Department Inbound | Outbound | Both switch reads the
   // same server gate (getDeptOutboundSummary -> outboundResolveRequest_) and
@@ -1008,14 +1001,55 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
   assert.ok(gated ? foldHidden : foldShown,
     'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-ob-fold is ' + (foldHidden ? 'hidden' : 'visible')
     + ' -- release (or hold) the Insights Outbound fold with the report (Operator State #63).');
-  assert.match(read('script-8-insights.html', DASH), /if \(!obAllowed_\(\) \|\| !meta \|\| !meta\.department/,
-    'the Insights Outbound fold must take its permission from obAllowed_ (the ONE client gate for D and E)');
+  assert.match(read('script-8-insights.html', DASH),
+    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(dir === 'in' \|\| !meta \|\| !meta\.department/,
+    'the Insights Outbound fold must take its permission from obEffectiveDir_ (obAllowed_, the ONE client gate) and hide on Inbound');
+
+  // G1: the Insights Callbacks fold (the Outbound report moving onto My
+  // Department) rides the same pair, and takes its permission from the
+  // direction switch through obEffectiveDir_ ('in' whenever obAllowed_ is not).
+  const cbFold = html.match(/<details[^>]*id="ins-cb-fold"[\s\S]*?>/);
+  assert.ok(cbFold, '#ins-cb-fold is missing from dashboard.html');
+  const cbHidden = /data-admin-only/.test(cbFold[0]) && /style="display:none;"/.test(cbFold[0]);
+  const cbShown = !/data-admin-only/.test(cbFold[0]) && !/style="display:none;"/.test(cbFold[0]);
+  assert.ok(gated ? cbHidden : cbShown,
+    'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-cb-fold is ' + (cbHidden ? 'hidden' : 'visible')
+    + ' -- release (or hold) the Insights Callbacks fold with the report (Operator State #63).');
+  assert.match(read('script-8-insights.html', DASH),
+    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(!w \|\| dir === 'in'\) \{ fold\.style\.display = 'none'; return; \}/,
+    'the Insights Callbacks fold must take its permission from obEffectiveDir_ and hide on Inbound');
 
   // Batch E2: the Overview tiles' outbound line is stripped on serve while the
   // gate stands, and FAILS CLOSED when OutboundReport.gs is not loaded.
   assert.match(read('CompanyOverview.gs', DASH),
     /if \(typeof OUTBOUND_VETTING_GATE_ === 'undefined' \|\| OUTBOUND_VETTING_GATE_\) \{\n\s*delete out\.outboundCoverageStart;\n\s*if \(Array\.isArray\(out\.depts\)\) out\.depts\.forEach\(function \(d\) \{ if \(d\) delete d\.outbound; \}\);/,
     'personalizeOverview_ must strip the tiles\' outbound line for non-admins while OUTBOUND_VETTING_GATE_ stands');
+});
+
+// G2 (owner 2026-10-08): Callbacks by department lives on the Overview,
+// ADMIN-ONLY FOREVER (it is a company view; a manager's page is one
+// department) and LAZY (a company-wide Neon read must never ride the
+// Overview landing or its 5-minute auto-refresh). It is deliberately NOT in
+// the 6c release pair above: releasing the Outbound report must not reveal it.
+test('G2: the Overview Callbacks-by-department section is admin-only and fetches only when opened', function () {
+  const html = read('dashboard.html', DASH);
+  const fold = html.match(/<details[^>]*id="ov-cbdept-fold"[\s\S]*?>/);
+  assert.ok(fold, '#ov-cbdept-fold is missing from dashboard.html');
+  assert.ok(/data-admin-only/.test(fold[0]) && /style="display:none;"/.test(fold[0]),
+    '#ov-cbdept-fold must stay data-admin-only + display:none whatever OUTBOUND_VETTING_GATE_ says');
+  const s3 = read('script-3-overview.html', DASH);
+  const i = s3.indexOf('function ovCbDeptSync_(');
+  assert.ok(i !== -1, 'ovCbDeptSync_ not found -- update this pin');
+  const body = s3.slice(i, s3.indexOf('\n  }\n', i));
+  assert.match(body, /if \(!fold \|\| !fold\.open \|\| USER\.role !== 'admin'\) return;/,
+    'ovCbDeptSync_ must refuse to fetch unless the fold is open AND the viewer is an admin');
+  assert.match(body, /\.getOutboundReport\(\{ from: r\.from, to: r\.to, department: '' \}\)/,
+    'the section reads the company view of the SAME report the modal does');
+  const j = s3.indexOf('function ovLoad_(');
+  const load = s3.slice(j, s3.indexOf('\n  }\n', j));
+  assert.ok(!/ovCbDept/.test(load), 'ovLoad_ (the landing + the 5-minute auto-refresh) must never touch the section');
+  const calls = (s3.match(/ovCbDeptSync_\(\);/g) || []).length;   // call sites, not the declaration
+  assert.equal(calls, 2, 'ovCbDeptSync_ is called from the fold toggle and the window switch ONLY (saw ' + calls + ')');
 });
 
 // R49 (owner ruling 2026-09-16): the CSR queue family's work window floors at

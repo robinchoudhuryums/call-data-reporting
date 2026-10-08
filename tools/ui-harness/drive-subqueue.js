@@ -265,9 +265,12 @@ async function openDeptThirtyDays(page) {
     await page.evaluate(() => { window.__CSV__.length = 0; });
     const menuBtn = page.locator('#csv-export-btn');
     if (await menuBtn.count()) { await menuBtn.click(); await page.waitForTimeout(300); }
+    // The My Department export menu's item specifically: other surfaces carry
+    // their own "Download CSV" buttons (the Overview's Callbacks by department
+    // section sits EARLIER in the DOM), so a page-wide text match clicks the
+    // wrong one and reads an empty capture.
     await page.evaluate(() => {
-      const cands = Array.from(document.querySelectorAll('button, a, .menu-item, .header-menu-item'));
-      const hit = cands.find((e) => /download csv/i.test((e.textContent || '').trim()));
+      const hit = document.querySelector('#dept-export-menu [data-action="csv"]');
       if (hit) hit.click();
     });
     await page.waitForTimeout(600);

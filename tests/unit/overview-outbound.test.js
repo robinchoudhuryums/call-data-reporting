@@ -8,6 +8,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 const { rosterGrid } = require('../harness/fixtures');
@@ -302,7 +304,28 @@ test('F: wiring -- tiles chip Placed + rate, rows chip both counts + rate, total
   assert.equal((src.match(/obPctHtml_\(t\)/g) || []).length, 2);
   assert.match(src, /var priorOk = !!\(pr && pr\.meta && pr\.meta\.available !== false && sm\.priorFrom\s*&& !\(pr\.meta\.coverageStart && sm\.priorFrom < pr\.meta\.coverageStart\)\);/,
     'the prior window must start on/after capture');
-  assert.match(src, /getDeptOutboundSummary\(\{ department: dept, from: m\.priorFrom, to: m\.priorTo \}\)/,
+  assert.match(src, /obSummaryFetch_\(\{ department: dept, from: m\.priorFrom, to: m\.priorTo \}/,
     'the table compares the SAME INV-28 window as the inbound E5 chips');
+});
+
+test('FO-3: the table and the Insights Outbound fold share ONE client store for getDeptOutboundSummary', function () {
+  const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  const frags = fs.readdirSync(dir).filter((f) => /^script-.*\.html$/.test(f));
+  const senders = frags.filter((f) => /\.getDeptOutboundSummary\(/.test(fs.readFileSync(path.join(dir, f), 'utf8')));
+  assert.deepEqual(senders, ['script-5-dept.html'], 'only the shared store may call the RPC');
+  const s5 = fs.readFileSync(path.join(dir, 'script-5-dept.html'), 'utf8');
+  const i = s5.indexOf('function obSummaryFetch_(');
+  const body = s5.slice(i, s5.indexOf('\n  }\n', i));
+  assert.equal((s5.match(/\.getDeptOutboundSummary\(/g) || []).length, 1, 'one call site, inside the store');
+  assert.match(body, /\.getDeptOutboundSummary\(req\)/);
+  assert.match(body, /if \(e && e\.done\) \{ setTimeout\(function \(\) \{ onOk\(e\.data\); \}, 0\); return; \}/,
+    'a held answer replays ASYNCHRONOUSLY, so a caller can show its loading state first');
+  assert.match(body, /if \(e\) \{ e\.waiters\.push\(/, 'an in-flight request queues the second caller instead of re-sending');
+  assert.match(body, /\.withFailureHandler\(function \(err\) \{\n\s*if \(st\.entries\[k\] === e\) delete st\.entries\[k\];/,
+    'a failed read is never held, so the next sync retries');
+  assert.match(s5, /OB_VIEW_\.key = null;[^\n]*\n\s*obSummaryStoreClear_\(\);/, 'an explicit Refresh clears the store');
+  const s8 = fs.readFileSync(path.join(dir, 'script-8-insights.html'), 'utf8');
+  assert.equal((s8.match(/obSummaryFetch_\(\{ department: meta\.department/g) || []).length, 2,
+    'the Insights fold reads its current AND prior window through the store');
 });
 

@@ -59,7 +59,12 @@
     '/report/insights':    { kind: 'page', page: 'insights' },
     '/report/inbound':     { kind: 'modal', modalId: 'inbound-modal',     buttonId: 'inbound-report-btn' },
     '/report/direct':      { kind: 'modal', modalId: 'direct-call-modal', buttonId: 'direct-call-report-btn' },
-    '/report/outbound':    { kind: 'modal', modalId: 'outbound-modal',    buttonId: 'outbound-report-btn' },
+    // G3: the Outbound report MODAL is retired; its content lives on My
+    // Department. Legacy links land there with the direction on Outbound and
+    // the Insights Callbacks fold open (insCbDeepLink_, script-8). Admin-only
+    // until the 6c release: for anyone else the switch is hidden, so it is a
+    // plain My Department landing.
+    '/report/outbound':    { kind: 'page',  page: 'dept', callbacks: true },
     // 6d: NOT admin-only -- the server admits a manager of the agent's
     // roster dept, so the F11 non-admin no-op must not swallow this one.
     '/report/agent-day':   { kind: 'modal', modalId: 'agent-day-modal',  buttonId: 'agent-day-btn' },
@@ -177,6 +182,7 @@
       if (def.kind === 'page') {
         if (def.page === 'insights' || document.body.getAttribute('data-page') !== def.page) setPage(def.page);
         else setRoute_(target);
+        if (def.callbacks && typeof insCbDeepLink_ === 'function') insCbDeepLink_();
       } else if (!routeModalOpen_(def)) {
         btn.click();
       } else {
@@ -282,6 +288,7 @@
             if (def.scrollTo === 'dept-missed-section') deptMissedScrollPending_ = true;
             setPage(def.page);
             if (def.page === 'dept' && typeof refresh === 'function') refresh();
+            if (def.callbacks && typeof insCbDeepLink_ === 'function') insCbDeepLink_();
             if (params) {
               const provider = SHARE_STATE_[route];
               if (provider) {

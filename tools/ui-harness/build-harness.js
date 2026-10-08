@@ -490,7 +490,15 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
   window.google = {
     script: {
       run: makeRunner(),
-      url: { getLocation: function (cb) { cb({ hash: '', parameter: {}, parameters: {} }); } },
+      // A driver can boot the app on a deep link by setting
+      // window.__HARNESS_HASH__ in an init script (e.g. '/report/outbound');
+      // unset, every page boots on the default landing as before. ASYNC like
+      // the real google.script.url.getLocation (it round-trips to the parent
+      // frame), so the deep link lands AFTER boot's default page, as in
+      // production -- a synchronous stub would let the default landing win.
+      url: { getLocation: function (cb) {
+        setTimeout(function () { cb({ hash: window.__HARNESS_HASH__ || '', parameter: {}, parameters: {} }); }, 0);
+      } },
       // CL-23: a recording history stack. push/replace edit it like the
       // browser does; a driver walks it with __HARNESS__.historyBack() /
       // historyForward(), which call the app's change handler the way a
