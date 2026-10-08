@@ -1008,8 +1008,9 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
   assert.ok(gated ? foldHidden : foldShown,
     'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-ob-fold is ' + (foldHidden ? 'hidden' : 'visible')
     + ' -- release (or hold) the Insights Outbound fold with the report (Operator State #63).');
-  assert.match(read('script-8-insights.html', DASH), /if \(!obAllowed_\(\) \|\| !meta \|\| !meta\.department/,
-    'the Insights Outbound fold must take its permission from obAllowed_ (the ONE client gate for D and E)');
+  assert.match(read('script-8-insights.html', DASH),
+    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(dir === 'in' \|\| !meta \|\| !meta\.department/,
+    'the Insights Outbound fold must take its permission from obEffectiveDir_ (obAllowed_, the ONE client gate) and hide on Inbound');
 
   // G1: the Insights Callbacks fold (the Outbound report moving onto My
   // Department) rides the same pair, and takes its permission from the
@@ -1030,6 +1031,32 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
   assert.match(read('CompanyOverview.gs', DASH),
     /if \(typeof OUTBOUND_VETTING_GATE_ === 'undefined' \|\| OUTBOUND_VETTING_GATE_\) \{\n\s*delete out\.outboundCoverageStart;\n\s*if \(Array\.isArray\(out\.depts\)\) out\.depts\.forEach\(function \(d\) \{ if \(d\) delete d\.outbound; \}\);/,
     'personalizeOverview_ must strip the tiles\' outbound line for non-admins while OUTBOUND_VETTING_GATE_ stands');
+});
+
+// G2 (owner 2026-10-08): Callbacks by department lives on the Overview,
+// ADMIN-ONLY FOREVER (it is a company view; a manager's page is one
+// department) and LAZY (a company-wide Neon read must never ride the
+// Overview landing or its 5-minute auto-refresh). It is deliberately NOT in
+// the 6c release pair above: releasing the Outbound report must not reveal it.
+test('G2: the Overview Callbacks-by-department section is admin-only and fetches only when opened', function () {
+  const html = read('dashboard.html', DASH);
+  const fold = html.match(/<details[^>]*id="ov-cbdept-fold"[\s\S]*?>/);
+  assert.ok(fold, '#ov-cbdept-fold is missing from dashboard.html');
+  assert.ok(/data-admin-only/.test(fold[0]) && /style="display:none;"/.test(fold[0]),
+    '#ov-cbdept-fold must stay data-admin-only + display:none whatever OUTBOUND_VETTING_GATE_ says');
+  const s3 = read('script-3-overview.html', DASH);
+  const i = s3.indexOf('function ovCbDeptSync_(');
+  assert.ok(i !== -1, 'ovCbDeptSync_ not found -- update this pin');
+  const body = s3.slice(i, s3.indexOf('\n  }\n', i));
+  assert.match(body, /if \(!fold \|\| !fold\.open \|\| USER\.role !== 'admin'\) return;/,
+    'ovCbDeptSync_ must refuse to fetch unless the fold is open AND the viewer is an admin');
+  assert.match(body, /\.getOutboundReport\(\{ from: r\.from, to: r\.to, department: '' \}\)/,
+    'the section reads the company view of the SAME report the modal does');
+  const j = s3.indexOf('function ovLoad_(');
+  const load = s3.slice(j, s3.indexOf('\n  }\n', j));
+  assert.ok(!/ovCbDept/.test(load), 'ovLoad_ (the landing + the 5-minute auto-refresh) must never touch the section');
+  const calls = (s3.match(/ovCbDeptSync_\(\);/g) || []).length;   // call sites, not the declaration
+  assert.equal(calls, 2, 'ovCbDeptSync_ is called from the fold toggle and the window switch ONLY (saw ' + calls + ')');
 });
 
 // R49 (owner ruling 2026-09-16): the CSR queue family's work window floors at

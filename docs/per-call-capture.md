@@ -572,7 +572,9 @@ unmapped queues get their own row; the TOTAL row reuses the company callback
 block (never the rows' sum). The FIRST callback decides own vs other, with a
 `call_id` tie-break in the lateral that the sheet fallback reproduces.
 `own + other + none === tracked` is pinned on every row and the total
-(`outbound-callback-dept.test.js`); S48 is the walk. `getOutboundUncalled` is the
+(`outbound-callback-dept.test.js`); S48 is the walk. **Since G2 (2026-10-08) its
+home is the Overview** (an admin-only, lazy section; the modal's copy goes with
+the modal in G3) -- see docs/client-ui-conventions.md. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
 `outboundReport:v7` + the freshness tag; unavailable payloads uncached.

@@ -400,18 +400,20 @@ S47 | Agent-day view: fidelity degrades honestly across the three horizons | Sub
   Expected: as described. The three banners are the point of the scenario -- a short list with NO banner is the failure this surface was designed around, because it reads as "the agent did nothing" when it means "we no longer hold the detail".
   Fails if: any tier renders a short list with no disclosure; the header tiles disagree with My Department for the same agent-day; a manager reaches an agent on neither of their depts; an unrostered name resolves for a non-admin; or the reconciliation line claims an exact match on a degraded day.
 
-S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
+S48 | Outbound callbacks by department (CB-1, on the Overview since G2) | Subsystem: Department Dashboard
   Steps:
-    - As the ADMIN (the report is admin-only until the 6c release), open Reports -> Outbound, leave Department on "All departments", and generate a window with real abandons (a week or more).
-    - Below the callback tiles, "Callbacks by department" renders. Default order is worst "Called back by us" % first; a sub-queue (e.g. Spanish) sits indented directly under its parent (CSR) whatever the sort; "Not mapped to a department" (if present) is always last.
+    - As the ADMIN, land on the Overview and scroll to the bottom: a closed "Outbound Callbacks by department" section reads "open to load". Nothing loads until you open it, and the 5-minute auto-refresh never loads it.
+    - Open it: the window defaults to Last 30 days (ending yesterday, dates shown). Five company callback tiles sit above the table. Default order is worst "Called back by us" % first; a sub-queue (e.g. Spanish) sits indented directly under its parent (CSR) whatever the sort; "Not mapped to a department" (if present) is always last.
     - Arithmetic, on any row: Called back by us + By another dept + Not called back = Trackable abandons. Same on the "All departments" total row.
-    - Reconcile the total row against the tiles above: Trackable = "Called back"'s "of N trackable", Callbacks connected = the "Callbacks connected" tile, Median = the "Median time to callback" tile. Summing the dept rows does NOT give the total (a parent includes its sub-queues; a queue shared by two depts is in both) -- the total row's hover says so.
+    - Reconcile the total row against the tiles above it: Trackable = "Called back"'s "of N trackable", Callbacks connected = the "Callbacks connected" tile, Median = the "Median time to callback" tile. Summing the dept rows does NOT give the total (a parent includes its sub-queues; a queue shared by two depts is in both) -- the section's note says so.
     - Hover each header: the definitions name the FIRST callback, "upper bound" for Connected, and a Median clock that includes internal handoff.
     - Keyboard only: Tab to a row's department button, press Enter -> the row expands (aria-expanded true) showing "First callback by" rows naming departments / "Unrostered" / "No agent recorded" and the multi-roster / unrostered / no-agent tallies; the unmapped row's expand lists the unmapped queue names. Tab to a header, Enter sorts; Enter again flips.
-    - Export CSV: a "Department / Parent / Trackable abandons / ..." block appears, with the total row labelled "All departments (each abandon once)". No cell begins with = + - @.
-    - Switch Department to a single dept and regenerate: the table is GONE (company view only).
+    - Download CSV: a "Department / Parent / Trackable abandons / ..." block in the order on screen, with the total row labelled "All departments (each abandon once)". No cell begins with = + - @.
+    - Switch the window to Last 7 days: it loads once for the new window. Close and reopen: no reload.
+    - Until G3 removes it: Reports -> Outbound, Department "All departments", same dates -> the modal's table matches the section exactly, in its own sort.
+    - View as a manager: the section is gone. As a real MANAGER (also after the 6c release): no section and no request.
   Expected: as described. A parent row's "by us" includes its sub-queues' agents; a crossover agent counts as "us" for any dept they are rostered on.
-  Fails if: a row's three call columns do not sum to its trackable count; the total row disagrees with the tiles; a child row detaches from its parent on sort; the unmapped row is missing while unmapped abandons exist (the total would exceed what the rows can explain); the table shows on a single-dept view; or any cell shows a caller number.
+  Fails if: a row's three call columns do not sum to its trackable count; the total row disagrees with the tiles; a child row detaches from its parent on sort; the unmapped row is missing while unmapped abandons exist; the section loads before it is opened or on the auto-refresh; a manager or View-as sees it; or any cell shows a caller number.
 
 S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Department Dashboard
   Steps:
@@ -524,7 +526,7 @@ S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: 
     - Switch the card Window to Last 30 days, then YTD: the line's figures change with the window. On YTD the line adds "since Jul 10" (capture start).
     - Reconcile one dept: Reports -> Outbound for that dept, dates = the card window. Placed and Connected equal the tile's line, except that the report's agent table also counts the dept's one-level sub-queue rosters (PC-12) while the tile counts the dept's own roster, like the inbound tile.
     - Wait for the 5-minute auto-refresh (or reload): the line is still there and no slower (it rides the cached Overview).
-    - Open My Department over a month and scroll to Insights. After Queue health, an "Outbound" fold reads "N placed · P% connected" when closed. Open it: five tiles (Placed, Connected, Connect rate, Per agent-day, Avg talk), each with a ▲/▼ vs the prior window, and a per-agent table. Placed and Connected equal the dept's OWN subtotal in the My Department Outbound view (S57) for the same dates. For a parent dept that subtotal excludes its sub-queues, because Insights covers one department.
+    - Open My Department over a month, set the direction to Outbound (or Both) and scroll to Insights -- on Inbound the fold is hidden. After Queue health, an "Outbound" fold reads "N placed · P% connected" when closed. Open it: five tiles (Placed, Connected, Connect rate, Per agent-day, Avg talk), each with a ▲/▼ vs the prior window, and a per-agent table. Placed and Connected equal the dept's OWN subtotal in the My Department Outbound view (S57) for the same dates. For a parent dept that subtotal excludes its sub-queues, because Insights covers one department.
     - Pick a custom comparison that starts before 2026-07-10: the fold shows no comparison and says the prior window predates capture.
     - View as a manager: no tile shows the outbound line and the Insights fold is gone. As a real MANAGER: the same.
     - On a phone-width window: the Insights fold's table scrolls sideways inside the fold; the page does not.

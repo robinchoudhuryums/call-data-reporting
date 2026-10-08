@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-08 — Batch G2 IMPLEMENTED (block 238): Callbacks by department on the Overview + the Insights Outbound fold follows the switch.**
+  - Owner: "align it too" -> `#ins-ob-fold` shows only on Outbound / Both (like G1's Callbacks fold).
+  - `#ov-cbdept-fold`: the company callback table + five tiles at the bottom of the Overview, ADMIN-ONLY FOREVER (not in the 6c pair), lazy (fetch only while open, own window Last 7/30 days/3 months, one fetch per window, never on the auto-refresh). Drawn by the modal's renderers through a per-surface VIEW (own sort); one shared column list builds both headers.
+  - New blocking stage drive-cbdept.js (19 checks); a "G2" cross-file pin; drive-subqueue / drive-agentpanel CSV selectors tightened (they clicked the first page-wide "Download CSV"). 2243 tests; every ci:ui stage green; four mutations bite.
+
+  **Owner-side:** deploy the dashboard and walk S48 (now on the Overview), S58's direction step and S59.
+  **Next:** G3 (retire the modal) before the 6c release.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-08 — Batch G1 IMPLEMENTED (block 237): the Callbacks fold in Insights — step 1 of moving the Outbound report onto My Department.**
   - Owner rulings (2026-10-08): managers get the My Department version, not the modal; Callbacks by department goes to an admin-only Overview section (G2); integrate first, release once (G3 before 6c). `runOutboundVettingCheck` read `ok parity`; the owner is still vetting accuracy before release. The source probe (#74) read MISMATCH, so outbound stays on Neon (already the design).
   - `#ins-cb-fold`: the modal's callback tiles, strips, chart, not-called-back drill + call path, CSV / email, drawn by the modal's OWN renderers (now target-aware in script-9). Outbound / Both only, admin-only, lazy (fetch on open, one per window).

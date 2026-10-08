@@ -64,6 +64,9 @@ const STAGES = [
   // Department) -- lazy fetch, the shared renderers painting into it, the
   // chart after a close/reopen, the drill's call path, and the 6c half.
   ['node', ['drive-callbacks.js'], 'Insights Callbacks fold (Batch G1)'],
+  // Batch G2: Callbacks by department on the Overview -- admin-only forever,
+  // lazy (nothing on the landing / auto-refresh), its own sort and window.
+  ['node', ['drive-cbdept.js'], 'Overview Callbacks by department (Batch G2)'],
   // The admin modals + the Escalations worklist. These have thorough
   // SERVER-side pins and, until this stage, no assertion that any of them
   // RENDERS -- the gap that shipped the header dept-selector ReferenceError.

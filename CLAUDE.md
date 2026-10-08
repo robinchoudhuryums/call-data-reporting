@@ -256,6 +256,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # or View-as -- Batch E), drive-callbacks.js (the Insights Callbacks fold:
 # Outbound/Both only, lazy one fetch, the shared renderers incl. a drawn chart
 # after a reopen, the drill's call path, CSV/email, 360 px -- Batch G1),
+# drive-cbdept.js (Callbacks by department on the Overview: admin-only, lazy,
+# its own window + sort, grouped rows, keyboard expand, CSV -- Batch G2),
 # drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
 # Outbound and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
@@ -2318,7 +2320,7 @@ S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboa
 S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
 S46 | Outbound report reaches a manager (the 6c release) | Subsystem: Department Dashboard
 S47 | Agent-day view: fidelity degrades honestly across the three horizons | Subsystem: Department Dashboard
-S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
+S48 | Outbound callbacks by department (CB-1, on the Overview since G2) | Subsystem: Department Dashboard
 S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Department Dashboard
 S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Department Dashboard
 S51 | One escalation assigned to several departments -- linked copies (ESC-L1) | Subsystem: Department Dashboard

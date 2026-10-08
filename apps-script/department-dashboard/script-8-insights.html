@@ -2051,7 +2051,11 @@
 
   function insObSync_(data, opts) {
     var meta = data && data.meta;
-    if (!obAllowed_() || !meta || !meta.department || !meta.from || !meta.to) { insObHide_(); return; }
+    // Owner 2026-10-08: the fold follows the direction switch like the G1
+    // Callbacks fold -- Outbound / Both only. obEffectiveDir_ reads
+    // obAllowed_, so it is still admin-only until 6c and hidden in View-as.
+    var dir = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() : 'in';
+    if (dir === 'in' || !meta || !meta.department || !meta.from || !meta.to) { insObHide_(); return; }
     if (opts && opts.swr) return;
     var key = [meta.department, meta.from, meta.to, meta.priorFrom || '', meta.priorTo || ''].join('|');
     var fold = $('ins-ob-fold');

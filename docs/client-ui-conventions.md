@@ -2138,8 +2138,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   five tiles with `insDeltaBadge_` deltas (per day when the
   windows differ in length, CL-2) plus a per-agent table in a horizontal
   scroller (`.ins-ob-scroll`; the bare table pushed the page to 510 px at
-  360). It shows only while `obAllowed_()` is true, the same gate as Batch D,
-  so View-as and managers never fetch. A prior window that starts before capture shows
+  360). It shows only on the Outbound or Both direction (`obEffectiveDir_`,
+  i.e. `obAllowed_()`, the same gate as Batch D -- owner 2026-10-08 aligned it
+  with the G1 Callbacks fold; `obViewSync_` re-syncs both folds on a switch),
+  so Inbound, View-as and managers never fetch. A prior window that starts before capture shows
   no comparison and says why. It is not fetched on the SWR pre-paint, and a
   repeat render of the same windows repaints from the last result. The fold
   persists as `ob` in the Insights folds store and is open by default.
@@ -2183,6 +2185,25 @@ stay pinned by INV-39, INV-53 and INV-06.
   persists as `cb` in the Insights folds store. Rendered-gated by
   `drive-callbacks.js` (which also re-generates the modal, so a broken shared
   helper cannot pass).
+- **Callbacks by department on the Overview (owner 2026-10-08, Batch G2).**
+  The Outbound report's company-view table ("who calls back whose abandoned
+  callers", CB-1) as `#ov-cbdept-fold`, a collapsed section at the bottom of
+  the Overview. **Admin-only FOREVER** -- `data-admin-only` + display:none
+  (revealed by the admin loop, hidden by the View-as rule) and `ovCbDeptSync_`
+  refuses a non-admin -- and deliberately NOT in the 6c release pair: a
+  manager's page is one department. **Lazy:** it reads `getOutboundReport`
+  (department `''`, the company view) only while OPEN, for its own window
+  (Last 7 days / Last 30 days / Last 3 months via `datePresetRange_`, so it
+  ends yesterday), once per window; `ovLoad_` -- the landing and the 5-minute
+  auto-refresh -- never calls it (cross-file-pins "G2"). It shows the five
+  company callback tiles above the table, both drawn by the modal's renderers:
+  `outboundCallbackTilesHtml_` and `outboundRenderCbDept_(t, meta, view)` with
+  an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
+  and last payload, so sorting one surface never reorders the other). The
+  column definitions are ONE list (`OB_CBDEPT_COLS_` / `obCbDeptTheadHtml_`)
+  that builds both tables' header row. The CSV is the company report in the
+  section's on-screen order (`outboundDownloadCsv_(data, sort)`). Rendered-gated
+  by `drive-cbdept.js`.
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's

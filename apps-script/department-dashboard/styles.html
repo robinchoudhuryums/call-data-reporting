@@ -7216,6 +7216,18 @@
   .ob-cbdept-total td { border-top: 2px solid var(--line); font-weight: 600; }
   .ob-cbdept-detail { margin: 6px 0; }
 
+  /* G2: the Overview's Callbacks by department section (admin-only). A
+     collapsed fold below the dept detail table; the wide table scrolls inside
+     itself so the page never scrolls sideways. */
+  .ov-cbdept-fold { margin-top: 18px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); }
+  .ov-cbdept-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 10px 14px; cursor: pointer; }
+  .ov-cbdept-head { color: var(--muted); font-size: 13px; }
+  .ov-cbdept-body { padding: 0 14px 14px; }
+  .ov-cbdept-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 10px; }
+  .ov-cbdept-scroll { overflow-x: auto; max-width: 100%; }
+  #ov-cbdept-fold .pr-kpi-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  @media (max-width: 900px) { #ov-cbdept-fold .pr-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
   /* The abandon-hour strip. Scrolls horizontally on a narrow viewport rather
      than squeezing the cells past legibility -- the table/diagram exception
      to the no-horizontal-scroll rule. */

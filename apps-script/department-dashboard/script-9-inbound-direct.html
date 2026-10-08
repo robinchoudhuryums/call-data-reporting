@@ -2005,10 +2005,20 @@
   // srtApply_, because the rows are GROUPED: a sub-queue stays indented under
   // its parent whatever the order, the unmapped row stays last, and the total
   // row (a tfoot) never takes part. Default = worst own-rate first (ruling 1).
-  var obCbDeptSort_ = { key: 'ownPct', dir: 'asc' };
-  var obCbDeptLast_ = null;
-  function obCbDeptCmp_(a, b) {
-    const k = obCbDeptSort_.key, dir = obCbDeptSort_.dir === 'asc' ? 1 : -1;
+  //
+  // G2: TWO surfaces render this table -- the modal's company view and the
+  // admin-only Overview section -- through these same functions. Each holds
+  // its own VIEW: its element-id prefix (<prefix>-section / -table / -tbody /
+  // -tfoot), its own sort and the payload it last painted, so sorting one
+  // never reorders the other. The modal's view is the default everywhere.
+  function obCbDeptView_(prefix) {
+    return { prefix: prefix, sort: { key: 'ownPct', dir: 'asc' }, last: null };
+  }
+  var OB_CBDEPT_MODAL_ = obCbDeptView_('outbound-cbdept');
+  var obCbDeptSort_ = OB_CBDEPT_MODAL_.sort;
+  function obCbDeptCmp_(a, b, sort) {
+    const srt = sort || obCbDeptSort_;
+    const k = srt.key, dir = srt.dir === 'asc' ? 1 : -1;
     const va = a[k], vb = b[k];
     // Nulls (no trackable abandons) sink regardless of direction.
     if (va == null && vb == null) return String(a.dept).localeCompare(String(b.dept));
@@ -2018,7 +2028,8 @@
       ? (va - vb) : String(va).localeCompare(String(vb));
     return (c * dir) || String(a.dept).localeCompare(String(b.dept));
   }
-  function obCbDeptOrder_(rows) {
+  function obCbDeptOrder_(rows, sort) {
+    const cmp = function (a, b) { return obCbDeptCmp_(a, b, sort); };
     const present = {};
     rows.forEach(function (r) { if (!r.unmapped) present[r.dept] = true; });
     const kids = {};
@@ -2030,11 +2041,36 @@
       else tops.push(r);
     });
     const out = [];
-    tops.sort(obCbDeptCmp_).forEach(function (t) {
+    tops.sort(cmp).forEach(function (t) {
       out.push(t);
-      (kids[t.dept] || []).sort(obCbDeptCmp_).forEach(function (c) { out.push(c); });
+      (kids[t.dept] || []).sort(cmp).forEach(function (c) { out.push(c); });
     });
     return out.concat(tail);
+  }
+  // The column definitions, ONE copy for both surfaces (G2). `tilesWord` names
+  // where the matching tiles sit ('above' in both today).
+  var OB_CBDEPT_COLS_ = [
+    { key: 'dept', label: 'Department', num: false, title: '' },
+    { key: 'tracked', label: 'Trackable abandons', num: true,
+      title: 'Abandoned calls on this department’s queues that carried caller ID (a parent includes its sub-queues). Anonymous abandons cannot be called back and are left out.' },
+    { key: 'ownPct', label: 'Called back by us', num: true,
+      title: 'Trackable abandons whose FIRST callback was dialed by an agent on this department’s roster (or a sub-queue’s). The ranked column.' },
+    { key: 'otherCalledBack', label: 'By another dept', num: true,
+      title: 'The first callback came from someone NOT on this department’s roster: another department, an unrostered dialer, or a call with no agent recorded. The caller was served, but not by the owning department.' },
+    { key: 'notCalledBack', label: 'Not called back', num: true,
+      title: 'No outbound call to the caller within the callback window.' },
+    { key: 'connectedPct', label: 'Callbacks connected (upper bound)', num: true,
+      title: 'Callbacks (by anyone) where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of trackable abandons.' },
+    { key: 'medianCallbackSec', label: 'Median time', num: true,
+      title: 'Median time from the abandoned call to the first callback, measured from the caller’s side: it INCLUDES any internal handoff (e.g. an email to the owning department), so it is not agent responsiveness alone. Same clock as the Median tile above.' },
+    { key: 'pendingTail', label: 'Still in window', num: true,
+      title: 'Not called back yet, but still inside the callback window.' },
+  ];
+  function obCbDeptTheadHtml_() {
+    return '<tr>' + OB_CBDEPT_COLS_.map(function (c) {
+      return '<th' + (c.num ? ' class="num sortable"' : ' class="sortable"') + ' data-cbsort="' + c.key + '" tabindex="0"'
+        + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '') + '>' + escapeHtml(c.label) + '</th>';
+    }).join('') + '</tr>';
   }
   function obCbDeptCellsHtml_(r) {
     const pct = function (v) { return v != null ? v + '%' : '—'; };
@@ -2088,12 +2124,13 @@
     }
     return html;
   }
-  function outboundPaintCbDept_() {
-    const t = obCbDeptLast_;
-    const tb = $('outbound-cbdept-tbody');
-    const tf = $('outbound-cbdept-tfoot');
+  function outboundPaintCbDept_(view) {
+    const v = view || OB_CBDEPT_MODAL_;
+    const t = v.last;
+    const tb = $(v.prefix + '-tbody');
+    const tf = $(v.prefix + '-tfoot');
     if (!t || !tb) return;
-    tb.innerHTML = obCbDeptOrder_(t.rows || []).map(function (r) {
+    tb.innerHTML = obCbDeptOrder_(t.rows || [], v.sort).map(function (r) {
       const child = !!(r.parent && !r.unmapped);
       return '<tr class="qcd-expandable ob-cbdept-row' + (child ? ' ob-cbdept-child' : '')
         + (r.unmapped ? ' ob-cbdept-unmapped' : '') + '">'
@@ -2111,25 +2148,28 @@
           + '<strong>All departments</strong></td>' + obCbDeptCellsHtml_(t.total) + '</tr>'
         : '';
     }
-    const table = $('outbound-cbdept-table');
+    const table = $(v.prefix + '-table');
     if (table) {
       table.querySelectorAll('th[data-cbsort]').forEach(function (th) {
-        const on = th.getAttribute('data-cbsort') === obCbDeptSort_.key;
-        th.classList.toggle('srt-asc', on && obCbDeptSort_.dir === 'asc');
-        th.classList.toggle('srt-desc', on && obCbDeptSort_.dir === 'desc');
-        if (on) th.setAttribute('aria-sort', obCbDeptSort_.dir === 'asc' ? 'ascending' : 'descending');
+        const on = th.getAttribute('data-cbsort') === v.sort.key;
+        th.classList.toggle('srt-asc', on && v.sort.dir === 'asc');
+        th.classList.toggle('srt-desc', on && v.sort.dir === 'desc');
+        if (on) th.setAttribute('aria-sort', v.sort.dir === 'asc' ? 'ascending' : 'descending');
         else th.removeAttribute('aria-sort');
       });
     }
   }
-  function outboundRenderCbDept_(t, meta) {
-    const sec = $('outbound-cbdept-section');
+  function outboundRenderCbDept_(t, meta, view) {
+    const v = view || OB_CBDEPT_MODAL_;
+    const sec = $(v.prefix + '-section');
     if (!sec) return;
-    obCbDeptLast_ = t || null;
+    v.last = t || null;
     if (!t || !(t.rows || []).length) { sec.style.display = 'none'; return; }
     sec.style.display = '';
-    const tb = $('outbound-cbdept-tbody');
-    const table = $('outbound-cbdept-table');
+    const tb = $(v.prefix + '-tbody');
+    const table = $(v.prefix + '-table');
+    const head = table && table.querySelector('thead');
+    if (head && !head.children.length) head.innerHTML = obCbDeptTheadHtml_();
     if (tb && !tb._obCbWired) {
       tb._obCbWired = true;
       // Delegated expand (the qcd-expandable contract: the button owns
@@ -2143,9 +2183,9 @@
       table._obCbWired = true;
       const sortBy = function (th) {
         const key = th.getAttribute('data-cbsort');
-        if (obCbDeptSort_.key === key) obCbDeptSort_.dir = obCbDeptSort_.dir === 'asc' ? 'desc' : 'asc';
-        else { obCbDeptSort_.key = key; obCbDeptSort_.dir = (key === 'dept' || key === 'ownPct' || key === 'connectedPct') ? 'asc' : 'desc'; }
-        outboundPaintCbDept_();
+        if (v.sort.key === key) v.sort.dir = v.sort.dir === 'asc' ? 'desc' : 'asc';
+        else { v.sort.key = key; v.sort.dir = (key === 'dept' || key === 'ownPct' || key === 'connectedPct') ? 'asc' : 'desc'; }
+        outboundPaintCbDept_(v);
       };
       const thead = table.querySelector('thead');
       if (thead) {
@@ -2162,7 +2202,7 @@
         });
       }
     }
-    outboundPaintCbDept_();
+    outboundPaintCbDept_(v);
   }
 
   // PC-12: one heading row (dept, agent count, subtotals) per in-scope dept
@@ -2415,7 +2455,7 @@
         department: meta.companyView ? '' : (meta.department || '') });
   }
 
-  function outboundDownloadCsv_(data) {
+  function outboundDownloadCsv_(data, cbDeptSort) {
     const d = (data && data.meta) ? data : outboundLastData;
     if (!d || (d.meta || {}).available === false) return;
     const meta = d.meta || {};
@@ -2446,7 +2486,7 @@
           r.otherCalledBack, r.notCalledBack, r.calledBackConnected, r.connectedPct != null ? r.connectedPct : '',
           r.medianCallbackSec != null ? r.medianCallbackSec : '', r.pendingTail]);
       };
-      obCbDeptOrder_(cbd.rows).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
+      obCbDeptOrder_(cbd.rows, cbDeptSort).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
       if (cbd.total) lines.push(cbdRow('All departments (each abandon once)', '', cbd.total));
     }
     lines.push('');

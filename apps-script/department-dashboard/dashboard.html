@@ -299,6 +299,53 @@
             <tbody id="ov-user-tbody"></tbody>
           </table>
         </div>
+        <!-- G2: CALLBACKS BY DEPARTMENT -- the company-wide "who calls back
+             whose abandoned callers" table, moved here from the Outbound
+             report's company view (G3 retires the modal). ADMIN-ONLY FOREVER:
+             data-admin-only + display:none (revealed by the admin loop, hidden
+             in View-as), and NOT part of the 6c release pair -- a manager's
+             page is one department. LAZY: getOutboundReport (company view) runs
+             only once the section is OPEN, and only for its own window -- the
+             5-minute auto-refresh never touches it (ovLoad_ does not call it). -->
+        <details id="ov-cbdept-fold" class="ov-cbdept-fold" data-admin-only style="display:none;">
+          <summary class="ov-cbdept-summary">
+            <span class="ds-zone-label"><span class="ov-dir-pill">Outbound</span> Callbacks by department</span>
+            <span class="ov-cbdept-head" id="ov-cbdept-head">open to load</span>
+          </summary>
+          <div class="ov-cbdept-body" id="ov-cbdept-body">
+            <div class="ov-cbdept-controls">
+              <span class="segmented" id="ov-cbdept-window" role="group" aria-label="Callbacks window">
+                <button type="button" class="seg-btn" data-preset="last7" aria-pressed="false">Last 7 days</button>
+                <button type="button" class="seg-btn active" data-preset="last30" aria-pressed="true">Last 30 days</button>
+                <button type="button" class="seg-btn" data-preset="last3Months" aria-pressed="false">Last 3 months</button>
+              </span>
+              <span class="al-hint" id="ov-cbdept-dates"></span>
+              <button type="button" class="btn btn-secondary" id="ov-cbdept-csv-btn">Download CSV</button>
+            </div>
+            <div id="ov-cbdept-state" class="ds-note" style="display:none;"></div>
+            <div id="ov-cbdept-content" style="display:none;">
+              <div id="ov-cbdept-kpis" class="pr-kpi-row"></div>
+              <div class="al-section" id="ov-cbdept-section" style="display:none;">
+                <p class="al-hint">
+                  Each department is responsible for calling back its own abandoned callers.
+                  &ldquo;Called back by us&rdquo; counts abandons on the department&rsquo;s queues whose
+                  <strong>first</strong> callback came from its own agents (a parent includes its
+                  sub-queues&rsquo; queues and agents). Times run from the abandoned call and include
+                  any internal handoff. Expand a row to see who made the callbacks. The rows do not
+                  sum to the total: a parent includes its sub-queues, and a queue shared by two
+                  departments is in both.
+                </p>
+                <div class="ov-cbdept-scroll">
+                  <table class="al-config-table ob-cbdept-table" id="ov-cbdept-table">
+                    <thead></thead>
+                    <tbody id="ov-cbdept-tbody"></tbody>
+                    <tfoot id="ov-cbdept-tfoot"></tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -2412,23 +2459,10 @@
             </p>
             <div style="overflow-x:auto;">
               <table class="al-config-table ob-cbdept-table" id="outbound-cbdept-table">
-                <thead><tr>
-                  <th data-cbsort="dept" tabindex="0" class="sortable">Department</th>
-                  <th class="num sortable" data-cbsort="tracked" tabindex="0"
-                      title="Abandoned calls on this department&rsquo;s queues that carried caller ID (a parent includes its sub-queues). Anonymous abandons cannot be called back and are left out.">Trackable abandons</th>
-                  <th class="num sortable" data-cbsort="ownPct" tabindex="0"
-                      title="Trackable abandons whose FIRST callback was dialed by an agent on this department&rsquo;s roster (or a sub-queue&rsquo;s). The ranked column.">Called back by us</th>
-                  <th class="num sortable" data-cbsort="otherCalledBack" tabindex="0"
-                      title="The first callback came from someone NOT on this department&rsquo;s roster: another department, an unrostered dialer, or a call with no agent recorded. The caller was served, but not by the owning department.">By another dept</th>
-                  <th class="num sortable" data-cbsort="notCalledBack" tabindex="0"
-                      title="No outbound call to the caller within the callback window.">Not called back</th>
-                  <th class="num sortable" data-cbsort="connectedPct" tabindex="0"
-                      title="Callbacks (by anyone) where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of trackable abandons.">Callbacks connected (upper bound)</th>
-                  <th class="num sortable" data-cbsort="medianCallbackSec" tabindex="0"
-                      title="Median time from the abandoned call to the first callback, measured from the caller&rsquo;s side: it INCLUDES any internal handoff (e.g. an email to the owning department), so it is not agent responsiveness alone. Same clock as the Median tile above.">Median time</th>
-                  <th class="num sortable" data-cbsort="pendingTail" tabindex="0"
-                      title="Not called back yet, but still inside the callback window.">Still in window</th>
-                </tr></thead>
+                <!-- G2: the header row is built by obCbDeptTheadHtml_ (script-9),
+                     ONE copy of the column definitions shared with the
+                     Overview's Callbacks by department section. -->
+                <thead></thead>
                 <tbody id="outbound-cbdept-tbody"></tbody>
                 <tfoot id="outbound-cbdept-tfoot"></tfoot>
               </table>
