@@ -2083,15 +2083,15 @@
       INS_OB_.cur = cur; INS_OB_.prior = prior;
       insObRender_(cur, prior, meta);
     }
-    google.script.run
-      .withSuccessHandler(function (r) { cur = r; done(); })
-      .withFailureHandler(function (e) { failed = (e && e.message) ? e.message : String(e || ''); done(); })
-      .getDeptOutboundSummary({ department: meta.department, from: meta.from, to: meta.to });
+    // FO-3: through the store the My Department table shares (script-5), so
+    // the two never send the same window twice.
+    obSummaryFetch_({ department: meta.department, from: meta.from, to: meta.to },
+      function (r) { cur = r; done(); },
+      function (e) { failed = (e && e.message) ? e.message : String(e || ''); done(); });
     if (meta.priorFrom && meta.priorTo) {
-      google.script.run
-        .withSuccessHandler(function (r) { prior = r; done(); })
-        .withFailureHandler(function () { prior = null; done(); })   // no deltas, the section still renders
-        .getDeptOutboundSummary({ department: meta.department, from: meta.priorFrom, to: meta.priorTo });
+      obSummaryFetch_({ department: meta.department, from: meta.priorFrom, to: meta.priorTo },
+        function (r) { prior = r; done(); },
+        function () { prior = null; done(); });   // no deltas, the section still renders
     }
   }
 

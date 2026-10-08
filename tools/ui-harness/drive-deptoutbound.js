@@ -220,8 +220,25 @@ async function openDept(page, meta) {
     await pr.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
     await pr.waitForTimeout(2500);
     await openDept(pr, meta);
+    const beforeSwitch = await pr.evaluate(() => (window.__HARNESS__.calls || []).length);
     await pr.click('#dept-dir-switch [data-dir="out"]');
     await pr.waitForTimeout(2500);
+    // FO-3: the table and the Insights Outbound fold share ONE client store,
+    // so the switch asks for each window once between them, not once each.
+    {
+      const sent = await pr.evaluate((n) => (window.__HARNESS__.calls || []).slice(n)
+        .filter((c) => c.fn === 'getDeptOutboundSummary')
+        .map((c) => (c.args && c.args[0]) ? c.args[0].from + '|' + c.args[0].to : '?'), beforeSwitch);
+      const per = {};
+      sent.forEach((k) => { per[k] = (per[k] || 0) + 1; });
+      const both = await pr.evaluate(() => ({
+        table: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
+        fold: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
+      }));
+      record('switching to Outbound asks for each window ONCE between the table and the Insights fold, and both render',
+        Object.keys(per).length === 2 && Object.keys(per).every((k) => per[k] === 1) && both.table > 0 && both.fold === 5,
+        JSON.stringify({ per: per, both: both }));
+    }
     for (let round = 1; round <= 2; round++) {
       const before = await pr.evaluate(() => (window.__HARNESS__.calls || []).length);
       await pr.click('#refresh-btn');
