@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-08 — FO-3 + G3 IMPLEMENTED (block 240): the Outbound modal is retired.**
+  - FO-3: one client store (obSummaryFetch_) for getDeptOutboundSummary, shared by the Batch D table and the Insights Outbound fold; a switch to Outbound now sends each window once.
+  - G3: modal markup + menu item + modal-only client code removed; `#/report/outbound` lands on My Department -> Outbound with the Callbacks fold open (admin; a plain landing for anyone else); the 6c pin pairs the gate with #dept-dir-switch / #ins-ob-fold / #ins-cb-fold and fails if the modal returns. Harness getLocation is async + deep-linkable.
+  - 2244 tests; every ci:ui stage green; four bites.
+
+  **Owner-side:** deploy, walk S46's pre-release half, S48, S59. The 6c release (#63 step 4) whenever vetting is done.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-08 — G2 follow-ons IMPLEMENTED (block 239).** FO-1: Batch D's outbound view no longer re-sends a request for a window already in flight (a Refresh sent each window twice; a new two-round driver check reproduced it and now passes). FO-2: the ui-harness README warns that a stale manager build makes manager checks pass vacuously on hand runs. Gates green.
   **Next:** G3 (retire the modal) before the 6c release; owner call on sharing one store between the Batch D table and the Insights Outbound fold (they fetch the same windows twice).
   **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
