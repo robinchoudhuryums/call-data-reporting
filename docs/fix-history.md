@@ -1266,8 +1266,9 @@ AF-1) and #355 (the dialog); cdr-import deployed the same day.
 Owner-requested, after live Neon probes showed the callback figures could not
 answer the question the report was built for (customers who called a person's
 line repeatedly with no callback). The rulings and measurements are in
-`docs/next-steps.md` "Callback episodes + direct lines"; CE-2 (drill lists)
-and CE-3 (direct-line callbacks) are planned there.
+`docs/next-steps.md` "Callback episodes + direct lines"; CE-1..CE-3 shipped
+2026-10-09 (blocks 241-243), the follow-ons FO-1..FO-4 and BF-1/BF-2 with them
+(blocks 244-245).
 
 | Change | What was wrong / what changed | Live rule · evidence |
 |---|---|---|

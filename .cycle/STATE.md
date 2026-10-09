@@ -1,6 +1,8 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — /sync-docs after CE-1..BF-2.** CLAUDE.md: the Operator State #49 index line names the direct-line fallback + the BF-1 backfill. architecture.md: the Outbound row's three new RPCs + `outboundDirect:v2:`, the export's cols 23-24. fix-history: the Callback-episodes intro past tense. Harness README: the FO-1/2/3 driver checks. CLAUDE.md 172.8 KB (27.2 KB headroom); nothing prunable without dropping a rule -- the two largest bullets sit ~200 B under the 4 KB ratchet, so route their next additions to a split doc.
+  **Where I left off:** PR opened and merged per the owner's instruction.
 - **2026-10-09 — BF-1 + BF-2 IMPLEMENTED (block 245).**
   - BF-1: cdr-import `previewFirstRingBackfill()` / `backfillFirstRingFromJourney()` derive first_ring_seconds for older direct-line missed/abandoned calls from the stored journey (first leg naming the line owner, canonicalized; NULL-only writes; unknown stays NULL). Run end to end on Postgres 16.
   - BF-2: outboundAgentsSel_ groups by `COALESCE(trim(agent_name), '')`, the sheet twin's key.

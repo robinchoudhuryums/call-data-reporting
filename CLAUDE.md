@@ -2142,7 +2142,7 @@ items for anything it flags or doesn't cover.)
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; when set, an Access Control `agent` row opens the separate agent app -- off, agents get access-denied)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching
-49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh, plus the one-time historical re-export
+49. Inbound Calls tab export trigger -- keeps the heatmap's and the direct-line callbacks' SHEET FALLBACK fresh, plus the one-time re-exports and the BF-1 ring backfill from stored journeys
 50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use for an emailed Individual Report; prefer adding the agent to Access Control
 52. Sheet coverage check -- business days with ZERO rows in a dashboard-read sheet, the interior gap every other signal misses; needs no Neon, so it works mid-outage
