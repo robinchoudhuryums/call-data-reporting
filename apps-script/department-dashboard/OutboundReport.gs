@@ -359,8 +359,12 @@ function outboundAgentsSel_(f, t) {
   // twin's JS sort (obAgentsFromGrid_) does. The database's default collation
   // ignores case and punctuation and puts NULL last, so the two sources
   // listed tied agents differently.
+  // BF-2: the row's name is the TRIMMED name, a missing one '' -- the twin's
+  // String(...).trim() key -- so a NULL name and a blank one are one row in
+  // both sources, and a name the capture's length cap cut after a space
+  // groups with its unpadded spelling.
   return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent COLLATE \"C\" NULLS FIRST), '[]') FROM ("
-    + 'SELECT agent_name AS agent, count(*) AS ob_total, '
+    + "SELECT COALESCE(trim(agent_name), '') AS agent, count(*) AS ob_total, "
     +   'count(*) FILTER (WHERE connected) AS ob_connected, '
     // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
     // not brief -- it falls into neither bucket, and the shaper derives
@@ -374,7 +378,7 @@ function outboundAgentsSel_(f, t) {
     +   'COALESCE(sum(attempts),0) AS attempts, '
     +   'count(DISTINCT call_date) AS ob_days '
     + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
-    + 'GROUP BY agent_name) t)';
+    + 'GROUP BY 1) t)';
 }
 
 /**

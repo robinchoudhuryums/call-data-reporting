@@ -637,7 +637,13 @@ COUNTED (`counts.misdials`) and kept OUT of the episodes and every rate. The
 ring is `inbound_calls.first_ring_seconds`, captured by cdr-import
 (`icFirstRingSec_`: start -> connect when the leg was answered, start -> stop
 otherwise -- the outbound `ring_seconds` rule); rows captured before it read
-NULL = unknown and stay in. Every reader takes the column through
+NULL = unknown and stay in, until the one-off `backfillFirstRingFromJourney()`
+(BF-1, cdr-import, preview first) derives them from the stored journey: the
+`secs` of the first non-queue journey leg naming the line owner (verbatim or
+through the capture's canonicalizer), which on an unanswered leg equals the
+capture's start -> stop. It writes NULL rows only, leaves an answered or
+length-less leg unknown, and reads just the events' name / kind / secs out of
+Neon (`first-ring-backfill.test.js`). Every reader takes the column through
 `to_jsonb(c) ->> 'first_ring_seconds'`, so a dashboard or export deployed
 before cdr-import has added it reads NULL instead of failing (pinned).
 **Sheet fallback (FO-2):** the Inbound Calls export carries First Agent / First

@@ -352,6 +352,11 @@ tests/
                               two-arm dept attribution; direct-fallback:
                               source parity between the Neon path and the
                               sheet, which is the PRIMARY there),
+                              first-ring-backfill (BF-1: the one-off
+                              backfill of first_ring_seconds from the stored
+                              journey -- the first leg naming the line
+                              owner, unknown stays NULL, NULL-only writes,
+                              date chunks, preview never writes),
                               inbound-export (the "Inbound Calls" tab's
                               cols 16-17 + coercion guards feeding that
                               fallback, and FO-2's First Agent / First Ring

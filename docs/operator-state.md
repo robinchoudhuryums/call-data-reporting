@@ -1720,8 +1720,16 @@ When something looks wrong, before assuming a code bug, check:
     in this order:** (1) push cdr-import -- its next capture adds
     `inbound_calls.first_ring_seconds` and fills it for the dates it writes
     (older rows stay NULL = "ring unknown", which the misdial filter keeps in
-    the rate; a date still inside the ~14-day `Call_Legs_*` window gains it
-    with a Manual Export / force re-import, #56); (2) push cdr-report and run
+    the rate); then, from the cdr-import editor, run
+    `previewFirstRingBackfill()`, take a Neon backup (dashboard: Admin ->
+    Health -> Back up now) and run `backfillFirstRingFromJourney()` (BF-1),
+    which derives the ring for older rows from their stored journey -- the
+    first journey leg naming the line owner, whose length on an unanswered leg
+    is exactly what the capture computes. Rows it cannot decide (no journey,
+    no leg naming the owner, an answered leg) stay NULL; it only ever writes
+    NULL rows, so it is safe to re-run, and a run cut short by the time budget
+    continues where it left off. Read its log: it says how many it derived,
+    how many of those are misdials, and how many stay unknown; (2) push cdr-report and run
     `exportInboundCalls('<earliest-date-you-want-covered>', '<today-ISO>')`
     once from the editor, so existing rows gain the two cells -- until then
     the fallback names the line rung only from the first re-exported date, and

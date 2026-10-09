@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — BF-1 + BF-2 IMPLEMENTED (block 245).**
+  - BF-1: cdr-import `previewFirstRingBackfill()` / `backfillFirstRingFromJourney()` derive first_ring_seconds for older direct-line missed/abandoned calls from the stored journey (first leg naming the line owner, canonicalized; NULL-only writes; unknown stays NULL). Run end to end on Postgres 16.
+  - BF-2: outboundAgentsSel_ groups by `COALESCE(trim(agent_name), '')`, the sheet twin's key.
+  - 2296 tests; every ci:ui stage green; seven bites.
+
+  **Owner-side:** after the cdr-import push, preview -> Neon backup -> apply the backfill, then the Inbound Calls re-export (#49). Open: managers seeing call ids at 6c.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-09 — CE follow-ons IMPLEMENTED (block 244).** Owner rulings: misdial = a ring under 8 s (out of the rates, counted; unknown ring stays in); add the First Agent export column + a sheet backup; no Overview per-dept direct table for now.
   - FO-1: cdr-import captures `inbound_calls.first_ring_seconds`; the direct SQL flags misdials via `to_jsonb` (works before the column exists). outboundDirect:v2.
   - FO-2: Inbound Calls export cols 23-24 (First Agent / First Ring Sec); both direct endpoints fall back to the export tabs (parity-pinned twin of the SQL), uncached, disclosed.

@@ -618,8 +618,9 @@ deploy.
 - **Misdials (owner, 2026-10-09 -- block 244):** a ring to the line owner
   under 8 s (the outbound brief-ring line) is counted and left out of the
   rates; a call with no ring length stays in. The ring is captured at import
-  (`inbound_calls.first_ring_seconds`), so rows captured before the deploy
-  stay in until their date is re-imported.
+  (`inbound_calls.first_ring_seconds`); rows captured before the deploy get it
+  from the one-off `backfillFirstRingFromJourney()` (block 245), which derives
+  it from the stored journey.
 - **Sheet backup (owner, 2026-10-09 -- block 244):** the Inbound Calls export
   gained First Agent / First Ring Sec, and the direct-line figures fall back
   to the two export tabs when Neon is unreachable.

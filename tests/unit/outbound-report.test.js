@@ -259,7 +259,10 @@ test('outbound SQL: callback linkage joins by caller hash, through to + the call
 
 test('outbound SQL: agents group by agent_name ONLY — the raw CDR org label is never read', function () {
   const r = runCompute_('CSR');
-  assert.match(r.sql, /GROUP BY agent_name\)/);
+  // BF-2: grouped by the TRIMMED name, a missing one '' -- the sheet twin's key.
+  assert.match(r.sql, /SELECT COALESCE\(trim\(agent_name\), ''\) AS agent, count\(\*\) AS ob_total/);
+  assert.match(r.sql, /GROUP BY 1\) t\)/);
+  assert.doesNotMatch(r.sql, /GROUP BY agent_name\) t\)/);
   assert.ok(!/o\.department/.test(r.sql) && !/agent_dept/.test(r.sql),
     'the contract caveat: attribution is roster-side, the org-label column stays unread');
 });
