@@ -596,11 +596,23 @@ dial tie is broken by `call_id` on both paths. The five-outcome partition is
 pinned on every row and the total (`outbound-callback-dept.test.js`); S48 is
 the walk. **Since G2 (2026-10-08) its
 home is the Overview** (an admin-only, lazy section; the modal's copy went with
-the modal in G3) -- see docs/client-ui-conventions.md. `getOutboundUncalled` is the
-not-called-back drill: the attempts of the episodes ending `none` / `pending`,
-from the SAME event fetch + engine as the tiles, then one detail query for
-exactly those call ids (cap 200, no caller identity; rows reuse the heatmap
-cell renderer + "↳ path"). Cached
+the modal in G3) -- see docs/client-ui-conventions.md. **The two drill lists (CE-2, 2026-10-09)** run the SAME event fetch + engine
+as the tiles, then ONE detail query for exactly the inbound calls they show
+(incl. `dial_in_number`, our line, labelled from `DIAL_IN_LABELS`); no hash,
+number or caller key reaches the client. `getOutboundUncalled` = the episodes
+ending `none` / `pending`, GROUPED by episode (newest first, whole episodes up
+to a 200-attempt cap): status (still inside the window with N days left |
+missed) and two LATE tags read `OUTBOUND_LATE_HORIZON_DAYS` (=14) past the
+deadline (`obEpLateTags_`: "called back late, day N, own / another team",
+"got through later") -- tags only, the engine's window expiry keeps those
+events from ever deciding an outcome. `getOutboundCalledBack` = the episodes
+a dial decided (`own` / `other`): the dialer and their roster team, the delay
+from the first attempt, connected or not, and the deciding dial's call id
+(`ep.dial`) for a "↳ callback path" into the OUTBOUND call
+(`data-journey-kind="outbound"` on the shared `.pid-journey` chip). Rows show
+the call id + copy for admins (`parentIdBadge`: managers get the path chip
+alone, the owner-round-4 rule) -- the phone provider's portal shows the
+number the dashboard never stores. Cached
 `outboundReport:v8` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two

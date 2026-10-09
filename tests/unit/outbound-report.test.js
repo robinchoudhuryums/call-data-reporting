@@ -415,34 +415,58 @@ function makeSeqConn_(jsons) {
   return conn;
 }
 
-test('outbound v2 on CE-1: getOutboundUncalled lists the attempts of episodes ending none / pending — no caller identity', function () {
+test('CE-2: getOutboundUncalled groups the none / pending episodes, with status, late tags and the dialed line -- no caller identity', function () {
   h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
   h.ctx.buildDeptsByAgent_ = function () { return ROSTER_; };
-  const events = JSON.stringify({ cbCounts: BLOB_.cbCounts, cbAb: BLOB_.cbAb.concat([
-      [4, '2026-08-02', '09:00:00', 'a_q_csr', 'c4b']]),   // k4 tries again: same episode
-    cbOb: BLOB_.cbOb, cbAns: [] });
-  const detail = JSON.stringify([uncalledRow_('c4b', '2026-08-02'), uncalledRow_('c4', '2026-08-01')]);
-  const conn = makeSeqConn_([events, detail]);
-  h.ctx.getDashboardNeonConn_ = function () { return conn; };
-  const out = JSON.parse(JSON.stringify(h.call('getOutboundUncalled',
-    { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
-  assert.equal(conn.sql.length, 2, 'the event fetch, then the detail for exactly those attempts');
-  assert.match(conn.sql[0], /^WITH cb_ab AS \(/, 'the SAME event fetch as the report');
-  assert.match(conn.sql[0], /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
-  assert.match(conn.sql[0], /c\.call_start IS NULL OR \(c\.call_start >= \(CASE WHEN/,
-    'work-window scoped like the report');
-  assert.match(conn.sql[0], /'a_q_csr'/, 'dept predicate applied');
-  assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(\('2026-08-02'::date, 'c4b'\), \('2026-08-01'::date, 'c4'\)\)/,
-    'only k4\'s two attempts: k1/k2 were called back by the team and k3 contacted by another team');
-  assert.ok(!/caller_hash|"k"/.test(JSON.stringify(out)), 'no hash and no caller key in the response');
-  assert.equal(out.meta.episodes, 1);
-  assert.equal(out.calls.length, 2);
-  assert.equal(out.calls[0].callId, 'c4b');
-  assert.equal(out.calls[0].cstStart, '10:41:00');
-  assert.equal(out.meta.truncated, false);
-  assert.equal(conn.closed, true);
+  h.ctx.inboundDialInLabels_ = function () { return { '18005550100': 'Main CSR Line' }; };
+  const realToday = h.ctx.obTodayIso_;
+  h.ctx.obTodayIso_ = function () { return '2026-08-20'; };
+  try {
+    const events = JSON.stringify({ cbCounts: BLOB_.cbCounts,
+      cbAb: BLOB_.cbAb.concat([
+        [4, '2026-08-02', '09:00:00', 'a_q_csr', 'c4b'],    // k4 tries again: same episode
+        [5, '2026-08-19', '08:00:00', 'a_q_csr', 'c5']]),   // k5: still inside the window
+      cbOb: BLOB_.cbOb.concat([[4, '2026-08-09', '10:00:00', 'late', 'Ann', true]]),   // k4 called back late
+      cbAns: [] });
+    const detail = JSON.stringify([
+      Object.assign(uncalledRow_('c5', '2026-08-19'), { dial_in_number: '+1 (800) 555-0100' }),
+      uncalledRow_('c4b', '2026-08-02'), uncalledRow_('c4', '2026-08-01')]);
+    const conn = makeSeqConn_([events, detail]);
+    h.ctx.getDashboardNeonConn_ = function () { return conn; };
+    const out = JSON.parse(JSON.stringify(h.call('getOutboundUncalled',
+      { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
+    assert.equal(conn.sql.length, 2, 'the event fetch, then the detail for exactly those attempts');
+    assert.match(conn.sql[0], /^WITH cb_ab AS \(/, 'the SAME event fetch as the report');
+    assert.match(conn.sql[0], /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
+    assert.match(conn.sql[0], /c\.call_start IS NULL OR \(c\.call_start >= \(CASE WHEN/, 'work-window scoped like the report');
+    assert.match(conn.sql[0], /'a_q_csr'/, 'dept predicate applied');
+    assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-01'::date AND '2026-09-05'::date/,
+      'dials read to + window + OUTBOUND_LATE_HORIZON_DAYS, for the late tags');
+    assert.match(conn.sql[1], /c\.dial_in_number/);
+    assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(\('2026-08-19'::date, 'c5'\), \('2026-08-01'::date, 'c4'\), \('2026-08-02'::date, 'c4b'\)\)/,
+      'k1/k2 were called back by the team and k3 contacted by another team: never listed');
+    assert.ok(!/caller_hash|"k"/.test(JSON.stringify(out)), 'no hash and no caller key in the response');
+    assert.deepEqual([out.meta.episodes, out.meta.pending, out.meta.missed], [2, 1, 1]);
+    assert.equal(out.episodes.length, 2, 'newest episode first');
+    const p = out.episodes[0], m = out.episodes[1];
+    assert.deepEqual([p.status, p.daysLeft, p.firstIso], ['pending', 2, '2026-08-19'], '08-19 + 3 = 08-22: two days left');
+    assert.deepEqual(p.late, { calledBack: null, gotThrough: null });
+    assert.equal(m.status, 'missed');
+    assert.deepEqual(m.attempts, [{ callDate: '2026-08-01', callId: 'c4' }, { callDate: '2026-08-02', callId: 'c4b' }],
+      'attempts oldest first');
+    assert.deepEqual(m.late.calledBack, { iso: '2026-08-09', hms: '10:00:00', daysAfter: 7, team: 'own', agent: 'Ann' },
+      'a dial after the 08-05 deadline is a TAG, never an outcome');
+    assert.equal(out.calls[0].callId, 'c5', 'flat rows newest first');
+    assert.equal(out.calls[0].dialIn, 'Main CSR Line', 'the dialed line, labelled from DIAL_IN_LABELS');
+    assert.equal(out.calls[1].dialIn, null);
+    assert.equal(out.meta.truncated, false);
+    assert.equal(conn.closed, true);
+  } finally {
+    h.ctx.obTodayIso_ = realToday;
+    delete h.ctx.inboundDialInLabels_;
+  }
 
-  // Truncation: 201 uncalled attempts → newest 200 asked for + flagged.
+  // Truncation: whole episodes newest first up to the 200-attempt cap.
   const many = [];
   for (let i = 0; i < 201; i++) many.push([100 + i, '2026-08-05', '08:00:00', 'a_q_csr', 'id' + i]);
   const conn2 = makeSeqConn_([JSON.stringify({ cbCounts: [], cbAb: many, cbOb: [], cbAns: [] }), '[]']);
@@ -450,6 +474,7 @@ test('outbound v2 on CE-1: getOutboundUncalled lists the attempts of episodes en
   const big = JSON.parse(JSON.stringify(h.call('getOutboundUncalled',
     { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
   assert.equal(big.meta.truncated, true);
+  assert.equal(big.episodes.length, 200);
   assert.equal((conn2.sql[1].match(/::date, 'id/g) || []).length, 200);
 
   // Gate: rides the same resolver (manager refused while vetted).
@@ -462,6 +487,42 @@ test('outbound v2 on CE-1: getOutboundUncalled lists the attempts of episodes en
   // No conn → clean unavailable.
   h.ctx.getDashboardNeonConn_ = function () { return null; };
   assert.equal(h.call('getOutboundUncalled',
+    { from: '2026-08-01', to: '2026-08-19', department: 'CSR' }).meta.available, false);
+});
+
+test('CE-2: getOutboundCalledBack lists the episodes a dial decided -- dialer, team, own or other, delay, the callback id', function () {
+  h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  h.ctx.buildDeptsByAgent_ = function () { return ROSTER_; };
+  const events = JSON.stringify({ cbCounts: BLOB_.cbCounts, cbAb: BLOB_.cbAb, cbOb: BLOB_.cbOb, cbAns: [] });
+  const detail = JSON.stringify([uncalledRow_('c1', '2026-08-18'), uncalledRow_('c2', '2026-08-18'),
+    uncalledRow_('c3', '2026-08-18')]);
+  const conn = makeSeqConn_([events, detail]);
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const out = JSON.parse(JSON.stringify(h.call('getOutboundCalledBack',
+    { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
+  assert.equal(conn.sql.length, 2);
+  assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-01'::date AND '2026-08-22'::date/,
+    'no late horizon: the list shows what the tiles count');
+  assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(/);
+  assert.ok(!/caller_hash|"k"/.test(JSON.stringify(out)), 'no hash and no caller key');
+  assert.deepEqual([out.meta.own, out.meta.other], [2, 1], 'the same split as the tiles');
+  assert.equal(out.episodes.length, 3, 'k4 (nobody called) is not on this list');
+  const by = {}; out.episodes.forEach(function (e) { by[e.first.callId] = e; });
+  assert.deepEqual([by.c1.outcome, by.c1.agent, by.c1.team, by.c1.delaySec, by.c1.connected],
+    ['own', 'Ann', 'CSR', 1800, true]);
+  assert.deepEqual(by.c1.dial, { callDate: '2026-08-18', callStart: '08:30:00', callId: 'o1' },
+    'the OUTBOUND call id behind the "↳ callback path"');
+  assert.deepEqual([by.c3.outcome, by.c3.agent, by.c3.team], ['other', 'Bob', 'Sales']);
+  assert.equal(by.c1.first.cstStart, '10:41:00', 'the first attempt’s detail row');
+  assert.equal(by.c1.attempts, 1);
+
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  assert.throws(function () {
+    h.call('getOutboundCalledBack', { from: '2026-08-01', to: '2026-08-19' });
+  }, /admin-only while it is being vetted/, 'the same 6c gate as the report');
+  h.state.testUser = null;
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.equal(h.call('getOutboundCalledBack',
     { from: '2026-08-01', to: '2026-08-19', department: 'CSR' }).meta.available, false);
 });
 

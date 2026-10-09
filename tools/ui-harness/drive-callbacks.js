@@ -153,8 +153,26 @@ async function setDir(page, dir) {
   }));
   record('the not-called-back drill asks for the same window and dept, and lists the calls',
     unc.length === 1 && unc[0].from === insMeta.from && unc[0].to === insMeta.to
-      && unc[0].department === insMeta.department && rows.rows === 1 && rows.paths === 1,
+      && unc[0].department === insMeta.department && rows.rows === 3 && rows.paths === 3,
     JSON.stringify({ unc: unc, rows: rows }));
+  // CE-2: grouped by episode, each with its status and late tags; the call id
+  // (+ copy, admin) and the dialed line on every attempt.
+  const eps = await page.evaluate(() => {
+    const blocks = Array.from(document.querySelectorAll('#ins-cb-uncalled-list .ob-ep'));
+    const list = document.getElementById('ins-cb-uncalled-list');
+    return { n: blocks.length,
+      heads: blocks.map((b) => (b.querySelector('.ob-ep-head') || {}).textContent || ''),
+      rowsPer: blocks.map((b) => b.querySelectorAll('.heat-drill-row').length),
+      ids: list.querySelectorAll('.pid-num').length, copies: list.querySelectorAll('.pid-copy').length,
+      dialed: (list.textContent.match(/dialed Main CSR Line/g) || []).length };
+  });
+  record('CE-2: the list is grouped by episode -- status, attempts and the late tag on each',
+    eps.n === 2 && /Still inside the window · 2 days left/.test(eps.heads[0]) && /1 attempt/.test(eps.heads[0])
+      && /Missed/.test(eps.heads[1]) && /2 attempts/.test(eps.heads[1])
+      && /Called back late · day 5 · own team/.test(eps.heads[1])
+      && JSON.stringify(eps.rowsPer) === '[1,2]', JSON.stringify(eps));
+  record('CE-2: every attempt shows its call id with a copy button (admin) and the dialed line',
+    eps.ids === 3 && eps.copies === 3 && eps.dialed === 2, JSON.stringify(eps));
   await page.click('#ins-cb-uncalled-list .pid-journey');
   await page.waitForTimeout(1200);
   const jr = await page.evaluate(() => {
@@ -163,6 +181,36 @@ async function setDir(page, dir) {
       body: !!ov && !!ov.querySelector('.cj-body') && ov.querySelector('.cj-body').textContent.trim().length > 0 };
   });
   record('a row’s "↳ path" opens the call path', jr.open && jr.body, JSON.stringify(jr));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+
+  // CE-2: the called-back list, and the path into the OUTBOUND callback.
+  await page.click('#ins-cb-calledback-btn');
+  await page.waitForTimeout(1200);
+  const cbk = await calls(page, 'getOutboundCalledBack');
+  const cbr = await page.evaluate(() => {
+    const list = document.getElementById('ins-cb-calledback-list');
+    const rows = Array.from(list.querySelectorAll('.ob-cb-row'));
+    return { n: rows.length, text: rows.map((r) => r.textContent.replace(/\s+/g, ' ')),
+      cbPaths: list.querySelectorAll('.pid-journey[data-journey-kind="outbound"]').length,
+      head: ((list.querySelector('.heat-drill-head') || {}).textContent || '') };
+  });
+  record('CE-2: the called-back list asks for the same window and dept, own and another team apart',
+    cbk.length === 1 && cbk[0].from === insMeta.from && cbk[0].to === insMeta.to && cbk[0].department === insMeta.department
+      && cbr.n === 2 && /Own team/.test(cbr.text[0]) && /Test Agent \(CSR\)/.test(cbr.text[0]) && /connected/.test(cbr.text[0])
+      && /Another team/.test(cbr.text[1]) && /Bill Payer \(Billing\)/.test(cbr.text[1]) && /did not connect/.test(cbr.text[1])
+      && /1 by own team · 1 by another team/.test(cbr.head) && cbr.cbPaths === 2,
+    JSON.stringify({ cbk: cbk, cbr: cbr }));
+  await page.click('#ins-cb-calledback-list .pid-journey[data-journey-kind="outbound"]');
+  await page.waitForTimeout(1200);
+  const jo = await page.evaluate(() => {
+    const ov = document.getElementById('call-journey-overlay');
+    const reqs = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getCallJourney')
+      .map((c) => (c.args && c.args[0]) || null);
+    return { open: !!ov && getComputedStyle(ov).display !== 'none', last: reqs[reqs.length - 1] || null };
+  });
+  record('CE-2: "↳ callback path" opens the OUTBOUND call’s path',
+    jo.open && jo.last && jo.last.kind === 'outbound' && jo.last.callId === 'OB-777', JSON.stringify(jo));
   await page.keyboard.press('Escape');
   await page.waitForTimeout(500);
 

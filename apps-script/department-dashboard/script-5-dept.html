@@ -557,8 +557,11 @@
       const jbtn = e.target.closest && e.target.closest('.pid-journey');
       if (jbtn) {
         e.preventDefault(); e.stopPropagation();
+        // CE-2: an optional data-journey-kind="outbound" drills the OUTBOUND
+        // call (the called-back list's "↳ callback path"); absent = inbound.
         callJourneyShow_(jbtn.getAttribute('data-journey-pid') || '',
-                         jbtn.getAttribute('data-journey-date') || '');
+                         jbtn.getAttribute('data-journey-date') || '',
+                         jbtn.getAttribute('data-journey-kind') || '');
         return;
       }
       const btn = e.target.closest && e.target.closest('.pid-copy');

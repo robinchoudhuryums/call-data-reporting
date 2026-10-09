@@ -575,7 +575,11 @@ tests/
                               consumed, delay from the FIRST attempt, the
                               raw abandon counts, the series, and the
                               per-dept table's rows / total / mapped-only
-                              headline),
+                              headline; CE-2: the deciding dial each episode
+                              records, events past the window never moving
+                              an outcome, and the late tags -- first dial /
+                              family-queue got-through after the deadline,
+                              within the horizon, own vs another team),
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
                               in the target queue -- counts for the transfer

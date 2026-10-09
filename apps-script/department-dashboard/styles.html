@@ -8166,4 +8166,13 @@ tr.ob-group-head td {
   border-top: 1px solid var(--line);
 }
 tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82em; margin-left: 6px; }
+/* CE-2: the callback drill lists. One block per contact episode, its status
+   on a left rail (warn = still inside the window, bad = missed). */
+.ob-ep { border-left: 2px solid var(--line); padding-left: 8px; margin-top: 8px; }
+.ob-ep:first-child { margin-top: 0; }
+.ob-ep--pending { border-left-color: var(--warn); }
+.ob-ep--missed { border-left-color: var(--bad); }
+.ob-ep-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; }
+.ob-ep .heat-drill-row:first-of-type { border-top: none; }
+.ob-cb-row .ds-chip { flex: 0 0 auto; }
 </style>

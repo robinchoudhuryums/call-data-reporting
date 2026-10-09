@@ -2123,8 +2123,175 @@
     });
   }
 
-  // v2: the not-called-back drill. Reuses the heatmap cell drill's renderer
-  // (heatCellDetailHtml_) so rows carry the same stage tick + facts + "↳
+  // CE-2: the two drill lists render GROUPED BY EPISODE. Shared row pieces:
+  // the stage tick + queue path + facts of the heatmap drill, the dialed line,
+  // and parentIdBadge (the call id + copy for admins -- the phone provider's
+  // portal shows the number the dashboard never stores -- and "↳ path").
+  function outboundAttemptRowHtml_(c) {
+    const path = [c.entryQueue, c.finalQueue].filter(Boolean)
+      .filter(function (v, i, a) { return a.indexOf(v) === i; })
+      .map(escapeHtml).join(' → ');
+    const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
+    const facts = [];
+    if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+    if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
+    if (c.dialIn) facts.push('dialed ' + escapeHtml(String(c.dialIn)));
+    const stageCls = c.abandonedOnHold ? 'is-hold'
+      : (String(c.abandonStage || '') === 'ivr' ? 'is-ivr' : 'is-q');
+    return '<div class="heat-drill-row">'
+      + '<span class="hd-stage ' + stageCls + '" aria-hidden="true"></span>'
+      + '<span class="heat-drill-inline-date">' + escapeHtml(String(c.callDate || '').slice(5)) + '</span>'
+      + '<span class="heat-drill-when">' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
+      + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
+      +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
+      + '</span>'
+      + parentIdBadge(c.callId, c.callDate)
+      + '</div>';
+  }
+
+  // CE-2: the not-called-back list. One block per episode: when it started,
+  // how many attempts, its STATUS (still inside the window, N days left |
+  // missed) and the LATE tags read past the window -- tags only, they never
+  // move a figure.
+  function outboundUncalledHtml_(resp) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+    }
+    const byKey = {};
+    ((resp && resp.calls) || []).forEach(function (c) { byKey[c.callDate + '|' + c.callId] = c; });
+    const eps = (resp && resp.episodes) || [];
+    const blocks = eps.map(function (ep) {
+      const chips = [];
+      if (ep.status === 'pending') {
+        chips.push('<span class="ds-chip ds-chip--warn">Still inside the window · '
+          + (ep.daysLeft > 0 ? ep.daysLeft + ' day' + (ep.daysLeft === 1 ? '' : 's') + ' left' : 'last day')
+          + '</span>');
+      } else {
+        chips.push('<span class="ds-chip ds-chip--bad">Missed</span>');
+      }
+      const late = ep.late || {};
+      if (late.calledBack) {
+        chips.push('<span class="ds-chip ds-chip--neutral" title="A dial reached the caller after the '
+          + escapeHtml(String(meta.callbackWindowDays || 3)) + '-day window: tagged, never counted">'
+          + 'Called back late · day ' + escapeHtml(String(late.calledBack.daysAfter))
+          + ' · ' + (late.calledBack.team === 'own' ? 'own team' : 'another team') + '</span>');
+      }
+      if (late.gotThrough) {
+        chips.push('<span class="ds-chip ds-chip--neutral" title="The caller reached the team on a later call, after the window">'
+          + 'Got through later · day ' + escapeHtml(String(late.gotThrough.daysAfter)) + '</span>');
+      }
+      const n = (ep.attempts || []).length;
+      const rows = (ep.attempts || []).map(function (a) {
+        const c = byKey[a.callDate + '|' + a.callId] || { callDate: a.callDate, callId: a.callId };
+        return outboundAttemptRowHtml_(c);
+      }).join('');
+      return '<div class="ob-ep ob-ep--' + (ep.status === 'pending' ? 'pending' : 'missed') + '">'
+        + '<div class="ob-ep-head">'
+        +   '<span class="heat-drill-when">' + escapeHtml(String(ep.firstIso || '')) + '</span>'
+        +   '<span class="heat-drill-facts">' + n + ' attempt' + (n === 1 ? '' : 's') + '</span>'
+        +   chips.join('')
+        + '</div>' + rows + '</div>';
+    }).join('');
+    return '<div class="heat-drill-head"><strong>Not called back</strong> · '
+      + eps.length + ' episode' + (eps.length === 1 ? '' : 's')
+      + (meta.pending ? ' · ' + meta.pending + ' still inside the window' : '')
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
+      + '</div><div class="heat-drill-list">' + blocks + '</div>';
+  }
+
+  // CE-2: the called-back list. One row per episode a dial decided: when the
+  // caller first tried, how many times, who dialed (their roster team, own or
+  // another team), how long after the first attempt, whether it connected,
+  // and a "↳ path" into the OUTBOUND call beside the abandoned call's own.
+  function outboundCalledBackHtml_(resp) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the per-call store (Neon) could not be reached.</div>';
+    }
+    const eps = (resp && resp.episodes) || [];
+    const rows = eps.map(function (ep) {
+      const f = ep.first || {};
+      const own = ep.outcome === 'own';
+      const dial = ep.dial || null;
+      const dialPath = dial && dial.callId && dial.callDate
+        ? '<button type="button" class="pid-journey" data-journey-kind="outbound" '
+          + 'data-journey-pid="' + escapeHtml(String(dial.callId)) + '" '
+          + 'data-journey-date="' + escapeHtml(String(dial.callDate)) + '" '
+          + 'title="View the callback’s path" aria-label="View the callback’s path">↳ callback path</button>'
+        : '';
+      const facts = [];
+      facts.push(escapeHtml(ep.agent || 'No agent recorded') + ' (' + escapeHtml(ep.team || '') + ')');
+      if (ep.delaySec != null) facts.push('after ' + escapeHtml(fmtDuration(ep.delaySec)));
+      facts.push(ep.connected ? 'connected' : 'did not connect');
+      if (dial && dial.callStart) facts.push('callback at ' + escapeHtml(String(dial.callDate || '').slice(5)) + ' '
+        + escapeHtml(clCstTime_(dial.callStart).slice(0, 5)) + ' CST');
+      return '<div class="heat-drill-row ob-cb-row">'
+        + '<span class="heat-drill-inline-date">' + escapeHtml(String(ep.firstIso || '').slice(5)) + '</span>'
+        + '<span class="heat-drill-when">' + escapeHtml(String(f.cstStart || '').slice(0, 5)) + '</span>'
+        + '<span class="ds-chip ' + (own ? 'ds-chip--good' : 'ds-chip--neutral') + '">'
+        +   (own ? 'Own team' : 'Another team') + '</span>'
+        + '<span class="heat-drill-path">' + escapeHtml(f.entryQueue || '(no queue recorded)')
+        +   ' <span class="heat-drill-facts">· ' + ep.attempts + ' attempt' + (ep.attempts === 1 ? '' : 's')
+        +   (f.dialIn ? ' · dialed ' + escapeHtml(String(f.dialIn)) : '')
+        +   ' · ' + facts.join(' · ') + '</span></span>'
+        + parentIdBadge(f.callId, f.callDate)
+        + dialPath
+        + '</div>';
+    }).join('');
+    return '<div class="heat-drill-head"><strong>Called back</strong> · '
+      + fmtNumber(meta.own || 0) + ' by own team · ' + fmtNumber(meta.other || 0) + ' by another team'
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + eps.length + ' shown)</span>' : '')
+      + '</div><div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  // The called-back drill: the not-called-back drill's pattern exactly (its
+  // own per-request token from the caller, both handlers drop a superseded
+  // response -- UI-5; a second click closes the list).
+  function outboundLoadCalledBackInto_(ctx) {
+    const btn = ctx.btn;
+    const list = ctx.list;
+    const status = ctx.status;
+    if (!btn || !list) return;
+    const meta = ctx.meta || {};
+    if (!meta.from) return;
+    if (list.style.display !== 'none' && list.innerHTML) {
+      list.style.display = 'none'; list.innerHTML = '';
+      if (status) status.textContent = '';
+      return;
+    }
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    const prev = btn.dataset.idleLabel;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    const tok = ctx.nextSeq();
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
+        btn.disabled = false; btn.textContent = prev;
+        initClipboardOnce();
+        const isEmpty = resp && (resp.episodes || []).length === 0
+          && (!resp.meta || resp.meta.available !== false);
+        list.innerHTML = isEmpty
+          ? '<div class="ds-note">No contact episode in this range was called back.</div>'
+          : outboundCalledBackHtml_(resp);
+        list.style.display = '';
+        if (status) {
+          const m = (resp && resp.meta) || {};
+          status.textContent = m.available === false ? ''
+            : ((resp.episodes || []).length + ' episode(s)' + (m.truncated ? ' (newest shown)' : ''));
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== ctx.curSeq()) return;
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getOutboundCalledBack({ from: meta.from, to: meta.to,
+        department: meta.companyView ? '' : (meta.department || '') });
+  }
+
+  // v2: the not-called-back drill. Since CE-2 its rows come grouped by
+  // episode (outboundUncalledHtml_); each still carries the stage tick + facts + "↳
   // path" journey chip; initClipboardOnce arms the delegated handler.
   // The not-called-back drill (the Insights Callbacks fold, G1): `ctx` names
   // the button / list / status elements, the report meta whose window and
@@ -2152,22 +2319,21 @@
         if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
         btn.disabled = false; btn.textContent = prev;
         initClipboardOnce();
-        // Empty here is GOOD news — heatCellDetailHtml_'s generic empty
-        // message ("no abandoned calls recorded") would misread it.
-        const isEmpty = resp && (resp.calls || []).length === 0
+        // Empty here is GOOD news -- say so rather than "no calls".
+        const isEmpty = resp && (resp.episodes || []).length === 0
           && (!resp.meta || resp.meta.available !== false);
         list.innerHTML = isEmpty
           ? '<div class="ds-note">Every contact episode in this range was called back, got through '
             + 'or was contacted by another team within '
             + escapeHtml(String((resp.meta && resp.meta.callbackWindowDays) || 3)) + ' days.</div>'
-          : heatCellDetailHtml_(resp, 'Not called back');
+          : outboundUncalledHtml_(resp);
         list.style.display = '';
         if (status) {
           const m = (resp && resp.meta) || {};
           status.textContent = m.available === false ? ''
             : ((resp.calls || []).length + ' call(s)'
               + (m.episodes != null ? ' in ' + m.episodes + ' episode' + (m.episodes === 1 ? '' : 's') : '')
-              + (m.truncated ? ' (newest ' + (resp.calls || []).length + ' shown)' : ''));
+              + (m.truncated ? ' (newest shown)' : ''));
         }
       })
       .withFailureHandler(function (err) {

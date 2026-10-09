@@ -398,15 +398,51 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
     },
     sendOutboundReportEmail: function () { return { to: 'admin@example.com' }; },
+    // CE-2: grouped by contact episode -- a pending one (still inside the
+    // window) and a missed one with a late callback tag, so every chip renders.
     getOutboundUncalled: function (req) {
       return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || null, companyView: !(req && req.department),
           available: true, truncated: false, scope: 'range', tzLabel: 'CST', callbackWindowDays: 3,
-          episodes: 1 },
+          lateHorizonDays: 14, episodes: 2, pending: 1, missed: 1 },
+        episodes: [
+          { firstIso: '2026-08-19', firstHms: '08:41:00', lastIso: '2026-08-19', status: 'pending', daysLeft: 2,
+            attempts: [{ callDate: '2026-08-19', callId: 'oc-1' }], late: { calledBack: null, gotThrough: null } },
+          { firstIso: '2026-08-11', firstHms: '07:02:00', lastIso: '2026-08-12', status: 'missed', daysLeft: null,
+            attempts: [{ callDate: '2026-08-11', callId: 'oc-2' }, { callDate: '2026-08-12', callId: 'oc-3' }],
+            late: { calledBack: { iso: '2026-08-17', hms: '09:00:00', daysAfter: 5, team: 'own', agent: 'Test Agent' },
+                    gotThrough: null } },
+        ],
         calls: [
           { callDate: '2026-08-19', callId: 'oc-1', cstStart: '10:41:00',
             entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
-            abandonedOnHold: false, waitSeconds: 95, holdSeconds: null },
+            abandonedOnHold: false, waitSeconds: 95, holdSeconds: null, dialIn: 'Main CSR Line' },
+          { callDate: '2026-08-12', callId: 'oc-3', cstStart: '11:15:00',
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
+            abandonedOnHold: false, waitSeconds: 40, holdSeconds: null, dialIn: null },
+          { callDate: '2026-08-11', callId: 'oc-2', cstStart: '09:02:00',
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
+            abandonedOnHold: false, waitSeconds: 61, holdSeconds: null, dialIn: 'Main CSR Line' },
+        ] };
+    },
+    // CE-2: the called-back list -- one own-team and one another-team episode.
+    getOutboundCalledBack: function (req) {
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          available: true, truncated: false, tzLabel: 'CST', callbackWindowDays: 3, own: 1, other: 1 },
+        episodes: [
+          { firstIso: '2026-08-18', firstHms: '08:00:00', attempts: 2,
+            first: { callDate: '2026-08-18', callId: 'cb-1', cstStart: '10:00:00', entryQueue: 'A_Q_CSR',
+              finalQueue: 'A_Q_CSR', abandonStage: 'queue', abandonedOnHold: false, waitSeconds: 50,
+              holdSeconds: null, dialIn: 'Main CSR Line' },
+            outcome: 'own', agent: 'Test Agent', team: 'CSR', delaySec: 1800, connected: true,
+            dial: { callDate: '2026-08-18', callStart: '08:30:00', callId: 'OB-777' } },
+          { firstIso: '2026-08-17', firstHms: '09:00:00', attempts: 1,
+            first: { callDate: '2026-08-17', callId: 'cb-2', cstStart: '11:00:00', entryQueue: 'A_Q_CSR',
+              finalQueue: 'A_Q_CSR', abandonStage: 'queue', abandonedOnHold: false, waitSeconds: 30,
+              holdSeconds: null, dialIn: null },
+            outcome: 'other', agent: 'Bill Payer', team: 'Billing', delaySec: 7200, connected: false,
+            dial: { callDate: '2026-08-17', callStart: '11:00:00', callId: 'OB-778' } },
         ] };
     },
     updateCoachingFlagStatus: function (req) { return { id: req && req.id, status: req && req.action }; },

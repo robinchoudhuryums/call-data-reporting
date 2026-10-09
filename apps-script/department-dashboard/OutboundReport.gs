@@ -384,14 +384,18 @@ function outboundAgentsSel_(f, t) {
  *               integer caller key (dense_rank over the hash): the hash itself
  *               never leaves the database.
  *   cbOb     -- every dial to those callers from rangeFrom through
- *               toIso + OUTBOUND_CALLBACK_WINDOW_DAYS, by any agent.
+ *               toIso + OUTBOUND_CALLBACK_WINDOW_DAYS (+ extraDays for the
+ *               CE-2 drill lists' late tags), by any agent.
  *   cbAns    -- their ANSWERED, external inbound queue calls over the same
  *               span: the "caller got through" events.
  * The engine (obCallbackEpisodes_) does the rest, in JS, for both sources.
  */
-function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, priorTo) {
+function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, priorTo, extraDays) {
   const where = outboundAbandonWhere_(scope, deptQueues, rangeFrom, toIso);
-  const endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS);
+  // CE-2: the drill lists read `extraDays` PAST the window for their "called
+  // back late" / "got through later" tags. The engine's window expiry keeps
+  // those events from ever deciding an outcome.
+  const endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS + (Number(extraDays) || 0));
   const winCase = "CASE WHEN c.call_date >= '" + curFrom + "'::date THEN 'cur' "
     + (priorTo ? ("WHEN c.call_date <= '" + priorTo + "'::date THEN 'pri' ") : '')
     + "ELSE 'gap' END";
@@ -723,9 +727,10 @@ function obEpFamily_(teams, parentOf, childrenOf) {
  *        homesOf: function(agent) -> [dept] }
  *
  * Episode: { k, teamKey, teams, firstIso, firstHms, attempts: [{iso, hms, id, q}],
- *            outcome, delaySec, connected, agent }  -- delay/connected/agent
- * describe the event that DECIDED the outcome (own dial, answered call or the
- * first unconsumed other-team dial); null for pending / none.
+ *            outcome, delaySec, connected, agent, dial }  -- delay/connected/
+ * agent/dial describe the event that DECIDED the outcome (own dial, answered
+ * call or the first unconsumed other-team dial; `dial` = {iso, hms, id} of a
+ * deciding DIAL, CE-2's path into the callback); null for pending / none.
  */
 function obCallbackEpisodes_(ev, ctx) {
   ev = ev || {};
@@ -778,9 +783,10 @@ function obCallbackEpisodes_(ev, ctx) {
         if (ep.other) {
           ep.outcome = 'other';
           ep.delaySec = ep.other.delay; ep.connected = ep.other.connected; ep.agent = ep.other.agent;
+          ep.dial = ep.other.dial;
         } else {
           ep.outcome = (ep.deadline >= ctx.todayIso) ? 'pending' : 'none';
-          ep.delaySec = null; ep.connected = false; ep.agent = null;
+          ep.delaySec = null; ep.connected = false; ep.agent = null; ep.dial = null;
         }
       }
       delete ep.other; delete ep.deadline; delete ep.family; delete ep.firstOrd;
@@ -805,14 +811,14 @@ function obCallbackEpisodes_(ev, ctx) {
         open.push({ k: Number(k), teamKey: team.key, teams: team.teams, family: familyOf(team),
                     firstIso: e.iso, firstHms: e.hms, firstOrd: e.ord, attempts: [att],
                     deadline: obDaysAfterIso_(e.iso, win), outcome: null, other: null,
-                    delaySec: null, connected: false, agent: null });
+                    delaySec: null, connected: false, agent: null, dial: null });
       } else if (e.t === 1) {
         var owners = ownersOf[e.q] || [];
         open = open.filter(function (ep) {
           var hit = owners.some(function (d) { return ep.family[d]; });
           if (!hit) return true;
           ep.outcome = 'gotThrough'; ep.delaySec = e.ord - ep.firstOrd;
-          ep.connected = false; ep.agent = null;
+          ep.connected = false; ep.agent = null; ep.dial = null;
           finalize(ep);
           return false;
         });
@@ -825,12 +831,16 @@ function obCallbackEpisodes_(ev, ctx) {
           consumed = true;
           ep.outcome = 'own'; ep.delaySec = e.ord - ep.firstOrd;
           ep.connected = e.connected; ep.agent = e.agent;
+          ep.dial = { iso: e.iso, hms: e.hms, id: e.id };   // CE-2: the "↳ path" into the callback
           finalize(ep);
           return false;
         });
         if (!consumed) {
           open.forEach(function (ep) {
-            if (!ep.other) ep.other = { delay: e.ord - ep.firstOrd, connected: e.connected, agent: e.agent };
+            if (!ep.other) {
+              ep.other = { delay: e.ord - ep.firstOrd, connected: e.connected, agent: e.agent,
+                           dial: { iso: e.iso, hms: e.hms, id: e.id } };
+            }
           });
         }
       }
@@ -1208,17 +1218,168 @@ function outboundEmailDelayTable_(buckets, calledBack) {
     + '<table style="border-collapse:collapse;width:100%;max-width:460px;">' + rows + '</table>';
 }
 
+// ---------------------------------------------------------------------------
+// CE-2 (owner 2026-10-09): the two drill lists behind the callback tiles.
+//
+//   getOutboundUncalled  -- the episodes nobody called back (`none`) or that
+//                           are still inside the window (`pending`), each with
+//                           its attempts, its status, and two LATE tags read
+//                           past the window: "called back after day N" and
+//                           "got through later". Tags never move a figure.
+//   getOutboundCalledBack -- the episodes a dial decided (`own` / `other`):
+//                           who dialed, their roster team, own or another
+//                           team, the delay from the first attempt, whether it
+//                           connected, and the dial's call id for a "↳ path"
+//                           into the OUTBOUND call.
+//
+// Both run the report's own event fetch + engine (so they agree with the tiles
+// by construction), then ONE detail query for exactly the inbound calls they
+// show. No caller identity leaves the server: no hash, no number, no caller
+// key. The dialed LINE (dial_in_number) is ours, and shows with its
+// DIAL_IN_LABELS label when one is set.
+// ---------------------------------------------------------------------------
+
+// How far past the window the late tags look (days after the episode's
+// deadline). A tag only -- it never moves an outcome.
+var OUTBOUND_LATE_HORIZON_DAYS = 14;
+
 /**
- * v2 (follow-on #2), on CE-1's unit: the NOT-called-back drill list -- every
- * ATTEMPT of the current window's episodes that ended `none` (nobody called
- * back inside the window) or are still `pending`, newest first, capped at
- * OUTBOUND_UNCALLED_MAX (meta.truncated). The episodes come from the SAME
- * event fetch + engine as the report, so the list agrees with the tiles by
- * construction. Row shape matches getInboundHeatmapCell's `calls` (the client
- * reuses heatCellDetailHtml_, incl. the "↳ path" journey chip ->
- * getCallJourney). NO caller identity in the response (no hash, no number,
- * no caller key). Uncached -- per-list, cheap, and an unavailable payload
- * must not pin. Same admin-only vetting gate as the report.
+ * PURE (outbound-episodes.test.js). The late tags for ONE episode that ended
+ * `none`: the first dial to the caller and the first answered call from them
+ * on a family queue, AFTER the episode's deadline (last attempt + window) and
+ * within `horizonDays` of it. `ev` is the event rows (same layouts as the
+ * engine); `daysAfter` counts from the LAST attempt's date.
+ */
+function obEpLateTags_(ep, ev, ctx, horizonDays) {
+  var out = { calledBack: null, gotThrough: null };
+  if (!ep || !ep.attempts || !ep.attempts.length) return out;
+  var win = Number(ctx.windowDays) || OUTBOUND_CALLBACK_WINDOW_DAYS;
+  var lastIso = ep.attempts[ep.attempts.length - 1].iso;
+  var deadline = obDaysAfterIso_(lastIso, win);
+  var limit = obDaysAfterIso_(deadline, Number(horizonDays) || OUTBOUND_LATE_HORIZON_DAYS);
+  var family = obEpFamily_(ep.teams, ctx.parentOf, ctx.childrenOf);
+  var homesOf = ctx.homesOf || function () { return []; };
+  var dayDiff = function (a, b) {
+    return Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10))
+      - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86400000);
+  };
+  var first = function (rows, pick) {
+    var best = null;
+    (rows || []).forEach(function (r) {
+      if (r[0] !== ep.k) return;
+      var iso = String(r[1] || '');
+      if (!iso || iso <= deadline || iso > limit) return;
+      if (!pick(r)) return;
+      var ord = obOrdinal_(iso, r[2]);
+      if (!best || ord < best.ord) best = { ord: ord, row: r, iso: iso };
+    });
+    return best;
+  };
+  var d = first(ev.ob, function () { return true; });
+  if (d) {
+    var agent = String(d.row[4] == null ? '' : d.row[4]).trim();
+    var own = (homesOf(agent) || []).some(function (h) { return family[h]; });
+    out.calledBack = { iso: d.iso, hms: d.row[2] || null, daysAfter: dayDiff(lastIso, d.iso),
+                       team: own ? 'own' : 'other', agent: agent || null };
+  }
+  var a = first(ev.ans, function (r) {
+    return (ctx.ownersOf[String(r[3] == null ? '' : r[3])] || []).some(function (x) { return family[x]; });
+  });
+  if (a) out.gotThrough = { iso: a.iso, hms: a.row[2] || null, daysAfter: dayDiff(lastIso, a.iso) };
+  return out;
+}
+
+/** The roster label for a dialer: their homes, or why there are none. */
+function obEpTeamLabel_(agent, homesOf) {
+  var a = String(agent == null ? '' : agent).trim();
+  if (!a) return 'No agent recorded';
+  var homes = homesOf(a) || [];
+  return homes.length ? homes.join(' + ') : 'Unrostered';
+}
+
+/**
+ * The shared front half of both lists: the event fetch (current window only,
+ * `extraDays` past it) + the engine. Returns { eps, ev, ctx } or null when the
+ * read produced nothing.
+ */
+function obCallbackListEpisodes_(conn, scope, extraDays) {
+  const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
+  const evSql = obCallbackEventsSql_(scope, deptQueues, scope.from, scope.from, scope.to, null, extraDays);
+  const stmt = conn.createStatement();
+  const rs = stmt.executeQuery(evSql.with + ' SELECT json_build_object(' + evSql.fields + ')::text AS j');
+  const json = rs.next() ? rs.getString('j') : null;
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-drill');
+  rs.close(); stmt.close();
+  if (json == null) return null;
+  const obj = JSON.parse(json) || {};
+  const ev = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
+  const ctx = obEpContext_(obCallbackDeptMap_(), buildDeptsByAgent_());
+  const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
+  return { eps: eps, ev: ev, ctx: ctx };
+}
+
+/**
+ * The back half: ONE detail query for exactly the inbound calls a list shows,
+ * keyed `date|callId`. `keys` are {iso, id} from the engine (validated ISO
+ * dates; ids escaped). CST display time: the heatmap drill's shift (INV-18;
+ * call_start is stored raw PST); a row with no parseable start keeps ''.
+ */
+function obCallbackListDetail_(conn, keys) {
+  const byKey = {};
+  if (!keys.length) return byKey;
+  const cstStart = "(CASE WHEN c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' "
+    + "THEN to_char((c.call_start)::time + interval '" + INBOUND_HEATMAP_CST_SHIFT_HOURS
+    + " hours', 'HH24:MI:SS') ELSE '' END)";
+  const sql =
+    "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+    + 'SELECT c.call_date::text AS call_date, c.call_id, '
+    +   cstStart + ' AS cst_start, '
+    +   'c.entry_queue, c.final_queue, c.abandon_stage, c.abandoned_on_hold, '
+    +   'c.wait_seconds, c.hold_seconds, c.dial_in_number '
+    + 'FROM inbound_calls c WHERE (c.call_date, c.call_id) IN ('
+    +   keys.map(function (k) { return "('" + k.iso + "'::date, " + inboundSqlLit_(k.id) + ')'; }).join(', ')
+    + ')) t';
+  const stmt = conn.createStatement();
+  const rs = stmt.executeQuery(sql);
+  const json = rs.next() ? rs.getString('j') : null;
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-drill');
+  rs.close(); stmt.close();
+  let arr = JSON.parse(json || '[]');
+  if (!Array.isArray(arr)) arr = [];
+  const labels = (typeof inboundDialInLabels_ === 'function') ? inboundDialInLabels_() : {};
+  arr.forEach(function (c) {
+    const num = String(c.dial_in_number == null ? '' : c.dial_in_number).trim();
+    const digits = num.replace(/\D/g, '');
+    byKey[String(c.call_date || '') + '|' + String(c.call_id || '')] = {
+      callDate: String(c.call_date || ''),
+      callId: String(c.call_id || ''),
+      cstStart: String(c.cst_start || ''),
+      entryQueue: c.entry_queue || null,
+      finalQueue: c.final_queue || null,
+      abandonStage: c.abandon_stage || null,
+      abandonedOnHold: !!c.abandoned_on_hold,
+      waitSeconds: c.wait_seconds == null ? null : Number(c.wait_seconds),
+      holdSeconds: c.hold_seconds == null ? null : Number(c.hold_seconds),
+      dialIn: num ? ((digits && labels[digits]) || num) : null,
+    };
+  });
+  return byKey;
+}
+
+/** Newest episode first (by first attempt), the caller key as a stable tie-break. */
+function obEpNewestFirst_(a, b) {
+  const ka = a.firstIso + ' ' + (a.firstHms || ''), kb = b.firstIso + ' ' + (b.firstHms || '');
+  return ka < kb ? 1 : (ka > kb ? -1 : (a.k - b.k));
+}
+
+/**
+ * v2 (follow-on #2), on CE-1's unit, CE-2's shape: the NOT-called-back list.
+ * `episodes` (newest first): { firstIso, firstHms, lastIso, status:
+ * 'pending'|'missed', daysLeft (pending), attempts: [{callDate, callId}]
+ * (oldest first), late: { calledBack, gotThrough } (missed only) }.
+ * `calls` keeps the flat per-attempt rows, newest first, each with `dialIn`.
+ * Capped at OUTBOUND_UNCALLED_MAX attempts, whole episodes newest first
+ * (meta.truncated). Same admin-only vetting gate as the report.
  */
 function getOutboundUncalled(req) {
   const scope = outboundResolveRequest_(req);
@@ -1228,83 +1389,136 @@ function getOutboundUncalled(req) {
       department: scope.dept || null, companyView: scope.companyView,
       truncated: false, scope: 'range', tzLabel: 'CST',
       callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
-      episodes: 0,
+      lateHorizonDays: OUTBOUND_LATE_HORIZON_DAYS,
+      episodes: 0, pending: 0, missed: 0,
     },
+    episodes: [],
     calls: [],
   };
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) { out.meta.available = false; return out; }
-
-    // 1. The report's own event fetch (current window only) -> the engine.
-    const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
-    const ev = obCallbackEventsSql_(scope, deptQueues, scope.from, scope.from, scope.to, null);
-    const stmt = conn.createStatement();
-    const rs = stmt.executeQuery(ev.with + ' SELECT json_build_object(' + ev.fields + ')::text AS j');
-    const json = rs.next() ? rs.getString('j') : null;
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-drill');
-    rs.close(); stmt.close();
-    if (json == null) { out.meta.available = false; return out; }
-    const obj = JSON.parse(json) || {};
-    const ctx = obEpContext_(obCallbackDeptMap_(), buildDeptsByAgent_());
-    const eps = obCallbackEpisodes_({ ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] },
-      Object.assign({}, ctx, { from: scope.from, to: scope.to }))
-      .filter(function (ep) { return ep.outcome === 'none' || ep.outcome === 'pending'; });
+    const list = obCallbackListEpisodes_(conn, scope, OUTBOUND_LATE_HORIZON_DAYS);
+    if (!list) { out.meta.available = false; return out; }
+    const eps = list.eps
+      .filter(function (ep) { return ep.outcome === 'none' || ep.outcome === 'pending'; })
+      .sort(obEpNewestFirst_);
     out.meta.episodes = eps.length;
-    const atts = [];
-    eps.forEach(function (ep) { ep.attempts.forEach(function (a) { atts.push(a); }); });
-    atts.sort(function (x, y) {
-      const kx = x.iso + ' ' + (x.hms || ''), ky = y.iso + ' ' + (y.hms || '');
-      return kx < ky ? 1 : (kx > ky ? -1 : 0);   // newest first, so the cap keeps the newest
-    });
-    if (atts.length > OUTBOUND_UNCALLED_MAX) {
-      out.meta.truncated = true;
-      atts.length = OUTBOUND_UNCALLED_MAX;
-    }
-    if (!atts.length) return out;
+    eps.forEach(function (ep) { if (ep.outcome === 'pending') out.meta.pending++; else out.meta.missed++; });
 
-    // 2. The per-call detail for exactly those attempts (validated ISO dates
-    // from the engine; call ids escaped). CST display time: the heatmap cell
-    // drill's shift convention (INV-18; call_start is stored raw PST). A row
-    // with no parseable call_start keeps a blank cst_start, never dropped.
-    const cstStart = "(CASE WHEN c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' "
-      + "THEN to_char((c.call_start)::time + interval '" + INBOUND_HEATMAP_CST_SHIFT_HOURS
-      + " hours', 'HH24:MI:SS') ELSE '' END)";
-    const keys = atts.map(function (a) {
-      return "('" + a.iso + "'::date, " + inboundSqlLit_(a.id) + ')';
-    }).join(', ');
-    const sql =
-      "SELECT COALESCE(json_agg(t ORDER BY t.call_date DESC, t.raw_start DESC NULLS LAST), '[]')::text AS j FROM ("
-      + 'SELECT c.call_date::text AS call_date, c.call_id, c.call_start AS raw_start, '
-      +   cstStart + ' AS cst_start, '
-      +   'c.entry_queue, c.final_queue, c.abandon_stage, c.abandoned_on_hold, '
-      +   'c.wait_seconds, c.hold_seconds '
-      + 'FROM inbound_calls c WHERE (c.call_date, c.call_id) IN (' + keys + ')'
-      + ') t';
-    const st2 = conn.createStatement();
-    const rs2 = st2.executeQuery(sql);
-    const j2 = rs2.next() ? rs2.getString('j') : null;
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j2 ? j2.length : 0, 'outbound-drill');
-    rs2.close(); st2.close();
-    let arr = JSON.parse(j2 || '[]');
-    if (!Array.isArray(arr)) arr = [];
-    out.calls = arr.map(function (c) {
+    // Whole episodes, newest first, until the attempt cap; an oversized
+    // single episode keeps its newest attempts.
+    const shown = [];
+    let budget = OUTBOUND_UNCALLED_MAX;
+    for (let i = 0; i < eps.length && budget > 0; i++) {
+      const atts = eps[i].attempts.length <= budget ? eps[i].attempts : eps[i].attempts.slice(-budget);
+      if (atts.length < eps[i].attempts.length) out.meta.truncated = true;
+      shown.push({ ep: eps[i], atts: atts });
+      budget -= atts.length;
+    }
+    if (shown.length < eps.length) out.meta.truncated = true;
+
+    const keys = [];
+    shown.forEach(function (x) { x.atts.forEach(function (a) { keys.push({ iso: a.iso, id: a.id }); }); });
+    const detail = obCallbackListDetail_(conn, keys);
+    out.episodes = shown.map(function (x) {
+      const ep = x.ep;
+      const lastIso = ep.attempts[ep.attempts.length - 1].iso;
+      const deadline = obDaysAfterIso_(lastIso, list.ctx.windowDays);
+      const pending = ep.outcome === 'pending';
+      const daysLeft = pending
+        ? Math.round((Date.UTC(+deadline.slice(0, 4), +deadline.slice(5, 7) - 1, +deadline.slice(8, 10))
+            - Date.UTC(+list.ctx.todayIso.slice(0, 4), +list.ctx.todayIso.slice(5, 7) - 1, +list.ctx.todayIso.slice(8, 10)))
+            / 86400000)
+        : null;
       return {
-        callDate: String(c.call_date || ''),
-        callId: String(c.call_id || ''),
-        cstStart: String(c.cst_start || ''),
-        entryQueue: c.entry_queue || null,
-        finalQueue: c.final_queue || null,
-        abandonStage: c.abandon_stage || null,
-        abandonedOnHold: !!c.abandoned_on_hold,
-        waitSeconds: c.wait_seconds == null ? null : Number(c.wait_seconds),
-        holdSeconds: c.hold_seconds == null ? null : Number(c.hold_seconds),
+        firstIso: ep.firstIso, firstHms: ep.firstHms || null, lastIso: lastIso,
+        status: pending ? 'pending' : 'missed', daysLeft: daysLeft,
+        attempts: x.atts.map(function (a) { return { callDate: a.iso, callId: a.id }; }),
+        late: pending ? { calledBack: null, gotThrough: null }
+                      : obEpLateTags_(ep, list.ev, list.ctx, OUTBOUND_LATE_HORIZON_DAYS),
+      };
+    });
+    const flat = [];
+    out.episodes.forEach(function (e) {
+      e.attempts.forEach(function (a) {
+        const d = detail[a.callDate + '|' + a.callId];
+        if (d) flat.push(d);
+      });
+    });
+    flat.sort(function (x, y) {
+      const kx = x.callDate + ' ' + x.cstStart, ky = y.callDate + ' ' + y.cstStart;
+      return kx < ky ? 1 : (kx > ky ? -1 : 0);
+    });
+    out.calls = flat;
+    return out;
+  } catch (e) {
+    Logger.log('getOutboundUncalled failed (best-effort): ' + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
+// Cap on the called-back list (episodes), the not-called-back cap's class.
+var OUTBOUND_CALLED_BACK_MAX = 200;
+
+/**
+ * CE-2: the CALLED-BACK list -- the current window's episodes a dial decided
+ * (`own` or `other`), newest first, capped at OUTBOUND_CALLED_BACK_MAX
+ * (meta.truncated). Each: { firstIso, firstHms, attempts (count), first (the
+ * first attempt's detail row), outcome, agent, team (the dialer's roster
+ * homes / 'Unrostered' / 'No agent recorded'), delaySec (from the FIRST
+ * attempt), connected, dial: { callDate, callStart (raw PST), callId } }.
+ * Same resolver + vetting gate as the report; uncached.
+ */
+function getOutboundCalledBack(req) {
+  const scope = outboundResolveRequest_(req);
+  const out = {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null, companyView: scope.companyView,
+      truncated: false, tzLabel: 'CST', callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
+      own: 0, other: 0,
+    },
+    episodes: [],
+  };
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+    const list = obCallbackListEpisodes_(conn, scope, 0);
+    if (!list) { out.meta.available = false; return out; }
+    let eps = list.eps
+      .filter(function (ep) { return ep.outcome === 'own' || ep.outcome === 'other'; })
+      .sort(obEpNewestFirst_);
+    eps.forEach(function (ep) { out.meta[ep.outcome]++; });
+    if (eps.length > OUTBOUND_CALLED_BACK_MAX) {
+      out.meta.truncated = true;
+      eps = eps.slice(0, OUTBOUND_CALLED_BACK_MAX);
+    }
+    const detail = obCallbackListDetail_(conn, eps.map(function (ep) {
+      return { iso: ep.attempts[0].iso, id: ep.attempts[0].id };
+    }));
+    out.episodes = eps.map(function (ep) {
+      const f = ep.attempts[0];
+      return {
+        firstIso: ep.firstIso, firstHms: ep.firstHms || null,
+        attempts: ep.attempts.length,
+        first: detail[f.iso + '|' + f.id] || { callDate: f.iso, callId: f.id },
+        outcome: ep.outcome,
+        agent: ep.agent || null,
+        team: obEpTeamLabel_(ep.agent, list.ctx.homesOf),
+        delaySec: ep.delaySec == null ? null : Math.round(ep.delaySec),
+        connected: !!ep.connected,
+        dial: ep.dial ? { callDate: ep.dial.iso, callStart: ep.dial.hms || null, callId: ep.dial.id } : null,
       };
     });
     return out;
   } catch (e) {
-    Logger.log('getOutboundUncalled failed (best-effort): ' + (e && e.message ? e.message : e));
+    Logger.log('getOutboundCalledBack failed (best-effort): ' + (e && e.message ? e.message : e));
     out.meta.available = false;
     return out;
   } finally {

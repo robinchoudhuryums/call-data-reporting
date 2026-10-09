@@ -2229,7 +2229,7 @@
   // is one of the heavier Neon reads; a reopen for the same window repaints
   // from the held payload (the chart included -- built while the fold was
   // closed it would be the C3 zero-height canvas).
-  var INS_CB_ = { key: null, seq: 0, data: null, error: null, uncSeq: 0 };
+  var INS_CB_ = { key: null, seq: 0, data: null, error: null, uncSeq: 0, cbkSeq: 0 };
 
   function insCbWindow_() {
     var m = insLastData && insLastData.meta;
@@ -2250,6 +2250,7 @@
       // A new window / dept: drop the held payload and orphan any fetch or
       // drill still in flight for the old one (each lands only on its own key).
       INS_CB_.key = key; INS_CB_.data = null; INS_CB_.error = null;
+      INS_CB_.cbkSeq++;   // CE-2: the called-back drill is orphaned too
       INS_CB_.seq++; INS_CB_.uncSeq++;
       insCbResetUncalled_();
       var content = $('ins-cb-content'); if (content) content.style.display = 'none';
@@ -2292,6 +2293,13 @@
     if (list) { list.style.display = 'none'; list.innerHTML = ''; }
     var st = $('ins-cb-uncalled-status');
     if (st) st.textContent = '';
+    // CE-2: the called-back drill resets with it.
+    var cbtn = $('ins-cb-calledback-btn');
+    if (cbtn && cbtn.dataset.idleLabel) { cbtn.disabled = false; cbtn.textContent = cbtn.dataset.idleLabel; }
+    var clist = $('ins-cb-calledback-list');
+    if (clist) { clist.style.display = 'none'; clist.innerHTML = ''; }
+    var cst = $('ins-cb-calledback-status');
+    if (cst) cst.textContent = '';
   }
 
   // PURE. The collapsed-summary headline, so the fold answers its question
@@ -2391,6 +2399,16 @@
         meta: INS_CB_.data.meta || {},
         nextSeq: function () { return ++INS_CB_.uncSeq; },
         curSeq: function () { return INS_CB_.uncSeq; },
+      });
+    });
+    var cbk = $('ins-cb-calledback-btn');
+    if (cbk) cbk.addEventListener('click', function () {
+      if (!INS_CB_.data) return;
+      outboundLoadCalledBackInto_({
+        btn: cbk, list: $('ins-cb-calledback-list'), status: $('ins-cb-calledback-status'),
+        meta: INS_CB_.data.meta || {},
+        nextSeq: function () { return ++INS_CB_.cbkSeq; },
+        curSeq: function () { return INS_CB_.cbkSeq; },
       });
     });
     var csv = $('ins-cb-csv-btn');

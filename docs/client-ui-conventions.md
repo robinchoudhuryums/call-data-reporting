@@ -2168,8 +2168,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   (CE-1 -- own team, another team, got through and not called back are
   SEPARATE tiles by ruling, never one "called back"; prior deltas on the two
   own-team rates from `callbackPrior`), the "how fast" strip, the daily chart,
-  the by-hour strip, the not-called-back drill (rows carry the "↳ path" call
-  path) and CSV / email export. It reads the SAME `getOutboundReport` payload
+  the by-hour strip, the two drill lists (CE-2: "List not-called-back calls"
+  grouped by episode with status + late-tag chips, and "List called-back
+  calls" with own / another team chips and a "↳ callback path" into the
+  outbound call -- each drill has its own stale-drill counter, UI-5) and CSV /
+  email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
   elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
   `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one

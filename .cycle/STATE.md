@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — CE-2 IMPLEMENTED (block 242): the callback drill lists.**
+  - Not-called-back list grouped by episode: status (still inside the window, N days left / missed), late tags read 14 days past the window (called back late / got through later -- tags only), the dialed line, the call id + copy (admin).
+  - New `getOutboundCalledBack` + "List called-back calls": dialer, roster team, own / another team, delay from the first attempt, connected, "↳ callback path" into the outbound call.
+  - Both endpoints run on a local Postgres 16; 2273 tests; five bites.
+
+  **Owner-side:** deploy, walk S59's list steps. Open question for the 6c release: should managers see the call id + copy (today admin-only, owner round 4)?
+  **Next:** CE-3 (direct-line callbacks).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-09 — CE-1 IMPLEMENTED (block 241): the callback figures count contact EPISODES.**
   - Owner rulings 2026-10-09 (docs/next-steps.md "Callback episodes + direct lines"): phone-menu hang-ups out of the rate; own team and another team both shown, clearly apart; repeat attempts as episodes; the team-aware refinement; repeat unreturned caller = 2+ attempts in 3 days, no callback (CE-3).
   - One pure engine (`obCallbackEpisodes_`) for the Neon path (event rows, integer caller keys) and the sheet fallback; every callback surface moved (Insights fold, Overview table + mapped-only headline, email, not-called-back list). outboundReport:v8.

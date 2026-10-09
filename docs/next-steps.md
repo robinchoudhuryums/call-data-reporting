@@ -27,7 +27,7 @@ batch, items are independent unless marked.
 | ∥ | **CDR Import tools** (owner asks 2026-10-05) — SHIPPED | transfer filter Phase 0 (read-only probe + its dialog) · both CDR Tools menus grouped into submenus · AF-1 abandoned-filter dialog + on-tab check | cdr-import + cdr-report (menus) | MERGED #354, #355; cdr-import DEPLOYED 2026-10-05. Next: walk S55, then retire the fourteen per-queue items (AF-1 step 3); transfer filter Phase 1 once the owner confirms the Phase 0 shapes |
 | ∥ | **Agent + outbound views** (owner plan 2026-10-07) — IMPLEMENTED (blocks 231-236) | A ans/day + Agent Day tile rows · B inline agent panel · C outbound source probe (Operator State #74) · D Inbound \| Outbound \| Both + Team Outbound · E Overview tile outbound line + Insights Outbound fold · F prior-period chips on the outbound figures | dashboard (DEPLOY pending; walk S56-S58) | done; D-F admin-only until the 6c release (#63) |
 | ∥ | **Outbound report → My Department** (owner 2026-10-08: managers get the My Department version, not the modal) — G1, G2, G3 IMPLEMENTED (blocks 237-240) | G1 the Insights Callbacks fold (the modal's callback analysis, shared renderers, lazy) · G2 Callbacks by department → an admin-only, lazy Overview section; S48 rewritten · G3 retire the modal: `#/report/outbound` lands on My Department → Outbound with the fold open, the 6c pin re-pointed, drivers off the modal list, S46 + #63 rewritten | dashboard | done (walk S59, S48, S46's pre-release half); the modal is gone; the 6c release is now the gate + the switch + the two Insights folds (#63) |
-| ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1 IMPLEMENTED (block 241) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard | CE-1 done (deploy, walk S48 + S59); CE-2 next; CE-3 after CE-2 (it reuses CE-1's engine) |
+| ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1, CE-2 IMPLEMENTED (blocks 241-242) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard | CE-1 + CE-2 done (deploy, walk S48 + S59); CE-3 next (it reuses CE-1's engine) |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 
@@ -591,7 +591,7 @@ deploy.
 - **Version + pins:** cache prefix bump (`outboundReport:v8`); harness fixture
   + drive-callbacks / drive-cbdept updated.
 
-### CE-2 — drill lists (dashboard)
+### CE-2 — drill lists (dashboard) — IMPLEMENTED 2026-10-09 (block 242)
 
 - **A "called back" list:** dialer, team, delay, connected, and a "↳ path" into
   the outbound call (`getCallJourney` already serves outbound).

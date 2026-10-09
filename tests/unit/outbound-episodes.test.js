@@ -318,6 +318,62 @@ test('a queue mapped to two depts lands in BOTH rows and once in the total', fun
 test('the engine output carries no caller identity beyond the per-request integer key', function () {
   const eps = run({ ab: [ab(7, '2026-09-10', '08:00:00', 'a_q_csr', 'call-1')] });
   assert.deepEqual(Object.keys(eps[0]).sort(),
-    ['agent', 'attempts', 'connected', 'delaySec', 'firstHms', 'firstIso', 'k', 'outcome', 'teamKey', 'teams']);
+    ['agent', 'attempts', 'connected', 'delaySec', 'dial', 'firstHms', 'firstIso', 'k', 'outcome', 'teamKey', 'teams']);
   assert.deepEqual(eps[0].attempts, [{ iso: '2026-09-10', hms: '08:00:00', id: 'call-1', q: 'a_q_csr' }]);
+});
+
+// ── CE-2: the deciding dial and the late tags ───────────────────────────────
+
+test('CE-2: the DECIDING dial is recorded for own and other; none / got-through carry none', function () {
+  const eps = run({
+    ab: [ab(1, '2026-09-10', '08:00:00', 'a_q_csr'), ab(2, '2026-09-10', '08:00:00', 'a_q_csr'),
+         ab(3, '2026-09-10', '08:00:00', 'a_q_csr'), ab(4, '2026-09-10', '08:00:00', 'a_q_csr')],
+    ob: [ob(1, '2026-09-10', '09:00:00', 'Bill', true, 'b1'), ob(1, '2026-09-11', '09:00:00', 'Cara', false, 'c1'),
+         ob(2, '2026-09-10', '10:00:00', 'Bill', true, 'b2')],
+    ans: [ans(3, '2026-09-10', '09:30:00', 'a_q_csr')],
+  });
+  const by = {}; eps.forEach((e) => { by[e.k] = e; });
+  assert.deepEqual(by[1].dial, { iso: '2026-09-11', hms: '09:00:00', id: 'c1' },
+    'the own dial decided it, not Bill’s earlier one');
+  assert.deepEqual(by[2].dial, { iso: '2026-09-10', hms: '10:00:00', id: 'b2' }, 'the first other-team dial');
+  assert.equal(by[3].dial, null, 'got through: no dial decided it');
+  assert.equal(by[4].dial, null);
+});
+
+test('CE-2: events read PAST the window never move an outcome', function () {
+  const eps = run({ ab: [ab(1, '2026-09-10', '08:00:00', 'a_q_csr')],
+                    ob: [ob(1, '2026-09-20', '09:00:00', 'Cara', true)],
+                    ans: [ans(1, '2026-09-18', '09:00:00', 'a_q_csr')] });
+  assert.equal(eps[0].outcome, 'none');
+});
+
+test('CE-2 late tags: the first dial and the first got-through AFTER the deadline, within the horizon', function () {
+  const ev = { ab: [ab(1, '2026-09-10', '08:00:00', 'a_q_csr'), ab(1, '2026-09-11', '08:00:00', 'a_q_csr')],
+    ob: [ob(1, '2026-09-14', '23:59:00', 'Cara', true),    // = last attempt + 3: inside the window
+         ob(1, '2026-09-16', '10:00:00', 'Bill', false),   // day 5 after the last attempt: late, another team
+         ob(1, '2026-09-17', '10:00:00', 'Cara', true)],
+    ans: [ans(1, '2026-09-18', '09:00:00', 'a_q_sales'),  // another team's queue: not "got through"
+          ans(1, '2026-09-19', '09:00:00', 'a_q_csr')] };
+  const c = ctx();
+  // Engine first: the in-window own dial decides it -- tags are for `none` only,
+  // so test the helper on a hand-shaped none episode with the same attempts.
+  const ep = { k: 1, teams: ['CSR'], attempts: [{ iso: '2026-09-10' }, { iso: '2026-09-11' }] };
+  const tags = JSON.parse(JSON.stringify(h.ctx.obEpLateTags_(ep, ev, c, 14)));
+  assert.deepEqual(tags.calledBack, { iso: '2026-09-16', hms: '10:00:00', daysAfter: 5, team: 'other', agent: 'Bill' },
+    'the first dial PAST the deadline (09-14), counted from the last attempt');
+  assert.deepEqual(tags.gotThrough, { iso: '2026-09-19', hms: '09:00:00', daysAfter: 8 },
+    'only a family queue counts as getting through');
+});
+
+test('CE-2 late tags: nothing past the horizon, and an own-team late dial is labelled own', function () {
+  const ep = { k: 1, teams: ['PAP'], attempts: [{ iso: '2026-09-10' }] };
+  const far = JSON.parse(JSON.stringify(h.ctx.obEpLateTags_(ep,
+    { ob: [ob(1, '2026-09-28', '09:00:00', 'Sam', true)], ans: [] }, ctx(), 14)));
+  assert.equal(far.calledBack, null, '09-13 deadline + 14 = 09-27: 09-28 is past the horizon');
+  const near = JSON.parse(JSON.stringify(h.ctx.obEpLateTags_(ep,
+    { ob: [ob(1, '2026-09-20', '09:00:00', 'Sam', true)], ans: [] }, ctx(), 14)));
+  assert.equal(near.calledBack.team, 'own', 'Sam is on the parent’s roster: the family rule');
+  const other = JSON.parse(JSON.stringify(h.ctx.obEpLateTags_({ k: 2, teams: ['PAP'], attempts: [{ iso: '2026-09-10' }] },
+    { ob: [ob(1, '2026-09-20', '09:00:00', 'Sam', true)], ans: [] }, ctx(), 14)));
+  assert.equal(other.calledBack, null, 'another caller’s dial is never this caller’s tag');
 });
