@@ -2296,10 +2296,12 @@
 
   // PURE. The collapsed-summary headline, so the fold answers its question
   // even closed once it has loaded.
+  // CE-1: the head reads the OWN-TEAM rate over contact episodes.
   function insCbHeadText_(cb) {
     if (!cb || !cb.abandonedTotal) return 'no abandoned callers in this window';
-    return (cb.calledBackPct != null ? cb.calledBackPct + '% called back' : 'callback rate –')
-      + ' · ' + fmtNumber(cb.abandonedTotal) + ' abandoned'
+    if (!cb.episodes) return fmtNumber(cb.abandonedTotal) + ' abandoned · none trackable';
+    return (cb.ownPct != null ? cb.ownPct + '% called back by the team' : 'callback rate –')
+      + ' · ' + fmtNumber(cb.episodes) + ' contact episode' + (cb.episodes === 1 ? '' : 's')
       + (cb.medianCallbackSec != null ? ' · median ' + fmtDuration(cb.medianCallbackSec) : '');
   }
 

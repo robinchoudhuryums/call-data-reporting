@@ -118,14 +118,16 @@ async function setDir(page, dir) {
     hourCells: document.querySelectorAll('#ins-cb-hour-strip .ob-hour-cell').length,
     windowDays: (document.getElementById('ins-cb-window') || {}).textContent,
   }));
-  record('the headline answers the question closed: rate, abandons, median',
-    /70% called back/.test(r.head) && /25 abandoned/.test(r.head) && /median/.test(r.head), r.head);
-  record('the five callback tiles render with the payload’s figures',
-    r.tiles.length === 5 && /^Abandoned/.test(r.tiles[0]) && r.tiles[0].indexOf('25') !== -1
-      && r.tiles[2].indexOf('70%') !== -1, r.tiles.join(' | '));
-  record('the two rate tiles carry prior-window deltas', r.deltas === 2, 'deltas=' + r.deltas);
+  record('the headline answers the question closed: own-team rate, episodes, median (CE-1)',
+    /55\.6% called back by the team/.test(r.head) && /18 contact episodes/.test(r.head) && /median/.test(r.head), r.head);
+  record('the seven episode tiles render, own team and another team kept apart',
+    r.tiles.length === 7 && /^Contact episodes/.test(r.tiles[0]) && r.tiles[0].indexOf('18') !== -1
+      && /^Called back by own team/.test(r.tiles[1]) && r.tiles[1].indexOf('55.6%') !== -1
+      && r.tiles.some((t) => /^Contacted by another team/.test(t) && /may be unrelated/.test(t))
+      && r.tiles.some((t) => /^Caller got through/.test(t)), r.tiles.join(' | '));
+  record('the two own-team rate tiles carry prior-window deltas', r.deltas === 2, 'deltas=' + r.deltas);
   record('the "how fast" strip and the by-hour strip both render',
-    r.delaySegs === 5 && r.hourCells === 4, 'segs=' + r.delaySegs + ' cells=' + r.hourCells);
+    r.delaySegs === 4 && r.hourCells === 4, 'segs=' + r.delaySegs + ' cells=' + r.hourCells);
   record('the callback window in the caption comes from the payload', r.windowDays === '3', r.windowDays);
   await page.waitForTimeout(800);
   let ch = await page.evaluate(chartDrawn);
@@ -226,7 +228,7 @@ async function setDir(page, dir) {
         modal: !!document.getElementById('outbound-modal') };
     });
     record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and scrolled into view',
-      dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 5 && dl.inView && !dl.modal,
+      dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 7 && dl.inView && !dl.modal,
       JSON.stringify(dl));
     await pd.close();
   }
@@ -259,7 +261,7 @@ async function setDir(page, dir) {
       sw: document.documentElement.scrollWidth, vw: window.innerWidth,
     }));
     record('360 px: the open fold renders without a sideways page scroll',
-      n.tiles === 5 && n.sw <= n.vw + 1, JSON.stringify(n));
+      n.tiles === 7 && n.sw <= n.vw + 1, JSON.stringify(n));
     await pn.close();
   }
 

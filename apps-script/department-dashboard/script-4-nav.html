@@ -879,10 +879,26 @@
     g['connected']    = OB_CONNECTED_DEF_;
     g['ob connected'] = OB_CONNECTED_DEF_;
     g['connect %']    = 'Connected calls as a share of calls placed. ' + OB_CONNECTED_DEF_;
-    g['callbacks connected'] = 'Abandoned callers we called back where the far end answered, '
-      + 'divided by the same trackable abandons as the callback rate. It includes voicemail '
-      + 'and phone menus, so it is an UPPER BOUND on callers actually reached. '
-      + OB_CONNECTED_DEF_;
+    // CE-1: the callback tiles count contact EPISODES -- one caller trying to
+    // reach one team, however many times they tried inside the window.
+    g['contact episodes'] = 'One caller trying to reach this team, however many times they '
+      + 'tried while it stayed open (each try within the callback window of the last). The '
+      + 'unit every callback rate divides by. Anonymous callers and hang-ups that reached no '
+      + 'queue cannot be called back and are left out.';
+    g['called back by own team'] = 'Contact episodes closed by a dial from someone on this '
+      + 'team’s roster (or its parent’s or a sub-queue’s), connected or not. The time runs '
+      + 'from the FIRST attempt.';
+    g['own callbacks connected'] = 'Own-team callbacks where the far end answered, divided by '
+      + 'the same contact episodes. It includes voicemail and phone menus, so it is an UPPER '
+      + 'BOUND on callers actually reached. ' + OB_CONNECTED_DEF_;
+    g['callbacks connected'] = g['own callbacks connected'];
+    g['contacted by another team'] = 'Episodes no own-team dial closed, but where someone from '
+      + 'another team dialed the caller inside the window. Kept apart because the call may be '
+      + 'about something else entirely.';
+    g['caller got through'] = 'The caller reached this team on a later call before anyone '
+      + 'called back.';
+    g['not called back'] = 'No dial to the caller inside the callback window, and they did not '
+      + 'get through.';
     g['avg att']      = g['att'];
     g['avg talk']     = g['att'];
   })();

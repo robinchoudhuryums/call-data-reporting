@@ -2164,8 +2164,10 @@ stay pinned by INV-39, INV-53 and INV-06.
 - **Callbacks in Insights -- the Outbound report moving onto My Department
   (owner 2026-10, Batch G1).** The `#ins-cb-fold` fold (`insCbSync_`,
   script-8) sits after the Outbound fold and carries the retired modal's callback
-  analysis for the region's dept + window: the five callback tiles (prior
-  deltas from `callbackPrior`), the "how fast" strip, the daily callback chart,
+  analysis for the region's dept + window: the seven contact-EPISODE tiles
+  (CE-1 -- own team, another team, got through and not called back are
+  SEPARATE tiles by ruling, never one "called back"; prior deltas on the two
+  own-team rates from `callbackPrior`), the "how fast" strip, the daily chart,
   the by-hour strip, the not-called-back drill (rows carry the "↳ path" call
   path) and CSV / email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
@@ -2196,8 +2198,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   (department `''`, the company view) only while OPEN, for its own window
   (Last 7 days / Last 30 days / Last 3 months via `datePresetRange_`, so it
   ends yesterday), once per window; `ovLoad_` -- the landing and the 5-minute
-  auto-refresh -- never calls it (cross-file-pins "G2"). It shows the five
-  company callback tiles above the table, both drawn by the shared renderers:
+  auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
+  episode tiles (plus a "Not counted (no queue reached)" tile for the
+  phone-menu and person's-line hang-ups) above the table, both drawn by the
+  shared renderers. Its headline is the own-team rate over MAPPED episodes
+  (`total.mappedOwnPct`, CE-1):
   `outboundCallbackTilesHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The

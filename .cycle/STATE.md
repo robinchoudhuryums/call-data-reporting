@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — CE-1 IMPLEMENTED (block 241): the callback figures count contact EPISODES.**
+  - Owner rulings 2026-10-09 (docs/next-steps.md "Callback episodes + direct lines"): phone-menu hang-ups out of the rate; own team and another team both shown, clearly apart; repeat attempts as episodes; the team-aware refinement; repeat unreturned caller = 2+ attempts in 3 days, no callback (CE-3).
+  - One pure engine (`obCallbackEpisodes_`) for the Neon path (event rows, integer caller keys) and the sheet fallback; every callback surface moved (Insights fold, Overview table + mapped-only headline, email, not-called-back list). outboundReport:v8.
+  - The event SQL was run against a local Postgres 16 and matched the sheet path; seven mutation bites; 2268 tests.
+
+  **Owner-side:** deploy, walk S48 + S59.
+  **Next:** CE-2 (drill lists), then CE-3 (direct-line callbacks).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l (branch restarted from main after #363 merged), no PR.
 - **2026-10-08 — FO-3 + G3 IMPLEMENTED (block 240): the Outbound modal is retired.**
   - FO-3: one client store (obSummaryFetch_) for getDeptOutboundSummary, shared by the Batch D table and the Insights Outbound fold; a switch to Outbound now sends each window once.
   - G3: modal markup + menu item + modal-only client code removed; `#/report/outbound` lands on My Department -> Outbound with the Callbacks fold open (admin; a plain landing for anyone else); the 6c pin pairs the gate with #dept-dir-switch / #ins-ob-fold / #ins-cb-fold and fails if the modal returns. Harness getLocation is async + deep-linkable.

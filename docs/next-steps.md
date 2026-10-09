@@ -27,6 +27,7 @@ batch, items are independent unless marked.
 | ∥ | **CDR Import tools** (owner asks 2026-10-05) — SHIPPED | transfer filter Phase 0 (read-only probe + its dialog) · both CDR Tools menus grouped into submenus · AF-1 abandoned-filter dialog + on-tab check | cdr-import + cdr-report (menus) | MERGED #354, #355; cdr-import DEPLOYED 2026-10-05. Next: walk S55, then retire the fourteen per-queue items (AF-1 step 3); transfer filter Phase 1 once the owner confirms the Phase 0 shapes |
 | ∥ | **Agent + outbound views** (owner plan 2026-10-07) — IMPLEMENTED (blocks 231-236) | A ans/day + Agent Day tile rows · B inline agent panel · C outbound source probe (Operator State #74) · D Inbound \| Outbound \| Both + Team Outbound · E Overview tile outbound line + Insights Outbound fold · F prior-period chips on the outbound figures | dashboard (DEPLOY pending; walk S56-S58) | done; D-F admin-only until the 6c release (#63) |
 | ∥ | **Outbound report → My Department** (owner 2026-10-08: managers get the My Department version, not the modal) — G1, G2, G3 IMPLEMENTED (blocks 237-240) | G1 the Insights Callbacks fold (the modal's callback analysis, shared renderers, lazy) · G2 Callbacks by department → an admin-only, lazy Overview section; S48 rewritten · G3 retire the modal: `#/report/outbound` lands on My Department → Outbound with the fold open, the 6c pin re-pointed, drivers off the modal list, S46 + #63 rewritten | dashboard | done (walk S59, S48, S46's pre-release half); the modal is gone; the 6c release is now the gate + the switch + the two Insights folds (#63) |
+| ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1 IMPLEMENTED (block 241) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard | CE-1 done (deploy, walk S48 + S59); CE-2 next; CE-3 after CE-2 (it reuses CE-1's engine) |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 
@@ -484,6 +485,139 @@ through the DAL rather than `direct_call_history` / `call_history_dept` — same
 with My Department by construction; and the tier is decided by WHAT CAME BACK
 rather than by the calendar, since the prune is flag-gated and tunable. Full
 design notes now live in `docs/per-call-capture.md`; walk S47.
+
+## Callback episodes + direct lines (owner, 2026-10-09)
+
+**Why.** The report was built for customers who say they called a person's
+direct line again and again and nobody called back. Measured against live
+Neon on 2026-10-09, the shipped callback figures could not answer that:
+
+- **The headline was mostly phone-menu hang-ups.** Of the company's trackable
+  abandons over 2026-09-09..10-08, 2,947 hung up in the phone menu before
+  reaching a queue (62% inside 20 s) and 753 hung up while a person's line
+  rang; only ~370 were queue abandons. All of them sat in the Overview's "Not
+  mapped to a department" row (653 of the 7-day 709), and the "% called back
+  by the owning department" headline divided by all of them.
+- **"Called back by anyone" is close to a coincidence baseline.** 39% of the
+  phone-menu hang-ups -- calls no agent ever saw -- still got an outbound call
+  within 3 days. CSR's queue abandons were "called back" 36% of the time,
+  Sales' 48%. Counting any dialer mostly measures routine contact.
+- **Agent names are not the problem.** The first dialers on mapped-queue
+  abandons are stored in the roster's own spelling, e.g.
+  `Roman (Robin) Paulose`.
+- **The direct-line population is invisible.** Calls that rang a person's
+  line first, 30 days: 2,968 answered, **4,011 missed**, 906 + 17 abandoned.
+  Only `abandoned` enters the callback figures. A missed call has no talk on
+  any leg, and its last leg is the person, so voicemail, ring-out and a
+  hang-up while ringing are indistinguishable.
+  `Sales Voicemails` (204 calls) is the ONE voicemail box in the raw data, an
+  account the Sales team created on purpose. It is the exception, not a
+  pattern.
+- **The Direct report** counts answered / missed-free / missed-busy per
+  employee per day, with no caller identity and no per-call rows. It cannot
+  carry a callback rate. The per-call `inbound_calls` table can.
+
+**Owner rulings (2026-10-09).**
+1. Phone-menu hang-ups are out of the callback rate. They are shown as a
+   labelled context count.
+2. Own team and another team are both visible, clearly separated and labelled.
+   For direct lines the same rule applies to work hours vs after hours.
+3. A repeat unreturned caller is 2+ unanswered attempts within 3 days and no
+   callback.
+4. Repeat attempts count as **contact episodes** (below). Counting every
+   abandon is punitive; counting unique callers is too generous.
+5. The team-aware refinement applies: a callback by team T is credited to T's
+   own open episode for that caller before it can count for anyone else.
+
+### The episode rules (shared by CE-1 and CE-3)
+
+One episode is one caller trying to reach one TEAM. A queue abandon's team is
+the department whose OWN queue list holds its entry queue
+(`inboundQueuesForDept_(d, {includeChildren:false})`). A queue mapped to no
+department belongs to the unmapped team ''.
+
+- **Opens** on an unanswered attempt.
+- **Joins:** a later unanswered attempt from the same caller to the same team
+  joins it while it is open and within `OUTBOUND_CALLBACK_WINDOW_DAYS` (3) of
+  the previous attempt's date.
+- **Closes**, at the first of:
+  - **own team:** a dial to the caller by a member of the team's family
+    (the team, its one-level parent, its one-level children -- the rule the
+    per-dept table already used);
+  - **got through:** an answered inbound call from the caller on one of the
+    family's queues.
+- **A dial from another team does NOT close it.** It may be unrelated.
+- **Outcome**, in precedence order: `own` > `gotThrough` > `other` (an
+  unconsumed other-team dial inside the window) > `pending` (deadline >=
+  today, script TZ) > `none`.
+  - The five partition the episodes:
+    `own + gotThrough + other + pending + none === episodes`.
+  - A dial is CONSUMED when it closes its own team's open episode for that
+    caller; a consumed dial is never "another team" for anyone (ruling 5).
+- **Delay** runs from the episode's FIRST attempt, the customer's actual wait.
+- **Attempts per episode** are reported beside the rate.
+- An unconnected own-team dial still closes the episode as called back (the
+  agent did their part). Phone tag shows as a low connected rate, never as a
+  failure.
+
+The engine is ONE pure function fed raw event rows. The Neon path and the
+sheet fallback both build those rows and call it, so the two sources cannot
+drift (the outbound-fallback parity suite keeps pinning that).
+
+**Egress note.** The callback block now ships per-call rows instead of
+aggregates: callers are integer keys, never hashes, and nothing leaves the
+server. That is ~100-200 KB per 30-day window, up from a few KB, still on the
+6 h cache tier. Re-check the Health page's Neon read volume (#47) a week after
+deploy.
+
+### CE-1 — callback rate on episodes (dashboard) — IMPLEMENTED 2026-10-09 (block 241)
+
+- The engine + its SQL event fetch + the sheet-fallback adapter.
+- **Scope:**
+  - The episode population is QUEUE-REACHED trackable abandons.
+  - Phone-menu hang-ups (no queue reached) and direct-line abandons are
+    EXCLUDED and shown as labelled context counts in the company view.
+  - `abandonedTotal` keeps its raw meaning, so `runOutboundVettingCheck`'s
+    parity with the Inbound report still holds.
+- **Surfaces:** every one of them moves to the episode figures:
+  - the Insights Callbacks fold: tiles, delay strip, daily chart, hour strip;
+  - the Overview Callbacks-by-department table and headline;
+  - the report email and the not-called-back list. The list becomes the
+    attempts of episodes ending `none` / `pending`, so it agrees with the
+    tiles by construction.
+- **The headline is "called back by own team"**, computed over mapped queues
+  only. "Contacted by another team (may be unrelated)" and "caller got
+  through" are separate figures, never folded in.
+- **Version + pins:** cache prefix bump (`outboundReport:v8`); harness fixture
+  + drive-callbacks / drive-cbdept updated.
+
+### CE-2 — drill lists (dashboard)
+
+- **A "called back" list:** dialer, team, delay, connected, and a "↳ path" into
+  the outbound call (`getCallJourney` already serves outbound).
+- **On the not-called-back list:**
+  - the call id is visible with a copy button (the phone provider's portal
+    shows the number, which the dashboard never stores), plus the dialed line;
+  - each row is marked "still inside the window" / "missed";
+  - each row is tagged "caller got through later" / "called back after day 3"
+    (tags only; the rate does not move).
+
+### CE-3 — direct-line callbacks (dashboard)
+
+- **Population:** external calls whose first leg rang a PERSON (`entry_queue`
+  empty, `first_agent` set) and that nobody answered -- `missed` and
+  `abandoned`.
+- **Ownership:** the team is the line owner's roster department, and the person
+  is credited separately (by them / by their team / by anyone).
+  `Sales Voicemails` is attributed to Sales and flagged as voicemail by
+  name; no general shared-mailbox mapping (owner: it is the only one).
+- **Hours:** work hours and after hours are shown as separate, labelled
+  figures.
+- **Repeat-unreturned-callers list:** episodes with 2+ attempts ending
+  `none`, with attempts, lines tried, first/last attempt and call ids.
+- **Open question for CE-3:** a missed direct call stores no `wait_seconds`. If
+  misdials need filtering, use each leg's ring length from the journey
+  (`secs`).
 
 ## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
 

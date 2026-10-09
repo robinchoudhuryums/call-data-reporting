@@ -320,13 +320,16 @@
               <div id="ov-cbdept-kpis" class="pr-kpi-row"></div>
               <div class="al-section" id="ov-cbdept-section" style="display:none;">
                 <p class="al-hint">
-                  Each department is responsible for calling back its own abandoned callers.
-                  &ldquo;Called back by us&rdquo; counts abandons on the department&rsquo;s queues whose
-                  <strong>first</strong> callback came from its own agents (a parent includes its
-                  sub-queues&rsquo; queues and agents). Times run from the abandoned call and include
-                  any internal handoff. Expand a row to see who made the callbacks. The rows do not
-                  sum to the total: a parent includes its sub-queues, and a queue shared by two
-                  departments is in both.
+                  Each department is responsible for calling back its own abandoned callers,
+                  counted in <strong>contact episodes</strong> (one caller trying to reach one
+                  team, however many times they tried). &ldquo;Own team&rdquo; = a dial by the
+                  department&rsquo;s own agents (a parent includes its sub-queues&rsquo; queues and
+                  agents); &ldquo;Another team&rdquo; is kept apart because it may be unrelated.
+                  Phone-menu hang-ups and hang-ups on a person&rsquo;s line reached no queue, so
+                  no team owns them: they are counted above the table, never in a rate. Times run
+                  from the first attempt and include any internal handoff. Expand a row to see who
+                  made the callbacks. The rows do not sum to the total: a parent includes its
+                  sub-queues, and a queue shared by two departments is in both.
                 </p>
                 <div class="ov-cbdept-scroll">
                   <table class="al-config-table ob-cbdept-table" id="ov-cbdept-table">
@@ -1241,13 +1244,18 @@
               <div id="ins-cb-kpis" class="pr-kpi-row"></div>
               <div id="ins-cb-delay-strip" style="display:none;"></div>
               <p class="al-hint">
-                &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
-                <span id="ins-cb-window">3</span> days, whether or not the call connected.
+                Counted in <strong>contact episodes</strong>: one caller trying to reach this
+                team, however many times they tried while it stayed open (each try within
+                <span id="ins-cb-window">3</span> days of the last). &ldquo;Called back by own
+                team&rdquo; = someone on this department&rsquo;s roster (or its parent / sub-queue)
+                <em>dialed</em> the caller, whether or not it connected; the time runs from the
+                <strong>first</strong> attempt. &ldquo;Contacted by another team&rdquo; is kept
+                apart because it may be about something else. &ldquo;Got through&rdquo; = the
+                caller reached the team on a later call before anyone called back.
                 &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
-                greeting or a phone menu; the phone records report all three the same way, so
-                &ldquo;Callbacks connected&rdquo; is an upper bound on callers actually reached.
-                Callbacks count no matter which agent or department dialed. Anonymous abandons
-                (no caller ID) cannot be tracked and are excluded from the callback rate.
+                greeting or a phone menu; the phone records report all three the same way, so it
+                is an upper bound on callers actually reached. Anonymous abandons (no caller ID)
+                cannot be tracked and are left out.
               </p>
               <div id="ins-cb-chart-wrap" style="display:none; max-width:100%; height:140px;">
                 <canvas id="ins-cb-chart"></canvas>

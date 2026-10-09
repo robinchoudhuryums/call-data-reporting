@@ -13,11 +13,11 @@ const { loadGas } = require('../harness/loadGas');
 //   (1) SOURCE PARITY, the headline -- ONE fixture served through the Neon
 //       path (as the SQL's json blob) and through the sheet fallback produces
 //       the SAME payload modulo the disclosure fields. Both routes share the
-//       pure outboundShapeReport_, so this pins the SHEET-side mirror of every
-//       SQL clause: the callback rule (earliest qualifying outbound, hash
-//       match, <=3d window, not-before-the-abandon), the abandon denominator
-//       (disposition + work window + is_internal exclusion + dept attribution)
-//       and the per-agent aggregation.
+//       pure outboundShapeReport_ AND (CE-1) the one episode engine, so this
+//       pins the SHEET-side mirror of every SQL clause that builds the event
+//       rows: the abandon population (disposition + work window + is_internal
+//       exclusion + dept attribution), the window split, the integer caller
+//       keys, the dial / answered-call spans, and the per-agent aggregation.
 //   (2) fallback payloads are NEVER cached; healthy payloads still cache.
 //   (3) all three failure branches (conn null / null result / query throw)
 //       reach the fallback; missing tabs keep available=false.
@@ -45,10 +45,13 @@ const OB_ROWS = [
 // Inbound rows: the Inbound Calls tab's 17 cols. Index map used below:
 // 0 date, 3 callerHash, 5 disposition, 7 abandonedOnHold, 10 entryQueue,
 // 12 finalDept, 15 callStart, 16 isInternal.
+let ibSeq = 0;
 function ibRow(date, hash, disposition, entryQueue, callStart, opts) {
   opts = opts || {};
   const r = new Array(17).fill('');
-  r[0] = date; r[3] = hash; r[5] = disposition; r[7] = opts.onHold ? 'TRUE' : 'FALSE';
+  r[0] = date; r[1] = opts.id || ('ib' + (++ibSeq)); r[3] = hash; r[5] = disposition;
+  r[6] = disposition === 'abandoned' ? (opts.stage || (entryQueue ? 'queue' : 'ivr')) : '';
+  r[7] = opts.onHold ? 'TRUE' : 'FALSE';
   r[10] = entryQueue; r[12] = opts.finalDept || ''; r[15] = callStart;
   r[16] = opts.internal ? 'TRUE' : 'FALSE';
   return r;
@@ -70,6 +73,13 @@ const IB_ROWS = [
   ibRow('2026-08-10', 'hashB', 'abandoned', 'A_Q_Sales', '08:25:00'),
   // Prior window, tracked + called back by o0.
   ibRow('2026-08-06', 'hashZ', 'abandoned', 'A_Q_CSR', '09:00:00'),
+  // CE-1: hashC tries again the next day -> joins hashC's open episode.
+  ibRow('2026-08-11', 'hashC', 'abandoned', 'A_Q_CSR', '08:15:00'),
+  // CE-1: hashD abandons, then gets through on the same queue -> "got through".
+  ibRow('2026-08-10', 'hashD', 'abandoned', 'A_Q_CSR', '08:40:00'),
+  ibRow('2026-08-10', 'hashD', 'answered', 'A_Q_CSR', '09:05:00'),
+  // CE-1: a phone-menu hang-up (no queue) -- counted, never an episode.
+  ibRow('2026-08-10', 'hashM', 'abandoned', '', '08:45:00'),
 ];
 
 /** The blob shape computeOutboundReport_'s SQL returns, from the same rows. */
@@ -100,68 +110,35 @@ function neonBlobFromFixture(dept) {
     return Object.keys(by).map((k) => { delete by[k]._d; return by[k]; })
       .sort((x, y) => (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : 1));
   };
-  const cbFor = (f, t, detail) => {
-    const abandons = IB_ROWS.filter((r) => r[0] >= f && r[0] <= t && r[5] === 'abandoned'
-      && r[16] !== 'TRUE' && inWin(r) && inDept(r));
-    const daily = {};
-    const byHour = {};
-    let calledBack = 0, connected = 0, anon = 0;
-    const delays = [];
-    abandons.forEach((r) => {
-      const d = daily[r[0]] || (daily[r[0]] = { d: r[0], tracked: 0, called_back: 0 });
-      if (!r[3]) { anon++; return; }
-      d.tracked++;
-      // (6) EXTRACT(HOUR FROM call_start), skipping rows with none.
-      const hk = r[15] ? parseInt(r[15].slice(0, 2), 10) : NaN;
-      const hb = isFinite(hk) ? (byHour[hk] || (byHour[hk] = { h: hk, tracked: 0, called_back: 0 })) : null;
-      if (hb) hb.tracked++;
-      const abOrd = Date.parse(r[0] + 'T' + r[15] + 'Z') / 1000;
-      const cands = OB_ROWS.filter((o) => o[2] === r[3] && o[0] >= r[0]
-        && Date.parse(o[0] + 'T' + o[10] + 'Z') / 1000 >= abOrd)
-        .sort((a, b) => Date.parse(a[0] + 'T' + a[10] + 'Z') - Date.parse(b[0] + 'T' + b[10] + 'Z'));
-      if (cands.length) {
-        calledBack++; d.called_back++;
-        if (hb) hb.called_back++;
-        if (cands[0][6] === 'TRUE') connected++;
-        delays.push(Date.parse(cands[0][0] + 'T' + cands[0][10] + 'Z') / 1000 - abOrd);
-      }
-    });
-    const agg = {
-      abandonedTotal: abandons.length, abandonedAnonymous: anon,
-      calledBack: calledBack, calledBackConnected: connected,
-    };
-    if (detail) {
-      agg.medianCallbackSec = delays.length ? delays.sort((a, b) => a - b)[0] : null;
-      agg.pendingTail = 0;   // fixture dates are far past the 3-day tail
-      // (3) the bucket counts json_build_object would return. Built from the
-      // REAL ladder, not a hand-copied one -- the point of the parity test is
-      // that the two implementations agree, and a third hard-coded copy here
-      // would just be a fourth place to drift.
-      const ladder = h.ctx.OUTBOUND_CALLBACK_BUCKETS_;
-      agg.delayBuckets = {};
-      ladder.forEach((b) => { agg.delayBuckets[b.key] = 0; });
-      delays.forEach((dl) => {
-        if (dl == null || dl < 0) return;
-        let prev = null;
-        for (const b of ladder) {
-          if ((prev === null || dl > prev) && (b.maxSec === null || dl <= b.maxSec)) {
-            agg.delayBuckets[b.key]++; return;
-          }
-          prev = b.maxSec;
-        }
-      });
-    }
-    return { agg: agg, daily: Object.keys(daily).sort().map((k) => daily[k]),
-             hours: Object.keys(byHour).map((k) => byHour[k]).sort((a, b) => a.h - b.h) };
-  };
-  const cur = cbFor(FROM, TO, true);
+  // CE-1: the EVENT rows obCallbackEventsSql_ returns, hand-derived from the
+  // fixture with the SQL's own clauses (independently of the sheet adapter).
+  const rangeFrom = PW.from, endIso = '2026-08-14';   // TO + OUTBOUND_CALLBACK_WINDOW_DAYS
+  const winOf = (d) => (d >= FROM ? 'cur' : (d <= PW.to ? 'pri' : 'gap'));
+  const abs = IB_ROWS.filter((r) => r[0] >= rangeFrom && r[0] <= TO && r[5] === 'abandoned'
+    && r[16] !== 'TRUE' && inWin(r) && inDept(r));
+  const counts = {};
+  abs.forEach((r) => {
+    const q = String(r[10]).trim().toLowerCase();
+    const kind = q ? 'queue' : (r[6] === 'direct' ? 'direct' : 'menu');
+    const key = [winOf(r[0]), kind, !r[3], q].join('|');
+    const c = counts[key] || (counts[key] = { w: winOf(r[0]), kind: kind, anon: !r[3], q: q, n: 0 });
+    c.n++;
+  });
+  const tracked = abs.filter((r) => r[3] && String(r[10]).trim() && winOf(r[0]) !== 'gap');
+  const hashes = Array.from(new Set(tracked.map((r) => r[3]))).sort();   // dense_rank() OVER (ORDER BY h)
+  const k = {}; hashes.forEach((x, i) => { k[x] = i + 1; });
+  const byKey = (a, b) => (a[0] - b[0]) || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0)
+    || (String(a[2]) < String(b[2]) ? -1 : String(a[2]) > String(b[2]) ? 1 : 0);
   return {
     agents: agentsFor(FROM, TO),
-    callback: cur.agg,
-    callbackDaily: cur.daily,
-    callbackByHour: cur.hours,   // (6)
+    cbCounts: Object.keys(counts).map((x) => counts[x]),
+    cbAb: tracked.map((r) => [k[r[3]], r[0], r[15] || null, String(r[10]).trim().toLowerCase(), r[1]]).sort(byKey),
+    cbOb: OB_ROWS.filter((o) => k[o[2]] && o[0] >= rangeFrom && o[0] <= endIso)
+      .map((o) => [k[o[2]], o[0], o[10] || null, o[1], o[3], o[6] === 'TRUE']).sort(byKey),
+    cbAns: IB_ROWS.filter((r) => k[r[3]] && r[5] === 'answered' && r[16] !== 'TRUE'
+        && String(r[10]).trim() && r[0] >= rangeFrom && r[0] <= endIso)
+      .map((r) => [k[r[3]], r[0], r[15] || null, String(r[10]).trim().toLowerCase()]).sort(byKey),
     agentsPrior: agentsFor(PW.from, PW.to),
-    callbackPrior: cbFor(PW.from, PW.to, false).agg,
     coverageStart: OB_ROWS.map((r) => r[0]).sort()[0],
   };
 }
@@ -202,7 +179,7 @@ function install(opts) {
   h.ctx.reportFreshnessTag_ = function () { return 'tag'; };
   h.ctx.logReportUsage_ = function () {};
   h.ctx.computePriorWindow_ = function () { return { from: PW.from, to: PW.to }; };
-  h.ctx.inboundQueuesForDept_ = function () { return ['A_Q_CSR']; };
+  h.ctx.inboundQueuesForDept_ = function (d) { return d === 'Sales' ? ['A_Q_Sales'] : ['A_Q_CSR']; };
   h.ctx.getFinalDeptLabels_ = function (d) { return [String(d).toLowerCase()]; };
   h.ctx.getAllFinalDeptLabels_ = function () { return ['csr', 'sales']; };
   h.ctx.buildDeptsByAgent_ = function () {
@@ -255,6 +232,7 @@ test('parity: the sheet fallback and the Neon path produce the SAME payload', fu
   assert.deepEqual(JSON.parse(JSON.stringify(fb.callback)), JSON.parse(JSON.stringify(live.callback)));
   assert.deepEqual(JSON.parse(JSON.stringify(fb.agents)), JSON.parse(JSON.stringify(live.agents)));
   assert.deepEqual(JSON.parse(JSON.stringify(fb.daily)), JSON.parse(JSON.stringify(live.daily)));
+  assert.deepEqual(JSON.parse(JSON.stringify(fb.callbackByHour)), JSON.parse(JSON.stringify(live.callbackByHour)));
   assert.deepEqual(JSON.parse(JSON.stringify(fb.callbackPrior)),
                    JSON.parse(JSON.stringify(live.callbackPrior)));
 });
@@ -263,13 +241,33 @@ test('the callback rule survives the mirror: hash match, window, ordering, anony
   install({ conn: null });
   const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
   const cb = fb.callback;
-  // 3 abandons pass the denominator (hashA, hashC, anonymous); the answered /
-  // internal / out-of-window / other-dept rows are all excluded.
-  assert.equal(cb.abandonedTotal, 3);
+  // 5 abandons pass the CSR denominator (hashA, hashC x2, hashD, anonymous);
+  // the answered / internal / out-of-window / other-dept rows are excluded,
+  // and the no-queue hashM hang-up is not on CSR's queues at all.
+  assert.equal(cb.abandonedTotal, 5);
   assert.equal(cb.abandonedAnonymous, 1);
-  assert.equal(cb.abandonedTracked, 2, 'anonymous never lands in the tracked denominator');
-  assert.equal(cb.calledBack, 1, 'only hashA has a qualifying later outbound');
-  assert.equal(cb.calledBackConnected, 1);
+  assert.equal(cb.abandonedTracked, 4, 'anonymous never lands in the tracked attempts');
+  assert.equal(cb.episodes, 3, 'hashC’s second try joined its open episode');
+  assert.equal(cb.repeatEpisodes, 1);
+  assert.equal(cb.own, 1, 'only hashA has a qualifying later dial -- from Ann, on the CSR roster');
+  assert.equal(cb.ownConnected, 1);
+  assert.equal(cb.gotThrough, 1, 'hashD reached the queue on a later call');
+  assert.equal(cb.none, 1);
+  assert.equal(cb.own + cb.other + cb.gotThrough + cb.pending + cb.none, cb.episodes);
+});
+
+test('CE-1 company view: both paths agree, the per-dept table included, and phone-menu hang-ups are counted apart', function () {
+  install({ conn: connReturning(JSON.stringify(neonBlobFromFixture(''))) });
+  const live = h.call('getOutboundReport', { from: FROM, to: TO, department: 'ALL' });
+  install({ conn: null });
+  const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'ALL' });
+  assert.equal(fb.meta.fallbackSource, 'sheet');
+  ['callback', 'callbackByDept', 'daily', 'callbackPrior'].forEach(function (k) {
+    assert.deepEqual(JSON.parse(JSON.stringify(fb[k])), JSON.parse(JSON.stringify(live[k])), k);
+  });
+  assert.equal(live.callback.phoneMenuAbandons, 1, 'hashM: counted ...');
+  assert.ok(live.callbackByDept.rows.every(function (r) { return r.dept !== ''; }));
+  assert.equal(live.callbackByDept.total.episodes, live.callback.episodes, '... and never an episode');
 });
 
 test('fallback payloads are NEVER cached; healthy payloads still are', function () {
@@ -313,16 +311,17 @@ test('the fallback discloses how far the copy reaches (meta.fallbackThrough)', f
 // PCR-3 (broad-scan 2026-09-23): a callback counts through abandon date + 3
 // INCLUSIVE, so an uncalled abandon exactly 3 days ago is still pending today.
 // Both paths used a strict '>' (and the SQL used Neon's UTC current_date).
-test('PCR-3: pendingTail includes an abandon exactly N days old, on both paths, against the script-TZ today', function () {
+test('PCR-3: a pending episode includes an abandon exactly N days old, against the script-TZ today', function () {
   install({ conn: null });
   const realToday = h.ctx.obTodayIso_;
-  h.ctx.obTodayIso_ = function () { return '2026-08-13'; };   // hashC abandoned 2026-08-10 = today - 3
+  // hashC tried 2026-08-10 and again 08-11: its window runs to 08-11 + 3.
+  h.ctx.obTodayIso_ = function () { return '2026-08-14'; };
   try {
     const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
-    assert.equal(fb.callback.pendingTail, 1, 'the uncalled 08-10 abandon can still be called back on 08-13');
-    h.ctx.obTodayIso_ = function () { return '2026-08-14'; };
+    assert.equal(fb.callback.pending, 1, 'last attempt 08-11: it can still be called back on 08-14 (inclusive)');
+    h.ctx.obTodayIso_ = function () { return '2026-08-15'; };
     h.state.cache.clear();
-    assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).callback.pendingTail, 0,
+    assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).callback.pending, 0,
       'one day later it is outside the window');
   } finally { h.ctx.obTodayIso_ = realToday; }
 });

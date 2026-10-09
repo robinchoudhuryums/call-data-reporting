@@ -531,19 +531,38 @@ the per-agent half rides `getDeptOutboundSummary`, and the legacy route
 `#/report/outbound` lands on the Callbacks fold. TEMPORARILY admin-only while
 vetted (the Inbound/Direct resolver model -- latent per-dept manager path,
 release = the gate + un-hiding the My Department surfaces, Operator State #63). Two CONTRACT rules, both test-enforced
-(`tests/unit/outbound-report.test.js`): (1) the callback DENOMINATOR is
-exactly the Inbound report's Abandoned population for the same scope --
+(`tests/unit/outbound-report.test.js`): (1) the raw abandon count
+(`callback.abandonedTotal`) is exactly the Inbound report's Abandoned
+population for the same scope --
 it reuses `inboundDeptPredicate_` + `inboundWindowClause_` + the
 is_internal exclusion verbatim (`outboundAbandonWhere_`), so the two
 reports can never disagree on what an abandon is; (2) agents attribute by
 ROSTER dept (exact INV-04 match via `buildDeptsByAgent_`), NEVER the raw
 CDR org label in `outbound_calls.department` -- the SQL never reads that
-column. A callback = the EARLIEST outbound with `callee_hash =
-caller_hash` within `OUTBOUND_CALLBACK_WINDOW_DAYS` (=3), matched from
-ANY dept/agent and uncapped by the report's `to`; anonymous abandons are
-excluded from the rate denominator (a dept is never punished for its
-caller-ID mix); `pendingTail` counts tracked abandons still inside the
-window -- INCLUSIVE of abandon date + 3, on the script-TZ date (PCR-3).
+column. **Since CE-1 (owner 2026-10-09) the callback figures count contact
+EPISODES** -- docs/next-steps.md "Callback episodes + direct lines" has the
+rulings and the live measurements behind them. The population is the
+QUEUE-REACHED trackable abandons: anonymous callers cannot be called back,
+and a phone-menu hang-up or a hang-up on a person's line reached no queue, so
+no team owns it -- both are counted (`phoneMenuAbandons` /
+`directLineAbandons`, company view) and never enter a rate. One episode is one
+caller trying to reach one TEAM (the dept whose OWN queue list holds the entry
+queue, `obCallbackDeptMap_().ownersOf`); later attempts join it while it is
+open and within `OUTBOUND_CALLBACK_WINDOW_DAYS` (=3) of the previous one. It
+closes on an own-team dial (a dialer on the roster of the team's FAMILY -- the
+team, its one-level parent and children) or an answered inbound call from the
+caller on a family queue ("got through"); another team's dial does NOT close
+it. Outcomes, in precedence: `own` > `gotThrough` > `other` > `pending`
+(INCLUSIVE of the last attempt + 3, on the script-TZ date, PCR-3) > `none`,
+partitioning `episodes`; every rate divides by `episodes`. A dial that closes
+its own team's episode is CONSUMED and never counts as "another team" for the
+caller's other open episodes. Delay runs from the FIRST attempt. **ONE pure
+engine** (`obCallbackEpisodes_`) serves both sources: the Neon path fetches
+EVENT rows (`obCallbackEventsSql_` -- every abandon counted, the trackable
+queue attempts, the dials to those callers through `to + 3`, their answered
+queue calls), callers keyed by a per-request integer `dense_rank` so no hash
+leaves the database, and the sheet fallback builds the same rows from the two
+export tabs. Pinned by `outbound-episodes.test.js`.
 **A parent dept's inbound/outbound/missed scope rolls in its one-level
 children's raw inbound aliases AND final-dept labels** (PCR-1/PCR-2,
 `inboundQueuesForDept_` / `inboundDeptFinalLabels_`, the same
@@ -564,39 +583,41 @@ same child map the callback denominator rolls in, so table and denominator
 cannot disagree), each row tagged `scopeDept` (the parent wins for an agent on
 both rosters, so nobody is counted twice) and rendered GROUPED per dept with a
 subtotal heading; a single-dept view is unchanged. **The per-dept CALLBACK table (CB-1,
-2026-09-28) does not contradict that ruling**: its row axis is the ABANDON's
-entry queue (one queue, one or more depts -- never an agent's homes), and the
-agent only decides the own / other COLUMN (member of THIS row's dept, a
-parent including its sub-queues' rosters). Company view only
-(`callbackByDept`, null on a dept view); one CTE pass of the callback
-lateral joined to a queue->dept VALUES map (`outboundCallbackByDeptSql_`),
-so a double-mapped queue is in both rows and each dept gets a real median;
-unmapped queues get their own row; the TOTAL row reuses the company callback
-block (never the rows' sum). The FIRST callback decides own vs other, with a
-`call_id` tie-break in the lateral that the sheet fallback reproduces.
-`own + other + none === tracked` is pinned on every row and the total
-(`outbound-callback-dept.test.js`); S48 is the walk. **Since G2 (2026-10-08) its
+2026-09-28, rebuilt on episodes by CE-1) does not contradict that ruling**: its
+row axis is the ABANDON's entry queue through its OWNER dept(s) (one queue,
+one or more depts -- never an agent's homes); a parent's row holds its
+sub-queues' episodes; the agent only decides the episode's outcome. Company
+view only (`callbackByDept`, null on a dept view; `obEpByDept_`), so a
+double-mapped queue is in both rows and each dept gets a real median;
+unmapped queues get their own row and are LEFT OUT of the headline
+(`total.mappedOwnPct` -- no team can own a callback on a queue mapped to
+none); the TOTAL counts each episode once (never the rows' sum). A same-second
+dial tie is broken by `call_id` on both paths. The five-outcome partition is
+pinned on every row and the total (`outbound-callback-dept.test.js`); S48 is
+the walk. **Since G2 (2026-10-08) its
 home is the Overview** (an admin-only, lazy section; the modal's copy went with
 the modal in G3) -- see docs/client-ui-conventions.md. `getOutboundUncalled` is the
-not-called-back drill (same lateral as the KPI, cap 200, no caller
-identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
-`outboundReport:v7` + the freshness tag; unavailable payloads uncached.
+not-called-back drill: the attempts of the episodes ending `none` / `pending`,
+from the SAME event fetch + engine as the tiles, then one detail query for
+exactly those call ids (cap 200, no caller identity; rows reuse the heatmap
+cell renderer + "↳ path"). Cached
+`outboundReport:v8` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
-feed one shaper:** (2) `calledBackConnectedPct`, the CONNECTED callback rate
-promoted beside the raw one over the SAME trackable denominator -- a callback
+feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since
+CE-1) promoted beside the raw one over the SAME denominator -- a callback
 that rang out is not a save, and burying that in a caption made the softer
 number the headline; (3) `delayBuckets`, the time-to-callback DISTRIBUTION
 over the shared `OUTBOUND_CALLBACK_BUCKETS_` ladder, because a median hid the
-tail and a next-day callback is a courtesy call rather than a recovery -- the
-ladder drives `outboundBucketSql_` AND `outboundBucketDelays_` so the two
-cannot bucket one delay differently; (4) the unconnected ring split on
+tail and a next-day callback is a courtesy call rather than a recovery --
+since CE-1 there is ONE bucketer (`outboundBucketDelays_`), reached through
+the episode engine by both sources; (4) the unconnected ring split on
 `OUTBOUND_BRIEF_RING_SEC_` (=8) via `outboundClassifyRing_`, a LABELLED
 heuristic separating misdials from real attempts -- **the boundary is strict
 (`< N` is brief, `= N` is real) and a NULL ring stays UNKNOWN**, surfaced as
 the remainder rather than filed into either bucket, so an export column that
 stops being written reads as unknowns and not as a pile of misdials; and (6)
-`callbackByHour`, the tracked/called-back pair cut by the ABANDON's hour --
+`callbackByHour`, the episodes / own-team pair cut by the FIRST attempt's hour --
 `daily` answers "are we keeping up", this answers "WHICH abandons fall
 through the cracks". The hour strip is deliberately **NOT** the shared
 weekday x hour heatmap: `renderAbandonHeatmap_` is hard-wired to abandon rate
@@ -607,15 +628,18 @@ gate and per-dept pinning apply), recomputed server-side so it cannot drift
 from the screen, `sendAppEmail_` + a banded `ekShellHtml_` per R28/R30.
 **Neon-down degrades to the SHEET FALLBACK** (`outboundSheetFallback_`):
 the `Outbound Calls` export tab (Op State #50) + the `Inbound Calls` tab
-for the abandon denominator, fed through the SAME pure
-`outboundShapeReport_` the Neon path uses -- so source parity is by
-CONSTRUCTION (outbound-fallback.test.js pins it over one fixture).
+for the abandons and answered calls, built into the SAME event rows and fed
+through the SAME pure `outboundShapeReport_` + episode engine the Neon path
+uses -- so source parity is by CONSTRUCTION (outbound-fallback.test.js pins
+it over one fixture).
 Disclosed via `meta.fallbackSource`/`fallbackThrough`, NEVER cached.
 **Vetting tool: `runOutboundVettingCheck`** (editor-run, admin-gated,
 read-only; `OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE` props) -- LIVE
 two-code-path parity (rule 1 above, vs `computeInboundReport_`'s own
 `kpis.abandoned`) + per-sample verdict re-verification with the call ids
-logged for Caller Lookup eyeballing. OPS-8 verdict prefixes; a
+logged for Caller Lookup eyeballing. Its sample leg re-verifies the MATCHING
+primitive (does a qualifying dial exist for one abandon), not the CE-1
+episode outcome. OPS-8 verdict prefixes; a
 zero-abandon window reports INCONCLUSIVE (the Batch-6 gate contract) --
 **never un-gate on an INCONCLUSIVE / FAILED / MISMATCH run.**
 

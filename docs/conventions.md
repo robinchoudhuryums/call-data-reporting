@@ -537,7 +537,7 @@ complete set of prefixes.
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
-| `OutboundReport.gs` | `outboundReport:vN:` | `v7` |
+| `OutboundReport.gs` | `outboundReport:vN:` | `v8` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
 | `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |

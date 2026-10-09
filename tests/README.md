@@ -559,10 +559,23 @@ tests/
                               outbound-fallback (the Outbound report's
                               Neon-down sheet fallback: SOURCE PARITY
                               between the Neon blob and the export tabs
-                              through the shared outboundShapeReport_, the
-                              callback rule's sheet-side mirror, the
-                              never-cache rule and all three failure
+                              through the shared outboundShapeReport_ and
+                              the one episode engine -- the event rows'
+                              sheet-side mirror, company view included --
+                              the never-cache rule and all three failure
                               branches),
+                              outbound-episodes (CE-1: the contact-EPISODE
+                              engine both sources share -- attempts join an
+                              open episode within the window of the last
+                              one, an own-team dial (the team's family) or
+                              the caller getting through closes it, another
+                              team's dial never does, own > got through >
+                              other > pending > none partition the episodes,
+                              a dial closing its own team's episode is
+                              consumed, delay from the FIRST attempt, the
+                              raw abandon counts, the series, and the
+                              per-dept table's rows / total / mapped-only
+                              headline),
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
                               in the target queue -- counts for the transfer
@@ -576,16 +589,19 @@ tests/
                               internal attempts into the dept's queues,
                               abandoned after MORE than 60 s of own queue
                               time, linked or not, its own fields only),
-                              outbound-callback-dept (CB-1: the per-dept
-                              callback table -- own + other + none ===
-                              tracked on every row and the total, the FIRST
-                              callback decides (call_id tie-break), parent
-                              rows take their sub-queues' queues AND agents,
-                              a double-mapped queue in both rows, unmapped
-                              queues in their own row, the named tallies,
-                              entry-queue-only attribution for abandons, and
-                              Neon-vs-sheet parity against a hand-worked
-                              blob),
+                              outbound-callback-dept (CB-1 on CE-1's
+                              episodes: the per-dept callback table -- the
+                              five outcomes partition the episodes on every
+                              row and the total, a same-second tie broken
+                              by call_id, a parent row holds its sub-queues'
+                              episodes and its agents are own for them, a
+                              double-mapped queue in both rows, unmapped
+                              queues in their own row and out of the
+                              headline, a no-queue hang-up counted apart,
+                              the named tallies, entry-queue-only
+                              attribution for abandons, no hash in the SQL's
+                              output, and Neon-vs-sheet parity against
+                              hand-derived event rows),
                               date-presets (the SHARED preset resolver: no
                               open-ended preset includes today, the
                               degenerate month/week-start clamps, and a

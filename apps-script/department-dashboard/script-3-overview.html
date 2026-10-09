@@ -2462,8 +2462,8 @@
     }
     if (!t || !(t.rows || []).length) {
       if (content) content.style.display = 'none';
-      if (head) head.textContent = 'no trackable abandons in this window';
-      ovCbDeptState_('No abandoned calls with caller ID in this window, so there is nothing to call back.');
+      if (head) head.textContent = 'no contact episodes in this window';
+      ovCbDeptState_('No queue abandons with caller ID in this window, so there is nothing to call back.');
       return;
     }
     ovCbDeptState_(meta.fallbackSource === 'sheet'
@@ -2473,8 +2473,14 @@
     if (content) content.style.display = '';
     var tot = t.total || {};
     if (head) {
-      head.textContent = (tot.ownPct != null ? tot.ownPct + '% called back by the owning department' : 'callbacks by department')
-        + ' · ' + fmtNumber(tot.tracked || 0) + ' trackable abandons';
+      // CE-1: the headline is the own-team rate over MAPPED episodes -- no
+      // team can own a callback on a queue it was never mapped to.
+      head.textContent = (tot.mappedOwnPct != null
+          ? tot.mappedOwnPct + '% called back by the owning department' : 'callbacks by department')
+        + ' · ' + fmtNumber(tot.mappedEpisodes || 0) + ' contact episodes on mapped queues'
+        // The tiles below count EVERY episode, so say what the headline leaves out.
+        + (((tot.episodes || 0) - (tot.mappedEpisodes || 0)) > 0
+          ? ' (' + fmtNumber((tot.episodes || 0) - (tot.mappedEpisodes || 0)) + ' on unmapped queues left out)' : '');
     }
     var kp = $('ov-cbdept-kpis');
     if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
