@@ -2485,6 +2485,13 @@
     var kp = $('ov-cbdept-kpis');
     if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
     outboundRenderCbDept_(t, meta, ovCbDeptView_());
+    obDlSync_('ov-dl', ovCbDeptWindow_());   // CE-3: lazy, follows the section's window
+  }
+
+  // CE-3: the section's window as the Direct lines block wants it (company view).
+  function ovCbDeptWindow_() {
+    var r = datePresetRange_(OV_CBDEPT_.preset);
+    return r ? { department: '', from: r.from, to: r.to } : null;
   }
 
   (function ovCbDeptWire_() {
@@ -2508,6 +2515,7 @@
       if (OV_CBDEPT_.data) outboundDownloadCsv_(OV_CBDEPT_.data, ovCbDeptView_().sort);
     });
     // The qcd-expandable rows open on click (wired once by outboundRenderCbDept_).
+    obDlWire_('ov-dl', ovCbDeptWindow_);   // CE-3
   })();
 
 </script>

@@ -377,3 +377,92 @@ test('CE-2 late tags: nothing past the horizon, and an own-team late dial is lab
     { ob: [ob(1, '2026-09-20', '09:00:00', 'Sam', true)], ans: [] }, ctx(), 14)));
   assert.equal(other.calledBack, null, 'another caller’s dial is never this caller’s tag');
 });
+
+// ── CE-3: direct lines ──────────────────────────────────────────────────────
+// A person's-line attempt carries its OWN team (the line owner's homes) and
+// owner; an answered call to a person's line reaches that person's team.
+
+const dab = (k, d, t, owner, id) => {
+  const homes = ROSTER[owner] || (owner === 'Sales Voicemails' ? ['Sales'] : []);
+  return [k, d, t, '', id || ('d-' + k + '-' + d + '-' + t), homes, owner];
+};
+
+test('CE-3: a direct attempt takes its team from the line owner, and records whose line it rang', function () {
+  const eps = run({ ab: [dab(1, '2026-09-10', '08:00:00', 'Cara'), dab(1, '2026-09-10', '09:00:00', 'Cara')],
+                    ob: [ob(1, '2026-09-10', '10:00:00', 'Cara', true)] });
+  assert.equal(eps.length, 1);
+  assert.equal(eps[0].teamKey, 'CSR');
+  assert.deepEqual(eps[0].attempts.map((a) => a.owner), ['Cara', 'Cara']);
+  assert.equal(eps[0].outcome, 'own');
+});
+
+test('CE-3: an ANSWERED call to a family person’s line is "got through"; to another team’s person it is not', function () {
+  const eps = run({ ab: [dab(1, '2026-09-10', '08:00:00', 'Cara'), dab(2, '2026-09-10', '08:00:00', 'Cara')],
+                    ans: [[1, '2026-09-10', '09:00:00', '', 'Cara'], [2, '2026-09-10', '09:00:00', '', 'Sam']] });
+  const by = {}; eps.forEach((e) => { by[e.k] = e; });
+  assert.equal(by[1].outcome, 'gotThrough');
+  assert.equal(by[2].outcome, 'none', 'reaching Sales is not reaching CSR');
+  // ...and a queue answer still counts for a direct episode of the same team.
+  const q = run({ ab: [dab(1, '2026-09-10', '08:00:00', 'Cara')], ans: [ans(1, '2026-09-10', '09:00:00', 'a_q_csr')] });
+  assert.equal(q[0].outcome, 'gotThrough');
+});
+
+test('CE-3: queue attempts are untouched -- no owner key, team from the queue', function () {
+  const eps = run({ ab: [ab(1, '2026-09-10', '08:00:00', 'a_q_csr')] });
+  assert.equal(eps[0].teamKey, 'CSR');
+  assert.ok(!('owner' in eps[0].attempts[0]));
+});
+
+test('CE-3: the shared Sales voicemail box belongs to Sales, case-insensitively; anyone else on no roster to no team', function () {
+  const homesOf = h.ctx.obDirectHomesOf_({ Cara: ['CSR'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(homesOf('Sales Voicemails'))), ['Sales']);
+  assert.deepEqual(JSON.parse(JSON.stringify(homesOf('sales voicemails'))), ['Sales']);
+  assert.deepEqual(JSON.parse(JSON.stringify(homesOf('Cara'))), ['CSR']);
+  assert.deepEqual(JSON.parse(JSON.stringify(homesOf('Stranger'))), []);
+  assert.equal(h.ctx.obDirectIsVoicemailLine_('Sales Voicemails'), true);
+  assert.equal(h.ctx.obDirectIsVoicemailLine_('Cara'), false);
+});
+
+test('CE-3: after hours = a weekend, a company holiday, or a start outside the 06:30-15:00 PST window', function () {
+  const realHol = h.ctx.isCompanyHoliday_;
+  h.ctx.isCompanyHoliday_ = function (iso) { return iso === '2026-09-07'; };
+  try {
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-08', '10:00:00'), false, 'a Tuesday mid-morning');
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-08', '06:29:59'), true, 'before the window');
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-08', '06:30:00'), false);
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-08', '15:00:00'), true, 'the window end is exclusive');
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-12', '10:00:00'), true, 'a Saturday');
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-07', '10:00:00'), true, 'a company holiday');
+    assert.equal(h.ctx.obDirectIsAfterHours_('2026-09-08', null), false, 'no start: work hours (the window-clause convention)');
+  } finally { h.ctx.isCompanyHoliday_ = realHol; }
+});
+
+test('CE-3: the direct summary splits own-team callbacks into "by the person" and "by their team"', function () {
+  const eps = h.ctx.obCallbackEpisodes_({
+    ab: [dab(1, '2026-09-10', '08:00:00', 'Cara'), dab(2, '2026-09-10', '08:00:00', 'Cara'),
+         dab(3, '2026-09-10', '08:00:00', 'Cara')],
+    ob: [ob(1, '2026-09-10', '09:00:00', 'Cara', true), ob(2, '2026-09-10', '09:00:00', 'Dana', false)],
+  }, ctx({ homesOf: function (a) { return Object.assign({ Dana: ['CSR'] }, ROSTER)[a] || []; } }));
+  const s = JSON.parse(JSON.stringify(h.ctx.obDirectSummary_(eps)));
+  assert.deepEqual([s.episodes, s.own, s.ownByPerson, s.ownByTeam, s.none], [3, 2, 1, 1, 1]);
+  assert.equal(s.ownByPersonPct, 33.3);
+  assert.equal(s.ownByPerson + s.ownByTeam, s.own);
+});
+
+test('CE-3: the counts split missed / abandoned, anonymous, the voicemail box and lines on no roster', function () {
+  const c = JSON.parse(JSON.stringify(h.ctx.obDirectCounts_([
+    { disp: 'missed', anon: false, who: 'Cara', n: 10 },
+    { disp: 'abandoned', anon: false, who: 'Cara', n: 4 },
+    { disp: 'missed', anon: true, who: 'Cara', n: 2 },
+    { disp: 'missed', anon: false, who: 'Sales Voicemails', n: 5 },
+    { disp: 'abandoned', anon: false, who: 'Stranger', n: 1 },
+  ], h.ctx.obDirectHomesOf_({ Cara: ['CSR'] }))));
+  assert.deepEqual(c, { calls: 22, anonymous: 2, trackable: 20, missed: 17, abandoned: 5, voicemailBox: 5, unownedLines: 1 });
+});
+
+test('CE-3: a dept view’s line owners are its (and its sub-queues’) roster plus its shared lines', function () {
+  const names = JSON.parse(JSON.stringify(h.ctx.obDirectScopeNames_(['Sales', 'PAP'],
+    { Sam: ['Sales'], Pat: ['PAP'], Cara: ['CSR'], Casey: ['CSR', 'Sales'] })));
+  assert.deepEqual(names, ['Casey', 'Pat', 'Sales Voicemails', 'Sam']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.ctx.obDirectScopeNames_(['CSR'], { Cara: ['CSR'] }))), ['Cara']);
+});

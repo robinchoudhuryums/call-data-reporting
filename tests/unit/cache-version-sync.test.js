@@ -71,6 +71,7 @@ const SPECS = [
   // Batch G: the Outbound report (callback linkage + per-agent activity).
   ['outboundReport',    'OutboundReport.gs',      /'outboundReport:v(\d+)'/],
   ['deptOutbound',      'OutboundReport.gs',      /'deptOutbound:v(\d+):'/],
+  ['outboundDirect',    'OutboundReport.gs',      /'outboundDirect:v(\d+):'/],   // CE-3
   // S2 (broad-scan 2026-08-27): the four prefixes the completeness sweep
   // below found untracked -- documented in current-truth docs, invisible to
   // this suite (the third recurrence of the B5/F3b class).
@@ -213,6 +214,7 @@ const ANCHOR_SPECS = {
   neonAgentExts:       'tag',
   outboundReport:      'tag',
   deptOutbound:        'tag',
+  outboundDirect:      'tag',
   overviewChartYtd:    'exception: embeds latestDate in the key (equivalent anchor)',
   presence:            'exception: CacheService presence map, ~15-min prune -- not a report cache',
   mailThrottle:        'exception: SEC-2 per-user report-email counter (rolling 6 h window) -- not a report cache',

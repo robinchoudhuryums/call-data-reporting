@@ -214,6 +214,53 @@ async function setDir(page, dir) {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(500);
 
+  // CE-3: Direct lines -- lazy inside the fold, then the repeat list.
+  record('CE-3: the Direct lines block is closed and has fetched nothing',
+    (await calls(page, 'getOutboundDirectCallbacks')).length === 0
+      && await page.evaluate(() => !document.getElementById('ins-dl-fold').open
+        && /open to load/.test(document.getElementById('ins-dl-head').textContent)));
+  await page.click('#ins-dl-fold > summary');
+  await page.waitForTimeout(1200);
+  const dlc = await calls(page, 'getOutboundDirectCallbacks');
+  const dl = await page.evaluate(() => ({
+    head: document.getElementById('ins-dl-head').textContent,
+    counts: document.getElementById('ins-dl-counts').textContent,
+    work: Array.from(document.querySelectorAll('#ins-dl-work .ds-kpi')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+    after: document.querySelectorAll('#ins-dl-after .ds-kpi').length,
+  }));
+  record('CE-3: opening it fetches the direct-line figures ONCE, for the fold’s window and dept',
+    dlc.length === 1 && dlc[0].from === insMeta.from && dlc[0].to === insMeta.to && dlc[0].department === insMeta.department,
+    JSON.stringify(dlc));
+  record('CE-3: work-hours and after-hours rows, "by the person" and "by their team" apart',
+    dl.work.length === 7 && dl.after === 7
+      && /^Called back by the person ?35%/.test(dl.work[1]) && /^Called back by their team ?20%/.test(dl.work[2])
+      && /46\.7% called back by the team · 30 contact episodes · 10 not called back/.test(dl.head)
+      && /6 to the Sales voicemail box/.test(dl.counts) && /38 rang out or went to voicemail/.test(dl.counts),
+    JSON.stringify(dl));
+  await page.click('#ins-dl-rep-btn');
+  await page.waitForTimeout(1200);
+  const rep = await calls(page, 'getOutboundDirectRepeats');
+  const rl = await page.evaluate(() => {
+    const list = document.getElementById('ins-dl-rep-list');
+    const ep = list.querySelector('.ob-ep');
+    return { eps: list.querySelectorAll('.ob-ep').length,
+      head: ep ? ep.querySelector('.ob-ep-head').textContent : '',
+      rows: Array.from(list.querySelectorAll('.heat-drill-row')).map((r) => r.textContent.replace(/\s+/g, ' ')),
+      ids: list.querySelectorAll('.pid-copy').length };
+  });
+  record('CE-3: the repeat-unreturned-callers list -- lines tried, voicemail, late tag, each attempt with owner + hours',
+    rep.length === 1 && rep[0].from === insMeta.from && rep[0].department === insMeta.department
+      && rl.eps === 1 && /Sam Seller, Sales Voicemails/.test(rl.head) && /Voicemail box/.test(rl.head)
+      && /Called back late · day 7 · own team/.test(rl.head) && rl.rows.length === 2
+      && /not answered/.test(rl.rows[0]) && /rang Sam Seller/.test(rl.rows[0])
+      && /after hours/.test(rl.rows[1]) && rl.ids === 2, JSON.stringify({ rep: rep, rl: rl }));
+  await page.click('#ins-dl-fold > summary');
+  await page.waitForTimeout(300);
+  await page.click('#ins-dl-fold > summary');
+  await page.waitForTimeout(800);
+  record('CE-3: closing and reopening the block does not re-fetch',
+    (await calls(page, 'getOutboundDirectCallbacks')).length === 1);
+
   // CSV + email read the held payload's window.
   await page.click('#ins-cb-csv-btn');
   await page.waitForTimeout(800);

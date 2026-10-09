@@ -579,7 +579,12 @@ tests/
                               records, events past the window never moving
                               an outcome, and the late tags -- first dial /
                               family-queue got-through after the deadline,
-                              within the horizon, own vs another team),
+                              within the horizon, own vs another team;
+                              CE-3: direct-line attempts carrying their line
+                              owner's team, an answered call to a family
+                              person's line as got-through, the Sales
+                              voicemail box, after hours, the by-person /
+                              by-team split and the counts),
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
                               in the target queue -- counts for the transfer

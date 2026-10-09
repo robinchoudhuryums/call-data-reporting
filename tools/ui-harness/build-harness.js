@@ -425,6 +425,47 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
             abandonedOnHold: false, waitSeconds: 61, holdSeconds: null, dialIn: 'Main CSR Line' },
         ] };
     },
+    // CE-3: Direct lines -- work + after-hours figures, and the repeat list.
+    getOutboundDirectCallbacks: function (req) {
+      const sum = function (eps, own, byPerson, other, got, pending, none, repeat, median) {
+        const pct = function (n) { return eps ? Math.round(n / eps * 1000) / 10 : null; };
+        return { episodes: eps, attempts: eps + repeat, repeatEpisodes: repeat,
+          own: own, ownConnected: Math.max(0, own - 1), gotThrough: got, other: other, otherConnected: 0,
+          pending: pending, none: none, ownPct: pct(own), ownConnectedPct: pct(Math.max(0, own - 1)),
+          gotThroughPct: pct(got), otherPct: pct(other), pendingPct: pct(pending), nonePct: pct(none),
+          medianCallbackSec: median, delayBuckets: { m15: 0, h1: 1, h4: 1, d1: 0, later: 0 },
+          ownByPerson: byPerson, ownByTeam: own - byPerson,
+          ownByPersonPct: pct(byPerson), ownByTeamPct: pct(own - byPerson) };
+      };
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          scopeDepts: (req && req.department) ? [req.department] : [], available: true,
+          callbackWindowDays: 3, workWindowPst: { start: '06:30:00', end: '15:00:00' }, cacheHit: false },
+        counts: { calls: 46, anonymous: 4, trackable: 42, missed: 38, abandoned: 8, voicemailBox: 6, unownedLines: 1 },
+        all: sum(30, 14, 9, 3, 2, 1, 10, 6, 5400),
+        work: sum(20, 11, 7, 2, 2, 1, 4, 4, 3600),
+        after: sum(10, 3, 2, 1, 0, 0, 6, 2, 50400) };
+    },
+    getOutboundDirectRepeats: function (req) {
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          available: true, truncated: false, tzLabel: 'CST', callbackWindowDays: 3, lateHorizonDays: 14,
+          minAttempts: 2, episodes: 1 },
+        episodes: [
+          { firstIso: '2026-08-11', firstHms: '07:02:00', lastIso: '2026-08-12', team: 'Sales', lines: ['Sam Seller', 'Sales Voicemails'],
+            voicemail: true,
+            attempts: [
+              { callDate: '2026-08-11', callId: 'dl-1', cstStart: '09:02:00', entryQueue: null, finalQueue: null,
+                abandonStage: null, abandonedOnHold: false, waitSeconds: null, holdSeconds: null,
+                dialIn: '+18005550123', disposition: 'missed', owner: 'Sam Seller', afterHours: false },
+              { callDate: '2026-08-12', callId: 'dl-2', cstStart: '18:40:00', entryQueue: null, finalQueue: null,
+                abandonStage: 'direct', abandonedOnHold: false, waitSeconds: null, holdSeconds: null,
+                dialIn: null, disposition: 'abandoned', owner: 'Sales Voicemails', afterHours: true },
+            ],
+            late: { calledBack: { iso: '2026-08-19', hms: '09:00:00', daysAfter: 7, team: 'own', agent: 'Sam Seller' },
+                    gotThrough: null } },
+        ] };
+    },
     // CE-2: the called-back list -- one own-team and one another-team episode.
     getOutboundCalledBack: function (req) {
       return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',

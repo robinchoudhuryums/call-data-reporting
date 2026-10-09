@@ -2332,6 +2332,7 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
 S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
 S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
 S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department Dashboard
+S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

@@ -132,6 +132,25 @@ function section() {
       && /^All departments \(each episode once\),/.test(cbLines[4] || '') && bad.length === 0,
     JSON.stringify({ scope: lines[1], block: cbLines, bad: bad.slice(0, 2) }));
 
+  // CE-3: the company Direct lines block, lazy, with the repeat list.
+  await page.click('#ov-dl-fold > summary');
+  await page.waitForTimeout(1200);
+  const dlc = await page.evaluate(() => (window.__HARNESS__.calls || [])
+    .filter((c) => c.fn === 'getOutboundDirectCallbacks').map((c) => (c.args && c.args[0]) || null));
+  const dlt = await page.evaluate(() => ({
+    work: document.querySelectorAll('#ov-dl-work .ds-kpi').length,
+    after: document.querySelectorAll('#ov-dl-after .ds-kpi').length }));
+  await page.click('#ov-dl-rep-btn');
+  await page.waitForTimeout(1200);
+  const drep = await page.evaluate(() => ({
+    calls: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getOutboundDirectRepeats')
+      .map((c) => (c.args && c.args[0]) || null),
+    eps: document.querySelectorAll('#ov-dl-rep-list .ob-ep').length }));
+  record('CE-3: the Overview Direct lines block reads the COMPANY view, once, with its repeat list',
+    dlc.length === 1 && dlc[0].department === '' && dlt.work === 7 && dlt.after === 7
+      && drep.calls.length === 1 && drep.calls[0].department === '' && drep.eps === 1,
+    JSON.stringify({ dlc: dlc, dlt: dlt, drep: drep }));
+
   // Window switch: one fetch for the new window; reopening the same window: none.
   await page.click('#ov-cbdept-window [data-preset="last7"]');
   await page.waitForTimeout(1500);

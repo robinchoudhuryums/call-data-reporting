@@ -2171,8 +2171,12 @@ stay pinned by INV-39, INV-53 and INV-06.
   the by-hour strip, the two drill lists (CE-2: "List not-called-back calls"
   grouped by episode with status + late-tag chips, and "List called-back
   calls" with own / another team chips and a "↳ callback path" into the
-  outbound call -- each drill has its own stale-drill counter, UI-5) and CSV /
-  email export. It reads the SAME `getOutboundReport` payload
+  outbound call -- each drill has its own stale-drill counter, UI-5), the
+  CE-3 "Direct lines" block (a nested lazy `<details>`, `#ins-dl-fold`, shared
+  with the Overview section's `#ov-dl-fold` through one prefix-keyed view --
+  `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: work-
+  and after-hours tile rows, the repeat-unreturned-callers drill; it follows
+  its host's window and fetches only while open) and CSV / email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
   elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
   `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one

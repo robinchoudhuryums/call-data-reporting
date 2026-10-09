@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — CE-3 IMPLEMENTED (block 243): direct-line callbacks.**
+  - Unanswered external calls to a PERSON's line, counted as episodes; credit goes to the line owner's team, split by the person / by their team, another team kept apart; work hours and after hours shown separately; `Sales Voicemails` -> Sales (the only shared line, owner).
+  - New `getOutboundDirectCallbacks` (cached `outboundDirect:v1`) + `getOutboundDirectRepeats` (2+ attempts in 3 days, nobody called back). "Direct lines" sub-folds in the Insights Callbacks fold and the Overview's Callbacks by department.
+  - Direct SQL run on a local Postgres 16; 2283 tests; every ci:ui stage green; five bites.
+
+  **Owner-side:** deploy, walk S60. Open: a misdial filter (no wait_seconds on missed direct calls), managers seeing call ids at 6c, a per-dept direct table on the Overview.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR. The callback-episodes plan (CE-1..3) is complete.
 - **2026-10-09 — CE-2 IMPLEMENTED (block 242): the callback drill lists.**
   - Not-called-back list grouped by episode: status (still inside the window, N days left / missed), late tags read 14 days past the window (called back late / got through later -- tags only), the dialed line, the call id + copy (admin).
   - New `getOutboundCalledBack` + "List called-back calls": dialer, roster team, own / another team, delay from the first attempt, connected, "↳ callback path" into the outbound call.

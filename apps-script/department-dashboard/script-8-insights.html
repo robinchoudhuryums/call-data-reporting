@@ -2359,6 +2359,9 @@
     }
     var note = $('ins-cb-note');
     if (note) { note.style.display = notes.length ? '' : 'none'; note.textContent = notes.join(' '); }
+    // CE-3: the Direct lines block follows this fold's window (lazy: it
+    // fetches only while its own <details> is open).
+    obDlSync_('ins-dl', insCbWindow_());
     insCbScrollIfPending_();
   }
 
@@ -2401,6 +2404,7 @@
         curSeq: function () { return INS_CB_.uncSeq; },
       });
     });
+    obDlWire_('ins-dl', insCbWindow_);   // CE-3
     var cbk = $('ins-cb-calledback-btn');
     if (cbk) cbk.addEventListener('click', function () {
       if (!INS_CB_.data) return;

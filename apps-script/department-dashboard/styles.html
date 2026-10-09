@@ -8175,4 +8175,13 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
 .ob-ep-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; }
 .ob-ep .heat-drill-row:first-of-type { border-top: none; }
 .ob-cb-row .ds-chip { flex: 0 0 auto; }
+/* CE-3: the Direct lines block inside the two callback surfaces. */
+.ob-dl-fold { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ob-dl-summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.ob-dl-sub { font-weight: 500; color: var(--muted); }
+/* The zone label is nowrap everywhere else; its sub-title here must wrap or a
+   360 px page scrolls sideways (drive-callbacks' 360 px check). */
+.ob-dl-summary .ds-zone-label { white-space: normal; min-width: 0; }
+.ob-dl-head { color: var(--muted); font-size: 12px; }
+.ob-dl-body { margin-top: 8px; }
 </style>

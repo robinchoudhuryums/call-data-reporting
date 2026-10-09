@@ -538,6 +538,7 @@ complete set of prefixes.
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
 | `OutboundReport.gs` | `outboundReport:vN:` | `v8` |
+| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v1` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
 | `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |

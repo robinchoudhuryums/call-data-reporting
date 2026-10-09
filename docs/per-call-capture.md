@@ -612,7 +612,26 @@ from the first attempt, connected or not, and the deciding dial's call id
 (`data-journey-kind="outbound"` on the shared `.pid-journey` chip). Rows show
 the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
-number the dashboard never stores. Cached
+number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
+for -- are a SEPARATE, lazy, separately cached endpoint
+(`getOutboundDirectCallbacks`, `outboundDirect:v1`: dept + window + freshness
+tag + roster hash) so the Callbacks figures never pay for it. Population:
+external calls whose first leg rang a PERSON (no entry queue, `first_agent`
+set) and that nobody answered, `missed` (rang out / that person's voicemail --
+indistinguishable in the CDR) or `abandoned`; ALL hours, split by the FIRST
+attempt into work hours and after hours (outside 06:30-15:00 PST, weekends,
+company holidays -- `obDirectIsAfterHours_`). The team is the line owner's
+roster home(s) (`obDirectHomesOf_`), plus the ONE shared mailbox
+(`OB_DIRECT_SHARED_LINES_`: `Sales Voicemails` -> Sales, owner 2026-10-09; a
+constant, flagged as voicemail by name); a dept view narrows to its line
+owners IN SQL (`obDirectScopeNames_`). The SAME episode engine: attempt rows
+carry their team + owner, an answered call to a family person's line (or a
+family queue) is "got through", and own-team callbacks split into "by the
+person whose line was tried" and "by their team". `getOutboundDirectRepeats`
+is the repeat-unreturned-callers list (owner ruling: 2+ unanswered attempts
+in the window, no callback): first / last attempt, the lines tried, the team,
+voicemail, CE-2's late tags, every attempt's detail. Neon-only: no export tab
+carries `first_agent` for a fallback, so an outage reads as unavailable. Cached
 `outboundReport:v8` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two

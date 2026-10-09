@@ -899,6 +899,12 @@
       + 'called back.';
     g['not called back'] = 'No dial to the caller inside the callback window, and they did not '
       + 'get through.';
+    // CE-3: the Direct lines own-team split.
+    g['called back by the person'] = 'Direct-line contact episodes closed by a dial from the '
+      + 'person whose line the caller tried, connected or not.';
+    g['called back by their team'] = 'Direct-line contact episodes closed by a dial from a '
+      + 'teammate (the line owner’s roster team, its parent or a sub-queue) rather than the '
+      + 'person whose line was tried.';
     g['avg att']      = g['att'];
     g['avg talk']     = g['att'];
   })();

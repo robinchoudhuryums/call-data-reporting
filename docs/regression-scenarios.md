@@ -550,3 +550,16 @@ S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department 
     - On a phone-width window with the fold open: the page does not scroll sideways (the by-hour strip may scroll inside itself).
   Expected: as described; with Neon unreachable the fold reads from the Outbound Calls tab with a note saying so, and if nothing can be read it says the data is unavailable.
   Fails if: the fold shows on Inbound, to a manager or in View-as; it fetches before it is opened, or again on a reopen of the same window; the deep link does not land on it; the chart is blank after a close and reopen; or the page scrolls sideways at phone width.
+
+S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, open My Department (a dept with direct-line callers, e.g. Sales) over the last month, switch to Outbound and open the Callbacks fold: a closed "Direct lines — this department's people" block sits at the bottom, reading "open to load". Nothing loads until you open it.
+    - Open it: a line of counts ("N unanswered calls to a person's line (M rang out or went to voicemail, A hung up while it rang) · anonymous · to the Sales voicemail box · to lines on no roster"), then a WORK HOURS row and an AFTER HOURS (incl. weekends & holidays) row of seven tiles each: Contact episodes, Called back by the person, Called back by their team, Contacted by another team, Caller got through, Not called back, Median time to callback.
+    - Arithmetic on either row: by the person + by their team + another team + got through + not called back + still in window (the Not called back tile's foot) = Contact episodes.
+    - "List repeat unreturned callers": one block per caller episode with 2+ unanswered attempts and no callback -- first → last date, the lines tried (people), the team, "Voicemail box" when the Sales voicemail box was rung, and a late tag where a callback came after the window. Each attempt row says "not answered" or "abandoned direct", "rang <person>", the line dialed, "after hours" where it applies, and the call id (copy) + "↳ path".
+    - Pick one repeat caller and check it in Caller Lookup: the attempts are there, and no outbound call to that number inside the window.
+    - On the Overview, open Callbacks by department and its "Direct lines — every department" block: the same tiles for the company, and the repeat list across every department.
+    - Close and reopen either block: no reload. Change the window: it loads once more.
+    - View as a manager: neither block is visible (they sit inside admin-only surfaces until the 6c release).
+  Expected: as described. A call to a person's line is never counted as a queue abandon, and the Callbacks tiles above do not change when the block is opened.
+  Fails if: the block fetches before it is opened or on a reopen; the two rows' outcomes do not sum to their episodes; a repeat caller is listed whom someone called back inside the window; the Sales voicemail box is listed under no team; a call id or number of a CALLER appears anywhere; or the page scrolls sideways at phone width.

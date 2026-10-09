@@ -339,6 +339,38 @@
                   </table>
                 </div>
               </div>
+              <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
+                   getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
+              <details id="ov-dl-fold" class="ob-dl-fold">
+                <summary class="ob-dl-summary">
+                  <span class="ds-zone-label">Direct lines <span class="ob-dl-sub">&mdash; every department</span></span>
+                  <span class="ob-dl-head" id="ov-dl-head">open to load</span>
+                </summary>
+                <div class="ob-dl-body">
+                  <div id="ov-dl-state" class="ds-note" style="display:none;"></div>
+                  <div id="ov-dl-content" style="display:none;">
+                    <p class="al-hint" id="ov-dl-counts"></p>
+                    <div class="al-section-subtitle">Work hours</div>
+                    <div id="ov-dl-work" class="pr-kpi-row"></div>
+                    <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
+                    <div id="ov-dl-after" class="pr-kpi-row"></div>
+                    <p class="al-hint">
+                      External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
+                      answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
+                      the two apart) or the caller hung up while it rang. Counted in contact episodes; the
+                      team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
+                      Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
+                      them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
+                      of the caller&rsquo;s FIRST attempt.
+                    </p>
+                    <div class="esc-resolve-actions">
+                      <button class="btn btn-secondary" id="ov-dl-rep-btn" type="button">List repeat unreturned callers</button>
+                      <span id="ov-dl-rep-status" class="al-hint"></span>
+                    </div>
+                    <div id="ov-dl-rep-list" style="display:none;"></div>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </details>
@@ -1273,6 +1305,38 @@
                 <span id="ins-cb-calledback-status" class="al-hint"></span>
               </div>
               <div id="ins-cb-calledback-list" style="display:none;"></div>
+              <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
+                   getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
+              <details id="ins-dl-fold" class="ob-dl-fold">
+                <summary class="ob-dl-summary">
+                  <span class="ds-zone-label">Direct lines <span class="ob-dl-sub">&mdash; this department&rsquo;s people</span></span>
+                  <span class="ob-dl-head" id="ins-dl-head">open to load</span>
+                </summary>
+                <div class="ob-dl-body">
+                  <div id="ins-dl-state" class="ds-note" style="display:none;"></div>
+                  <div id="ins-dl-content" style="display:none;">
+                    <p class="al-hint" id="ins-dl-counts"></p>
+                    <div class="al-section-subtitle">Work hours</div>
+                    <div id="ins-dl-work" class="pr-kpi-row"></div>
+                    <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
+                    <div id="ins-dl-after" class="pr-kpi-row"></div>
+                    <p class="al-hint">
+                      External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
+                      answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
+                      the two apart) or the caller hung up while it rang. Counted in contact episodes; the
+                      team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
+                      Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
+                      them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
+                      of the caller&rsquo;s FIRST attempt.
+                    </p>
+                    <div class="esc-resolve-actions">
+                      <button class="btn btn-secondary" id="ins-dl-rep-btn" type="button">List repeat unreturned callers</button>
+                      <span id="ins-dl-rep-status" class="al-hint"></span>
+                    </div>
+                    <div id="ins-dl-rep-list" style="display:none;"></div>
+                  </div>
+                </div>
+              </details>
               <div id="ins-cb-note" class="ds-note" style="display:none;"></div>
               <div class="esc-resolve-actions ins-cb-actions">
                 <button class="btn btn-secondary" id="ins-cb-csv-btn" type="button">Download CSV</button>

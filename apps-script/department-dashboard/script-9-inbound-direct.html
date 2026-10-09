@@ -2133,9 +2133,14 @@
       .map(escapeHtml).join(' → ');
     const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
     const facts = [];
-    if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+    // CE-3: a person's line that rang out (or went to their voicemail -- the
+    // CDR cannot tell) is `missed`, not abandoned.
+    if (c.disposition === 'missed') facts.push('not answered');
+    else if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+    if (c.owner) facts.push('rang ' + escapeHtml(String(c.owner)));
     if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
     if (c.dialIn) facts.push('dialed ' + escapeHtml(String(c.dialIn)));
+    if (c.afterHours) facts.push('after hours');
     const stageCls = c.abandonedOnHold ? 'is-hold'
       : (String(c.abandonStage || '') === 'ivr' ? 'is-ivr' : 'is-q');
     return '<div class="heat-drill-row">'
@@ -2243,6 +2248,226 @@
       + fmtNumber(meta.own || 0) + ' by own team · ' + fmtNumber(meta.other || 0) + ' by another team'
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + eps.length + ' shown)</span>' : '')
       + '</div><div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  // ── CE-3: Direct lines -- calls to a person's line ─────────────────────
+  // One block per surface, by element-id prefix ('ins-dl' in the Insights
+  // Callbacks fold, 'ov-dl' in the Overview's Callbacks by department). LAZY:
+  // getOutboundDirectCallbacks runs only while the block's <details> is open,
+  // once per window; a new window orphans an in-flight fetch AND repeat drill.
+  var OB_DL_VIEWS_ = {};
+  function obDlView_(prefix) {
+    return OB_DL_VIEWS_[prefix]
+      || (OB_DL_VIEWS_[prefix] = { prefix: prefix, key: null, seq: 0, data: null, inFlight: false, repSeq: 0 });
+  }
+  function obDlState_(prefix, msg) {
+    const el = $(prefix + '-state');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.display = msg ? '' : 'none';
+  }
+  function obDlResetRepeats_(prefix) {
+    const btn = $(prefix + '-rep-btn');
+    if (btn && btn.dataset.idleLabel) { btn.disabled = false; btn.textContent = btn.dataset.idleLabel; }
+    const list = $(prefix + '-rep-list');
+    if (list) { list.style.display = 'none'; list.innerHTML = ''; }
+    const st = $(prefix + '-rep-status');
+    if (st) st.textContent = '';
+  }
+  // `req` is the surface's window ({department, from, to}; department '' =
+  // the company view) or null while it has none.
+  function obDlSync_(prefix, req) {
+    const fold = $(prefix + '-fold');
+    if (!fold || !req) return;
+    const v = obDlView_(prefix);
+    const key = (req.department || '') + '|' + req.from + '|' + req.to;
+    if (key !== v.key) {
+      v.key = key; v.data = null; v.inFlight = false;
+      v.seq++; v.repSeq++;
+      obDlResetRepeats_(prefix);
+      const content = $(prefix + '-content'); if (content) content.style.display = 'none';
+      obDlState_(prefix, '');
+      const head = $(prefix + '-head'); if (head) head.textContent = 'open to load';
+    }
+    if (!fold.open) return;
+    if (v.data) { obDlRender_(prefix, v.data); return; }
+    if (v.inFlight) return;
+    v.inFlight = true;
+    const tok = ++v.seq;
+    const head = $(prefix + '-head'); if (head) head.textContent = 'loading…';
+    obDlState_(prefix, 'Loading direct-line callbacks…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (tok !== v.seq) return;   // a newer window owns the block
+        v.inFlight = false;
+        v.data = data || {};
+        obDlRender_(prefix, v.data);
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== v.seq) return;
+        v.inFlight = false; v.key = null;   // let the next open retry
+        if (head) head.textContent = 'unavailable';
+        obDlState_(prefix, 'Direct-line callbacks could not be loaded: '
+          + ((err && err.message) ? err.message : String(err)));
+      })
+      .getOutboundDirectCallbacks({ from: req.from, to: req.to, department: req.department || '' });
+  }
+  function outboundDirectTilesHtml_(s) {
+    s = s || {};
+    const pct = function (x) { return x != null ? x + '%' : '—'; };
+    return [
+      inboundKpiTile_('Contact episodes', fmtNumber(s.episodes),
+        fmtNumber(s.attempts) + ' unanswered call' + (s.attempts === 1 ? '' : 's')
+        + (s.repeatEpisodes ? ' · ' + fmtNumber(s.repeatEpisodes) + ' with 2+ attempts' : ''), ''),
+      inboundKpiTile_('Called back by the person', pct(s.ownByPersonPct),
+        fmtNumber(s.ownByPerson) + ' · whose line was tried', ''),
+      inboundKpiTile_('Called back by their team', pct(s.ownByTeamPct),
+        fmtNumber(s.ownByTeam) + ' · a teammate dialed', ''),
+      inboundKpiTile_('Contacted by another team', pct(s.otherPct),
+        fmtNumber(s.other) + ' · may be unrelated', ''),
+      inboundKpiTile_('Caller got through', pct(s.gotThroughPct),
+        fmtNumber(s.gotThrough) + ' · reached the team on a later call', ''),
+      inboundKpiTile_('Not called back', fmtNumber(s.none),
+        s.pending ? fmtNumber(s.pending) + ' more still in window' : 'no dial inside the window', ''),
+      inboundKpiTile_('Median time to callback',
+        s.medianCallbackSec != null ? fmtDuration(s.medianCallbackSec) : '—',
+        'own team · from the first attempt', ''),
+    ].join('');
+  }
+  function obDlRender_(prefix, data) {
+    const meta = (data && data.meta) || {};
+    const head = $(prefix + '-head');
+    const content = $(prefix + '-content');
+    if (meta.available === false) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'unavailable';
+      obDlState_(prefix, 'Direct-line data is unavailable right now (the per-call store, Neon, could not be read).');
+      return;
+    }
+    const c = data.counts || {};
+    const all = data.all || {};
+    if (!c.calls) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'no unanswered direct-line calls in this window';
+      obDlState_(prefix, 'No external call to a person’s line went unanswered in this window.');
+      return;
+    }
+    obDlState_(prefix, '');
+    if (content) content.style.display = '';
+    if (head) {
+      head.textContent = (all.ownPct != null ? all.ownPct + '% called back by the team' : 'callback rate –')
+        + ' · ' + fmtNumber(all.episodes || 0) + ' contact episode' + (all.episodes === 1 ? '' : 's')
+        + (all.none ? ' · ' + fmtNumber(all.none) + ' not called back' : '');
+    }
+    const bits = [fmtNumber(c.calls) + ' unanswered call' + (c.calls === 1 ? '' : 's') + ' to a person’s line ('
+      + fmtNumber(c.missed) + ' rang out or went to voicemail, ' + fmtNumber(c.abandoned) + ' hung up while it rang)'];
+    if (c.anonymous) bits.push(fmtNumber(c.anonymous) + ' anonymous (untrackable)');
+    if (c.voicemailBox) bits.push(fmtNumber(c.voicemailBox) + ' to the Sales voicemail box');
+    if (c.unownedLines) bits.push(fmtNumber(c.unownedLines) + ' to lines on no roster');
+    const cnt = $(prefix + '-counts'); if (cnt) cnt.textContent = bits.join(' · ') + '.';
+    const w = $(prefix + '-work'); if (w) w.innerHTML = outboundDirectTilesHtml_(data.work);
+    const a = $(prefix + '-after'); if (a) a.innerHTML = outboundDirectTilesHtml_(data.after);
+  }
+  // Wired once per surface: the fold's toggle (with that surface's window)
+  // and the repeat-callers drill.
+  function obDlWire_(prefix, reqFn) {
+    const fold = $(prefix + '-fold');
+    if (!fold || fold._obDlWired) return;
+    fold._obDlWired = true;
+    fold.addEventListener('toggle', function () { if (fold.open) obDlSync_(prefix, reqFn()); });
+    const btn = $(prefix + '-rep-btn');
+    if (btn) btn.addEventListener('click', function () {
+      const v = obDlView_(prefix);
+      if (!v.data || !v.data.meta) return;
+      outboundLoadDirectRepeatsInto_({
+        btn: btn, list: $(prefix + '-rep-list'), status: $(prefix + '-rep-status'),
+        meta: v.data.meta,
+        nextSeq: function () { return ++v.repSeq; },
+        curSeq: function () { return v.repSeq; },
+      });
+    });
+  }
+
+  // CE-3: the repeat-unreturned-callers list (owner ruling 3): one block per
+  // episode -- first and last attempt, the lines tried, the team, voicemail
+  // when the shared box was rung, CE-2's late tags -- and every attempt row.
+  function outboundDirectRepeatsHtml_(resp) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the per-call store (Neon) could not be reached.</div>';
+    }
+    const eps = (resp && resp.episodes) || [];
+    const blocks = eps.map(function (ep) {
+      const chips = ['<span class="ds-chip ds-chip--bad">Not called back</span>'];
+      if (ep.voicemail) chips.push('<span class="ds-chip ds-chip--neutral">Voicemail box</span>');
+      const late = ep.late || {};
+      if (late.calledBack) {
+        chips.push('<span class="ds-chip ds-chip--neutral">Called back late · day '
+          + escapeHtml(String(late.calledBack.daysAfter)) + ' · '
+          + (late.calledBack.team === 'own' ? 'own team' : 'another team') + '</span>');
+      }
+      if (late.gotThrough) {
+        chips.push('<span class="ds-chip ds-chip--neutral">Got through later · day '
+          + escapeHtml(String(late.gotThrough.daysAfter)) + '</span>');
+      }
+      const n = (ep.attempts || []).length;
+      return '<div class="ob-ep ob-ep--missed">'
+        + '<div class="ob-ep-head">'
+        +   '<span class="heat-drill-when">' + escapeHtml(String(ep.firstIso || ''))
+        +     (ep.lastIso && ep.lastIso !== ep.firstIso ? ' → ' + escapeHtml(String(ep.lastIso)) : '') + '</span>'
+        +   '<span class="heat-drill-facts">' + n + ' attempts · ' + escapeHtml((ep.lines || []).join(', ') || '(unknown line)')
+        +     ' · ' + escapeHtml(ep.team || '') + '</span>'
+        +   chips.join('')
+        + '</div>' + (ep.attempts || []).map(outboundAttemptRowHtml_).join('') + '</div>';
+    }).join('');
+    return '<div class="heat-drill-head"><strong>Repeat unreturned callers</strong> · '
+      + eps.length + ' caller episode' + (eps.length === 1 ? '' : 's') + ' with 2+ unanswered attempts and no callback'
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
+      + '</div><div class="heat-drill-list">' + blocks + '</div>';
+  }
+
+  // The repeat drill: the UI-5 pattern (its own per-request token from the
+  // caller, both handlers drop a superseded response; a second click closes).
+  function outboundLoadDirectRepeatsInto_(ctx) {
+    const btn = ctx.btn;
+    const list = ctx.list;
+    const status = ctx.status;
+    if (!btn || !list) return;
+    const meta = ctx.meta || {};
+    if (!meta.from) return;
+    if (list.style.display !== 'none' && list.innerHTML) {
+      list.style.display = 'none'; list.innerHTML = '';
+      if (status) status.textContent = '';
+      return;
+    }
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    const prev = btn.dataset.idleLabel;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    const tok = ctx.nextSeq();
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
+        btn.disabled = false; btn.textContent = prev;
+        initClipboardOnce();
+        const isEmpty = resp && (resp.episodes || []).length === 0
+          && (!resp.meta || resp.meta.available !== false);
+        list.innerHTML = isEmpty
+          ? '<div class="ds-note">No caller tried a person’s line twice or more without a callback in this window.</div>'
+          : outboundDirectRepeatsHtml_(resp);
+        list.style.display = '';
+        if (status) {
+          const m = (resp && resp.meta) || {};
+          status.textContent = m.available === false ? ''
+            : ((resp.episodes || []).length + ' caller episode(s)' + (m.truncated ? ' (newest shown)' : ''));
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== ctx.curSeq()) return;
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getOutboundDirectRepeats({ from: meta.from, to: meta.to,
+        department: meta.companyView ? '' : (meta.department || '') });
   }
 
   // The called-back drill: the not-called-back drill's pattern exactly (its

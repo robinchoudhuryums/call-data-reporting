@@ -3143,3 +3143,94 @@ test('PC-12: outboundScopeDepts_ uses the callback denominator\'s own child map 
     assert.deepEqual(Array.from(h.call('outboundScopeDepts_', '')), []);
   } finally { h.ctx.getOverviewParentMap_ = saved; }
 });
+
+// ── CE-3: direct lines ──────────────────────────────────────────────────────
+
+const DL_EVENTS_ = {
+  dlCounts: [
+    { disp: 'missed', anon: false, who: 'Ann', n: 5 },
+    { disp: 'abandoned', anon: true, who: 'Ann', n: 1 },
+  ],
+  dlAb: [
+    [1, '2026-08-18', '08:00:00', 'd1', 'Ann'], [1, '2026-08-18', '09:00:00', 'd1b', 'Ann'],   // called back by Ann
+    [2, '2026-08-18', '20:00:00', 'd2', 'Ann'],                                                // after hours, none
+    [4, '2026-08-17', '10:00:00', 'd4', 'Ann'], [4, '2026-08-18', '11:00:00', 'd4b', 'Ann'],   // repeat, none
+  ],
+  dlOb: [[1, '2026-08-18', '10:00:00', 'o1', 'Ann', true]],
+  dlAns: [],
+};
+
+function installDl_() {
+  h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  h.ctx.buildDeptsByAgent_ = function () { return ROSTER_; };
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  h.state.cache.clear();
+}
+
+test('CE-3: getOutboundDirectCallbacks -- the dept’s line owners only, work / after hours apart, cached', function () {
+  installDl_();
+  const conn = makeSeqConn_([JSON.stringify(DL_EVENTS_)]);
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const out = JSON.parse(JSON.stringify(h.call('getOutboundDirectCallbacks',
+    { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })));
+  const sql = conn.sql[0];
+  assert.match(sql, /^WITH dl_ab AS \(/);
+  assert.match(sql, /c\.disposition IN \('missed', 'abandoned'\)/, 'unanswered: rang out / voicemail AND hung up');
+  assert.match(sql, /COALESCE\(trim\(c\.entry_queue\),''\) = '' AND COALESCE\(trim\(c\.first_agent\),''\) <> ''/,
+    'rang a PERSON first: no queue, a first agent');
+  assert.match(sql, /trim\(c\.first_agent\) IN \('Ann', 'Casey'\)/, 'the dept view narrows to its line owners IN SQL');
+  assert.doesNotMatch(sql, /c\.call_start (IS NULL OR|>=)/, 'ALL hours are read; the split happens on the server');
+  (sql.match(/json_build_array\([^)]*\)/g) || []).forEach(function (arr) {
+    assert.ok(!/\bh\b|caller_hash|callee_hash/.test(arr), 'no hash in ' + arr);
+  });
+  assert.deepEqual(out.counts, { calls: 6, anonymous: 1, trackable: 5, missed: 5, abandoned: 1, voicemailBox: 0, unownedLines: 0 });
+  assert.deepEqual([out.all.episodes, out.all.own, out.all.ownByPerson, out.all.none], [3, 1, 1, 2]);
+  assert.deepEqual([out.work.episodes, out.after.episodes], [2, 1], 'k2 first tried at 20:00 PST');
+  assert.equal(out.meta.cacheHit, false);
+  // Cached on the freshness tag (+ roster): a second call does not touch Neon.
+  h.ctx.getDashboardNeonConn_ = function () { throw new Error('should be cached'); };
+  const again = h.call('getOutboundDirectCallbacks', { from: '2026-08-17', to: '2026-08-18', department: 'CSR' });
+  assert.equal(again.meta.cacheHit, true);
+  // Company view: every line.
+  const conn2 = makeSeqConn_([JSON.stringify(DL_EVENTS_)]);
+  h.ctx.getDashboardNeonConn_ = function () { return conn2; };
+  h.call('getOutboundDirectCallbacks', { from: '2026-08-17', to: '2026-08-18', department: 'ALL' });
+  assert.doesNotMatch(conn2.sql[0], /first_agent\) IN \(/);
+  // Unavailable is never cached and never a zero.
+  h.state.cache.clear();
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.equal(h.call('getOutboundDirectCallbacks', { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })
+    .meta.available, false);
+  assert.equal(h.state.cache.size, 0);
+  // The 6c gate.
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  assert.throws(function () { h.call('getOutboundDirectCallbacks', { from: '2026-08-17', to: '2026-08-18' }); },
+    /admin-only while it is being vetted/);
+  h.state.testUser = null;
+});
+
+test('CE-3: getOutboundDirectRepeats lists 2+-attempt episodes nobody called back -- lines, owners, hours, no identity', function () {
+  installDl_();
+  const detail = JSON.stringify([
+    Object.assign(uncalledRow_('d4', '2026-08-17'), { disposition: 'missed', abandon_stage: null, wait_seconds: null }),
+    Object.assign(uncalledRow_('d4b', '2026-08-18'), { disposition: 'abandoned' })]);
+  const conn = makeSeqConn_([JSON.stringify(DL_EVENTS_), detail]);
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const out = JSON.parse(JSON.stringify(h.call('getOutboundDirectRepeats',
+    { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })));
+  assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-17'::date AND '2026-09-04'::date/,
+    'dials read past the window for the late tags');
+  assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(\('2026-08-17'::date, 'd4'\), \('2026-08-18'::date, 'd4b'\)\)/,
+    'k2 tried once and k1 was called back: only k4 is a repeat unreturned caller');
+  assert.ok(!/caller_hash|"k"/.test(JSON.stringify(out)));
+  assert.equal(out.meta.episodes, 1);
+  const ep = out.episodes[0];
+  assert.deepEqual([ep.firstIso, ep.lastIso, ep.team, ep.voicemail], ['2026-08-17', '2026-08-18', 'CSR', false]);
+  assert.deepEqual(ep.lines, ['Ann']);
+  assert.deepEqual(ep.attempts.map(function (a) { return [a.callId, a.owner, a.disposition, a.afterHours]; }),
+    [['d4', 'Ann', 'missed', false], ['d4b', 'Ann', 'abandoned', false]]);
+  assert.deepEqual(ep.late, { calledBack: null, gotThrough: null });
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.equal(h.call('getOutboundDirectRepeats', { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })
+    .meta.available, false);
+});

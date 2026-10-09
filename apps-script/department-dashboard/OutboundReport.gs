@@ -695,15 +695,28 @@ function obCallbackDeptMap_() {
 // Event-row layouts (arrays, to keep the Neon blob small). `k` is a
 // per-request integer caller key -- the hash never leaves the database.
 //   ab:  [k, isoDate, 'HH:MM:SS'|null, queueLower, callId]   unanswered attempt
+//        CE-3 (direct lines) appends [.., teams[], lineOwner]: the team comes
+//        from the line owner's roster, not a queue.
 //   ob:  [k, isoDate, 'HH:MM:SS'|null, callId, agentName, connected]  a dial
 //   ans: [k, isoDate, 'HH:MM:SS'|null, queueLower]            answered inbound
+//        CE-3 appends [.., person]: an answered call to a person's line has no
+//        queue, so its team is that person's roster homes.
 var OB_EP_OUTCOMES_ = ['own', 'gotThrough', 'other', 'pending', 'none'];
 
-/** PURE. The team key + member list for a queue: owners sorted, '+'-joined; '' unmapped. */
-function obEpTeamOf_(q, ownersOf) {
-  var owners = (ownersOf && ownersOf[String(q == null ? '' : q)]) || [];
-  var teams = owners.slice().sort();
-  return { key: teams.join('+'), teams: teams };
+/** PURE. The team key + member list for a queue: owners sorted, '+'-joined; '' unmapped.
+ *  CE-3: an explicit `teams` list (a direct-line attempt's owner homes) wins. */
+function obEpTeamOf_(q, ownersOf, teams) {
+  var owners = Array.isArray(teams) ? teams
+    : ((ownersOf && ownersOf[String(q == null ? '' : q)]) || []);
+  var sorted = owners.slice().sort();
+  return { key: sorted.join('+'), teams: sorted };
+}
+
+/** PURE. The depts an ANSWERED call reached: its queue's owners, or (CE-3, no
+ *  queue) the homes of the person whose line it rang. */
+function obEpAnsOwners_(q, person, ownersOf, homesOf) {
+  if (q) return (ownersOf && ownersOf[q]) || [];
+  return person && homesOf ? (homesOf(person) || []) : [];
 }
 
 /** PURE. The family set {dept: true} of a team list (each team, its parent, its children). */
@@ -753,13 +766,16 @@ function obCallbackEpisodes_(ev, ctx) {
     var iso = String(r[1] || '');
     if (!iso || iso < ctx.from || iso > ctx.to) return;   // episodes START in the window
     push(r[0], { t: 0, iso: iso, hms: r[2] || null, ord: obOrdinal_(iso, r[2]),
-                 q: String(r[3] == null ? '' : r[3]), id: String(r[4] == null ? '' : r[4]) });
+                 q: String(r[3] == null ? '' : r[3]), id: String(r[4] == null ? '' : r[4]),
+                 teams: Array.isArray(r[5]) ? r[5] : null,                  // CE-3
+                 owner: r.length > 6 ? String(r[6] == null ? '' : r[6]) : null });
   });
   (ev.ans || []).forEach(function (r) {
     var iso = String(r[1] || '');
     if (!iso || !byK[r[0]]) return;
     push(r[0], { t: 1, iso: iso, hms: r[2] || null, ord: obOrdinal_(iso, r[2]),
-                 q: String(r[3] == null ? '' : r[3]), id: '' });
+                 q: String(r[3] == null ? '' : r[3]), id: '',
+                 person: r.length > 4 ? String(r[4] == null ? '' : r[4]).trim() : '' });   // CE-3
   });
   (ev.ob || []).forEach(function (r) {
     var iso = String(r[1] || '');
@@ -799,8 +815,9 @@ function obCallbackEpisodes_(ev, ctx) {
         return true;
       });
       if (e.t === 0) {
-        var team = obEpTeamOf_(e.q, ownersOf);
+        var team = obEpTeamOf_(e.q, ownersOf, e.teams);
         var att = { iso: e.iso, hms: e.hms, id: e.id, q: e.q };
+        if (e.owner !== null) att.owner = e.owner;   // CE-3: whose line it rang
         for (var i = 0; i < open.length; i++) {
           if (open[i].teamKey === team.key) {
             open[i].attempts.push(att);
@@ -813,7 +830,7 @@ function obCallbackEpisodes_(ev, ctx) {
                     deadline: obDaysAfterIso_(e.iso, win), outcome: null, other: null,
                     delaySec: null, connected: false, agent: null, dial: null });
       } else if (e.t === 1) {
-        var owners = ownersOf[e.q] || [];
+        var owners = obEpAnsOwners_(e.q, e.person, ownersOf, homesOf);
         open = open.filter(function (ep) {
           var hit = owners.some(function (d) { return ep.family[d]; });
           if (!hit) return true;
@@ -1283,7 +1300,8 @@ function obEpLateTags_(ep, ev, ctx, horizonDays) {
                        team: own ? 'own' : 'other', agent: agent || null };
   }
   var a = first(ev.ans, function (r) {
-    return (ctx.ownersOf[String(r[3] == null ? '' : r[3])] || []).some(function (x) { return family[x]; });
+    return obEpAnsOwners_(String(r[3] == null ? '' : r[3]), r.length > 4 ? String(r[4] || '').trim() : '',
+      ctx.ownersOf, homesOf).some(function (x) { return family[x]; });
   });
   if (a) out.gotThrough = { iso: a.iso, hms: a.row[2] || null, daysAfter: dayDiff(lastIso, a.iso) };
   return out;
@@ -1335,7 +1353,7 @@ function obCallbackListDetail_(conn, keys) {
     + 'SELECT c.call_date::text AS call_date, c.call_id, '
     +   cstStart + ' AS cst_start, '
     +   'c.entry_queue, c.final_queue, c.abandon_stage, c.abandoned_on_hold, '
-    +   'c.wait_seconds, c.hold_seconds, c.dial_in_number '
+    +   'c.wait_seconds, c.hold_seconds, c.dial_in_number, c.disposition '
     + 'FROM inbound_calls c WHERE (c.call_date, c.call_id) IN ('
     +   keys.map(function (k) { return "('" + k.iso + "'::date, " + inboundSqlLit_(k.id) + ')'; }).join(', ')
     + ')) t';
@@ -1361,6 +1379,7 @@ function obCallbackListDetail_(conn, keys) {
       waitSeconds: c.wait_seconds == null ? null : Number(c.wait_seconds),
       holdSeconds: c.hold_seconds == null ? null : Number(c.hold_seconds),
       dialIn: num ? ((digits && labels[digits]) || num) : null,
+      disposition: c.disposition || null,   // CE-3: 'missed' rows read "not answered"
     };
   });
   return byKey;
@@ -1519,6 +1538,322 @@ function getOutboundCalledBack(req) {
     return out;
   } catch (e) {
     Logger.log('getOutboundCalledBack failed (best-effort): ' + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CE-3 (owner 2026-10-09): DIRECT-LINE callbacks -- the question this report
+// was built for ("I called a person's line again and again and nobody called
+// back"). docs/next-steps.md "Callback episodes + direct lines".
+//
+//   * POPULATION: external calls whose first leg rang a PERSON -- no entry
+//     queue, `first_agent` set -- and that nobody answered: `missed` (rang
+//     out / went to that person's voicemail; the CDR cannot tell them apart)
+//     and `abandoned` (hung up while it rang). Anonymous callers are counted,
+//     never in a rate. ALL HOURS: work hours and after hours (outside the
+//     06:30-15:00 PST window, weekends, company holidays) are shown apart,
+//     by the episode's FIRST attempt.
+//   * TEAM: the line owner's roster home(s) -- `obDirectHomesOf_`, which also
+//     knows the ONE shared mailbox in the raw data (`Sales Voicemails`, an
+//     account the Sales team made on purpose -- owner, 2026-10-09). A line
+//     owner on no roster is the unmapped team ''.
+//   * The SAME episode engine (CE-1): attempts carry their team, an own-team
+//     dial or the caller getting through (a family queue OR a family person's
+//     line answered) closes the episode. Own-team callbacks split into "by
+//     the person whose line was tried" and "by their team".
+//   * Lazy + separately cached (`outboundDirect:v1`), so the Callbacks
+//     figures never pay for it. Neon-only (no sheet copy carries first_agent
+//     for the fallback): an outage reads as unavailable, never as zero.
+// ---------------------------------------------------------------------------
+
+// The shared mailboxes a person's-line call can ring: the name as the CDR
+// stores it (first_agent) -> the roster dept that owns it. Owner ruling
+// 2026-10-09: ONE exists, so a constant, not a Dept Config column -- add an
+// entry here if that changes.
+var OB_DIRECT_SHARED_LINES_ = [{ name: 'Sales Voicemails', dept: 'Sales' }];
+
+/** PURE. The shared line named `n` (case-insensitive), or null. */
+function obDirectSharedLine_(n) {
+  var k = String(n == null ? '' : n).trim().toLowerCase();
+  for (var i = 0; i < OB_DIRECT_SHARED_LINES_.length; i++) {
+    if (OB_DIRECT_SHARED_LINES_[i].name.toLowerCase() === k) return OB_DIRECT_SHARED_LINES_[i];
+  }
+  return null;
+}
+
+const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v1:';
+var OUTBOUND_DIRECT_REPEATS_MAX = 200;   // episodes on the repeat list
+
+/** PURE. A line owner's (or dialer's) homes: the roster, else a shared mailbox's dept. */
+function obDirectHomesOf_(deptsByAgent) {
+  return function (name) {
+    var n = String(name == null ? '' : name).trim();
+    if (!n) return [];
+    var homes = (deptsByAgent && deptsByAgent[n]) || [];
+    if (homes.length) return homes;
+    var shared = obDirectSharedLine_(n);
+    return shared ? [shared.dept] : [];
+  };
+}
+
+/** PURE. True for a shared voicemail box (flagged as voicemail by name). */
+function obDirectIsVoicemailLine_(name) {
+  return !!obDirectSharedLine_(name);
+}
+
+/**
+ * PURE. After hours = a weekend, a company holiday, or a start outside the
+ * work window (INBOUND_WORK_WINDOW_PST, raw PST like call_start). A missing
+ * start counts as work hours (the inboundWindowClause_ convention).
+ */
+function obDirectIsAfterHours_(iso, hms) {
+  var d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)));
+  var dow = d.getUTCDay();
+  if (dow === 0 || dow === 6) return true;
+  if (typeof isCompanyHoliday_ === 'function') {
+    try { if (isCompanyHoliday_(iso)) return true; } catch (e) { /* holiday read failed: time only */ }
+  }
+  var t = String(hms || '');
+  if (!/^\d{2}:\d{2}:\d{2}$/.test(t)) return false;
+  return !(t >= INBOUND_WORK_WINDOW_PST.start && t < INBOUND_WORK_WINDOW_PST.end);
+}
+
+/**
+ * The direct-line event rows (current window only), shaped like
+ * obCallbackEventsSql_'s: `names` (a dept view's line owners) narrows the
+ * attempts; null = every line (company view).
+ */
+function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
+  const endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS + (Number(extraDays) || 0));
+  const span = " BETWEEN '" + fromIso + "'::date AND '" + endIso + "'::date";
+  const who = names
+    ? (' AND trim(c.first_agent) IN (' + (names.length ? names.map(inboundSqlLit_).join(', ') : 'NULL') + ')')
+    : '';
+  return {
+    with: 'WITH dl_ab AS ('
+      + 'SELECT c.call_date AS d, c.call_start AS st, c.call_id AS cid, c.caller_hash AS h, '
+      +   'trim(c.first_agent) AS who, c.disposition AS disp '
+      + 'FROM inbound_calls c '
+      + "WHERE c.disposition IN ('missed', 'abandoned') "
+      +   "AND c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date "
+      +   'AND COALESCE(c.is_internal, FALSE) = FALSE '
+      +   "AND COALESCE(trim(c.entry_queue),'') = '' "
+      +   "AND COALESCE(trim(c.first_agent),'') <> ''" + who + '), '
+      + 'dl_k AS (SELECT x.h, (dense_rank() OVER (ORDER BY x.h))::int AS k FROM ('
+      +   'SELECT DISTINCT h FROM dl_ab WHERE h IS NOT NULL) x)',
+    fields:
+        "'dlCounts', (SELECT COALESCE(json_agg(json_build_object("
+      +   "'disp', z.disp, 'anon', z.anon, 'who', z.who, 'n', z.n)), '[]') FROM ("
+      +   'SELECT disp, (h IS NULL) AS anon, who, count(*) AS n FROM dl_ab GROUP BY 1, 2, 3) z), '
+      + "'dlAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.cid, a.who) "
+      +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') FROM dl_ab a JOIN dl_k k ON k.h = a.h), "
+      + "'dlOb', (SELECT COALESCE(json_agg(json_build_array(k.k, o.call_date::text, o.call_start, "
+      +   'o.call_id, o.agent_name, o.connected) ORDER BY k.k, o.call_date, o.call_start, o.call_id), '
+      +   "'[]') FROM outbound_calls o JOIN dl_k k ON k.h = o.callee_hash WHERE o.call_date" + span + '), '
+      + "'dlAns', (SELECT COALESCE(json_agg(json_build_array(k.k, a.call_date::text, a.call_start, "
+      +   "lower(trim(COALESCE(a.entry_queue,''))), trim(COALESCE(a.first_agent,''))) "
+      +   "ORDER BY k.k, a.call_date, a.call_start), '[]') "
+      +   'FROM inbound_calls a JOIN dl_k k ON k.h = a.caller_hash '
+      +   "WHERE a.disposition = 'answered' AND COALESCE(a.is_internal, FALSE) = FALSE "
+      +   'AND a.call_date' + span + ')',
+  };
+}
+
+/** The line owners a dept view covers: everyone on its (and its sub-queues') rosters + its shared lines. */
+function obDirectScopeNames_(scopeDepts, deptsByAgent) {
+  var inScope = {};
+  (scopeDepts || []).forEach(function (d) { inScope[d] = true; });
+  var names = [];
+  Object.keys(deptsByAgent || {}).forEach(function (n) {
+    if ((deptsByAgent[n] || []).some(function (d) { return inScope[d]; })) names.push(n);
+  });
+  OB_DIRECT_SHARED_LINES_.forEach(function (l) { if (inScope[l.dept]) names.push(l.name); });
+  return names.sort();
+}
+
+/**
+ * The shared front half: fetch + map the rows into engine rows (each attempt
+ * carries its line owner's teams) + run the engine. Returns
+ * { eps, ev, ctx, counts, afterById } or null.
+ */
+function obDirectFetch_(conn, scope, extraDays) {
+  const deptsByAgent = buildDeptsByAgent_();
+  const names = scope.companyView ? null
+    : obDirectScopeNames_(scope.scopeDepts && scope.scopeDepts.length ? scope.scopeDepts : [scope.dept], deptsByAgent);
+  const evSql = obDirectEventsSql_(names, scope.from, scope.to, extraDays);
+  const stmt = conn.createStatement();
+  const rs = stmt.executeQuery(evSql.with + ' SELECT json_build_object(' + evSql.fields + ')::text AS j');
+  const json = rs.next() ? rs.getString('j') : null;
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-direct');
+  rs.close(); stmt.close();
+  if (json == null) return null;
+  const obj = JSON.parse(json) || {};
+  const homesOf = obDirectHomesOf_(deptsByAgent);
+  const ctx = obEpContext_(obCallbackDeptMap_(), deptsByAgent);
+  ctx.homesOf = homesOf;   // dialers AND line owners: the roster, plus the shared mailbox
+  const afterById = {};
+  const ab = (obj.dlAb || []).map(function (r) {
+    afterById[r[1] + '|' + r[3]] = obDirectIsAfterHours_(String(r[1]), r[2]);
+    return [r[0], r[1], r[2], '', r[3], homesOf(r[4]), String(r[4] == null ? '' : r[4])];
+  });
+  const ev = { ab: ab, ob: obj.dlOb || [], ans: obj.dlAns || [] };
+  const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
+  return { eps: eps, ev: ev, ctx: ctx, counts: obj.dlCounts || [], afterById: afterById };
+}
+
+/** PURE. The direct-line figures for a set of episodes: CE-1's summary plus the own-team split. */
+function obDirectSummary_(eps) {
+  var s = obSummarizeEpisodes_(eps, true);
+  s.ownByPerson = 0; s.ownByTeam = 0;
+  (eps || []).forEach(function (ep) {
+    if (ep.outcome !== 'own') return;
+    var owners = {};
+    ep.attempts.forEach(function (a) { if (a.owner) owners[a.owner] = true; });
+    if (ep.agent && owners[ep.agent]) s.ownByPerson++; else s.ownByTeam++;
+  });
+  s.ownByPersonPct = obPct1_(s.ownByPerson, s.episodes);
+  s.ownByTeamPct = obPct1_(s.ownByTeam, s.episodes);
+  return s;
+}
+
+/** PURE. The raw unanswered-call counts (dlCounts rows) -> the context figures. */
+function obDirectCounts_(rows, homesOf) {
+  var c = { calls: 0, anonymous: 0, trackable: 0, missed: 0, abandoned: 0, voicemailBox: 0, unownedLines: 0 };
+  (rows || []).forEach(function (r) {
+    var n = Number(r.n) || 0;
+    var anon = r.anon === true || String(r.anon) === 'true';
+    c.calls += n;
+    if (anon) c.anonymous += n; else c.trackable += n;
+    if (r.disp === 'missed') c.missed += n; else c.abandoned += n;
+    if (obDirectIsVoicemailLine_(r.who)) c.voicemailBox += n;
+    else if (!(homesOf(r.who) || []).length) c.unownedLines += n;
+  });
+  return c;
+}
+
+/**
+ * CE-3: the direct-line callback figures for the dept (its line owners, its
+ * sub-queues' included) or the company. { meta, counts, all, work, after }
+ * where each of all / work / after is obDirectSummary_ over the episodes
+ * whose FIRST attempt fell in those hours. Same resolver + 6c gate + SEC-1
+ * cap as the report; cached 6 h on the freshness tag + the roster.
+ */
+function getOutboundDirectCallbacks(req) {
+  const scope = outboundResolveRequest_(req);
+  assertReportRangeCap_(scope.from, scope.to);   // SEC-1
+  const cache = CacheService.getScriptCache();
+  const rosterTag = scope.companyView
+    ? ((typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na')
+    : ((typeof rosterSetHash_ === 'function') ? rosterSetHash_(scope.scopeDepts) : 'na');
+  const key = OUTBOUND_DIRECT_CACHE_KEY_PREFIX + (scope.dept || '__all__') + ':' + scope.from + ':' + scope.to
+    + ':' + reportFreshnessTag_() + ':' + rosterTag;
+  const hit = cache.get(key);
+  if (hit) {
+    try {
+      const p = JSON.parse(hit);
+      p.meta.cacheHit = true;
+      logReportUsage_('outbound:direct', scope.dept || '(all)', scope.user, true);
+      return p;
+    } catch (e) { /* recompute */ }
+  }
+  const out = {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null, companyView: scope.companyView,
+      scopeDepts: scope.companyView ? [] : (scope.scopeDepts || [scope.dept]),
+      callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
+      workWindowPst: { start: INBOUND_WORK_WINDOW_PST.start, end: INBOUND_WORK_WINDOW_PST.end },
+      cacheHit: false,
+    },
+    counts: obDirectCounts_([], function () { return []; }),
+    all: obDirectSummary_([]), work: obDirectSummary_([]), after: obDirectSummary_([]),
+  };
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+    const d = obDirectFetch_(conn, scope, 0);
+    if (!d) { out.meta.available = false; return out; }
+    const isAfter = function (ep) { return !!d.afterById[ep.attempts[0].iso + '|' + ep.attempts[0].id]; };
+    out.counts = obDirectCounts_(d.counts, d.ctx.homesOf);
+    out.all = obDirectSummary_(d.eps);
+    out.work = obDirectSummary_(d.eps.filter(function (ep) { return !isAfter(ep); }));
+    out.after = obDirectSummary_(d.eps.filter(isAfter));
+  } catch (e) {
+    Logger.log('getOutboundDirectCallbacks failed (best-effort): ' + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+  try { cache.put(key, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+  catch (e) { Logger.log('outboundDirect cache put failed: %s', e); }
+  logReportUsage_('outbound:direct', scope.dept || '(all)', scope.user, false);
+  return out;
+}
+
+/**
+ * CE-3: the REPEAT-UNRETURNED-CALLERS list (owner ruling 3: 2+ unanswered
+ * attempts inside the window, and no callback): the direct-line episodes that
+ * ended `none` with 2+ attempts, newest first, capped at
+ * OUTBOUND_DIRECT_REPEATS_MAX (meta.truncated). Each: first / last attempt,
+ * the lines tried (owners), every attempt's detail row (call id, the line
+ * dialed, the person it rang, after-hours flag) and CE-2's late tags. Same
+ * gate + SEC-1 cap; uncached. No caller identity.
+ */
+function getOutboundDirectRepeats(req) {
+  const scope = outboundResolveRequest_(req);
+  assertReportRangeCap_(scope.from, scope.to);   // SEC-1
+  const out = {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null, companyView: scope.companyView,
+      truncated: false, tzLabel: 'CST', callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
+      lateHorizonDays: OUTBOUND_LATE_HORIZON_DAYS, minAttempts: 2, episodes: 0,
+    },
+    episodes: [],
+  };
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+    const d = obDirectFetch_(conn, scope, OUTBOUND_LATE_HORIZON_DAYS);
+    if (!d) { out.meta.available = false; return out; }
+    let eps = d.eps
+      .filter(function (ep) { return ep.outcome === 'none' && ep.attempts.length >= 2; })
+      .sort(obEpNewestFirst_);
+    out.meta.episodes = eps.length;
+    if (eps.length > OUTBOUND_DIRECT_REPEATS_MAX) {
+      out.meta.truncated = true;
+      eps = eps.slice(0, OUTBOUND_DIRECT_REPEATS_MAX);
+    }
+    const keys = [];
+    eps.forEach(function (ep) { ep.attempts.forEach(function (a) { keys.push({ iso: a.iso, id: a.id }); }); });
+    const detail = obCallbackListDetail_(conn, keys);
+    out.episodes = eps.map(function (ep) {
+      const owners = [];
+      ep.attempts.forEach(function (a) { if (a.owner && owners.indexOf(a.owner) === -1) owners.push(a.owner); });
+      return {
+        firstIso: ep.firstIso, firstHms: ep.firstHms || null,
+        lastIso: ep.attempts[ep.attempts.length - 1].iso,
+        team: ep.teams.length ? ep.teams.join(' + ') : 'No roster team',
+        lines: owners,
+        voicemail: owners.some(obDirectIsVoicemailLine_),
+        attempts: ep.attempts.map(function (a) {
+          const row = detail[a.iso + '|' + a.id] || { callDate: a.iso, callId: a.id };
+          return Object.assign({}, row, { owner: a.owner || null,
+            afterHours: !!d.afterById[a.iso + '|' + a.id] });
+        }),
+        late: obEpLateTags_(ep, d.ev, d.ctx, OUTBOUND_LATE_HORIZON_DAYS),
+      };
+    });
+    return out;
+  } catch (e) {
+    Logger.log('getOutboundDirectRepeats failed (best-effort): ' + (e && e.message ? e.message : e));
     out.meta.available = false;
     return out;
   } finally {
