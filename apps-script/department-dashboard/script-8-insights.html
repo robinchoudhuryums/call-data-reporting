@@ -2365,13 +2365,44 @@
     insCbScrollIfPending_();
   }
 
-  // The deep link's one-shot scroll, consumed by the first paint that has
-  // something to show (data, empty or unavailable alike).
+  // The deep link's scroll, armed by the first paint that has something to
+  // show (data, empty or unavailable alike). The sections ABOVE the fold (the
+  // agent table, the other Insights folds) are still loading at that moment
+  // and keep pushing it down, so one scroll could leave it off screen. It
+  // HOLDS instead: re-scroll on every page resize until the layout has been
+  // quiet for INS_CB_SCROLL_QUIET_MS_, capped at INS_CB_SCROLL_MAX_MS_, and
+  // let go at once when the user scrolls, clicks or types.
+  var INS_CB_SCROLL_QUIET_MS_ = 1200;
+  var INS_CB_SCROLL_MAX_MS_ = 6000;
   function insCbScrollIfPending_() {
     if (!INS_CB_SCROLL_) return;
     INS_CB_SCROLL_ = false;
     var fold = $('ins-cb-fold');
-    if (fold) { try { fold.scrollIntoView({ block: 'start' }); } catch (e) { /* old browsers */ } }
+    if (!fold) return;
+    var done = false, ro = null, quiet = null, cap = null;
+    var evs = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+    var stop = function () {
+      if (done) return;
+      done = true;
+      if (ro) ro.disconnect();
+      clearTimeout(quiet); clearTimeout(cap);
+      evs.forEach(function (ev) { window.removeEventListener(ev, stop, true); });
+    };
+    var go = function () {
+      if (done) return;
+      if (fold.offsetParent !== null) {
+        try { fold.scrollIntoView({ block: 'start' }); } catch (e) { /* old browsers */ }
+      }
+      clearTimeout(quiet);
+      quiet = setTimeout(stop, INS_CB_SCROLL_QUIET_MS_);
+    };
+    evs.forEach(function (ev) { window.addEventListener(ev, stop, true); });
+    if (typeof ResizeObserver === 'function') {
+      ro = new ResizeObserver(go);
+      ro.observe(document.body);
+    }
+    cap = setTimeout(stop, INS_CB_SCROLL_MAX_MS_);
+    go();
   }
 
   // G3: the #/report/outbound deep link (script-4's router) lands HERE, the

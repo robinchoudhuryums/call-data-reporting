@@ -9,10 +9,11 @@ const { assertSetValuesShape } = require('../harness/fakeSheet');
 // fallback COPY of Neon inbound_calls, and since the heatmap-sheet-fallback
 // work ALSO the data source the dashboard's abandon heatmap degrades to
 // during a Neon outage. Pinned here:
-//   (1) the schema contract the dashboard reads BY POSITION: 22 headers with
-//       Call Start / Is Internal at cols 16-17 and the journey-fallback
-//       columns at 18-22, and the export SQL fetching
-//       both fields in that order;
+//   (1) the schema contract the dashboard reads BY POSITION: 24 headers with
+//       Call Start / Is Internal at cols 16-17, the journey-fallback
+//       columns at 18-22 and the direct-line fallback's First Agent / First
+//       Ring Sec at 23-24 (FO-2), and the export SQL fetching
+//       each field in that order;
 //   (2) the coercion protections on Call Start (a time-shaped string, the
 //       K-AC class): '@' format over the current height AND the exact write
 //       range, with the grid pre-expanded so an append can never spill past
@@ -36,7 +37,7 @@ function fakeSheet(dataRows, opts) {
   opts = opts || {};
   const self = {
     _rows: [(opts.header || []).slice()].concat(dataRows.map(function (r) { return r.slice(); })),
-    _maxCols: opts.maxCols || 22,
+    _maxCols: opts.maxCols || 24,
     _maxRows: opts.maxRows || 200,
     _formats: [],
     _deleted: [],
@@ -122,7 +123,7 @@ function neonConnReturning(rows, capture) {
   };
 }
 
-// One Neon-shaped record (json_build_array order = the 22 header positions).
+// One Neon-shaped record (json_build_array order = the 24 header positions).
 function neonRow(o) {
   return [o.date, o.id || 'c1', '', '', '', o.disposition || 'abandoned',
           '', false, 0, 0, o.entryQueue || 'A_Q_CSR', '', '', 1, 0,
@@ -130,17 +131,19 @@ function neonRow(o) {
           o.internal === undefined ? false : o.internal,
           o.journey === undefined ? '' : o.journey,
           o.originAgent || '', o.originDept || '',
-          o.relatedId || '', o.relatedKind || ''];
+          o.relatedId || '', o.relatedKind || '',
+          o.firstAgent || '', o.firstRing === undefined ? null : o.firstRing];
 }
 
 const HEADERS = function () { return h.ctx.INBOUND_EXPORT_HEADERS; };
 
-test('schema contract: 22 headers, Call Start / Is Internal at 16-17, journey-fallback cols at 18-22, SQL fetches all', function () {
-  assert.equal(HEADERS().length, 22);
+test('schema contract: 24 headers, Call Start / Is Internal at 16-17, journey-fallback cols at 18-22, direct-line cols at 23-24, SQL fetches all', function () {
+  assert.equal(HEADERS().length, 24);
   assert.equal(HEADERS()[15], 'Call Start');
   assert.equal(HEADERS()[16], 'Is Internal');
   assert.deepEqual(JSON.parse(JSON.stringify(HEADERS().slice(17))),
-    ['Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind']);
+    ['Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind',
+     'First Agent', 'First Ring Sec']);
   assert.equal(h.ctx.INBOUND_EXPORT_CALL_START_COL, 16);
 
   const sheet = fakeSheet([], { header: HEADERS() });
@@ -154,6 +157,10 @@ test('schema contract: 22 headers, Call Start / Is Internal at 16-17, journey-fa
   assert.match(cap.sql, /CASE WHEN c\.call_date >= \?::date THEN COALESCE\(c\.journey,''\) ELSE '' END/);
   assert.match(cap.sql, /COALESCE\(c\.origin_agent,''\), COALESCE\(c\.origin_dept,''\)/);
   assert.match(cap.sql, /COALESCE\(c\.related_call_id,''\), COALESCE\(c\.related_call_kind,''\)/);
+  // FO-2: the ring is read through to_jsonb, so an export that runs before
+  // cdr-import has added the column reads NULL instead of failing the query.
+  assert.match(cap.sql, /COALESCE\(c\.first_agent,''\), \(to_jsonb\(c\) ->> 'first_ring_seconds'\)::int/);
+  assert.doesNotMatch(cap.sql, /c\.first_ring_seconds/);
   // Param order: 1 = the journey cutoff, 2-3 = the BETWEEN range. A swapped
   // order here silently exports every journey blank.
   assert.equal(cap.params[2], '2026-08-19');
@@ -194,6 +201,24 @@ test('journey cells write verbatim (JSON starts with [, not formula-leading -- n
   assert.equal(sheet._rows[1][19], 'Customer Success');
   assert.equal(sheet._rows[1][20], '999');
   assert.equal(sheet._rows[1][21], 'outbound');
+});
+
+test('FO-2: First Agent + First Ring Sec land at cols 23-24; an unknown ring is a BLANK cell, never 0', function () {
+  const sheet = fakeSheet([], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.ctx.getNeonConn = function () {
+    return neonConnReturning([
+      neonRow({ date: '2026-08-19', id: 'a', firstAgent: 'Anna Smith', firstRing: 5 }),
+      neonRow({ date: '2026-08-19', id: 'b', firstAgent: 'Anna Smith', firstRing: 0 }),
+      neonRow({ date: '2026-08-19', id: 'c' }),
+    ]);
+  };
+  h.call('exportInboundCalls', '2026-08-19', '2026-08-19');
+  assert.equal(sheet._rows[1][22], 'Anna Smith');
+  assert.equal(sheet._rows[1][23], 5);
+  assert.equal(sheet._rows[2][23], 0, 'a real 0 s ring stays 0');
+  assert.equal(sheet._rows[3][22], '');
+  assert.equal(sheet._rows[3][23], '', 'NULL ring -> blank');
 });
 
 test('export writes the two new columns; is_internal booleans normalize to TRUE/FALSE strings', function () {
@@ -240,13 +265,13 @@ test('pre-extension tab (15 cols) is widened and reheadered before any col-16 ra
   h.state.spreadsheet = fakeSS(sheet);
   h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: '2026-08-19' })]); };
   h.call('exportInboundCalls', '2026-08-19', '2026-08-19');   // would throw REP-10 without the widen
-  assert.equal(sheet._maxCols, 22);
+  assert.equal(sheet._maxCols, 24);
   assert.equal(sheet._rows[0][15], 'Call Start');
   assert.equal(sheet._rows[0][16], 'Is Internal');
 });
 
 test('prune: drops only the contiguous pre-cutoff head block; INBOUND_EXPORT_KEEP_DAYS honored', function () {
-  const mk = function (iso) { const r = new Array(22).fill(''); r[0] = iso; return r; };
+  const mk = function (iso) { const r = new Array(24).fill(''); r[0] = iso; return r; };
   // ic_isoDaysAgo_(2) is the cutoff when KEEP_DAYS=2; build one clearly-old
   // pair, then recent rows.
   const today = h.call('ic_isoToday_');

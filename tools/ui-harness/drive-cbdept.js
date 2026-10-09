@@ -139,7 +139,8 @@ function section() {
     .filter((c) => c.fn === 'getOutboundDirectCallbacks').map((c) => (c.args && c.args[0]) || null));
   const dlt = await page.evaluate(() => ({
     work: document.querySelectorAll('#ov-dl-work .ds-kpi').length,
-    after: document.querySelectorAll('#ov-dl-after .ds-kpi').length }));
+    after: document.querySelectorAll('#ov-dl-after .ds-kpi').length,
+    note: (function () { const n = document.getElementById('ov-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })() }));
   await page.click('#ov-dl-rep-btn');
   await page.waitForTimeout(1200);
   const drep = await page.evaluate(() => ({
@@ -150,6 +151,9 @@ function section() {
     dlc.length === 1 && dlc[0].department === '' && dlt.work === 7 && dlt.after === 7
       && drep.calls.length === 1 && drep.calls[0].department === '' && drep.eps === 1,
     JSON.stringify({ dlc: dlc, dlt: dlt, drep: drep }));
+  record('FO-2: a spreadsheet-served payload says so, how far the copy reaches, and from when it names the line rung',
+    /Neon was unreachable: these figures come from the Inbound Calls and Outbound Calls tabs \(through \d{4}-\d{2}-\d{2}\)/.test(dlt.note || '')
+      && /names the line each call rang only from \d{4}-\d{2}-\d{2}, so earlier calls are missing here/.test(dlt.note || ''), JSON.stringify(dlt.note));
 
   // Window switch: one fetch for the new window; reopening the same window: none.
   await page.click('#ov-cbdept-window [data-preset="last7"]');

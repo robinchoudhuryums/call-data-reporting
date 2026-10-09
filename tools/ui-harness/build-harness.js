@@ -437,11 +437,21 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           ownByPerson: byPerson, ownByTeam: own - byPerson,
           ownByPersonPct: pct(byPerson), ownByTeamPct: pct(own - byPerson) };
       };
-      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+      const from = (req && req.from) || '2026-07-21';
+      const meta = { from: from, to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || null, companyView: !(req && req.department),
           scopeDepts: (req && req.department) ? [req.department] : [], available: true,
-          callbackWindowDays: 3, workWindowPst: { start: '06:30:00', end: '15:00:00' }, cacheHit: false },
-        counts: { calls: 46, anonymous: 4, trackable: 42, missed: 38, abandoned: 8, voicemailBox: 6, unownedLines: 1 },
+          callbackWindowDays: 3, workWindowPst: { start: '06:30:00', end: '15:00:00' }, misdialSec: 8,
+          cacheHit: false };
+      // FO-2: the company view (the Overview) is served from the spreadsheet
+      // copy, whose First Agent column starts after the window does.
+      if (meta.companyView) {
+        meta.fallbackSource = 'sheet'; meta.fallbackThrough = meta.to;
+        const cov = new Date(from + 'T12:00:00Z'); cov.setUTCDate(cov.getUTCDate() + 3);
+        meta.fallbackCoverageStart = cov.toISOString().slice(0, 10);   // 3 days into the window
+      }
+      return { meta: meta,
+        counts: { calls: 49, anonymous: 4, trackable: 42, missed: 38, abandoned: 11, voicemailBox: 6, unownedLines: 1, misdials: 3 },
         all: sum(30, 14, 9, 3, 2, 1, 10, 6, 5400),
         work: sum(20, 11, 7, 2, 2, 1, 4, 4, 3600),
         after: sum(10, 3, 2, 1, 0, 0, 6, 2, 50400) };

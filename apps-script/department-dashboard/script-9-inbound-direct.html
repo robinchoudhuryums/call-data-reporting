@@ -2341,7 +2341,8 @@
     if (meta.available === false) {
       if (content) content.style.display = 'none';
       if (head) head.textContent = 'unavailable';
-      obDlState_(prefix, 'Direct-line data is unavailable right now (the per-call store, Neon, could not be read).');
+      obDlState_(prefix, 'Direct-line data is unavailable right now: the per-call store (Neon) could not be read, '
+        + 'and the spreadsheet copy could not stand in.');
       return;
     }
     const c = data.counts || {};
@@ -2364,7 +2365,27 @@
     if (c.anonymous) bits.push(fmtNumber(c.anonymous) + ' anonymous (untrackable)');
     if (c.voicemailBox) bits.push(fmtNumber(c.voicemailBox) + ' to the Sales voicemail box');
     if (c.unownedLines) bits.push(fmtNumber(c.unownedLines) + ' to lines on no roster');
+    // FO-1: misdials are in the call total above, out of every rate below.
+    if (c.misdials) {
+      bits.push(fmtNumber(c.misdials) + ' misdial' + (c.misdials === 1 ? '' : 's') + ' (rang under '
+        + (meta.misdialSec != null ? meta.misdialSec : 8) + ' s, left out of the rates)');
+    }
     const cnt = $(prefix + '-counts'); if (cnt) cnt.textContent = bits.join(' · ') + '.';
+    const note = $(prefix + '-note');
+    if (note) {
+      const nb = [];
+      if (meta.fallbackSource === 'sheet') {
+        // FO-2: the spreadsheet copy answered while Neon was unreachable.
+        nb.push('Neon was unreachable: these figures come from the Inbound Calls and Outbound Calls tabs'
+          + (meta.fallbackThrough ? ' (through ' + meta.fallbackThrough + ')' : '') + '.');
+        if (meta.fallbackCoverageStart && meta.fallbackCoverageStart > meta.from) {
+          nb.push('The copy names the line each call rang only from ' + meta.fallbackCoverageStart
+            + ', so earlier calls are missing here.');
+        }
+      }
+      note.style.display = nb.length ? '' : 'none';
+      note.textContent = nb.join(' ');
+    }
     const w = $(prefix + '-work'); if (w) w.innerHTML = outboundDirectTilesHtml_(data.work);
     const a = $(prefix + '-after'); if (a) a.innerHTML = outboundDirectTilesHtml_(data.after);
   }
@@ -2394,9 +2415,14 @@
   function outboundDirectRepeatsHtml_(resp) {
     const meta = (resp && resp.meta) || {};
     if (meta.available === false) {
-      return '<div class="ds-note">Call detail unavailable — the per-call store (Neon) could not be reached.</div>';
+      return '<div class="ds-note">Call detail unavailable — the per-call store (Neon) could not be reached, '
+        + 'and the spreadsheet copy could not stand in.</div>';
     }
     const eps = (resp && resp.episodes) || [];
+    const fbNote = meta.fallbackSource === 'sheet'
+      ? '<div class="ds-note">From the Inbound Calls and Outbound Calls tabs (Neon was unreachable)'
+        + (meta.fallbackThrough ? ', through ' + escapeHtml(String(meta.fallbackThrough)) : '') + '.</div>'
+      : '';
     const blocks = eps.map(function (ep) {
       const chips = ['<span class="ds-chip ds-chip--bad">Not called back</span>'];
       if (ep.voicemail) chips.push('<span class="ds-chip ds-chip--neutral">Voicemail box</span>');
@@ -2423,7 +2449,7 @@
     return '<div class="heat-drill-head"><strong>Repeat unreturned callers</strong> · '
       + eps.length + ' caller episode' + (eps.length === 1 ? '' : 's') + ' with 2+ unanswered attempts and no callback'
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
-      + '</div><div class="heat-drill-list">' + blocks + '</div>';
+      + '</div>' + fbNote + '<div class="heat-drill-list">' + blocks + '</div>';
   }
 
   // The repeat drill: the UI-5 pattern (its own per-request token from the

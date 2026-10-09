@@ -350,6 +350,7 @@
                   <div id="ov-dl-state" class="ds-note" style="display:none;"></div>
                   <div id="ov-dl-content" style="display:none;">
                     <p class="al-hint" id="ov-dl-counts"></p>
+                    <div id="ov-dl-note" class="ds-note" style="display:none;"></div>
                     <div class="al-section-subtitle">Work hours</div>
                     <div id="ov-dl-work" class="pr-kpi-row"></div>
                     <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
@@ -361,7 +362,9 @@
                       team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
                       Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
                       them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
-                      of the caller&rsquo;s FIRST attempt.
+                      of the caller&rsquo;s FIRST attempt. A call that rang the person for under 8 seconds
+                      is counted as a misdial and left out of the rates (a call with no recorded ring
+                      length stays in).
                     </p>
                     <div class="esc-resolve-actions">
                       <button class="btn btn-secondary" id="ov-dl-rep-btn" type="button">List repeat unreturned callers</button>
@@ -1316,6 +1319,7 @@
                   <div id="ins-dl-state" class="ds-note" style="display:none;"></div>
                   <div id="ins-dl-content" style="display:none;">
                     <p class="al-hint" id="ins-dl-counts"></p>
+                    <div id="ins-dl-note" class="ds-note" style="display:none;"></div>
                     <div class="al-section-subtitle">Work hours</div>
                     <div id="ins-dl-work" class="pr-kpi-row"></div>
                     <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
@@ -1327,7 +1331,9 @@
                       team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
                       Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
                       them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
-                      of the caller&rsquo;s FIRST attempt.
+                      of the caller&rsquo;s FIRST attempt. A call that rang the person for under 8 seconds
+                      is counted as a misdial and left out of the rates (a call with no recorded ring
+                      length stays in).
                     </p>
                     <div class="esc-resolve-actions">
                       <button class="btn btn-secondary" id="ins-dl-rep-btn" type="button">List repeat unreturned callers</button>

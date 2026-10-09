@@ -2184,8 +2184,12 @@ stay pinned by INV-39, INV-53 and INV-06.
   stale-drill counter, UI-5), `outboundDownloadCsv_(data)` and
   `outboundSendEmailFor_` (script-9). **G3 retired the modal**: the legacy
   `#/report/outbound` link lands HERE (`insCbDeepLink_`: switch to Outbound,
-  fold open + persisted, one-shot scroll after the first paint; a plain My
-  Department landing while the switch is hidden). It shows only on the Outbound or Both
+  fold open + persisted, then a scroll armed by the first paint that HOLDS
+  -- re-scrolling on page resizes until the layout has been quiet
+  `INS_CB_SCROLL_QUIET_MS_`, capped at `INS_CB_SCROLL_MAX_MS_`, released by
+  any wheel / touch / pointer / key input (FO-3: the sections above it are
+  still loading at first paint, and a single scroll could leave the fold off
+  screen); a plain My Department landing while the switch is hidden). It shows only on the Outbound or Both
   direction (`obEffectiveDir_`, i.e. `obAllowed_`: admin-only until 6c, hidden
   in View-as) and is LAZY: nothing is fetched until the fold is open, one fetch
   per dept + window, a reopen repaints from the held payload (the chart is

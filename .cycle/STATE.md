@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — CE follow-ons IMPLEMENTED (block 244).** Owner rulings: misdial = a ring under 8 s (out of the rates, counted; unknown ring stays in); add the First Agent export column + a sheet backup; no Overview per-dept direct table for now.
+  - FO-1: cdr-import captures `inbound_calls.first_ring_seconds`; the direct SQL flags misdials via `to_jsonb` (works before the column exists). outboundDirect:v2.
+  - FO-2: Inbound Calls export cols 23-24 (First Agent / First Ring Sec); both direct endpoints fall back to the export tabs (parity-pinned twin of the SQL), uncached, disclosed.
+  - FO-3: the #/report/outbound deep-link scroll holds until the page settles (the G3 flake). FO-4: agent tie order COLLATE "C" NULLS FIRST.
+  - 2290 tests; every ci:ui stage green; Postgres 16 parity; eight bites + a probabilistic UI bite.
+
+  **Owner-side:** deploy cdr-import, then cdr-report + the one-time `exportInboundCalls` re-export (#49), then the dashboard; walk S60. Open: managers seeing call ids at 6c.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
 - **2026-10-09 — CE-3 IMPLEMENTED (block 243): direct-line callbacks.**
   - Unanswered external calls to a PERSON's line, counted as episodes; credit goes to the line owner's team, split by the person / by their team, another team kept apart; work hours and after hours shown separately; `Sales Voicemails` -> Sales (the only shared line, owner).
   - New `getOutboundDirectCallbacks` (cached `outboundDirect:v1`) + `getOutboundDirectRepeats` (2+ attempts in 3 days, nobody called back). "Direct lines" sub-folds in the Insights Callbacks fold and the Overview's Callbacks by department.

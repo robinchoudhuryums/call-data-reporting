@@ -457,7 +457,30 @@ test('CE-3: the counts split missed / abandoned, anonymous, the voicemail box an
     { disp: 'missed', anon: false, who: 'Sales Voicemails', n: 5 },
     { disp: 'abandoned', anon: false, who: 'Stranger', n: 1 },
   ], h.ctx.obDirectHomesOf_({ Cara: ['CSR'] }))));
-  assert.deepEqual(c, { calls: 22, anonymous: 2, trackable: 20, missed: 17, abandoned: 5, voicemailBox: 5, unownedLines: 1 });
+  assert.deepEqual(c, { calls: 22, anonymous: 2, trackable: 20, missed: 17, abandoned: 5, voicemailBox: 5, unownedLines: 1, misdials: 0 });
+});
+
+test('FO-1: a ring under 8 s is a misdial -- counted, not trackable; an unknown ring is not a misdial', function () {
+  assert.equal(h.ctx.obDirectIsMisdial_(7), true);
+  assert.equal(h.ctx.obDirectIsMisdial_('0'), true);
+  assert.equal(h.ctx.obDirectIsMisdial_(8), false, 'the boundary is strict: 8 s is a real ring');
+  [null, undefined, '', ' ', 'x'].forEach(function (v) {
+    assert.equal(h.ctx.obDirectIsMisdial_(v), false, 'unknown stays in the rate: ' + JSON.stringify(v));
+  });
+  const c = JSON.parse(JSON.stringify(h.ctx.obDirectCounts_([
+    { disp: 'missed', anon: false, who: 'Cara', mis: false, n: 10 },
+    { disp: 'abandoned', anon: false, who: 'Cara', mis: true, n: 4 },
+    { disp: 'abandoned', anon: true, who: 'Cara', mis: true, n: 1 },
+  ], h.ctx.obDirectHomesOf_({ Cara: ['CSR'] }))));
+  assert.deepEqual([c.calls, c.misdials, c.anonymous, c.trackable], [15, 5, 1, 10],
+    'misdials stay in the call total, leave the trackable population');
+});
+
+test('FO-2: obShiftHms_ adds hours and wraps at midnight like the SQL interval', function () {
+  assert.equal(h.ctx.obShiftHms_('10:00:00', 2), '12:00:00');
+  assert.equal(h.ctx.obShiftHms_('23:30:05', 2), '01:30:05');
+  assert.equal(h.ctx.obShiftHms_('9:05:00', 2), '11:05:00');
+  assert.equal(h.ctx.obShiftHms_('', 2), '');
 });
 
 test('CE-3: a dept view’s line owners are its (and its sub-queues’) roster plus its shared lines', function () {

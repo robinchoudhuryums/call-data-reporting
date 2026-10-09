@@ -614,7 +614,7 @@ the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
 number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
 for -- are a SEPARATE, lazy, separately cached endpoint
-(`getOutboundDirectCallbacks`, `outboundDirect:v1`: dept + window + freshness
+(`getOutboundDirectCallbacks`, `outboundDirect:v2`: dept + window + freshness
 tag + roster hash) so the Callbacks figures never pay for it. Population:
 external calls whose first leg rang a PERSON (no entry queue, `first_agent`
 set) and that nobody answered, `missed` (rang out / that person's voicemail --
@@ -630,8 +630,23 @@ family queue) is "got through", and own-team callbacks split into "by the
 person whose line was tried" and "by their team". `getOutboundDirectRepeats`
 is the repeat-unreturned-callers list (owner ruling: 2+ unanswered attempts
 in the window, no callback): first / last attempt, the lines tried, the team,
-voicemail, CE-2's late tags, every attempt's detail. Neon-only: no export tab
-carries `first_agent` for a fallback, so an outage reads as unavailable. Cached
+voicemail, CE-2's late tags, every attempt's detail. **Misdials (FO-1, owner
+2026-10-09):** a call whose ring to the line owner lasted under
+`OUTBOUND_BRIEF_RING_SEC_` (8 s, strict -- the outbound brief-ring line) is
+COUNTED (`counts.misdials`) and kept OUT of the episodes and every rate. The
+ring is `inbound_calls.first_ring_seconds`, captured by cdr-import
+(`icFirstRingSec_`: start -> connect when the leg was answered, start -> stop
+otherwise -- the outbound `ring_seconds` rule); rows captured before it read
+NULL = unknown and stay in. Every reader takes the column through
+`to_jsonb(c) ->> 'first_ring_seconds'`, so a dashboard or export deployed
+before cdr-import has added it reads NULL instead of failing (pinned).
+**Sheet fallback (FO-2):** the Inbound Calls export carries First Agent / First
+Ring Sec at cols 23-24, and when Neon is unreachable both endpoints read the
+two export tabs through `obDirectEventsFromGrids_`, the clause-by-clause twin
+of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
+disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
+whose rows name the line rung: rows exported before FO-2 are blank there and
+would read as "no direct calls"). Cached
 `outboundReport:v8` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two

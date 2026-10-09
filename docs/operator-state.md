@@ -1709,12 +1709,29 @@ When something looks wrong, before assuming a code bug, check:
     rows keep a blank cell and the drill serves the entry→final summary,
     disclosed in the overlay caption. Sized against the whole-spreadsheet
     10M-cell ceiling; raise the window only with that number in view.
-    **Deploy order matters on a fresh/empty tab:** push the 22-col export
+    **Deploy order matters on a fresh/empty tab:** push the 24-col export
     BEFORE installing the trigger or running the seed, or the first run
-    writes 17-col rows whose journey cells stay blank until a manual
-    re-export of those dates. Pinned by
+    writes narrower rows whose new cells stay blank until a manual
+    re-export of those dates.
+    **The tab also carries the DIRECT-LINE callback figures' fallback (cols
+    23–24: First Agent / First Ring Sec, FO-2).** When Neon is unreachable,
+    `getOutboundDirectCallbacks` / `getOutboundDirectRepeats` read this tab
+    and the Outbound Calls tab (#50). **One-time after deploying FO-1/FO-2,
+    in this order:** (1) push cdr-import -- its next capture adds
+    `inbound_calls.first_ring_seconds` and fills it for the dates it writes
+    (older rows stay NULL = "ring unknown", which the misdial filter keeps in
+    the rate; a date still inside the ~14-day `Call_Legs_*` window gains it
+    with a Manual Export / force re-import, #56); (2) push cdr-report and run
+    `exportInboundCalls('<earliest-date-you-want-covered>', '<today-ISO>')`
+    once from the editor, so existing rows gain the two cells -- until then
+    the fallback names the line rung only from the first re-exported date, and
+    says so (`fallbackCoverageStart`); (3) push the dashboard. Every reader
+    takes the ring through `to_jsonb(c) ->> 'first_ring_seconds'`, so a
+    different order degrades to "ring unknown" rather than failing. The two
+    columns are ~+9% on this tab's width; team-tools reads the tab by header
+    name (#68), so appending them changes nothing there. Pinned by
     `tests/unit/inbound-export.test.js` + `tests/unit/heatmap-fallback.test.js`
-    + `tests/unit/journey-fallback.test.js`.
+    + `tests/unit/journey-fallback.test.js` + `tests/unit/outbound-fallback.test.js`.
 
 50. **Outbound Calls tab export trigger — the keystone of the Neon-outage
     story.** `outbound_calls` had no sheet primary, so an outage took THREE

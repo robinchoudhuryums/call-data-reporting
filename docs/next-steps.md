@@ -27,7 +27,7 @@ batch, items are independent unless marked.
 | ∥ | **CDR Import tools** (owner asks 2026-10-05) — SHIPPED | transfer filter Phase 0 (read-only probe + its dialog) · both CDR Tools menus grouped into submenus · AF-1 abandoned-filter dialog + on-tab check | cdr-import + cdr-report (menus) | MERGED #354, #355; cdr-import DEPLOYED 2026-10-05. Next: walk S55, then retire the fourteen per-queue items (AF-1 step 3); transfer filter Phase 1 once the owner confirms the Phase 0 shapes |
 | ∥ | **Agent + outbound views** (owner plan 2026-10-07) — IMPLEMENTED (blocks 231-236) | A ans/day + Agent Day tile rows · B inline agent panel · C outbound source probe (Operator State #74) · D Inbound \| Outbound \| Both + Team Outbound · E Overview tile outbound line + Insights Outbound fold · F prior-period chips on the outbound figures | dashboard (DEPLOY pending; walk S56-S58) | done; D-F admin-only until the 6c release (#63) |
 | ∥ | **Outbound report → My Department** (owner 2026-10-08: managers get the My Department version, not the modal) — G1, G2, G3 IMPLEMENTED (blocks 237-240) | G1 the Insights Callbacks fold (the modal's callback analysis, shared renderers, lazy) · G2 Callbacks by department → an admin-only, lazy Overview section; S48 rewritten · G3 retire the modal: `#/report/outbound` lands on My Department → Outbound with the fold open, the 6c pin re-pointed, drivers off the modal list, S46 + #63 rewritten | dashboard | done (walk S59, S48, S46's pre-release half); the modal is gone; the 6c release is now the gate + the switch + the two Insights folds (#63) |
-| ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1, CE-2, CE-3 IMPLEMENTED (blocks 241-243) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard | done (deploy, walk S48, S59, S60); open: a misdial filter for direct lines, managers seeing call ids at 6c |
+| ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1, CE-2, CE-3 + follow-ons IMPLEMENTED (blocks 241-244) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard + cdr-import + cdr-report (follow-ons) | done (deploy cdr-import, then cdr-report + re-export, then the dashboard; walk S48, S59, S60); open: managers seeing call ids at 6c |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 
@@ -615,10 +615,17 @@ deploy.
   figures.
 - **Repeat-unreturned-callers list:** episodes with 2+ attempts ending
   `none`, with attempts, lines tried, first/last attempt and call ids.
-- **Open question (still open after CE-3):** a missed direct call stores no
-  `wait_seconds`, so CE-3 filters no misdials. If they need filtering, use
-  each leg's ring length from the journey (`secs`).
-- **As built:** lazy and separately cached (`outboundDirect:v1`), Neon-only,
+- **Misdials (owner, 2026-10-09 -- block 244):** a ring to the line owner
+  under 8 s (the outbound brief-ring line) is counted and left out of the
+  rates; a call with no ring length stays in. The ring is captured at import
+  (`inbound_calls.first_ring_seconds`), so rows captured before the deploy
+  stay in until their date is re-imported.
+- **Sheet backup (owner, 2026-10-09 -- block 244):** the Inbound Calls export
+  gained First Agent / First Ring Sec, and the direct-line figures fall back
+  to the two export tabs when Neon is unreachable.
+- **Not now (owner, 2026-10-09):** a per-department direct-line table on the
+  Overview.
+- **As built:** lazy and separately cached (`outboundDirect:v2`), Neon first,
   after hours = outside 06:30-15:00 PST or a weekend / company holiday, own-team
   callbacks split "by the person" (a line the caller tried) / "by their team";
   the block sits in the Insights Callbacks fold AND the Overview's Callbacks

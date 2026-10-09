@@ -247,6 +247,22 @@ var IC_JOURNEY_MAX_EVENTS = 40;
 var IC_JOURNEY_NAME_MAX = 80;
 
 /**
+ * PURE (FO-1). How long one leg RANG, in whole seconds: start to connect when
+ * the leg was ANSWERED (talk > 0 on an 'Answered' leg -- the disposition's
+ * gate), start to stop otherwise (the caller hung up, or the ring timed out).
+ * The same rule as outboundCalls.js's ring_seconds: CONNECTED is not trusted
+ * on an unanswered leg. Null when a timestamp does not parse.
+ */
+function icFirstRingSec_(leg) {
+  var startMs = icParseTs_(leg[IC_COL.START]);
+  var answered = icTimeToSec_(leg[IC_COL.TALK]) > 0
+    && String(leg[IC_COL.ANSWERED] == null ? '' : leg[IC_COL.ANSWERED]).trim() === 'Answered';
+  var edgeMs = answered ? icParseTs_(leg[IC_COL.CONNECTED]) : icParseTs_(leg[IC_COL.STOP]);
+  return (!isNaN(startMs) && !isNaN(edgeMs))
+    ? Math.max(0, Math.round((edgeMs - startMs) / 1000)) : null;
+}
+
+/**
  * PURE. Ordered leg-by-leg journey for one call (legs pre-sorted by
  * start). Each event: { t: 'HH:MM:SS', name, kind: queue|answer|leg,
  * secs?, talk?, hold?, missed?, abandoned? }. 'leg' covers both IVR
@@ -649,6 +665,7 @@ function buildInboundCallRecords_(rawRows) {
     // direct-DID line's dominant first_agent names the line's owner.
     // Phone-shaped callee names are skipped (PHI: never store a raw number).
     var firstAgent = null;
+    var firstRingSec = null;
     for (var fa = 0; fa < legs.length; fa++) {
       var facn = String(legs[fa][IC_COL.CALLEE_NAME] == null ? '' : legs[fa][IC_COL.CALLEE_NAME]).trim();
       if (!facn || facn.toUpperCase() === 'N/A') continue;
@@ -664,6 +681,7 @@ function buildInboundCallRecords_(rawRows) {
       var fad = String(legs[fa][IC_COL.DEPARTMENTS] == null ? '' : legs[fa][IC_COL.DEPARTMENTS]).trim();
       if (!fad || fad.toUpperCase() === 'N/A') continue;
       firstAgent = facn.slice(0, IC_JOURNEY_NAME_MAX);
+      firstRingSec = icFirstRingSec_(legs[fa]);
       break;
     }
 
@@ -705,6 +723,9 @@ function buildInboundCallRecords_(rawRows) {
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
       firstAgent:      firstAgent,
+      // FO-1: how long THAT person's phone rang -- the direct-line callback
+      // figures' misdial filter (OutboundReport.gs). NULL when unknown.
+      firstRingSec:    firstRingSec,
       // ORIGINATOR (internal-origin records only). `firstAgent` derives from
       // the CALLEE name across the group's legs, and an internal-origin group's
       // only callee IS the queue -- which icIsQueueName_ skips -- so these
@@ -1236,6 +1257,9 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // row written before Step 4 linked an inbound call, so the read side
       // must COALESCE rather than treat NULL as unknown.
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_kind text');
+      // FO-1: the first person's ring length (icFirstRingSec_). NULL on rows
+      // captured before it, which the reader keeps in the rate.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_ring_seconds integer');
       ddl.close();
       conn.setAutoCommit(false);   // P-9: the transaction opens AFTER the DDL
 
@@ -1258,7 +1282,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept, related_call_kind';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept, related_call_kind, first_ring_seconds';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -1267,7 +1291,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, related_call_kind=EXCLUDED.related_call_kind, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, related_call_kind=EXCLUDED.related_call_kind, first_ring_seconds=EXCLUDED.first_ring_seconds, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -1290,7 +1314,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
           + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId)
           + ',' + icSqlStr_(r.originAgent) + ',' + icSqlStr_(r.originDept)
-          + ',' + icSqlStr_(r.relatedCallKind) + ')';
+          + ',' + icSqlStr_(r.relatedCallKind) + ',' + icSqlInt_(r.firstRingSec) + ')';
       });
       var buildMs = Date.now() - tBuild;
 

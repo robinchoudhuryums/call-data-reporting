@@ -354,7 +354,8 @@ tests/
                               sheet, which is the PRIMARY there),
                               inbound-export (the "Inbound Calls" tab's
                               cols 16-17 + coercion guards feeding that
-                              fallback), freshness-weekend (the OPS-7
+                              fallback, and FO-2's First Agent / First Ring
+                              Sec at 23-24, the ring read via to_jsonb), freshness-weekend (the OPS-7
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
@@ -563,7 +564,10 @@ tests/
                               the one episode engine -- the event rows'
                               sheet-side mirror, company view included --
                               the never-cache rule and all three failure
-                              branches),
+                              branches; FO-2: the direct-line figures'
+                              Neon-vs-sheet parity, misdials out, the
+                              repeat list's detail from the tab, a tab not
+                              yet widened staying unavailable),
                               outbound-episodes (CE-1: the contact-EPISODE
                               engine both sources share -- attempts join an
                               open episode within the window of the last

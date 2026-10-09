@@ -46,7 +46,13 @@ var INBOUND_EXPORT_HEADERS = [
   // INBOUND_EXPORT_JOURNEY_DAYS and blank beyond -- the 400-day row
   // retention stays cheap while the path fallback covers what the sheet
   // can afford. The origin/related columns are small and always exported.
-  'Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind'
+  'Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind',
+  // Cols 23-24 (FO-2): the direct-line callback figures' sheet fallback
+  // (OutboundReport.gs::obDirectSheetFallback_ reads them BY POSITION): the
+  // first person the call rang (inbound_calls.first_agent, roster spelling)
+  // and how long that ring lasted (first_ring_seconds, the misdial filter;
+  // blank = unknown, never 0).
+  'First Agent', 'First Ring Sec'
 ];
 var INBOUND_EXPORT_CALL_START_COL = 16;   // plain-texted every run (see above)
 var INBOUND_EXPORT_SEED_DAYS = 30;   // first-run lookback when the tab is empty
@@ -198,7 +204,12 @@ function exportInboundCalls(fromIso, toIso) {
       // the small origin/related columns always.
       "CASE WHEN c.call_date >= ?::date THEN COALESCE(c.journey,'') ELSE '' END, " +
       "COALESCE(c.origin_agent,''), COALESCE(c.origin_dept,''), " +
-      "COALESCE(c.related_call_id,''), COALESCE(c.related_call_kind,'')" +
+      "COALESCE(c.related_call_id,''), COALESCE(c.related_call_kind,''), " +
+      // first_ring_seconds is read through to_jsonb so this export keeps
+      // working when it runs before cdr-import has added the column (a
+      // missing key reads NULL; a direct column reference would fail the
+      // whole query). Do not "simplify" it to c.first_ring_seconds.
+      "COALESCE(c.first_agent,''), (to_jsonb(c) ->> 'first_ring_seconds')::int" +
       ") ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
       "FROM inbound_calls c " +
       "LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +

@@ -227,6 +227,7 @@ async function setDir(page, dir) {
     counts: document.getElementById('ins-dl-counts').textContent,
     work: Array.from(document.querySelectorAll('#ins-dl-work .ds-kpi')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
     after: document.querySelectorAll('#ins-dl-after .ds-kpi').length,
+    note: (function () { const n = document.getElementById('ins-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })(),
   }));
   record('CE-3: opening it fetches the direct-line figures ONCE, for the fold’s window and dept',
     dlc.length === 1 && dlc[0].from === insMeta.from && dlc[0].to === insMeta.to && dlc[0].department === insMeta.department,
@@ -237,6 +238,9 @@ async function setDir(page, dir) {
       && /46\.7% called back by the team · 30 contact episodes · 10 not called back/.test(dl.head)
       && /6 to the Sales voicemail box/.test(dl.counts) && /38 rang out or went to voicemail/.test(dl.counts),
     JSON.stringify(dl));
+  record('FO-1: misdials are counted in the context line and named as left out of the rates; a Neon payload shows no copy note',
+    /3 misdials \(rang under 8 s, left out of the rates\)/.test(dl.counts) && /49 unanswered calls/.test(dl.counts)
+      && dl.note === null, JSON.stringify({ counts: dl.counts, note: dl.note }));
   await page.click('#ins-dl-rep-btn');
   await page.waitForTimeout(1200);
   const rep = await calls(page, 'getOutboundDirectRepeats');
@@ -319,10 +323,13 @@ async function setDir(page, dir) {
       return { page: document.body.getAttribute('data-page'), dir: document.body.getAttribute('data-dir'),
         shown: !!f && getComputedStyle(f).display !== 'none', open: !!f && f.open,
         tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
-        inView: !!r && r.top < window.innerHeight && r.bottom > 0,
+        // At the TOP of the screen, not merely visible: the scroll holds while
+        // the sections above it finish loading (FO-3).
+        inView: !!r && r.top > -2 && r.top < 120,
+        top: r ? Math.round(r.top) : null,
         modal: !!document.getElementById('outbound-modal') };
     });
-    record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and scrolled into view',
+    record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and held at the top of the screen',
       dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 7 && dl.inView && !dl.modal,
       JSON.stringify(dl));
     await pd.close();

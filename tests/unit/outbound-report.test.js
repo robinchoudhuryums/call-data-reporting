@@ -3183,7 +3183,15 @@ test('CE-3: getOutboundDirectCallbacks -- the dept’s line owners only, work / 
   (sql.match(/json_build_array\([^)]*\)/g) || []).forEach(function (arr) {
     assert.ok(!/\bh\b|caller_hash|callee_hash/.test(arr), 'no hash in ' + arr);
   });
-  assert.deepEqual(out.counts, { calls: 6, anonymous: 1, trackable: 5, missed: 5, abandoned: 1, voicemailBox: 0, unownedLines: 0 });
+  assert.deepEqual(out.counts, { calls: 6, anonymous: 1, trackable: 5, missed: 5, abandoned: 1, voicemailBox: 0, unownedLines: 0, misdials: 0 });
+  // FO-1: the misdial flag -- read through to_jsonb (works before the column
+  // exists), kept out of the caller keys and the attempts, still counted.
+  assert.match(sql, /COALESCE\(\(to_jsonb\(c\) ->> 'first_ring_seconds'\)::int < 8, FALSE\) AS mis/);
+  assert.doesNotMatch(sql, /c\.first_ring_seconds/);
+  assert.match(sql, /SELECT DISTINCT h FROM dl_ab WHERE h IS NOT NULL AND NOT mis/);
+  assert.match(sql, /JOIN dl_k k ON k\.h = a\.h WHERE NOT a\.mis\)/);
+  assert.match(sql, /SELECT disp, \(h IS NULL\) AS anon, who, mis, count\(\*\) AS n FROM dl_ab GROUP BY 1, 2, 3, 4/);
+  assert.equal(out.meta.misdialSec, 8);
   assert.deepEqual([out.all.episodes, out.all.own, out.all.ownByPerson, out.all.none], [3, 1, 1, 2]);
   assert.deepEqual([out.work.episodes, out.after.episodes], [2, 1], 'k2 first tried at 20:00 PST');
   assert.equal(out.meta.cacheHit, false);

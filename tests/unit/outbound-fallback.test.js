@@ -472,3 +472,124 @@ test('Batch D: the report and the view read ONE SQL definition and ONE sheet agg
   const sel = src.slice(src.indexOf('function outboundAgentsSel_('), src.indexOf('function computeOutboundReport_('));
   assert.match(sel, /'count\(DISTINCT call_date\) AS ob_days '/);
 });
+
+// ── FO-2: the direct-line figures' sheet fallback ──────────────────────────
+// The same parity contract as the report above: ONE fixture served as the
+// SQL's event blob (hand-derived below with obDirectEventsSql_'s own clauses,
+// independently of the sheet mirror) and as the two export tabs must give the
+// SAME figures. The Inbound Calls tab is 24 columns since FO-2 (23 = First
+// Agent, 24 = First Ring Sec).
+let dlSeq = 0;
+function dlRow(date, hash, disp, firstAgent, ring, callStart, opts) {
+  opts = opts || {};
+  const r = new Array(24).fill('');
+  r[0] = date; r[1] = opts.id || ('dl' + (++dlSeq)); r[3] = hash; r[4] = opts.dialIn || '';
+  r[5] = disp; r[6] = disp === 'abandoned' ? 'direct' : '';
+  r[7] = 'FALSE'; r[9] = opts.wait == null ? '' : String(opts.wait);
+  r[10] = opts.entryQueue || ''; r[15] = callStart;
+  r[16] = opts.internal ? 'TRUE' : 'FALSE';
+  r[22] = firstAgent; r[23] = ring == null ? '' : String(ring);
+  return r;
+}
+const DL_IB = [
+  dlRow('2026-08-10', 'hashP', 'missed', 'Ann', 20, '08:00:00', { id: 'd1' }),
+  dlRow('2026-08-10', 'hashP', 'abandoned', 'Ann', 3, '08:30:00', { id: 'd2' }),       // misdial
+  dlRow('2026-08-10', 'hashQ', 'missed', 'Bob', null, '09:00:00', { id: 'd3' }),       // ring unknown: kept
+  dlRow('2026-08-11', 'hashQ', 'missed', 'Bob', 12, '19:00:00', { id: 'd4' }),         // after hours
+  dlRow('2026-08-11', '', 'missed', 'Ann', 30, '10:00:00', { id: 'd5' }),              // anonymous
+  dlRow('2026-08-11', 'hashR', 'missed', 'Cara', 20, '10:00:00', { id: 'd6' }),        // no roster: company view only
+  dlRow('2026-08-10', 'hashS', 'abandoned', 'Ann', 7, '10:00:00', { id: 'd7' }),       // misdial (7 < 8)
+  dlRow('2026-08-10', 'hashT', 'missed', 'Ann', 20, '10:00:00', { id: 'd8', internal: true }),
+  dlRow('2026-08-10', 'hashP', 'abandoned', 'Ann', 20, '10:00:00', { id: 'd9', entryQueue: 'A_Q_CSR' }),
+  dlRow('2026-08-11', 'hashQ', 'answered', 'Bob', 4, '11:00:00', { id: 'd10' }),
+  dlRow('2026-08-10', 'hashU', 'missed', 'Bob', 25, '10:00:00', { id: 'd11', dialIn: '19725550100', wait: 0 }),
+  dlRow('2026-08-11', 'hashU', 'abandoned', 'Bob', 8, '10:30:00', { id: 'd12', wait: 9 }),   // 8 s: a real ring
+];
+const DL_OB = [
+  ['2026-08-10', 'o1', 'hashP', 'Ann', '101', 'CSR', 'TRUE', 60, 5, 1, '09:00:00', ''],
+  ['2026-08-10', 'o2', 'hashS', 'Bob', '102', 'CSR', 'TRUE', 60, 5, 1, '11:00:00', ''],   // a misdialer: never keyed
+];
+
+function dlNeonBlob(names) {
+  const endIso = '2026-08-14';   // TO + OUTBOUND_CALLBACK_WINDOW_DAYS
+  const ab = DL_IB.filter((r) => r[0] >= FROM && r[0] <= TO && (r[5] === 'missed' || r[5] === 'abandoned')
+    && r[16] !== 'TRUE' && !String(r[10]).trim() && String(r[22]).trim()
+    && (!names || names.indexOf(String(r[22]).trim()) !== -1));
+  const mis = (r) => r[23] !== '' && Number(r[23]) < 8;
+  const counts = {};
+  ab.forEach((r) => {
+    const key = [r[5], !r[3], r[22], mis(r)].join('|');
+    const c = counts[key] || (counts[key] = { disp: r[5], anon: !r[3], who: r[22], mis: mis(r), n: 0 });
+    c.n++;
+  });
+  const hashes = Array.from(new Set(ab.filter((r) => r[3] && !mis(r)).map((r) => r[3]))).sort();
+  const k = {}; hashes.forEach((x, i) => { k[x] = i + 1; });
+  const byKey = (a, b) => (a[0] - b[0]) || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0)
+    || (String(a[2]) < String(b[2]) ? -1 : String(a[2]) > String(b[2]) ? 1 : 0);
+  return {
+    dlCounts: Object.keys(counts).map((x) => counts[x]),
+    dlAb: ab.filter((r) => k[r[3]] && !mis(r)).map((r) => [k[r[3]], r[0], r[15] || null, r[1], r[22]]).sort(byKey),
+    dlOb: DL_OB.filter((o) => k[o[2]] && o[0] >= FROM && o[0] <= endIso)
+      .map((o) => [k[o[2]], o[0], o[10] || null, o[1], o[3], o[6] === 'TRUE']).sort(byKey),
+    dlAns: DL_IB.filter((r) => k[r[3]] && r[5] === 'answered' && r[16] !== 'TRUE' && r[0] >= FROM && r[0] <= endIso)
+      .map((r) => [k[r[3]], r[0], r[15] || null, String(r[10]).trim().toLowerCase(), r[22]]).sort(byKey),
+  };
+}
+
+function installDlTabs(opts) {
+  install(opts);
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  h.ctx.openSpreadsheet_ = function () {
+    return {
+      getSheetByName: function (name) {
+        if (name === 'Outbound Calls') return fakeTab(DL_OB, 12);
+        if (name === 'Inbound Calls') return opts && opts.narrowIb ? fakeTab(DL_IB, 22) : fakeTab(DL_IB, 24);
+        return null;
+      },
+    };
+  };
+}
+
+test('FO-2: the direct-line figures agree between Neon and the sheet fallback -- misdials out, counted', function () {
+  [['CSR', ['Ann', 'Bob']], ['ALL', null]].forEach(function (pair) {
+    installDlTabs({ conn: connReturning(JSON.stringify(dlNeonBlob(pair[1]))) });
+    const live = JSON.parse(JSON.stringify(h.call('getOutboundDirectCallbacks', { from: FROM, to: TO, department: pair[0] })));
+    assert.equal(live.meta.available, true);
+    assert.ok(!live.meta.fallbackSource);
+    installDlTabs({ conn: null });
+    const fb = JSON.parse(JSON.stringify(h.call('getOutboundDirectCallbacks', { from: FROM, to: TO, department: pair[0] })));
+    assert.equal(fb.meta.fallbackSource, 'sheet', pair[0]);
+    ['counts', 'all', 'work', 'after'].forEach(function (f) {
+      assert.deepEqual(fb[f], live[f], pair[0] + ' ' + f);
+    });
+  });
+  installDlTabs({ conn: null });
+  const fb = h.call('getOutboundDirectCallbacks', { from: FROM, to: TO, department: 'CSR' });
+  assert.deepEqual(JSON.parse(JSON.stringify(fb.counts)),
+    { calls: 8, anonymous: 1, trackable: 5, missed: 5, abandoned: 3, voicemailBox: 0, unownedLines: 0, misdials: 2 },
+    'd2 (3 s) and d7 (7 s) are misdials; d3 (ring unknown) and d12 (8 s) stay in');
+  assert.equal(fb.all.episodes, 4, 'hashP, hashQ (twice: got through, then a new attempt), hashU -- never hashS');
+  assert.equal(fb.meta.fallbackThrough, '2026-08-10', 'the OLDER of the two tabs (Outbound ends 08-10)');
+  assert.equal(fb.meta.fallbackCoverageStart, '2026-08-10');
+  assert.equal(h.state.cache.size, 0, 'a fallback payload is never cached');
+});
+
+test('FO-2: the repeat list falls back too, its call detail read from the tab', function () {
+  installDlTabs({ conn: null });
+  const out = JSON.parse(JSON.stringify(h.call('getOutboundDirectRepeats', { from: FROM, to: TO, department: 'CSR' })));
+  assert.equal(out.meta.available, true);
+  assert.equal(out.meta.fallbackSource, 'sheet');
+  assert.equal(out.meta.episodes, 1, 'hashU: two real attempts, nobody called back');
+  const ep = out.episodes[0];
+  assert.deepEqual(ep.lines, ['Bob']);
+  assert.deepEqual(ep.attempts.map(function (a) { return [a.callId, a.cstStart, a.disposition, a.dialIn, a.waitSeconds]; }),
+    [['d11', '12:00:00', 'missed', '19725550100', 0], ['d12', '12:30:00', 'abandoned', null, 9]]);
+  assert.ok(!/hash/.test(JSON.stringify(out)), 'no caller identity');
+});
+
+test('FO-2: a tab not yet widened to 24 columns, or a missing Outbound tab, stays honestly unavailable', function () {
+  installDlTabs({ conn: null, narrowIb: true });
+  assert.equal(h.call('getOutboundDirectCallbacks', { from: FROM, to: TO, department: 'CSR' }).meta.available, false);
+  install({ conn: null, noOb: true });
+  assert.equal(h.call('getOutboundDirectRepeats', { from: FROM, to: TO, department: 'CSR' }).meta.available, false);
+});

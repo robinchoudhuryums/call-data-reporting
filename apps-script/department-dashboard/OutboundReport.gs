@@ -355,7 +355,11 @@ function outboundBucketDelays_(delays) {
  * denominator of the "/ day" figure.
  */
 function outboundAgentsSel_(f, t) {
-  return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
+  // The tie order is byte order with a blank name first -- what the sheet
+  // twin's JS sort (obAgentsFromGrid_) does. The database's default collation
+  // ignores case and punctuation and puts NULL last, so the two sources
+  // listed tied agents differently.
+  return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent COLLATE \"C\" NULLS FIRST), '[]') FROM ("
     + 'SELECT agent_name AS agent, count(*) AS ob_total, '
     +   'count(*) FILTER (WHERE connected) AS ob_connected, '
     // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
@@ -1364,6 +1368,13 @@ function obCallbackListDetail_(conn, keys) {
   rs.close(); stmt.close();
   let arr = JSON.parse(json || '[]');
   if (!Array.isArray(arr)) arr = [];
+  return obDetailRowsByKey_(arr);
+}
+
+/** PURE-ish (reads DIAL_IN_LABELS). The detail rows keyed date|id, from the
+ *  query's raw rows -- shared with the sheet fallback (FO-2). */
+function obDetailRowsByKey_(arr) {
+  const byKey = {};
   const labels = (typeof inboundDialInLabels_ === 'function') ? inboundDialInLabels_() : {};
   arr.forEach(function (c) {
     const num = String(c.dial_in_number == null ? '' : c.dial_in_number).trim();
@@ -1565,9 +1576,14 @@ function getOutboundCalledBack(req) {
 //     dial or the caller getting through (a family queue OR a family person's
 //     line answered) closes the episode. Own-team callbacks split into "by
 //     the person whose line was tried" and "by their team".
-//   * Lazy + separately cached (`outboundDirect:v1`), so the Callbacks
-//     figures never pay for it. Neon-only (no sheet copy carries first_agent
-//     for the fallback): an outage reads as unavailable, never as zero.
+//   * MISDIALS (FO-1, owner 2026-10-09): a ring to the line owner under
+//     OUTBOUND_BRIEF_RING_SEC_ (inbound_calls.first_ring_seconds, captured by
+//     cdr-import) is counted and kept OUT of the episodes; an unknown ring
+//     (rows captured before the column) stays in.
+//   * Lazy + separately cached (`outboundDirect:v2`), so the Callbacks
+//     figures never pay for it. Neon first; when it is unreachable the export
+//     tabs stand in (FO-2, obDirectEventsFromGrids_ mirrors the SQL), never
+//     cached and disclosed -- and with neither, unavailable, never zero.
 // ---------------------------------------------------------------------------
 
 // The shared mailboxes a person's-line call can ring: the name as the CDR
@@ -1585,7 +1601,7 @@ function obDirectSharedLine_(n) {
   return null;
 }
 
-const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v1:';
+const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v2:';   // v2 (FO-1): misdials leave the rate
 var OUTBOUND_DIRECT_REPEATS_MAX = 200;   // episodes on the repeat list
 
 /** PURE. A line owner's (or dialer's) homes: the roster, else a shared mailbox's dept. */
@@ -1636,7 +1652,12 @@ function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
   return {
     with: 'WITH dl_ab AS ('
       + 'SELECT c.call_date AS d, c.call_start AS st, c.call_id AS cid, c.caller_hash AS h, '
-      +   'trim(c.first_agent) AS who, c.disposition AS disp '
+      +   'trim(c.first_agent) AS who, c.disposition AS disp, '
+      // FO-1: a ring to the line owner under OUTBOUND_BRIEF_RING_SEC_ is a
+      // MISDIAL -- counted, kept out of the episodes. Read through to_jsonb so
+      // this query keeps working before cdr-import has added the column (a
+      // missing key reads NULL = unknown = kept in). Do not "simplify" it.
+      +   "COALESCE((to_jsonb(c) ->> 'first_ring_seconds')::int < " + OUTBOUND_BRIEF_RING_SEC_ + ', FALSE) AS mis '
       + 'FROM inbound_calls c '
       + "WHERE c.disposition IN ('missed', 'abandoned') "
       +   "AND c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date "
@@ -1644,13 +1665,13 @@ function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
       +   "AND COALESCE(trim(c.entry_queue),'') = '' "
       +   "AND COALESCE(trim(c.first_agent),'') <> ''" + who + '), '
       + 'dl_k AS (SELECT x.h, (dense_rank() OVER (ORDER BY x.h))::int AS k FROM ('
-      +   'SELECT DISTINCT h FROM dl_ab WHERE h IS NOT NULL) x)',
+      +   'SELECT DISTINCT h FROM dl_ab WHERE h IS NOT NULL AND NOT mis) x)',
     fields:
         "'dlCounts', (SELECT COALESCE(json_agg(json_build_object("
-      +   "'disp', z.disp, 'anon', z.anon, 'who', z.who, 'n', z.n)), '[]') FROM ("
-      +   'SELECT disp, (h IS NULL) AS anon, who, count(*) AS n FROM dl_ab GROUP BY 1, 2, 3) z), '
+      +   "'disp', z.disp, 'anon', z.anon, 'who', z.who, 'mis', z.mis, 'n', z.n)), '[]') FROM ("
+      +   'SELECT disp, (h IS NULL) AS anon, who, mis, count(*) AS n FROM dl_ab GROUP BY 1, 2, 3, 4) z), '
       + "'dlAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.cid, a.who) "
-      +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') FROM dl_ab a JOIN dl_k k ON k.h = a.h), "
+      +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') FROM dl_ab a JOIN dl_k k ON k.h = a.h WHERE NOT a.mis), "
       + "'dlOb', (SELECT COALESCE(json_agg(json_build_array(k.k, o.call_date::text, o.call_start, "
       +   'o.call_id, o.agent_name, o.connected) ORDER BY k.k, o.call_date, o.call_start, o.call_id), '
       +   "'[]') FROM outbound_calls o JOIN dl_k k ON k.h = o.callee_hash WHERE o.call_date" + span + '), '
@@ -1675,23 +1696,105 @@ function obDirectScopeNames_(scopeDepts, deptsByAgent) {
   return names.sort();
 }
 
-/**
- * The shared front half: fetch + map the rows into engine rows (each attempt
- * carries its line owner's teams) + run the engine. Returns
- * { eps, ev, ctx, counts, afterById } or null.
- */
-function obDirectFetch_(conn, scope, extraDays) {
-  const deptsByAgent = buildDeptsByAgent_();
-  const names = scope.companyView ? null
-    : obDirectScopeNames_(scope.scopeDepts && scope.scopeDepts.length ? scope.scopeDepts : [scope.dept], deptsByAgent);
+/** PURE (FO-1). A ring to the line owner shorter than OUTBOUND_BRIEF_RING_SEC_
+ *  (strict, the outbound brief-ring boundary) is a misdial; unknown is not. */
+function obDirectIsMisdial_(ring) {
+  if (ring == null || String(ring).trim() === '') return false;
+  var n = Number(ring);
+  return isFinite(n) && n < OUTBOUND_BRIEF_RING_SEC_;
+}
+
+/** The event rows from Neon (obDirectEventsSql_), or null when none came back. */
+function obDirectEventsFromNeon_(conn, scope, names, extraDays) {
   const evSql = obDirectEventsSql_(names, scope.from, scope.to, extraDays);
   const stmt = conn.createStatement();
   const rs = stmt.executeQuery(evSql.with + ' SELECT json_build_object(' + evSql.fields + ')::text AS j');
   const json = rs.next() ? rs.getString('j') : null;
   if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-direct');
   rs.close(); stmt.close();
-  if (json == null) return null;
-  const obj = JSON.parse(json) || {};
+  return json == null ? null : (JSON.parse(json) || {});
+}
+
+// FO-2: the Inbound Calls tab through its First Agent / First Ring Sec columns
+// (cdr-report/inboundCallsExport.js, cols 23-24).
+var OB_DIRECT_SHEET_COLS_ = 24;
+
+/**
+ * PURE (FO-2). The SAME event rows obDirectEventsSql_ returns, built from the
+ * two export tabs -- each clause mirrors one in the SQL, and
+ * outbound-episodes.test.js drives both from one fixture.
+ *   ibGrid: the Inbound Calls tab, cols 1..24 (23 = First Agent, 24 = First Ring Sec)
+ *   obGrid: the Outbound Calls tab, cols 1..12
+ */
+function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGrid) {
+  var endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS + (Number(extraDays) || 0));
+  var who = null;
+  if (names) { who = {}; names.forEach(function (n) { who[n] = true; }); }
+  var cell = function (row, i) { return String(row[i] == null ? '' : row[i]).trim(); };
+  var nullsLast = function (a, b) {
+    if (a === b) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return a < b ? -1 : 1;
+  };
+  var counts = {}, ab = [], keyOf = {}, keyList = [];
+  for (var i = 0; i < ibGrid.length; i++) {
+    var r = ibGrid[i];
+    var iso = ncCellDateIso_(r[0]);
+    if (!iso || iso < fromIso || iso > toIso) continue;
+    var disp = cell(r, 5).toLowerCase();
+    if (disp !== 'missed' && disp !== 'abandoned') continue;
+    if (cell(r, 16).toUpperCase() === 'TRUE') continue;          // is_internal
+    if (cell(r, 10)) continue;                                   // entry_queue
+    var line = cell(r, 22);                                      // first_agent
+    if (!line || (who && !who[line])) continue;
+    var h = cell(r, 3) || null;
+    var mis = obDirectIsMisdial_(r[23]);
+    var ck = disp + '\u0000' + (h ? '0' : '1') + '\u0000' + line + '\u0000' + (mis ? '1' : '0');
+    var c = counts[ck] || (counts[ck] = { disp: disp, anon: !h, who: line, mis: mis, n: 0 });
+    c.n++;
+    if (!h || mis) continue;
+    if (!keyOf.hasOwnProperty(h)) { keyOf[h] = 0; keyList.push(h); }
+    ab.push({ h: h, row: [0, iso, cell(r, 15) || null, cell(r, 1), line] });
+  }
+  keyList.sort().forEach(function (hh, idx) { keyOf[hh] = idx + 1; });   // dense_rank() OVER (ORDER BY h)
+  var byKeyThen = function (a, b) {
+    return (a[0] - b[0]) || nullsLast(a[1], b[1]) || nullsLast(a[2], b[2]) || nullsLast(a[3], b[3]);
+  };
+  var dlAb = ab.map(function (x) { x.row[0] = keyOf[x.h]; return x.row; }).sort(byKeyThen);
+  var dlOb = [];
+  for (var o = 0; o < obGrid.length; o++) {
+    var orow = obGrid[o];
+    var oiso = ncCellDateIso_(orow[0]);
+    var oh = cell(orow, 2);
+    if (!oiso || !oh || !keyOf[oh] || oiso < fromIso || oiso > endIso) continue;
+    dlOb.push([keyOf[oh], oiso, cell(orow, 10) || null, cell(orow, 1), cell(orow, 3),
+               cell(orow, 6).toUpperCase() === 'TRUE']);
+  }
+  dlOb.sort(byKeyThen);
+  var dlAns = [];
+  for (var a = 0; a < ibGrid.length; a++) {
+    var arow = ibGrid[a];
+    var aiso = ncCellDateIso_(arow[0]);
+    var ah = cell(arow, 3);
+    if (!aiso || !ah || !keyOf[ah] || aiso < fromIso || aiso > endIso) continue;
+    if (cell(arow, 5).toLowerCase() !== 'answered') continue;
+    if (cell(arow, 16).toUpperCase() === 'TRUE') continue;
+    dlAns.push([keyOf[ah], aiso, cell(arow, 15) || null, cell(arow, 10).toLowerCase(), cell(arow, 22)]);
+  }
+  dlAns.sort(function (x, y) { return (x[0] - y[0]) || nullsLast(x[1], y[1]) || nullsLast(x[2], y[2]); });
+  return {
+    dlCounts: Object.keys(counts).map(function (k) { return counts[k]; }),
+    dlAb: dlAb, dlOb: dlOb, dlAns: dlAns,
+  };
+}
+
+/**
+ * The shared back half: map the event rows into engine rows (each attempt
+ * carries its line owner's teams) + run the engine. Returns
+ * { eps, ev, ctx, counts, afterById }.
+ */
+function obDirectBuild_(obj, scope, deptsByAgent) {
   const homesOf = obDirectHomesOf_(deptsByAgent);
   const ctx = obEpContext_(obCallbackDeptMap_(), deptsByAgent);
   ctx.homesOf = homesOf;   // dialers AND line owners: the roster, plus the shared mailbox
@@ -1703,6 +1806,89 @@ function obDirectFetch_(conn, scope, extraDays) {
   const ev = { ab: ab, ob: obj.dlOb || [], ans: obj.dlAns || [] };
   const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
   return { eps: eps, ev: ev, ctx: ctx, counts: obj.dlCounts || [], afterById: afterById };
+}
+
+/** PURE (FO-2). The detail rows obCallbackListDetail_ returns, from the Inbound Calls grid. */
+function obDirectDetailFromGrid_(ibGrid, keys) {
+  const want = {};
+  (keys || []).forEach(function (k) { want[k.iso + '|' + k.id] = true; });
+  const raw = [];
+  for (let i = 0; i < ibGrid.length; i++) {
+    const r = ibGrid[i];
+    const iso = ncCellDateIso_(r[0]);
+    const id = String(r[1] == null ? '' : r[1]).trim();
+    if (!iso || !want[iso + '|' + id]) continue;
+    const st = String(r[15] == null ? '' : r[15]).trim();
+    const num = function (v) { const t = String(v == null ? '' : v).trim(); return t === '' ? null : Number(t); };
+    raw.push({
+      call_date: iso, call_id: id, cst_start: obShiftHms_(st, INBOUND_HEATMAP_CST_SHIFT_HOURS),
+      entry_queue: String(r[10] == null ? '' : r[10]).trim(), final_queue: String(r[11] == null ? '' : r[11]).trim(),
+      abandon_stage: String(r[6] == null ? '' : r[6]).trim(),
+      abandoned_on_hold: String(r[7] == null ? '' : r[7]).trim().toUpperCase() === 'TRUE',
+      wait_seconds: num(r[9]), hold_seconds: num(r[8]),
+      dial_in_number: String(r[4] == null ? '' : r[4]).trim(), disposition: String(r[5] == null ? '' : r[5]).trim(),
+    });
+  }
+  return obDetailRowsByKey_(raw);
+}
+
+/** PURE. 'HH:MM:SS' + n hours, wrapping at midnight (the SQL `time + interval`); '' when not a time. */
+function obShiftHms_(hms, hours) {
+  const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(hms || ''));
+  if (!m) return '';
+  const h = ((+m[1] + hours) % 24 + 24) % 24;
+  return (h < 10 ? '0' : '') + h + ':' + m[2] + ':' + m[3];
+}
+
+/**
+ * FO-2: the direct-line event source. Neon first; when it is unreachable or
+ * its read throws, the export tabs (the CE-1 fallback pattern -- never
+ * cached, disclosed). Returns { d, detail(keys), fallbackSource,
+ * fallbackThrough, fallbackCoverageStart, close() } or null (neither source).
+ */
+function obDirectSource_(scope, extraDays) {
+  const deptsByAgent = buildDeptsByAgent_();
+  const names = scope.companyView ? null
+    : obDirectScopeNames_(scope.scopeDepts && scope.scopeDepts.length ? scope.scopeDepts : [scope.dept], deptsByAgent);
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (conn) {
+      const obj = obDirectEventsFromNeon_(conn, scope, names, extraDays);
+      if (obj) {
+        const c = conn;
+        return {
+          d: obDirectBuild_(obj, scope, deptsByAgent),
+          detail: function (keys) { return obCallbackListDetail_(c, keys); },
+          fallbackSource: null,
+          close: function () { try { c.close(); } catch (ce) { /* already closed */ } },
+        };
+      }
+    }
+  } catch (e) {
+    Logger.log('obDirectSource_: Neon read failed, trying the export tabs: ' + (e && e.message ? e.message : e));
+  }
+  if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  const ib = obSheetTailGrid_('Inbound Calls', OB_DIRECT_SHEET_COLS_, scope.from);
+  const ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, scope.from);
+  if (!ib || !ob) return null;
+  const obj = obDirectEventsFromGrids_(names, scope.from, scope.to, extraDays, ib.grid, ob.grid);
+  // The first date whose rows name the line rung: rows exported before FO-2
+  // carry a blank First Agent and would read as "no direct calls".
+  let coverage = null;
+  ib.grid.forEach(function (r) {
+    const iso = ncCellDateIso_(r[0]);
+    if (iso && String(r[22] == null ? '' : r[22]).trim() && (coverage === null || iso < coverage)) coverage = iso;
+  });
+  return {
+    d: obDirectBuild_(obj, scope, deptsByAgent),
+    detail: function (keys) { return obDirectDetailFromGrid_(ib.grid, keys); },
+    fallbackSource: 'sheet',
+    fallbackThrough: (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
+                                                : (ob.through || ib.through || null),
+    fallbackCoverageStart: coverage,
+    close: function () {},
+  };
 }
 
 /** PURE. The direct-line figures for a set of episodes: CE-1's summary plus the own-team split. */
@@ -1722,12 +1908,16 @@ function obDirectSummary_(eps) {
 
 /** PURE. The raw unanswered-call counts (dlCounts rows) -> the context figures. */
 function obDirectCounts_(rows, homesOf) {
-  var c = { calls: 0, anonymous: 0, trackable: 0, missed: 0, abandoned: 0, voicemailBox: 0, unownedLines: 0 };
+  var c = { calls: 0, anonymous: 0, trackable: 0, missed: 0, abandoned: 0, voicemailBox: 0,
+            unownedLines: 0, misdials: 0 };
   (rows || []).forEach(function (r) {
     var n = Number(r.n) || 0;
     var anon = r.anon === true || String(r.anon) === 'true';
+    var mis = r.mis === true || String(r.mis) === 'true';   // FO-1: out of the episodes
     c.calls += n;
-    if (anon) c.anonymous += n; else c.trackable += n;
+    if (anon) c.anonymous += n;
+    if (mis) c.misdials += n;
+    if (!anon && !mis) c.trackable += n;
     if (r.disp === 'missed') c.missed += n; else c.abandoned += n;
     if (obDirectIsVoicemailLine_(r.who)) c.voicemailBox += n;
     else if (!(homesOf(r.who) || []).length) c.unownedLines += n;
@@ -1767,28 +1957,37 @@ function getOutboundDirectCallbacks(req) {
       scopeDepts: scope.companyView ? [] : (scope.scopeDepts || [scope.dept]),
       callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
       workWindowPst: { start: INBOUND_WORK_WINDOW_PST.start, end: INBOUND_WORK_WINDOW_PST.end },
+      misdialSec: OUTBOUND_BRIEF_RING_SEC_,
       cacheHit: false,
     },
     counts: obDirectCounts_([], function () { return []; }),
     all: obDirectSummary_([]), work: obDirectSummary_([]), after: obDirectSummary_([]),
   };
-  let conn = null;
+  let src = null;
   try {
-    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) { out.meta.available = false; return out; }
-    const d = obDirectFetch_(conn, scope, 0);
-    if (!d) { out.meta.available = false; return out; }
+    src = obDirectSource_(scope, 0);
+    if (!src) { out.meta.available = false; return out; }
+    const d = src.d;
     const isAfter = function (ep) { return !!d.afterById[ep.attempts[0].iso + '|' + ep.attempts[0].id]; };
     out.counts = obDirectCounts_(d.counts, d.ctx.homesOf);
     out.all = obDirectSummary_(d.eps);
     out.work = obDirectSummary_(d.eps.filter(function (ep) { return !isAfter(ep); }));
     out.after = obDirectSummary_(d.eps.filter(isAfter));
+    if (src.fallbackSource) {
+      // FO-2: the export tabs answered -- disclosed, and never cached (the
+      // CE-1 fallback rule), so the next request tries Neon again.
+      out.meta.fallbackSource = src.fallbackSource;
+      out.meta.fallbackThrough = src.fallbackThrough || null;
+      out.meta.fallbackCoverageStart = src.fallbackCoverageStart || null;
+      logReportUsage_('outbound:direct', scope.dept || '(all)', scope.user, false);
+      return out;
+    }
   } catch (e) {
     Logger.log('getOutboundDirectCallbacks failed (best-effort): ' + (e && e.message ? e.message : e));
     out.meta.available = false;
     return out;
   } finally {
-    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+    if (src) src.close();
   }
   try { cache.put(key, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('outboundDirect cache put failed: %s', e); }
@@ -1817,12 +2016,16 @@ function getOutboundDirectRepeats(req) {
     },
     episodes: [],
   };
-  let conn = null;
+  let src = null;
   try {
-    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) { out.meta.available = false; return out; }
-    const d = obDirectFetch_(conn, scope, OUTBOUND_LATE_HORIZON_DAYS);
-    if (!d) { out.meta.available = false; return out; }
+    src = obDirectSource_(scope, OUTBOUND_LATE_HORIZON_DAYS);
+    if (!src) { out.meta.available = false; return out; }
+    const d = src.d;
+    if (src.fallbackSource) {
+      out.meta.fallbackSource = src.fallbackSource;
+      out.meta.fallbackThrough = src.fallbackThrough || null;
+      out.meta.fallbackCoverageStart = src.fallbackCoverageStart || null;
+    }
     let eps = d.eps
       .filter(function (ep) { return ep.outcome === 'none' && ep.attempts.length >= 2; })
       .sort(obEpNewestFirst_);
@@ -1833,7 +2036,7 @@ function getOutboundDirectRepeats(req) {
     }
     const keys = [];
     eps.forEach(function (ep) { ep.attempts.forEach(function (a) { keys.push({ iso: a.iso, id: a.id }); }); });
-    const detail = obCallbackListDetail_(conn, keys);
+    const detail = src.detail(keys);
     out.episodes = eps.map(function (ep) {
       const owners = [];
       ep.attempts.forEach(function (a) { if (a.owner && owners.indexOf(a.owner) === -1) owners.push(a.owner); });
@@ -1857,7 +2060,7 @@ function getOutboundDirectRepeats(req) {
     out.meta.available = false;
     return out;
   } finally {
-    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+    if (src) src.close();
   }
 }
 
@@ -4791,7 +4994,8 @@ function obAgentsFromGrid_(obGrid, fromIso, toIso) {
     a.ob_talk_sec += Number(row[7]) || 0;
     a.attempts += Number(row[9]) || 0;
   }
-  // Same ORDER BY as outboundAgentsSel_: ob_total DESC, then agent.
+  // Same ORDER BY as outboundAgentsSel_: ob_total DESC, then agent in byte
+  // order (a blank name first).
   return Object.keys(byAgent).map(function (k) { var a = byAgent[k]; delete a._days; return a; })
     .sort(function (x, y) {
       return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
