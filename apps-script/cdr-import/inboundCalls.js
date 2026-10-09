@@ -247,6 +247,22 @@ var IC_JOURNEY_MAX_EVENTS = 40;
 var IC_JOURNEY_NAME_MAX = 80;
 
 /**
+ * PURE (FO-1). How long one leg RANG, in whole seconds: start to connect when
+ * the leg was ANSWERED (talk > 0 on an 'Answered' leg -- the disposition's
+ * gate), start to stop otherwise (the caller hung up, or the ring timed out).
+ * The same rule as outboundCalls.js's ring_seconds: CONNECTED is not trusted
+ * on an unanswered leg. Null when a timestamp does not parse.
+ */
+function icFirstRingSec_(leg) {
+  var startMs = icParseTs_(leg[IC_COL.START]);
+  var answered = icTimeToSec_(leg[IC_COL.TALK]) > 0
+    && String(leg[IC_COL.ANSWERED] == null ? '' : leg[IC_COL.ANSWERED]).trim() === 'Answered';
+  var edgeMs = answered ? icParseTs_(leg[IC_COL.CONNECTED]) : icParseTs_(leg[IC_COL.STOP]);
+  return (!isNaN(startMs) && !isNaN(edgeMs))
+    ? Math.max(0, Math.round((edgeMs - startMs) / 1000)) : null;
+}
+
+/**
  * PURE. Ordered leg-by-leg journey for one call (legs pre-sorted by
  * start). Each event: { t: 'HH:MM:SS', name, kind: queue|answer|leg,
  * secs?, talk?, hold?, missed?, abandoned? }. 'leg' covers both IVR
@@ -649,6 +665,7 @@ function buildInboundCallRecords_(rawRows) {
     // direct-DID line's dominant first_agent names the line's owner.
     // Phone-shaped callee names are skipped (PHI: never store a raw number).
     var firstAgent = null;
+    var firstRingSec = null;
     for (var fa = 0; fa < legs.length; fa++) {
       var facn = String(legs[fa][IC_COL.CALLEE_NAME] == null ? '' : legs[fa][IC_COL.CALLEE_NAME]).trim();
       if (!facn || facn.toUpperCase() === 'N/A') continue;
@@ -664,6 +681,7 @@ function buildInboundCallRecords_(rawRows) {
       var fad = String(legs[fa][IC_COL.DEPARTMENTS] == null ? '' : legs[fa][IC_COL.DEPARTMENTS]).trim();
       if (!fad || fad.toUpperCase() === 'N/A') continue;
       firstAgent = facn.slice(0, IC_JOURNEY_NAME_MAX);
+      firstRingSec = icFirstRingSec_(legs[fa]);
       break;
     }
 
@@ -705,6 +723,9 @@ function buildInboundCallRecords_(rawRows) {
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
       firstAgent:      firstAgent,
+      // FO-1: how long THAT person's phone rang -- the direct-line callback
+      // figures' misdial filter (OutboundReport.gs). NULL when unknown.
+      firstRingSec:    firstRingSec,
       // ORIGINATOR (internal-origin records only). `firstAgent` derives from
       // the CALLEE name across the group's legs, and an internal-origin group's
       // only callee IS the queue -- which icIsQueueName_ skips -- so these
@@ -1236,6 +1257,9 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // row written before Step 4 linked an inbound call, so the read side
       // must COALESCE rather than treat NULL as unknown.
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_kind text');
+      // FO-1: the first person's ring length (icFirstRingSec_). NULL on rows
+      // captured before it, which the reader keeps in the rate.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_ring_seconds integer');
       ddl.close();
       conn.setAutoCommit(false);   // P-9: the transaction opens AFTER the DDL
 
@@ -1258,7 +1282,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept, related_call_kind';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept, related_call_kind, first_ring_seconds';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -1267,7 +1291,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, related_call_kind=EXCLUDED.related_call_kind, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, related_call_kind=EXCLUDED.related_call_kind, first_ring_seconds=EXCLUDED.first_ring_seconds, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -1290,7 +1314,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
           + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId)
           + ',' + icSqlStr_(r.originAgent) + ',' + icSqlStr_(r.originDept)
-          + ',' + icSqlStr_(r.relatedCallKind) + ')';
+          + ',' + icSqlStr_(r.relatedCallKind) + ',' + icSqlInt_(r.firstRingSec) + ')';
       });
       var buildMs = Date.now() - tBuild;
 
@@ -1327,6 +1351,156 @@ function writeInboundCallsToNeon(rawRows, opts) {
 // is one transaction -- single commit in writeInboundCallsToNeon -- so a
 // timeout can't leave a half-written date behind). 15 min mirrors the
 // bulk-rebuild budget, leaving margin under the 30-min execution ceiling.
+// ── BF-1: backfill inbound_calls.first_ring_seconds from the STORED journey ──
+// FO-1 captures the first person's ring at import (icFirstRingSec_); rows
+// captured before that read NULL, which the direct-line figures keep in the
+// rate as "ring unknown". Past the ~14-day Call_Legs window the legs are gone,
+// but the journey still holds each leg's length (`secs` = stop - start), and
+// for an UNANSWERED leg that is exactly what icFirstRingSec_ computes. So for
+// the only rows the misdial filter reads -- an external, missed or abandoned
+// call that rang a person first (no entry queue, first_agent set) -- the ring
+// is the `secs` of the FIRST journey leg naming the line owner. PC-1's rewrite
+// put journey agent names in roster spelling; the match also runs the
+// capture's own canonicalizer (icAgentCanonicalizer_), so a journey PC-1 has
+// not reached still matches. Rows it cannot decide stay NULL (unknown, kept in
+// the rate): no journey, no leg naming the line owner, that leg answered, or
+// no length on it.
+//
+// Run PREVIEW first. Back up Neon (dashboard: Admin -> Health -> Back up now)
+// before APPLY. Idempotent: it only writes rows still NULL, so a run cut
+// short by the time budget simply continues when run again. Afterwards,
+// re-export the Inbound Calls tab (cdr-report exportInboundCalls, Operator
+// State #49) so the sheet copy carries the backfilled values too.
+var BF_RING_CHUNK_DAYS_ = 31;
+// The dashboard's misdial line (OutboundReport.gs OUTBOUND_BRIEF_RING_SEC_),
+// used here for the LOG only -- the dashboard applies its own at read time.
+var BF_RING_MISDIAL_SEC_ = 8;
+var BF_RING_QUERY_TIMEOUT_S_ = 120;
+
+/** EDITOR-RUN, read-only: what backfillFirstRingFromJourney() WOULD write. */
+function previewFirstRingBackfill() { return firstRingBackfill_(false); }
+/** EDITOR-RUN: write the derived ring on NULL rows (preview + Neon backup first). */
+function backfillFirstRingFromJourney() { return firstRingBackfill_(true); }
+
+/**
+ * PURE. The ring length of the first journey leg naming `firstAgent`, or null.
+ * `events` are the call's non-queue journey events in order ({ n: name,
+ * k: kind, s: secs }); `canon` is the capture's agent canonicalizer.
+ */
+function icFirstRingFromJourney_(events, firstAgent, canon) {
+  var who = String(firstAgent == null ? '' : firstAgent).trim();
+  if (!who) return null;
+  for (var i = 0; i < (events || []).length; i++) {
+    var e = events[i] || {};
+    var name = String(e.n == null ? '' : e.n).trim();
+    if (!name) continue;
+    var c = canon ? canon(name) : name;
+    if (name.slice(0, IC_JOURNEY_NAME_MAX) !== who
+        && String(c == null ? '' : c).slice(0, IC_JOURNEY_NAME_MAX) !== who) continue;
+    // The line owner's leg. On a missed / abandoned call it is unanswered,
+    // and its length IS the ring; an answered leg's length includes talk.
+    if (e.k === 'answer') return null;
+    var secs = e.s == null || String(e.s).trim() === '' ? NaN : Number(e.s);
+    return isFinite(secs) && secs >= 0 ? Math.round(secs) : null;
+  }
+  return null;
+}
+
+/** PURE. 'YYYY-MM-DD' + n days (UTC). */
+function bfIsoAddDays_(iso, n) {
+  var d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)));
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function firstRingBackfill_(apply) {
+  var label = apply ? 'backfillFirstRingFromJourney' : 'previewFirstRingBackfill';
+  IC_AGENT_CANON_MEMO_ = null;
+  var canon = icAgentCanonicalizer_();
+  var conn = getReachableNeonConn_();
+  if (!conn) throw new Error(label + ': Neon unreachable (NEON_* Script Properties set?).');
+  var t0 = Date.now(), budget = icBackfillTimeLimitMs_();
+  var out = { apply: !!apply, candidates: 0, derived: 0, written: 0, misdials: 0,
+              undecided: 0, bytes: 0, chunks: [], stoppedAtBudget: false, range: null };
+  var pop = "c.first_ring_seconds IS NULL AND c.disposition IN ('missed', 'abandoned') "
+    + 'AND COALESCE(c.is_internal, FALSE) = FALSE '
+    + "AND COALESCE(trim(c.entry_queue), '') = '' AND COALESCE(trim(c.first_agent), '') <> '' "
+    + "AND c.journey IS NOT NULL AND c.journey <> ''";
+  var query = function (sql) {
+    var st = conn.createStatement();
+    try { st.setQueryTimeout(BF_RING_QUERY_TIMEOUT_S_); } catch (e) { /* best-effort */ }
+    var rs = st.executeQuery(sql);
+    var v = rs.next() ? rs.getString(1) : null;
+    rs.close(); st.close();
+    return v;
+  };
+  try {
+    conn.setAutoCommit(true);   // each chunk's UPDATE stands alone: an interrupted run keeps what it did
+    // The column may not exist yet if this runs before a capture added it.
+    var ddl = conn.createStatement();
+    ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_ring_seconds integer');
+    ddl.close();
+    var span = JSON.parse(query("SELECT json_build_array(min(c.call_date)::text, max(c.call_date)::text)::text "
+      + 'FROM inbound_calls c WHERE ' + pop) || '[null,null]');
+    if (!span[0]) {
+      Logger.log(label + ': nothing to do -- no NULL first_ring_seconds on a direct-line missed/abandoned call with a journey.');
+      return out;
+    }
+    out.range = { from: span[0], to: span[1] };
+    for (var from = span[0]; from <= span[1]; ) {
+      if (Date.now() - t0 > budget) { out.stoppedAtBudget = true; break; }
+      var to = bfIsoAddDays_(from, BF_RING_CHUNK_DAYS_ - 1);
+      if (to > span[1]) to = span[1];
+      // Only the non-queue events' name / kind / secs leave the database --
+      // never the caller hash or the masked external names' neighbours.
+      var json = query("SELECT COALESCE(json_agg(json_build_array(c.call_date::text, c.call_id, c.first_agent, "
+        + "(SELECT COALESCE(json_agg(json_build_object('n', x.e->>'name', 'k', x.e->>'kind', 's', x.e->>'secs') "
+        +   "ORDER BY x.ord), '[]') FROM jsonb_array_elements(c.journey::jsonb) WITH ORDINALITY AS x(e, ord) "
+        +   "WHERE COALESCE(x.e->>'kind', '') <> 'queue'))), '[]')::text "
+        + 'FROM inbound_calls c WHERE ' + pop
+        + " AND c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date") || '[]';
+      out.bytes += json.length;
+      var rows = JSON.parse(json);
+      var tuples = [], chunk = { from: from, to: to, candidates: rows.length, derived: 0, misdials: 0, written: 0 };
+      rows.forEach(function (r) {
+        var ring = icFirstRingFromJourney_(r[3], r[2], canon);
+        if (ring == null) { out.undecided++; return; }
+        chunk.derived++;
+        if (ring < BF_RING_MISDIAL_SEC_) chunk.misdials++;
+        tuples.push('(' + icSqlStr_(r[0]) + '::date,' + icSqlStr_(r[1]) + ',' + icSqlInt_(ring) + ')');
+      });
+      if (apply && tuples.length) {
+        var batches = icChunkTuplesByChars_(tuples, IC_SQL_CHUNK_BUDGET_CHARS);
+        for (var b = 0; b < batches.length; b++) {
+          var up = conn.createStatement();
+          try { up.setQueryTimeout(BF_RING_QUERY_TIMEOUT_S_); } catch (e) { /* best-effort */ }
+          chunk.written += up.executeUpdate('UPDATE inbound_calls c SET first_ring_seconds = v.r '
+            + 'FROM (VALUES ' + batches[b].join(',') + ') AS v(d, id, r) '
+            + 'WHERE c.call_date = v.d AND c.call_id = v.id AND c.first_ring_seconds IS NULL');
+          up.close();
+        }
+      }
+      out.candidates += chunk.candidates; out.derived += chunk.derived;
+      out.misdials += chunk.misdials; out.written += chunk.written;
+      out.chunks.push(chunk);
+      from = bfIsoAddDays_(to, 1);
+    }
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+  Logger.log(label + ': ' + out.candidates + ' direct-line missed/abandoned call(s) with no ring length'
+    + (out.range ? ' (' + out.range.from + '..' + out.range.to + ')' : '') + '; derived ' + out.derived
+    + ' from the journey (' + out.misdials + ' under ' + BF_RING_MISDIAL_SEC_ + ' s = misdials on the dashboard), '
+    + out.undecided + ' left unknown; ' + (apply ? 'wrote ' + out.written : 'would write ' + out.derived)
+    + '. Read ' + Math.round(out.bytes / 1024) + ' KB from Neon.'
+    + (out.stoppedAtBudget ? ' STOPPED at the time budget -- run it again to continue.' : ''));
+  out.chunks.forEach(function (c) {
+    Logger.log('  ' + c.from + '..' + c.to + ': ' + c.candidates + ' candidate(s), ' + c.derived + ' derived ('
+      + c.misdials + ' misdial)' + (apply ? ', ' + c.written + ' written' : ''));
+  });
+  return out;
+}
+
 var IC_BACKFILL_TIME_LIMIT_MS = 15 * 60 * 1000;
 // P-3 (broad-scan 2026-09-17): overridable via the `IC_BACKFILL_TIME_LIMIT_MS`
 // Script Property (cdr-import) so the budget can be aligned to the MEASURED

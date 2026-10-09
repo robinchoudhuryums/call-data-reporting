@@ -118,14 +118,16 @@ async function setDir(page, dir) {
     hourCells: document.querySelectorAll('#ins-cb-hour-strip .ob-hour-cell').length,
     windowDays: (document.getElementById('ins-cb-window') || {}).textContent,
   }));
-  record('the headline answers the question closed: rate, abandons, median',
-    /70% called back/.test(r.head) && /25 abandoned/.test(r.head) && /median/.test(r.head), r.head);
-  record('the five callback tiles render with the payload’s figures',
-    r.tiles.length === 5 && /^Abandoned/.test(r.tiles[0]) && r.tiles[0].indexOf('25') !== -1
-      && r.tiles[2].indexOf('70%') !== -1, r.tiles.join(' | '));
-  record('the two rate tiles carry prior-window deltas', r.deltas === 2, 'deltas=' + r.deltas);
+  record('the headline answers the question closed: own-team rate, episodes, median (CE-1)',
+    /55\.6% called back by the team/.test(r.head) && /18 contact episodes/.test(r.head) && /median/.test(r.head), r.head);
+  record('the seven episode tiles render, own team and another team kept apart',
+    r.tiles.length === 7 && /^Contact episodes/.test(r.tiles[0]) && r.tiles[0].indexOf('18') !== -1
+      && /^Called back by own team/.test(r.tiles[1]) && r.tiles[1].indexOf('55.6%') !== -1
+      && r.tiles.some((t) => /^Contacted by another team/.test(t) && /may be unrelated/.test(t))
+      && r.tiles.some((t) => /^Caller got through/.test(t)), r.tiles.join(' | '));
+  record('the two own-team rate tiles carry prior-window deltas', r.deltas === 2, 'deltas=' + r.deltas);
   record('the "how fast" strip and the by-hour strip both render',
-    r.delaySegs === 5 && r.hourCells === 4, 'segs=' + r.delaySegs + ' cells=' + r.hourCells);
+    r.delaySegs === 4 && r.hourCells === 4, 'segs=' + r.delaySegs + ' cells=' + r.hourCells);
   record('the callback window in the caption comes from the payload', r.windowDays === '3', r.windowDays);
   await page.waitForTimeout(800);
   let ch = await page.evaluate(chartDrawn);
@@ -151,8 +153,26 @@ async function setDir(page, dir) {
   }));
   record('the not-called-back drill asks for the same window and dept, and lists the calls',
     unc.length === 1 && unc[0].from === insMeta.from && unc[0].to === insMeta.to
-      && unc[0].department === insMeta.department && rows.rows === 1 && rows.paths === 1,
+      && unc[0].department === insMeta.department && rows.rows === 3 && rows.paths === 3,
     JSON.stringify({ unc: unc, rows: rows }));
+  // CE-2: grouped by episode, each with its status and late tags; the call id
+  // (+ copy, admin) and the dialed line on every attempt.
+  const eps = await page.evaluate(() => {
+    const blocks = Array.from(document.querySelectorAll('#ins-cb-uncalled-list .ob-ep'));
+    const list = document.getElementById('ins-cb-uncalled-list');
+    return { n: blocks.length,
+      heads: blocks.map((b) => (b.querySelector('.ob-ep-head') || {}).textContent || ''),
+      rowsPer: blocks.map((b) => b.querySelectorAll('.heat-drill-row').length),
+      ids: list.querySelectorAll('.pid-num').length, copies: list.querySelectorAll('.pid-copy').length,
+      dialed: (list.textContent.match(/dialed Main CSR Line/g) || []).length };
+  });
+  record('CE-2: the list is grouped by episode -- status, attempts and the late tag on each',
+    eps.n === 2 && /Still inside the window · 2 days left/.test(eps.heads[0]) && /1 attempt/.test(eps.heads[0])
+      && /Missed/.test(eps.heads[1]) && /2 attempts/.test(eps.heads[1])
+      && /Called back late · day 5 · own team/.test(eps.heads[1])
+      && JSON.stringify(eps.rowsPer) === '[1,2]', JSON.stringify(eps));
+  record('CE-2: every attempt shows its call id with a copy button (admin) and the dialed line',
+    eps.ids === 3 && eps.copies === 3 && eps.dialed === 2, JSON.stringify(eps));
   await page.click('#ins-cb-uncalled-list .pid-journey');
   await page.waitForTimeout(1200);
   const jr = await page.evaluate(() => {
@@ -163,6 +183,87 @@ async function setDir(page, dir) {
   record('a row’s "↳ path" opens the call path', jr.open && jr.body, JSON.stringify(jr));
   await page.keyboard.press('Escape');
   await page.waitForTimeout(500);
+
+  // CE-2: the called-back list, and the path into the OUTBOUND callback.
+  await page.click('#ins-cb-calledback-btn');
+  await page.waitForTimeout(1200);
+  const cbk = await calls(page, 'getOutboundCalledBack');
+  const cbr = await page.evaluate(() => {
+    const list = document.getElementById('ins-cb-calledback-list');
+    const rows = Array.from(list.querySelectorAll('.ob-cb-row'));
+    return { n: rows.length, text: rows.map((r) => r.textContent.replace(/\s+/g, ' ')),
+      cbPaths: list.querySelectorAll('.pid-journey[data-journey-kind="outbound"]').length,
+      head: ((list.querySelector('.heat-drill-head') || {}).textContent || '') };
+  });
+  record('CE-2: the called-back list asks for the same window and dept, own and another team apart',
+    cbk.length === 1 && cbk[0].from === insMeta.from && cbk[0].to === insMeta.to && cbk[0].department === insMeta.department
+      && cbr.n === 2 && /Own team/.test(cbr.text[0]) && /Test Agent \(CSR\)/.test(cbr.text[0]) && /connected/.test(cbr.text[0])
+      && /Another team/.test(cbr.text[1]) && /Bill Payer \(Billing\)/.test(cbr.text[1]) && /did not connect/.test(cbr.text[1])
+      && /1 by own team · 1 by another team/.test(cbr.head) && cbr.cbPaths === 2,
+    JSON.stringify({ cbk: cbk, cbr: cbr }));
+  await page.click('#ins-cb-calledback-list .pid-journey[data-journey-kind="outbound"]');
+  await page.waitForTimeout(1200);
+  const jo = await page.evaluate(() => {
+    const ov = document.getElementById('call-journey-overlay');
+    const reqs = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getCallJourney')
+      .map((c) => (c.args && c.args[0]) || null);
+    return { open: !!ov && getComputedStyle(ov).display !== 'none', last: reqs[reqs.length - 1] || null };
+  });
+  record('CE-2: "↳ callback path" opens the OUTBOUND call’s path',
+    jo.open && jo.last && jo.last.kind === 'outbound' && jo.last.callId === 'OB-777', JSON.stringify(jo));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+
+  // CE-3: Direct lines -- lazy inside the fold, then the repeat list.
+  record('CE-3: the Direct lines block is closed and has fetched nothing',
+    (await calls(page, 'getOutboundDirectCallbacks')).length === 0
+      && await page.evaluate(() => !document.getElementById('ins-dl-fold').open
+        && /open to load/.test(document.getElementById('ins-dl-head').textContent)));
+  await page.click('#ins-dl-fold > summary');
+  await page.waitForTimeout(1200);
+  const dlc = await calls(page, 'getOutboundDirectCallbacks');
+  const dl = await page.evaluate(() => ({
+    head: document.getElementById('ins-dl-head').textContent,
+    counts: document.getElementById('ins-dl-counts').textContent,
+    work: Array.from(document.querySelectorAll('#ins-dl-work .ds-kpi')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+    after: document.querySelectorAll('#ins-dl-after .ds-kpi').length,
+    note: (function () { const n = document.getElementById('ins-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })(),
+  }));
+  record('CE-3: opening it fetches the direct-line figures ONCE, for the fold’s window and dept',
+    dlc.length === 1 && dlc[0].from === insMeta.from && dlc[0].to === insMeta.to && dlc[0].department === insMeta.department,
+    JSON.stringify(dlc));
+  record('CE-3: work-hours and after-hours rows, "by the person" and "by their team" apart',
+    dl.work.length === 7 && dl.after === 7
+      && /^Called back by the person ?35%/.test(dl.work[1]) && /^Called back by their team ?20%/.test(dl.work[2])
+      && /46\.7% called back by the team · 30 contact episodes · 10 not called back/.test(dl.head)
+      && /6 to the Sales voicemail box/.test(dl.counts) && /38 rang out or went to voicemail/.test(dl.counts),
+    JSON.stringify(dl));
+  record('FO-1: misdials are counted in the context line and named as left out of the rates; a Neon payload shows no copy note',
+    /3 misdials \(rang under 8 s, left out of the rates\)/.test(dl.counts) && /49 unanswered calls/.test(dl.counts)
+      && dl.note === null, JSON.stringify({ counts: dl.counts, note: dl.note }));
+  await page.click('#ins-dl-rep-btn');
+  await page.waitForTimeout(1200);
+  const rep = await calls(page, 'getOutboundDirectRepeats');
+  const rl = await page.evaluate(() => {
+    const list = document.getElementById('ins-dl-rep-list');
+    const ep = list.querySelector('.ob-ep');
+    return { eps: list.querySelectorAll('.ob-ep').length,
+      head: ep ? ep.querySelector('.ob-ep-head').textContent : '',
+      rows: Array.from(list.querySelectorAll('.heat-drill-row')).map((r) => r.textContent.replace(/\s+/g, ' ')),
+      ids: list.querySelectorAll('.pid-copy').length };
+  });
+  record('CE-3: the repeat-unreturned-callers list -- lines tried, voicemail, late tag, each attempt with owner + hours',
+    rep.length === 1 && rep[0].from === insMeta.from && rep[0].department === insMeta.department
+      && rl.eps === 1 && /Sam Seller, Sales Voicemails/.test(rl.head) && /Voicemail box/.test(rl.head)
+      && /Called back late · day 7 · own team/.test(rl.head) && rl.rows.length === 2
+      && /not answered/.test(rl.rows[0]) && /rang Sam Seller/.test(rl.rows[0])
+      && /after hours/.test(rl.rows[1]) && rl.ids === 2, JSON.stringify({ rep: rep, rl: rl }));
+  await page.click('#ins-dl-fold > summary');
+  await page.waitForTimeout(300);
+  await page.click('#ins-dl-fold > summary');
+  await page.waitForTimeout(800);
+  record('CE-3: closing and reopening the block does not re-fetch',
+    (await calls(page, 'getOutboundDirectCallbacks')).length === 1);
 
   // CSV + email read the held payload's window.
   await page.click('#ins-cb-csv-btn');
@@ -222,11 +323,14 @@ async function setDir(page, dir) {
       return { page: document.body.getAttribute('data-page'), dir: document.body.getAttribute('data-dir'),
         shown: !!f && getComputedStyle(f).display !== 'none', open: !!f && f.open,
         tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
-        inView: !!r && r.top < window.innerHeight && r.bottom > 0,
+        // At the TOP of the screen, not merely visible: the scroll holds while
+        // the sections above it finish loading (FO-3).
+        inView: !!r && r.top > -2 && r.top < 120,
+        top: r ? Math.round(r.top) : null,
         modal: !!document.getElementById('outbound-modal') };
     });
-    record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and scrolled into view',
-      dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 5 && dl.inView && !dl.modal,
+    record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and held at the top of the screen',
+      dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 7 && dl.inView && !dl.modal,
       JSON.stringify(dl));
     await pd.close();
   }
@@ -259,7 +363,7 @@ async function setDir(page, dir) {
       sw: document.documentElement.scrollWidth, vw: window.innerWidth,
     }));
     record('360 px: the open fold renders without a sideways page scroll',
-      n.tiles === 5 && n.sw <= n.vw + 1, JSON.stringify(n));
+      n.tiles === 7 && n.sw <= n.vw + 1, JSON.stringify(n));
     await pn.close();
   }
 

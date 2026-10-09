@@ -352,9 +352,15 @@ tests/
                               two-arm dept attribution; direct-fallback:
                               source parity between the Neon path and the
                               sheet, which is the PRIMARY there),
+                              first-ring-backfill (BF-1: the one-off
+                              backfill of first_ring_seconds from the stored
+                              journey -- the first leg naming the line
+                              owner, unknown stays NULL, NULL-only writes,
+                              date chunks, preview never writes),
                               inbound-export (the "Inbound Calls" tab's
                               cols 16-17 + coercion guards feeding that
-                              fallback), freshness-weekend (the OPS-7
+                              fallback, and FO-2's First Agent / First Ring
+                              Sec at 23-24, the ring read via to_jsonb), freshness-weekend (the OPS-7
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
@@ -559,10 +565,35 @@ tests/
                               outbound-fallback (the Outbound report's
                               Neon-down sheet fallback: SOURCE PARITY
                               between the Neon blob and the export tabs
-                              through the shared outboundShapeReport_, the
-                              callback rule's sheet-side mirror, the
-                              never-cache rule and all three failure
-                              branches),
+                              through the shared outboundShapeReport_ and
+                              the one episode engine -- the event rows'
+                              sheet-side mirror, company view included --
+                              the never-cache rule and all three failure
+                              branches; FO-2: the direct-line figures'
+                              Neon-vs-sheet parity, misdials out, the
+                              repeat list's detail from the tab, a tab not
+                              yet widened staying unavailable),
+                              outbound-episodes (CE-1: the contact-EPISODE
+                              engine both sources share -- attempts join an
+                              open episode within the window of the last
+                              one, an own-team dial (the team's family) or
+                              the caller getting through closes it, another
+                              team's dial never does, own > got through >
+                              other > pending > none partition the episodes,
+                              a dial closing its own team's episode is
+                              consumed, delay from the FIRST attempt, the
+                              raw abandon counts, the series, and the
+                              per-dept table's rows / total / mapped-only
+                              headline; CE-2: the deciding dial each episode
+                              records, events past the window never moving
+                              an outcome, and the late tags -- first dial /
+                              family-queue got-through after the deadline,
+                              within the horizon, own vs another team;
+                              CE-3: direct-line attempts carrying their line
+                              owner's team, an answered call to a family
+                              person's line as got-through, the Sales
+                              voicemail box, after hours, the by-person /
+                              by-team split and the counts),
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
                               in the target queue -- counts for the transfer
@@ -576,16 +607,19 @@ tests/
                               internal attempts into the dept's queues,
                               abandoned after MORE than 60 s of own queue
                               time, linked or not, its own fields only),
-                              outbound-callback-dept (CB-1: the per-dept
-                              callback table -- own + other + none ===
-                              tracked on every row and the total, the FIRST
-                              callback decides (call_id tie-break), parent
-                              rows take their sub-queues' queues AND agents,
-                              a double-mapped queue in both rows, unmapped
-                              queues in their own row, the named tallies,
-                              entry-queue-only attribution for abandons, and
-                              Neon-vs-sheet parity against a hand-worked
-                              blob),
+                              outbound-callback-dept (CB-1 on CE-1's
+                              episodes: the per-dept callback table -- the
+                              five outcomes partition the episodes on every
+                              row and the total, a same-second tie broken
+                              by call_id, a parent row holds its sub-queues'
+                              episodes and its agents are own for them, a
+                              double-mapped queue in both rows, unmapped
+                              queues in their own row and out of the
+                              headline, a no-queue hang-up counted apart,
+                              the named tallies, entry-queue-only
+                              attribution for abandons, no hash in the SQL's
+                              output, and Neon-vs-sheet parity against
+                              hand-derived event rows),
                               date-presets (the SHARED preset resolver: no
                               open-ended preset includes today, the
                               degenerate month/week-start clamps, and a

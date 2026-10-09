@@ -306,6 +306,33 @@ test('R5: firstAgent = FIRST person leg (queues/menus skipped; phone-shaped call
     'IVR (no dept), queue, and phone-shaped legs are all skipped');
 });
 
+// FO-1: the first person's RING length -- the direct-line callback figures'
+// misdial filter. Start -> stop on an unanswered leg; start -> connected on an
+// answered one (CONNECTED is not trusted on an unanswered leg, the outbound
+// ring_seconds rule).
+test('FO-1: firstRingSec is the first person leg\'s ring: start->stop unanswered, start->connected answered', function () {
+  const missed = rec(build([
+    leg({ callId: '915001', legId: 1, start: '06/04/2026 10:00:00', stop: '06/04/2026 10:00:10', direction: 'Incoming', caller: '12145550001', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '915001', legId: 2, start: '06/04/2026 10:00:10', connected: '06/04/2026 10:00:10', stop: '06/04/2026 10:00:34', direction: 'Incoming', caller: '12145550001', callee: '352', calleeName: 'Anna Smith', missed: 'Missed', dialIn: '19722281820', dept: 'CSR' }),
+  ]), '915001');
+  assert.equal(missed.firstAgent, 'Anna Smith');
+  assert.equal(missed.firstRingSec, 24, 'the IVR leg is not the ring; a CONNECTED stamp on an unanswered leg is ignored');
+  const quick = rec(build([
+    leg({ callId: '915002', legId: 1, start: '06/04/2026 10:00:00', stop: '06/04/2026 10:00:03', direction: 'Incoming', caller: '12145550002', callee: '352', calleeName: 'Anna Smith', missed: 'Missed', abandoned: 'Abandoned', dialIn: '19725550123', dept: 'CSR' }),
+  ]), '915002');
+  assert.equal(quick.firstRingSec, 3, 'a caller who hangs up after 3 s');
+  const answered = rec(build([
+    leg({ callId: '915003', legId: 1, start: '06/04/2026 10:01:10', connected: '06/04/2026 10:01:16', stop: '06/04/2026 10:05:00', direction: 'Incoming', talk: '0:03:44', caller: '12145550003', callee: '352', calleeName: 'Anna Smith', answered: 'Answered', dialIn: '19722281820', dept: 'CSR' }),
+  ]), '915003');
+  assert.equal(answered.firstRingSec, 6, 'answered: start to connect, never the talk time');
+  const ivr = rec(build([
+    leg({ callId: '915004', legId: 1, start: '06/04/2026 05:41:26', stop: '06/04/2026 05:41:43', direction: 'Incoming', caller: '14047770004', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820', missed: 'Missed', abandoned: 'Abandoned' }),
+  ]), '915004');
+  assert.equal(ivr.firstRingSec, null, 'no person rang: no ring length');
+  const bad = h.call('icFirstRingSec_', ['915005', 1, 'not a date', '', '06/04/2026 10:00:00']);
+  assert.equal(bad, null, 'an unparseable start is unknown, never 0');
+});
+
 // S2C-1 (broad-scan 2026-09-23): on an answered queue call the agent's own
 // OUTGOING talk leg carries the CALLER's CNAM in CALLEE_NAME (callee = the
 // external number) plus the agent's Departments value, so first_agent stored a

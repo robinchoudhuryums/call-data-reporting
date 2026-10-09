@@ -71,10 +71,15 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-callbacks.js` — the Insights **Callbacks** fold (G1): lazy (one
   fetch, on open), the shared renderers incl. a drawn chart after a reopen,
   the not-called-back drill's call path, CSV / email, 360 px, and the retired
-  modal's `#/report/outbound` deep link (G3) for an admin and a manager.
+  modal's `#/report/outbound` deep link (G3) for an admin and a manager; since
+  CE-2/CE-3 also both drill lists (episode grouping, the outbound "callback
+  path") and the lazy Direct lines block with its repeat-callers list; since
+  the follow-ons, the misdial count line (FO-1) and the deep link holding the
+  fold at the TOP of the screen while the page settles (FO-3).
 - `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
   admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
-  keyboard expand and sort, CSV bytes.
+  keyboard expand and sort, CSV bytes, and (CE-3) the company Direct lines
+  block, including its spreadsheet-served note (FO-2).
 - `drive-admin.js` — eight **modals** (Alerts, Outlier Fix, Dept Config,
   Access Control, System Health, Caller Lookup, Coaching, and the Agent Day
   report, run past its setup form; the Outbound modal is retired, G3) and the **Escalations

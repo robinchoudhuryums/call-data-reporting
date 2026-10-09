@@ -525,6 +525,13 @@ test('UI-5/6/7/11: the four late-landing fetches are guarded', function () {
     'G1: the Insights Callbacks fold drives the drill with its own counter');
   assert.match(body(s8, 'insCbSync_'), /INS_CB_\.seq\+\+; INS_CB_\.uncSeq\+\+;\s*\n\s*insCbResetUncalled_\(\);/,
     'G1: a new window / dept orphans the fold\'s in-flight fetch AND drill before resetting the panel');
+  // CE-2: the called-back drill follows the same contract with its OWN counter.
+  const cbk = body(s9, 'outboundLoadCalledBackInto_');
+  assert.match(cbk, /const tok = ctx\.nextSeq\(\);/, 'CE-2: the called-back drill takes a token');
+  assert.equal((cbk.match(/if \(tok !== ctx\.curSeq\(\)\) return;/g) || []).length, 2,
+    'CE-2: BOTH handlers drop a superseded response');
+  assert.match(s8, /nextSeq: function \(\) \{ return \+\+INS_CB_\.cbkSeq; \}/);
+  assert.match(body(s8, 'insCbSync_'), /INS_CB_\.cbkSeq\+\+;/, 'CE-2: a new window orphans it too');
   // UI-6: the insurer drill cache is keyed by range + dept + insurer.
   assert.match(s9, /function inboundDrillKey_\(insurer\) \{[\s\S]*?\[m\.from \|\| '', m\.to \|\| '', m\.department \|\| '', insurer\]/,
     'UI-6: the drill key carries the range and dept');

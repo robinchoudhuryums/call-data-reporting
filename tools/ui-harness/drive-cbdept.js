@@ -84,15 +84,15 @@ function section() {
   record('opening it fetches the COMPANY view once, for the window it shows (Last 30 days)',
     calls.length === 1 && calls[0].department === '' && !!m && calls[0].from === m[1] && calls[0].to === m[2]
       && span >= 28 && span <= 31, JSON.stringify({ calls: calls, dates: s.dates, span: span }));
-  record('the five company callback tiles render', s.tiles === 5, 'tiles=' + s.tiles);
-  record('the header comes from the shared column list (8 sortable columns)', s.ths === 8, 'ths=' + s.ths);
+  record('the company episode tiles render, the no-queue hang-ups counted in their own tile', s.tiles === 8, 'tiles=' + s.tiles);
+  record('the header comes from the shared column list (9 sortable columns)', s.ths === 9, 'ths=' + s.ths);
   record('default order: worst own-rate first, the sub-queue directly under its parent, unmapped last',
     JSON.stringify(s.order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department'])
       && JSON.stringify(s.child) === JSON.stringify([false, true, false, false]), JSON.stringify(s.order));
-  record('the total row counts each abandon once and reconciles with the tiles (20 trackable)',
-    /^All departments/.test(s.total[0] || '') && s.total[1] === '20', JSON.stringify(s.total));
-  record('the headline answers the question closed',
-    /50% called back by the owning department/.test(s.head) && /20 trackable abandons/.test(s.head), s.head);
+  record('the total row counts each episode once and reconciles with the tiles (18 episodes)',
+    /^All departments/.test(s.total[0] || '') && s.total[1] === '18', JSON.stringify(s.total));
+  record('the headline is the own-team rate over MAPPED episodes (CE-1)',
+    /66\.7% called back by the owning department/.test(s.head) && /15 contact episodes on mapped queues/.test(s.head), s.head);
 
   // Sort by Median time: Sales (40:00) before CSR, Spanish stays under CSR.
   await page.click('#ov-cbdept-table th[data-cbsort="medianCallbackSec"]');
@@ -114,21 +114,46 @@ function section() {
       visible: !!detail && getComputedStyle(detail).display !== 'none',
       text: detail ? detail.textContent : '' };
   });
-  record('Enter on a department expands its "First callback by" detail',
-    ex.expanded === 'true' && ex.visible && /First callback by/.test(ex.text), JSON.stringify({ e: ex.expanded, v: ex.visible }));
+  record('Enter on a department expands its "Called by" detail, each caller counted as own or another team',
+    ex.expanded === 'true' && ex.visible && /Called by \(roster\)/.test(ex.text) && /Counted as/.test(ex.text)
+      && /own team/.test(ex.text),
+    JSON.stringify({ e: ex.expanded, v: ex.visible }));
 
   // CSV.
   await page.click('#ov-cbdept-csv-btn');
   await page.waitForTimeout(800);
   const csv = await page.evaluate(() => (window.__CSV__ || []).slice(-1)[0] || '');
   const lines = csv.split('\n');
-  const hdr = lines.indexOf(lines.filter((l) => /^Department,Parent,Trackable abandons/.test(l))[0]);
+  const hdr = lines.indexOf(lines.filter((l) => /^Department,Parent,Contact episodes/.test(l))[0]);
   const cbLines = hdr >= 0 ? lines.slice(hdr + 1, hdr + 6) : [];
   const bad = lines.filter((l) => l.split(',').some((c) => /^[=+\-@]/.test(c.replace(/^"/, ''))));
   record('Download CSV carries the per-dept block in the ON-SCREEN order and the once-counted total',
     hdr > 0 && lines[1] === 'Scope,All departments' && /^Sales,/.test(cbLines[0] || '') && /^Spanish,CSR,/.test(cbLines[2] || '')
-      && /^All departments \(each abandon once\),/.test(cbLines[4] || '') && bad.length === 0,
+      && /^All departments \(each episode once\),/.test(cbLines[4] || '') && bad.length === 0,
     JSON.stringify({ scope: lines[1], block: cbLines, bad: bad.slice(0, 2) }));
+
+  // CE-3: the company Direct lines block, lazy, with the repeat list.
+  await page.click('#ov-dl-fold > summary');
+  await page.waitForTimeout(1200);
+  const dlc = await page.evaluate(() => (window.__HARNESS__.calls || [])
+    .filter((c) => c.fn === 'getOutboundDirectCallbacks').map((c) => (c.args && c.args[0]) || null));
+  const dlt = await page.evaluate(() => ({
+    work: document.querySelectorAll('#ov-dl-work .ds-kpi').length,
+    after: document.querySelectorAll('#ov-dl-after .ds-kpi').length,
+    note: (function () { const n = document.getElementById('ov-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })() }));
+  await page.click('#ov-dl-rep-btn');
+  await page.waitForTimeout(1200);
+  const drep = await page.evaluate(() => ({
+    calls: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getOutboundDirectRepeats')
+      .map((c) => (c.args && c.args[0]) || null),
+    eps: document.querySelectorAll('#ov-dl-rep-list .ob-ep').length }));
+  record('CE-3: the Overview Direct lines block reads the COMPANY view, once, with its repeat list',
+    dlc.length === 1 && dlc[0].department === '' && dlt.work === 7 && dlt.after === 7
+      && drep.calls.length === 1 && drep.calls[0].department === '' && drep.eps === 1,
+    JSON.stringify({ dlc: dlc, dlt: dlt, drep: drep }));
+  record('FO-2: a spreadsheet-served payload says so, how far the copy reaches, and from when it names the line rung',
+    /Neon was unreachable: these figures come from the Inbound Calls and Outbound Calls tabs \(through \d{4}-\d{2}-\d{2}\)/.test(dlt.note || '')
+      && /names the line each call rang only from \d{4}-\d{2}-\d{2}, so earlier calls are missing here/.test(dlt.note || ''), JSON.stringify(dlt.note));
 
   // Window switch: one fetch for the new window; reopening the same window: none.
   await page.click('#ov-cbdept-window [data-preset="last7"]');

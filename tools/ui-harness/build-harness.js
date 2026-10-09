@@ -219,62 +219,75 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           obTalkSec: 8000, obAttSec: 229, attempts: 60,
           obUnconnectedBrief: 5, obUnconnectedReal: 9, obUnconnectedUnknown: 1,
           briefRingSec: 8 },
-        callback: { abandonedTotal: 25, abandonedAnonymous: 5, abandonedTracked: 20,
-          calledBack: 14, calledBackConnected: 9, calledBackPct: 70,
-          calledBackConnectedPct: 45,
-          medianCallbackSec: 1980, pendingTail: 2,
-          delayBuckets: { m15: 5, h1: 4, h4: 3, d1: 1, later: 1 } },
-        callbackPrior: { abandonedTracked: 18, calledBack: 11, calledBackPct: 61.1,
-          calledBackConnectedPct: 38.9 },
+        // CE-1: the callback figures are contact EPISODES (OutboundReport.gs
+        // obCallbackEpisodes_). own + gotThrough + other + pending + none ===
+        // episodes on the block, every per-dept row and the total.
+        callback: Object.assign({
+          abandonedTotal: 25, abandonedAnonymous: 5, queueAbandons: 25, queueAnonymous: 5,
+          abandonedTracked: 20, phoneMenuAbandons: 0, directLineAbandons: 0,
+          episodes: 18, attempts: 20, repeatEpisodes: 2,
+          own: 10, ownConnected: 6, gotThrough: 2, other: 3, otherConnected: 2, pending: 1, none: 2,
+          ownPct: 55.6, ownConnectedPct: 33.3, gotThroughPct: 11.1, otherPct: 16.7,
+          pendingPct: 5.6, nonePct: 11.1,
+          medianCallbackSec: 1980,
+          delayBuckets: { m15: 4, h1: 3, h4: 2, d1: 1, later: 0 } },
+          // The company view also counts the hang-ups that reached no queue.
+          (req && req.department) ? {} : { abandonedTotal: 77, abandonedAnonymous: 9,
+            phoneMenuAbandons: 40, directLineAbandons: 12 }),
+        callbackPrior: { episodes: 16, own: 8, ownPct: 50, ownConnectedPct: 31.3,
+          otherPct: 12.5, gotThroughPct: 6.3 },
         callbackByHour: [
-          { hour: 6, tracked: 5, calledBack: 4, ratePct: 80 },
-          { hour: 7, tracked: 8, calledBack: 4, ratePct: 50 },
-          { hour: 8, tracked: 2, calledBack: 0, ratePct: 0 },
-          { hour: 11, tracked: 5, calledBack: 3, ratePct: 60 },
+          { hour: 6, episodes: 5, own: 4, ratePct: 80 },
+          { hour: 7, episodes: 8, own: 4, ratePct: 50 },
+          { hour: 8, episodes: 2, own: 0, ratePct: 0 },
+          { hour: 11, episodes: 3, own: 2, ratePct: 66.7 },
         ],
         daily: [
-          { date: '2026-08-17', tracked: 8, calledBack: 6, ratePct: 75 },
-          { date: '2026-08-18', tracked: 7, calledBack: 5, ratePct: 71.4 },
-          { date: '2026-08-19', tracked: 5, calledBack: 3, ratePct: 60 },
+          { date: '2026-08-17', episodes: 7, own: 5, other: 1, ratePct: 71.4 },
+          { date: '2026-08-18', episodes: 6, own: 3, other: 1, ratePct: 50 },
+          { date: '2026-08-19', episodes: 5, own: 2, other: 1, ratePct: 40 },
         ],
-        // v5 (CB-1): the per-dept callback table rides the COMPANY view only
+        // CB-1 on CE-1: the per-dept callback table rides the COMPANY view only
         // (the client sends department '' for "All departments"). Shaped like
-        // outboundShapeCallbackByDept_'s output: a parent + an indented child,
-        // a plain dept, and the unmapped row -- every branch of the renderer.
+        // obEpByDept_'s output: a parent + an indented child, a plain dept,
+        // and the unmapped row -- every branch of the renderer.
         callbackByDept: (req && req.department) ? null : {
           rows: [
-            { dept: 'CSR', unmapped: false, parent: null, abandonedTotal: 12, abandonedAnonymous: 2,
-              tracked: 10, ownCalledBack: 6, ownPct: 60, ownConnected: 4, otherCalledBack: 1,
-              notCalledBack: 3, calledBack: 7, calledBackConnected: 5, connectedPct: 50,
-              medianCallbackSec: 1500, pendingTail: 1,
-              byCaller: [{ label: 'CSR', kind: 'own', calledBack: 6, connected: 4 },
-                         { label: 'Sales', kind: 'dept', calledBack: 1, connected: 1 }],
+            { dept: 'CSR', unmapped: false, parent: null, episodes: 10, attempts: 11, repeatEpisodes: 1,
+              own: 6, ownConnected: 4, gotThrough: 1, other: 1, otherConnected: 0, pending: 1, none: 1,
+              ownPct: 60, ownConnectedPct: 40, gotThroughPct: 10, otherPct: 10, pendingPct: 10, nonePct: 10,
+              medianCallbackSec: 1500, abandonedAnonymous: 2,
+              byCaller: [{ label: 'CSR', kind: 'own', calledBack: 5, connected: 3 },
+                         { label: 'Spanish', kind: 'own', calledBack: 1, connected: 1 },
+                         { label: 'Billing', kind: 'other', calledBack: 1, connected: 0 }],
               tallies: { multiRoster: 1, unrostered: 0, noAgent: 0 } },
-            { dept: 'Spanish', unmapped: false, parent: 'CSR', abandonedTotal: 3, abandonedAnonymous: 0,
-              tracked: 3, ownCalledBack: 1, ownPct: 33.3, ownConnected: 1, otherCalledBack: 1,
-              notCalledBack: 1, calledBack: 2, calledBackConnected: 1, connectedPct: 33.3,
-              medianCallbackSec: 900, pendingTail: 0,
+            { dept: 'Spanish', unmapped: false, parent: 'CSR', episodes: 3, attempts: 3, repeatEpisodes: 0,
+              own: 1, ownConnected: 1, gotThrough: 0, other: 1, otherConnected: 0, pending: 0, none: 1,
+              ownPct: 33.3, ownConnectedPct: 33.3, gotThroughPct: 0, otherPct: 33.3, pendingPct: 0, nonePct: 33.3,
+              medianCallbackSec: 900, abandonedAnonymous: 0,
               byCaller: [{ label: 'Spanish', kind: 'own', calledBack: 1, connected: 1 },
-                         { label: 'CSR', kind: 'dept', calledBack: 1, connected: 0 }],
+                         { label: 'Billing', kind: 'other', calledBack: 1, connected: 0 }],
               tallies: { multiRoster: 0, unrostered: 0, noAgent: 0 } },
-            { dept: 'Sales', unmapped: false, parent: null, abandonedTotal: 8, abandonedAnonymous: 3,
-              tracked: 5, ownCalledBack: 4, ownPct: 80, ownConnected: 2, otherCalledBack: 1,
-              notCalledBack: 0, calledBack: 5, calledBackConnected: 3, connectedPct: 60,
-              medianCallbackSec: 2400, pendingTail: 0,
-              byCaller: [{ label: 'Sales', kind: 'own', calledBack: 4, connected: 2 },
-                         { label: 'Unrostered', kind: 'unrostered', calledBack: 1, connected: 1 }],
-              tallies: { multiRoster: 0, unrostered: 1, noAgent: 0 } },
-            { dept: 'Not mapped to a department', unmapped: true, parent: null, abandonedTotal: 5,
-              abandonedAnonymous: 0, tracked: 5, ownCalledBack: 0, ownPct: 0, ownConnected: 0,
-              otherCalledBack: 2, notCalledBack: 3, calledBack: 2, calledBackConnected: 0,
-              connectedPct: 0, medianCallbackSec: 3600, pendingTail: 1,
-              byCaller: [{ label: 'No agent recorded', kind: 'noAgent', calledBack: 2, connected: 0 }],
+            { dept: 'Sales', unmapped: false, parent: null, episodes: 5, attempts: 6, repeatEpisodes: 1,
+              own: 4, ownConnected: 2, gotThrough: 1, other: 0, otherConnected: 0, pending: 0, none: 0,
+              ownPct: 80, ownConnectedPct: 40, gotThroughPct: 20, otherPct: 0, pendingPct: 0, nonePct: 0,
+              medianCallbackSec: 2400, abandonedAnonymous: 3,
+              byCaller: [{ label: 'Sales', kind: 'own', calledBack: 4, connected: 2 }],
+              tallies: { multiRoster: 0, unrostered: 0, noAgent: 0 } },
+            { dept: 'Not mapped to a department', unmapped: true, parent: null, episodes: 3, attempts: 3,
+              repeatEpisodes: 0, own: 0, ownConnected: 0, gotThrough: 0, other: 2, otherConnected: 0,
+              pending: 0, none: 1, ownPct: 0, ownConnectedPct: 0, gotThroughPct: 0, otherPct: 66.7,
+              pendingPct: 0, nonePct: 33.3, medianCallbackSec: null, abandonedAnonymous: 0,
+              byCaller: [{ label: 'No agent recorded', kind: 'other', calledBack: 2, connected: 0 }],
               tallies: { multiRoster: 0, unrostered: 0, noAgent: 2 } },
           ],
-          total: { abandonedTotal: 25, abandonedAnonymous: 5, tracked: 20, ownCalledBack: 10,
-            ownPct: 50, otherCalledBack: 4, notCalledBack: 6, calledBack: 14,
-            calledBackConnected: 9, connectedPct: 45, medianCallbackSec: 1980, pendingTail: 2 },
-          unmappedQueues: [{ queue: 'a_q_mystery', tracked: 5, total: 5 }],
+          total: { episodes: 18, attempts: 20, repeatEpisodes: 2, own: 10, ownConnected: 6,
+            gotThrough: 2, other: 3, otherConnected: 2, pending: 1, none: 2,
+            ownPct: 55.6, ownConnectedPct: 33.3, gotThroughPct: 11.1, otherPct: 16.7,
+            pendingPct: 5.6, nonePct: 11.1, medianCallbackSec: 1980,
+            mappedEpisodes: 15, mappedOwn: 10, mappedOwnPct: 66.7,
+            abandonedAnonymous: 5, phoneMenuAbandons: 40, directLineAbandons: 12 },
+          unmappedQueues: [{ queue: 'a_q_mystery', tracked: 3, total: 3 }],
           unmappedQueueCount: 1,
         },
         agents: (req && req.department === 'Sales') ? [
@@ -385,14 +398,102 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
     },
     sendOutboundReportEmail: function () { return { to: 'admin@example.com' }; },
+    // CE-2: grouped by contact episode -- a pending one (still inside the
+    // window) and a missed one with a late callback tag, so every chip renders.
     getOutboundUncalled: function (req) {
       return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || null, companyView: !(req && req.department),
-          available: true, truncated: false, scope: 'range', tzLabel: 'CST', callbackWindowDays: 3 },
+          available: true, truncated: false, scope: 'range', tzLabel: 'CST', callbackWindowDays: 3,
+          lateHorizonDays: 14, episodes: 2, pending: 1, missed: 1 },
+        episodes: [
+          { firstIso: '2026-08-19', firstHms: '08:41:00', lastIso: '2026-08-19', status: 'pending', daysLeft: 2,
+            attempts: [{ callDate: '2026-08-19', callId: 'oc-1' }], late: { calledBack: null, gotThrough: null } },
+          { firstIso: '2026-08-11', firstHms: '07:02:00', lastIso: '2026-08-12', status: 'missed', daysLeft: null,
+            attempts: [{ callDate: '2026-08-11', callId: 'oc-2' }, { callDate: '2026-08-12', callId: 'oc-3' }],
+            late: { calledBack: { iso: '2026-08-17', hms: '09:00:00', daysAfter: 5, team: 'own', agent: 'Test Agent' },
+                    gotThrough: null } },
+        ],
         calls: [
           { callDate: '2026-08-19', callId: 'oc-1', cstStart: '10:41:00',
             entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
-            abandonedOnHold: false, waitSeconds: 95, holdSeconds: null },
+            abandonedOnHold: false, waitSeconds: 95, holdSeconds: null, dialIn: 'Main CSR Line' },
+          { callDate: '2026-08-12', callId: 'oc-3', cstStart: '11:15:00',
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
+            abandonedOnHold: false, waitSeconds: 40, holdSeconds: null, dialIn: null },
+          { callDate: '2026-08-11', callId: 'oc-2', cstStart: '09:02:00',
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
+            abandonedOnHold: false, waitSeconds: 61, holdSeconds: null, dialIn: 'Main CSR Line' },
+        ] };
+    },
+    // CE-3: Direct lines -- work + after-hours figures, and the repeat list.
+    getOutboundDirectCallbacks: function (req) {
+      const sum = function (eps, own, byPerson, other, got, pending, none, repeat, median) {
+        const pct = function (n) { return eps ? Math.round(n / eps * 1000) / 10 : null; };
+        return { episodes: eps, attempts: eps + repeat, repeatEpisodes: repeat,
+          own: own, ownConnected: Math.max(0, own - 1), gotThrough: got, other: other, otherConnected: 0,
+          pending: pending, none: none, ownPct: pct(own), ownConnectedPct: pct(Math.max(0, own - 1)),
+          gotThroughPct: pct(got), otherPct: pct(other), pendingPct: pct(pending), nonePct: pct(none),
+          medianCallbackSec: median, delayBuckets: { m15: 0, h1: 1, h4: 1, d1: 0, later: 0 },
+          ownByPerson: byPerson, ownByTeam: own - byPerson,
+          ownByPersonPct: pct(byPerson), ownByTeamPct: pct(own - byPerson) };
+      };
+      const from = (req && req.from) || '2026-07-21';
+      const meta = { from: from, to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          scopeDepts: (req && req.department) ? [req.department] : [], available: true,
+          callbackWindowDays: 3, workWindowPst: { start: '06:30:00', end: '15:00:00' }, misdialSec: 8,
+          cacheHit: false };
+      // FO-2: the company view (the Overview) is served from the spreadsheet
+      // copy, whose First Agent column starts after the window does.
+      if (meta.companyView) {
+        meta.fallbackSource = 'sheet'; meta.fallbackThrough = meta.to;
+        const cov = new Date(from + 'T12:00:00Z'); cov.setUTCDate(cov.getUTCDate() + 3);
+        meta.fallbackCoverageStart = cov.toISOString().slice(0, 10);   // 3 days into the window
+      }
+      return { meta: meta,
+        counts: { calls: 49, anonymous: 4, trackable: 42, missed: 38, abandoned: 11, voicemailBox: 6, unownedLines: 1, misdials: 3 },
+        all: sum(30, 14, 9, 3, 2, 1, 10, 6, 5400),
+        work: sum(20, 11, 7, 2, 2, 1, 4, 4, 3600),
+        after: sum(10, 3, 2, 1, 0, 0, 6, 2, 50400) };
+    },
+    getOutboundDirectRepeats: function (req) {
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          available: true, truncated: false, tzLabel: 'CST', callbackWindowDays: 3, lateHorizonDays: 14,
+          minAttempts: 2, episodes: 1 },
+        episodes: [
+          { firstIso: '2026-08-11', firstHms: '07:02:00', lastIso: '2026-08-12', team: 'Sales', lines: ['Sam Seller', 'Sales Voicemails'],
+            voicemail: true,
+            attempts: [
+              { callDate: '2026-08-11', callId: 'dl-1', cstStart: '09:02:00', entryQueue: null, finalQueue: null,
+                abandonStage: null, abandonedOnHold: false, waitSeconds: null, holdSeconds: null,
+                dialIn: '+18005550123', disposition: 'missed', owner: 'Sam Seller', afterHours: false },
+              { callDate: '2026-08-12', callId: 'dl-2', cstStart: '18:40:00', entryQueue: null, finalQueue: null,
+                abandonStage: 'direct', abandonedOnHold: false, waitSeconds: null, holdSeconds: null,
+                dialIn: null, disposition: 'abandoned', owner: 'Sales Voicemails', afterHours: true },
+            ],
+            late: { calledBack: { iso: '2026-08-19', hms: '09:00:00', daysAfter: 7, team: 'own', agent: 'Sam Seller' },
+                    gotThrough: null } },
+        ] };
+    },
+    // CE-2: the called-back list -- one own-team and one another-team episode.
+    getOutboundCalledBack: function (req) {
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          available: true, truncated: false, tzLabel: 'CST', callbackWindowDays: 3, own: 1, other: 1 },
+        episodes: [
+          { firstIso: '2026-08-18', firstHms: '08:00:00', attempts: 2,
+            first: { callDate: '2026-08-18', callId: 'cb-1', cstStart: '10:00:00', entryQueue: 'A_Q_CSR',
+              finalQueue: 'A_Q_CSR', abandonStage: 'queue', abandonedOnHold: false, waitSeconds: 50,
+              holdSeconds: null, dialIn: 'Main CSR Line' },
+            outcome: 'own', agent: 'Test Agent', team: 'CSR', delaySec: 1800, connected: true,
+            dial: { callDate: '2026-08-18', callStart: '08:30:00', callId: 'OB-777' } },
+          { firstIso: '2026-08-17', firstHms: '09:00:00', attempts: 1,
+            first: { callDate: '2026-08-17', callId: 'cb-2', cstStart: '11:00:00', entryQueue: 'A_Q_CSR',
+              finalQueue: 'A_Q_CSR', abandonStage: 'queue', abandonedOnHold: false, waitSeconds: 30,
+              holdSeconds: null, dialIn: null },
+            outcome: 'other', agent: 'Bill Payer', team: 'Billing', delaySec: 7200, connected: false,
+            dial: { callDate: '2026-08-17', callStart: '11:00:00', callId: 'OB-778' } },
         ] };
     },
     updateCoachingFlagStatus: function (req) { return { id: req && req.id, status: req && req.action }; },

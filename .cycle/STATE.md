@@ -1,6 +1,46 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-09 — /sync-docs after CE-1..BF-2.** CLAUDE.md: the Operator State #49 index line names the direct-line fallback + the BF-1 backfill. architecture.md: the Outbound row's three new RPCs + `outboundDirect:v2:`, the export's cols 23-24. fix-history: the Callback-episodes intro past tense. Harness README: the FO-1/2/3 driver checks. CLAUDE.md 172.8 KB (27.2 KB headroom); nothing prunable without dropping a rule -- the two largest bullets sit ~200 B under the 4 KB ratchet, so route their next additions to a split doc.
+  **Where I left off:** PR opened and merged per the owner's instruction.
+- **2026-10-09 — BF-1 + BF-2 IMPLEMENTED (block 245).**
+  - BF-1: cdr-import `previewFirstRingBackfill()` / `backfillFirstRingFromJourney()` derive first_ring_seconds for older direct-line missed/abandoned calls from the stored journey (first leg naming the line owner, canonicalized; NULL-only writes; unknown stays NULL). Run end to end on Postgres 16.
+  - BF-2: outboundAgentsSel_ groups by `COALESCE(trim(agent_name), '')`, the sheet twin's key.
+  - 2296 tests; every ci:ui stage green; seven bites.
+
+  **Owner-side:** after the cdr-import push, preview -> Neon backup -> apply the backfill, then the Inbound Calls re-export (#49). Open: managers seeing call ids at 6c.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-09 — CE follow-ons IMPLEMENTED (block 244).** Owner rulings: misdial = a ring under 8 s (out of the rates, counted; unknown ring stays in); add the First Agent export column + a sheet backup; no Overview per-dept direct table for now.
+  - FO-1: cdr-import captures `inbound_calls.first_ring_seconds`; the direct SQL flags misdials via `to_jsonb` (works before the column exists). outboundDirect:v2.
+  - FO-2: Inbound Calls export cols 23-24 (First Agent / First Ring Sec); both direct endpoints fall back to the export tabs (parity-pinned twin of the SQL), uncached, disclosed.
+  - FO-3: the #/report/outbound deep-link scroll holds until the page settles (the G3 flake). FO-4: agent tie order COLLATE "C" NULLS FIRST.
+  - 2290 tests; every ci:ui stage green; Postgres 16 parity; eight bites + a probabilistic UI bite.
+
+  **Owner-side:** deploy cdr-import, then cdr-report + the one-time `exportInboundCalls` re-export (#49), then the dashboard; walk S60. Open: managers seeing call ids at 6c.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-09 — CE-3 IMPLEMENTED (block 243): direct-line callbacks.**
+  - Unanswered external calls to a PERSON's line, counted as episodes; credit goes to the line owner's team, split by the person / by their team, another team kept apart; work hours and after hours shown separately; `Sales Voicemails` -> Sales (the only shared line, owner).
+  - New `getOutboundDirectCallbacks` (cached `outboundDirect:v1`) + `getOutboundDirectRepeats` (2+ attempts in 3 days, nobody called back). "Direct lines" sub-folds in the Insights Callbacks fold and the Overview's Callbacks by department.
+  - Direct SQL run on a local Postgres 16; 2283 tests; every ci:ui stage green; five bites.
+
+  **Owner-side:** deploy, walk S60. Open: a misdial filter (no wait_seconds on missed direct calls), managers seeing call ids at 6c, a per-dept direct table on the Overview.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR. The callback-episodes plan (CE-1..3) is complete.
+- **2026-10-09 — CE-2 IMPLEMENTED (block 242): the callback drill lists.**
+  - Not-called-back list grouped by episode: status (still inside the window, N days left / missed), late tags read 14 days past the window (called back late / got through later -- tags only), the dialed line, the call id + copy (admin).
+  - New `getOutboundCalledBack` + "List called-back calls": dialer, roster team, own / another team, delay from the first attempt, connected, "↳ callback path" into the outbound call.
+  - Both endpoints run on a local Postgres 16; 2273 tests; five bites.
+
+  **Owner-side:** deploy, walk S59's list steps. Open question for the 6c release: should managers see the call id + copy (today admin-only, owner round 4)?
+  **Next:** CE-3 (direct-line callbacks).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-09 — CE-1 IMPLEMENTED (block 241): the callback figures count contact EPISODES.**
+  - Owner rulings 2026-10-09 (docs/next-steps.md "Callback episodes + direct lines"): phone-menu hang-ups out of the rate; own team and another team both shown, clearly apart; repeat attempts as episodes; the team-aware refinement; repeat unreturned caller = 2+ attempts in 3 days, no callback (CE-3).
+  - One pure engine (`obCallbackEpisodes_`) for the Neon path (event rows, integer caller keys) and the sheet fallback; every callback surface moved (Insights fold, Overview table + mapped-only headline, email, not-called-back list). outboundReport:v8.
+  - The event SQL was run against a local Postgres 16 and matched the sheet path; seven mutation bites; 2268 tests.
+
+  **Owner-side:** deploy, walk S48 + S59.
+  **Next:** CE-2 (drill lists), then CE-3 (direct-line callbacks).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l (branch restarted from main after #363 merged), no PR.
 - **2026-10-08 — FO-3 + G3 IMPLEMENTED (block 240): the Outbound modal is retired.**
   - FO-3: one client store (obSummaryFetch_) for getDeptOutboundSummary, shared by the Batch D table and the Insights Outbound fold; a switch to Outbound now sends each window once.
   - G3: modal markup + menu item + modal-only client code removed; `#/report/outbound` lands on My Department -> Outbound with the Callbacks fold open (admin; a plain landing for anyone else); the 6c pin pairs the gate with #dept-dir-switch / #ins-ob-fold / #ins-cb-fold and fails if the modal returns. Harness getLocation is async + deep-linkable.

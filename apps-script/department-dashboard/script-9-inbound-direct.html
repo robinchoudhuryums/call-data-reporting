@@ -1723,34 +1723,49 @@
    * The pending tail is a COUNT, not a caption guess: tracked abandons still
    * inside the callback window that could yet be called back.
    */
+  // CE-1 (owner 2026-10-09): the callback tiles count contact EPISODES. Every
+  // rate divides by cb.episodes, and own team / another team / got through
+  // are SEPARATE tiles by ruling -- never folded into one "called back".
   function outboundCallbackTilesHtml_(cb, cbp) {
     cb = cb || {};
-    return [
-      inboundKpiTile_('Abandoned', fmtNumber(cb.abandonedTotal),
-        fmtNumber(cb.abandonedAnonymous) + ' anonymous (untrackable)', ''),
-      inboundKpiTile_('Called back', fmtNumber(cb.calledBack),
-        'of ' + fmtNumber(cb.abandonedTracked) + ' trackable'
-        + (cb.pendingTail ? ' · ' + fmtNumber(cb.pendingTail) + ' still in window' : ''), ''),
-      inboundKpiTile_('Callback rate', cb.calledBackPct != null ? cb.calledBackPct + '%' : '—',
-        'of trackable abandons',
-        (cbp && cb.calledBackPct != null && cbp.calledBackPct != null)
-          ? inboundDelta_(cb.calledBackPct, cbp.calledBackPct, 'pos', true) : ''),
-      // (2): promoted from a caption. A callback that rang out is not a save,
-      // and burying that under "Callback rate" made the softer number the
-      // headline. SAME denominator as the tile above, deliberately, so the
-      // gap between the two is readable without arithmetic.
-      // Was "Actually reached" -- a claim the data cannot back: a connected
-      // callback includes voicemail and phone menus (owner ruling
-      // 2026-09-23). It is an upper bound on callers reached, and says so.
-      inboundKpiTile_('Callbacks connected',
-        cb.calledBackConnectedPct != null ? cb.calledBackConnectedPct + '%' : '—',
-        fmtNumber(cb.calledBackConnected) + ' · same denominator · incl. voicemail',
-        (cbp && cb.calledBackConnectedPct != null && cbp.calledBackConnectedPct != null)
-          ? inboundDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, 'pos', true) : ''),
+    const pct = function (v) { return v != null ? v + '%' : '—'; };
+    const delta = function (cur, prior) {
+      return (cbp && cur != null && prior != null) ? inboundDelta_(cur, prior, 'pos', true) : '';
+    };
+    const tiles = [
+      inboundKpiTile_('Contact episodes', fmtNumber(cb.episodes),
+        fmtNumber(cb.abandonedTracked) + ' trackable abandon' + (cb.abandonedTracked === 1 ? '' : 's')
+        + (cb.repeatEpisodes ? ' · ' + fmtNumber(cb.repeatEpisodes) + ' with 2+ attempts' : '')
+        + (cb.queueAnonymous ? ' · ' + fmtNumber(cb.queueAnonymous) + ' anonymous (untrackable)' : ''), ''),
+      inboundKpiTile_('Called back by own team', pct(cb.ownPct),
+        fmtNumber(cb.own) + ' episode' + (cb.own === 1 ? '' : 's')
+        + (cb.pending ? ' · ' + fmtNumber(cb.pending) + ' still in window' : ''),
+        delta(cb.ownPct, cbp && cbp.ownPct)),
+      // (2) kept: a callback that rang out is not a save. A connected callback
+      // includes voicemail and phone menus (owner ruling 2026-09-23), so it is
+      // an upper bound on callers reached, and says so.
+      inboundKpiTile_('Own callbacks connected', pct(cb.ownConnectedPct),
+        fmtNumber(cb.ownConnected) + ' · incl. voicemail',
+        delta(cb.ownConnectedPct, cbp && cbp.ownConnectedPct)),
+      inboundKpiTile_('Contacted by another team', pct(cb.otherPct),
+        fmtNumber(cb.other) + ' · may be unrelated', ''),
+      inboundKpiTile_('Caller got through', pct(cb.gotThroughPct),
+        fmtNumber(cb.gotThrough) + ' · reached the team on a later call', ''),
+      inboundKpiTile_('Not called back', fmtNumber(cb.none),
+        'no dial inside the window', ''),
       inboundKpiTile_('Median time to callback',
         cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
-        'first dial after the abandon', ''),
-    ].join('');
+        'own team · from the first attempt', ''),
+    ];
+    // Company view only: the hang-ups that reached no queue, so no team owns
+    // them. Counted, labelled, and never in a rate (ruling 1).
+    if (cb.phoneMenuAbandons || cb.directLineAbandons) {
+      tiles.push(inboundKpiTile_('Not counted (no queue reached)',
+        fmtNumber((cb.phoneMenuAbandons || 0) + (cb.directLineAbandons || 0)),
+        fmtNumber(cb.phoneMenuAbandons || 0) + ' phone-menu · '
+        + fmtNumber(cb.directLineAbandons || 0) + ' on a person’s line', ''));
+    }
+    return tiles.join('');
   }
 
   // v5 (CB-1): the per-dept callback table (company view only). Own sort, not
@@ -1802,19 +1817,21 @@
   // where the matching tiles sit ('above' in both today).
   var OB_CBDEPT_COLS_ = [
     { key: 'dept', label: 'Department', num: false, title: '' },
-    { key: 'tracked', label: 'Trackable abandons', num: true,
-      title: 'Abandoned calls on this department’s queues that carried caller ID (a parent includes its sub-queues). Anonymous abandons cannot be called back and are left out.' },
-    { key: 'ownPct', label: 'Called back by us', num: true,
-      title: 'Trackable abandons whose FIRST callback was dialed by an agent on this department’s roster (or a sub-queue’s). The ranked column.' },
-    { key: 'otherCalledBack', label: 'By another dept', num: true,
-      title: 'The first callback came from someone NOT on this department’s roster: another department, an unrostered dialer, or a call with no agent recorded. The caller was served, but not by the owning department.' },
-    { key: 'notCalledBack', label: 'Not called back', num: true,
-      title: 'No outbound call to the caller within the callback window.' },
-    { key: 'connectedPct', label: 'Callbacks connected (upper bound)', num: true,
-      title: 'Callbacks (by anyone) where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of trackable abandons.' },
+    { key: 'episodes', label: 'Contact episodes', num: true,
+      title: 'One caller trying to reach this department, however many times they tried while it stayed open (each try within the callback window of the last). Built from the abandons on its queues that carried caller ID; a parent includes its sub-queues.' },
+    { key: 'ownPct', label: 'Called back by own team', num: true,
+      title: 'Episodes closed by a dial from an agent on this department’s roster (or its parent’s / a sub-queue’s), connected or not. The ranked column.' },
+    { key: 'otherPct', label: 'Another team', num: true,
+      title: 'Episodes no own-team dial closed, but where someone else dialed the caller inside the window: another department, an unrostered dialer, or a call with no agent recorded. Kept apart because it may be about something else.' },
+    { key: 'gotThroughPct', label: 'Got through', num: true,
+      title: 'The caller reached the department on a later call before anyone called back.' },
+    { key: 'none', label: 'Not called back', num: true,
+      title: 'No dial to the caller inside the window, and they did not get through.' },
+    { key: 'ownConnectedPct', label: 'Own connected (upper bound)', num: true,
+      title: 'Own-team callbacks where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of episodes.' },
     { key: 'medianCallbackSec', label: 'Median time', num: true,
-      title: 'Median time from the abandoned call to the first callback, measured from the caller’s side: it INCLUDES any internal handoff (e.g. an email to the owning department), so it is not agent responsiveness alone. Same clock as the Median tile above.' },
-    { key: 'pendingTail', label: 'Still in window', num: true,
+      title: 'Median time from the episode’s FIRST attempt to the own-team callback, measured from the caller’s side: it INCLUDES any internal handoff, so it is not agent responsiveness alone.' },
+    { key: 'pending', label: 'Still in window', num: true,
       title: 'Not called back yet, but still inside the callback window.' },
   ];
   function obCbDeptTheadHtml_() {
@@ -1825,21 +1842,21 @@
   }
   function obCbDeptCellsHtml_(r) {
     const pct = function (v) { return v != null ? v + '%' : '—'; };
-    return '<td class="num">' + fmtNumber(r.tracked) + '</td>'
-      + '<td class="num"><strong>' + fmtNumber(r.ownCalledBack) + '</strong> · ' + pct(r.ownPct) + '</td>'
-      + '<td class="num">' + fmtNumber(r.otherCalledBack) + '</td>'
-      + '<td class="num">' + fmtNumber(r.notCalledBack) + '</td>'
-      + '<td class="num">' + fmtNumber(r.calledBackConnected) + ' · ' + pct(r.connectedPct) + '</td>'
+    return '<td class="num">' + fmtNumber(r.episodes) + '</td>'
+      + '<td class="num"><strong>' + fmtNumber(r.own) + '</strong> · ' + pct(r.ownPct) + '</td>'
+      + '<td class="num">' + fmtNumber(r.other) + ' · ' + pct(r.otherPct) + '</td>'
+      + '<td class="num">' + fmtNumber(r.gotThrough) + ' · ' + pct(r.gotThroughPct) + '</td>'
+      + '<td class="num">' + fmtNumber(r.none) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ownConnected) + ' · ' + pct(r.ownConnectedPct) + '</td>'
       + '<td class="num">' + (r.medianCallbackSec != null ? fmtDuration(r.medianCallbackSec) : '—') + '</td>'
-      + '<td class="num">' + fmtNumber(r.pendingTail) + '</td>';
+      + '<td class="num">' + fmtNumber(r.pending) + '</td>';
   }
   function obCbDeptDetailHtml_(r, t) {
-    const kindNote = { own: 'this department', dept: 'another department', multi: 'an agent on more than one roster',
-                       unrostered: 'on no roster', noAgent: 'no agent recorded' };
+    const kindNote = { own: 'own team', other: 'another team' };
     let html = '';
     if ((r.byCaller || []).length) {
       html += '<table class="al-config-table ob-cbdept-detail"><thead><tr>'
-        + '<th>First callback by</th><th>Who</th><th class="num">Callbacks</th><th class="num">Connected</th>'
+        + '<th>Called by (roster)</th><th>Counted as</th><th class="num">Episodes</th><th class="num">Connected</th>'
         + '</tr></thead><tbody>'
         + r.byCaller.map(function (b) {
           return '<tr><td>' + escapeHtml(b.label) + '</td><td>' + escapeHtml(kindNote[b.kind] || '') + '</td>'
@@ -1855,10 +1872,11 @@
     if (tl.multiRoster) bits.push(fmtNumber(tl.multiRoster) + ' by agents on more than one roster');
     if (tl.unrostered) bits.push(fmtNumber(tl.unrostered) + ' by a dialer on no roster');
     if (tl.noAgent) bits.push(fmtNumber(tl.noAgent) + ' with no agent recorded');
-    if (bits.length) html += '<p class="al-hint">Of the callbacks: ' + escapeHtml(bits.join(' · ')) + '.</p>';
-    if (r.ownCalledBack) {
-      html += '<p class="al-hint">' + fmtNumber(r.ownConnected) + ' of the '
-        + fmtNumber(r.ownCalledBack) + ' own callbacks connected (incl. voicemail).</p>';
+    if (bits.length) html += '<p class="al-hint">Of the calls above: ' + escapeHtml(bits.join(' · ')) + '.</p>';
+    if (r.repeatEpisodes) {
+      html += '<p class="al-hint">' + fmtNumber(r.repeatEpisodes) + ' of the '
+        + fmtNumber(r.episodes) + ' episodes took 2+ attempts (' + fmtNumber(r.attempts)
+        + ' trackable abandons in all).</p>';
     }
     if (r.abandonedAnonymous) {
       html += '<p class="al-hint">' + fmtNumber(r.abandonedAnonymous) + ' anonymous abandon(s) not trackable.</p>';
@@ -1871,7 +1889,7 @@
         }).join(', ')
         + (t.unmappedQueueCount > t.unmappedQueues.length
           ? ' and ' + fmtNumber(t.unmappedQueueCount - t.unmappedQueues.length) + ' more' : '')
-        + '.</p>';
+        + '. No team owns these episodes, so the headline leaves them out.</p>';
     }
     return html;
   }
@@ -1891,12 +1909,12 @@
         + escapeHtml(r.dept) + ' <span class="qcd-expand-icon">&#9654;</span></button></td>'
         + obCbDeptCellsHtml_(r)
         + '</tr>'
-        + '<tr class="qcd-detail-row" style="display:none;"><td colspan="8"><div class="qcd-detail-wrap">'
+        + '<tr class="qcd-detail-row" style="display:none;"><td colspan="9"><div class="qcd-detail-wrap">'
         + obCbDeptDetailHtml_(r, t) + '</div></td></tr>';
     }).join('');
     if (tf) {
       tf.innerHTML = t.total
-        ? '<tr class="ob-cbdept-total"><td title="Every abandon counted once, whichever departments its queue belongs to">'
+        ? '<tr class="ob-cbdept-total"><td title="Every episode counted once, whichever departments its queue belongs to">'
           + '<strong>All departments</strong></td>' + obCbDeptCellsHtml_(t.total) + '</tr>'
         : '';
     }
@@ -1937,7 +1955,7 @@
       const sortBy = function (th) {
         const key = th.getAttribute('data-cbsort');
         if (v.sort.key === key) v.sort.dir = v.sort.dir === 'asc' ? 'desc' : 'asc';
-        else { v.sort.key = key; v.sort.dir = (key === 'dept' || key === 'ownPct' || key === 'connectedPct') ? 'asc' : 'desc'; }
+        else { v.sort.key = key; v.sort.dir = (key === 'dept' || key === 'ownPct' || key === 'ownConnectedPct') ? 'asc' : 'desc'; }
         outboundPaintCbDept_(v);
       };
       const thead = table.querySelector('thead');
@@ -1978,7 +1996,7 @@
     const el = target;
     if (!el) return;
     const b = cb && cb.delayBuckets;
-    const total = Number(cb && cb.calledBack) || 0;
+    const total = Number(cb && cb.own) || 0;   // CE-1: own-team callbacks, timed from the first attempt
     // Nothing to distribute -> stay quiet. An all-zero strip reads as "every
     // callback was slow" rather than "there were no callbacks".
     if (!b || !total) { el.style.display = 'none'; el.innerHTML = ''; return; }
@@ -2001,7 +2019,7 @@
       return '<span class="ob-delay-key"><i class="ob-delay-dot ob-delay-dot--' + tone + '"></i>'
         + escapeHtml(OUTBOUND_DELAY_LABELS_[k]) + ' <strong>' + fmtNumber(n) + '</strong></span>';
     }).join('');
-    el.innerHTML = '<div class="al-section-subtitle">How fast were the callbacks?</div>'
+    el.innerHTML = '<div class="al-section-subtitle">How fast did the team call back (from the first attempt)?</div>'
       + '<div class="ob-delay-bar">' + seg + '</div>'
       + '<div class="ob-delay-legend">' + legend + '</div>'
       + '<p class="al-hint">A median hides the tail. Sooner is better: inside 15 minutes '
@@ -2022,38 +2040,37 @@
   function outboundRenderHourStrip_(rows, target) {
     const el = target;
     if (!el) return;
-    const list = (rows || []).filter(function (r) { return Number(r.tracked) > 0; });
+    const list = (rows || []).filter(function (r) { return Number(r.episodes) > 0; });
     if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
     el.style.display = '';
     // call_start is raw PST (the INV-18 storage convention) -- shift to CST
     // for display exactly as the per-call lists do, never server-side.
-    const maxTracked = list.reduce(function (m, r) { return Math.max(m, Number(r.tracked) || 0); }, 0);
     const cells = list.map(function (r) {
       const cstHour = ((Number(r.hour) || 0) + 2) % 24;
       const rate = r.ratePct;
-      const tracked = Number(r.tracked) || 0;
-      const lowSignal = tracked < 3;
+      const n = Number(r.episodes) || 0;
+      const lowSignal = n < 3;
       const tone = lowSignal ? 'muted'
         : (rate >= 75 ? 'good' : (rate >= 50 ? 'accent' : 'warn'));
       const label = heatHourLabel_(cstHour);
-      const title = label + ' CST · ' + (rate == null ? 'no trackable abandons' : rate + '% called back')
-        + ' (' + (Number(r.calledBack) || 0) + ' of ' + tracked + ')'
+      const title = label + ' CST · ' + (rate == null ? 'no contact episodes' : rate + '% called back by own team')
+        + ' (' + (Number(r.own) || 0) + ' of ' + n + ' episodes)'
         + (lowSignal ? ' · low volume' : '');
       return '<div class="ob-hour-cell" title="' + escapeHtml(title) + '">'
         + '<div class="ob-hour-bar"><span class="ob-hour-fill ob-hour-fill--' + tone
         + '" style="height:' + (rate == null ? 0 : Math.max(2, rate)) + '%"></span></div>'
         + '<div class="ob-hour-rate">' + (rate == null ? '—' : Math.round(rate) + '%') + '</div>'
         + '<div class="ob-hour-h">' + escapeHtml(label) + '</div>'
-        + '<div class="ob-hour-n">' + fmtNumber(tracked) + '</div>'
+        + '<div class="ob-hour-n">' + fmtNumber(n) + '</div>'
         + '</div>';
     }).join('');
     el.innerHTML = '<div class="al-section-subtitle">Which abandons fall through the cracks?</div>'
       + '<div class="ob-hour-strip">' + cells + '</div>'
-      + '<p class="al-hint">Callback rate by the hour the caller ABANDONED (CST), over the '
-      + 'whole window — the daily trend above says whether we are keeping up, this says '
-      + 'which hours we are not. Bar height is the rate; the number underneath is how many '
-      + 'trackable abandons that hour held. Hours under 3 are muted as low signal'
-      + (maxTracked ? '' : '') + '.</p>';
+      + '<p class="al-hint">Own-team callback rate by the hour of the episode&rsquo;s FIRST '
+      + 'abandoned attempt (CST), over the whole window — the daily trend above says whether '
+      + 'we are keeping up, this says which hours we are not. Bar height is the rate; the '
+      + 'number underneath is how many contact episodes started that hour. Hours under 3 are '
+      + 'muted as low signal.</p>';
   }
 
   // One chart instance PER CANVAS (keyed by its id), so a second surface's
@@ -2073,7 +2090,7 @@
       data: {
         labels: pts.map(function (d) { return d.date; }),
         datasets: [{
-          label: 'Callback rate %',
+          label: 'Called back by own team %',
           data: pts.map(function (d) { return d.ratePct; }),
           borderColor: THEME.accent,
           backgroundColor: THEME.accent,
@@ -2091,8 +2108,9 @@
             callbacks: {
               label: function (ctx) {
                 const d = pts[ctx.dataIndex] || {};
-                return d.calledBack + ' of ' + d.tracked + ' tracked abandons called back ('
-                  + (d.ratePct != null ? d.ratePct : '—') + '%)';
+                return d.own + ' of ' + d.episodes + ' contact episodes called back by own team ('
+                  + (d.ratePct != null ? d.ratePct : '—') + '%)'
+                  + (d.other ? ' · ' + d.other + ' contacted by another team' : '');
               },
             },
           },
@@ -2105,8 +2123,426 @@
     });
   }
 
-  // v2: the not-called-back drill. Reuses the heatmap cell drill's renderer
-  // (heatCellDetailHtml_) so rows carry the same stage tick + facts + "↳
+  // CE-2: the two drill lists render GROUPED BY EPISODE. Shared row pieces:
+  // the stage tick + queue path + facts of the heatmap drill, the dialed line,
+  // and parentIdBadge (the call id + copy for admins -- the phone provider's
+  // portal shows the number the dashboard never stores -- and "↳ path").
+  function outboundAttemptRowHtml_(c) {
+    const path = [c.entryQueue, c.finalQueue].filter(Boolean)
+      .filter(function (v, i, a) { return a.indexOf(v) === i; })
+      .map(escapeHtml).join(' → ');
+    const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
+    const facts = [];
+    // CE-3: a person's line that rang out (or went to their voicemail -- the
+    // CDR cannot tell) is `missed`, not abandoned.
+    if (c.disposition === 'missed') facts.push('not answered');
+    else if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+    if (c.owner) facts.push('rang ' + escapeHtml(String(c.owner)));
+    if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
+    if (c.dialIn) facts.push('dialed ' + escapeHtml(String(c.dialIn)));
+    if (c.afterHours) facts.push('after hours');
+    const stageCls = c.abandonedOnHold ? 'is-hold'
+      : (String(c.abandonStage || '') === 'ivr' ? 'is-ivr' : 'is-q');
+    return '<div class="heat-drill-row">'
+      + '<span class="hd-stage ' + stageCls + '" aria-hidden="true"></span>'
+      + '<span class="heat-drill-inline-date">' + escapeHtml(String(c.callDate || '').slice(5)) + '</span>'
+      + '<span class="heat-drill-when">' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
+      + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
+      +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
+      + '</span>'
+      + parentIdBadge(c.callId, c.callDate)
+      + '</div>';
+  }
+
+  // CE-2: the not-called-back list. One block per episode: when it started,
+  // how many attempts, its STATUS (still inside the window, N days left |
+  // missed) and the LATE tags read past the window -- tags only, they never
+  // move a figure.
+  function outboundUncalledHtml_(resp) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+    }
+    const byKey = {};
+    ((resp && resp.calls) || []).forEach(function (c) { byKey[c.callDate + '|' + c.callId] = c; });
+    const eps = (resp && resp.episodes) || [];
+    const blocks = eps.map(function (ep) {
+      const chips = [];
+      if (ep.status === 'pending') {
+        chips.push('<span class="ds-chip ds-chip--warn">Still inside the window · '
+          + (ep.daysLeft > 0 ? ep.daysLeft + ' day' + (ep.daysLeft === 1 ? '' : 's') + ' left' : 'last day')
+          + '</span>');
+      } else {
+        chips.push('<span class="ds-chip ds-chip--bad">Missed</span>');
+      }
+      const late = ep.late || {};
+      if (late.calledBack) {
+        chips.push('<span class="ds-chip ds-chip--neutral" title="A dial reached the caller after the '
+          + escapeHtml(String(meta.callbackWindowDays || 3)) + '-day window: tagged, never counted">'
+          + 'Called back late · day ' + escapeHtml(String(late.calledBack.daysAfter))
+          + ' · ' + (late.calledBack.team === 'own' ? 'own team' : 'another team') + '</span>');
+      }
+      if (late.gotThrough) {
+        chips.push('<span class="ds-chip ds-chip--neutral" title="The caller reached the team on a later call, after the window">'
+          + 'Got through later · day ' + escapeHtml(String(late.gotThrough.daysAfter)) + '</span>');
+      }
+      const n = (ep.attempts || []).length;
+      const rows = (ep.attempts || []).map(function (a) {
+        const c = byKey[a.callDate + '|' + a.callId] || { callDate: a.callDate, callId: a.callId };
+        return outboundAttemptRowHtml_(c);
+      }).join('');
+      return '<div class="ob-ep ob-ep--' + (ep.status === 'pending' ? 'pending' : 'missed') + '">'
+        + '<div class="ob-ep-head">'
+        +   '<span class="heat-drill-when">' + escapeHtml(String(ep.firstIso || '')) + '</span>'
+        +   '<span class="heat-drill-facts">' + n + ' attempt' + (n === 1 ? '' : 's') + '</span>'
+        +   chips.join('')
+        + '</div>' + rows + '</div>';
+    }).join('');
+    return '<div class="heat-drill-head"><strong>Not called back</strong> · '
+      + eps.length + ' episode' + (eps.length === 1 ? '' : 's')
+      + (meta.pending ? ' · ' + meta.pending + ' still inside the window' : '')
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
+      + '</div><div class="heat-drill-list">' + blocks + '</div>';
+  }
+
+  // CE-2: the called-back list. One row per episode a dial decided: when the
+  // caller first tried, how many times, who dialed (their roster team, own or
+  // another team), how long after the first attempt, whether it connected,
+  // and a "↳ path" into the OUTBOUND call beside the abandoned call's own.
+  function outboundCalledBackHtml_(resp) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the per-call store (Neon) could not be reached.</div>';
+    }
+    const eps = (resp && resp.episodes) || [];
+    const rows = eps.map(function (ep) {
+      const f = ep.first || {};
+      const own = ep.outcome === 'own';
+      const dial = ep.dial || null;
+      const dialPath = dial && dial.callId && dial.callDate
+        ? '<button type="button" class="pid-journey" data-journey-kind="outbound" '
+          + 'data-journey-pid="' + escapeHtml(String(dial.callId)) + '" '
+          + 'data-journey-date="' + escapeHtml(String(dial.callDate)) + '" '
+          + 'title="View the callback’s path" aria-label="View the callback’s path">↳ callback path</button>'
+        : '';
+      const facts = [];
+      facts.push(escapeHtml(ep.agent || 'No agent recorded') + ' (' + escapeHtml(ep.team || '') + ')');
+      if (ep.delaySec != null) facts.push('after ' + escapeHtml(fmtDuration(ep.delaySec)));
+      facts.push(ep.connected ? 'connected' : 'did not connect');
+      if (dial && dial.callStart) facts.push('callback at ' + escapeHtml(String(dial.callDate || '').slice(5)) + ' '
+        + escapeHtml(clCstTime_(dial.callStart).slice(0, 5)) + ' CST');
+      return '<div class="heat-drill-row ob-cb-row">'
+        + '<span class="heat-drill-inline-date">' + escapeHtml(String(ep.firstIso || '').slice(5)) + '</span>'
+        + '<span class="heat-drill-when">' + escapeHtml(String(f.cstStart || '').slice(0, 5)) + '</span>'
+        + '<span class="ds-chip ' + (own ? 'ds-chip--good' : 'ds-chip--neutral') + '">'
+        +   (own ? 'Own team' : 'Another team') + '</span>'
+        + '<span class="heat-drill-path">' + escapeHtml(f.entryQueue || '(no queue recorded)')
+        +   ' <span class="heat-drill-facts">· ' + ep.attempts + ' attempt' + (ep.attempts === 1 ? '' : 's')
+        +   (f.dialIn ? ' · dialed ' + escapeHtml(String(f.dialIn)) : '')
+        +   ' · ' + facts.join(' · ') + '</span></span>'
+        + parentIdBadge(f.callId, f.callDate)
+        + dialPath
+        + '</div>';
+    }).join('');
+    return '<div class="heat-drill-head"><strong>Called back</strong> · '
+      + fmtNumber(meta.own || 0) + ' by own team · ' + fmtNumber(meta.other || 0) + ' by another team'
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + eps.length + ' shown)</span>' : '')
+      + '</div><div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  // ── CE-3: Direct lines -- calls to a person's line ─────────────────────
+  // One block per surface, by element-id prefix ('ins-dl' in the Insights
+  // Callbacks fold, 'ov-dl' in the Overview's Callbacks by department). LAZY:
+  // getOutboundDirectCallbacks runs only while the block's <details> is open,
+  // once per window; a new window orphans an in-flight fetch AND repeat drill.
+  var OB_DL_VIEWS_ = {};
+  function obDlView_(prefix) {
+    return OB_DL_VIEWS_[prefix]
+      || (OB_DL_VIEWS_[prefix] = { prefix: prefix, key: null, seq: 0, data: null, inFlight: false, repSeq: 0 });
+  }
+  function obDlState_(prefix, msg) {
+    const el = $(prefix + '-state');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.display = msg ? '' : 'none';
+  }
+  function obDlResetRepeats_(prefix) {
+    const btn = $(prefix + '-rep-btn');
+    if (btn && btn.dataset.idleLabel) { btn.disabled = false; btn.textContent = btn.dataset.idleLabel; }
+    const list = $(prefix + '-rep-list');
+    if (list) { list.style.display = 'none'; list.innerHTML = ''; }
+    const st = $(prefix + '-rep-status');
+    if (st) st.textContent = '';
+  }
+  // `req` is the surface's window ({department, from, to}; department '' =
+  // the company view) or null while it has none.
+  function obDlSync_(prefix, req) {
+    const fold = $(prefix + '-fold');
+    if (!fold || !req) return;
+    const v = obDlView_(prefix);
+    const key = (req.department || '') + '|' + req.from + '|' + req.to;
+    if (key !== v.key) {
+      v.key = key; v.data = null; v.inFlight = false;
+      v.seq++; v.repSeq++;
+      obDlResetRepeats_(prefix);
+      const content = $(prefix + '-content'); if (content) content.style.display = 'none';
+      obDlState_(prefix, '');
+      const head = $(prefix + '-head'); if (head) head.textContent = 'open to load';
+    }
+    if (!fold.open) return;
+    if (v.data) { obDlRender_(prefix, v.data); return; }
+    if (v.inFlight) return;
+    v.inFlight = true;
+    const tok = ++v.seq;
+    const head = $(prefix + '-head'); if (head) head.textContent = 'loading…';
+    obDlState_(prefix, 'Loading direct-line callbacks…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (tok !== v.seq) return;   // a newer window owns the block
+        v.inFlight = false;
+        v.data = data || {};
+        obDlRender_(prefix, v.data);
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== v.seq) return;
+        v.inFlight = false; v.key = null;   // let the next open retry
+        if (head) head.textContent = 'unavailable';
+        obDlState_(prefix, 'Direct-line callbacks could not be loaded: '
+          + ((err && err.message) ? err.message : String(err)));
+      })
+      .getOutboundDirectCallbacks({ from: req.from, to: req.to, department: req.department || '' });
+  }
+  function outboundDirectTilesHtml_(s) {
+    s = s || {};
+    const pct = function (x) { return x != null ? x + '%' : '—'; };
+    return [
+      inboundKpiTile_('Contact episodes', fmtNumber(s.episodes),
+        fmtNumber(s.attempts) + ' unanswered call' + (s.attempts === 1 ? '' : 's')
+        + (s.repeatEpisodes ? ' · ' + fmtNumber(s.repeatEpisodes) + ' with 2+ attempts' : ''), ''),
+      inboundKpiTile_('Called back by the person', pct(s.ownByPersonPct),
+        fmtNumber(s.ownByPerson) + ' · whose line was tried', ''),
+      inboundKpiTile_('Called back by their team', pct(s.ownByTeamPct),
+        fmtNumber(s.ownByTeam) + ' · a teammate dialed', ''),
+      inboundKpiTile_('Contacted by another team', pct(s.otherPct),
+        fmtNumber(s.other) + ' · may be unrelated', ''),
+      inboundKpiTile_('Caller got through', pct(s.gotThroughPct),
+        fmtNumber(s.gotThrough) + ' · reached the team on a later call', ''),
+      inboundKpiTile_('Not called back', fmtNumber(s.none),
+        s.pending ? fmtNumber(s.pending) + ' more still in window' : 'no dial inside the window', ''),
+      inboundKpiTile_('Median time to callback',
+        s.medianCallbackSec != null ? fmtDuration(s.medianCallbackSec) : '—',
+        'own team · from the first attempt', ''),
+    ].join('');
+  }
+  function obDlRender_(prefix, data) {
+    const meta = (data && data.meta) || {};
+    const head = $(prefix + '-head');
+    const content = $(prefix + '-content');
+    if (meta.available === false) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'unavailable';
+      obDlState_(prefix, 'Direct-line data is unavailable right now: the per-call store (Neon) could not be read, '
+        + 'and the spreadsheet copy could not stand in.');
+      return;
+    }
+    const c = data.counts || {};
+    const all = data.all || {};
+    if (!c.calls) {
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'no unanswered direct-line calls in this window';
+      obDlState_(prefix, 'No external call to a person’s line went unanswered in this window.');
+      return;
+    }
+    obDlState_(prefix, '');
+    if (content) content.style.display = '';
+    if (head) {
+      head.textContent = (all.ownPct != null ? all.ownPct + '% called back by the team' : 'callback rate –')
+        + ' · ' + fmtNumber(all.episodes || 0) + ' contact episode' + (all.episodes === 1 ? '' : 's')
+        + (all.none ? ' · ' + fmtNumber(all.none) + ' not called back' : '');
+    }
+    const bits = [fmtNumber(c.calls) + ' unanswered call' + (c.calls === 1 ? '' : 's') + ' to a person’s line ('
+      + fmtNumber(c.missed) + ' rang out or went to voicemail, ' + fmtNumber(c.abandoned) + ' hung up while it rang)'];
+    if (c.anonymous) bits.push(fmtNumber(c.anonymous) + ' anonymous (untrackable)');
+    if (c.voicemailBox) bits.push(fmtNumber(c.voicemailBox) + ' to the Sales voicemail box');
+    if (c.unownedLines) bits.push(fmtNumber(c.unownedLines) + ' to lines on no roster');
+    // FO-1: misdials are in the call total above, out of every rate below.
+    if (c.misdials) {
+      bits.push(fmtNumber(c.misdials) + ' misdial' + (c.misdials === 1 ? '' : 's') + ' (rang under '
+        + (meta.misdialSec != null ? meta.misdialSec : 8) + ' s, left out of the rates)');
+    }
+    const cnt = $(prefix + '-counts'); if (cnt) cnt.textContent = bits.join(' · ') + '.';
+    const note = $(prefix + '-note');
+    if (note) {
+      const nb = [];
+      if (meta.fallbackSource === 'sheet') {
+        // FO-2: the spreadsheet copy answered while Neon was unreachable.
+        nb.push('Neon was unreachable: these figures come from the Inbound Calls and Outbound Calls tabs'
+          + (meta.fallbackThrough ? ' (through ' + meta.fallbackThrough + ')' : '') + '.');
+        if (meta.fallbackCoverageStart && meta.fallbackCoverageStart > meta.from) {
+          nb.push('The copy names the line each call rang only from ' + meta.fallbackCoverageStart
+            + ', so earlier calls are missing here.');
+        }
+      }
+      note.style.display = nb.length ? '' : 'none';
+      note.textContent = nb.join(' ');
+    }
+    const w = $(prefix + '-work'); if (w) w.innerHTML = outboundDirectTilesHtml_(data.work);
+    const a = $(prefix + '-after'); if (a) a.innerHTML = outboundDirectTilesHtml_(data.after);
+  }
+  // Wired once per surface: the fold's toggle (with that surface's window)
+  // and the repeat-callers drill.
+  function obDlWire_(prefix, reqFn) {
+    const fold = $(prefix + '-fold');
+    if (!fold || fold._obDlWired) return;
+    fold._obDlWired = true;
+    fold.addEventListener('toggle', function () { if (fold.open) obDlSync_(prefix, reqFn()); });
+    const btn = $(prefix + '-rep-btn');
+    if (btn) btn.addEventListener('click', function () {
+      const v = obDlView_(prefix);
+      if (!v.data || !v.data.meta) return;
+      outboundLoadDirectRepeatsInto_({
+        btn: btn, list: $(prefix + '-rep-list'), status: $(prefix + '-rep-status'),
+        meta: v.data.meta,
+        nextSeq: function () { return ++v.repSeq; },
+        curSeq: function () { return v.repSeq; },
+      });
+    });
+  }
+
+  // CE-3: the repeat-unreturned-callers list (owner ruling 3): one block per
+  // episode -- first and last attempt, the lines tried, the team, voicemail
+  // when the shared box was rung, CE-2's late tags -- and every attempt row.
+  function outboundDirectRepeatsHtml_(resp) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the per-call store (Neon) could not be reached, '
+        + 'and the spreadsheet copy could not stand in.</div>';
+    }
+    const eps = (resp && resp.episodes) || [];
+    const fbNote = meta.fallbackSource === 'sheet'
+      ? '<div class="ds-note">From the Inbound Calls and Outbound Calls tabs (Neon was unreachable)'
+        + (meta.fallbackThrough ? ', through ' + escapeHtml(String(meta.fallbackThrough)) : '') + '.</div>'
+      : '';
+    const blocks = eps.map(function (ep) {
+      const chips = ['<span class="ds-chip ds-chip--bad">Not called back</span>'];
+      if (ep.voicemail) chips.push('<span class="ds-chip ds-chip--neutral">Voicemail box</span>');
+      const late = ep.late || {};
+      if (late.calledBack) {
+        chips.push('<span class="ds-chip ds-chip--neutral">Called back late · day '
+          + escapeHtml(String(late.calledBack.daysAfter)) + ' · '
+          + (late.calledBack.team === 'own' ? 'own team' : 'another team') + '</span>');
+      }
+      if (late.gotThrough) {
+        chips.push('<span class="ds-chip ds-chip--neutral">Got through later · day '
+          + escapeHtml(String(late.gotThrough.daysAfter)) + '</span>');
+      }
+      const n = (ep.attempts || []).length;
+      return '<div class="ob-ep ob-ep--missed">'
+        + '<div class="ob-ep-head">'
+        +   '<span class="heat-drill-when">' + escapeHtml(String(ep.firstIso || ''))
+        +     (ep.lastIso && ep.lastIso !== ep.firstIso ? ' → ' + escapeHtml(String(ep.lastIso)) : '') + '</span>'
+        +   '<span class="heat-drill-facts">' + n + ' attempts · ' + escapeHtml((ep.lines || []).join(', ') || '(unknown line)')
+        +     ' · ' + escapeHtml(ep.team || '') + '</span>'
+        +   chips.join('')
+        + '</div>' + (ep.attempts || []).map(outboundAttemptRowHtml_).join('') + '</div>';
+    }).join('');
+    return '<div class="heat-drill-head"><strong>Repeat unreturned callers</strong> · '
+      + eps.length + ' caller episode' + (eps.length === 1 ? '' : 's') + ' with 2+ unanswered attempts and no callback'
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
+      + '</div>' + fbNote + '<div class="heat-drill-list">' + blocks + '</div>';
+  }
+
+  // The repeat drill: the UI-5 pattern (its own per-request token from the
+  // caller, both handlers drop a superseded response; a second click closes).
+  function outboundLoadDirectRepeatsInto_(ctx) {
+    const btn = ctx.btn;
+    const list = ctx.list;
+    const status = ctx.status;
+    if (!btn || !list) return;
+    const meta = ctx.meta || {};
+    if (!meta.from) return;
+    if (list.style.display !== 'none' && list.innerHTML) {
+      list.style.display = 'none'; list.innerHTML = '';
+      if (status) status.textContent = '';
+      return;
+    }
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    const prev = btn.dataset.idleLabel;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    const tok = ctx.nextSeq();
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
+        btn.disabled = false; btn.textContent = prev;
+        initClipboardOnce();
+        const isEmpty = resp && (resp.episodes || []).length === 0
+          && (!resp.meta || resp.meta.available !== false);
+        list.innerHTML = isEmpty
+          ? '<div class="ds-note">No caller tried a person’s line twice or more without a callback in this window.</div>'
+          : outboundDirectRepeatsHtml_(resp);
+        list.style.display = '';
+        if (status) {
+          const m = (resp && resp.meta) || {};
+          status.textContent = m.available === false ? ''
+            : ((resp.episodes || []).length + ' caller episode(s)' + (m.truncated ? ' (newest shown)' : ''));
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== ctx.curSeq()) return;
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getOutboundDirectRepeats({ from: meta.from, to: meta.to,
+        department: meta.companyView ? '' : (meta.department || '') });
+  }
+
+  // The called-back drill: the not-called-back drill's pattern exactly (its
+  // own per-request token from the caller, both handlers drop a superseded
+  // response -- UI-5; a second click closes the list).
+  function outboundLoadCalledBackInto_(ctx) {
+    const btn = ctx.btn;
+    const list = ctx.list;
+    const status = ctx.status;
+    if (!btn || !list) return;
+    const meta = ctx.meta || {};
+    if (!meta.from) return;
+    if (list.style.display !== 'none' && list.innerHTML) {
+      list.style.display = 'none'; list.innerHTML = '';
+      if (status) status.textContent = '';
+      return;
+    }
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    const prev = btn.dataset.idleLabel;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    const tok = ctx.nextSeq();
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
+        btn.disabled = false; btn.textContent = prev;
+        initClipboardOnce();
+        const isEmpty = resp && (resp.episodes || []).length === 0
+          && (!resp.meta || resp.meta.available !== false);
+        list.innerHTML = isEmpty
+          ? '<div class="ds-note">No contact episode in this range was called back.</div>'
+          : outboundCalledBackHtml_(resp);
+        list.style.display = '';
+        if (status) {
+          const m = (resp && resp.meta) || {};
+          status.textContent = m.available === false ? ''
+            : ((resp.episodes || []).length + ' episode(s)' + (m.truncated ? ' (newest shown)' : ''));
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== ctx.curSeq()) return;
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getOutboundCalledBack({ from: meta.from, to: meta.to,
+        department: meta.companyView ? '' : (meta.department || '') });
+  }
+
+  // v2: the not-called-back drill. Since CE-2 its rows come grouped by
+  // episode (outboundUncalledHtml_); each still carries the stage tick + facts + "↳
   // path" journey chip; initClipboardOnce arms the delegated handler.
   // The not-called-back drill (the Insights Callbacks fold, G1): `ctx` names
   // the button / list / status elements, the report meta whose window and
@@ -2134,20 +2570,21 @@
         if (tok !== ctx.curSeq()) return;   // a newer render / drill owns the panel
         btn.disabled = false; btn.textContent = prev;
         initClipboardOnce();
-        // Empty here is GOOD news — heatCellDetailHtml_'s generic empty
-        // message ("no abandoned calls recorded") would misread it.
-        const isEmpty = resp && (resp.calls || []).length === 0
+        // Empty here is GOOD news -- say so rather than "no calls".
+        const isEmpty = resp && (resp.episodes || []).length === 0
           && (!resp.meta || resp.meta.available !== false);
         list.innerHTML = isEmpty
-          ? '<div class="ds-note">Every trackable abandoned caller in this range was called back within '
+          ? '<div class="ds-note">Every contact episode in this range was called back, got through '
+            + 'or was contacted by another team within '
             + escapeHtml(String((resp.meta && resp.meta.callbackWindowDays) || 3)) + ' days.</div>'
-          : heatCellDetailHtml_(resp, 'Not called back');
+          : outboundUncalledHtml_(resp);
         list.style.display = '';
         if (status) {
           const m = (resp && resp.meta) || {};
           status.textContent = m.available === false ? ''
             : ((resp.calls || []).length + ' call(s)'
-              + (m.truncated ? ' (newest ' + (resp.calls || []).length + ' shown)' : ''));
+              + (m.episodes != null ? ' in ' + m.episodes + ' episode' + (m.episodes === 1 ? '' : 's') : '')
+              + (m.truncated ? ' (newest shown)' : ''));
         }
       })
       .withFailureHandler(function (err) {
@@ -2174,24 +2611,29 @@
     lines.push(row(['Outbound report', meta.from + ' to ' + meta.to]));
     lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
     lines.push(row(['Abandoned', cb.abandonedTotal, 'Anonymous', cb.abandonedAnonymous,
-      'Called back', cb.calledBack, 'Connected', cb.calledBackConnected,
-      'Callback %', cb.calledBackPct != null ? cb.calledBackPct : '',
-      'Median callback sec', cb.medianCallbackSec != null ? cb.medianCallbackSec : '',
-      'Still in window', cb.pendingTail != null ? cb.pendingTail : '']));
-    // v5 (CB-1): the per-dept callback table, when the view carries one.
+      'Trackable queue abandons', cb.abandonedTracked,
+      'Phone-menu hang-ups (not counted)', cb.phoneMenuAbandons || 0,
+      'Direct-line hang-ups (not counted)', cb.directLineAbandons || 0]));
+    lines.push(row(['Contact episodes', cb.episodes, 'With 2+ attempts', cb.repeatEpisodes,
+      'Called back by own team', cb.own, 'Own %', cb.ownPct != null ? cb.ownPct : '',
+      'Own connected', cb.ownConnected,
+      'Another team', cb.other, 'Got through', cb.gotThrough,
+      'Not called back', cb.none, 'Still in window', cb.pending,
+      'Median own callback sec', cb.medianCallbackSec != null ? cb.medianCallbackSec : '']));
+    // CB-1 on CE-1: the per-dept callback table, when the view carries one.
     const cbd = d.callbackByDept;
     if (cbd && (cbd.rows || []).length) {
       lines.push('');
-      lines.push(row(['Department', 'Parent', 'Trackable abandons', 'Called back by us', 'Own %',
-        'By another dept', 'Not called back', 'Callbacks connected (upper bound)', 'Connected %',
-        'Median callback sec', 'Still in window']));
+      lines.push(row(['Department', 'Parent', 'Contact episodes', 'Trackable abandons',
+        'Called back by own team', 'Own %', 'Another team', 'Got through', 'Not called back',
+        'Own connected (upper bound)', 'Own connected %', 'Median callback sec', 'Still in window']));
       const cbdRow = function (name, parent, r) {
-        return row([name, parent || '', r.tracked, r.ownCalledBack, r.ownPct != null ? r.ownPct : '',
-          r.otherCalledBack, r.notCalledBack, r.calledBackConnected, r.connectedPct != null ? r.connectedPct : '',
-          r.medianCallbackSec != null ? r.medianCallbackSec : '', r.pendingTail]);
+        return row([name, parent || '', r.episodes, r.attempts, r.own, r.ownPct != null ? r.ownPct : '',
+          r.other, r.gotThrough, r.none, r.ownConnected, r.ownConnectedPct != null ? r.ownConnectedPct : '',
+          r.medianCallbackSec != null ? r.medianCallbackSec : '', r.pending]);
       };
       obCbDeptOrder_(cbd.rows, cbDeptSort).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
-      if (cbd.total) lines.push(cbdRow('All departments (each abandon once)', '', cbd.total));
+      if (cbd.total) lines.push(cbdRow('All departments (each episode once)', '', cbd.total));
     }
     lines.push('');
     lines.push(row(['Agent', 'Roster dept', 'OB calls', 'Connected', 'Connect %',

@@ -320,13 +320,16 @@
               <div id="ov-cbdept-kpis" class="pr-kpi-row"></div>
               <div class="al-section" id="ov-cbdept-section" style="display:none;">
                 <p class="al-hint">
-                  Each department is responsible for calling back its own abandoned callers.
-                  &ldquo;Called back by us&rdquo; counts abandons on the department&rsquo;s queues whose
-                  <strong>first</strong> callback came from its own agents (a parent includes its
-                  sub-queues&rsquo; queues and agents). Times run from the abandoned call and include
-                  any internal handoff. Expand a row to see who made the callbacks. The rows do not
-                  sum to the total: a parent includes its sub-queues, and a queue shared by two
-                  departments is in both.
+                  Each department is responsible for calling back its own abandoned callers,
+                  counted in <strong>contact episodes</strong> (one caller trying to reach one
+                  team, however many times they tried). &ldquo;Own team&rdquo; = a dial by the
+                  department&rsquo;s own agents (a parent includes its sub-queues&rsquo; queues and
+                  agents); &ldquo;Another team&rdquo; is kept apart because it may be unrelated.
+                  Phone-menu hang-ups and hang-ups on a person&rsquo;s line reached no queue, so
+                  no team owns them: they are counted above the table, never in a rate. Times run
+                  from the first attempt and include any internal handoff. Expand a row to see who
+                  made the callbacks. The rows do not sum to the total: a parent includes its
+                  sub-queues, and a queue shared by two departments is in both.
                 </p>
                 <div class="ov-cbdept-scroll">
                   <table class="al-config-table ob-cbdept-table" id="ov-cbdept-table">
@@ -336,6 +339,41 @@
                   </table>
                 </div>
               </div>
+              <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
+                   getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
+              <details id="ov-dl-fold" class="ob-dl-fold">
+                <summary class="ob-dl-summary">
+                  <span class="ds-zone-label">Direct lines <span class="ob-dl-sub">&mdash; every department</span></span>
+                  <span class="ob-dl-head" id="ov-dl-head">open to load</span>
+                </summary>
+                <div class="ob-dl-body">
+                  <div id="ov-dl-state" class="ds-note" style="display:none;"></div>
+                  <div id="ov-dl-content" style="display:none;">
+                    <p class="al-hint" id="ov-dl-counts"></p>
+                    <div id="ov-dl-note" class="ds-note" style="display:none;"></div>
+                    <div class="al-section-subtitle">Work hours</div>
+                    <div id="ov-dl-work" class="pr-kpi-row"></div>
+                    <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
+                    <div id="ov-dl-after" class="pr-kpi-row"></div>
+                    <p class="al-hint">
+                      External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
+                      answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
+                      the two apart) or the caller hung up while it rang. Counted in contact episodes; the
+                      team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
+                      Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
+                      them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
+                      of the caller&rsquo;s FIRST attempt. A call that rang the person for under 8 seconds
+                      is counted as a misdial and left out of the rates (a call with no recorded ring
+                      length stays in).
+                    </p>
+                    <div class="esc-resolve-actions">
+                      <button class="btn btn-secondary" id="ov-dl-rep-btn" type="button">List repeat unreturned callers</button>
+                      <span id="ov-dl-rep-status" class="al-hint"></span>
+                    </div>
+                    <div id="ov-dl-rep-list" style="display:none;"></div>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </details>
@@ -1241,13 +1279,18 @@
               <div id="ins-cb-kpis" class="pr-kpi-row"></div>
               <div id="ins-cb-delay-strip" style="display:none;"></div>
               <p class="al-hint">
-                &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
-                <span id="ins-cb-window">3</span> days, whether or not the call connected.
+                Counted in <strong>contact episodes</strong>: one caller trying to reach this
+                team, however many times they tried while it stayed open (each try within
+                <span id="ins-cb-window">3</span> days of the last). &ldquo;Called back by own
+                team&rdquo; = someone on this department&rsquo;s roster (or its parent / sub-queue)
+                <em>dialed</em> the caller, whether or not it connected; the time runs from the
+                <strong>first</strong> attempt. &ldquo;Contacted by another team&rdquo; is kept
+                apart because it may be about something else. &ldquo;Got through&rdquo; = the
+                caller reached the team on a later call before anyone called back.
                 &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
-                greeting or a phone menu; the phone records report all three the same way, so
-                &ldquo;Callbacks connected&rdquo; is an upper bound on callers actually reached.
-                Callbacks count no matter which agent or department dialed. Anonymous abandons
-                (no caller ID) cannot be tracked and are excluded from the callback rate.
+                greeting or a phone menu; the phone records report all three the same way, so it
+                is an upper bound on callers actually reached. Anonymous abandons (no caller ID)
+                cannot be tracked and are left out.
               </p>
               <div id="ins-cb-chart-wrap" style="display:none; max-width:100%; height:140px;">
                 <canvas id="ins-cb-chart"></canvas>
@@ -1258,6 +1301,48 @@
                 <span id="ins-cb-uncalled-status" class="al-hint"></span>
               </div>
               <div id="ins-cb-uncalled-list" style="display:none;"></div>
+              <!-- CE-2: the called-back list -- who dialed, own or another team, the delay
+                   from the first attempt, and a path into the callback itself. -->
+              <div class="esc-resolve-actions">
+                <button class="btn btn-secondary" id="ins-cb-calledback-btn" type="button">List called-back calls</button>
+                <span id="ins-cb-calledback-status" class="al-hint"></span>
+              </div>
+              <div id="ins-cb-calledback-list" style="display:none;"></div>
+              <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
+                   getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
+              <details id="ins-dl-fold" class="ob-dl-fold">
+                <summary class="ob-dl-summary">
+                  <span class="ds-zone-label">Direct lines <span class="ob-dl-sub">&mdash; this department&rsquo;s people</span></span>
+                  <span class="ob-dl-head" id="ins-dl-head">open to load</span>
+                </summary>
+                <div class="ob-dl-body">
+                  <div id="ins-dl-state" class="ds-note" style="display:none;"></div>
+                  <div id="ins-dl-content" style="display:none;">
+                    <p class="al-hint" id="ins-dl-counts"></p>
+                    <div id="ins-dl-note" class="ds-note" style="display:none;"></div>
+                    <div class="al-section-subtitle">Work hours</div>
+                    <div id="ins-dl-work" class="pr-kpi-row"></div>
+                    <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
+                    <div id="ins-dl-after" class="pr-kpi-row"></div>
+                    <p class="al-hint">
+                      External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
+                      answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
+                      the two apart) or the caller hung up while it rang. Counted in contact episodes; the
+                      team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
+                      Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
+                      them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
+                      of the caller&rsquo;s FIRST attempt. A call that rang the person for under 8 seconds
+                      is counted as a misdial and left out of the rates (a call with no recorded ring
+                      length stays in).
+                    </p>
+                    <div class="esc-resolve-actions">
+                      <button class="btn btn-secondary" id="ins-dl-rep-btn" type="button">List repeat unreturned callers</button>
+                      <span id="ins-dl-rep-status" class="al-hint"></span>
+                    </div>
+                    <div id="ins-dl-rep-list" style="display:none;"></div>
+                  </div>
+                </div>
+              </details>
               <div id="ins-cb-note" class="ds-note" style="display:none;"></div>
               <div class="esc-resolve-actions ins-cb-actions">
                 <button class="btn btn-secondary" id="ins-cb-csv-btn" type="button">Download CSV</button>
