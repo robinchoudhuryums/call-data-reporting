@@ -640,13 +640,21 @@ function buildInboundCallRecords_(rawRows) {
       if (icIsQueueName_(cn) && queues.indexOf(cn) === -1) queues.push(cn);
     });
 
+    // PIPE-13 (broad-scan 2026-10-12, the P22 rule): on an internal-origin
+    // tree the first answered talk leg can be a SIBLING's (a warm transfer
+    // merges two people's legs under one root), so final_dept and the wait's
+    // end point came from someone else's call. `answered` is already scoped
+    // to the requester's legs; these two loops now read the same scope.
+    // External inbound records keep every leg (all descend from the caller).
+    var answerScope = isInternalOrigin ? (ownLegs.length ? ownLegs : legs) : legs;
+
     // Final dept = the answering talk leg's Departments (if answered).
     var finalDept = null;
     if (answered) {
-      for (var d = 0; d < legs.length; d++) {
-        if (icTimeToSec_(legs[d][IC_COL.TALK]) > 0
-            && String(legs[d][IC_COL.ANSWERED]).trim() === 'Answered') {
-          var dep = String(legs[d][IC_COL.DEPARTMENTS] == null ? '' : legs[d][IC_COL.DEPARTMENTS]).trim();
+      for (var d = 0; d < answerScope.length; d++) {
+        if (icTimeToSec_(answerScope[d][IC_COL.TALK]) > 0
+            && String(answerScope[d][IC_COL.ANSWERED]).trim() === 'Answered') {
+          var dep = String(answerScope[d][IC_COL.DEPARTMENTS] == null ? '' : answerScope[d][IC_COL.DEPARTMENTS]).trim();
           if (dep && dep.toUpperCase() !== 'N/A') { finalDept = dep; break; }
         }
       }
@@ -690,10 +698,10 @@ function buildInboundCallRecords_(rawRows) {
     var firstStart = icParseTs_((isInternalOrigin ? legs[0] : incoming[0])[IC_COL.START]);
     var endMs = NaN;
     if (answered) {
-      for (var w = 0; w < legs.length; w++) {
-        if (icTimeToSec_(legs[w][IC_COL.TALK]) > 0
-            && String(legs[w][IC_COL.ANSWERED]).trim() === 'Answered') {
-          endMs = icParseTs_(legs[w][IC_COL.CONNECTED]); break;
+      for (var w = 0; w < answerScope.length; w++) {   // PIPE-13: the requester's own answer
+        if (icTimeToSec_(answerScope[w][IC_COL.TALK]) > 0
+            && String(answerScope[w][IC_COL.ANSWERED]).trim() === 'Answered') {
+          endMs = icParseTs_(answerScope[w][IC_COL.CONNECTED]); break;
         }
       }
     } else if (abandonLeg) {
@@ -1422,10 +1430,11 @@ function firstRingBackfill_(apply) {
   var t0 = Date.now(), budget = icBackfillTimeLimitMs_();
   var out = { apply: !!apply, candidates: 0, derived: 0, written: 0, misdials: 0,
               undecided: 0, bytes: 0, chunks: [], stoppedAtBudget: false, range: null };
-  var pop = "c.first_ring_seconds IS NULL AND c.disposition IN ('missed', 'abandoned') "
+  var popRest = " AND c.disposition IN ('missed', 'abandoned') "
     + 'AND COALESCE(c.is_internal, FALSE) = FALSE '
     + "AND COALESCE(trim(c.entry_queue), '') = '' AND COALESCE(trim(c.first_agent), '') <> '' "
     + "AND c.journey IS NOT NULL AND c.journey <> ''";
+  var pop = 'c.first_ring_seconds IS NULL' + popRest;
   var query = function (sql) {
     var st = conn.createStatement();
     try { st.setQueryTimeout(BF_RING_QUERY_TIMEOUT_S_); } catch (e) { /* best-effort */ }
@@ -1437,9 +1446,23 @@ function firstRingBackfill_(apply) {
   try {
     conn.setAutoCommit(true);   // each chunk's UPDATE stands alone: an interrupted run keeps what it did
     // The column may not exist yet if this runs before a capture added it.
-    var ddl = conn.createStatement();
-    ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_ring_seconds integer');
-    ddl.close();
+    // PIPE-14 (broad-scan 2026-10-12): only APPLY adds it. An ALTER TABLE
+    // takes an ACCESS EXCLUSIVE lock on inbound_calls (every dashboard read
+    // and the daily capture queue behind it), so the "read-only" preview
+    // must not run one. A preview with no column yet asks the catalog and
+    // treats every row as NULL -- which is exactly what apply would see
+    // right after adding it.
+    if (apply) {
+      var ddl = conn.createStatement();
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_ring_seconds integer');
+      ddl.close();
+    } else if (!(Number(query("SELECT count(*)::text FROM information_schema.columns "
+        + "WHERE table_name = 'inbound_calls' AND column_name = 'first_ring_seconds'")) > 0)) {
+      out.columnMissing = true;
+      pop = 'TRUE' + popRest;
+      Logger.log(label + ': inbound_calls has no first_ring_seconds column yet -- every row counts as NULL. '
+        + 'The apply run (or the next capture) adds it.');
+    }
     var span = JSON.parse(query("SELECT json_build_array(min(c.call_date)::text, max(c.call_date)::text)::text "
       + 'FROM inbound_calls c WHERE ' + pop) || '[null,null]');
     if (!span[0]) {
@@ -1595,6 +1618,20 @@ function backfillInboundCalls(fromIso, toIso, force) {
   // unreachable Neon -> empty set; the per-date writer creates the
   // table and handles unreachability itself.
   var doneDates = force ? {} : icFetchMirroredDates_();
+  // PIPE-15 (broad-scan 2026-10-12): without HMAC_SECRET the writer stores a
+  // NULL caller_hash, and a FORCE run's authoritative replace would put that
+  // NULL over the good hashes an already-mirrored date holds -- callbacks,
+  // repeat-caller tracking and insurer labels go blind for those dates, and
+  // past the ~14-day Call_Legs window nothing can re-derive them. So a force
+  // run with no secret REFUSES each already-mirrored date (a FAILED entry,
+  // which keeps a deferred-mirror date queued and loud) and still writes a
+  // date Neon has never seen, exactly as the PC-10 daily path does.
+  var hashlessGuard = {};
+  if (force && !PropertiesService.getScriptProperties().getProperty('HMAC_SECRET')) {
+    hashlessGuard = icFetchMirroredDates_();
+    Logger.log('backfillInboundCalls: HMAC_SECRET not set -- force will NOT rewrite already-mirrored dates '
+      + '(their stored caller hashes would become NULL). Set HMAC_SECRET (Operator State #17) and re-run.');
+  }
 
   var processed = 0, skippedDone = 0, skippedEmpty = 0, totalRecords = 0;
   var failures = [];
@@ -1610,6 +1647,10 @@ function backfillInboundCalls(fromIso, toIso, force) {
     }
     var c = candidates[i];
     if (doneDates[c.iso]) { skippedDone++; continue; }
+    if (hashlessGuard[c.iso]) {   // PIPE-15
+      failures.push(c.iso + ' (already mirrored; refused without HMAC_SECRET -- it would NULL the stored caller hashes)');
+      continue;
+    }
 
     try {
       var legs = c.sheet.getDataRange().getDisplayValues();

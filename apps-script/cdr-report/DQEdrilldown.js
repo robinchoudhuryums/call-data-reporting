@@ -98,6 +98,19 @@ function getCurrentSelectionContext() {
 
 // -- Server-side data fetcher ------------------------------------------------
 
+/** TOOL-5: a display date ("M/D/YYYY", zero-padded or not, or ISO) -> 'YYYY-MM-DD'; else the trimmed input. */
+function drillDayKey_(s) {
+  var t = String(s == null ? '' : s).trim();
+  var iso = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return iso[1] + '-' + ('0' + Number(iso[2])).slice(-2) + '-' + ('0' + Number(iso[3])).slice(-2);
+  var p = t.split('/');
+  if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
+    var y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
+    return y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
+  }
+  return t;
+}
+
 function getDQEDrilldownRows(params) {
   var dateStr     = params.dateStr;
   var agentName   = params.agentName;
@@ -113,6 +126,25 @@ function getDQEDrilldownRows(params) {
 
   var data     = rawSheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
   var timeVals = rawSheet.getRange(2, 7, lastRow - 1, 2).getDisplayValues();
+
+  // TOOL-5 (broad-scan 2026-10-12): Raw Data holds ONE imported day. Drilling a
+  // DQE cell from any other date used to come back "no matching rows" --
+  // read as "the build counted nothing" during exactly the investigation this
+  // tool serves. Say which day Raw Data holds and how to load the other one.
+  // Days compare on a normalized key, so "3/9/2026" (col B display) and
+  // "03/09/2026" (Raw Data's start-time display) are the same day.
+  var dayKey = drillDayKey_(dateStr);
+  var rawDays = {};
+  for (var di = 0; di < data.length; di++) {
+    var dk = drillDayKey_(String(data[di][2]).trim().split(' ')[0]);
+    if (dk) rawDays[dk] = (rawDays[dk] || 0) + 1;
+  }
+  if (!rawDays[dayKey]) {
+    var held = Object.keys(rawDays).sort(function (a, b) { return rawDays[b] - rawDays[a]; });
+    return { error: 'Raw Data holds ' + (held.length ? held.slice(0, 2).join(' / ') : 'no dated rows')
+      + ', not ' + dateStr + '. The drill-down traces the day currently in Raw Data -- re-import '
+      + dateStr + ' (CDR Import: Manual Export) to load it, then drill this cell again.' };
+  }
 
   // F24: the DQE row's Agent Name (col C) is the CANONICAL roster form -- the
   // pipeline rewrites paren-variants / aliases before writing (INV-24). Raw
@@ -231,7 +263,7 @@ function getDQEDrilldownRows(params) {
   // mismatches during precisely the incident this tool exists to debug.
   var queueNameByExt = {};
   for (var qi = 0; qi < data.length; qi++) {
-    if (String(data[qi][2]).trim().split(' ')[0] !== dateStr) continue;
+    if (drillDayKey_(String(data[qi][2]).trim().split(' ')[0]) !== dayKey) continue;
     var qExt  = String(data[qi][10]).trim();
     var qName = String(data[qi][11]).trim();
     if (!/^\d+$/.test(qExt)) continue;
@@ -249,7 +281,7 @@ function getDQEDrilldownRows(params) {
     var row = data[i];
 
     var rowDateStr = String(row[2]).trim().split(' ')[0];
-    if (rowDateStr !== dateStr) continue;
+    if (drillDayKey_(rowDateStr) !== dayKey) continue;   // TOOL-5: normalized day
 
     var rowAgent = canonicalize_(String(row[11]).trim());   // F24: match canonical roster form
     if (rowAgent !== agentName) continue;

@@ -116,6 +116,46 @@ test('R8-B6: a re-run after a crashed apply deletes leftover duplicates WITHOUT 
   assert.equal(rows[0][10], '9:15:00,10:30:00', 'slot cell unchanged');
 });
 
+// PIPE-9 (broad-scan 2026-10-12): the crashed apply died before the CRT-2
+// Neon clear, so the delete-only recovery left dqe_history's pre-merge split.
+test('PIPE-9: an already-merged group queues the Neon clear and re-blanks the row\'s AI..AK', function () {
+  const batches = [];
+  const fakeConn = {
+    prepareStatement: function () {
+      let cur = {};
+      return { setQueryTimeout: function () {}, setString: function (i, v) { cur[i] = v; },
+               addBatch: function () { batches.push(cur); cur = {}; },
+               executeBatch: function () { return batches.map(function () { return 1; }); }, close: function () {} };
+    },
+    close: function () {},
+  };
+  const orig = h.ctx.getReachableNeonConn_;
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn; };
+  try {
+    const wide = function (r, extra) { return r.concat(extra || ['', '', '']); };
+    h.state.props.SPREADSHEET_ID = 'fake';
+    h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+      'DQE Historical Data': [
+        new Array(37).fill('h'),
+        // The crash state: merged first row, killed before its AI..AK clear AND before the deletes.
+        wide(dqeRow('2026-06-22', 'Anna Smith', { 5: '4', 7: '2', 10: '9:15:00,10:30:00', 29: 'P2,P1', 30: 'M2,M1', 31: '9:15:00,10:30:00' }),
+             ['{"A_Q_CSR":{"a":1}}', 1, 240]),
+        wide(dqeRow('2026-06-22', 'Anna Smith', { 10: '10:30:00', 29: 'P1', 30: 'M1', 31: '10:30:00' })),
+        wide(dqeRow('2026-06-22', 'Anna Smith', { 10: '9:15:00', 29: 'P2', 30: 'M2', 31: '9:15:00' })),
+      ],
+    } });
+    const res = h.call('repairDqeDuplicateMerge');
+    assert.equal(res.deleted, 2);
+    assert.equal(batches.length, 1, 'pre-fix the recovery cleared nothing in Neon');
+    assert.equal(batches[0][2], 'Anna Smith');
+    assert.equal(res.neonExtrasCleared.cleared, 1);
+    const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+    const row = sheet.getRange(2, 1, 1, 37).getValues()[0];
+    assert.deepEqual([row[34], row[35], row[36]], ['', '', ''], 'AI..AK blank on the surviving row');
+    assert.equal(String(row[5]), '4', 'still not re-summed');
+  } finally { h.ctx.getReachableNeonConn_ = orig; }
+});
+
 test('R8-B6: genuinely-distinct duplicate rows still MERGE (detector must not false-positive)', function () {
   // Normal un-merged state: the first row does NOT contain the second row's
   // tokens -- the detector must decline and the ordinary sum must run.
@@ -316,6 +356,25 @@ test('CRT-5: a slot repair with nothing coerced takes no snapshot and rewrites n
   assert.equal(h.state.props.HR_BACKUP_SS_ID, undefined);
 });
 
+// PIPE-11 (broad-scan 2026-10-12): the abandoned-id repair takes the CRT-5
+// no-op short-circuit too -- a clean AD..AE is never snapshotted or rewritten.
+test('PIPE-11: an abandoned-id repair with nothing coerced takes no snapshot and rewrites no value', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake' };
+  h.state.createdSpreadsheets = [];
+  const grid = [new Array(34).fill('h')];
+  for (let i = 0; i < 300; i++) grid.push(dqeRow('06/22/2026', 'Agent ' + i, { 29: '1762242202191,1762242165529', 30: 'M1' }));
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': grid } });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  let valueWrites = 0;
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function () { const r = realGetRange.apply(null, arguments); const sv = r.setValues.bind(r); r.setValues = function (v) { valueWrites++; return sv(v); }; return r; };
+  const res = h.call('repairDqeAbandonedIds');
+  assert.equal(res.noop, true);
+  assert.equal(valueWrites, 0, 'no value rewritten');
+  assert.equal(h.state.createdSpreadsheets.length, 0, 'no backup workbook touched (300 rows x 2 cols is over the threshold)');
+  assert.equal(h.state.props.HR_BACKUP_SS_ID, undefined);
+});
+
 // ---- broad-scan 2026-10-01 Batch 9: CR-2 / CR-3 ------------------------------
 
 // CR-2: row count + date/agent could not see a SAME-POSITION rebuild (a force
@@ -380,4 +439,29 @@ test('CR-3: a slot-repair abort restores the group\'s formats and names what was
   const restore = (sheet._numberFormats || []).filter(function (f) { return f.format === '(per-cell)' && f.startCol === 32; });
   assert.equal(restore.length, 1, 'AF got its ORIGINAL per-cell formats back, not left in the numeric lens');
   assert.equal(sheet.getRange(2, 11).getValue(), '10:30:00', 'the K-AC group that passed its re-check was written');
+});
+
+// PIPE-10 (broad-scan 2026-10-12): a PST shift killed between a row's slot
+// write and its AF write left CST slots beside a PST AF, and the re-run
+// classified the row "already CST" and skipped it forever.
+test('PIPE-10: the PST shift heals an AF that lags its already-shifted slots; a correct CST row is untouched', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  const row = function (agent, slot0, af) { return dqeRow('3/2/2026', agent, { 10: slot0, 29: af ? 'P1' : '', 30: af ? 'M1' : '', 31: af }); };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': [
+    new Array(34).fill('h'),
+    row('Interrupted', '8:10:00', '6:10:00'),   // slots shifted, AF not
+    row('Fresh PST', '6:15:00', '6:15:00'),     // never shifted: both move
+    row('Done CST', '8:20:00', '8:20:00'),      // fully shifted: untouched
+  ] } });
+  const prev = h.call('previewDqeOldPstTimestampShift');
+  assert.equal(prev.stats.afHealedRows, 1);
+  h.call('repairDqeOldPstTimestampShift');
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const got = {};
+  sheet.getRange(2, 1, 3, 34).getDisplayValues().forEach(function (r) { got[r[2]] = [r[10], r[31]]; });
+  assert.deepEqual(got.Interrupted, ['8:10:00', '8:10:00'], 'AF healed; slots not shifted twice');
+  assert.deepEqual(got['Fresh PST'], ['8:15:00', '8:15:00']);
+  assert.deepEqual(got['Done CST'], ['8:20:00', '8:20:00']);
+  // A second run finds nothing left to do.
+  assert.equal(h.call('previewDqeOldPstTimestampShift').stats.afHealedRows, 0);
 });

@@ -311,3 +311,17 @@ test('R49: the drill counts an early CSR-family leg, and still excludes an early
     'the drill\'s Found-N must equal the stored Answered cell -- a flat 6:30 floor here '
     + 'reports 1 against a cell of 2');
 });
+
+// TOOL-5 (broad-scan 2026-10-12): Raw Data holds one imported day. A drill on
+// any other date used to return "no matching rows" -- now it names the day
+// Raw Data holds; and the col-B display form ("3/9/2026") matches Raw Data's
+// zero-padded start-time form ("03/09/2026").
+test('TOOL-5: drilling a date Raw Data does not hold names the held day; an unpadded date still matches', function () {
+  const s = scenario();
+  const other = h.fn('getDQEDrilldownRows')({ dateStr: '3/10/2026', agentName: 'Anna Smith', column: 8 });
+  assert.match(other.error, /^Raw Data holds 2026-03-09, not 3\/10\/2026\. .*re-import 3\/10\/2026 \(CDR Import: Manual Export\)/);
+  const unpadded = h.fn('getDQEDrilldownRows')({ dateStr: '3/9/2026', agentName: 'Anna Smith', column: 8 });
+  assert.ok(!unpadded.error, String(unpadded.error));
+  assert.equal(unpadded.rowCount, s.cell.answered, 'same Found-N as the padded form');
+  assert.equal(s.drill(8).rowCount, s.cell.answered);
+});

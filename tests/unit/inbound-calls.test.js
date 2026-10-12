@@ -1264,6 +1264,36 @@ test('shared root: a sibling leg\'s hold/disc-on-hold no longer leaks onto the a
   // 'abandoned IN QUEUE while held' test above.
 });
 
+// PIPE-13 (broad-scan 2026-10-12, the P22 rule's last two fields): final_dept
+// and the wait's end point read the FIRST answered talk leg across the whole
+// tree, so on an internal-origin record a sibling's earlier answer (a warm
+// transfer merging two people's legs) supplied both. They now read the
+// requester's own legs, the scope `answered` already used.
+test('PIPE-13: a sibling\'s earlier answer no longer sets the assist record\'s final dept or wait', function () {
+  const recs = build([
+    // A colleague's call out to a customer, answered first under the same root.
+    leg({ callId: '880001', legId: 4, start: '08/21/2026 07:30:00', connected: '08/21/2026 07:30:05',
+          stop: '08/21/2026 07:40:00', direction: 'Outgoing', talk: '0:09:55',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555',
+          answered: 'Answered', dept: 'Field Operations (Market Activity)' }),
+    // Margie dials the queue...
+    leg({ callId: '880001', legId: 1, start: '08/21/2026 07:30:20', connected: '08/21/2026 07:30:21',
+          stop: '08/21/2026 07:31:00', direction: 'Internal', callTime: '0:00:40',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_Billing',
+          dept: 'Customer Success' }),
+    // ...and the Billing agent picks it up 40 s later.
+    leg({ callId: '880001', legId: 2, start: '08/21/2026 07:30:21', connected: '08/21/2026 07:31:00',
+          stop: '08/21/2026 07:33:00', direction: 'Internal', talk: '0:02:00',
+          caller: '363', callerName: 'Margie Ingay', callee: '150', calleeName: 'Bill Agent',
+          answered: 'Answered', dept: 'Billing' }),
+  ]);
+  const r = rec(recs, '880001');
+  assert.equal(r.isInternal, true);
+  assert.equal(r.disposition, 'answered');
+  assert.equal(r.finalDept, 'Billing', "Margie's call was answered by Billing, not the colleague's Field Ops leg");
+  assert.equal(r.waitSeconds, 60, "the wait ends at Margie's own answer (07:31:00), not the sibling's (07:30:05)");
+});
+
 
 // ---- Batch 5 (broad-scan 2026-09-17): P-6 / P-9 / P-11 ----------------------
 

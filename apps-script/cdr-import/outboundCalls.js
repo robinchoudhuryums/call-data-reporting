@@ -103,21 +103,26 @@ function buildOutboundCallRecords_(rawRows) {
     // labelled calls, 2026-09-22; docs/outbound-callback-dept-plan.md).
     // (zero-talk legs that say "Answered" are ringback/system noise, the
     // same gate the inbound disposition uses).
-    var connected = false, talkSeconds = 0;
+    var connected = false, talkSeconds = 0, connLeg = null;
     extLegs.forEach(function (l) {
       var t = icTimeToSec_(l[IC_COL.TALK]);
       if (t > 0 && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered') {
         connected = true;
         talkSeconds = Math.max(talkSeconds, t);
+        if (!connLeg) connLeg = l;   // PIPE-12: the first attempt that connected
       }
     });
 
-    // Ring seconds on the first attempt: start -> connected when it was
-    // picked up, else start -> stop (how long it rang before giving up).
+    // Ring seconds. Connected: the CONNECTING attempt's own start -> its
+    // connected time (PIPE-12, broad-scan 2026-10-12: this used attempt 1's
+    // CONNECTED even when a later attempt connected -- a timestamp FO-1 found
+    // untrustworthy on a leg that never connected). Not connected: attempt 1's
+    // start -> stop, how long it rang before giving up.
     var startMs = icParseTs_(first[IC_COL.START]);
-    var edgeMs = connected ? icParseTs_(first[IC_COL.CONNECTED]) : icParseTs_(first[IC_COL.STOP]);
-    var ringSeconds = (!isNaN(startMs) && !isNaN(edgeMs))
-      ? Math.max(0, Math.round((edgeMs - startMs) / 1000)) : null;
+    var ringFrom = connected ? icParseTs_(connLeg[IC_COL.START]) : startMs;
+    var edgeMs = connected ? icParseTs_(connLeg[IC_COL.CONNECTED]) : icParseTs_(first[IC_COL.STOP]);
+    var ringSeconds = (!isNaN(ringFrom) && !isNaN(edgeMs))
+      ? Math.max(0, Math.round((edgeMs - ringFrom) / 1000)) : null;
 
     var callDate = icIsoDate_(startMs);
     // C-6: a date-less group (unparseable first-leg timestamp) is DROPPED
@@ -382,6 +387,20 @@ function backfillOutboundCalls(fromIso, toIso, force) {
   }
 
   var doneDates = force ? {} : ocFetchMirroredDates_();
+  // PIPE-15 (broad-scan 2026-10-12): without HMAC_SECRET the writer stores a
+  // NULL callee_hash, and a FORCE run's authoritative replace would put that
+  // NULL over the good hashes an already-mirrored date holds -- callbacks,
+  // repeat-caller tracking and insurer labels go blind for those dates, and
+  // past the ~14-day Call_Legs window nothing can re-derive them. So a force
+  // run with no secret REFUSES each already-mirrored date (a FAILED entry,
+  // which keeps a deferred-mirror date queued and loud) and still writes a
+  // date Neon has never seen, exactly as the PC-10 daily path does.
+  var hashlessGuard = {};
+  if (force && !PropertiesService.getScriptProperties().getProperty('HMAC_SECRET')) {
+    hashlessGuard = ocFetchMirroredDates_();
+    Logger.log('backfillOutboundCalls: HMAC_SECRET not set -- force will NOT rewrite already-mirrored dates '
+      + '(their stored callee hashes would become NULL). Set HMAC_SECRET (Operator State #17) and re-run.');
+  }
 
   var processed = 0, skippedDone = 0, skippedEmpty = 0, totalRecords = 0;
   var failures = [];
@@ -399,6 +418,10 @@ function backfillOutboundCalls(fromIso, toIso, force) {
     }
     var c = candidates[i];
     if (doneDates[c.iso]) { skippedDone++; continue; }
+    if (hashlessGuard[c.iso]) {   // PIPE-15
+      failures.push(c.iso + ' (already mirrored; refused without HMAC_SECRET -- it would NULL the stored callee hashes)');
+      continue;
+    }
 
     try {
       var legs = c.sheet.getDataRange().getDisplayValues();

@@ -89,6 +89,10 @@ capture. Rows captured before the deploy are rewritten by the editor-run
 taken from a leg whose caller is an EXTERNAL number (PC-7). A run with
 `HMAC_SECRET` unset writes NULL caller hashes, so the step's Pipeline Health
 row is now a `failure` naming it (PC-10, Operator State #17), not a success.
+A FORCE `backfillInboundCalls` / `backfillOutboundCalls` with the secret unset
+REFUSES every already-mirrored date (a FAILED entry, which also keeps a
+deferred-mirror date queued) instead of replacing its stored hashes with NULL,
+and still writes a date Neon has never seen (PIPE-15, `outbound-calls.test.js`).
 
 ### Internal-transfer journey enrichment (R11-N)
 
@@ -172,8 +176,13 @@ only consulted when nothing answered, which makes the fallback safe).
 (3) The requester -- `origin_agent` / `origin_dept` and the ext the
 related-call match keys on -- comes from the **earliest QUEUE leg, not
 `legs[0]`**: a colleague's leg can start first. TIMING fields
-(`call_start` / `call_date` / `wait_seconds`) still key on `legs[0]` by
-design; this changes identity, not the record's clock. **The same root is
+(`call_start` / `call_date` / the wait's START) still key on `legs[0]` by
+design; this changes identity, not the record's clock. **The ANSWER-side
+fields read the requester's legs (P22 + PIPE-13):** `abandoned_on_hold`,
+`hold_seconds`, `final_dept` and the wait's END point (the first answered
+talk leg) all scope to the legs `icLegFromOriginator_` passes, falling back
+to every leg when none matches -- a sibling's earlier answer under a merged
+root used to supply both `final_dept` and the wait's end. **The same root is
 ALSO captured in `outbound_calls`** -- its gate is no-Incoming + an answered
 external Outgoing leg, which a merged tree satisfies -- so one id can name a
 row in both tables and the Outbound report counts that leg as the answering
@@ -437,7 +446,9 @@ semantics; **and on the CONNECTED side it cannot distinguish a person from
 voicemail, an IVR or a call-screening service either** -- every disposition
 field reads identically, verified against labelled calls 2026-09-22, so
 `connected` means "something answered", never "reached the caller"; see
-`outbound-callback-dept-plan.md` GROUND TRUTH), talk/ring seconds, attempts, `call_start` (raw PST
+`outbound-callback-dept-plan.md` GROUND TRUTH), talk/ring seconds (ring on
+the attempt that CONNECTED -- its START to its CONNECTED, PIPE-12; an
+unconnected call measures attempt 1's start -> stop), attempts, `call_start` (raw PST
 'HH:MM:SS'; clients shift +2h to CST via `clCstTime_`, the INV-18
 convention), and the masked leg-by-leg journey (a phone-shaped callee
 name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE
@@ -658,7 +669,10 @@ NULL = unknown and stay in, until the one-off `backfillFirstRingFromJourney()`
 through the capture's canonicalizer), which on an unanswered leg equals the
 capture's start -> stop. It writes NULL rows only, leaves an answered or
 length-less leg unknown, and reads just the events' name / kind / secs out of
-Neon (`first-ring-backfill.test.js`). Every reader takes the column through
+Neon (`first-ring-backfill.test.js`). Only APPLY adds the column: the preview
+runs no `ALTER TABLE` (an ACCESS EXCLUSIVE lock on `inbound_calls`), asking
+`information_schema` instead and counting every row NULL when it is missing
+(PIPE-14). Every reader takes the column through
 `to_jsonb(c) ->> 'first_ring_seconds'`, so a dashboard or export deployed
 before cdr-import has added it reads NULL instead of failing (pinned).
 **Sheet fallback (FO-2):** the Inbound Calls export carries First Agent / First

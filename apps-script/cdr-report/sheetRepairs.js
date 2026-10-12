@@ -471,6 +471,19 @@ function repairDqeAbandonedIds_(dryRun) {
              applied: false, recSamples: recSamples, lostSamples: lostSamples };
   }
 
+  // PIPE-11 (broad-scan 2026-10-12, the CRT-5 pattern): nothing coerced ->
+  // lock '@' (format only, no value rewritten) and return WITHOUT a snapshot.
+  // A no-op apply used to back up the whole sheet first, and with only six
+  // tabs kept per sheet, repeated no-op runs rotated the pre-repair original
+  // out of the backup workbook.
+  if (!recovered && !markedLost) {
+    range.setNumberFormat('@');
+    Logger.log('repairDqeAbandonedIds: nothing coerced in AD..AE -- columns locked to plain text, no values '
+      + 'rewritten, no backup taken.');
+    return { recovered: 0, markedLost: 0, lostDates: [], applied: true, noop: true,
+             recSamples: [], lostSamples: [] };
+  }
+
   // Lock AD-AE to plain text (so recovered values + the sentinel STAY text and
   // the columns can't re-coerce), then write back. (T-5: AF's plain-text lock
   // lives in the slot repair, which owns that column's recovery.)
@@ -604,7 +617,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
 
   var stats = {
     candidates: 0, shiftedRows: 0, shiftedSlotCells: 0, afShiftedCells: 0,
-    alreadyCstRows: 0, mixedRows: 0, anomalyRows: 0, afOrphanRows: 0,
+    alreadyCstRows: 0, afHealedRows: 0, mixedRows: 0, anomalyRows: 0, afOrphanRows: 0,
     afSentinelSkipped: 0, afUnparseable: 0, unparsedDateRows: 0
   };
   var samples = { shifted: [], alreadyCst: [], anomaly: [], af: [] };
@@ -618,6 +631,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
     stats.candidates++;
 
     var rowPst = 0, rowCst = 0, rowAnom = 0;
+    var rowSlotSecs = {};   // PIPE-10: every slot time on the row, in seconds
     for (var c = 0; c < SLOT_N; c++) {
       var cell = slotVals[i][c];
       if (!cell) continue;
@@ -626,6 +640,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
       var times = String(cell).split(',');
       for (var k = 0; k < times.length; k++) {
         var sec = parseHms(times[k]);
+        if (sec !== null) rowSlotSecs[sec] = true;
         if (sec === null)                       rowAnom++;
         else if (sec >= pstLo && sec < pstHi)   rowPst++;
         else if (sec >= cstLo && sec < cstHi)   rowCst++;
@@ -647,6 +662,26 @@ function repairDqeOldPstTimestampShift_(dryRun) {
     if (rowPst === 0 && rowCst > 0) {
       stats.alreadyCstRows++;
       if (samples.alreadyCst.length < 12) samples.alreadyCst.push('R' + rowNum + ' (' + dates[i][0] + ')');
+      // PIPE-10 (broad-scan 2026-10-12): an apply killed between a row's slot
+      // write and its AF write leaves CST slots beside a PST AF -- and this
+      // branch used to skip the row forever. AF times are a SUBSET of the
+      // row's missed times, so AF is lagging exactly when every AF token sits
+      // 2 h before a slot time and matches none itself. Shift AF alone then.
+      var lagTrim = afVals[i][0] ? String(afVals[i][0]).trim() : '';
+      if (lagTrim && lagTrim !== SENTINEL) {
+        var lagTok = lagTrim.split(','), lagOut = [], lagging = true;
+        for (var lt = 0; lt < lagTok.length; lt++) {
+          var ls = parseHms(lagTok[lt]);
+          if (ls === null || rowSlotSecs[ls] || !rowSlotSecs[ls + SHIFT]) { lagging = false; break; }
+          lagOut.push(fmtHms(ls + SHIFT));
+        }
+        if (lagging) {
+          stats.afHealedRows++;
+          stats.afShiftedCells++;
+          if (samples.af.length < 12) samples.af.push('R' + rowNum + ' AF lagged its CST slots (interrupted apply) -> shifted +2h (' + dates[i][0] + ')');
+          changes.push({ rowNum: rowNum, slots: null, af: lagOut.join(',') });
+        }
+      }
       continue;
     }
     if (rowPst === 0 && rowCst === 0) {
@@ -703,7 +738,8 @@ function repairDqeOldPstTimestampShift_(dryRun) {
 
   var summary = 'candidates(pre-' + DQE_TZ_SHIFT_CUTOFF_YYYYMMDD + ')=' + stats.candidates
     + ' shiftRows=' + stats.shiftedRows + ' slotCells=' + stats.shiftedSlotCells
-    + ' afCells=' + stats.afShiftedCells + ' | skipped: alreadyCST=' + stats.alreadyCstRows
+    + ' afCells=' + stats.afShiftedCells + ' afHealed=' + stats.afHealedRows
+    + ' | skipped: alreadyCST=' + stats.alreadyCstRows
     + ' mixed=' + stats.mixedRows + ' anomaly=' + stats.anomalyRows
     + ' afOrphan=' + stats.afOrphanRows + ' afSentinel=' + stats.afSentinelSkipped
     + ' afNonTime=' + stats.afUnparseable + ' unparsedDate=' + stats.unparsedDateRows;
@@ -720,9 +756,11 @@ function repairDqeOldPstTimestampShift_(dryRun) {
   hrReverifyRows_(sheet, rowSnap, 'repairDqeOldPstTimestampShift');   // CRT-7 / CR-1: AFTER the snapshot
   for (var x = 0; x < changes.length; x++) {
     var ch = changes[x];
-    var sr = sheet.getRange(ch.rowNum, SLOT_START, 1, SLOT_N);
-    sr.setNumberFormat('@');
-    sr.setValues([ch.slots]);
+    if (ch.slots) {   // PIPE-10: an AF-only heal leaves the (already CST) slots alone
+      var sr = sheet.getRange(ch.rowNum, SLOT_START, 1, SLOT_N);
+      sr.setNumberFormat('@');
+      sr.setValues([ch.slots]);
+    }
     var ar = sheet.getRange(ch.rowNum, AF_COL, 1, 1);
     ar.setNumberFormat('@');
     ar.setValue(ch.af === null || ch.af === undefined ? '' : ch.af);
@@ -889,6 +927,7 @@ function mergeDqeDuplicateRows_(dryRun) {
   var summary = [];
 
   var recovered = 0, unverifiable = 0;
+  var extraClears = [];   // PIPE-9: already-merged rows -> AI..AK blank + the Neon clear
   dupKeys.forEach(function (key) {
     var idxs = groups[key];
     var rows = idxs.map(function (i) { return data[i]; });
@@ -915,6 +954,13 @@ function mergeDqeDuplicateRows_(dryRun) {
     }
     if (scMergeAlreadyApplied_(rows[0], rows.slice(1))) {
       recovered++;
+      // PIPE-9 (broad-scan 2026-10-12): the interrupted apply wrote this row
+      // and died BEFORE the CRT-2 Neon clear (it runs after the deletes), so a
+      // re-run that only deletes left dqe_history's pre-merge queue_split and
+      // after-hours pair under COALESCE. Queue the clear -- and re-blank the
+      // row's AI..AK, in case the kill landed between its two writes.
+      var akParts = key.split('\u0000');
+      extraClears.push({ row: idxs[0] + 2, date: akParts[0], agent: akParts[1] });
       idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
       summary.push(key.replace('\u0000', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
         + '  -> ALREADY MERGED (interrupted apply); deleting leftover duplicate(s) only');
@@ -1051,6 +1097,10 @@ function mergeDqeDuplicateRows_(dryRun) {
     var extraCols = Math.min(37, sheet.getMaxColumns()) - 34;
     if (extraCols > 0) sheet.getRange(w.row, 35, 1, extraCols).setValues([new Array(extraCols).fill('')]);
   });
+  extraClears.forEach(function (x) {   // PIPE-9: same AI..AK clear, no re-sum
+    var xCols = Math.min(37, sheet.getMaxColumns()) - 34;
+    if (xCols > 0) sheet.getRange(x.row, 35, 1, xCols).setValues([new Array(xCols).fill('')]);
+  });
   SpreadsheetApp.flush();
   // Delete extras bottom-up so earlier deletions don't shift later row numbers.
   deleteRows.sort(function (a, b) { return b - a; }).forEach(function (rn) { sheet.deleteRow(rn); });
@@ -1064,7 +1114,8 @@ function mergeDqeDuplicateRows_(dryRun) {
   // smaller day than the row it sits on. So clear the Neon twin explicitly for
   // exactly the merged keys. Best-effort: the sheet is the authority and is
   // already correct; an unreachable Neon is named in the log with the fix.
-  var neonClear = scClearNeonMergeExtras_(writes.filter(function (w) { return w.date && w.agent; })
+  var neonClear = scClearNeonMergeExtras_(writes.concat(extraClears)   // PIPE-9: + already-merged keys
+    .filter(function (w) { return w.date && w.agent; })
     .map(function (w) { return { date: w.date, agent: w.agent }; }));
 
   Logger.log('DQE merge: merged ' + dupKeys.length + ' group(s), deleted ' + deleteRows.length + ' row(s).\n'

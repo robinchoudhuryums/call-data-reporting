@@ -1965,6 +1965,10 @@ When something looks wrong, before assuming a code bug, check:
     last-write-wins on the Neon side -- are found by `findDqeDuplicateRows`
     (neonbackfill.js) and merged by `repairDqeDuplicateMerge` (sheetRepairs.js,
     with a `preview` twin); an Orphan Fix rename can create them (X-1, open).
+    Re-running the merge is the recovery for one cut short after its sheet
+    write: an already-merged group re-blanks AI..AK and re-queues the Neon
+    NULLs (PIPE-9). The PST shift (`repairDqeOldPstTimestampShift`) likewise
+    heals an AF that lags its already-shifted slots on a re-run (PIPE-10).
     **Uploading several days in a row (ING-4, 2026-09-28):** the upload
     trigger now imports EVERY not-yet-processed `Call_Legs_*` date within 14
     days of the newest, OLDEST FIRST, instead of only the newest sheet -- so

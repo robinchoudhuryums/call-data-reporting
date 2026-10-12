@@ -1,6 +1,23 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 8 IMPLEMENTED (block 254): repair, per-call and drill edges.**
+  - Fixes:
+    - PIPE-9: merge re-run re-blanks AI..AK and queues the Neon clear.
+    - TOOL-5: drill names Raw Data's day.
+    - PIPE-10: PST shift heals a lagging AF.
+    - PIPE-11: no-op abandoned-id repair takes no snapshot.
+    - PIPE-12: outbound ring on the connecting attempt.
+    - PIPE-13: final_dept/wait end scoped to the requester.
+    - PIPE-14: BF-1 preview runs no DDL.
+    - PIPE-15: force backfills without HMAC_SECRET refuse mirrored dates.
+  - Decision while implementing: PIPE-15 refuses per already-mirrored DATE rather than the whole run, so the deferred mirror still writes new dates.
+  - Verification: 2388 tests; lint clean; INV-16 in sync; 11 bites. No client change.
+  - Follow-ons: the internal-record wait START (still legs[0]) wants an owner ruling; PIPE-15's mirrored-date read fails open.
+
+  **Owner-side:** deploy cdr-report and cdr-import. No new operator steps.
+  **Next:** Batch 9 or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 7 IMPLEMENTED (block 253): pipeline data rules, plus the Batch 6 follow-ons.**
   - Fixes:
     - PIPE-1: bulk CDR/QCD Neon mirrors are authoritative per date, and the bulk report names the DQE prune.
