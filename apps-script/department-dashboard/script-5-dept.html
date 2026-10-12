@@ -4463,4 +4463,111 @@
     if (tb) tb.innerHTML = html;
   }
 
+
+  // ---- Calm Care preview: section tabs on My Department ----------------
+  // Splits the long dept scroll into Agents / Missed calls / Insights tabs
+  // (the right-rail Queue Call Data + Team Rings panels stay on every tab).
+  // CARE THEME ONLY: with any other theme the tab bar is hidden by CSS and
+  // #dept-page carries no data-care-tab, so nothing moves. Purely a view
+  // layer -- every section still renders and fetches exactly as before; the
+  // tabs only decide which ones are on screen. Any code path that scrolls
+  // to a section (deep links, "See missed calls", setPage('insights'))
+  // reveals its tab first via careRevealFor_ (hooked into
+  // scrollFullyIntoView_ and deptInsightsOpen_).
+  var CARE_TABS_ = [
+    { id: 'agents',   label: 'Agents' },
+    { id: 'missed',   label: 'Missed calls' },
+    { id: 'insights', label: 'Insights' }
+  ];
+  function careTabsOn_() { return document.body.dataset.theme === 'care'; }
+  function careTabFor_(el) {
+    if (!el || !el.closest) return null;
+    if (el.closest('#dept-insights-region')) return 'insights';
+    if (el.closest('.dept-context-row, #dept-missed-detail')) return 'missed';
+    if (el.closest('.dept-main')) return 'agents';
+    return null;
+  }
+  function careSelectTab_(id, focus) {
+    var pg = $('dept-page');
+    var bar = $('care-dept-tabs');
+    if (!pg || !bar) return;
+    if (!careTabsOn_()) { pg.removeAttribute('data-care-tab'); return; }
+    if (pg.getAttribute('data-care-tab') === id) return;
+    pg.setAttribute('data-care-tab', id);
+    bar.querySelectorAll('[role="tab"]').forEach(function (b) {
+      var on = b.getAttribute('data-tab') === id;
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
+      if (on && focus) b.focus();
+    });
+    try { sessionStorage.setItem('cdr.care.depttab', id); } catch (e) { /* best-effort */ }
+    if (id === 'insights' && typeof deptInsightsOpen_ === 'function') deptInsightsOpen_();
+    // The missed chart defers creation while its container is unmeasurable
+    // (MC2) and gives up after ~30 frames; a hidden tab outlasts that, so the
+    // reveal redraws it from the last payload.
+    if (id === 'missed' && deptMissedLastData && !deptMissedChart) {
+      deptMissedDrawAttempts_ = 0;
+      deptMissedDrawChart_(deptMissedLastData);
+    }
+    // Same for the Insights 12-month trend (I4's bounded deferral).
+    if (id === 'insights' && typeof insLastData !== 'undefined' && insLastData
+        && typeof Chart !== 'undefined' && Chart.getChart && !Chart.getChart('ins-trend-chart')
+        && typeof insDrawTrendChart_ === 'function') {
+      insTrendDrawAttempts_ = 0;
+      insDrawTrendChart_(insLastData);
+    }
+    // Charts laid out while their tab was display:none measured 0 px; a
+    // resize tick lets Chart.js's observers re-measure on reveal.
+    setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 0);
+  }
+  function careRevealFor_(el) {
+    if (!careTabsOn_()) return;
+    var t = careTabFor_(el);
+    if (t) careSelectTab_(t);
+  }
+  function careInitTabs_() {
+    var pg = $('dept-page');
+    if (!pg) return;
+    var bar = $('care-dept-tabs');
+    if (!bar) {
+      var layout = pg.querySelector('.dept-layout');
+      if (!layout) return;
+      bar = document.createElement('div');
+      bar.id = 'care-dept-tabs';
+      bar.className = 'care-tabs';
+      bar.setAttribute('role', 'tablist');
+      bar.setAttribute('aria-label', 'Department sections');
+      CARE_TABS_.forEach(function (t) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'care-tab';
+        b.setAttribute('role', 'tab');
+        b.setAttribute('data-tab', t.id);
+        b.setAttribute('aria-selected', 'false');
+        b.tabIndex = -1;
+        b.textContent = t.label;
+        b.addEventListener('click', function () { careSelectTab_(t.id); });
+        bar.appendChild(b);
+      });
+      bar.addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
+        var ids = CARE_TABS_.map(function (t) { return t.id; });
+        var cur = ids.indexOf(pg.getAttribute('data-care-tab'));
+        var next = e.key === 'Home' ? 0 : e.key === 'End' ? ids.length - 1
+          : (cur + (e.key === 'ArrowRight' ? 1 : -1) + ids.length) % ids.length;
+        e.preventDefault();
+        careSelectTab_(ids[next], true);
+      });
+      layout.parentNode.insertBefore(bar, layout);
+    }
+    if (!careTabsOn_()) { pg.removeAttribute('data-care-tab'); return; }
+    var saved = null;
+    try { saved = sessionStorage.getItem('cdr.care.depttab'); } catch (e) { /* best-effort */ }
+    var ok = CARE_TABS_.some(function (t) { return t.id === saved; });
+    pg.removeAttribute('data-care-tab');
+    careSelectTab_(ok ? saved : 'agents');
+  }
+  careInitTabs_();
+  window.addEventListener('dash-mode-change', careInitTabs_);
+
 </script>

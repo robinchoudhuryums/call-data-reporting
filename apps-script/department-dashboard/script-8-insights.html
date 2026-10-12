@@ -309,6 +309,7 @@
     var reg = $('dept-insights-region');
     if (!reg) return;
     if (!reg.open) reg.open = true;
+    if (typeof careRevealFor_ === 'function') careRevealFor_(reg);   // Calm Care tabs
     insEnsurePage_();
     if (opts && opts.scroll) {
       try { reg.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }

@@ -372,7 +372,7 @@
     try { saved = localStorage.getItem(KEY); } catch (e) {}
     // First-time visitors land on cool; explicit saved preferences
     // (including 'warm') are preserved untouched.
-    const initial = (saved === 'warm' || saved === 'cool' || saved === 'clinical')
+    const initial = (saved === 'warm' || saved === 'cool' || saved === 'clinical' || saved === 'care')
       ? saved : 'cool';
     if (initial !== 'warm') document.body.dataset.theme = initial;
     // Expose globally so the Settings modal init can read/write
@@ -380,11 +380,12 @@
     window.__themePref = {
       get: function () {
         return (document.body.dataset.theme === 'cool' ||
-                document.body.dataset.theme === 'clinical')
+                document.body.dataset.theme === 'clinical' ||
+                document.body.dataset.theme === 'care')
           ? document.body.dataset.theme : 'warm';
       },
       set: function (theme) {
-        if (theme === 'cool' || theme === 'clinical') {
+        if (theme === 'cool' || theme === 'clinical' || theme === 'care') {
           document.body.dataset.theme = theme;
         } else {
           delete document.body.dataset.theme;
@@ -458,10 +459,14 @@
     // can make scale-based charts vanish.
     if (!THEME.muted || !THEME.line || !THEME.paperCard) return;
 
-    const FONT_MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-    const FONT_DISPLAY = "'Inter Tight', -apple-system, BlinkMacSystemFont, sans-serif";
+    // Calm Care preview theme: charts follow the theme's single typeface and
+    // a slightly larger size; every other theme keeps the Plex Mono rhythm.
+    const CARE = document.body.dataset.theme === 'care';
+    const FONT_CARE = "'Figtree', -apple-system, BlinkMacSystemFont, sans-serif";
+    const FONT_MONO = CARE ? FONT_CARE : "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    const FONT_DISPLAY = CARE ? FONT_CARE : "'Inter Tight', -apple-system, BlinkMacSystemFont, sans-serif";
     Chart.defaults.font.family = FONT_MONO;
-    Chart.defaults.font.size = 10.5;
+    Chart.defaults.font.size = CARE ? 12 : 10.5;
     Chart.defaults.color = THEME.muted;
     Chart.defaults.borderColor = THEME.line;
     // Per-scale-type defaults (Chart.js v4): grid lines + tick color
@@ -491,7 +496,7 @@
     tt.bodyColor       = THEME.ink;
     tt.borderColor     = THEME.line;
     tt.borderWidth     = 1;
-    tt.cornerRadius    = 2;
+    tt.cornerRadius    = CARE ? 10 : 2;
     tt.padding         = 8;
     tt.titleFont       = { family: FONT_DISPLAY, size: 12, weight: '500' };
     tt.bodyFont        = { family: FONT_MONO,    size: 11 };
@@ -502,7 +507,7 @@
     // Legend — muted mono labels (matches the kicker rhythm)
     const lg = Chart.defaults.plugins.legend.labels;
     lg.color = THEME.muted;
-    lg.font  = { family: FONT_MONO, size: 10 };
+    lg.font  = { family: FONT_MONO, size: CARE ? 12.5 : 10 };
     // Title (used by IR charts' chartHeader)
     if (Chart.defaults.plugins.title) {
       Chart.defaults.plugins.title.color = THEME.muted;

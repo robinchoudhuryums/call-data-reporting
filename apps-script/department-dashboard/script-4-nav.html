@@ -754,6 +754,7 @@
   // old behavior minus the overlap.
   function scrollFullyIntoView_(el, extraGap) {
     if (!el) return;
+    if (typeof careRevealFor_ === 'function') careRevealFor_(el);   // Calm Care tabs
     var gap = extraGap > 0 ? extraGap : 12;
     var inset = stickyTopInset_() + gap;
     var r = el.getBoundingClientRect();

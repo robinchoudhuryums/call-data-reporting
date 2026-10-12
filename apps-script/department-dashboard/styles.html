@@ -130,6 +130,47 @@
     --line:        #d8d8d8;
   }
 
+  /* Calm Care (preview theme, owner 2026-10). Unlike warm/cool/clinical this
+     theme changes MORE than the neutrals: type (Figtree everywhere, incl. the
+     --mono slot so the uppercase-mono kicker family reads as sentence case),
+     radius, elevation and the accent hue. Opt-in from Settings only; every
+     rule it adds is scoped under body[data-theme="care"] (component layer at
+     the END of this file), so the shipped themes are byte-for-byte unchanged.
+     Placed BEFORE the dark overlay so dark mode still wins the neutrals; the
+     care-specific dark tokens live in the component layer. Status hues keep
+     their meaning (good/warn/bad); only their values are retuned. */
+  body[data-theme="care"] {
+    --paper:       #f4f7f6;
+    --paper-2:     #eaf0ee;
+    --paper-card:  #ffffff;
+    --ink:         #16212b;
+    --muted:       #56636e;
+    --line:        #e1e8e6;
+    --accent:      #0e7c6b;
+    --accent-soft: #e2f2ee;
+    --good:        #1d7f45;
+    --good-soft:   #e3f3e8;
+    --warn:        #b4541a;
+    --warn-soft:   #fcecdd;
+    --bad:         #9e2f23;
+    --bad-soft:    #f8dcd8;
+    --stale:       #8a5a00;
+    --stale-soft:  #fbefd8;
+    --dir-out:      #6d4fc2;
+    --dir-out-soft: #efeafb;
+    --display: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ui:      'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono:    'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --r:      10px;
+    --r-sm:   8px;
+    --r-lg:   16px;
+    --shadow-1:     0 1px 2px rgba(22,33,43,.05);
+    --shadow-2:     0 1px 2px rgba(22,33,43,.05), 0 6px 20px rgba(22,33,43,.06);
+    --shadow-modal: 0 2px 4px rgba(22,33,43,.06), 0 16px 40px rgba(22,33,43,.14);
+    --care-shadow:  0 1px 2px rgba(22,33,43,.05), 0 6px 20px rgba(22,33,43,.05);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Dark mode overlay — toggled via body[data-mode="dark"] from the
      header button. Only the token values shift; every selector below
      keeps using the same var() refs. color-scheme: dark hints the
@@ -8184,4 +8225,184 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
 .ob-dl-summary .ds-zone-label { white-space: normal; min-width: 0; }
 .ob-dl-head { color: var(--muted); font-size: 12px; }
 .ob-dl-body { margin-top: 8px; }
+
+/* ==================================================================
+   Calm Care -- component layer (preview theme; tokens near the top).
+   Everything here is scoped to body[data-theme="care"] so the shipped
+   warm / cool / clinical themes render exactly as before. The theme
+   re-skins: Figtree type in sentence case (the uppercase-mono kicker
+   family is neutralized globally), pill controls, soft-shadow cards
+   on 16px radii, and a teal accent. It does not move or remove any
+   element, so ids, routes, exports and every driver keep working.
+   ================================================================== */
+body[data-theme="care"] { font-size: 14.5px; letter-spacing: 0; }
+/* The uppercase + wide-tracked mono label family appears ~120 times with
+   per-selector specificity; one blanket reset is the honest way to turn
+   it into sentence case for a preview. */
+body[data-theme="care"] *,
+body[data-theme="care"] *::before,
+body[data-theme="care"] *::after { text-transform: none !important; letter-spacing: normal !important; }
+body[data-theme="care"] h1,
+body[data-theme="care"] h2,
+body[data-theme="care"] h3 { font-weight: 700; }
+
+/* Header + primary nav */
+body[data-theme="care"] .dash-header { border-bottom: 0; padding-bottom: 8px; margin-bottom: 16px; align-items: center; }
+body[data-theme="care"] .dash-kicker { font-size: 14px; font-weight: 500; color: var(--muted); margin-bottom: 2px; }
+body[data-theme="care"] .dash-header h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.015em !important; }
+body[data-theme="care"] .header-nav { gap: 4px; background: var(--paper-card); padding: 5px; border-radius: 999px; box-shadow: var(--care-shadow); }
+body[data-theme="care"] .header-menu-btn { border: 0; border-radius: 999px; padding: 9px 16px; font-size: 14.5px; font-weight: 600; color: #3b4a56; }
+body[data-theme="care"] .header-menu-btn:hover { background: var(--paper-2); color: var(--ink); }
+body[data-theme="care"] .header-menu-btn.header-nav-current,
+body[data-theme="care"] .header-menu-btn.header-nav-current:hover { background: var(--accent-soft); color: #0a5e51; }
+body[data-theme="care"] .header-menu-list { border: 0; border-radius: 14px; box-shadow: var(--shadow-modal); padding: 6px; }
+body[data-theme="care"] .header-menu-item { border-radius: 10px; }
+body[data-theme="care"] .help-btn { border-radius: 999px; border-color: var(--line); background: var(--paper-card); }
+body[data-theme="care"] .tag { border-radius: 999px; font-size: 12px; font-weight: 700; padding: 2px 10px; }
+body[data-theme="care"] .freshness-pill { border-radius: 999px; font-size: 13px; }
+
+/* Controls */
+body[data-theme="care"] .control label,
+body[data-theme="care"] .control .ctl-label { font-size: 13px; font-weight: 600; color: var(--muted); }
+body[data-theme="care"] .control input[type="date"],
+body[data-theme="care"] .control select,
+body[data-theme="care"] select,
+body[data-theme="care"] input[type="date"],
+body[data-theme="care"] input[type="text"],
+body[data-theme="care"] input[type="search"],
+body[data-theme="care"] textarea { border-radius: 10px; border-color: #d9e3e0; }
+body[data-theme="care"] .btn { border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; padding: 8px 18px; }
+body[data-theme="care"] .btn-secondary { background: var(--paper-card); color: var(--ink); border-color: #d9e3e0; }
+body[data-theme="care"] .btn-icon { padding: 7px 10px; }
+
+/* Surfaces: hairline boxes become soft-shadow cards */
+body[data-theme="care"] .card { border: 0; border-radius: var(--r-lg); box-shadow: var(--care-shadow); }
+body[data-theme="care"] .status { border-radius: 12px; border-left-width: 0; }
+
+/* Agent table */
+body[data-theme="care"] .agents { border-radius: var(--r-lg); overflow: hidden; }
+body[data-theme="care"] .agents thead th { font-size: 13px; font-weight: 600; }
+body[data-theme="care"] .agents td { font-size: 14.5px; }
+
+/* Zone labels ("Team · this range", "Selected dept") read as section titles */
+body[data-theme="care"] .ds-zone-label { font-size: 17px; font-weight: 700; color: var(--ink); }
+body[data-theme="care"] .ds-zone::after { background: transparent; }
+
+/* Cards: every bordered surface becomes a borderless soft-shadow card */
+body[data-theme="care"] :is(.ov-dept-tile, .ov-company-aggregate, .ir-chart-wrap, .dept-qcd-snapshot,
+  .chart-section, .queue-only-section, .agent-card, .ds-card, .dts-tile, .ov-user-table,
+  .missed-agents-fold, .dept-transfer, .diagnostics, .ins-region, .ir-results) {
+  border: 0; border-radius: var(--r-lg); box-shadow: var(--care-shadow); background: var(--paper-card);
+}
+body[data-theme="care"] .ov-company-aggregate { padding: 20px 24px; }
+body[data-theme="care"] .ov-dept-tile { padding: 18px 20px; gap: 8px; }
+body[data-theme="care"] .ov-dept-tile-solo:hover { box-shadow: 0 0 0 2px var(--accent-soft), var(--care-shadow); }
+body[data-theme="care"] .ov-tile-soloed { box-shadow: 0 0 0 2px var(--accent), var(--care-shadow); }
+body[data-theme="care"] .ov-dept-grid { gap: 16px; }
+body[data-theme="care"] .ov-dept-stat-label,
+body[data-theme="care"] .ov-agg-stat-label,
+body[data-theme="care"] .ov-dept-active,
+body[data-theme="care"] .ov-dept-pct-cap,
+body[data-theme="care"] .ov-agg-kicker,
+body[data-theme="care"] .ov-agg-pct-cap { font-size: 13px; color: var(--muted); }
+body[data-theme="care"] .ov-agg-kicker { font-weight: 600; }
+body[data-theme="care"] .wow-chip { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; }
+body[data-theme="care"] .ov-qcd-flag,
+body[data-theme="care"] .ov-dir-pill,
+body[data-theme="care"] .ov-wow-chip { font-size: 12px; border-radius: 999px; }
+body[data-theme="care"] .ans-total,
+body[data-theme="care"] .ans-perday { font-size: 12.5px; }
+/* One escalation line on the Overview: the strip above the snapshot stays,
+   the duplicate inside the admin snapshot is hidden. */
+body[data-theme="care"] #ov-agg-esc { display: none !important; }
+body[data-theme="care"] .ov-esc-strip { border: 0; border-radius: 14px; background: var(--warn-soft); padding: 12px 16px; font-size: 14px; }
+body[data-theme="care"] .ov-status-banner { border-radius: 14px; }
+body[data-theme="care"] .ov-admin-actions .btn { border-radius: 999px; }
+
+/* Selectors and tabs: one pill language */
+body[data-theme="care"] :is(.ov-period-btn, .ov-range-btn, .date-preset-chip, .dept-qcd-period-btn, .seg-btn) {
+  border-radius: 999px; font-size: 13.5px; font-weight: 600; min-width: 0;
+}
+body[data-theme="care"] .seg-btn { border-right: 0; }
+body[data-theme="care"] .seg-btn.active,
+body[data-theme="care"] :is(.ov-period-btn, .ov-range-btn, .date-preset-chip, .dept-qcd-period-btn).active {
+  background: var(--accent-soft); color: #0a5e51; border-color: transparent;
+}
+body[data-theme="care"] .ir-tab { font-size: 14px; font-weight: 600; padding: 8px 14px; }
+body[data-theme="care"] .ir-tab.active { color: var(--accent); }
+
+/* My Department: team strip in ONE row of left-aligned KPI cards */
+body[data-theme="care"] .dept-team-strip { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+body[data-theme="care"] .dts-tile,
+body[data-theme="care"] .dts-tile:not(.dts-tile--hero) { padding: 16px 18px; align-items: flex-start; justify-content: flex-start; text-align: left; gap: 6px; }
+body[data-theme="care"] .dts-tile:not(.dts-tile--hero) .dts-label { justify-content: flex-start; }
+body[data-theme="care"] .dts-tile--hero { box-shadow: 0 0 0 2px var(--accent-soft), var(--care-shadow); }
+body[data-theme="care"] .dts-label { font-size: 13.5px; font-weight: 600; }
+body[data-theme="care"] .dts-scope { font-size: 13px; }
+body[data-theme="care"] .dts-value { font-size: 28px; }
+body[data-theme="care"] .dts-sub { font-size: 13px; }
+body[data-theme="care"] .dept-qcd-tile { border: 0; border-radius: 12px; }
+body[data-theme="care"] .dept-qcd-label { font-size: 12px; }
+body[data-theme="care"] .dept-qcd-snapshot { padding: 18px 20px; }
+body[data-theme="care"] .dept-qcd-hint,
+body[data-theme="care"] .dept-qcd-date { font-size: 13.5px; }
+body[data-theme="care"] #dept-page .controls { padding: 14px 18px; background: var(--paper-card); border-radius: var(--r-lg); box-shadow: var(--care-shadow); align-items: center; }
+body[data-theme="care"] .agents .agents-totals td { background: var(--accent-soft); font-weight: 700; }
+
+/* My Department section tabs (care only; built by careInitTabs_). */
+.care-tabs { display: none; }
+body[data-theme="care"] .care-tabs {
+  display: flex; gap: 4px; margin: 4px 0 18px; padding: 5px; width: fit-content; max-width: 100%;
+  overflow-x: auto; background: var(--paper-2); border-radius: 999px;
+}
+body[data-theme="care"] .care-tab {
+  border: 0; background: transparent; border-radius: 999px; padding: 9px 18px; min-height: 40px;
+  font-size: 15px; font-weight: 600; color: #3b4a56; cursor: pointer; white-space: nowrap;
+}
+body[data-theme="care"] .care-tab:hover { color: var(--ink); }
+body[data-theme="care"] .care-tab[aria-selected="true"] { background: var(--paper-card); color: var(--ink); box-shadow: 0 1px 3px rgba(22,33,43,.14); }
+body[data-theme="care"] .care-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body[data-theme="care"] #dept-page[data-care-tab="agents"] :is(.dept-context-row, #dept-missed-detail, #dept-insights-region) { display: none !important; }
+body[data-theme="care"] #dept-page[data-care-tab="missed"] .dept-main > :not(.dept-context-row, #dept-missed-detail, #dept-coverage-host, #status) { display: none !important; }
+body[data-theme="care"] #dept-page[data-care-tab="insights"] .dept-main > :not(#dept-insights-region, #dept-coverage-host, #status) { display: none !important; }
+body[data-theme="care"] #dept-page[data-care-tab] .dept-context-row,
+body[data-theme="care"] #dept-page[data-care-tab] #dept-insights-region { margin-top: 0; }
+body[data-theme="care"] #dept-page[data-care-tab] .ins-region-summary { display: none; }
+body[data-theme="care"] #dept-page[data-care-tab] .dept-context-row > .dept-qcd-snapshot { margin-top: 0; }
+body[data-theme="care"][data-mode="dark"] .care-tab[aria-selected="true"] { background: var(--paper-card); }
+
+/* Nested surfaces: a card inside a card stays flat (one level of elevation) */
+body[data-theme="care"] :is(.dept-qcd-snapshot, .ins-region, .ir-results, .ds-card) :is(.chart-section, .ir-chart-wrap, .ds-card, .ir-results) {
+  box-shadow: none; border: 1px solid var(--line); border-radius: 14px;
+}
+body[data-theme="care"] .report-summary { border-radius: 12px; border: 0; }
+body[data-theme="care"] .report-headline { border-radius: 14px; }
+body[data-theme="care"] #dept-team-rings :is(td, th, span) { font-size: 12.5px; }
+body[data-theme="care"] .dqe-table-header strong,
+body[data-theme="care"] #dqe-table-title,
+body[data-theme="care"] #dept-missed-title { font-size: 17px; font-weight: 700; }
+body[data-theme="care"] .ov-agg-stat-val,
+body[data-theme="care"] .ov-agg-row strong { font-size: 22px; font-weight: 700; }
+
+/* Dark mode: care keeps its teal accent (lightened for AA on the dark paper) */
+body[data-theme="care"][data-mode="dark"] {
+  --accent: #4fc3ad;
+  --accent-soft: #123a33;
+  --dir-out: #b39be6;        /* pinned: --dir-out is defined wherever --accent is */
+  --dir-out-soft: #2a2140;
+  --care-shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.25);
+}
+body[data-theme="care"][data-mode="dark"] .header-menu-btn { color: var(--muted); }
+body[data-theme="care"][data-mode="dark"] .seg-btn.active,
+body[data-theme="care"][data-mode="dark"] :is(.ov-period-btn, .ov-range-btn, .date-preset-chip, .dept-qcd-period-btn).active { color: var(--accent); }
+body[data-theme="care"][data-mode="dark"] .care-tab { color: var(--muted); }
+body[data-theme="care"][data-mode="dark"] .care-tab[aria-selected="true"] { color: var(--ink); }
+body[data-theme="care"][data-mode="dark"] .header-nav { background: var(--paper-2); }
+@media (max-width: 720px) {
+  body[data-theme="care"] .header-nav { background: transparent; box-shadow: none; padding: 0; justify-content: flex-start; }
+  body[data-theme="care"] .header-menu-btn { padding: 8px 12px; font-size: 14px; }
+  body[data-theme="care"] .dash-header h1 { font-size: 26px; }
+}
+body[data-theme="care"][data-mode="dark"] .header-menu-btn.header-nav-current,
+body[data-theme="care"][data-mode="dark"] .header-menu-btn.header-nav-current:hover { color: var(--accent); }
 </style>
