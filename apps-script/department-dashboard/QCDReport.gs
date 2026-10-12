@@ -804,8 +804,25 @@ function readQcdGrid_(readFrom, readTo) {
     var grid = neonFetchQcdGrid_(readFrom, readTo);
     if (grid) { QCD_NEON_GRID_MEMO_[key] = grid; return grid; }
     // Unreachable / error -> fall back to the sheet (may itself be missing).
+    QCD_NEON_FELL_BACK_ = true;   // DATA-4 (below)
   }
   return readQcdSheetData_();
+}
+
+// DATA-4 (broad-scan 2026-10-12): on the Neon path an UNREACHABLE Neon falls
+// back to the sheet, and once the sheet is missing / trimmed below the window
+// that read comes back empty -- the snapshot readers returned null WITHOUT
+// flagging, so getDepartmentSummary / the Overview cached a payload with no
+// Queue panel or chips for 6 h. A reader whose snapshot came back empty calls
+// this; it flags the execution (noteQcdSnapshotReadFailed_, the D-5 skip-put
+// rule) only when this execution actually fell back, so a genuinely empty
+// window on a reachable source still caches as before.
+var QCD_NEON_FELL_BACK_ = false;
+function qcdFlagEmptyIfOutage_(where) {
+  if (!QCD_NEON_FELL_BACK_) return;
+  if (typeof noteQcdSnapshotReadFailed_ === 'function') {
+    noteQcdSnapshotReadFailed_(where, new Error('Neon unreachable and the sheet fallback had no rows for the window'));
+  }
 }
 
 /**

@@ -396,22 +396,57 @@ function countWorkingDays_(fromIso, toIso) {
 // window.__COMPANY_HOLIDAYS__ (renderDashboard_).
 
 var COMPANY_HOLIDAYS_MEMO_ = null;      // per-execution (tests reset it)
-var COMPANY_HOLIDAYS_SOURCE_ = '';      // 'sheet' | 'property' | 'none'; '-shadowed' / 'sheet-error' suffixes (Health row)
+var COMPANY_HOLIDAYS_SOURCE_ = '';      // 'sheet' | 'sheet-copy' | 'property' | 'none'; '-shadowed' / 'sheet-error' suffixes (Health row)
+
+// ENG-8 (broad-scan 2026-10-12): the last ranges a SUCCESSFUL sheet read
+// produced, so a failed read serves the calendar the sheet last held rather
+// than the property -- which H1 tells the operator to CLEAR once the sheet is
+// populated, leaving a failed read to treat every holiday as a workday (alerts
+// and digests fire on Christmas, the walk-back assesses the closed day).
+// Rewritten only when the ranges change; deleted when the sheet reads EMPTY,
+// so an operator clearing the sheet is never overridden by a stale copy.
+var COMPANY_HOLIDAYS_COPY_PROP_ = 'COMPANY_HOLIDAYS_SHEET_COPY';
 
 function getCompanyHolidayRanges_() {
   if (COMPANY_HOLIDAYS_MEMO_) return COMPANY_HOLIDAYS_MEMO_;
-  let raw = null;
-  try { raw = PropertiesService.getScriptProperties().getProperty('COMPANY_HOLIDAYS'); } catch (e) {}
-  const sheetRead = sheetReadCompanyHolidayRanges_();   // { ranges, error }
+  let props = null, raw = null, copy = null;
+  try {
+    props = PropertiesService.getScriptProperties();
+    raw = props.getProperty('COMPANY_HOLIDAYS');
+    copy = props.getProperty(COMPANY_HOLIDAYS_COPY_PROP_);
+  } catch (e) {}
+  let sheetRead = sheetReadCompanyHolidayRanges_();   // { ranges, error }
+  if (sheetRead.error) sheetRead = sheetReadCompanyHolidayRanges_();   // ENG-8: one retry (a transient timeout)
   if (sheetRead.ranges && sheetRead.ranges.length) {
     COMPANY_HOLIDAYS_MEMO_ = sheetRead.ranges;
     // A property still set beside a populated sheet is IGNORED, not merged --
     // say so (the Health row reads this) rather than silently shadowing it.
     COMPANY_HOLIDAYS_SOURCE_ = raw ? 'sheet-shadowed' : 'sheet';
+    try {
+      const json = JSON.stringify(sheetRead.ranges);
+      if (props && json !== copy && json.length <= 8000) props.setProperty(COMPANY_HOLIDAYS_COPY_PROP_, json);
+    } catch (eW) { /* best-effort: the live read already served */ }
     return COMPANY_HOLIDAYS_MEMO_;
+  }
+  if (!sheetRead.error) {
+    // A readable sheet that is absent or empty is a real "nothing configured"
+    // -- retire the copy so it can never resurrect cleared dates.
+    if (props && copy) { try { props.deleteProperty(COMPANY_HOLIDAYS_COPY_PROP_); } catch (eD) {} }
+  } else if (copy) {
+    let parsed = null;
+    try { parsed = JSON.parse(copy); } catch (eP) { parsed = null; }
+    if (Array.isArray(parsed) && parsed.length) {
+      COMPANY_HOLIDAYS_MEMO_ = parsed.filter(function (r) { return r && r.from && r.to; })
+        .map(function (r) { return { from: String(r.from), to: String(r.to) }; });
+      COMPANY_HOLIDAYS_SOURCE_ = 'sheet-copy+sheet-error';
+      return COMPANY_HOLIDAYS_MEMO_;
+    }
   }
   COMPANY_HOLIDAYS_MEMO_ = raw ? parseSkipDateRanges_(raw) : [];
   COMPANY_HOLIDAYS_SOURCE_ = (raw ? 'property' : 'none') + (sheetRead.error ? '+sheet-error' : '');
+  if (sheetRead.error && !raw) {
+    try { Logger.log('[company-holidays] sheet unreadable and no last-good copy or property -- this request treats every weekday as a working day'); } catch (eL) {}
+  }
   return COMPANY_HOLIDAYS_MEMO_;
 }
 

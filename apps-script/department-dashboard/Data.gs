@@ -257,6 +257,13 @@ function getLatestDataDates() {
   // after the underlying read recovers. On error we return the partial result
   // UNCACHED so the next call retries.
   let computedOk = true;
+  // DATA-5 (broad-scan 2026-10-12): the R8-C2 rule, applied per component. A
+  // component that came back EMPTY after its Neon read failed (and the sheet
+  // fallback had nothing either -- the trimmed-sheet end state) is an outage,
+  // not "no data": serve it, but never cache it, or the pill and the date
+  // clamps stay blank for the TTL after Neon recovers. A positive value from
+  // the sheet fallback still caches, as the singular getLatestDataDate's does.
+  let failedSourceEmpty = false;
   try {
     const ss = openSpreadsheet_();
     const ssTZ = ss.getSpreadsheetTimeZone();
@@ -264,6 +271,7 @@ function getLatestDataDates() {
     // DQE Historical Data -- col B (date). Reuses the cached
     // single-source result so we don't double-scan.
     result.dqe = getLatestDataDate();
+    if (!result.dqe && typeof getDqeReadSource_ === 'function' && getDqeReadSource_() === 'neon') failedSourceEmpty = true;
 
     // QCD Historical Data -- col C. Pipeline writer is
     // autoImport.js's processIntegratedHistory QCD block; the
@@ -274,9 +282,11 @@ function getLatestDataDates() {
     // with it. Neon null/empty/error falls back to the sheet scan.
     let qcdLatest = '';
     let qcdEarliest = '';
+    let qcdNeonMissed = false;
     if (typeof getQcdReadSource_ === 'function' && getQcdReadSource_() === 'neon'
         && typeof neonGetMaxQcdDate_ === 'function') {
       qcdLatest = neonGetMaxQcdDate_() || '';
+      qcdNeonMissed = !qcdLatest;
       if (qcdLatest && typeof neonGetMinQcdDate_ === 'function') {
         qcdEarliest = neonGetMinQcdDate_() || '';
       }
@@ -299,6 +309,7 @@ function getLatestDataDates() {
     }
     if (qcdLatest) result.qcd = qcdLatest;
     if (qcdEarliest) result.qcdEarliest = qcdEarliest;
+    if (qcdNeonMissed && !qcdLatest) failedSourceEmpty = true;
 
     // R12-26: DQE COVERAGE START -- the earliest date each source actually
     // holds, so a report whose requested From predates the data can WARN
@@ -306,9 +317,11 @@ function getLatestDataDates() {
     // = one indexed MIN(call_date); sheet path = its own date-column scan
     // (same cost class as the QCD scan above; the blob is 5-min cached).
     let dqeEarliest = '';
+    let dqeMinNeonMissed = false;
     if (typeof getDqeReadSource_ === 'function' && getDqeReadSource_() === 'neon'
         && typeof neonGetMinDqeDate_ === 'function') {
       dqeEarliest = neonGetMinDqeDate_() || '';
+      dqeMinNeonMissed = !dqeEarliest;
     }
     if (!dqeEarliest) {
       // F9: the SHARED bounds scan -- `result.dqe` above came from
@@ -318,6 +331,7 @@ function getLatestDataDates() {
       if (bounds.min) dqeEarliest = bounds.min;
     }
     if (dqeEarliest) result.dqeEarliest = dqeEarliest;
+    if (dqeMinNeonMissed && !dqeEarliest) failedSourceEmpty = true;
 
     // Overall max -- drives the pill's visible date + age. When
     // both sources agree, the pill matches DQE (normal steady
@@ -334,8 +348,10 @@ function getLatestDataDates() {
     Logger.log('getLatestDataDates failed: %s', e);
     computedOk = false;
   }
-  if (computedOk) {
+  if (computedOk && !failedSourceEmpty) {
     try { cache.put(KEY, JSON.stringify(result), CACHE_TTL_SECONDS); } catch (e) {}
+  } else if (failedSourceEmpty) {
+    Logger.log('getLatestDataDates: a Neon read failed and its sheet fallback was empty -- served UNCACHED (DATA-5).');
   }
   return result;
 }
@@ -1857,13 +1873,13 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     if (_optPrior && _optPrior < _readFrom) _readFrom = _optPrior;
     const _readTo = (_optTo && _optTo > _todayIso) ? _optTo : _todayIso;
     const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
-    if (!grid || grid.missing || grid.empty) return null;
+    if (!grid || grid.missing || grid.empty) { if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeDeptQcdSnapshot_'); return null; }   // DATA-4
     const tz = ssTZ || grid.ssTZ;
     const values = grid.values;
     // R10-5: the H:MM:SS Avg Answer strings live in the parallel `displays`
     // grid (INV-02 discipline; the Neon adapter ships an aligned copy).
     const displays = grid.displays || null;
-    if (!values.length) return null;
+    if (!values.length) { if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeDeptQcdSnapshot_'); return null; }   // DATA-4
 
     let latestDate = '';
     let byQueue = {};   // queue -> { total, answered, abandoned, violations } on latestDate
@@ -1888,7 +1904,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         b.violations += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
       }
     }
-    if (!latestDate) return null;
+    if (!latestDate) { if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeDeptQcdSnapshot_'); return null; }   // DATA-4
 
     // QCD side-panel period slider (Yesterday / MTD). MTD is an ISOLATED second
     // pass over the same in-memory `values`, summing every row in the latest

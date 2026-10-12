@@ -1086,7 +1086,9 @@ function healthConfigRows_(add, ctx) {
           holHint = 'The COMPANY_HOLIDAYS Script Property is still set but IGNORED -- the Company Holidays sheet wins. Move any dates the sheet is missing into the sheet, then clear the property (Operator State #27).';
         } else if (holSrc.indexOf('sheet-error') >= 0) {
           holStatus = 'warn';
-          holHint = 'The Company Holidays sheet could not be read this request; serving the COMPANY_HOLIDAYS property (or nothing). Transient unless it repeats.';
+          holHint = holSrc.indexOf('sheet-copy') === 0
+            ? 'The Company Holidays sheet could not be read this request; serving its last-good copy (ENG-8). Transient unless it repeats.'
+            : 'The Company Holidays sheet could not be read this request and no last-good copy exists; serving the COMPANY_HOLIDAYS property (or nothing). Transient unless it repeats.';
         } else if (!holRanges.length) {
           holHint = 'No company holidays configured -- every weekday counts as a working day. Add rows to the Company Holidays sheet (setup() creates it; Operator State #27).';
         }

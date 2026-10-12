@@ -303,3 +303,51 @@ test('S2A-3: an outage-empty or config-degraded agent payload is served but neve
   h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' });
   assert.equal(agentKeys().length, 2, 'a healthy read caches both blobs as before');
 });
+
+// SEC-4 (broad-scan 2026-10-12): ahWaitJoin_'s journey fetch -- PCR-5's quoted,
+// wildcard-escaped pattern and a row ceiling (newest first, flagged).
+test('SEC-4: ahWaitJoin_ matches the QUOTED, escaped name with a LIMIT, and flags a fetch that hit it', function () {
+  const seen = { sql: '', params: {} };
+  function fakeConn(rows) {
+    return {
+      prepareStatement: function (sql) {
+        seen.sql = sql;
+        return {
+          setString: function (i, v) { seen.params[i] = v; },
+          executeQuery: function () {
+            let done = false;
+            return { next: function () { if (done) return false; done = true; return true; },
+                     getString: function () { return JSON.stringify(rows); }, close: function () {} };
+          },
+          close: function () {},
+        };
+      },
+      close: function () {},
+    };
+  }
+  const ring = { d: '2026-10-05', call_start: '07:00:00', journey: JSON.stringify([{ name: 'Ann_1%', missed: true, t: '07:00:20', secs: 12 }]) };
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn([ring]); };
+  try {
+    const j = h.call('ahWaitJoin_', 'Ann_1%', '2026-10-01', '2026-10-07');
+    assert.equal(seen.params[3], '%"Ann\\_1\\%"%', 'quoted as the JSON value, LIKE wildcards escaped');
+    const limit = h.ctx.AH_WAIT_JOIN_MAX_ROWS_;
+    assert.ok(seen.sql.indexOf('ORDER BY call_date DESC, call_start DESC LIMIT ' + (limit + 1)) > 0, 'bounded, newest first');
+    assert.equal(j.available, true);
+    assert.equal(j.truncated, false);
+    assert.deepEqual(JSON.parse(JSON.stringify(j.map)), { '2026-10-05|32420': { ring: 12, wait: 20 } });
+
+    // One row past the ceiling: the extra (oldest) row is dropped and flagged.
+    const many = [];
+    for (let i = 0; i <= limit; i++) many.push({ d: '2026-10-05', call_start: '07:00:00', journey: '[]' });
+    h.ctx.getDashboardNeonConn_ = function () { return fakeConn(many); };
+    const t = h.call('ahWaitJoin_', 'Ann', '2026-10-01', '2026-10-07');
+    assert.equal(t.truncated, true);
+    assert.equal(t.available, true, 'a capped join is still a join -- older rings keep the timestamp only');
+  } finally { delete h.ctx.getDashboardNeonConn_; }
+
+  // One rule, two readers: the agent-day drill's PCR-5 pattern is the same function of the name.
+  const hd = loadGas({ files: ['Config.gs', 'Util.gs', 'AgentDay.gs'] });
+  ['Ann', 'Ann_1%', 'O\'Brien "Bo"', 'back\\slash'].forEach(function (n) {
+    assert.equal(h.call('ahJourneyLikePattern_', n), hd.call('agentDayLikePattern_', n), n);
+  });
+});

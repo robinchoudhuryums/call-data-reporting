@@ -1800,7 +1800,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
   (Batch 6) the `summary:v23` and `individual_active:v2` keys carry the same
   roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
-  reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:`,
+  reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:` (and since DATA-1/2/10 `companyOverview`, `insights`, the agent app's blobs and `agentHist:v1`),
   and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /
   `rosterAllDeptsHash_`, Data.gs; pinned by `cache-key.test.js`).
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept

@@ -178,7 +178,32 @@ function escSnapshotChunk_(rows) {
            truncated: truncated || (rows.length >= ESC_SNAPSHOT_MAX_ROWS) };
 }
 
-/** Stores rows + META (written LAST, so a half-write reads as absent). */
+// SEC-3 (broad-scan 2026-10-12): the ids of permanently DELETED escalations,
+// newest last, capped. Every snapshot read drops them, so a post-delete
+// refresh that FAILED (it is best-effort) can no longer serve the deleted
+// row -- patient data included -- from the outage snapshot. Ids are UUIDs
+// (no PHI) and never reused, so a permanent exclusion is correct; the cap
+// keeps the property under the ~9 KB per-value limit.
+var ESC_SNAPSHOT_DELETED_PROP_ = 'ESC_SNAPSHOT_DELETED';
+var ESC_SNAPSHOT_DELETED_MAX_ = 200;
+function escSnapshotDeletedIds_() {
+  try {
+    var v = JSON.parse(PropertiesService.getScriptProperties().getProperty(ESC_SNAPSHOT_DELETED_PROP_) || '[]');
+    return Array.isArray(v) ? v.map(String) : [];
+  } catch (e) { return []; }
+}
+function escSnapshotNoteDeleted_(ids) {
+  try {
+    var cur = escSnapshotDeletedIds_();
+    (ids || []).forEach(function (id) { id = String(id); if (cur.indexOf(id) === -1) cur.push(id); });
+    PropertiesService.getScriptProperties()
+      .setProperty(ESC_SNAPSHOT_DELETED_PROP_, JSON.stringify(cur.slice(-ESC_SNAPSHOT_DELETED_MAX_)));
+  } catch (e) {
+    Logger.log('escSnapshotNoteDeleted_: not recorded: ' + (e && e.message ? e.message : e));
+  }
+}
+
+/** Stores rows + META (written LAST, so a half-write reads as absent). Returns true when stored. */
 function escSnapshotStore_(rows) {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -195,11 +220,13 @@ function escSnapshotStore_(rows) {
       at: new Date().toISOString(), chunks: packed.chunks.length,
       count: packed.count, truncated: packed.truncated,
     }));
+    return true;
   } catch (e) {
     // Best-effort -- a failed snapshot must never cost the live read. ESC-D6:
     // but say so; an empty catch hid an over-cap write (the store keeps the
     // PREVIOUS snapshot, which then ages silently).
     Logger.log('escSnapshotStore_: snapshot NOT stored: ' + (e && e.message ? e.message : e));
+    return false;
   }
 }
 
@@ -217,6 +244,8 @@ function escSnapshotLoad_() {
     }
     var rows = JSON.parse(json);
     if (!Array.isArray(rows)) return null;
+    var gone = escSnapshotDeletedIds_();   // SEC-3
+    if (gone.length) rows = rows.filter(function (r) { return !(r && gone.indexOf(String(r.id)) !== -1); });
     return { rows: rows, at: meta.at || null, truncated: !!meta.truncated };
   } catch (e) { return null; }
 }
@@ -267,11 +296,15 @@ function escSnapshotMaybeRefresh_(conn, force) {
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
     var snapRows = JSON.parse(json || '[]');
-    escSnapshotStore_(snapRows);
+    var stored = escSnapshotStore_(snapRows);
     // ESC-S1: the threads of those rows, from the same connection. Its own
     // try: a failure here costs the offline threads, never the rows.
     try { escSnapshotActRefresh_(conn, snapRows); } catch (eAct) { /* best-effort */ }
-  } catch (e) { /* best-effort */ }
+    return stored;   // SEC-3: callers can tell a refresh that did not land
+  } catch (e) {
+    Logger.log('escSnapshotMaybeRefresh_: refresh failed: ' + (e && e.message ? e.message : e));
+    return false;
+  }
 }
 
 /**
@@ -1835,8 +1868,18 @@ function deleteEscalation(req) {
     Logger.log('deleteEscalation: %s deleted %s (%s, was %s) with its activity trail%s',
       user.email, id, meta.department, meta.status, all ? (' + every linked copy (' + n + ', group ' + meta.groupId + ')') : '');
     try { logReportUsage_('escalations:delete', depts.join(' + '), user, false); } catch (eu) {}
-    try { escSnapshotMaybeRefresh_(conn, /*force=*/true); } catch (eSnap) { /* best-effort */ }
+    // SEC-3: exclude the deleted ids from every snapshot read FIRST, then
+    // refresh; a refresh that does not land is logged and reported (it used
+    // to be swallowed while the snapshot kept serving the deleted row).
+    escSnapshotNoteDeleted_(goneIds);
+    var snapOk = false;
+    try { snapOk = escSnapshotMaybeRefresh_(conn, /*force=*/true) === true; } catch (eSnap) { snapOk = false; }
+    if (!snapOk) {
+      Logger.log('deleteEscalation: the outage snapshot did NOT refresh after deleting %s -- '
+        + 'the deleted id(s) are excluded on serve (ESC_SNAPSHOT_DELETED); the next refresh replaces it.', id);
+    }
     result = { id: id, deleted: n, allLinked: all };
+    if (!snapOk) result.snapshotRefreshFailed = true;
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('deleteEscalation failed: ' + (e && e.message ? e.message : e));
@@ -1950,7 +1993,12 @@ function escAssertRowAccess_(user, rowDept) {
   // this is byte-equivalent to the old `rowDept !== user.department` check.
   if (user.role === 'manager' && !user.allDepts) {
     var mine = (user.departments && user.departments.length) ? user.departments : [user.department];
-    if (mine.indexOf(rowDept) === -1) throw new Error('Not authorized for this department.');
+    // SEC-5 (broad-scan 2026-10-12): the SAME words as a missing id. Every
+    // row verb looks the row up first, so "not authorized" for a foreign row
+    // vs "not found" for a missing one told a manager which ids exist in
+    // other departments. (Admins and allDepts managers never reach here; the
+    // role check above runs before any lookup via assertManagerOrAdmin_.)
+    if (mine.indexOf(rowDept) === -1) throw new Error('Escalation not found.');
   }
   // admins + allDepts managers: entitled to every row, including rows
   // whose stored dept no longer matches a current roster header.

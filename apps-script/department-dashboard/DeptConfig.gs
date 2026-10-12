@@ -275,8 +275,16 @@ function getOverviewParentMap_() {
   if (typeof OVERVIEW_PARENT_OF !== 'undefined') {
     Object.keys(OVERVIEW_PARENT_OF).forEach(function (k) { map[k] = OVERVIEW_PARENT_OF[k]; });
   }
-  readDeptConfigRows_().forEach(function (r) {
-    if (r.active && r.overviewParent) map[r.dept] = r.overviewParent;
+  // CFG-1 (broad-scan 2026-10-12): the FIRST active row per dept decides, as
+  // for every other field (A-3, getActiveDeptConfigMap_). Iterating every row
+  // let a hand-added later duplicate win -- and this map widens manager ACCESS
+  // (INV-38), so a stray "PAP -> Power" row granted Power's managers PAP's
+  // agent-level data, while a modal save (which edits the first row) reported
+  // success without removing the edge. An empty Overview Parent on that first
+  // row falls back to the constant, like every other field.
+  const active = getActiveDeptConfigMap_();
+  Object.keys(active).forEach(function (dept) {
+    if (active[dept].overviewParent) map[dept] = active[dept].overviewParent;
   });
   return map;
 }

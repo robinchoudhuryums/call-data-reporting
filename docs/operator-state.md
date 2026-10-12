@@ -660,7 +660,14 @@ When something looks wrong, before assuming a code bug, check:
     cannot coerce a lone date to a Date value (the reader tolerates a coerced
     cell anyway by formatting it in the SPREADSHEET's tz). **Precedence:** the
     sheet WINS the moment it holds one active range; the property is consulted
-    only while the sheet is absent, unreadable, or has no active row. The two
+    only while the sheet is absent, unreadable, or has no active row --
+    EXCEPT that an UNREADABLE sheet (a failed read, retried once) first
+    serves its LAST-GOOD copy (`COMPANY_HOLIDAYS_SHEET_COPY`, engine state the
+    code writes on every read whose ranges changed and deletes when the sheet
+    reads EMPTY; ENG-8), because the property is normally cleared after the
+    migration below and a failed read used to treat every holiday as a
+    workday for that request. The Health row then reads
+    `from sheet-copy+sheet-error`. The two
     are NEVER merged -- a property left set beside a populated sheet is
     ignored, and the Health page's `company-holidays` row (config section)
     warns about it, because team-tools (#68) reads ONLY the sheet and a date
@@ -682,8 +689,8 @@ When something looks wrong, before assuming a code bug, check:
     Maintain it yearly (e.g. rows for `2026-01-01`, `2026-05-25`, `2026-07-03`,
     `2026-11-26..2026-11-27`, `2026-12-25`); it is GLOBAL -- per-dept
     exceptions stay in Alert Config Skip Dates. No redeploy needed to edit.
-    Pinned by `util.test.js` (precedence, failed-read fallback, coerced-cell
-    tz), `setup.test.js` (the text pin) and `system-health.test.js` (the row).
+    Pinned by `util.test.js` (precedence, failed-read fallback incl. the
+    ENG-8 last-good copy, coerced-cell tz), `setup.test.js` (the text pin) and `system-health.test.js` (the row).
 28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard; trigger handler `runNeonBackup_`).
     Weekly Drive export of the tables with NO sheet fallback --
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey

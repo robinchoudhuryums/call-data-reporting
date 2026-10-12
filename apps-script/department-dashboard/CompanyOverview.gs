@@ -119,7 +119,13 @@ function overviewCacheKey_() {
   // key within getLatestDataDate's 5-min tier instead of waiting out the TTL.
   var fresh = (typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na';
   var rf = (typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung';   // DD-2
-  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf;
+  // DATA-1 (broad-scan 2026-10-12): + every dept's roster (DL-5's all-dept
+  // hash, the same one the YTD chart on this page carries). The freshness tag
+  // does not move on a `DO NOT EDIT!` edit, so a hire or removal left the
+  // tiles' "X of Y agents" and per-dept rollups stale for the TTL while the
+  // chart beside them updated. In this ONE helper, so every bust site inherits it.
+  var rh = (typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na';
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf + ':' + rh;
 }
 
 // Chart-range slider (hybrid). The multi-dept chart ships a 90-day series
@@ -1905,7 +1911,10 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     const _mtdStartWin = mtdStartIso_(_readTo);
     const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
     let grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
-    if (!grid || grid.missing || grid.empty) return out;
+    if (!grid || grid.missing || grid.empty) {
+      if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeQcdSnapshots_');   // DATA-4
+      return out;
+    }
 
     const tz = ssTZ || TZ;
     // QO-1 (broad-scan 2026-10-01): "MTD" is month-to-date through the LATEST
@@ -2085,6 +2094,12 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // Every caller looks this object up BY DEPT NAME -- nothing iterates its
     // keys -- so an extra key is safe.
     out._companyDaily = companyQcdDaily;
+    // DATA-4: no dept got a snapshot (a trimmed fallback sheet reads as rows
+    // outside the window) -- flag it when this execution fell back from Neon.
+    if (!Object.keys(out).some(function (k) { return k !== '_companyDaily'; })
+        && typeof qcdFlagEmptyIfOutage_ === 'function') {
+      qcdFlagEmptyIfOutage_('computeQcdSnapshots_');
+    }
 
   } catch (e) {
     // D-5: mark the execution so the Overview / trend puts skip (see QCDReport.gs).

@@ -901,6 +901,7 @@ function bestEffortReadFailed_() { return !!BEST_EFFORT_READ_FAILED_; }
 function resetExecReadFailureFlags_() {
   QCD_SNAPSHOT_READ_FAILED_ = false;
   BEST_EFFORT_READ_FAILED_ = false;
+  if (typeof QCD_NEON_FELL_BACK_ !== 'undefined') QCD_NEON_FELL_BACK_ = false;   // DATA-4 (QCDReport.gs)
 }
 // DL-9: per-execution tally of the warmed report caches' OUTCOMES -- a put that
 // succeeded ('write') or a serve from an existing entry ('hit'). CacheWarm
@@ -965,6 +966,7 @@ var PROP_REGISTRY_ = Object.freeze({
     ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
     COACHING_NOTIFY_PENDING: 'engine',
+    COMPANY_HOLIDAYS_SHEET_COPY: 'engine',   // ENG-8: last-good Company Holidays ranges (sheet-read failure fallback)
     DQE_SILENCE_WATCH_LAST: 'engine', DQE_SILENCE_WATCH_LAST_RESULT: 'engine',
     DQE_SILENCE_STREAKS: 'engine',
     ESC_REVIEW_PING_WATERMARK: 'engine',

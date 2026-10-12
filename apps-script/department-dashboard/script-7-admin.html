@@ -1999,24 +1999,44 @@
         const renamedRows = res.ok.reduce(function (a, b) { return a + (b.renamed || 0); }, 0);
         const okRenames = res.ok.filter(function (o) { return o.item.kind !== 'roster-add'; }).length;
         const okAdds    = res.ok.filter(function (o) { return o.item.kind === 'roster-add'; }).length;
+        // PC-4 (broad-scan 2026-10-12): a rename SKIPS the days on which the
+        // target agent already has a row (renaming them would double-count);
+        // those days stay under the outlier's name, so it stays listed.
+        const collided = res.ok.filter(function (o) {
+          return o.res && o.res.collisionDates && o.res.collisionDates.length;
+        });
+        const collisionText = collided.length
+          ? ' ⚠ ' + collided.map(function (o) {
+              const d = o.res.collisionDates;
+              return o.item.fromName + ': ' + d.length + ' day' + (d.length === 1 ? '' : 's')
+                + ' left unrenamed because ' + o.item.toName + ' already has a row that day ('
+                + d.slice(0, 5).join(', ') + (d.length > 5 ? ', …' : '') + ')';
+            }).join('; ')
+            + '. Merge those days deliberately with the CDR Report project’s previewDqeDuplicateMerge / '
+            + 'repairDqeDuplicateMerge (Operator State #56); the alias already routes future imports.'
+          : '';
         if (res.failed.length) {
           ofSetStatus_('error', 'Applied ' + res.ok.length + ' of ' + items.length + '. '
             + res.failed.length + ' failed: '
-            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; '));
+            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; ')
+            + collisionText);
         } else {
           const bits = [];
           if (okRenames) bits.push('renamed ' + renamedRows + ' row' + (renamedRows === 1 ? '' : 's')
             + ' across ' + okRenames + ' outlier' + (okRenames === 1 ? '' : 's'));
           if (okAdds) bits.push('added ' + okAdds + ' new assignment' + (okAdds === 1 ? '' : 's'));
-          ofSetStatus_('success', 'Done — ' + bits.join(' and ')
-            + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).');
+          ofSetStatus_(collided.length ? 'warn' : 'success', 'Done — ' + bits.join(' and ')
+            + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).'
+            + collisionText);
         }
         showToast('Applied ' + res.ok.length + ' change' + (res.ok.length === 1 ? '' : 's'),
           res.failed.length ? 'error' : 'success');
         // Seamless refresh (Batch 1): drop applied orphans + merge the freshest
         // aliases / log / rosterNames across the batch (roster-adds return
         // rosterNames+log; renames return aliases+log -- take the latest of each).
-        const applied = res.ok.map(function (o) { return o.item.fromName; });
+        // PC-4: an outlier with colliding days still has rows -- keep it listed.
+        const applied = res.ok.filter(function (o) { return collided.indexOf(o) === -1; })
+          .map(function (o) { return o.item.fromName; });
         const merged = {};
         res.ok.forEach(function (o) {
           const rr = o.res || {};

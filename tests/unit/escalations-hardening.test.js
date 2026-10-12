@@ -50,9 +50,9 @@ test('F-45: escAssertRowAccess_ pins managers to the row\'s stored dept', functi
   const f = h.fn('escAssertRowAccess_');
   const mgr = { role: 'manager', department: 'CSR' };
   assert.doesNotThrow(function () { f(mgr, 'CSR'); });
-  assert.throws(function () { f(mgr, 'Sales'); }, /Not authorized for this department/);
+  assert.throws(function () { f(mgr, 'Sales'); }, /Escalation not found/);
   // Exact match only -- no case folding (matches the dashboard convention).
-  assert.throws(function () { f(mgr, 'csr'); }, /Not authorized for this department/);
+  assert.throws(function () { f(mgr, 'csr'); }, /Escalation not found/);
 });
 
 test('F-45: admins pass for ANY stored dept, including one no longer on the roster', function () {
@@ -80,7 +80,7 @@ test('R8-4: an ALL-departments manager (allDepts) passes the row gate for ANY de
   // A single-dept manager with allDepts explicitly false stays pinned.
   assert.throws(function () {
     f({ role: 'manager', department: 'CSR', allDepts: false }, 'Sales');
-  }, /Not authorized for this department/);
+  }, /Escalation not found/);
 });
 
 test('Tier C: a multi-dept manager passes the row gate for any assigned dept', function () {
@@ -88,7 +88,7 @@ test('Tier C: a multi-dept manager passes the row gate for any assigned dept', f
   const multi = { role: 'manager', department: 'CSR', allDepts: false, departments: ['CSR', 'Sales'] };
   assert.doesNotThrow(function () { f(multi, 'CSR'); });
   assert.doesNotThrow(function () { f(multi, 'Sales'); });
-  assert.throws(function () { f(multi, 'Power'); }, /Not authorized for this department/);
+  assert.throws(function () { f(multi, 'Power'); }, /Escalation not found/);
 });
 
 test('F-45: unauthenticated / role-none callers are refused outright', function () {
@@ -208,8 +208,32 @@ test('Phase 2: approve is pending_review-ONLY and per-dept gated', function () {
   installReview({ role: 'manager', department: 'Sales', email: 'mgr@x.com' },
     { status: 'pending_review', department: 'CSR', reason: 'r' }, log);
   assert.throws(function () { h.call('approveEscalation', { id: 'e1' }); },
-    /Not authorized for this department/);
+    /Escalation not found/);
   assert.equal(log.writes.length, 0, 'no writes on refusal');
+});
+
+test('SEC-5: a cross-dept manager gets the SAME answer for a foreign id as for a missing one, on every row verb', function () {
+  const mgr = { role: 'manager', department: 'Sales', departments: ['Sales'], email: 'mgr@x.com' };
+  const verbs = [
+    ['resolveEscalation', { resolution: 'done' }, 'pending'],
+    ['reopenEscalation', { reason: 'again' }, 'resolved'],
+    ['startEscalation', {}, 'pending'],
+    ['approveEscalation', {}, 'pending_review'],
+    ['rejectEscalation', { reason: 'no' }, 'pending_review'],
+    ['updateEscalationComment', { comments: 'c' }, 'pending'],
+  ];
+  verbs.forEach(function (v) {
+    const msg = function (row) {
+      const log = { writes: [] };
+      installReview(mgr, row, log);
+      try { h.call(v[0], Object.assign({ id: 'e1' }, v[1])); } catch (e) { assert.equal(log.writes.length, 0); return e.message; }
+      return 'no throw';
+    };
+    const foreign = msg({ status: v[2], department: 'CSR', reason: 'r' });
+    const missing = msg(null);
+    assert.equal(foreign, missing, v[0] + ': no existence oracle');
+    assert.match(foreign, /Escalation not found/, v[0]);
+  });
 });
 
 test('Phase 2: a submission with an empty reason cannot be approved (untrusted-input boundary)', function () {
@@ -324,7 +348,7 @@ test('C6: startEscalation promotes pending -> in_progress with a "started" activ
   const log4 = { writes: [] };
   installReview({ role: 'manager', department: 'Sales', email: 'mgr@x.com' },
     { status: 'pending', department: 'CSR', reason: 'r' }, log4);
-  assert.throws(function () { h.call('startEscalation', { id: 'e1' }); }, /Not authorized for this department/);
+  assert.throws(function () { h.call('startEscalation', { id: 'e1' }); }, /Escalation not found/);
   assert.equal(log4.writes.length, 0);
 });
 
@@ -579,6 +603,26 @@ test('2a: an admin delete removes the activity trail THEN the row in ONE transac
   ['Jane Caller', 'Pat Patient', 'TRX9', 'e1'].forEach(function (pii) {
     assert.ok(audit.indexOf(pii) === -1, 'the usage row must not carry "' + pii + '" (no PHI, no id in the usage sheet)');
   });
+});
+
+test('SEC-3: the delete records the gone id BEFORE refreshing, and reports a refresh that did not land', function () {
+  const log = { writes: [] };
+  installReview({ role: 'admin', email: 'admin@x.com' }, { status: 'resolved', department: 'Sales', reason: 'r' }, log);
+  h.ctx.logReportUsage_ = function () {};
+  delete h.state.props.ESC_SNAPSHOT_DELETED;
+  const seenAtRefresh = [];
+  h.ctx.escSnapshotMaybeRefresh_ = function () { seenAtRefresh.push(h.state.props.ESC_SNAPSHOT_DELETED || null); return false; };
+  const res = h.call('deleteEscalation', { id: 'e1' });
+  assert.equal(res.deleted, 1);
+  assert.equal(res.snapshotRefreshFailed, true, 'a refresh that did not land is reported, not swallowed');
+  assert.deepEqual(seenAtRefresh, ['["e1"]'], 'the exclusion is written before the refresh runs');
+
+  // A refresh that lands carries no flag.
+  installReview({ role: 'admin', email: 'admin@x.com' }, { status: 'resolved', department: 'Sales', reason: 'r' }, { writes: [] });
+  h.ctx.logReportUsage_ = function () {};
+  h.ctx.escSnapshotMaybeRefresh_ = function () { return true; };
+  const ok = h.call('deleteEscalation', { id: 'e1' });
+  assert.equal(ok.snapshotRefreshFailed, undefined);
 });
 
 test('2a: an unknown id is a no-op -- { deleted: 0 }, no writes, no throw (double click / stale card)', function () {

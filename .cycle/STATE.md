@@ -1,6 +1,23 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 5 IMPLEMENTED (block 251): config, access + cache dimensions.**
+  - Fixes:
+    - CFG-1: first active row wins for the parent map.
+    - PC-4: orphan rename skips collision days and warns (owner).
+    - DATA-4: outage-empty QCD Neon read is flagged.
+    - SEC-3: deleted ids excluded from the snapshot; a failed refresh is reported.
+    - ENG-8: last-good holiday copy plus one retry.
+    - DATA-1/2/10: roster hash on the companyOverview, insights and agent-app keys.
+    - DATA-5: no latestDates cache after a failed source.
+    - SEC-4: escaped LIKE plus a LIMIT in ahWaitJoin_.
+    - SEC-5: a foreign row reads as not found.
+  - Owner decision this batch: PC-4 = skip collisions + warn.
+  - Verification: 2367 tests; ci:ui green; lint clean; module map regenerated; 14 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-5). No new operator steps.
+  **Next:** Batch 6 (engine robustness, low tier) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 4 IMPLEMENTED (block 250): fallback tabs + bulk-path signals.**
   - TOOL-1 export tabs re-read changed older dates (updated_at watermark, 10/run + pending; cdr-import correction UPDATEs bump updated_at); TOOL-2 Neon-down export failures not emailed (owner); TOOL-3 append before remove; TOOL-4 anchored prune; PIPE-2 bulk gap failure row + alert; PIPE-4 phone-history re-attach (owner); PIPE-6 enqueue failure row.
   - Owner decisions this batch: TOOL-2 = skip Neon-down only; PIPE-4 = the re-attach design (the scan's naive fix would have orphaned the history or broken forced CDR writes under an FK).

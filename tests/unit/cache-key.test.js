@@ -88,3 +88,30 @@ test('DL-5: summary (whole set), individual, both missed keys and the Overview Y
   missedKeys.forEach(function (k) { assert.match(k, /rosterSetHash_\(\[dept\]\)/); });
   assert.match(src('CompanyOverview.gs'), /OVERVIEW_CHART_TREND_CACHE_PREFIX \+ ':'[^;]+rosterAllDeptsHash_\(\)/);
 });
+
+// DATA-1 / DATA-2 / DATA-10 (broad-scan 2026-10-12): the three 6 h keys DL-5
+// missed -- the Overview blob, an explicit-pick Insights run and the agent
+// app's team + history blobs -- carry the roster too.
+test('DATA-1: the Overview key moves on ANY dept\'s roster edit (behavioural, through the one key helper)', function () {
+  const ho = loadGas({ files: ['Config.gs', 'Util.gs', 'Data.gs', 'CompanyOverview.gs'] });
+  ho.state.props.SPREADSHEET_ID = 'fake';
+  ho.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'], Sales: ['Bob, 102'] }) } });
+  ho.ctx.reportFreshnessTag_ = function () { return '2026-10-09'; };   // hold every other dimension still
+  ho.ctx.ROSTER_BLOCK_MEMO_ = null;
+  const a = ho.call('overviewCacheKey_');
+  assert.match(a, /:[0-9a-f]{32}$/, 'ends in the all-dept roster hash');
+  ho.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'], Sales: ['Bob, 102', 'Cat, 103'] }) } });
+  ho.ctx.ROSTER_BLOCK_MEMO_ = null;   // per-execution memo: a new request
+  assert.notEqual(ho.call('overviewCacheKey_'), a, 'a Sales hire mints a new Overview key');
+  assert.ok(a.length <= 250, 'INV-36: still under the CacheService key cap');
+});
+
+test('DATA-2 / DATA-10: Insights and the agent app\'s team + history keys carry the dept roster', function () {
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  const src = function (f) { return fs.readFileSync(path.join(dash, f), 'utf8'); };
+  assert.match(src('InsightsReport.gs'), /const cacheKey = INSIGHTS_CACHE_KEY_PREFIX[^;]+hashAgents_\(\(roster && roster\.names\) \|\| \[\]\);/);
+  const ah = src('AgentHome.gs');
+  assert.match(ah, /tag = tag \+ ':' \+ \(\(typeof rosterSetHash_ === 'function'\) \? rosterSetHash_\(\[who\.dept\]\) : 'na'\);[\s\S]{0,400}var teamKey = AGENT_HOME_CACHE_PREFIX_ \+ ':team:'[^;]+tag;/);
+  assert.match(ah, /var key = 'agentHist:v1:'[^;]+rosterSetHash_\(\[who\.dept\]\)/);
+});
