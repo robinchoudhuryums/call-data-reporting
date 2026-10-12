@@ -654,7 +654,7 @@ this is the sequence. IDs are the scan's. Sizes: S < 2 h, M ½–2 days.
 | 6 | Engine robustness (low) | ENG-3/4/5/6/7/9/14 | queued |
 | 7 | Pipeline data rules | PIPE-1 authoritative bulk mirrors · PIPE-3 tab-date check · PIPE-5 | queued |
 | 8 | Repair, per-call + drill edges | PIPE-9..15 · TOOL-5 | queued |
-| 9 | Agent app + a11y | UI-1/2 · CL-6/7/8 | queued |
+| 9 | Agent app + a11y | UI-1/2 · CL-6/7/8 · **SEC-4 follow-on** (owner 2026-10-12): say on the agent app when the wait-join ceiling (`AH_WAIT_JOIN_MAX_ROWS_`, 3000 rows) cut off older rings -- carry `join.truncated` into the payload and render a note -- instead of older rings silently showing the time only | queued |
 | 10 | Cache anchors + combined-view perf | DATA-6/7/8 | queued |
 | 11 | Docs, deploy, code health | DOC-1..7 · DEP-1/2 · SEC-7 · TOOL-6 · DATA-9 | queued |
 
