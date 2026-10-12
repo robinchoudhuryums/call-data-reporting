@@ -1751,8 +1751,10 @@
         fmtNumber(cb.other) + ' · may be unrelated', ''),
       inboundKpiTile_('Caller got through', pct(cb.gotThroughPct),
         fmtNumber(cb.gotThrough) + ' · reached the team on a later call', ''),
+      // B1/PC-2: while an ingest lags, "pending" is held open for the days not
+      // loaded -- say so, so the tile is not read against today's date.
       inboundKpiTile_('Not called back', fmtNumber(cb.none),
-        'no dial inside the window', ''),
+        cb.dataLagging && cb.dataThrough ? 'calls loaded through ' + cb.dataThrough : 'no dial inside the window', ''),
       inboundKpiTile_('Median time to callback',
         cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
         'own team · from the first attempt', ''),
@@ -2169,8 +2171,10 @@
     const blocks = eps.map(function (ep) {
       const chips = [];
       if (ep.status === 'pending') {
+        // B1/PC-2: held open because the window's last days' calls are not loaded yet.
         chips.push('<span class="ds-chip ds-chip--warn">Still inside the window · '
-          + (ep.daysLeft > 0 ? ep.daysLeft + ' day' + (ep.daysLeft === 1 ? '' : 's') + ' left' : 'last day')
+          + (ep.awaitingData ? 'waiting on calls not loaded yet'
+            : (ep.daysLeft > 0 ? ep.daysLeft + ' day' + (ep.daysLeft === 1 ? '' : 's') + ' left' : 'last day'))
           + '</span>');
       } else {
         chips.push('<span class="ds-chip ds-chip--bad">Missed</span>');
@@ -2201,6 +2205,7 @@
     return '<div class="heat-drill-head"><strong>Not called back</strong> · '
       + eps.length + ' episode' + (eps.length === 1 ? '' : 's')
       + (meta.pending ? ' · ' + meta.pending + ' still inside the window' : '')
+      + (meta.dataLagging && meta.dataThrough ? ' · calls loaded through ' + escapeHtml(String(meta.dataThrough)) : '')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
       + '</div><div class="heat-drill-list">' + blocks + '</div>';
   }
@@ -2382,6 +2387,11 @@
           nb.push('The copy names the line each call rang only from ' + meta.fallbackCoverageStart
             + ', so earlier calls are missing here.');
         }
+      }
+      if (meta.dataLagging && meta.dataThrough) {
+        // B1/PC-2: "still in window" is held open for the days not loaded yet.
+        nb.push('Calls are loaded through ' + meta.dataThrough
+          + '; episodes whose window reaches past that still count as in window.');
       }
       note.style.display = nb.length ? '' : 'none';
       note.textContent = nb.join(' ');

@@ -80,6 +80,14 @@ const IB_ROWS = [
   ibRow('2026-08-10', 'hashD', 'answered', 'A_Q_CSR', '09:05:00'),
   // CE-1: a phone-menu hang-up (no queue) -- counted, never an episode.
   ibRow('2026-08-10', 'hashM', 'abandoned', '', '08:45:00'),
+  // B1/PC-1 LEADING edge: hashL abandons in the prior window's lookback
+  // (08-04, before PW.from) and again on 08-06 -- the 08-06 attempt JOINS the
+  // lookback episode, so it is no prior-window episode.
+  ibRow('2026-08-04', 'hashL', 'abandoned', 'A_Q_CSR', '09:00:00'),
+  ibRow('2026-08-06', 'hashL', 'abandoned', 'A_Q_CSR', '09:30:00'),
+  // B1/PC-1 TRAILING edge: hashD tries again after the window (08-12, its
+  // 08-10 episode already closed) -- a trailing attempt never opens one.
+  ibRow('2026-08-12', 'hashD', 'abandoned', 'A_Q_CSR', '08:00:00'),
 ];
 
 /** The blob shape computeOutboundReport_'s SQL returns, from the same rows. */
@@ -112,9 +120,12 @@ function neonBlobFromFixture(dept) {
   };
   // CE-1: the EVENT rows obCallbackEventsSql_ returns, hand-derived from the
   // fixture with the SQL's own clauses (independently of the sheet adapter).
-  const rangeFrom = PW.from, endIso = '2026-08-14';   // TO + OUTBOUND_CALLBACK_WINDOW_DAYS
-  const winOf = (d) => (d >= FROM ? 'cur' : (d <= PW.to ? 'pri' : 'gap'));
-  const abs = IB_ROWS.filter((r) => r[0] >= rangeFrom && r[0] <= TO && r[5] === 'abandoned'
+  // B1/PC-1: attempts one window either side of [PW.from, TO]; dials and
+  // answered calls through the trailing attempts' own window.
+  const abFrom = '2026-08-03', abTo = '2026-08-14';   // PW.from - 3, TO + 3
+  const evFrom = '2026-08-03', evTo = '2026-08-17';   // ..., TO + 3 + OUTBOUND_CALLBACK_WINDOW_DAYS
+  const winOf = (d) => (d > TO ? 'post' : d >= FROM ? 'cur' : d < PW.from ? 'lb' : (d <= PW.to ? 'pri' : 'gap'));
+  const abs = IB_ROWS.filter((r) => r[0] >= abFrom && r[0] <= abTo && r[5] === 'abandoned'
     && r[16] !== 'TRUE' && inWin(r) && inDept(r));
   const counts = {};
   abs.forEach((r) => {
@@ -124,7 +135,7 @@ function neonBlobFromFixture(dept) {
     const c = counts[key] || (counts[key] = { w: winOf(r[0]), kind: kind, anon: !r[3], q: q, n: 0 });
     c.n++;
   });
-  const tracked = abs.filter((r) => r[3] && String(r[10]).trim() && winOf(r[0]) !== 'gap');
+  const tracked = abs.filter((r) => r[3] && String(r[10]).trim());
   const hashes = Array.from(new Set(tracked.map((r) => r[3]))).sort();   // dense_rank() OVER (ORDER BY h)
   const k = {}; hashes.forEach((x, i) => { k[x] = i + 1; });
   const byKey = (a, b) => (a[0] - b[0]) || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0)
@@ -133,11 +144,13 @@ function neonBlobFromFixture(dept) {
     agents: agentsFor(FROM, TO),
     cbCounts: Object.keys(counts).map((x) => counts[x]),
     cbAb: tracked.map((r) => [k[r[3]], r[0], r[15] || null, String(r[10]).trim().toLowerCase(), r[1]]).sort(byKey),
-    cbOb: OB_ROWS.filter((o) => k[o[2]] && o[0] >= rangeFrom && o[0] <= endIso)
+    cbOb: OB_ROWS.filter((o) => k[o[2]] && o[0] >= evFrom && o[0] <= evTo)
       .map((o) => [k[o[2]], o[0], o[10] || null, o[1], o[3], o[6] === 'TRUE']).sort(byKey),
     cbAns: IB_ROWS.filter((r) => k[r[3]] && r[5] === 'answered' && r[16] !== 'TRUE'
-        && String(r[10]).trim() && r[0] >= rangeFrom && r[0] <= endIso)
+        && String(r[10]).trim() && r[0] >= evFrom && r[0] <= evTo)
       .map((r) => [k[r[3]], r[0], r[15] || null, String(r[10]).trim().toLowerCase()]).sort(byKey),
+    // B1/PC-2: LEAST(max inbound date, max outbound date) -- the SQL's cbThrough.
+    cbThrough: [IB_ROWS.map((r) => r[0]).sort().pop(), OB_ROWS.map((r) => r[0]).sort().pop()].sort()[0],
     agentsPrior: agentsFor(PW.from, PW.to),
     coverageStart: OB_ROWS.map((r) => r[0]).sort()[0],
   };
@@ -251,8 +264,12 @@ test('the callback rule survives the mirror: hash match, window, ordering, anony
   assert.equal(cb.repeatEpisodes, 1);
   assert.equal(cb.own, 1, 'only hashA has a qualifying later dial -- from Ann, on the CSR roster');
   assert.equal(cb.ownConnected, 1);
-  assert.equal(cb.gotThrough, 1, 'hashD reached the queue on a later call');
-  assert.equal(cb.none, 1);
+  assert.equal(cb.gotThrough, 1, 'hashD reached the queue on a later call; its 08-12 retry opens nothing');
+  // B1/PC-2: the copy's calls stop at the older tab's last date; hashC's
+  // window runs past it, so it is held open, not "not called back".
+  assert.equal(cb.pending, 1, 'hashC: window reaches past the loaded calls');
+  assert.equal(cb.none, 0);
+  assert.equal(cb.dataLagging, true);
   assert.equal(cb.own + cb.other + cb.gotThrough + cb.pending + cb.none, cb.episodes);
 });
 
@@ -314,6 +331,10 @@ test('the fallback discloses how far the copy reaches (meta.fallbackThrough)', f
 test('PCR-3: a pending episode includes an abandon exactly N days old, against the script-TZ today', function () {
   install({ conn: null });
   const realToday = h.ctx.obTodayIso_;
+  // B1/PC-2: "pending" is judged against the loaded calls too, so the copy
+  // must reach past the dates under test -- one unrelated row per tab.
+  IB_ROWS.push(ibRow('2026-08-20', 'hashFill', 'answered', 'A_Q_Sales', '09:00:00'));
+  OB_ROWS.push(['2026-08-20', 'oFill', 'hashFill', 'Zed', '199', 'Sales', 'FALSE', 0, 9, 1, '09:00:00', '']);
   // hashC tried 2026-08-10 and again 08-11: its window runs to 08-11 + 3.
   h.ctx.obTodayIso_ = function () { return '2026-08-14'; };
   try {
@@ -323,6 +344,21 @@ test('PCR-3: a pending episode includes an abandon exactly N days old, against t
     h.state.cache.clear();
     assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).callback.pending, 0,
       'one day later it is outside the window');
+  } finally { h.ctx.obTodayIso_ = realToday; IB_ROWS.pop(); OB_ROWS.pop(); }
+});
+
+// B1/PC-2: an ingest that stopped short holds an episode open for the days not
+// loaded -- the overnight lag and the multi-day outage that used to turn into
+// a wave of "not called back".
+test('B1/PC-2: pending is judged against the loaded calls, never past them', function () {
+  install({ conn: null });
+  const realToday = h.ctx.obTodayIso_;
+  h.ctx.obTodayIso_ = function () { return '2026-08-25'; };   // the copy still ends 08-11
+  try {
+    const cb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).callback;
+    assert.equal(cb.pending, 1, 'hashC (window to 08-14) waits on calls never loaded');
+    assert.equal(cb.dataThrough, '2026-08-11');
+    assert.equal(cb.dataLagging, true);
   } finally { h.ctx.obTodayIso_ = realToday; }
 });
 
@@ -504,6 +540,10 @@ const DL_IB = [
   dlRow('2026-08-11', 'hashQ', 'answered', 'Bob', 4, '11:00:00', { id: 'd10' }),
   dlRow('2026-08-10', 'hashU', 'missed', 'Bob', 25, '10:00:00', { id: 'd11', dialIn: '19725550100', wait: 0 }),
   dlRow('2026-08-11', 'hashU', 'abandoned', 'Bob', 8, '10:30:00', { id: 'd12', wait: 9 }),   // 8 s: a real ring
+  // B1/PC-1: hashV first tried 08-08 (before FROM): its 08-10 retry joins that
+  // episode -- counted as a call in the window, never an episode of it.
+  dlRow('2026-08-08', 'hashV', 'missed', 'Ann', 20, '10:00:00', { id: 'd13' }),
+  dlRow('2026-08-10', 'hashV', 'missed', 'Ann', 20, '11:00:00', { id: 'd14' }),
 ];
 const DL_OB = [
   ['2026-08-10', 'o1', 'hashP', 'Ann', '101', 'CSR', 'TRUE', 60, 5, 1, '09:00:00', ''],
@@ -511,13 +551,15 @@ const DL_OB = [
 ];
 
 function dlNeonBlob(names) {
-  const endIso = '2026-08-14';   // TO + OUTBOUND_CALLBACK_WINDOW_DAYS
-  const ab = DL_IB.filter((r) => r[0] >= FROM && r[0] <= TO && (r[5] === 'missed' || r[5] === 'abandoned')
+  // B1/PC-1: attempts one window either side of [FROM, TO] (counts stay the
+  // window's own -- the SQL's `inw`); dials / answered through TO + 3 + 3.
+  const abFrom = '2026-08-07', abTo = '2026-08-14', evFrom = '2026-08-07', evTo = '2026-08-17';
+  const ab = DL_IB.filter((r) => r[0] >= abFrom && r[0] <= abTo && (r[5] === 'missed' || r[5] === 'abandoned')
     && r[16] !== 'TRUE' && !String(r[10]).trim() && String(r[22]).trim()
     && (!names || names.indexOf(String(r[22]).trim()) !== -1));
   const mis = (r) => r[23] !== '' && Number(r[23]) < 8;
   const counts = {};
-  ab.forEach((r) => {
+  ab.filter((r) => r[0] >= FROM && r[0] <= TO).forEach((r) => {
     const key = [r[5], !r[3], r[22], mis(r)].join('|');
     const c = counts[key] || (counts[key] = { disp: r[5], anon: !r[3], who: r[22], mis: mis(r), n: 0 });
     c.n++;
@@ -529,10 +571,12 @@ function dlNeonBlob(names) {
   return {
     dlCounts: Object.keys(counts).map((x) => counts[x]),
     dlAb: ab.filter((r) => k[r[3]] && !mis(r)).map((r) => [k[r[3]], r[0], r[15] || null, r[1], r[22]]).sort(byKey),
-    dlOb: DL_OB.filter((o) => k[o[2]] && o[0] >= FROM && o[0] <= endIso)
+    dlOb: DL_OB.filter((o) => k[o[2]] && o[0] >= evFrom && o[0] <= evTo)
       .map((o) => [k[o[2]], o[0], o[10] || null, o[1], o[3], o[6] === 'TRUE']).sort(byKey),
-    dlAns: DL_IB.filter((r) => k[r[3]] && r[5] === 'answered' && r[16] !== 'TRUE' && r[0] >= FROM && r[0] <= endIso)
+    dlAns: DL_IB.filter((r) => k[r[3]] && r[5] === 'answered' && r[16] !== 'TRUE' && r[0] >= evFrom && r[0] <= evTo)
       .map((r) => [k[r[3]], r[0], r[15] || null, String(r[10]).trim().toLowerCase(), r[22]]).sort(byKey),
+    // B1/PC-2: the SQL's dlThrough -- LEAST(max inbound date, max outbound date).
+    dlThrough: [DL_IB.map((r) => r[0]).sort().pop(), DL_OB.map((r) => r[0]).sort().pop()].sort()[0],
   };
 }
 
@@ -566,17 +610,25 @@ test('FO-2: the direct-line figures agree between Neon and the sheet fallback --
   installDlTabs({ conn: null });
   const fb = h.call('getOutboundDirectCallbacks', { from: FROM, to: TO, department: 'CSR' });
   assert.deepEqual(JSON.parse(JSON.stringify(fb.counts)),
-    { calls: 8, anonymous: 1, trackable: 5, missed: 5, abandoned: 3, voicemailBox: 0, unownedLines: 0, misdials: 2 },
-    'd2 (3 s) and d7 (7 s) are misdials; d3 (ring unknown) and d12 (8 s) stay in');
-  assert.equal(fb.all.episodes, 4, 'hashP, hashQ (twice: got through, then a new attempt), hashU -- never hashS');
+    { calls: 9, anonymous: 1, trackable: 6, missed: 6, abandoned: 3, voicemailBox: 0, unownedLines: 0, misdials: 2 },
+    'd2 (3 s) and d7 (7 s) are misdials; d3 (ring unknown) and d12 (8 s) stay in; d13 (08-08) is outside the window');
+  assert.equal(fb.all.episodes, 4, 'hashP, hashQ (twice: got through, then a new attempt), hashU -- never hashS, '
+    + 'and never hashV, whose episode began before the window (B1/PC-1)');
   assert.equal(fb.meta.fallbackThrough, '2026-08-10', 'the OLDER of the two tabs (Outbound ends 08-10)');
-  assert.equal(fb.meta.fallbackCoverageStart, '2026-08-10');
+  assert.equal(fb.meta.fallbackCoverageStart, '2026-08-08', 'the first named line in the copy (hashV, read for the lookback)');
   assert.equal(h.state.cache.size, 0, 'a fallback payload is never cached');
 });
 
 test('FO-2: the repeat list falls back too, its call detail read from the tab', function () {
   installDlTabs({ conn: null });
-  const out = JSON.parse(JSON.stringify(h.call('getOutboundDirectRepeats', { from: FROM, to: TO, department: 'CSR' })));
+  // B1/PC-2: hashU's window (to 08-14) must be LOADED to be "nobody called
+  // back" -- one unrelated row per tab carries both copies past it.
+  DL_IB.push(dlRow('2026-08-20', 'hashFill', 'answered', 'Bob', 20, '09:00:00', { id: 'dFill' }));
+  DL_OB.push(['2026-08-20', 'oFill', 'hashFill', 'Bob', '102', 'CSR', 'TRUE', 60, 5, 1, '09:00:00', '']);
+  let out;
+  try {
+    out = JSON.parse(JSON.stringify(h.call('getOutboundDirectRepeats', { from: FROM, to: TO, department: 'CSR' })));
+  } finally { DL_IB.pop(); DL_OB.pop(); }
   assert.equal(out.meta.available, true);
   assert.equal(out.meta.fallbackSource, 'sheet');
   assert.equal(out.meta.episodes, 1, 'hashU: two real attempts, nobody called back');
@@ -592,4 +644,33 @@ test('FO-2: a tab not yet widened to 24 columns, or a missing Outbound tab, stay
   assert.equal(h.call('getOutboundDirectCallbacks', { from: FROM, to: TO, department: 'CSR' }).meta.available, false);
   install({ conn: null, noOb: true });
   assert.equal(h.call('getOutboundDirectRepeats', { from: FROM, to: TO, department: 'CSR' }).meta.available, false);
+});
+
+// B1/PC-5: a dept view with no mapped queues attributes no abandon, so its
+// zero callback figures carry the NEO-5 flag (the Inbound report's), not a
+// silent "nobody abandoned".
+test('B1/PC-5: an unmapped dept view is flagged meta.unmapped; a mapped one is not', function () {
+  install({ conn: connReturning(JSON.stringify(neonBlobFromFixture('CSR'))) });
+  h.ctx.inboundQueuesForDept_ = function (d) { return d === 'Sales' ? [] : ['A_Q_CSR']; };
+  const un = h.call('getOutboundReport', { from: FROM, to: TO, department: 'Sales' });
+  assert.equal(un.meta.unmapped, true);
+  const mapped = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
+  assert.ok(!mapped.meta.unmapped);
+  const all = h.call('getOutboundReport', { from: FROM, to: TO, department: 'ALL' });
+  assert.ok(!all.meta.unmapped, 'the company view is never "unmapped"');
+});
+
+// B1/DATA-3: the key carries the roster (the DL-5 pattern): a roster edit --
+// which does not move the freshness tag -- must recompute own / another team.
+test('B1/DATA-3: a roster edit busts the cached report; the same roster hits the cache', function () {
+  install({ conn: connReturning(JSON.stringify(neonBlobFromFixture('CSR'))) });
+  let roster = 'r1';
+  h.ctx.rosterSetHash_ = function () { return roster; };
+  try {
+    assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).meta.cacheHit, false);
+    assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).meta.cacheHit, true);
+    roster = 'r2';
+    assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).meta.cacheHit, false,
+      'a new roster is a new key');
+  } finally { delete h.ctx.rosterSetHash_; }
 });

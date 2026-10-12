@@ -87,7 +87,10 @@
 // v7: PC-12 a parent dept's agent table includes its one-level sub-queue rosters (scopeDept + meta.scopeDepts)
 // v8: CE-1 (owner 2026-10-09) the callback figures count contact EPISODES -- own team /
 //     another team / got through / pending / none -- over queue-reached abandons only
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v8';
+// v9: B1 (broad-scan 2026-10-12) episodes join across the window's edges (PC-1),
+//     "pending" is judged against the loaded calls (PC-2); + meta.unmapped (PC-5)
+//     and the roster hash on the key (DATA-3)
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v9';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -110,7 +113,9 @@ function obTodayIso_() {
 //   2. dashboard.html: drop `data-admin-only` + the inline `style="display:none;"`
 //      from #dept-dir-switch, #ins-ob-fold and #ins-cb-fold
 //   (the Overview tiles' line needs no edit: personalizeOverview_ reads this
-//   switch; the Overview's Callbacks by department stays admin-only forever.)
+//   switch; the Overview's Callbacks by department stays admin-only forever.
+//   B1/PC-3: the called-back list's "↳ callback path" for MANAGERS also reads
+//   this switch -- InboundReport.gs::outboundJourneyCallbackEntitled_.)
 // A half-release is the failure mode this pairing exists to prevent -- a
 // visible surface over a throwing server reads to a manager as a broken app,
 // and a released server behind hidden surfaces reaches nobody.
@@ -256,8 +261,14 @@ function getOutboundReport(req) {
   const scope = outboundResolveRequest_(req);
 
   const cache = CacheService.getScriptCache();
+  // B1/DATA-3: + the roster (the DL-5 pattern, as outboundDirect / deptOutbound
+  // carry): roster homes decide own vs another team, the dept view's agent
+  // filter and scopeDept, and a roster edit does not move the freshness tag.
+  const rosterTag = scope.companyView
+    ? ((typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na')
+    : ((typeof rosterSetHash_ === 'function') ? rosterSetHash_(scope.scopeDepts || [scope.dept]) : 'na');
   const cacheKey = OUTBOUND_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_();
+                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_() + ':' + rosterTag;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -272,6 +283,10 @@ function getOutboundReport(req) {
   const data = computeOutboundReport_(scope);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
+  // B1/PC-5: a dept view with NO mapped queues can attribute no abandon, so its
+  // callback figures are an honest zero only with that said -- the NEO-5 flag
+  // the Inbound report carries. The agent rows are roster-based and unaffected.
+  if (!scope.companyView && !(inboundQueuesForDept_(scope.dept) || []).length) data.meta.unmapped = true;
   // Fallback payloads are NEVER cached -- a recovered Neon must not be masked
   // for the TTL (the unavailable-uncached rule extended to degraded payloads,
   // same as the Direct report and the heatmap fallback).
@@ -399,15 +414,23 @@ function outboundAgentsSel_(f, t) {
  * The engine (obCallbackEpisodes_) does the rest, in JS, for both sources.
  */
 function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, priorTo, extraDays) {
-  const where = outboundAbandonWhere_(scope, deptQueues, rangeFrom, toIso);
-  // CE-2: the drill lists read `extraDays` PAST the window for their "called
-  // back late" / "got through later" tags. The engine's window expiry keeps
-  // those events from ever deciding an outcome.
-  const endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS + (Number(extraDays) || 0));
-  const winCase = "CASE WHEN c.call_date >= '" + curFrom + "'::date THEN 'cur' "
+  // B1/PC-1: attempts are read one window BEFORE rangeFrom (the leading
+  // edge) and one window past toIso (join-only); dials + answered calls
+  // through the trailing attempts' own window. CE-2: the drill lists read
+  // `extraDays` further for their "called back late" / "got through later"
+  // tags. The engine's window expiry keeps those events from ever deciding
+  // an outcome.
+  const rs = obEpReadSpan_(rangeFrom, toIso, extraDays);
+  const where = outboundAbandonWhere_(scope, deptQueues, rs.abFrom, rs.abTo);
+  // The window label keeps cbCounts' 'cur' / 'pri' rows exactly the windows'
+  // own abandons: the edge rows are 'lb' (lookback) and 'post' (trailing),
+  // which no count reads.
+  const winCase = "CASE WHEN c.call_date > '" + toIso + "'::date THEN 'post' "
+    + "WHEN c.call_date >= '" + curFrom + "'::date THEN 'cur' "
+    + "WHEN c.call_date < '" + rangeFrom + "'::date THEN 'lb' "
     + (priorTo ? ("WHEN c.call_date <= '" + priorTo + "'::date THEN 'pri' ") : '')
     + "ELSE 'gap' END";
-  const span = " BETWEEN '" + rangeFrom + "'::date AND '" + endIso + "'::date";
+  const span = " BETWEEN '" + rs.evFrom + "'::date AND '" + rs.evTo + "'::date";
   return {
     with: 'WITH cb_ab AS ('
       + 'SELECT c.call_date AS d, c.call_start AS st, c.call_id AS cid, c.caller_hash AS h, '
@@ -416,7 +439,7 @@ function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, prio
       +   winCase + ' AS w '
       + 'FROM inbound_calls c WHERE ' + where + '), '
       + 'cb_k AS (SELECT x.h, (dense_rank() OVER (ORDER BY x.h))::int AS k FROM ('
-      +   "SELECT DISTINCT h FROM cb_ab WHERE h IS NOT NULL AND q <> '' AND w <> 'gap') x)",
+      +   "SELECT DISTINCT h FROM cb_ab WHERE h IS NOT NULL AND q <> '') x)",
     fields:
         "'cbCounts', (SELECT COALESCE(json_agg(json_build_object("
       +   "'w', z.w, 'kind', z.kind, 'anon', z.anon, 'q', z.qq, 'n', z.n)), '[]') FROM ("
@@ -425,7 +448,7 @@ function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, prio
       +   'FROM cb_ab GROUP BY 1, 2, 3, 4) z), '
       + "'cbAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.q, a.cid) "
       +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') "
-      +   "FROM cb_ab a JOIN cb_k k ON k.h = a.h WHERE a.q <> '' AND a.w <> 'gap'), "
+      +   "FROM cb_ab a JOIN cb_k k ON k.h = a.h WHERE a.q <> ''), "
       + "'cbOb', (SELECT COALESCE(json_agg(json_build_array(k.k, o.call_date::text, o.call_start, "
       +   'o.call_id, o.agent_name, o.connected) ORDER BY k.k, o.call_date, o.call_start, o.call_id), '
       +   "'[]') FROM outbound_calls o JOIN cb_k k ON k.h = o.callee_hash WHERE o.call_date" + span + '), '
@@ -433,9 +456,16 @@ function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, prio
       +   "lower(trim(a.entry_queue))) ORDER BY k.k, a.call_date, a.call_start), '[]') "
       +   'FROM inbound_calls a JOIN cb_k k ON k.h = a.caller_hash '
       +   "WHERE a.disposition = 'answered' AND COALESCE(a.is_internal, FALSE) = FALSE "
-      +   "AND COALESCE(trim(a.entry_queue),'') <> '' AND a.call_date" + span + ')',
+      +   "AND COALESCE(trim(a.entry_queue),'') <> '' AND a.call_date" + span + '), '
+      // B1/PC-2: the last date BOTH per-call tables hold -- what "pending"
+      // is judged against (obEpObservedThrough_).
+      + "'cbThrough', " + OB_EP_THROUGH_SQL_,
   };
 }
+
+// B1/PC-2: the older of the two per-call tables' newest dates, as ISO text.
+var OB_EP_THROUGH_SQL_ = '(SELECT LEAST((SELECT max(call_date) FROM inbound_calls), '
+  + '(SELECT max(call_date) FROM outbound_calls))::text)';
 
 function computeOutboundReport_(scope) {
   const from = scope.from, to = scope.to;
@@ -586,10 +616,15 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
   // the section below). ONE engine for both windows and both sources -- the
   // Neon fetch and the sheet adapter hand it the same event rows.
   const ctx = obEpContext_(cbDept, deptsByAgent);
+  ctx.observedThroughIso = obj.cbThrough || null;   // B1/PC-2: pending vs the loaded data
   const cbCounts = obj.cbCounts || [];
   const evRows = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
   const cur = obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
   out.callback = obEpCallbackBlock_(cur, cbCounts, 'cur', true);
+  // B1/PC-2: disclosed, so a lagging ingest reads as "calls loaded through X"
+  // rather than as a wave of "not called back".
+  out.callback.dataThrough = obj.cbThrough || null;
+  out.callback.dataLagging = obEpDataLagging_(obj.cbThrough, ctx.todayIso);
   const series = obEpSeries_(cur);
   out.daily = series.daily;             // per FIRST-attempt day: {date, episodes, own, other, ratePct}
   out.callbackByHour = series.byHour;   // (6) by the first attempt's hour: {hour, episodes, own, ratePct}
@@ -743,7 +778,27 @@ function obEpFamily_(teams, parentOf, childrenOf) {
  * event rows and returns every episode whose FIRST attempt falls in
  * [ctx.from, ctx.to].
  *
- * ctx: { from, to, todayIso, windowDays, ownersOf: {queueLower: [dept]},
+ * B1/PC-1: the window has EDGES, and the rules run across both.
+ *   * LEADING: attempts from ctx.from - windowDays are swept too, so an
+ *     in-window attempt that continues an episode opened before the window
+ *     JOINS it (and is not counted) instead of opening a new one. windowDays
+ *     of lookback is exact: an attempt can only join an episode whose previous
+ *     attempt is within windowDays of it. Episodes that start before ctx.from
+ *     are dropped from the output, so per-day views add up to the week.
+ *   * TRAILING: an attempt after ctx.to never OPENS an episode, but it JOINS
+ *     an open one (extending its deadline, as the join rule says). The event
+ *     fetchers read one window of such attempts (OB_EP_TRAIL_DAYS_).
+ * The fetchers widen their reads to match (obEpReadSpan_).
+ *
+ * B1/PC-2: "pending" is judged against the calls actually LOADED, not the
+ * clock: an episode is pending while its deadline is after
+ * min(ctx.observedThroughIso, yesterday). With the data current through
+ * yesterday that is the old "deadline >= today" rule; while an ingest lags
+ * (overnight, or an outage) an episode is not called "not called back" for
+ * days whose dials were never loaded.
+ *
+ * ctx: { from, to, todayIso, windowDays, observedThroughIso (optional),
+ *        ownersOf: {queueLower: [dept]},
  *        parentOf: {dept: parent}, childrenOf: {dept: [child]},
  *        homesOf: function(agent) -> [dept] }
  *
@@ -763,6 +818,9 @@ function obCallbackEpisodes_(ev, ctx) {
     if (!famCache[team.key]) famCache[team.key] = obEpFamily_(team.teams, ctx.parentOf, ctx.childrenOf);
     return famCache[team.key];
   };
+  // PC-1: the leading edge (a malformed `from` -- no window to widen -- keeps itself).
+  var lookFrom = /^\d{4}-\d{2}-\d{2}$/.test(String(ctx.from || '')) ? obDaysAfterIso_(ctx.from, -win) : ctx.from;
+  var observed = obEpObservedThrough_(ctx);         // PC-2: pending vs loaded data
 
   // Group every event by caller key, tagged with its type for the sweep.
   // Tie order inside one second: attempt, then answered call, then dial -- an
@@ -772,8 +830,9 @@ function obCallbackEpisodes_(ev, ctx) {
   var push = function (k, e) { (byK[k] || (byK[k] = [])).push(e); };
   (ev.ab || []).forEach(function (r) {
     var iso = String(r[1] || '');
-    if (!iso || iso < ctx.from || iso > ctx.to) return;   // episodes START in the window
+    if (!iso || iso < lookFrom) return;   // PC-1: lookback attempts can only absorb later ones
     push(r[0], { t: 0, iso: iso, hms: r[2] || null, ord: obOrdinal_(iso, r[2]),
+                 late: iso > ctx.to,   // PC-1: past the window -- joins, never opens
                  q: String(r[3] == null ? '' : r[3]), id: String(r[4] == null ? '' : r[4]),
                  teams: Array.isArray(r[5]) ? r[5] : null,                  // CE-3
                  owner: r.length > 6 ? String(r[6] == null ? '' : r[6]) : null });
@@ -809,12 +868,14 @@ function obCallbackEpisodes_(ev, ctx) {
           ep.delaySec = ep.other.delay; ep.connected = ep.other.connected; ep.agent = ep.other.agent;
           ep.dial = ep.other.dial;
         } else {
-          ep.outcome = (ep.deadline >= ctx.todayIso) ? 'pending' : 'none';
+          ep.outcome = (ep.deadline > observed) ? 'pending' : 'none';
           ep.delaySec = null; ep.connected = false; ep.agent = null; ep.dial = null;
         }
       }
       delete ep.other; delete ep.deadline; delete ep.family; delete ep.firstOrd;
-      out.push(ep);
+      // PC-1: an episode opened in the lookback absorbed its in-window
+      // attempts; it started outside the window, so it is not this window's.
+      if (ep.firstIso >= ctx.from) out.push(ep);
     };
     evs.forEach(function (e) {
       // Expire every open episode whose window has passed this event.
@@ -833,6 +894,7 @@ function obCallbackEpisodes_(ev, ctx) {
             return;
           }
         }
+        if (e.late) return;   // PC-1: an attempt past the window never opens an episode
         open.push({ k: Number(k), teamKey: team.key, teams: team.teams, family: familyOf(team),
                     firstIso: e.iso, firstHms: e.hms, firstOrd: e.ord, attempts: [att],
                     deadline: obDaysAfterIso_(e.iso, win), outcome: null, other: null,
@@ -879,6 +941,52 @@ function obCallbackEpisodes_(ev, ctx) {
       || (a.k - b.k) || (a.teamKey < b.teamKey ? -1 : a.teamKey > b.teamKey ? 1 : 0);
   });
   return out;
+}
+
+/**
+ * PURE (B1/PC-2). The last date whose calls the engine can treat as SEEN:
+ * the loaded-data date (ctx.observedThroughIso -- the older of the inbound
+ * and outbound per-call tables), capped at yesterday. Absent or malformed,
+ * yesterday -- which reproduces the old "deadline >= today" rule exactly.
+ */
+function obEpObservedThrough_(ctx) {
+  var yesterday = obDaysAfterIso_(ctx.todayIso, -1);
+  var o = String((ctx && ctx.observedThroughIso) || '');
+  return (/^\d{4}-\d{2}-\d{2}$/.test(o) && o < yesterday) ? o : yesterday;
+}
+
+// B1/PC-1: the engine sweeps attempts from `from - window` (the leading
+// edge) and lets attempts up to OB_EP_TRAIL_DAYS_ past `to` join (the
+// trailing edge). The trailing read is ONE window: a chain of two or more
+// joining attempts past `to` keeps the deadline of the first -- a bounded,
+// documented approximation for windows that end in the past.
+var OB_EP_TRAIL_DAYS_ = OUTBOUND_CALLBACK_WINDOW_DAYS;
+
+/**
+ * PURE (B1/PC-1). The read span every episode event fetcher uses, so the four
+ * of them (Neon + sheet, queue + direct) widen identically:
+ *   abFrom / abTo   -- the unanswered attempts: one window of lookback before
+ *                      `rangeFrom`, OB_EP_TRAIL_DAYS_ of join-only attempts past `to`;
+ *   evFrom / evTo   -- the dials + answered calls: from the lookback through the
+ *                      trailing attempts' own window (+ `extraDays` for the
+ *                      CE-2 late tags).
+ */
+function obEpReadSpan_(rangeFrom, toIso, extraDays) {
+  var win = OUTBOUND_CALLBACK_WINDOW_DAYS;
+  var lb = obDaysAfterIso_(rangeFrom, -win);
+  return {
+    abFrom: lb,
+    abTo: obDaysAfterIso_(toIso, OB_EP_TRAIL_DAYS_),
+    evFrom: lb,
+    evTo: obDaysAfterIso_(toIso, OB_EP_TRAIL_DAYS_ + win + (Number(extraDays) || 0)),
+  };
+}
+
+/** PURE (B1/PC-2). True when the loaded data stops before yesterday -- the
+ *  "pending" figures are then held open for the days not yet loaded. */
+function obEpDataLagging_(observedIso, todayIso) {
+  var o = String(observedIso || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(o) && o < obDaysAfterIso_(todayIso, -1);
 }
 
 /** PURE. Median of the non-negative values (the percentile_cont(0.5) convention). */
@@ -1340,8 +1448,9 @@ function obCallbackListEpisodes_(conn, scope, extraDays) {
   const obj = JSON.parse(json) || {};
   const ev = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
   const ctx = obEpContext_(obCallbackDeptMap_(), buildDeptsByAgent_());
+  ctx.observedThroughIso = obj.cbThrough || null;   // B1/PC-2
   const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
-  return { eps: eps, ev: ev, ctx: ctx };
+  return { eps: eps, ev: ev, ctx: ctx, dataThrough: obj.cbThrough || null };
 }
 
 /**
@@ -1435,6 +1544,8 @@ function getOutboundUncalled(req) {
     if (!conn) { out.meta.available = false; return out; }
     const list = obCallbackListEpisodes_(conn, scope, OUTBOUND_LATE_HORIZON_DAYS);
     if (!list) { out.meta.available = false; return out; }
+    out.meta.dataThrough = list.dataThrough;   // B1/PC-2
+    out.meta.dataLagging = obEpDataLagging_(list.dataThrough, list.ctx.todayIso);
     const eps = list.eps
       .filter(function (ep) { return ep.outcome === 'none' || ep.outcome === 'pending'; })
       .sort(obEpNewestFirst_);
@@ -1468,7 +1579,12 @@ function getOutboundUncalled(req) {
         : null;
       return {
         firstIso: ep.firstIso, firstHms: ep.firstHms || null, lastIso: lastIso,
-        status: pending ? 'pending' : 'missed', daysLeft: daysLeft,
+        // B1/PC-2: a pending episode whose deadline has passed is held open only
+        // because those days' calls are not loaded yet -- "awaiting data", not
+        // a negative count of days left.
+        status: pending ? 'pending' : 'missed',
+        daysLeft: daysLeft == null ? null : Math.max(0, daysLeft),
+        awaitingData: pending && daysLeft < 0,
         attempts: x.atts.map(function (a) { return { callDate: a.iso, callId: a.id }; }),
         late: pending ? { calledBack: null, gotThrough: null }
                       : obEpLateTags_(ep, list.ev, list.ctx, OUTBOUND_LATE_HORIZON_DAYS),
@@ -1584,7 +1700,7 @@ function getOutboundCalledBack(req) {
 //     OUTBOUND_BRIEF_RING_SEC_ (inbound_calls.first_ring_seconds, captured by
 //     cdr-import) is counted and kept OUT of the episodes; an unknown ring
 //     (rows captured before the column) stays in.
-//   * Lazy + separately cached (`outboundDirect:v2`), so the Callbacks
+//   * Lazy + separately cached (`outboundDirect:v3`), so the Callbacks
 //     figures never pay for it. Neon first; when it is unreachable the export
 //     tabs stand in (FO-2, obDirectEventsFromGrids_ mirrors the SQL), never
 //     cached and disclosed -- and with neither, unavailable, never zero.
@@ -1605,7 +1721,9 @@ function obDirectSharedLine_(n) {
   return null;
 }
 
-const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v2:';   // v2 (FO-1): misdials leave the rate
+// v2 (FO-1): misdials leave the rate. v3 (B1): the window-edge episode rules
+// (PC-1) and pending vs the loaded calls (PC-2).
+const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v3:';
 var OUTBOUND_DIRECT_REPEATS_MAX = 200;   // episodes on the repeat list
 
 /** PURE. A line owner's (or dialer's) homes: the roster, else a shared mailbox's dept. */
@@ -1648,8 +1766,10 @@ function obDirectIsAfterHours_(iso, hms) {
  * attempts; null = every line (company view).
  */
 function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
-  const endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS + (Number(extraDays) || 0));
-  const span = " BETWEEN '" + fromIso + "'::date AND '" + endIso + "'::date";
+  // B1/PC-1: the shared widened read (obEpReadSpan_); `inw` keeps dlCounts
+  // the window's own calls -- the edge attempts only feed the engine.
+  const rs = obEpReadSpan_(fromIso, toIso, extraDays);
+  const span = " BETWEEN '" + rs.evFrom + "'::date AND '" + rs.evTo + "'::date";
   const who = names
     ? (' AND trim(c.first_agent) IN (' + (names.length ? names.map(inboundSqlLit_).join(', ') : 'NULL') + ')')
     : '';
@@ -1661,10 +1781,11 @@ function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
       // MISDIAL -- counted, kept out of the episodes. Read through to_jsonb so
       // this query keeps working before cdr-import has added the column (a
       // missing key reads NULL = unknown = kept in). Do not "simplify" it.
-      +   "COALESCE((to_jsonb(c) ->> 'first_ring_seconds')::int < " + OUTBOUND_BRIEF_RING_SEC_ + ', FALSE) AS mis '
+      +   "COALESCE((to_jsonb(c) ->> 'first_ring_seconds')::int < " + OUTBOUND_BRIEF_RING_SEC_ + ', FALSE) AS mis, '
+      +   "(c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date) AS inw "
       + 'FROM inbound_calls c '
       + "WHERE c.disposition IN ('missed', 'abandoned') "
-      +   "AND c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date "
+      +   "AND c.call_date BETWEEN '" + rs.abFrom + "'::date AND '" + rs.abTo + "'::date "
       +   'AND COALESCE(c.is_internal, FALSE) = FALSE '
       +   "AND COALESCE(trim(c.entry_queue),'') = '' "
       +   "AND COALESCE(trim(c.first_agent),'') <> ''" + who + '), '
@@ -1673,7 +1794,7 @@ function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
     fields:
         "'dlCounts', (SELECT COALESCE(json_agg(json_build_object("
       +   "'disp', z.disp, 'anon', z.anon, 'who', z.who, 'mis', z.mis, 'n', z.n)), '[]') FROM ("
-      +   'SELECT disp, (h IS NULL) AS anon, who, mis, count(*) AS n FROM dl_ab GROUP BY 1, 2, 3, 4) z), '
+      +   'SELECT disp, (h IS NULL) AS anon, who, mis, count(*) AS n FROM dl_ab WHERE inw GROUP BY 1, 2, 3, 4) z), '
       + "'dlAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.cid, a.who) "
       +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') FROM dl_ab a JOIN dl_k k ON k.h = a.h WHERE NOT a.mis), "
       + "'dlOb', (SELECT COALESCE(json_agg(json_build_array(k.k, o.call_date::text, o.call_start, "
@@ -1684,7 +1805,8 @@ function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
       +   "ORDER BY k.k, a.call_date, a.call_start), '[]') "
       +   'FROM inbound_calls a JOIN dl_k k ON k.h = a.caller_hash '
       +   "WHERE a.disposition = 'answered' AND COALESCE(a.is_internal, FALSE) = FALSE "
-      +   'AND a.call_date' + span + ')',
+      +   'AND a.call_date' + span + '), '
+      + "'dlThrough', " + OB_EP_THROUGH_SQL_,   // B1/PC-2
   };
 }
 
@@ -1731,7 +1853,7 @@ var OB_DIRECT_SHEET_COLS_ = 24;
  *   obGrid: the Outbound Calls tab, cols 1..12
  */
 function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGrid) {
-  var endIso = obDaysAfterIso_(toIso, OUTBOUND_CALLBACK_WINDOW_DAYS + (Number(extraDays) || 0));
+  var span = obEpReadSpan_(fromIso, toIso, extraDays);   // B1/PC-1: the SQL's widened read
   var who = null;
   if (names) { who = {}; names.forEach(function (n) { who[n] = true; }); }
   var cell = function (row, i) { return String(row[i] == null ? '' : row[i]).trim(); };
@@ -1745,7 +1867,7 @@ function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGr
   for (var i = 0; i < ibGrid.length; i++) {
     var r = ibGrid[i];
     var iso = ncCellDateIso_(r[0]);
-    if (!iso || iso < fromIso || iso > toIso) continue;
+    if (!iso || iso < span.abFrom || iso > span.abTo) continue;
     var disp = cell(r, 5).toLowerCase();
     if (disp !== 'missed' && disp !== 'abandoned') continue;
     if (cell(r, 16).toUpperCase() === 'TRUE') continue;          // is_internal
@@ -1754,9 +1876,11 @@ function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGr
     if (!line || (who && !who[line])) continue;
     var h = cell(r, 3) || null;
     var mis = obDirectIsMisdial_(r[23]);
-    var ck = disp + '\u0000' + (h ? '0' : '1') + '\u0000' + line + '\u0000' + (mis ? '1' : '0');
-    var c = counts[ck] || (counts[ck] = { disp: disp, anon: !h, who: line, mis: mis, n: 0 });
-    c.n++;
+    if (iso >= fromIso && iso <= toIso) {   // the SQL's `WHERE inw`: counts are the window's own
+      var ck = disp + '\u0000' + (h ? '0' : '1') + '\u0000' + line + '\u0000' + (mis ? '1' : '0');
+      var c = counts[ck] || (counts[ck] = { disp: disp, anon: !h, who: line, mis: mis, n: 0 });
+      c.n++;
+    }
     if (!h || mis) continue;
     if (!keyOf.hasOwnProperty(h)) { keyOf[h] = 0; keyList.push(h); }
     ab.push({ h: h, row: [0, iso, cell(r, 15) || null, cell(r, 1), line] });
@@ -1771,7 +1895,7 @@ function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGr
     var orow = obGrid[o];
     var oiso = ncCellDateIso_(orow[0]);
     var oh = cell(orow, 2);
-    if (!oiso || !oh || !keyOf[oh] || oiso < fromIso || oiso > endIso) continue;
+    if (!oiso || !oh || !keyOf[oh] || oiso < span.evFrom || oiso > span.evTo) continue;
     dlOb.push([keyOf[oh], oiso, cell(orow, 10) || null, cell(orow, 1), cell(orow, 3),
                cell(orow, 6).toUpperCase() === 'TRUE']);
   }
@@ -1781,7 +1905,7 @@ function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGr
     var arow = ibGrid[a];
     var aiso = ncCellDateIso_(arow[0]);
     var ah = cell(arow, 3);
-    if (!aiso || !ah || !keyOf[ah] || aiso < fromIso || aiso > endIso) continue;
+    if (!aiso || !ah || !keyOf[ah] || aiso < span.evFrom || aiso > span.evTo) continue;
     if (cell(arow, 5).toLowerCase() !== 'answered') continue;
     if (cell(arow, 16).toUpperCase() === 'TRUE') continue;
     dlAns.push([keyOf[ah], aiso, cell(arow, 15) || null, cell(arow, 10).toLowerCase(), cell(arow, 22)]);
@@ -1802,6 +1926,7 @@ function obDirectBuild_(obj, scope, deptsByAgent) {
   const homesOf = obDirectHomesOf_(deptsByAgent);
   const ctx = obEpContext_(obCallbackDeptMap_(), deptsByAgent);
   ctx.homesOf = homesOf;   // dialers AND line owners: the roster, plus the shared mailbox
+  ctx.observedThroughIso = obj.dlThrough || null;   // B1/PC-2
   const afterById = {};
   const ab = (obj.dlAb || []).map(function (r) {
     afterById[r[1] + '|' + r[3]] = obDirectIsAfterHours_(String(r[1]), r[2]);
@@ -1809,7 +1934,8 @@ function obDirectBuild_(obj, scope, deptsByAgent) {
   });
   const ev = { ab: ab, ob: obj.dlOb || [], ans: obj.dlAns || [] };
   const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
-  return { eps: eps, ev: ev, ctx: ctx, counts: obj.dlCounts || [], afterById: afterById };
+  return { eps: eps, ev: ev, ctx: ctx, counts: obj.dlCounts || [], afterById: afterById,
+           dataThrough: obj.dlThrough || null };
 }
 
 /** PURE (FO-2). The detail rows obCallbackListDetail_ returns, from the Inbound Calls grid. */
@@ -1873,10 +1999,14 @@ function obDirectSource_(scope, extraDays) {
     Logger.log('obDirectSource_: Neon read failed, trying the export tabs: ' + (e && e.message ? e.message : e));
   }
   if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
-  const ib = obSheetTailGrid_('Inbound Calls', OB_DIRECT_SHEET_COLS_, scope.from);
-  const ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, scope.from);
+  const readFrom = obEpReadSpan_(scope.from, scope.to, extraDays).abFrom;   // B1/PC-1: the lookback
+  const ib = obSheetTailGrid_('Inbound Calls', OB_DIRECT_SHEET_COLS_, readFrom);
+  const ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, readFrom);
   if (!ib || !ob) return null;
   const obj = obDirectEventsFromGrids_(names, scope.from, scope.to, extraDays, ib.grid, ob.grid);
+  const through = (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
+                                             : (ob.through || ib.through || null);
+  obj.dlThrough = through;   // B1/PC-2: the SQL's dlThrough twin
   // The first date whose rows name the line rung: rows exported before FO-2
   // carry a blank First Agent and would read as "no direct calls".
   let coverage = null;
@@ -1888,8 +2018,7 @@ function obDirectSource_(scope, extraDays) {
     d: obDirectBuild_(obj, scope, deptsByAgent),
     detail: function (keys) { return obDirectDetailFromGrid_(ib.grid, keys); },
     fallbackSource: 'sheet',
-    fallbackThrough: (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
-                                                : (ob.through || ib.through || null),
+    fallbackThrough: through,
     fallbackCoverageStart: coverage,
     close: function () {},
   };
@@ -1974,6 +2103,8 @@ function getOutboundDirectCallbacks(req) {
     const d = src.d;
     const isAfter = function (ep) { return !!d.afterById[ep.attempts[0].iso + '|' + ep.attempts[0].id]; };
     out.counts = obDirectCounts_(d.counts, d.ctx.homesOf);
+    out.meta.dataThrough = d.dataThrough;   // B1/PC-2
+    out.meta.dataLagging = obEpDataLagging_(d.dataThrough, d.ctx.todayIso);
     out.all = obDirectSummary_(d.eps);
     out.work = obDirectSummary_(d.eps.filter(function (ep) { return !isAfter(ep); }));
     out.after = obDirectSummary_(d.eps.filter(isAfter));
@@ -5022,9 +5153,13 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
   // export tabs; the shaper then runs the ONE engine over either. Each clause
   // below mirrors one in the SQL.
   var rangeFrom = pw ? pw.from : scope.from;
-  var endIso = obDaysAfterIso_(scope.to, OUTBOUND_CALLBACK_WINDOW_DAYS);
+  // B1/PC-1: the SQL's widened read (obEpReadSpan_) -- attempts one window
+  // either side, dials / answered calls through the trailing attempts' window.
+  var span = obEpReadSpan_(rangeFrom, scope.to, 0);
   var winOf = function (iso) {
+    if (iso > scope.to) return 'post';
     if (iso >= scope.from) return 'cur';
+    if (iso < rangeFrom) return 'lb';
     if (pw && iso <= pw.to) return 'pri';
     return 'gap';
   };
@@ -5034,7 +5169,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
   for (var i = 0; i < ibGrid.length; i++) {
     var row = ibGrid[i];
     var iso = ncCellDateIso_(row[0]);
-    if (!iso || iso < rangeFrom || iso > scope.to) continue;
+    if (!iso || iso < span.abFrom || iso > span.abTo) continue;
     if (String(row[5] == null ? '' : row[5]).trim().toLowerCase() !== 'abandoned') continue;
     if (String(row[16] == null ? '' : row[16]).trim().toUpperCase() === 'TRUE') continue;  // is_internal
     var cs = String(row[15] == null ? '' : row[15]).trim();
@@ -5052,7 +5187,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var ck = w + '\u0000' + kind + '\u0000' + (hash ? '0' : '1') + '\u0000' + (q || '');
     var cr = countsBy[ck] || (countsBy[ck] = { w: w, kind: kind, anon: !hash, q: q || '', n: 0 });
     cr.n++;
-    if (!hash || !q || w === 'gap') continue;
+    if (!hash || !q) continue;
     if (!keyOf.hasOwnProperty(hash)) { keyOf[hash] = 0; keyList.push(hash); }
     abRows.push({ hash: hash, row: [0, iso, cs || null, q, String(row[1] == null ? '' : row[1]).trim()] });
   }
@@ -5065,7 +5200,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var orow = obGrid[o];
     var oiso = ncCellDateIso_(orow[0]);
     var h = String(orow[2] == null ? '' : orow[2]).trim();
-    if (!oiso || !h || !keyOf[h] || oiso < rangeFrom || oiso > endIso) continue;   // NULL hash never matches
+    if (!oiso || !h || !keyOf[h] || oiso < span.evFrom || oiso > span.evTo) continue;   // NULL hash never matches
     var ocs = String(orow[10] == null ? '' : orow[10]).trim();
     cbOb.push([keyOf[h], oiso, ocs || null, String(orow[1] == null ? '' : orow[1]).trim(),
                String(orow[3] == null ? '' : orow[3]).trim(),
@@ -5076,7 +5211,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var arow = ibGrid[a];
     var aiso = ncCellDateIso_(arow[0]);
     var ah = String(arow[3] == null ? '' : arow[3]).trim();
-    if (!aiso || !ah || !keyOf[ah] || aiso < rangeFrom || aiso > endIso) continue;
+    if (!aiso || !ah || !keyOf[ah] || aiso < span.evFrom || aiso > span.evTo) continue;
     if (String(arow[5] == null ? '' : arow[5]).trim().toLowerCase() !== 'answered') continue;
     if (String(arow[16] == null ? '' : arow[16]).trim().toUpperCase() === 'TRUE') continue;
     var aq = String(arow[10] == null ? '' : arow[10]).trim().toLowerCase();
@@ -5110,22 +5245,25 @@ function outboundSheetFallback_(scope) {
   try {
     var deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
     var pw = (typeof computePriorWindow_ === 'function') ? computePriorWindow_(scope.from, scope.to) : null;
-    var readFrom = pw ? pw.from : scope.from;
-    // Read outbound THROUGH the callback window past `to` -- a last-day
-    // abandon's callback can land after the report window (the SQL match is
+    // B1/PC-1: read back to the episode lookback (obEpReadSpan_), not just the
+    // window start. The tail read runs to the end of the tab, so the trailing
+    // attempts and the callback window past `to` are covered (the SQL match is
     // likewise uncapped by `to`).
+    var readFrom = obEpReadSpan_(pw ? pw.from : scope.from, scope.to, 0).abFrom;
     var ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, readFrom);
     var ib = obSheetTailGrid_('Inbound Calls', 17, readFrom);
     if (!ob || !ib) { out.meta.available = false; return out; }
 
     var cbDept = obCallbackDeptMap_();   // CE-1: the team map serves every view
     var blob = obBuildBlobFromGrids_(scope, ob.grid, ib.grid, pw, deptQueues);
+    // The OLDER of the two copies bounds what this payload can know -- and,
+    // B1/PC-2, what "pending" is judged against (the SQL's cbThrough twin).
+    var through = (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
+                                             : (ob.through || ib.through || null);
+    blob.cbThrough = through;
     var shaped = outboundShapeReport_(scope, blob, buildDeptsByAgent_(), cbDept, pw);
     shaped.meta.fallbackSource = 'sheet';
-    // The OLDER of the two copies bounds what this payload can know.
-    shaped.meta.fallbackThrough =
-      (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
-                                 : (ob.through || ib.through || null);
+    shaped.meta.fallbackThrough = through;
     return shaped;
   } catch (e) {
     Logger.log('outboundSheetFallback_ failed (best-effort): ' + (e && e.message ? e.message : e));

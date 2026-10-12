@@ -553,8 +553,17 @@ closes on an own-team dial (a dialer on the roster of the team's FAMILY -- the
 team, its one-level parent and children) or an answered inbound call from the
 caller on a family queue ("got through"); another team's dial does NOT close
 it. Outcomes, in precedence: `own` > `gotThrough` > `other` > `pending`
-(INCLUSIVE of the last attempt + 3, on the script-TZ date, PCR-3) > `none`,
-partitioning `episodes`; every rate divides by `episodes`. A dial that closes
+(INCLUSIVE of the last attempt + 3, PCR-3 -- judged against the LOADED calls,
+`min(cbThrough, yesterday)`, never the clock alone: an ingest that lags holds
+an episode open for the days not loaded, disclosed as `callback.dataThrough` /
+`dataLagging`, B1/PC-2) > `none`,
+partitioning `episodes`; every rate divides by `episodes`. **The window has
+EDGES and the rules run across them (B1/PC-1):** attempts from `from - 3` are
+swept so an in-window retry of an episode opened before the window JOINS it
+(and is not counted), and attempts up to 3 days past `to` join but never open
+-- so one-day views add up to the week. Every fetcher reads through ONE span
+helper (`obEpReadSpan_`); the trailing read is one window deep, a documented
+bound. A dial that closes
 its own team's episode is CONSUMED and never counts as "another team" for the
 caller's other open episodes. Delay runs from the FIRST attempt. **ONE pure
 engine** (`obCallbackEpisodes_`) serves both sources: the Neon path fetches
@@ -609,12 +618,17 @@ events from ever deciding an outcome. `getOutboundCalledBack` = the episodes
 a dial decided (`own` / `other`): the dialer and their roster team, the delay
 from the first attempt, connected or not, and the deciding dial's call id
 (`ep.dial`) for a "↳ callback path" into the OUTBOUND call
-(`data-journey-kind="outbound"` on the shared `.pid-journey` chip). Rows show
+(`data-journey-kind="outbound"` on the shared `.pid-journey` chip). A manager's
+drill of that dial is entitled by a THIRD server-re-derived arm
+(`outboundJourneyCallbackEntitled_`, B1/PC-3): the dial went to a caller who
+abandoned one of the manager's dept queues within the callback window before
+it. It applies only once `OUTBOUND_VETTING_GATE_` is released, and it is
+Neon-only (the list itself is), so the sheet fallback keeps refusing. Rows show
 the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
 number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
 for -- are a SEPARATE, lazy, separately cached endpoint
-(`getOutboundDirectCallbacks`, `outboundDirect:v2`: dept + window + freshness
+(`getOutboundDirectCallbacks`, `outboundDirect:v3`: dept + window + freshness
 tag + roster hash) so the Callbacks figures never pay for it. Population:
 external calls whose first leg rang a PERSON (no entry queue, `first_agent`
 set) and that nobody answered, `missed` (rang out / that person's voicemail --
@@ -653,7 +667,7 @@ of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
 disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
 whose rows name the line rung: rows exported before FO-2 are blank there and
 would read as "no direct calls"). Cached
-`outboundReport:v8` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v9` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since

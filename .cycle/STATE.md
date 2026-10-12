@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan + Batch 1 IMPLEMENTED (block 246).** The scan (3 stages; no Critical/High; full batch plan in docs/next-steps.md "Broad scan 2026-10-12") was followed by Batch 1, callback correctness before 6c:
+  - PC-1 episodes join across the window's edges (lookback + join-only trailing, one read span for all four fetchers); PC-2 pending vs the LOADED calls (disclosed); PC-3 manager callback-path entitlement (gated on 6c, Neon-only); PC-5 meta.unmapped; DATA-3 roster hash. outboundReport:v9, outboundDirect:v3.
+  - 2309 tests; ci:ui green; lint clean; Postgres 16 run of the new SQL; nine bites.
+  - Owner decisions this session: UX-1 (Outbound + Callbacks move under the outbound table) is Batch 3b, after Batch 3; UX-2 (the Insights ranked brief) deferred pending the urgency rule / manager visibility / amber-vs-red call.
+
+  **Owner-side:** deploy the dashboard (with the CE/FO/BF items still pending from #364), walk S48, S59, S60; re-check #47 a week later.
+  **Next:** owner picks the next batch (2 = green-while-broken + backup integrity is the suggested order).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **NEXT (2026-10-12):** CE-1..CE-3 + FO-1..FO-4 + BF-1/BF-2 + the sync-docs pass are MERGED (#364, `e73574d`) but NOT deployed. Owner deploy order (Operator State #49): (1) push cdr-import, then from its editor `previewFirstRingBackfill()` -> Neon backup -> `backfillFirstRingFromJourney()` (re-run if it stops at the time budget); (2) push cdr-report, then `exportInboundCalls('<earliest date to cover>', '<today>')` once; (3) push the dashboard + new deployment version, walk S48, S59, S60. Pending: /reflect over blocks 241-245. Open owner question: managers seeing call ids at the 6c release.
 - **2026-10-09 — /sync-docs after CE-1..BF-2.** CLAUDE.md: the Operator State #49 index line names the direct-line fallback + the BF-1 backfill. architecture.md: the Outbound row's three new RPCs + `outboundDirect:v2:`, the export's cols 23-24. fix-history: the Callback-episodes intro past tense. Harness README: the FO-1/2/3 driver checks. CLAUDE.md 172.8 KB (27.2 KB headroom); nothing prunable without dropping a rule -- the two largest bullets sit ~200 B under the 4 KB ratchet, so route their next additions to a split doc.
   **Where I left off:** PR opened and merged per the owner's instruction.

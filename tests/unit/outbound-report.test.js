@@ -251,8 +251,13 @@ test('outbound SQL: the abandon side reuses the Inbound dept predicate AND the w
 test('outbound SQL: callback linkage joins by caller hash, through to + the callback window', function () {
   const r = runCompute_('CSR');
   assert.match(r.sql, /JOIN cb_k k ON k\.h = o\.callee_hash/, 'the hash spaces are shared (CLAUDE.md)');
-  assert.match(r.sql, /o\.call_date BETWEEN '2026-08-01'::date AND '2026-08-22'::date/,
+  // B1/PC-1: from - window (the leading edge) through to + trailing window +
+  // callback window (a trailing attempt's own window).
+  assert.match(r.sql, /o\.call_date BETWEEN '2026-07-29'::date AND '2026-08-25'::date/,
     'to + OUTBOUND_CALLBACK_WINDOW_DAYS: a last-day abandon can be called back after the window');
+  assert.match(r.sql, /c\.call_date BETWEEN '2026-07-29'::date AND '2026-08-22'::date/,
+    'B1/PC-1: attempts read one window either side of [from, to]');
+  assert.match(r.sql, /THEN 'post' .*THEN 'lb'/, 'the edge rows get labels no count reads');
   assert.match(r.sql, /dense_rank\(\) OVER \(ORDER BY x\.h\)/,
     'callers leave the database as per-request integer keys, never as hashes');
 });
@@ -370,8 +375,9 @@ test('outbound v2: prior-window blocks appear when computePriorWindow_ exists, a
     const r = runCompute_('CSR', blob);
     assert.match(r.sql, /'agentsPrior'/);
     assert.match(r.sql, /WHEN c\.call_date <= '2026-07-31'::date THEN 'pri'/);
-    assert.match(r.sql, /c\.call_date BETWEEN '2026-07-14'::date AND '2026-08-19'::date/,
-      'one abandon scan spans the prior window through the current one');
+    assert.match(r.sql, /c\.call_date BETWEEN '2026-07-11'::date AND '2026-08-22'::date/,
+      'one abandon scan spans the prior window through the current one (B1/PC-1: + one window either side)');
+    assert.match(r.sql, /WHEN c\.call_date < '2026-07-14'::date THEN 'lb'/);
     // Prior KPIs exclude Bob (Sales roster) and Ghost (unrostered) exactly
     // like the current window — the delta chips compare like with like.
     assert.equal(r.out.kpisPrior.obTotal, 20);
@@ -443,8 +449,8 @@ test('CE-2: getOutboundUncalled groups the none / pending episodes, with status,
     assert.match(conn.sql[0], /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
     assert.match(conn.sql[0], /c\.call_start IS NULL OR \(c\.call_start >= \(CASE WHEN/, 'work-window scoped like the report');
     assert.match(conn.sql[0], /'a_q_csr'/, 'dept predicate applied');
-    assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-01'::date AND '2026-09-05'::date/,
-      'dials read to + window + OUTBOUND_LATE_HORIZON_DAYS, for the late tags');
+    assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-07-29'::date AND '2026-09-08'::date/,
+      'dials read to + window + OUTBOUND_LATE_HORIZON_DAYS, for the late tags (B1/PC-1: + the edges)');
     assert.match(conn.sql[1], /c\.dial_in_number/);
     assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(\('2026-08-19'::date, 'c5'\), \('2026-08-01'::date, 'c4'\), \('2026-08-02'::date, 'c4b'\)\)/,
       'k1/k2 were called back by the team and k3 contacted by another team: never listed');
@@ -504,7 +510,7 @@ test('CE-2: getOutboundCalledBack lists the episodes a dial decided -- dialer, t
   const out = JSON.parse(JSON.stringify(h.call('getOutboundCalledBack',
     { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
   assert.equal(conn.sql.length, 2);
-  assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-01'::date AND '2026-08-22'::date/,
+  assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-07-29'::date AND '2026-08-25'::date/,
     'no late horizon: the list shows what the tiles count');
   assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(/);
   assert.ok(!/caller_hash|"k"/.test(JSON.stringify(out)), 'no hash and no caller key');
@@ -3193,7 +3199,10 @@ test('CE-3: getOutboundDirectCallbacks -- the dept’s line owners only, work / 
   assert.doesNotMatch(sql, /c\.first_ring_seconds/);
   assert.match(sql, /SELECT DISTINCT h FROM dl_ab WHERE h IS NOT NULL AND NOT mis/);
   assert.match(sql, /JOIN dl_k k ON k\.h = a\.h WHERE NOT a\.mis\)/);
-  assert.match(sql, /SELECT disp, \(h IS NULL\) AS anon, who, mis, count\(\*\) AS n FROM dl_ab GROUP BY 1, 2, 3, 4/);
+  // B1/PC-1: the counts are the window's own calls; the edge attempts only feed the engine.
+  assert.match(sql, /SELECT disp, \(h IS NULL\) AS anon, who, mis, count\(\*\) AS n FROM dl_ab WHERE inw GROUP BY 1, 2, 3, 4/);
+  assert.match(sql, /\(c\.call_date BETWEEN '2026-08-17'::date AND '2026-08-18'::date\) AS inw/);
+  assert.match(sql, /c\.call_date BETWEEN '2026-08-14'::date AND '2026-08-21'::date/, 'attempts read one window either side');
   assert.equal(out.meta.misdialSec, 8);
   assert.deepEqual([out.all.episodes, out.all.own, out.all.ownByPerson, out.all.none], [3, 1, 1, 2]);
   assert.deepEqual([out.work.episodes, out.after.episodes], [2, 1], 'k2 first tried at 20:00 PST');
@@ -3229,8 +3238,8 @@ test('CE-3: getOutboundDirectRepeats lists 2+-attempt episodes nobody called bac
   h.ctx.getDashboardNeonConn_ = function () { return conn; };
   const out = JSON.parse(JSON.stringify(h.call('getOutboundDirectRepeats',
     { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })));
-  assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-17'::date AND '2026-09-04'::date/,
-    'dials read past the window for the late tags');
+  assert.match(conn.sql[0], /o\.call_date BETWEEN '2026-08-14'::date AND '2026-09-07'::date/,
+    'dials read past the window for the late tags (B1/PC-1: + the edges)');
   assert.match(conn.sql[1], /\(c\.call_date, c\.call_id\) IN \(\('2026-08-17'::date, 'd4'\), \('2026-08-18'::date, 'd4b'\)\)/,
     'k2 tried once and k1 was called back: only k4 is a repeat unreturned caller');
   assert.ok(!/caller_hash|"k"/.test(JSON.stringify(out)));

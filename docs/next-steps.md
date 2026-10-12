@@ -28,6 +28,7 @@ batch, items are independent unless marked.
 | ∥ | **Agent + outbound views** (owner plan 2026-10-07) — IMPLEMENTED (blocks 231-236) | A ans/day + Agent Day tile rows · B inline agent panel · C outbound source probe (Operator State #74) · D Inbound \| Outbound \| Both + Team Outbound · E Overview tile outbound line + Insights Outbound fold · F prior-period chips on the outbound figures | dashboard (DEPLOY pending; walk S56-S58) | done; D-F admin-only until the 6c release (#63) |
 | ∥ | **Outbound report → My Department** (owner 2026-10-08: managers get the My Department version, not the modal) — G1, G2, G3 IMPLEMENTED (blocks 237-240) | G1 the Insights Callbacks fold (the modal's callback analysis, shared renderers, lazy) · G2 Callbacks by department → an admin-only, lazy Overview section; S48 rewritten · G3 retire the modal: `#/report/outbound` lands on My Department → Outbound with the fold open, the 6c pin re-pointed, drivers off the modal list, S46 + #63 rewritten | dashboard | done (walk S59, S48, S46's pre-release half); the modal is gone; the 6c release is now the gate + the switch + the two Insights folds (#63) |
 | ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1, CE-2, CE-3 + follow-ons IMPLEMENTED (blocks 241-244) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard + cdr-import + cdr-report (follow-ons) | done (deploy cdr-import, then cdr-report + re-export, then the dashboard; walk S48, S59, S60); open: managers seeing call ids at 6c |
+| ∥ | **Broad scan 2026-10-12** — Batch 1 IMPLEMENTED (block 246) | 11 batches + 3b; full list in the next section | per batch | Batch 1 (callback correctness before 6c): dashboard deploy; the rest await owner selection |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 
@@ -548,8 +549,13 @@ department belongs to the unmapped team ''.
     family's queues.
 - **A dial from another team does NOT close it.** It may be unrelated.
 - **Outcome**, in precedence order: `own` > `gotThrough` > `other` (an
-  unconsumed other-team dial inside the window) > `pending` (deadline >=
-  today, script TZ) > `none`.
+  unconsumed other-team dial inside the window) > `pending` (deadline after
+  the LOADED calls -- `min(per-call data date, yesterday)`; B1/PC-2 replaced
+  "deadline >= today", which turned an ingest lag into "not called back") > `none`.
+- **Window edges (B1/PC-1, broad-scan 2026-10-12):** an in-window attempt that
+  continues an episode opened before the window joins it and is NOT this
+  window's episode (one window of lookback is exact); an attempt after the
+  window joins an open episode but never opens one. One-day views add up.
   - The five partition the episodes:
     `own + gotThrough + other + pending + none === episodes`.
   - A dial is CONSUMED when it closes its own team's open episode for that
@@ -631,6 +637,32 @@ deploy.
   callbacks split "by the person" (a line the caller tried) / "by their team";
   the block sits in the Insights Callbacks fold AND the Overview's Callbacks
   by department (company view). S60 is the walk.
+
+## Broad scan 2026-10-12 — the batch plan
+
+The scan's full report (findings, ratings, Stage 3) is in the session record;
+this is the sequence. IDs are the scan's. Sizes: S < 2 h, M ½–2 days.
+
+| Batch | Theme | Items | Status |
+|---|---|---|---|
+| 1 | Callback correctness before 6c | PC-1 window edges · PC-2 pending vs loaded calls · PC-3 manager callback-path entitlement · PC-5 unmapped flag · DATA-3 roster hash on `outboundReport` | IMPLEMENTED (block 246) |
+| 2 | Green-while-broken + backup integrity | ENG-10 backup folder re-point · ENG-11 scrub queue stall · ENG-12 scrub lock · ENG-2 DQE-silence stays bad · ENG-1 DEFERRED ages out · ENG-13 freshness banner vs backfills | queued |
+| 3 | Client correctness | CL-1 stale latest date · CL-9 export button lockout · CL-2 agent-panel day race · CL-10..15, CL-3..5 | queued |
+| 3b | One Outbound home on My Department | **UX-1** (owner 2026-10-12): Outbound summary + Callbacks (+ Direct lines) move under the outbound agent table; the summary drops its duplicate agent table and labels its own-group count | queued, after 3 |
+| 4 | Fallback tabs + bulk-path signals | TOOL-1 export re-fetch window · PIPE-2 bulk pause signal · TOOL-2/3/4 · PIPE-4 · PIPE-6 | queued |
+| 5 | Config, access + cache dimensions | CFG-1 parent-map row rule · PC-4 orphan-rename collisions · DATA-1/2/4/5/10 · SEC-3/4/5 · ENG-8 | queued |
+| 6 | Engine robustness (low) | ENG-3/4/5/6/7/9/14 | queued |
+| 7 | Pipeline data rules | PIPE-1 authoritative bulk mirrors · PIPE-3 tab-date check · PIPE-5 | queued |
+| 8 | Repair, per-call + drill edges | PIPE-9..15 · TOOL-5 | queued |
+| 9 | Agent app + a11y | UI-1/2 · CL-6/7/8 | queued |
+| 10 | Cache anchors + combined-view perf | DATA-6/7/8 | queued |
+| 11 | Docs, deploy, code health | DOC-1..7 · DEP-1/2 · SEC-7 · TOOL-6 · DATA-9 | queued |
+
+**Deferred (owner rulings):** SEC-1 (IR/Insights floater rule) · SEC-2 (Agent
+Day outbound for managers -- the open "call ids at 6c" question) · SEC-6
+(accepted) · PIPE-7 (design) · PIPE-8 (operator: Operator State #8) · **UX-2**
+(the Insights ranked brief + one-line sections; prototype screenshots exist --
+needs the urgency rule, manager visibility and the amber/red colour call).
 
 ## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
 

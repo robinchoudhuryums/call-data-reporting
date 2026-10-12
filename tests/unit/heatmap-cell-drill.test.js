@@ -292,13 +292,22 @@ function installOutbound(role, opts) {
   const conn = {
     prepareStatement: function (sql) {
       installOutbound.queries.push(sql);
-      const isLink = /FROM inbound_calls/.test(sql);
+      // B1/PC-3: the callback arm's EXISTS query (outbound row joined to the
+      // caller's abandons) -- answered by opts.callbackHit.
+      const isCallback = /callee_hash IS NOT NULL/.test(sql);
+      const isLink = !isCallback && /FROM inbound_calls/.test(sql);
       const isScoped = /entry_queue/.test(sql);
       const params = [];
       return {
         setString: function (i, v) { params[i] = v; },
         executeQuery: function () {
           installOutbound.lastParams = params.slice();
+          if (isCallback) {
+            installOutbound.callbackParams = params.slice();
+            let used = false;
+            return { next: function () { if (used || !opts.callbackHit) return false; used = true; return true; },
+                     getString: function () { return '1'; }, close: function () {} };
+          }
           if (isLink) {
             const set = isScoped ? scopedLinkers : linkers;
             let li = 0;
@@ -390,6 +399,44 @@ test('Step 4: an admin skips the derivation (already entitled to every dept)', f
   const out = h.call('getCallJourney', { callId: 'OB1', date: '2026-08-21', kind: 'outbound' });
   assert.equal(out.found, true);
   assert.equal(installOutbound.gateCalls.length, 0);
+});
+
+// B1/PC-3 (broad-scan 2026-10-12): the CE-2 called-back list's "↳ callback
+// path" opens an ordinary callback DIAL, which no assist record links -- so
+// the two link arms refused every manager. A third arm entitles a dial to a
+// caller who abandoned the manager's dept queues within the callback window,
+// and only once the outbound views are released (6c).
+test('B1/PC-3: after the 6c release, a callback dial to a caller who abandoned MY queues is drillable', function () {
+  installOutbound('manager', { scopedLinkers: [], linkers: [], gateAllows: false, outboundRow: OB_ROW, callbackHit: true });
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;
+  try {
+    const out = h.call('getCallJourney', OB_REQ);
+    assert.equal(out.found, true, 'the callback arm entitles on its own');
+    assert.ok(JSON.stringify(out).indexOf('SHOULD-NOT-LEAK') === -1, 'still no caller identity');
+    const sql = installOutbound.queries.filter(function (q) { return /callee_hash IS NOT NULL/.test(q); })[0];
+    assert.match(sql, /c\.caller_hash = o\.callee_hash/, 'the dial and the abandon are the same caller');
+    assert.match(sql, /c\.disposition = 'abandoned'/);
+    assert.match(sql, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
+    assert.match(sql, /c\.call_date BETWEEN \(\?::date - 3\) AND \?::date/, 'within the callback window before the dial');
+    assert.match(sql, /'a_q_csr'/, 'scoped to the manager’s OWN dept queues');
+    assert.deepEqual(installOutbound.callbackParams.slice(1), ['2026-08-21', 'OB1', '2026-08-21', '2026-08-21'],
+      'every client value is bound');
+  } finally { delete h.ctx.OUTBOUND_VETTING_GATE_; }
+});
+
+test('B1/PC-3: no abandon behind the dial -> refused; and while vetted, the callback arm never runs', function () {
+  installOutbound('manager', { scopedLinkers: [], linkers: [], gateAllows: false, outboundRow: OB_ROW, callbackHit: false });
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;
+  try {
+    assert.equal(h.call('getCallJourney', OB_REQ).reason, 'not-entitled');
+  } finally { delete h.ctx.OUTBOUND_VETTING_GATE_; }
+  installOutbound('manager', { scopedLinkers: [], linkers: [], gateAllows: false, outboundRow: OB_ROW, callbackHit: true });
+  h.ctx.OUTBOUND_VETTING_GATE_ = true;
+  try {
+    assert.equal(h.call('getCallJourney', OB_REQ).reason, 'not-entitled', 'callback data is admin-only until 6c');
+    assert.ok(!installOutbound.queries.some(function (q) { return /callee_hash IS NOT NULL/.test(q); }),
+      'the arm is not even consulted while the gate stands');
+  } finally { delete h.ctx.OUTBOUND_VETTING_GATE_; }
 });
 
 test('Step 4: an unknown kind throws, and inbound stays the default', function () {

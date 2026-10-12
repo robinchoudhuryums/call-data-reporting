@@ -69,6 +69,11 @@ const IB_ROWS = [
   ibRow('h9', '', '09:40:00'),              // no queue reached           counted, NOT an episode
   ibRow('h10', 'A_Q_CSR', '10:00:00'),      // tie -> Ann (o11)           CSR own
 ];
+// B1/PC-2: "pending" is judged against the LOADED calls, so both copies
+// reach past the window -- one unrelated row each (no abandon, no keyed callee).
+const LOADED_THROUGH = '2026-08-30';
+IB_ROWS.push(Object.assign(ibRow('hFill', 'A_Q_Sales', '09:00:00', { disposition: 'answered' }), { 0: LOADED_THROUGH }));
+OB_ROWS.push([LOADED_THROUGH, 'oFill', 'hFill', 'Zed', '999', '', 'FALSE', 0, 9, 1, '09:00:00', '']);
 
 // Each dept's OWN queues; the child-inclusive list (inboundQueuesForDept_'s
 // default) adds a parent's children's.
@@ -104,6 +109,7 @@ function neonEvents() {
     cbAb: tracked.map((r) => [k[r[3]], r[0], r[15], String(r[10]).trim().toLowerCase(), r[1]]),
     cbOb: OB_ROWS.filter((o) => k[o[2]]).map((o) => [k[o[2]], o[0], o[10], o[1], o[3], o[6] === 'TRUE']),
     cbAns: [],
+    cbThrough: LOADED_THROUGH,   // B1/PC-2: LEAST(max inbound date, max outbound date)
     coverageStart: D,
   };
 }
@@ -304,8 +310,8 @@ test('CE-1 SQL: one abandon CTE, integer caller keys, and no hash ever selected 
   (sql.match(/json_build_array\([^)]*\)/g) || []).forEach(function (arr) {
     assert.ok(!/\bh\b|caller_hash|callee_hash/.test(arr), 'no hash in ' + arr);
   });
-  assert.match(sql, /o\.call_date BETWEEN '2026-08-10'::date AND '2026-08-14'::date/,
-    'dials through to + OUTBOUND_CALLBACK_WINDOW_DAYS');
+  assert.match(sql, /o\.call_date BETWEEN '2026-08-07'::date AND '2026-08-17'::date/,
+    'dials from the lookback through to + trailing attempts + OUTBOUND_CALLBACK_WINDOW_DAYS (B1/PC-1)');
   assert.equal(sql.split('FROM inbound_calls c').length - 1, 1, 'the abandon scan runs ONCE');
 });
 

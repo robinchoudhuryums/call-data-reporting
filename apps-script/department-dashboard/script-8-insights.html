@@ -2328,6 +2328,16 @@
       insCbScrollIfPending_();
       return;
     }
+    if (meta.unmapped) {
+      // B1/PC-5: no mapped queues -> no abandon can be attributed; a zero here
+      // would read as "nobody abandoned".
+      if (content) content.style.display = 'none';
+      if (head) head.textContent = 'no queues mapped';
+      insCbState_('No queues are mapped for ' + (meta.department || 'this department')
+        + ', so no abandoned caller can be counted. Map its queue names in Dept Config (admin).');
+      insCbScrollIfPending_();
+      return;
+    }
     if (!cb.abandonedTotal) {
       if (content) content.style.display = 'none';
       if (head) head.textContent = insCbHeadText_(cb);
