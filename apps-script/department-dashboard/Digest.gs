@@ -143,7 +143,9 @@ function sendPreviewDigest(req) {
 
 function installDigestTriggers() {
   assertAdmin_();
-  uninstallDigestTriggers_();
+  // B2/ENG-1: a re-install keeps any pending one-shot readiness retry (see
+  // installAlertTrigger_); only an explicit uninstall removes it.
+  digestDeleteCadenceTriggers_();
   ScriptApp.newTrigger('runDailyDigests_')
     .timeBased().everyDays(1).atHour(DIGEST_DAILY_TRIGGER_HOUR).create();
   ScriptApp.newTrigger('runWeeklyDigests_')
@@ -1391,6 +1393,11 @@ function digestWindowFor_(cadence, now) {
 
 function uninstallDigestTriggers_() {
   digestClearRetryTriggers_();   // R31: a pending one-shot retry goes with them
+  digestDeleteCadenceTriggers_();
+}
+
+/** The three cadence triggers only (never a one-shot retry). */
+function digestDeleteCadenceTriggers_() {
   const triggers = ScriptApp.getProjectTriggers();
   for (let i = 0; i < triggers.length; i++) {
     const fn = triggers[i].getHandlerFunction();

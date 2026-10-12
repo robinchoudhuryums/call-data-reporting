@@ -97,6 +97,7 @@ function runNeonBackup_() {
   var outcomes = [];
   var conn = null;
   var budgetHit = false;   // BU-3
+  var leaseToken = null;   // B2/ENG-12
   var overBudget = function () {
     if (!budgetHit && Date.now() - t0 > NB_RUN_BUDGET_MS_) budgetHit = true;
     return budgetHit;
@@ -108,6 +109,9 @@ function runNeonBackup_() {
       nbRecord_('skipped (Neon unreachable/unconfigured)');
       return;
     }
+    // B2/ENG-12: the run is the files' one writer -- an inline scrub that
+    // arrives meanwhile leaves its ids queued for step 5 below.
+    leaseToken = nbLeaseClaim_('backup', NB_LEASE_BACKUP_TTL_S_, 60000, true);
     var store = nbStore_();
     var folder = store.folder;
     outcomes.push('store ' + store.label
@@ -279,7 +283,7 @@ function runNeonBackup_() {
       if (overBudget()) {
         outcomes.push('scrub not reached (run budget)');
       } else {
-        var sr = nbScrubPending_();
+        var sr = nbScrubPending_(leaseToken);
         outcomes.push(sr.status === 'ok'
           ? 'scrub ok (' + sr.lines + ' row(s) of deleted escalations removed from ' + sr.files + ' file(s))'
           : 'scrub pending (' + sr.pending + ' deleted escalation id(s) still in the backups)');
@@ -321,6 +325,7 @@ function runNeonBackup_() {
     nbRecord_('FAILED: ' + (e && e.message ? e.message : e));
   } finally {
     if (conn) { try { conn.close(); } catch (ce) {} }
+    nbLeaseRelease_(leaseToken);
   }
 }
 
@@ -567,6 +572,10 @@ function nbStore_() {
   try {
     return { folder: nbFolder_(), label: 'drive' };
   } catch (e) {
+    // B2/ENG-10: a CONFIGURED folder that cannot be used is a failure, never a
+    // silent switch -- falling back here would start a second store whose
+    // closed months lack the history (and leave the scrub two stores to clean).
+    if (e && e.nbConfigured) throw e;
     var msg = (e && e.message) ? e.message : String(e);
     Logger.log('runNeonBackup_: Drive unavailable (' + msg + ') -- using the Sheets backup workbook.');
     return { folder: nbSheetsFolder_(), label: 'sheets', driveError: msg };
@@ -823,43 +832,148 @@ function nbScrubUpdateQueue_(fn) {
   }
 }
 
-/** Scrubs every queued id; dequeues them only when every store came back clean. */
-function nbScrubPending_() {
-  var q = nbScrubQueue_();
-  if (!q.ids.length) return { status: 'none', pending: 0, dropped: q.dropped || 0 };
-  var ids = q.ids.slice();
-  var res;
-  try {
-    res = nbScrubIds_(ids, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'));
-  } catch (e) {
-    res = { ok: false, files: 0, lines: 0, deferred: [], errors: [(e && e.message) ? e.message : String(e)] };
+// B2/ENG-12 (broad-scan 2026-10-12): the backup files have ONE writer at a
+// time. Two scrubs (two deletes seconds apart) used to read the same file and
+// write it back in either order -- the later write could restore the other's
+// rows while its id had already left the queue -- and a scrub overlapping the
+// Saturday run could overwrite the Sheets store's `_index`. The script lock
+// is shared by every admin write, so it is not held across file I/O; instead a
+// LEASE in the script cache (TTL-bounded, so a killed run can never wedge it)
+// is claimed under a SHORT script lock. The backup run holds it for its whole
+// run; a scrub that finds it held leaves its ids queued (the holder's scrub
+// pass loops over late arrivals, and the next backup run retries the rest).
+var NB_LEASE_KEY_ = 'nbBackupFilesLease';
+var NB_LEASE_SCRUB_TTL_S_ = 300;    // a scrub rewrites a handful of files
+var NB_LEASE_BACKUP_TTL_S_ = 600;   // NB_RUN_BUDGET_MS_ + its last file writes
+var NB_SCRUB_MAX_PASSES_ = 3;       // late-arrival re-reads per scrub
+
+/**
+ * Claims the backup-files lease for `who` ('scrub' | 'backup'). Returns a token
+ * or null (held by another run). `waitMs` > 0 polls for that long first; `force`
+ * takes the lease anyway once the wait is over (the backup run: a weekly run
+ * must not be skipped because a scrub stalled -- the TTL bounds the overlap).
+ */
+function nbLeaseClaim_(who, ttlS, waitMs, force) {
+  var cache = CacheService.getScriptCache();
+  var token = who + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 8);
+  var deadline = Date.now() + (Number(waitMs) || 0);
+  // Bounded by count as well as the clock (a frozen clock must not spin forever).
+  for (var tries = Math.ceil((Number(waitMs) || 0) / 5000) + 1; tries > 0; tries--) {
+    var last = tries === 1;
+    var lock = LockService.getScriptLock();
+    var held = false;
+    try { held = lock.tryLock(10000); } catch (e) { held = false; }
+    if (held) {
+      try {
+        var cur = cache.get(NB_LEASE_KEY_);
+        if (!cur || (force && (last || Date.now() >= deadline))) {
+          cache.put(NB_LEASE_KEY_, token, ttlS);
+          return token;
+        }
+      } finally { try { lock.releaseLock(); } catch (re) {} }
+    }
+    if (last || Date.now() >= deadline) break;
+    Utilities.sleep(5000);
   }
-  var done = res.ok && !res.errors.length && !res.deferred.length;
-  var after = nbScrubUpdateQueue_(function (cur) {
-    if (done) cur.ids = cur.ids.filter(function (id) { return ids.indexOf(id) === -1; });
-    cur.lastAttempt = new Date().toISOString();
-    cur.lastError = done ? '' : (res.errors.concat(res.deferred.length
-      ? ['deferred until the next backup run finalizes ' + res.deferred.join(', ')] : []).join('; ')).slice(0, 600);
-    if (!cur.ids.length) cur.since = '';
-    return cur;
-  });
-  return { status: done ? 'ok' : 'pending', pending: after.ids.length, dropped: after.dropped || 0,
-           files: res.files, lines: res.lines, deferred: res.deferred, errors: res.errors };
+  return force ? token : null;   // force without the script lock: proceed, unleased
 }
 
-/** The stores this install has written to (never creates one). */
+/** Releases the lease if `token` still holds it (a TTL-expired lease is left alone). */
+function nbLeaseRelease_(token) {
+  if (!token) return;
+  var lock = LockService.getScriptLock();
+  var held = false;
+  try { held = lock.tryLock(10000); } catch (e) { held = false; }
+  try {
+    var cache = CacheService.getScriptCache();
+    if (cache.get(NB_LEASE_KEY_) === token) cache.remove(NB_LEASE_KEY_);
+  } catch (e) { /* best-effort -- the TTL frees it */ }
+  finally { if (held) { try { lock.releaseLock(); } catch (re) {} } }
+}
+
+/**
+ * Scrubs every queued id; dequeues them only when every store came back clean.
+ * `leaseToken`: the caller already holds the backup-files lease (the backup
+ * run's step 5); otherwise this claims it, and returns status 'busy' (ids stay
+ * queued) when another run holds it.
+ */
+function nbScrubPending_(leaseToken) {
+  var q0 = nbScrubQueue_();
+  if (!q0.ids.length) return { status: 'none', pending: 0, dropped: q0.dropped || 0 };
+  var own = leaseToken ? null : nbLeaseClaim_('scrub', NB_LEASE_SCRUB_TTL_S_, 0, false);
+  if (!leaseToken && !own) {
+    return { status: 'busy', pending: q0.ids.length, dropped: q0.dropped || 0,
+             files: 0, lines: 0, deferred: [], errors: [] };
+  }
+  var total = { files: 0, lines: 0 };
+  var out = null;
+  try {
+    // ENG-12: ids queued WHILE a pass runs are picked up by the next pass, so a
+    // delete that found the lease held is not left waiting for the weekly run.
+    for (var pass = 0; pass < NB_SCRUB_MAX_PASSES_; pass++) {
+      var q = nbScrubQueue_();
+      if (!q.ids.length) break;
+      var ids = q.ids.slice();
+      var res;
+      try {
+        res = nbScrubIds_(ids, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'));
+      } catch (e) {
+        res = { ok: false, files: 0, lines: 0, deferred: [], errors: [(e && e.message) ? e.message : String(e)] };
+      }
+      total.files += res.files; total.lines += res.lines;
+      var done = res.ok && !res.errors.length && !res.deferred.length;
+      var after = nbScrubUpdateQueue_(function (cur) {
+        if (done) cur.ids = cur.ids.filter(function (id) { return ids.indexOf(id) === -1; });
+        cur.lastAttempt = new Date().toISOString();
+        cur.lastError = done ? '' : (res.errors.concat(res.deferred.length
+          ? ['deferred until the next backup run finalizes ' + res.deferred.join(', ')] : []).join('; ')).slice(0, 600);
+        if (!cur.ids.length) cur.since = '';
+        return cur;
+      });
+      out = { status: done && !after.ids.length ? 'ok' : 'pending', pending: after.ids.length,
+              dropped: after.dropped || 0, files: total.files, lines: total.lines,
+              deferred: res.deferred, errors: res.errors };
+      if (!done) break;
+    }
+  } finally {
+    if (own) nbLeaseRelease_(own);
+  }
+  return out || { status: 'none', pending: 0, dropped: q0.dropped || 0 };
+}
+
+/**
+ * The stores this install has written to (never creates one). Each carries
+ * `active`: whether runNeonBackup_ writes to it now (nbStore_'s rule --
+ * NEON_BACKUP_STORE=sheets, else the Drive folder once one is set, else the
+ * workbook). B2/ENG-11: only the ACTIVE store's closed months get finalized by
+ * a later backup run, so only there may a scrub DEFER a file.
+ */
 function nbScrubStores_() {
   var props = PropertiesService.getScriptProperties();
   var out = { stores: [], errors: [] };
   var fid = props.getProperty('NEON_BACKUP_FOLDER_ID');
+  var forcedSheets = String(props.getProperty('NEON_BACKUP_STORE') || '').trim().toLowerCase() === 'sheets';
+  var activeLabel = (forcedSheets || !fid) ? 'sheets' : 'drive';
   if (fid) {
-    try { out.stores.push({ label: 'drive', folder: DriveApp.getFolderById(fid) }); }
-    catch (e) { out.errors.push('Drive folder ' + fid + ': ' + ((e && e.message) ? e.message : e)); }
+    try {
+      var df = DriveApp.getFolderById(fid);
+      // B2/ENG-10: a trashed folder still opens; its files are not "clean".
+      if (df && typeof df.isTrashed === 'function' && df.isTrashed()) throw new Error('the folder is in the Drive trash');
+      out.stores.push({ label: 'drive', folder: df, active: activeLabel === 'drive' });
+    } catch (e) {
+      out.errors.push('Drive folder ' + fid + ': ' + ((e && e.message) ? e.message : e)
+        + (activeLabel === 'drive' ? '' : ' (no longer the backup store -- clear NEON_BACKUP_FOLDER_ID if it is retired)'));
+    }
   }
   var sid = props.getProperty('NEON_BACKUP_SS_ID');
   if (sid) {
-    try { out.stores.push({ label: 'sheets', folder: nbSheetsFolderFor_(SpreadsheetApp.openById(sid)) }); }
-    catch (e2) { out.errors.push('backup workbook ' + sid + ': ' + ((e2 && e2.message) ? e2.message : e2)); }
+    try {
+      out.stores.push({ label: 'sheets', folder: nbSheetsFolderFor_(SpreadsheetApp.openById(sid)),
+                        active: activeLabel === 'sheets' });
+    } catch (e2) {
+      out.errors.push('backup workbook ' + sid + ': ' + ((e2 && e2.message) ? e2.message : e2)
+        + (activeLabel === 'sheets' ? '' : ' (no longer the backup store -- clear NEON_BACKUP_SS_ID if it is retired)'));
+    }
   }
   return out;
 }
@@ -902,7 +1016,13 @@ function nbScrubIds_(ids, todayIso) {
         });
         if (unparsed) res.errors.push(s.label + ' ' + name + ': ' + unparsed + ' unparseable line(s) name a deleted id');
         if (!removed) return;
-        if (act && !nbScrubMonthSafe_(s.folder, act[1], currentYm, todayIso)) {
+        // B2/ENG-11: defer only in the ACTIVE store. A store the backup no
+        // longer writes never finalizes its closed months, so a deferral there
+        // was permanent -- and one deferred file held EVERY queued id (the
+        // queue drains all-or-nothing) until the cap started dropping new
+        // deletes. An inactive store is scrubbed at once; its finality stamp
+        // no longer steers any backup run.
+        if (act && s.active !== false && !nbScrubMonthSafe_(s.folder, act[1], currentYm, todayIso)) {
           res.deferred.push(s.label + ' ' + name);
           return;
         }
@@ -1058,17 +1178,44 @@ function nbRestoreFileList_(folder, want) {
   return out;
 }
 
-/** The backup folder — from NEON_BACKUP_FOLDER_ID, auto-created once. */
+/**
+ * The backup folder -- from NEON_BACKUP_FOLDER_ID, auto-created ONCE (only when
+ * no id is set).
+ *
+ * B2/ENG-10 (broad-scan 2026-10-12): the BU-1 rule, applied to Drive. Any
+ * getFolderById error -- a transient Drive failure, or a restore run by an
+ * admin who cannot open the owner's folder -- used to create a fresh EMPTY
+ * folder and repoint the property: the history was orphaned (restore and the
+ * ESC-D8 scrub stopped looking at it, so deleted escalations stayed there),
+ * closed months were re-fetched without their already-pruned journeys, and the
+ * run still recorded `ok`, so retention kept pruning. A set id that cannot be
+ * opened, or a folder in the trash (getFolderById returns a trashed folder,
+ * and Drive purges the trash after 30 days), now THROWS an error marked
+ * `nbConfigured`, which nbStore_ refuses to paper over with the Sheets store:
+ * the run records FAILED, so Health shows it and the retention gate holds.
+ */
 function nbFolder_() {
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty('NEON_BACKUP_FOLDER_ID');
   if (id) {
-    try { return DriveApp.getFolderById(id); }
-    catch (e) { /* stale id (folder trashed) — fall through and recreate */ }
+    var folder = null, why = '';
+    try { folder = DriveApp.getFolderById(id); }
+    catch (e) { why = (e && e.message) ? e.message : String(e); }
+    if (folder && typeof folder.isTrashed === 'function' && folder.isTrashed()) {
+      folder = null;
+      why = 'the folder is in the Drive trash';
+    }
+    if (folder) return folder;
+    var err = new Error('the backup folder NEON_BACKUP_FOLDER_ID=' + id + ' could not be used (' + why
+      + '). NOT recreating it -- a new folder would orphan the backup history. Restore it from the trash, '
+      + 'run the backup as its owner, or retry later; to switch stores on purpose, set NEON_BACKUP_STORE=sheets '
+      + '(or clear NEON_BACKUP_FOLDER_ID if the folder was deleted deliberately).');
+    err.nbConfigured = true;
+    throw err;
   }
-  var folder = DriveApp.createFolder(NEON_BACKUP_FOLDER_NAME);
-  props.setProperty('NEON_BACKUP_FOLDER_ID', folder.getId());
-  return folder;
+  var created = DriveApp.createFolder(NEON_BACKUP_FOLDER_NAME);
+  props.setProperty('NEON_BACKUP_FOLDER_ID', created.getId());
+  return created;
 }
 
 function nbKeep_() {

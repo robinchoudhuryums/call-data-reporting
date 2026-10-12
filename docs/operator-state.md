@@ -81,7 +81,12 @@ When something looks wrong, before assuming a code bug, check:
      assessed date, so a retry never re-alerts. An `EMPTY …` outcome means
      every dept had no data. A leftover `runDailyAlertsRetry_` trigger is
      normal while a day is deferred, and uninstalling the alert trigger
-     removes it too.
+     removes it too. **B2/ENG-1 (2026-10-12):** reinstalling the daily
+     trigger (Alerts modal) no longer deletes a pending retry -- the install
+     replaces only the daily trigger, and the same holds for the digest
+     cadence triggers and their retries. A `DEFERRED` outcome older than 3 h
+     with no newer run means the retry was lost: the Health `out-alerts` /
+     `out-digest-<cadence>` row warns "RETRY LOST" -- run the send by hand.
    - **Daily DQE build** is now integrated into cdr-import's
      `processIntegratedHistory` (5th block; INV-16 expanded). Each
      successful daily import now refreshes DQE Historical Data
@@ -696,7 +701,16 @@ When something looks wrong, before assuming a code bug, check:
     backup** section (or `installNeonBackupTrigger()` -- Saturdays at
     `NEON_BACKUP_HOUR`=6 Central); "Back up now" seeds the folder. The
     Drive folder is auto-created ("Dashboard Neon Backups") and its id
-    persisted to `NEON_BACKUP_FOLDER_ID`. REQUIRES THE NEW
+    persisted to `NEON_BACKUP_FOLDER_ID` -- ONLY when that property is
+    unset (B2/ENG-10, 2026-10-12: a SET id whose folder is unreachable or in
+    the Drive trash FAILS the run and names the id, the BU-1 rule for the
+    Drive store; it no longer creates a fresh folder or falls back to the
+    Sheets workbook, either of which started a second store without the
+    closed-month history). Restore the folder from the trash, or run as its
+    owner; to change stores ON PURPOSE set `NEON_BACKUP_STORE=sheets`, or
+    clear `NEON_BACKUP_FOLDER_ID` if the folder was deleted deliberately.
+    The Drive -> Sheets fallback below now applies only while no folder id
+    is set. REQUIRES THE NEW
     `https://www.googleapis.com/auth/drive` OAuth scope added to
     appsscript.json -- after deploying, Run any function once in the
     editor to consent (per #9). Fetches use one string_agg round-trip
@@ -762,7 +776,15 @@ When something looks wrong, before assuming a code bug, check:
     history -- delete those by hand (File -> Version history) if a deleted
     escalation must be gone everywhere at once. A queue past 150 ids counts
     the overflow ("could not be queued") -- those ids must be removed from
-    the files by hand.
+    the files by hand. **Two scrub rules (B2, 2026-10-12).** ENG-11: only
+    the ACTIVE store (the one backup runs write) can hold back a scrub on an
+    unfinalized closed month; a store the backup no longer writes -- the
+    Drive files left behind after a switch to Sheets, or the reverse -- is
+    scrubbed at once, since no future run would ever finalize it. ENG-12: a
+    scrub and a backup run never rewrite the same files at the same time --
+    both take a short-lived file lease (CacheService, ~5-10 min); a scrub
+    that finds a backup mid-write leaves its ids queued and the backup's own
+    scrub step (or `runNeonBackupScrubNow()` afterwards) picks them up.
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -1550,7 +1572,9 @@ When something looks wrong, before assuming a code bug, check:
     alarm). Health page: the `trg-dqesilence` readiness row + the
     `out-dqesilence` outcome row (`DQE_SILENCE_WATCH_LAST_RESULT`,
     prefix-coded `ok` / `SILENT n dept(s)` / `INCONCLUSIVE …` (O-7:
-    needs-attention, not green) / `ERROR`). Spot-check any time
+    needs-attention, not green) / `ERROR`; B2/ENG-2, 2026-10-12: a dept still
+    dark after its one alert keeps the row `SILENT (already alerted) …`
+    naming it, rather than returning to `ok` while nothing changed). Spot-check any time
     with `runDqeSilenceCheckNow()` (admin; assesses now, no email). State
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The

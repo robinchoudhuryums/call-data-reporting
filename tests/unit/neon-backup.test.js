@@ -328,6 +328,45 @@ test('BU-1: an unopenable NEON_BACKUP_SS_ID is a FAILED run -- never a fresh wor
   assert.equal(h.state.createdSpreadsheets.length, 1);
 });
 
+// B2/ENG-10 (broad-scan 2026-10-12): the BU-1 rule, for the Drive folder. A
+// set NEON_BACKUP_FOLDER_ID that cannot be opened (a transient Drive error, or
+// an admin who cannot open the owner's folder) or that sits in the trash used
+// to mint a NEW folder and repoint the property -- orphaning the history while
+// the run recorded ok and retention kept pruning.
+test('B2/ENG-10: an unopenable or trashed backup FOLDER is a FAILED run -- never a new folder, never a silent Sheets switch', function () {
+  [['unopenable', function () { throw new Error('Service error: Drive'); }],
+   ['trashed', function () { return Object.assign({}, folder, { isTrashed: function () { return true; } }); }]]
+    .forEach(function (c) {
+      install();
+      h.state.spreadsheetsById = {}; h.state.createdSpreadsheets.length = 0;
+      let created = 0;
+      h.ctx.DriveApp = { getFolderById: c[1], createFolder: function () { created++; return folder; } };
+      inbound = days('2026-09-01', '2026-09-03');
+      const r = runAt('2026-09-26');
+      assert.match(r, /^FAILED: the backup folder NEON_BACKUP_FOLDER_ID=F could not be used/, c[0]);
+      assert.match(r, /NOT recreating it/, c[0]);
+      assert.equal(created, 0, c[0] + ': pre-ENG-10 a new empty folder was created here');
+      assert.equal(h.state.props.NEON_BACKUP_FOLDER_ID, 'F', c[0] + ': the property still points at the history');
+      assert.equal(h.state.createdSpreadsheets.length, 0, c[0] + ': no second (Sheets) store is started');
+      assert.match(h.call('neonRetentionBackupGate_', { getProperty: function (k) { return h.state.props[k]; } }, now) || '',
+        /did not finish clean/, c[0] + ': the retention prune stays held');
+    });
+  // A restore by an admin who cannot open the folder refuses too, instead of repointing it.
+  install();
+  h.ctx.DriveApp = { getFolderById: function () { throw new Error('No item with the given ID could be found, or you do not have permission'); },
+                     createFolder: function () { throw new Error('must not be called'); } };
+  h.ctx.assertAdmin_ = function () {};
+  h.state.props.NEON_RESTORE_FILE = 'inbound_calls-2026-09';
+  assert.throws(function () { h.call('restoreNeonBackupFile'); }, /NOT recreating it/);
+  assert.equal(h.state.props.NEON_BACKUP_FOLDER_ID, 'F');
+  // A deliberate switch still works: NEON_BACKUP_STORE=sheets never touches Drive.
+  installSheets();
+  h.state.props.NEON_BACKUP_FOLDER_ID = 'F';
+  h.state.props.NEON_BACKUP_STORE = 'sheets';
+  inbound = days('2026-09-01', '2026-09-03');
+  assert.match(runAt('2026-09-26'), /^ok \| store sheets \|/);
+});
+
 test('BU-2: a workbook past the warn line records WARN, not ok -- Health goes amber and retention holds', function () {
   installSheets();
   inbound = days('2026-09-01', '2026-09-03');

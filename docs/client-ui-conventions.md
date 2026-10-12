@@ -2090,7 +2090,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   and false-warned, LM1) Pipeline Health entries, OR the latest is older than
   `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header freshness pill).
   A `rows:0` DQE-step `success` (a no-op build of an already-in-history date)
-  does NOT count as freshness -- the helper requires `rows>0` (F5).
+  does NOT count as freshness -- the helper requires `rows>0` (F5). Nor does a
+  BACKFILL: a row whose note names a built date more than
+  `OVERVIEW_FRESH_BUILD_MAX_LAG_DAYS_` (=5) days before its own timestamp is
+  skipped (`ovPipelineRowIsFreshBuild_`, B2/ENG-13), so re-importing last
+  month cannot reset the clock while today's ingest is down.
   (2) **Orphan Fix nag** (`#ov-orphan-nag` / `ovRenderOrphanNag_` /
   `computeOverviewOrphanNag_`) counts orphans with `lastSeen` inside
   `OVERVIEW_ORPHAN_NAG_DAYS` (=7d), samples up to 3 names by row-count desc,

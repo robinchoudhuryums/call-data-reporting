@@ -1514,6 +1514,24 @@ function Utilities_fmt_(d) {
   return h.ctx.Utilities.formatDate(d, h.ctx.TZ, 'yyyy-MM-dd');
 }
 
+// B2/ENG-1 (broad-scan 2026-10-12): DEFERRED promises a retry within the hour.
+// A DEFERRED older than that means the retry chain was lost -- it used to read
+// green until the 4-day STALE check, and that day's sends never happened.
+test('B2/ENG-1: a DEFERRED alerts / digest outcome older than the retry window reads RETRY LOST', function () {
+  const hoursAgo = function (n) { return new Date(Date.now() - n * 3600000).toISOString(); };
+  installHealth({ props: { NEON_HOST: 'h', ALERTS_LAST: hoursAgo(0.5),
+    ALERTS_LAST_RESULT: 'DEFERRED 2026-09-21: DQE data is through 2026-09-18 at 08:05 -- retrying in 60 min' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-alerts').status, 'ok', 'a fresh deferral is the designed state');
+  installHealth({ props: { NEON_HOST: 'h', ALERTS_LAST: hoursAgo(4),
+    ALERTS_LAST_RESULT: 'DEFERRED 2026-09-21: DQE data is through 2026-09-18 at 08:05 -- retrying in 60 min' } });
+  const row = rowByKey(h.call('getSystemHealth'), 'out-alerts');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /RETRY LOST/);
+  installHealth({ props: { NEON_HOST: 'h', DIGEST_LAST_daily: hoursAgo(5),
+    DIGEST_LAST_RESULT_daily: 'DEFERRED 2026-09-21: DQE data is through 2026-09-18' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-digest-daily').status, 'warn', 'the digest cadences too');
+});
+
 test('Batch 4 follow-on: a daily-alerts run that STARTED after its last outcome and never finished reads INTERRUPTED', function () {
   const hoursAgo = function (n) { return new Date(Date.now() - n * 3600000).toISOString(); };
   installHealth({ props: { NEON_HOST: 'h',

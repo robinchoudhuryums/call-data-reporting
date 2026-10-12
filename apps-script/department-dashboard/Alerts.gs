@@ -1660,7 +1660,13 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
 
 // ── Trigger management ────────────────────────────────────────────
 function installAlertTrigger_() {
-  uninstallAlertTrigger_();
+  // B2/ENG-1 (broad-scan 2026-10-12): a RE-install replaces the daily trigger
+  // but KEEPS a pending one-shot readiness retry. It used to go through
+  // uninstallAlertTrigger_, which deletes the retry too -- an admin
+  // re-installing mid-morning, after a DEFERRED, silently lost that day's
+  // alerts (the next morning assesses the next date). An explicit uninstall
+  // still removes the retry with the trigger.
+  alertsDeleteDailyTriggers_();
   ScriptApp.newTrigger('runDailyAlerts_')
     .timeBased()
     .everyDays(1)
@@ -1669,13 +1675,18 @@ function installAlertTrigger_() {
 }
 
 function uninstallAlertTrigger_() {
+  alertsDeleteDailyTriggers_();
+  alertsClearRetryTriggers_();   // ENG-3: a pending one-shot retry goes with it
+}
+
+/** The daily `runDailyAlerts_` triggers only (never the one-shot retry). */
+function alertsDeleteDailyTriggers_() {
   const triggers = ScriptApp.getProjectTriggers();
   for (let i = 0; i < triggers.length; i++) {
     if (triggers[i].getHandlerFunction() === 'runDailyAlerts_') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
-  alertsClearRetryTriggers_();   // ENG-3: a pending one-shot retry goes with it
 }
 
 function getAlertTriggerStatus_() {

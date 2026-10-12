@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 2 IMPLEMENTED (block 247): green-while-broken + backup integrity.**
+  - ENG-10 a configured backup folder is never recreated or silently swapped for Sheets; ENG-11 scrubs don't stall on the inactive store; ENG-12 scrub/backup file lease; ENG-2 DQE-silence stays SILENT while an alerted dept is dark; ENG-1 reinstalls keep pending retries + Health "RETRY LOST"; ENG-13 backfills don't reset the Overview freshness clock.
+  - 2322 tests; lint clean; module map current; 13 bites (one survivor got its own test). No client change (ci:ui not needed). No cache bump.
+
+  **Owner-side:** deploy the dashboard (with Batch 1 + the #364 items), glance at the Health rows named in block 247.
+  **Next:** owner picks the next batch (3 = client correctness, then 3b UX-1).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan + Batch 1 IMPLEMENTED (block 246).** The scan (3 stages; no Critical/High; full batch plan in docs/next-steps.md "Broad scan 2026-10-12") was followed by Batch 1, callback correctness before 6c:
   - PC-1 episodes join across the window's edges (lookback + join-only trailing, one read span for all four fetchers); PC-2 pending vs the LOADED calls (disclosed); PC-3 manager callback-path entitlement (gated on 6c, Neon-only); PC-5 meta.unmapped; DATA-3 roster hash. outboundReport:v9, outboundDirect:v3.
   - 2309 tests; ci:ui green; lint clean; Postgres 16 run of the new SQL; nine bites.

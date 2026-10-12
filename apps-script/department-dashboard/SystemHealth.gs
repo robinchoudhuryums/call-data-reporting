@@ -144,6 +144,13 @@ var MAIL_QUOTA_WARN_FLOOR_ = 50;
 // Comfortably past the 6-minute execution ceiling so a send in flight while
 // the admin loads the page is not flagged.
 var HEALTH_SEND_INTERRUPTED_MS_ = 30 * 60000;
+// B2/ENG-1 (broad-scan 2026-10-12): a DEFERRED outcome (alerts / digests
+// waiting on the morning import) is a promise that a one-shot retry follows
+// within ALERTS_RETRY_MINUTES_ / DIGEST_DAILY_RETRY_MINUTES (60 min). Past
+// this age the retry chain was lost -- the retry trigger never ran, or was
+// deleted -- and that day's sends will never happen, while the row read green
+// until the 4-day STALE check. Generous: two retry intervals plus slack.
+var HEALTH_DEFERRED_MAX_MS_ = 3 * 3600000;
 // R47: Google's hard per-spreadsheet cell cap and the point this page warns.
 // Kept in step with cdr-report/sheetSpace.js's copies by cross-file-pins.
 var WORKBOOK_CELL_CAP_ = 10000000;
@@ -983,8 +990,18 @@ function healthOutcomeRows_(add, ctx) {
             + 'received it). Check the Executions log for this handler (ENG-5).';
         }
       }
-      add('triggers', outcomes[o][0], outcomes[o][1], (bad || stale || interrupted) ? 'warn' : 'ok',
-        (res || '') + (at ? (' @ ' + at) : '') + stale + interrupted);
+      // B2/ENG-1: a DEFERRED that never resolved -- see HEALTH_DEFERRED_MAX_MS_.
+      var lostRetry = '';
+      if (!bad && /^DEFERRED\b/.test(String(res || '')) && at) {
+        var dAge = healthAgeMs_(at, Date.now());
+        if (dAge != null && dAge > HEALTH_DEFERRED_MAX_MS_) {
+          lostRetry = ' — RETRY LOST: deferred ' + (Math.round(dAge / 360000) / 10) + ' h ago and no later outcome '
+            + 'was recorded, so the one-shot retry never ran (or was deleted). That day\'s sends will not happen '
+            + 'on their own -- send them by hand (Alerts modal / Digests) and check the Executions log (ENG-1).';
+        }
+      }
+      add('triggers', outcomes[o][0], outcomes[o][1], (bad || stale || interrupted || lostRetry) ? 'warn' : 'ok',
+        (res || '') + (at ? (' @ ' + at) : '') + stale + interrupted + lostRetry);
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
 }

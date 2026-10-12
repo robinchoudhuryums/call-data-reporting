@@ -233,3 +233,49 @@ test('EN-5: a manual send marks the date, so the 8 AM trigger does not send the 
   h2.call('sendAlerts', { date: '2026-09-18' });
   assert.equal(h2.state.props.ALERTS_RUN_MARKER, '2026-09-21');
 });
+
+// B2/ENG-1 (broad-scan 2026-10-12): an admin re-installing the triggers
+// mid-morning, after a DEFERRED, deleted the pending one-shot retry with them
+// -- that day's alerts / digests never went out. A re-install now keeps it;
+// an explicit uninstall still removes it.
+function fullTriggers_() {
+  const made = [];
+  h.ctx.ScriptApp = {
+    WeekDay: { MONDAY: 'MONDAY' },
+    getProjectTriggers: function () { return made.slice(); },
+    deleteTrigger: function (t) { made.splice(made.indexOf(t), 1); },
+    newTrigger: function (fn) {
+      const b = {};
+      ['timeBased', 'after', 'everyDays', 'atHour', 'onWeekDay', 'onMonthDay'].forEach(function (k) {
+        b[k] = function () { return b; };
+      });
+      b.create = function () { const t = { getHandlerFunction: function () { return fn; } }; made.push(t); return t; };
+      return b;
+    },
+  };
+  return function () { return made.map(function (t) { return t.getHandlerFunction(); }).sort(); };
+}
+
+test('B2/ENG-1: re-installing the alert trigger KEEPS a pending retry; uninstall removes it', function () {
+  install('2026-09-18');
+  const names = fullTriggers_();
+  h.call('installAlertTrigger_');
+  h.call('alertsScheduleRetry_');                       // a DEFERRED left a one-shot retry
+  h.call('installAlertTrigger_');                       // the admin re-installs mid-morning
+  assert.deepEqual(names(), ['runDailyAlertsRetry_', 'runDailyAlerts_'], 'one daily trigger, the retry survives');
+  h.call('uninstallAlertTrigger_');
+  assert.deepEqual(names(), [], 'turning alerts off takes the retry with it');
+});
+
+test('B2/ENG-1: re-installing the digest triggers KEEPS pending retries; uninstall removes them', function () {
+  install('2026-09-18');
+  const names = fullTriggers_();
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.logStatusReturn_ = function (x) { return x; };
+  h.call('installDigestTriggers');
+  h.ctx.ScriptApp.newTrigger('runDailyDigestRetry_').timeBased().after(1).create();
+  h.call('installDigestTriggers');
+  assert.deepEqual(names(), ['runDailyDigestRetry_', 'runDailyDigests_', 'runMonthlyDigests_', 'runWeeklyDigests_']);
+  h.call('uninstallDigestTriggers');
+  assert.deepEqual(names(), []);
+});

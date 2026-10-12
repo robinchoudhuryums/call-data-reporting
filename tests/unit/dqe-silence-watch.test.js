@@ -180,3 +180,38 @@ test('O-7: an inconclusive read records a prefix-coded INCONCLUSIVE outcome, not
   assert.doesNotMatch(h.state.props.DQE_SILENCE_WATCH_LAST_RESULT, /^ok/i, 'the Health classifier keys on the prefix');
   assert.equal(h.state.props.DQE_SILENCE_STREAKS, '{"CSR":{"days":1}}', 'state untouched');
 });
+
+// B2/ENG-2 (broad-scan 2026-10-12): the day AFTER the alert, a still-dark dept
+// kept the outcome `ok` -- green on the Health page while per-agent data kept
+// disappearing. An open alerted episode now stays prefix-coded SILENT.
+function runWatchWith(streaks, perDept) {
+  h.state.props = { DQE_SILENCE_WATCH_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com',
+                    DQE_SILENCE_STREAKS: JSON.stringify(streaks) };
+  h.state.sentEmails.length = 0;
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-09-02'; };
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  h.ctx.dqeSilenceReadDay_ = function () { return { date: '2026-09-02', perDept: perDept }; };
+  try { atWeekday(function () { h.call('runDqeSilenceWatch_'); }); }
+  finally { delete h.ctx.prevBusinessDayIso_; delete h.ctx.isCompanyHoliday_; delete h.ctx.dqeSilenceReadDay_; }
+  return h.state.props.DQE_SILENCE_WATCH_LAST_RESULT;
+}
+
+test('B2/ENG-2: an alerted dept still dark the next day keeps the outcome SILENT, never ok', function () {
+  const r = runWatchWith(
+    { 'Field Ops Power': { since: '2026-08-31', days: 2, calls: 45, alerted: true, lastIso: '2026-09-01' },
+      CSR: { since: '2026-09-01', days: 1, calls: 3, alerted: false, lastIso: '2026-09-01' } },
+    [{ dept: 'Field Ops Power', qcdCalls: 20, dqeRows: 0 }, { dept: 'CSR', qcdCalls: 1, dqeRows: 0 }]);
+  assert.match(r, /^SILENT \(already alerted\) 1 dept\(s\) still dark as of 2026-09-02/);
+  assert.match(r, /Field Ops Power \(3d since 2026-08-31, 65 queue calls\)/);
+  assert.match(r, /1 under-threshold streak\(s\) watched/, 'only the un-alerted streak is "under-threshold"');
+  assert.equal(h.state.sentEmails.filter(function (m) { return /silence|dark/i.test(m.subject || ''); }).length, 0,
+    'no second email for the same episode');
+  assert.doesNotMatch(r, /^ok\b/i, 'SILENT is a HEALTH_BAD_PREFIXES_ entry: the Health row stays red');
+});
+
+test('B2/ENG-2: once the dept recovers the outcome returns to ok', function () {
+  const r = runWatchWith(
+    { 'Field Ops Power': { since: '2026-08-31', days: 2, calls: 45, alerted: true, lastIso: '2026-09-01' } },
+    [{ dept: 'Field Ops Power', qcdCalls: 20, dqeRows: 14 }]);
+  assert.match(r, /^ok 2026-09-02 \(1 depts checked\)$/);
+});
