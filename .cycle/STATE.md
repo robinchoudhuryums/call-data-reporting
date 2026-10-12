@@ -1,6 +1,20 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 9 IMPLEMENTED (block 256): agent app + accessibility.**
+  - Fixes:
+    - UI-1: agent-panel and inbound-drill tabs get arrow keys + roving tabindex.
+    - UI-2: agent page live regions.
+    - CL-6: a rejected range keeps the numbers and puts the controls back; custom clamp; History Retry.
+    - CL-7: strict mode actually on.
+    - CL-8: the work window from the constants, incl. the CSR family's 8:00 start.
+    - SEC-4: the note for the capped wait lookup.
+  - Verification: 2396 tests; ci:ui all green (11 new rendered checks); lint clean; 9 bites (2 rendered).
+  - Also answered: PIPE-7's design choice. Recommended option A (on "already in history", check Neon for the date's per-call rows and backfill if missing); awaiting the owner.
+
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 10 (cache anchors + combined-view perf) or Batch 11 (docs, deploy, code health; SEC-7 needs one re-consent) -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — WS-1 IMPLEMENTED (block 255): the internal-call wait starts at the requester's queue leg (owner option 1, the Batch 8 follow-on).**
   - Change: call_start / call_date are unchanged; external calls are unchanged.
   - New read-only tool previewInternalWaitStart (CDR Tools → Diagnostics, pick a date or all dates). It logs each internal call's old and new wait, flags SUSPECT rows, checks that external calls do not move, and shows what Neon stores. Runbook: Operator State #75.

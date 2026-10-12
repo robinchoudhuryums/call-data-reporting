@@ -1972,7 +1972,16 @@ block) unless noted, and the two behavioural ones are also driven in
   (CL-13).** `role="tab"` promises arrow-key movement, a roving `tabindex`
   (only the selected tab is in the Tab order) and `role="tabpanel"` panels
   with `aria-labelledby`. The agent app's two tabs carry all of it, and
-  `drive-agent.js` presses ArrowRight / Home on them.
+  `drive-agent.js` presses ArrowRight / Home on them; since UI-1 (broad-scan
+  2026-10-12) so do the My Department agent panel's day tabs
+  (`drive-agentpanel.js` presses ArrowLeft / End) and the Inbound drill's
+  Volume / Abandon % sub-tabs (source-pinned in `client-correctness.test.js`;
+  the Inbound report has no driver). All four follow IR's R12-9 handler:
+  Left/Right wrap, Home/End jump, selection follows focus.
+- **A page's loading and error lines are live regions (UI-2).** An error is
+  `role="alert"`, a loading line `role="status" aria-live="polite"`, so a
+  screen reader hears the swap the eye sees. The agent page carries both on
+  each tab.
 - **A dialog traps Tab, names itself, and gives focus back.** `role="dialog"`
   / `alertdialog` with `aria-modal` promises a boundary the browser does not
   enforce: use the shared `trapFocus_` / `releaseFocus_`, point

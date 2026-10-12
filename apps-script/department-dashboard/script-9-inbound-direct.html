@@ -405,9 +405,10 @@
     const drill = document.createElement('tr');
     drill.className = 'inbound-drill-row';
     drill.innerHTML = '<td colspan="7">'
-      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist">'
-      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab" aria-selected="' + (inboundDrillMetric === 'calls') + '">Volume</button>'
-      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab" aria-selected="' + (inboundDrillMetric === 'rate') + '">Abandon %</button>'
+      // UI-1 (broad-scan 2026-10-12): roving tabindex + the arrow keys below.
+      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist" aria-label="Daily trend metric">'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab" aria-selected="' + (inboundDrillMetric === 'calls') + '" tabindex="' + (inboundDrillMetric === 'calls' ? '0' : '-1') + '">Volume</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab" aria-selected="' + (inboundDrillMetric === 'rate') + '" tabindex="' + (inboundDrillMetric === 'rate' ? '0' : '-1') + '">Abandon %</button>'
       + '</div>'
       + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
       + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
@@ -421,9 +422,25 @@
       drill.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
         b.classList.toggle('active', b === tab);
         b.setAttribute('aria-selected', b === tab ? 'true' : 'false');   // C2-13
+        b.setAttribute('tabindex', b === tab ? '0' : '-1');               // UI-1
       });
       const cached = inboundDrillCache[inboundDrillKey_(insurer)];
       if (cached) inboundRenderDrillChart_(drill, cached);
+    });
+    // UI-1: the APG tabs keyboard model (the R12-9 IR pattern) -- Left/Right
+    // wrap, Home/End jump; selection follows focus through the click handler.
+    drill.querySelector('.inbound-drill-tabs').addEventListener('keydown', function (e) {
+      const tab = e.target.closest && e.target.closest('.pr-trend-subtab');
+      if (!tab || ['ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(e.key) === -1) return;
+      e.preventDefault();
+      const tabs = Array.prototype.slice.call(drill.querySelectorAll('.pr-trend-subtab'));
+      let i = tabs.indexOf(tab);
+      if (e.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+      else if (e.key === 'Home') i = 0;
+      else i = tabs.length - 1;
+      tabs[i].click();
+      tabs[i].focus();
     });
 
     const drillKey = inboundDrillKey_(insurer);

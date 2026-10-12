@@ -381,3 +381,47 @@ test('CL-8 / CL-11: the qcd-hero-sub font is a valid declaration, and every temp
     assert.match(src(f), /^<!DOCTYPE html>\s*<html lang="en">/i, f);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Batch 9 of the 2026-10-12 broad scan: agent app + accessibility. The
+// RENDERED halves are in drive-agent.js (CL-6, CL-8, UI-2, SEC-4) and
+// drive-agentpanel.js (UI-1); these are the source halves.
+
+test('CL-7: the agent app\'s use-strict directive is the first statement of its function', function () {
+  const app = src('agentApp.html');
+  const head = app.split('<script>')[1];
+  const firstStmt = head.replace(/^\s*\(function \(\) \{/, '').replace(/^(\s*\/\/[^\n]*\n)+/, '').trimStart();
+  assert.ok(firstStmt.startsWith("'use strict';"), 'the directive leads the IIFE (comments may precede it)');
+  assert.equal((app.match(/'use strict';/g) || []).length, 1, 'one directive, not a stray string further down');
+});
+
+test('UI-2: the agent page announces its loading and error states', function () {
+  const page = src('agent.html');
+  ['agent-error', 'agent-hist-error'].forEach(function (id) {
+    assert.match(page, new RegExp('id="' + id + '" role="alert"'), id + ' is an alert');
+  });
+  ['agent-loading', 'agent-hist-loading'].forEach(function (id) {
+    assert.match(page, new RegExp('id="' + id + '" role="status" aria-live="polite"'), id + ' is a polite status');
+  });
+});
+
+test('UI-1: the inbound drill sub-tabs carry roving tabindex and the arrow-key model', function () {
+  const inb = src('script-9-inbound-direct.html');
+  const fn = extractFn(inb, 'inboundToggleDrill_');
+  assert.match(fn, /data-metric="calls" role="tab" aria-selected="' \+ \(inboundDrillMetric === 'calls'\) \+ '" tabindex="' \+ \(inboundDrillMetric === 'calls' \? '0' : '-1'\)/);
+  assert.match(fn, /b\.setAttribute\('tabindex', b === tab \? '0' : '-1'\);/, 'a click moves the tab stop');
+  assert.match(fn, /addEventListener\('keydown'[\s\S]*\['ArrowLeft', 'ArrowRight', 'Home', 'End'\][\s\S]*tabs\[i\]\.click\(\);\s*\n\s*tabs\[i\]\.focus\(\);/,
+    'arrow keys select through the click handler and move focus');
+  const ap = src('script-10-escalations.html');
+  assert.match(extractFn(ap, 'apDayHtml_'), /tabindex="' \+ \(on \? '0' : '-1'\)/, 'the agent-panel tabs too');
+});
+
+test('CL-6: the agent app keeps the window on screen when a load fails, and clamps a custom range', function () {
+  const app = src('agentApp.html');
+  const load = extractFn(app, 'load');
+  assert.match(load, /try \{ render\(d\); lastGood_ = reqWin; \}/, 'only a rendered window becomes the fallback');
+  assert.match(load, /if \(lastGood_\) \{\s*\n\s*win = \{ from: lastGood_\.from, to: lastGood_\.to, preset: lastGood_\.preset \};/,
+    'the controls go back to the window whose numbers are shown');
+  assert.match(app, /if \(latestIso && t > latestIso\) \{/);
+  assert.match(extractFn(app, 'showHistError_'), /retry\.addEventListener\('click', function \(\) \{ loadHistory_\(\); \}\);/);
+});

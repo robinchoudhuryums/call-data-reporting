@@ -153,6 +153,8 @@ test('trend covers the 30-day window; missed detail covers the selected window; 
   ]);
   assert.equal(d.missedTotal, 3);
   assert.equal(d.meta.waitsAvailable, false);
+  assert.equal(d.meta.waitsTruncated, false, 'SEC-4 follow-on: an unavailable join is not a truncated one');
+  assert.equal(d.meta.waitsCoverFrom, null);
 });
 
 test('Phase C: wait join decorates matching rings (PST journey +2h -> CST slots); unmatched stay bare', function () {
@@ -343,6 +345,32 @@ test('SEC-4: ahWaitJoin_ matches the QUOTED, escaped name with a LIMIT, and flag
     const t = h.call('ahWaitJoin_', 'Ann', '2026-10-01', '2026-10-07');
     assert.equal(t.truncated, true);
     assert.equal(t.available, true, 'a capped join is still a join -- older rings keep the timestamp only');
+
+    // SEC-4 follow-on (owner 2026-10-12): the cap's cut-off date travels to the
+    // page. Rows arrive newest first, so the last KEPT row's date is it.
+    const dated = [];
+    for (let i = 0; i <= limit; i++) {
+      dated.push({ d: i < limit ? '2026-10-0' + (7 - Math.floor(i * 5 / limit)) : '2026-10-01', call_start: '07:00:00', journey: '[]' });
+    }
+    h.ctx.getDashboardNeonConn_ = function () { return fakeConn(dated); };
+    const c = h.call('ahWaitJoin_', 'Ann', '2026-10-01', '2026-10-07');
+    assert.equal(c.coverFrom, dated[limit - 1].d, 'the oldest date still inside the cap');
+    assert.notEqual(c.coverFrom, '2026-10-01', 'not the dropped row\'s date');
+    h.ctx.getDashboardNeonConn_ = function () { return fakeConn([ring]); };
+    assert.equal(h.call('ahWaitJoin_', 'Ann_1%', '2026-10-01', '2026-10-07').coverFrom, null,
+      'no cut-off date when nothing was cut');
+  } finally { delete h.ctx.getDashboardNeonConn_; }
+
+  // ...and getAgentHome carries it into meta.
+  install('agent');
+  const many2 = [];
+  const cap = h.ctx.AH_WAIT_JOIN_MAX_ROWS_;
+  for (let i = 0; i <= cap; i++) many2.push({ d: i < cap ? '2026-08-12' : '2026-08-10', call_start: '07:00:00', journey: '[]' });
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn(many2); };
+  try {
+    const d = h.call('getAgentHome', { from: '2026-08-10', to: '2026-08-13' });
+    assert.equal(d.meta.waitsTruncated, true);
+    assert.equal(d.meta.waitsCoverFrom, '2026-08-12');
   } finally { delete h.ctx.getDashboardNeonConn_; }
 
   // One rule, two readers: the agent-day drill's PCR-5 pattern is the same function of the name.
@@ -350,4 +378,23 @@ test('SEC-4: ahWaitJoin_ matches the QUOTED, escaped name with a LIMIT, and flag
   ['Ann', 'Ann_1%', 'O\'Brien "Bo"', 'back\\slash'].forEach(function (n) {
     assert.equal(h.call('ahJourneyLikePattern_', n), hd.call('agentDayLikePattern_', n), n);
   });
+});
+
+// CL-8 (broad-scan 2026-10-12): the agent page's window text comes from the
+// pinned display constants (INV-06), incl. R49's earlier floor -- one helper
+// feeds both the served page (Code.gs) and the harness page (build-agent.js).
+test('CL-8: agentWorkWindow_ is the pinned constants, with the CSR family\'s early start and its queues', function () {
+  const w = JSON.parse(JSON.stringify(h.call('agentWorkWindow_')));
+  const fs = require('fs'), path = require('path');
+  const cfg = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Config.gs'), 'utf8');
+  const ww = /const DASHBOARD_WORK_WINDOW = Object\.freeze\(\{\s*pst: '([^']+)',\s*cst: '([^']+)'/.exec(cfg);
+  const ew = /const DASHBOARD_EARLY_WINDOW = Object\.freeze\(\{\s*pst: '[^']+',\s*cst: '([^']+)',\s*queues: Object\.freeze\(\[([^\]]+)\]\)/.exec(cfg);
+  assert.ok(ww && ew, 'the Config.gs constants moved');
+  const queues = ew[2].split(',').map((q) => q.trim().replace(/^'|'$/g, ''));
+  assert.deepEqual(w, { cst: ww[2], pst: ww[1], earlyCst: ew[1], earlyQueues: queues });
+  assert.equal(w.earlyCst.split(' – ')[0], '8:00 AM', 'the start the page shows for the CSR family');
+  const code = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Code.gs'), 'utf8');
+  assert.match(code, /tmpl\.workWindowJson = JSON\.stringify\(agentWorkWindow_\(\)\)/, 'the served page uses the helper');
+  const harness = fs.readFileSync(path.join(__dirname, '..', '..', 'tools', 'ui-harness', 'build-agent.js'), 'utf8');
+  assert.match(harness, /JSON\.stringify\(h\.call\('agentWorkWindow_'\)\)/, 'and so does the harness page');
 });

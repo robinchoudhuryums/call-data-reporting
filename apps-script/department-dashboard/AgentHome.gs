@@ -295,6 +295,11 @@ function getAgentHome(req) {
     // timestamp alone -- labeled coverage, never a guessed wait.
     var join = ahWaitJoin_(who.agentName, from, to);
     detail.waitsAvailable = join.available;
+    // SEC-4 follow-on (owner 2026-10-12): carry the ceiling into the payload
+    // so the page can say older rings show the time only, rather than leave
+    // them silently bare.
+    detail.waitsTruncated = !!join.truncated;
+    detail.waitsCoverFrom = join.truncated ? (join.coverFrom || null) : null;
     detail.missedDays = detail.missedDays.map(function (day) {
       return { date: day.date, entries: day.times.map(function (t) {
         var m = join.map[day.date + '|' + ahTimeSec_(t)] || {};
@@ -322,6 +327,8 @@ function getAgentHome(req) {
       trendFrom: trendFrom,
       workWindow: (typeof DASHBOARD_WORK_WINDOW !== 'undefined') ? DASHBOARD_WORK_WINDOW : '',
       waitsAvailable: !!detail.waitsAvailable,   // Phase C: capture reachability, not coverage
+      waitsTruncated: !!detail.waitsTruncated,   // SEC-4: the wait join hit its row ceiling
+      waitsCoverFrom: detail.waitsCoverFrom || null,   // ...and covers rings from this date on
     },
     me: ownView.me,
     meAttFormatted: formatSecondsHms_(ownView.me.attSeconds),
@@ -331,6 +338,23 @@ function getAgentHome(req) {
     trend: detail.trend,
     missedDays: detail.missedDays,
     missedTotal: detail.missedTotal,
+  };
+}
+
+/**
+ * CL-8 (broad-scan 2026-10-12): the work window the agent page states, from
+ * the pinned display constants (INV-06) -- including R49's earlier floor for
+ * the CSR queue family, which is per QUEUE, so the page names the queues
+ * rather than guessing whether this agent's calls came through them.
+ */
+function agentWorkWindow_() {
+  if (typeof DASHBOARD_WORK_WINDOW === 'undefined') return '';
+  var early = (typeof DASHBOARD_EARLY_WINDOW !== 'undefined') ? DASHBOARD_EARLY_WINDOW : null;
+  return {
+    cst: DASHBOARD_WORK_WINDOW.cst,
+    pst: DASHBOARD_WORK_WINDOW.pst,
+    earlyCst: early ? early.cst : '',
+    earlyQueues: early ? early.queues.slice() : [],
   };
 }
 
@@ -361,7 +385,7 @@ function getAgentHome(req) {
 var AH_WAIT_JOIN_MAX_ROWS_ = 3000;
 
 function ahWaitJoin_(agentName, fromIso, toIso) {
-  var out = { map: {}, available: false, truncated: false };
+  var out = { map: {}, available: false, truncated: false, coverFrom: null };
   if (typeof getDashboardNeonConn_ !== 'function') return out;
   var conn = null;
   try {
@@ -389,6 +413,10 @@ function ahWaitJoin_(agentName, fromIso, toIso) {
     if (recs.length > AH_WAIT_JOIN_MAX_ROWS_) {
       recs = recs.slice(0, AH_WAIT_JOIN_MAX_ROWS_);
       out.truncated = true;
+      // SEC-4 follow-on: newest first, so the last kept row's date is where
+      // coverage stops -- rings on that date may be partly covered, older
+      // ones not at all. The agent page says so instead of going quiet.
+      out.coverFrom = recs[recs.length - 1].d || null;
       Logger.log('ahWaitJoin_: hit the ' + AH_WAIT_JOIN_MAX_ROWS_ + '-row ceiling for ' + fromIso + '..' + toIso
         + ' -- older rings keep the timestamp only (SEC-4).');
     }

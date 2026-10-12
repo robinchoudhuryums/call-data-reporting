@@ -71,9 +71,10 @@ function renderAgentApp_(user, preview) {
     preview: !!preview,   // Phase C: admin view-as-agent (banner + explicit req params)
   };
   tmpl.userJson = JSON.stringify(userObj).replace(/</g, '\\u003c');
-  tmpl.workWindowJson = JSON.stringify(
-    (typeof DASHBOARD_WORK_WINDOW !== 'undefined') ? DASHBOARD_WORK_WINDOW : ''
-  ).replace(/</g, '\\u003c');
+  // CL-8 (broad-scan 2026-10-12): the agent page states the work window from
+  // these constants, not a hardcoded "8:30 AM" -- incl. R49's earlier floor
+  // for the CSR queue family (DASHBOARD_EARLY_WINDOW, pinned to the pipeline).
+  tmpl.workWindowJson = JSON.stringify(agentWorkWindow_()).replace(/</g, '\\u003c');
   // R23: the RESOLVED answer standard for this agent's dept ({target, band}
   // -- CSR seed 92/2, company default 80/10), so the app's tint + chart line
   // agree with the manager dashboard's per-dept judgment.
