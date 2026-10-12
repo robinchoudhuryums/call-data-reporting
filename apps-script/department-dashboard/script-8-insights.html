@@ -1752,8 +1752,9 @@
 
     insRenderLengthWarning_(data.meta);
     insRenderQueueHealth_(data.queueHealth);
-    insObSync_(data, opts);   // Batch E1: admin-only Outbound fold
-    if (!(opts && opts.swr)) insCbSync_();   // G1: admin-only Callbacks fold (lazy)
+    // UX-1: the Outbound summary + Callbacks sections moved under the outbound
+    // agent table and follow the PAGE's window (obViewSync_, script-5) -- an
+    // Insights render no longer drives them.
     // Temporal abandon heatmap companion to Queue health (sourced from
     // inbound_calls). Admin only -- getInboundHeatmap inherits the inbound
     // report's vetting gate, so managers never call it and the panel stays
@@ -2048,15 +2049,15 @@
   // markup; this stub keeps the render-path call site harmless.)
   function insRegionHeadSync_(data) { /* retired -- R24 */ }
 
-  // ── Batch E1: Outbound in Insights ──────────────────────────────────────
-  // The dept's outbound calls over the SAME window and the SAME prior window
-  // the inbound sections compare (meta.from/to, meta.priorFrom/priorTo), via
-  // two getDeptOutboundSummary calls (each cached server-side under
+  // ── Batch E1: the Outbound summary (under the outbound agent table) ─────
+  // The dept's outbound calls over the page's window and its INV-28 prior
+  // window (obSectionWindow_, script-5 -- UX-1 moved this out of the Insights
+  // region, whose window it used to read), via two getDeptOutboundSummary
+  // calls through the store the table shares (each cached server-side under
   // deptOutbound:v1). Admin-only while the Outbound report is (6c): shown only
   // while the My Department direction switch is visible (obAllowed_, the ONE
   // client gate for D and E), and the server refuses anyone else regardless.
-  // Not fetched on the SWR pre-paint; a repeat render for the same windows
-  // repaints from the last result instead of re-fetching.
+  // A repeat sync for the same windows repaints from the last result.
   var INS_OB_ = { key: null, seq: 0, cur: null, prior: null, meta: null };
 
   function insObHide_() {
@@ -2064,14 +2065,13 @@
     if (fold) fold.style.display = 'none';
   }
 
-  function insObSync_(data, opts) {
-    var meta = data && data.meta;
+  function insObSync_() {
+    var meta = (typeof obSectionWindow_ === 'function') ? obSectionWindow_() : null;
     // Owner 2026-10-08: the fold follows the direction switch like the G1
     // Callbacks fold -- Outbound / Both only. obEffectiveDir_ reads
     // obAllowed_, so it is still admin-only until 6c and hidden in View-as.
     var dir = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() : 'in';
-    if (dir === 'in' || !meta || !meta.department || !meta.from || !meta.to) { insObHide_(); return; }
-    if (opts && opts.swr) return;
+    if (dir === 'in' || !meta) { insObHide_(); return; }
     var key = [meta.department, meta.from, meta.to, meta.priorFrom || '', meta.priorTo || ''].join('|');
     var fold = $('ins-ob-fold');
     if (fold) fold.style.display = '';
@@ -2088,7 +2088,6 @@
       if (!cur) {
         if (head) head.textContent = 'unavailable';
         var kp = $('ins-ob-kpis'); if (kp) kp.innerHTML = '';
-        var ag = $('ins-ob-agents'); if (ag) ag.innerHTML = '';
         insObNote_('Outbound data could not be loaded' + (failed ? ': ' + failed : '.'));
         INS_OB_.key = null;   // let the next render retry
         return;
@@ -2117,10 +2116,12 @@
     n.textContent = text || '';
   }
 
-  // PURE. Insights is ONE department per run (the team average is per dept,
-  // INV-25/27), but getDeptOutboundSummary folds a parent's one-level
-  // sub-queue rosters in (PC-12, for the My Department combined view). Take
-  // the dept's OWN group: its deptGroups subtotal and its own agents.
+  // PURE. The summary is ONE department's (its prior-window comparison and
+  // per-day figures are per dept), but getDeptOutboundSummary folds a parent's
+  // one-level sub-queue rosters in (PC-12, for the combined table above). Take
+  // the dept's OWN group: its deptGroups subtotal and its own agents. UX-1:
+  // `scope` records what was left out, so the head can say why its count is
+  // smaller than the table's total.
   function insObOwnScope_(p, dept) {
     if (!p) return p;
     var g = (p.deptGroups || []).filter(function (x) { return x.dept === dept; })[0];
@@ -2129,8 +2130,24 @@
     Object.keys(p).forEach(function (k) { out[k] = p[k]; });
     out.totals = g.totals;
     out.agents = (p.agents || []).filter(function (a) { return a.scopeDept === dept; });
+    var others = (p.deptGroups || []).filter(function (x) { return x.dept !== dept; })
+      .map(function (x) { return x.dept; });
+    out.scope = others.length
+      ? { dept: dept, others: others, tablePlaced: (p.totals && p.totals.obTotal) || 0 }
+      : null;
     out.deptGroups = null;
     return out;
+  }
+
+  // PURE (UX-1). The summary's head: its own count, labelled as the dept's own
+  // group when the table above also counts sub-queue agents.
+  function insObHeadText_(t, scope) {
+    if (!(t && t.obTotal)) {
+      return scope ? scope.dept + ' only: no outbound calls in this window'
+        : 'no outbound calls in this window';
+    }
+    return (scope ? scope.dept + ' only · ' : '') + fmtNumber(t.obTotal) + ' placed · '
+      + (t.obConnectRate != null ? Number(t.obConnectRate).toFixed(1) + '% connected' : '–');
   }
 
   // PURE. Is the prior window comparable? Not when it starts before outbound
@@ -2155,22 +2172,16 @@
   function insObRender_(cur, prior, meta) {
     var head = $('ins-ob-fold-head');
     var kp = $('ins-ob-kpis');
-    var ag = $('ins-ob-agents');
     var t = (cur && cur.totals) || {};
     if (!cur || !cur.meta || cur.meta.available === false) {
       if (head) head.textContent = 'unavailable';
       if (kp) kp.innerHTML = '';
-      if (ag) ag.innerHTML = '';
       insObNote_('Outbound data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
       return;
     }
     var usable = insObPriorUsable_(prior, meta);
     var pt = usable ? prior.totals : null;
-    if (head) {
-      head.textContent = (t.obTotal || 0) ? (fmtNumber(t.obTotal) + ' placed · '
-        + (t.obConnectRate != null ? Number(t.obConnectRate).toFixed(1) + '% connected' : '–'))
-        : 'no outbound calls in this window';
-    }
+    if (head) head.textContent = insObHeadText_(t, cur.scope);
     if (kp) {
       kp.innerHTML = [
         insQhKpiTileHtml_('Placed', fmtNumber(t.obTotal || 0), 'outbound calls',
@@ -2188,8 +2199,12 @@
           (pt && t.obConnected && pt.obConnected) ? insObDelta_(t.obAttSec || 0, pt.obAttSec || 0, 'volume', 'neu', meta) : ''),
       ].join('');
     }
-    if (ag) ag.innerHTML = insObAgentsHtml_(cur.agents || [], usable ? (prior.agents || []) : null, meta);
+    // UX-1: no agent table here -- the outbound agent table directly above is it.
     var notes = [];
+    if (cur.scope) {
+      notes.push('These figures are ' + cur.scope.dept + '’s own group. The table above also includes '
+        + cur.scope.others.join(', ') + ' (' + fmtNumber(cur.scope.tablePlaced) + ' placed in all).');
+    }
     if (cur.meta.fallbackSource === 'sheet') {
       notes.push('Neon was unreachable: these figures come from the Outbound Calls tab'
         + (cur.meta.fallbackThrough ? ' (through ' + cur.meta.fallbackThrough + ')' : '') + '.');
@@ -2206,32 +2221,6 @@
     insObNote_(notes.join(' '));
   }
 
-  function insObAgentsHtml_(agents, priorAgents, meta) {
-    if (!agents.length) return '';
-    var priorBy = {};
-    (priorAgents || []).forEach(function (a) { priorBy[a.scopeDept + '|' + a.agent] = a; });
-    var rows = agents.slice().sort(function (a, b) {
-      return (b.obTotal || 0) - (a.obTotal || 0) || String(a.agent).localeCompare(String(b.agent));
-    }).map(function (a) {
-      var p = priorAgents ? priorBy[a.scopeDept + '|' + a.agent] : null;
-      var delta = priorAgents ? insObDelta_(a.obTotal || 0, p ? (p.obTotal || 0) : 0, 'volume', 'neu', meta, 'volume') : '';
-      return '<tr>'
-        + '<td>' + escapeHtml(a.agent) + '</td>'
-        + '<td class="num">' + fmtNumber(a.obTotal || 0) + (delta ? ' ' + delta : '') + '</td>'
-        + '<td class="num">' + fmtNumber(a.obConnected || 0) + '</td>'
-        + '<td class="num">' + (a.obConnectRate != null ? escapeHtml(Number(a.obConnectRate).toFixed(1) + '%') : '–') + '</td>'
-        + '<td class="num">' + (a.obPerDay != null ? escapeHtml(String(a.obPerDay)) : '–') + '</td>'
-        + '<td class="num">' + (a.obConnected ? escapeHtml(fmtDuration(a.obAttSec || 0)) : '–') + '</td>'
-        + '</tr>';
-    }).join('');
-    return '<div class="ins-ob-scroll"><table class="ds-table ins-ob-table">'
-      + '<thead><tr><th scope="col">Agent</th><th scope="col" class="num">Placed</th>'
-      + '<th scope="col" class="num" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">Connected</th>'
-      + '<th scope="col" class="num">Connect %</th><th scope="col" class="num">Per day</th>'
-      + '<th scope="col" class="num">Avg talk</th></tr></thead>'
-      + '<tbody>' + rows + '</tbody></table></div>';
-  }
-
   // ── G1: Callbacks in Insights (the Outbound report moving onto My Dept) ──
   // The Outbound modal's callback analysis for the dept + window on screen,
   // from getOutboundReport (the SAME RPC, cache and payload the modal reads),
@@ -2246,9 +2235,12 @@
   // closed it would be the C3 zero-height canvas).
   var INS_CB_ = { key: null, seq: 0, data: null, error: null, uncSeq: 0, cbkSeq: 0 };
 
+  // UX-1: the page's window (obSectionWindow_, script-5), not Insights' -- the
+  // section sits under the outbound table now and loads with or without the
+  // Insights region.
   function insCbWindow_() {
-    var m = insLastData && insLastData.meta;
-    if (!m || !m.department || !m.from || !m.to) return null;
+    var m = (typeof obSectionWindow_ === 'function') ? obSectionWindow_() : null;
+    if (!m) return null;
     return { department: m.department, from: m.from, to: m.to };
   }
 

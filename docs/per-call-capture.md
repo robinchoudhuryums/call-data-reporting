@@ -493,8 +493,9 @@ so talk time and connects need the per-call table whatever Batch C's probe
 (Operator State #74) says. Pinned in `outbound-fallback.test.js`.
 
 **Batch E puts the same figures in two more places, both admin-only until 6c.**
-The **Insights Outbound fold** calls `getDeptOutboundSummary` for the region's
-window and for its prior window, so it adds no SQL of its own. The **Overview
+The **Outbound summary** under My Department's outbound table (UX-1 moved it
+out of Insights) calls `getDeptOutboundSummary` for the page's window and its
+INV-28 prior window, so it adds no SQL of its own. The **Overview
 tiles' outbound line** is the one new read. `ovReadOutboundByDept_`
 (CompanyOverview.gs) runs ONE grouped query over the Overview's existing read
 window: per agent, `count(*) FILTER` placed and connected for each of the five
@@ -526,7 +527,7 @@ second time for the summary's own `meta.priorFrom/priorTo`.
 **Outbound report (`OutboundReport.gs`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**
 Since G3 (owner 2026-10-08) it has no modal: `getOutboundReport` feeds the My
-Department Insights Callbacks fold and the Overview's Callbacks by department,
+Department Callbacks section (under the outbound table since UX-1) and the Overview's Callbacks by department,
 the per-agent half rides `getDeptOutboundSummary`, and the legacy route
 `#/report/outbound` lands on the Callbacks fold. TEMPORARILY admin-only while
 vetted (the Inbound/Direct resolver model -- latent per-dept manager path,

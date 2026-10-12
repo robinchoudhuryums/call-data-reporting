@@ -2131,7 +2131,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   stripped by `personalizeOverview_` (`companyOverview:v28`).
 - **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
   `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
-  6c pin in `cross-file-pins.test.js` moves it with the gate and the two Insights outbound folds).
+  6c pin in `cross-file-pins.test.js` moves it with the gate and the two outbound sections under the table).
   The client's permission IS the switch's visibility (`obAllowed_`), so
   view-as-manager falls back to Inbound with no role check. Outbound and Both
   render a SEPARATE table, `#agents-ob-table` (`obViewRender_`, script-5), so
@@ -2156,23 +2156,30 @@ stay pinned by INV-39, INV-53 and INV-06.
   SAME card window the inbound stats show; a window that starts before outbound
   capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
   only to admins and only when its Neon read worked, so "render when present"
-  is the whole client gate. **Insights (E1):** the `#ins-ob-fold` fold
-  (`insObSync_`, script-8) sits after Queue health. It reads
-  `getDeptOutboundSummary` twice -- the region's window and its prior window
-  -- keeps only the dept's OWN group (`insObOwnScope_`: its `deptGroups`
-  subtotal and agents, since Insights is one department per run while the
-  summary folds a parent's sub-queues in for My Department), and renders
-  five tiles with `insDeltaBadge_` deltas (per day when the
-  windows differ in length, CL-2) plus a per-agent table in a horizontal
-  scroller (`.ins-ob-scroll`; the bare table pushed the page to 510 px at
-  360). It shows only on the Outbound or Both direction (`obEffectiveDir_`,
+  is the whole client gate. **The Outbound summary (E1, moved by UX-1):** the
+  `#ins-ob-fold` fold (`insObSync_`, script-8; ids keep their historical
+  `ins-*` prefix) sits in `#dept-ob-sections` DIRECTLY UNDER the outbound
+  agent table, outside the Insights region (owner 2026-10-12, broad-scan
+  Batch 3b). It reads the PAGE's window -- `obSectionWindow_` (script-5):
+  the loaded `state.meta` window and its INV-28 prior, the same one the
+  table's chips use -- never Insights' last result, so a collapsed Insights
+  region cannot leave it empty or stale; `obViewSync_` drives it after every
+  dept render. It reads `getDeptOutboundSummary` twice (window + prior, via
+  the store the table shares), keeps only the dept's OWN group
+  (`insObOwnScope_`: its `deptGroups` subtotal and agents), and renders five
+  tiles with `insDeltaBadge_` deltas. It has NO agent table (the outbound
+  table above is that); when the table also holds sub-queue agents, its head
+  reads "<dept> only · N placed" and a note names the left-out sub-queues and
+  the table's total (`insObHeadText_` / `insObOwnScope_`'s `scope`). It
+  shows only on the Outbound or Both direction (`obEffectiveDir_`,
   i.e. `obAllowed_()`, the same gate as Batch D -- owner 2026-10-08 aligned it
   with the G1 Callbacks fold; `obViewSync_` re-syncs both folds on a switch),
   so Inbound, View-as and managers never fetch. A prior window that starts before capture shows
-  no comparison and says why. It is not fetched on the SWR pre-paint, and a
-  repeat render of the same windows repaints from the last result. The fold
-  persists as `ob` in the Insights folds store and is open by default.
-  Rendered-gated by `drive-outbound-e.js`.
+  no comparison and says why. A repeat sync of the same windows repaints from
+  the last result. The fold persists as `ob` in the Insights folds store and
+  is open by default. Rendered-gated by `drive-outbound-e.js` (incl. its
+  placement and staying visible with the Insights region collapsed);
+  `outbound-home.test.js` pins the markup and the window source.
 - **Prior-period chips on outbound (owner 2026-10, Batch F).** The E5
   `wow-chip` dialect, via ONE helper pair in script-5 (`obPriorChip_` /
   `obRateChip_`) shared by the Overview tile line and the My Department
@@ -2188,10 +2195,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   gets no chip (E5's rule), Total / subtotal rows get none, and a prior
   window starting before outbound capture shows none. Pinned by
   `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
-- **Callbacks in Insights -- the Outbound report moving onto My Department
-  (owner 2026-10, Batch G1).** The `#ins-cb-fold` fold (`insCbSync_`,
-  script-8) sits after the Outbound fold and carries the retired modal's callback
-  analysis for the region's dept + window: the seven contact-EPISODE tiles
+- **Callbacks -- the Outbound report moving onto My Department (owner
+  2026-10, Batch G1; moved under the outbound table by UX-1).** The
+  `#ins-cb-fold` fold (`insCbSync_`, script-8) sits after the Outbound summary
+  in `#dept-ob-sections` and carries the retired modal's callback analysis
+  for the PAGE's dept + window (`insCbWindow_` reads `obSectionWindow_`): the seven contact-EPISODE tiles
   (CE-1 -- own team, another team, got through and not called back are
   SEPARATE tiles by ruling, never one "called back"; prior deltas on the two
   own-team rates from `callbackPrior`), the "how fast" strip, the daily chart,

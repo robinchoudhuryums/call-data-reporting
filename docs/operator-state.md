@@ -2299,8 +2299,9 @@ When something looks wrong, before assuming a code bug, check:
        version). Flip `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false`
        AND remove `data-admin-only` + `style="display:none;"` from
        `#dept-dir-switch` (the My Department Inbound | Outbound | Both switch,
-       Batch D), `#ins-ob-fold` (the Insights Outbound fold, Batch E) and
-       `#ins-cb-fold` (the Insights Callbacks fold, Batch G1) in
+       Batch D), `#ins-ob-fold` (the Outbound summary, Batch E) and
+       `#ins-cb-fold` (the Callbacks section, Batch G1) -- both under the
+       outbound agent table since UX-1 -- in
        `dashboard.html`. The Overview tiles' outbound line needs no edit:
        `personalizeOverview_` stops stripping it the moment the gate flips (it
        reads the same switch). The Overview's **Callbacks by department**

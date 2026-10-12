@@ -83,7 +83,8 @@ async function setDir(page, dir) {
 
 (async () => {
   const meta = require('./payloads/meta.json');
-  const insMeta = require('./payloads/insights.json').meta;
+  // UX-1: Callbacks reads the PAGE's window (the dept summary payload's meta).
+  const insMeta = require('./payloads/summary-30d.json').meta;
   const browser = await chromium.launch(launchOptions());
   const errors = [];
 

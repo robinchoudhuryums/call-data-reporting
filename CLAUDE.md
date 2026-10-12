@@ -252,8 +252,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # manager/view-as fall back to Inbound, panels never overlap, prior-period
 # chips on agent rows only -- Batches D/F),
 # drive-outbound-e.js (the Overview tiles' outbound line per card window +
-# the Insights Outbound fold's two-window deltas; neither reaches a manager
-# or View-as -- Batch E), drive-callbacks.js (the Insights Callbacks fold:
+# the Outbound summary's two-window deltas under the outbound table, UX-1;
+# neither reaches a manager or View-as -- Batch E), drive-callbacks.js (the
+# Callbacks section under the outbound table, UX-1:
 # Outbound/Both only, lazy one fetch, the shared renderers incl. a drawn chart
 # after a reopen, the drill's call path, CSV/email, 360 px -- Batch G1),
 # drive-cbdept.js (Callbacks by department on the Overview: admin-only, lazy,
@@ -2333,8 +2334,8 @@ S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Dep
 S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
 S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
 S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department Dashboard
-S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
-S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department Dashboard
+S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, UX-1) | Subsystem: Department Dashboard
+S59 | Callbacks under the outbound table on My Department (Batch G1, UX-1) | Subsystem: Department Dashboard
 S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems

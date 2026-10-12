@@ -511,7 +511,7 @@ S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department 
   Steps:
     - As the ADMIN (admin-only until the Outbound report is released), open My Department for a parent dept (e.g. CSR) over a month. Next to the table title, the Inbound | Outbound | Both switch shows; Inbound is selected and the table is the usual one.
     - Click Outbound: the table becomes Connected / Not connected (violet tallies, placed total in brackets, "N / day"), Connect %, Talk time, Avg talk, Attempts, grouped per dept with subtotals and a Total row. The side column shows Team Outbound Data instead of Team Rings.
-    - Reconcile: the Insights Outbound fold for the same dept and dates carries the same placed / connected totals as the dept's OWN subtotal row (S58).
+    - Reconcile: the Outbound summary directly under the table carries the same placed / connected totals as the dept's OWN subtotal row (S58).
     - Click Both: one row per agent with the inbound bar + Answer % and the outbound bar + Connect % + Out talk; Team Rings and Team Outbound stack without overlapping.
     - Click any row in Outbound or Both: the inline agent panel opens under it (S56).
     - Export / Copy while in Outbound: the file is the INBOUND table (the note above the table says so).
@@ -520,25 +520,26 @@ S57 | My Department Inbound / Outbound / Both (Batch D) | Subsystem: Department 
   Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
   Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table or Team Rings shows in the Outbound view; the panels overlap; a manager sees the switch or the outbound view; or Both adds inbound and outbound together anywhere.
 
-S58 | Outbound on the Overview tiles and in Insights (Batches E/F) | Subsystem: Department Dashboard
+S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, UX-1) | Subsystem: Department Dashboard
   Steps:
     - As the ADMIN (admin-only until the Outbound report is released), land on the Overview. Every dept tile shows a violet "Outbound" line under ATT: Placed N · Conn M P%. Expand a sub-queue card: the same line shows in it.
     - Switch the card Window to Last 30 days, then YTD: the line's figures change with the window. On YTD the line adds "since Jul 10" (capture start).
     - Reconcile one dept: My Department on Outbound for that dept, dates = the card window. Placed and Connected equal the tile's line against the dept's OWN subtotal -- the table's grand total also counts the one-level sub-queue rosters (PC-12) while the tile counts the dept's own roster, like the inbound tile.
     - Wait for the 5-minute auto-refresh (or reload): the line is still there and no slower (it rides the cached Overview).
-    - Open My Department over a month, set the direction to Outbound (or Both) and scroll to Insights -- on Inbound the fold is hidden. After Queue health, an "Outbound" fold reads "N placed · P% connected" when closed. Open it: five tiles (Placed, Connected, Connect rate, Per agent-day, Avg talk), each with a ▲/▼ vs the prior window, and a per-agent table. Placed and Connected equal the dept's OWN subtotal in the My Department Outbound view (S57) for the same dates. For a parent dept that subtotal excludes its sub-queues, because Insights covers one department.
-    - Pick a custom comparison that starts before 2026-07-10: the fold shows no comparison and says the prior window predates capture.
-    - View as a manager: no tile shows the outbound line and the Insights fold is gone. As a real MANAGER: the same.
-    - On a phone-width window: the Insights fold's table scrolls sideways inside the fold; the page does not.
+    - Open My Department over a month and set the direction to Outbound (or Both) -- on Inbound the summary is hidden. Directly UNDER the outbound agent table (UX-1 -- not in Insights), an "Outbound" fold reads "N placed · P% connected" when closed. Open it: five tiles (Placed, Connected, Connect rate, Per agent-day, Avg talk), each with a ▲/▼ vs the prior window, and NO agent table (the table above is it). Placed and Connected equal the dept's OWN subtotal in the table (S57) for the same dates. For a parent dept (e.g. CSR) the head reads "CSR only · N placed …" and a note names the sub-queues the table also includes and the table's total.
+    - Collapse the Insights region, then change the dates and Refresh: the Outbound summary and Callbacks still load for the new window (they follow the page's dates, not Insights').
+    - Pick dates whose prior window starts before 2026-07-10: the summary shows no comparison and says the prior window predates capture.
+    - View as a manager: no tile shows the outbound line and the Outbound summary is gone. As a real MANAGER: the same.
+    - On a phone-width window: the summary's tiles wrap; the page does not scroll sideways.
     - Prior-period chips (Batch F). On the tiles, with the Window on Yesterday or Last 30 days: a chip after Placed (green up, red down, gray under 3 calls) and one after the connect % in points (gray under 2 pts, or when either window placed under 10 calls). Hover a chip: it names the prior window and its figures. On YTD (and 60/90 days while capture is younger than the comparison needs): no chips.
     - In My Department's Outbound and Both views, each agent row carries a chip after Connected, a GRAY chip after Not connected, and a chip after Connect %, against the same prior window the inbound chips use. Total and subtotal rows carry none; an agent with no calls in the prior window carries none.
   Expected: as described; with Neon unreachable the tiles show no line (no error) and the fold reads from the Outbound Calls tab with a note saying so.
-  Fails if: a manager or a View-as preview sees either surface or a chip; the Not connected chip is ever colored; a chip appears on a pre-capture comparison; a tile's line does not change with the card window; the fold's totals differ from the dept's own S57 subtotal for the same dates, or a parent dept's fold lists its sub-queues' agents; or the page scrolls sideways at phone width.
+  Fails if: a manager or a View-as preview sees either surface or a chip; the Not connected chip is ever colored; a chip appears on a pre-capture comparison; a tile's line does not change with the card window; the summary's totals differ from the dept's own S57 subtotal for the same dates, a parent dept's summary counts its sub-queues without the "only" label and note, or it sits anywhere but directly under the outbound table; or the page scrolls sideways at phone width.
 
-S59 | Callbacks in Insights on My Department (Batch G1) | Subsystem: Department Dashboard
+S59 | Callbacks under the outbound table on My Department (Batch G1, UX-1) | Subsystem: Department Dashboard
   Steps:
-    - As the ADMIN (admin-only until the Outbound report is released), open My Department over a month with the direction on Inbound and scroll to Insights: there is no "Callbacks" fold.
-    - Switch the direction to Outbound: an "Outbound Callbacks" fold appears after the Outbound fold, closed, reading "open to load abandoned-caller callbacks". Nothing loads until you open it.
+    - As the ADMIN (admin-only until the Outbound report is released), open My Department over a month with the direction on Inbound: there is no "Callbacks" fold.
+    - Switch the direction to Outbound: an "Outbound Callbacks" fold appears under the outbound table, after the Outbound summary (UX-1), closed, reading "open to load abandoned-caller callbacks". Nothing loads until you open it.
     - Open it: seven contact-episode tiles (Contact episodes, Called back by own team, Own callbacks connected, Contacted by another team, Caller got through, Not called back, Median time to callback), the two own-team rate tiles with a ▲/▼ vs the prior window, the "How fast did the team call back (from the first attempt)?" strip, the daily chart, and the by-hour strip. Close the fold: its summary now reads "P% called back by the team · N contact episodes · median H:MM:SS".
     - Find a caller who abandoned several times in a row (Caller Lookup on a not-called-back call id): the attempts count as ONE episode, and its time runs from the first attempt.
     - Paste `#/report/outbound` and reload: My Department on Outbound with this fold open and scrolled into view (G3 -- the modal it replaced is gone).

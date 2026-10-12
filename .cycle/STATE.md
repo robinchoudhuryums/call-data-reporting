@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 3b IMPLEMENTED (block 249): UX-1, one Outbound home on My Department.**
+  - The Outbound summary + Callbacks (+ Direct lines) moved under the outbound agent table; no duplicate agent table; "<dept> only" label + note when the table holds sub-queues.
+  - Decision made while implementing: both sections now read the PAGE's window + INV-28 prior (obSectionWindow_), not Insights' -- otherwise a collapsed Insights region would leave them empty. Consequence: an Insights YoY/custom comparison no longer drives the outbound summary.
+  - 2337 tests (new outbound-home suite); ci:ui all green incl. 4 new UX-1 driver checks; screenshot matched the mock; 7 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-3b + #364 items), walk S57-S59 (+ S30, S23, S56, S36, S20/S29, S32 from Batch 3).
+  **Next:** Batch 4 (fallback tabs + bulk-path signals) or later -- owner picks. UX-2 still deferred.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 3 IMPLEMENTED (block 248): client lifecycle.**
   - CL-1 latest dates re-read while visible; CL-2 agent-panel cached-day seq; CL-3 hidden-tab Overview park; CL-4 no-ring prefetch sig checks; CL-5 month-end clamp; CL-9 Export button release; CL-10 IR close/open token; CL-11 subscriber-only reload; CL-12 Dept Config send-time dept + lock; CL-13 idle-label stash; CL-14 IR focus chain; CL-15 Health toggles.
   - Decision: CL-13 keeps re-entry (newest wins) -- the scan's "ignore re-entry" half would drop the user's latest preset pick.
