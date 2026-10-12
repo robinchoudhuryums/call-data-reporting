@@ -1445,7 +1445,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   both: freshness-weekend.test.js pins the banner behaviorally and the
   pill by source tripwire (its staleness lives in the assembled-client
   IIFE, where the rendered gate cannot tell right from wrong-on-Mondays).
-  Tunable in `setFreshnessPill_` if 36h becomes too noisy. Pill
+  Tunable in `setFreshnessPill_` if 36h becomes too noisy. The dates are
+  RE-READ every 5 min while the tab is visible (`refreshLatestDates_`,
+  B3/CL-1) so an overnight tab's pill and clamps catch up. Pill
   is hidden until the server returns the latest date so the
   header doesn't show a stale fallback. **Role-tiered prominence
   (owner note):** non-admins get `.freshness-pill--subtle` (quiet
@@ -1951,7 +1953,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   dept controls + the "Comparison & agents" popover. The form survives
   HIDDEN as the failure / empty-roster fallback only (`insShowForm`) --
   see docs/insights-merge-plan.md.
-  Overview auto-refreshes silently every 5 minutes while active, re-fetching
+  Overview auto-refreshes silently every 5 minutes while active and VISIBLE
+  (a hidden tab parks the tick and refreshes on return, B3/CL-3), re-fetching
   from the server cache. **A dept-TILE click SOLOS that dept's line on the
   30-day trend chart; it does NOT navigate** --
   `chartSpotlightTogglePin_(ovChartInstance, dept, additive)`, the same pin-set

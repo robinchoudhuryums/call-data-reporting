@@ -1324,7 +1324,13 @@
     insLastRequestedAgents_ = agents.slice();   // edit popover reads the REQUESTED form
     const req = { department: reportDept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
-    const gen = $('ins-generate-btn'); const prev = gen.textContent;
+    const gen = $('ins-generate-btn');
+    // B3/CL-13 (broad-scan 2026-10-12): stash the idle label ONCE -- a run
+    // started while another was in flight read "Generating…" back as its label,
+    // and the superseded run (P29: it returns before restoring) never put the
+    // real one back. The newest run still wins (the token below).
+    if (!gen.dataset.idleLabel) gen.dataset.idleLabel = gen.textContent;
+    const prev = gen.dataset.idleLabel;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     const __rtok = ++reportReqSeq_.ins;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
@@ -2006,8 +2012,14 @@
       });
     };
     if (insQhNoRingCache_ && insQhNoRingCache_.sig === sig) { apply(); return; }
+    // B3/CL-4 (broad-scan 2026-10-12): both handlers check the signature the
+    // request was made for. A late response for an earlier window used to
+    // REPLACE the cache (so the current window's next gate refetched), and a
+    // late FAILURE revealed every drill button -- including ones the current
+    // window's gate had correctly hidden at zero.
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (sig !== insQhMissedSig_()) return;
         const byQueue = {};
         const entries = (resp && resp.entries) || [];
         entries.forEach(function (e) {
@@ -2020,7 +2032,10 @@
         apply();
       })
       .withFailureHandler(function () {
-        tbody.querySelectorAll('.ins-qh-missed-drill').forEach(function (w) {
+        if (sig !== insQhMissedSig_()) return;
+        if (insQhNoRingCache_ && insQhNoRingCache_.sig === sig) return;   // a newer success already gated them
+        const live = $('ins-qh-tbody') || tbody;
+        live.querySelectorAll('.ins-qh-missed-drill').forEach(function (w) {
           w.style.display = '';
         });
       })
@@ -4782,7 +4797,8 @@
    */
   function insBuildCanvas_(onDone) {
     const root = $('insights-results');
-    if (!root) return;
+    // B3/CL-9: no results to capture must still give the Export button back.
+    if (!root) { exportCaptureFailed_(new Error('No Insights results on screen to capture.')); return; }
     // G-2: same CDN-absent guard as irBuildCanvas.
     if (typeof html2canvas === 'undefined') {
       exportCaptureFailed_(new Error('html2canvas is not loaded (blocked CDN?) — image export unavailable.'));

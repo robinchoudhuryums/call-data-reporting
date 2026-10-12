@@ -372,14 +372,25 @@
     }
   }
 
+  // B3/CL-3 (broad-scan 2026-10-12): a tick that lands while the tab is HIDDEN
+  // skips the server call (a background tab left open all day cost one
+  // Overview fetch every 5 min) and parks the refresh; the tab becoming visible
+  // again runs it at once, so a returning viewer never sees older data than
+  // the old timer would have shown.
+  var ovAutoRefreshParked_ = false;
   function ovScheduleAutoRefresh_() {
     if (ovAutoRefreshTimer_) clearTimeout(ovAutoRefreshTimer_);
     ovAutoRefreshTimer_ = setTimeout(function () {
-      if (document.body.getAttribute('data-page') === 'overview') {
-        ovLoad_(true);
-      }
+      if (document.body.getAttribute('data-page') !== 'overview') return;
+      if (document.hidden) { ovAutoRefreshParked_ = true; return; }
+      ovLoad_(true);
     }, OV_AUTO_REFRESH_MS);
   }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden || !ovAutoRefreshParked_) return;
+    ovAutoRefreshParked_ = false;
+    if (document.body.getAttribute('data-page') === 'overview') ovLoad_(true);
+  });
 
   function ovRender_(data) {
     if (!data || !data.depts) return;

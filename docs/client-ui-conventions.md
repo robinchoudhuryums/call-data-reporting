@@ -1083,6 +1083,29 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   never `loader.textContent = 'Error: …'`. (8) A `getLatestDataDates` failure
   is toasted and beaconed before the today-range fallback. New surfaces of
   the same shape adopt the helper, not the pattern it replaced.
+- **Request lifecycle rules (broad-scan 2026-10-12 Batch 3, pinned in
+  `client-lifecycle.test.js`).** (1) A value read at BOOT that the server can
+  change during the day is re-read: the latest data dates go through
+  `refreshLatestDates_` every 5 min while the tab is visible (and on
+  return), feeding every `clampInputsToLatest_` and the pill -- but only the
+  boot call (`applyLatestDates_(dates, true)`) may write the date inputs.
+  (2) A path that renders from a CACHE claims the same sequence token as the
+  fetch path (`AP_.seq++` in `apSelectDay_`), or an older in-flight fetch
+  paints over it. (3) Closing a modal claims its report token
+  (`reportReqSeq_.ir++` on IR close and open) and cancels a pending auto-run.
+  (4) A busy button stashes its idle label ONCE (`dataset.idleLabel`) --
+  reading `innerHTML` at run time captures the spinner when runs overlap.
+  (5) A write's response handler names what was SENT (capture it before the
+  call), never a global it reads at response time, and the controls that
+  would change the target are locked in flight (`dcSetBusy_`). (6) A shared
+  capture-failure handler releases every busy trigger it can reach,
+  `#dept-export-btn` and `insExportBusy_` included. (7) Focus on close goes
+  to the first SHOWN element of opener → launcher → `#page-title`
+  (`irFocusAfterClose_`); a hidden launcher drops focus to `<body>`. (8) A
+  section reload after a write re-reads only that section
+  (`alReloadSubscribers_`, the `alCfgApplySection_` rule) and keeps the
+  user's unsaved edits elsewhere (the Health UI toggles' dirty flag).
+  (9) Auto-refresh timers do nothing in a hidden tab.
 - **The Window selector and the chart's range control are ONE option set now
   (R50).** Window (`#ov-period-bar`) drives the dept CARDS and the agent table
   below; Chart (`#ov-chart-range`) drives the trend. They were built apart and

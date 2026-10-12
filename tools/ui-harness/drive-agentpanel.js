@@ -133,7 +133,16 @@ function record(name, pass, detail) {
     return !!m && getComputedStyle(m).display !== 'none';
   });
   record('"Individual report" opens the Individual Report', irOpen);
-  if (irOpen) { await page.keyboard.press('Escape'); await page.waitForTimeout(700); }
+  if (irOpen) {
+    await page.keyboard.press('Escape'); await page.waitForTimeout(700);
+    // B3/CL-14: focus returns to the panel's button, never the Reports menu's
+    // launcher (hidden for a manager) or <body>.
+    const back = await page.evaluate(() => {
+      const a = document.activeElement;
+      return a ? (a.hasAttribute('data-ap-ir') ? 'ap-ir' : (a.id || a.tagName)) : 'none';
+    });
+    record('closing the Individual Report returns focus to the panel\'s button', back === 'ap-ir', 'focus=' + back);
+  }
 
   // ---- 5. Escape and Collapse close it and hand focus back ---------------
   await page.locator('#ap-panel .ap-day').first().focus();

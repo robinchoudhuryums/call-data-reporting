@@ -2727,6 +2727,11 @@
     wireBackup('health-backup-now',       'runNeonBackupNow',           'Backing up… (can take a minute)');
     // R7 (G-3): UI surface toggles editor.
     const uiSave = $('health-uiflags-save');
+    // B3/CL-15: a tick the admin has not saved yet survives a Health reload.
+    const uiList = $('health-uiflags-list');
+    if (uiList) uiList.addEventListener('change', function (e) {
+      if (e.target && e.target.matches && e.target.matches('input[type=checkbox]')) healthUiFlagsDirty_ = true;
+    });
     if (uiSave) uiSave.addEventListener('click', function () {
       const list = $('health-uiflags-list');
       if (!list) return;
@@ -2738,6 +2743,7 @@
       google.script.run
         .withSuccessHandler(function (resp) {
           uiSave.disabled = false;
+          healthUiFlagsDirty_ = false;   // B3/CL-15: the list now matches the server
           if (st) st.textContent = 'Saved — '
             + ((resp && resp.flags && resp.flags.length) ? (resp.flags.length + ' surface(s) hidden') : 'all surfaces visible')
             + '. Users pick this up on their next page load.';
@@ -2752,14 +2758,31 @@
 
   // R7 (G-3): render the UI-toggle checkboxes from the server registry
   // (checked = HIDDEN). Loaded alongside the health table.
+  // B3/CL-15 (broad-scan 2026-10-12): three fixes. (1) Every Health reload
+  // (Refresh, a backup action) re-rendered this list from the server, wiping
+  // ticks the admin had not saved -- unsaved ticks are now kept, with a note.
+  // (2) The load carries a request token, so a slower earlier response cannot
+  // paint over a newer one. (3) A load FAILURE used to hide the section
+  // silently; it now says so (a server with no registry still hides it).
+  var healthUiFlagsSeq_ = 0;
+  var healthUiFlagsDirty_ = false;
   function healthLoadUiFlags_() {
     const list = $('health-uiflags-list');
     const section = $('health-uiflags-section');
     if (!list || !section) return;
+    const tok = ++healthUiFlagsSeq_;
+    const st = $('health-uiflags-status');
+    const save = $('health-uiflags-save');
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (tok !== healthUiFlagsSeq_) return;
         if (!resp || !resp.registry) { section.style.display = 'none'; return; }
         section.style.display = '';
+        if (save) save.disabled = false;
+        if (healthUiFlagsDirty_ && list.querySelector('input[type=checkbox]')) {
+          if (st) st.textContent = 'Unsaved changes kept — Save to apply them.';
+          return;
+        }
         const flags = resp.flags || [];
         list.innerHTML = Object.keys(resp.registry).map(function (k) {
           const on = flags.indexOf(k) !== -1;
@@ -2768,7 +2791,19 @@
             + ' <code class="health-uiflag-key">' + escapeHtml(k) + '</code></label>';
         }).join('');
       })
-      .withFailureHandler(function () { section.style.display = 'none'; })
+      .withFailureHandler(function (err) {
+        if (tok !== healthUiFlagsSeq_) return;
+        section.style.display = '';
+        if (healthUiFlagsDirty_ && list.querySelector('input[type=checkbox]')) {
+          if (st) st.textContent = 'Couldn’t re-read the saved toggles ('
+            + (err && err.message ? err.message : String(err)) + '); your unsaved changes are kept.';
+          return;
+        }
+        if (save) save.disabled = true;
+        list.innerHTML = '<div class="ds-note">Couldn’t load the UI toggles: '
+          + escapeHtml(err && err.message ? err.message : String(err))
+          + ' — press Refresh to try again.</div>';
+      })
       .getUiFlags();
   }
 

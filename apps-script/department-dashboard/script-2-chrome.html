@@ -532,34 +532,8 @@
     // defaultRange above).
     google.script.run
       .withSuccessHandler(function (dates) {
-        // dates = { dqe, qcd, latest } per Data.gs::getLatestDataDates.
-        // From/To defaults use DQE specifically (the agent table
-        // draws from DQE; defaulting to a QCD-only date would
-        // empty the table). Pill uses the overall max + a
-        // per-source tooltip breakdown so an out-of-sync state
-        // (e.g. mid-migration) doesn't make the pill look stuck.
-        const dqe = dates && dates.dqe ? dates.dqe : null;
-        if (dqe) {
-          latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
-          // C1-2 (broad-scan 2026-09-17): this snap is async and can land
-          // AFTER the user has already picked a window (a preset chip, a typed
-          // date, a chart-point deep link) -- overwriting it with the latest
-          // day and re-fetching a range they did not ask for. Snap only while
-          // the controls still hold the untouched default.
-          if (!datesTouched_) {
-            $('from-date').value = dqe;
-            $('to-date').value = dqe;
-          }
-        }
-        // Latest QCD day drives the Daily Call Queue Report's default
-        // date, so a Monday/holiday open lands on real data instead of
-        // an empty literal-yesterday (a weekend).
-        if (dates && dates.qcd) latestQcdIso_ = dates.qcd;
-        // R12-26: coverage starts (earliest data per source) for the
-        // shorter-than-claimed-range warnings on the report surfaces.
-        dataCoverage_ = { dqe: (dates && dates.dqeEarliest) || null,
-                          qcd: (dates && dates.qcdEarliest) || null };
-        setFreshnessPill_(dates || null);
+        latestDatesFetchedAt_ = Date.now();
+        applyLatestDates_(dates, true);
         refresh();
       })
       .withFailureHandler(function (err) {
@@ -582,6 +556,75 @@
     // Overview's data fetch.
     setPage('overview');
   }
+
+  // B3/CL-1 (broad-scan 2026-10-12): the latest data dates were read ONCE at
+  // boot, so a tab left open overnight kept clamping every DQE / QCD window
+  // (clampInputsToLatest_) to yesterday's latest date -- "Yesterday" snapped
+  // back a day -- and the freshness pill never aged to amber. They are now
+  // re-read every LATEST_DATES_REFRESH_MS while the tab is visible and when it
+  // becomes visible again (the server caches the answer for 5 min, so this is
+  // the Overview auto-refresh's cost, and a hidden tab pays nothing -- CL-3).
+  // A re-read updates the clamps, the coverage starts and the pill; it never
+  // moves dates the user is looking at (the boot-only snap below).
+  var LATEST_DATES_REFRESH_MS = 5 * 60 * 1000;
+  var latestDatesFetchedAt_ = 0;
+  var latestDatesInFlight_ = false;
+  var latestDatesLast_ = null;
+  function applyLatestDates_(dates, isBoot) {
+    latestDatesLast_ = dates || null;
+    // dates = { dqe, qcd, latest } per Data.gs::getLatestDataDates.
+    // From/To defaults use DQE specifically (the agent table
+    // draws from DQE; defaulting to a QCD-only date would
+    // empty the table). Pill uses the overall max + a
+    // per-source tooltip breakdown so an out-of-sync state
+    // (e.g. mid-migration) doesn't make the pill look stuck.
+    const dqe = dates && dates.dqe ? dates.dqe : null;
+    if (dqe) {
+      latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
+      // C1-2 (broad-scan 2026-09-17): this snap is async and can land
+      // AFTER the user has already picked a window (a preset chip, a typed
+      // date, a chart-point deep link) -- overwriting it with the latest
+      // day and re-fetching a range they did not ask for. Snap only while
+      // the controls still hold the untouched default.
+      if (isBoot && !datesTouched_) {
+        $('from-date').value = dqe;
+        $('to-date').value = dqe;
+      }
+    }
+    // Latest QCD day drives the Daily Call Queue Report's default
+    // date, so a Monday/holiday open lands on real data instead of
+    // an empty literal-yesterday (a weekend).
+    if (dates && dates.qcd) latestQcdIso_ = dates.qcd;
+    // R12-26: coverage starts (earliest data per source) for the
+    // shorter-than-claimed-range warnings on the report surfaces.
+    dataCoverage_ = { dqe: (dates && dates.dqeEarliest) || null,
+                      qcd: (dates && dates.qcdEarliest) || null };
+    setFreshnessPill_(dates || null);
+  }
+  function refreshLatestDates_(force) {
+    if (document.hidden || latestDatesInFlight_) return;
+    if (!force && Date.now() - latestDatesFetchedAt_ < LATEST_DATES_REFRESH_MS) {
+      setFreshnessPill_(latestDatesLast_);   // still ages the "Nh ago" label
+      return;
+    }
+    latestDatesInFlight_ = true;
+    google.script.run
+      .withSuccessHandler(function (dates) {
+        latestDatesInFlight_ = false;
+        latestDatesFetchedAt_ = Date.now();
+        if (dates && (dates.dqe || dates.qcd || dates.latest)) applyLatestDates_(dates, false);
+      })
+      .withFailureHandler(function () {
+        // Best-effort: keep the last good dates; the boot failure already toasted.
+        latestDatesInFlight_ = false;
+        latestDatesFetchedAt_ = Date.now();
+      })
+      .getLatestDataDates();
+  }
+  setInterval(function () { refreshLatestDates_(false); }, LATEST_DATES_REFRESH_MS);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && latestDatesFetchedAt_) refreshLatestDates_(false);
+  });
 
   // -- Date preset chips ---------------------------------------------------
   // The Quick-select chip list + builder. (M4: the Insights header's twin

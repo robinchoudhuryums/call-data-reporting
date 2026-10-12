@@ -2761,7 +2761,11 @@
         b.setAttribute('aria-pressed', on ? 'true' : 'false');
       });
     }
-    if (AP_.days[date]) { apRenderDay_(AP_.days[date]); return; }
+    // B3/CL-2 (broad-scan 2026-10-12): the cached-day path also claims the
+    // sequence -- without it, a fetch still in flight for the PREVIOUS day
+    // landed after this instant render and painted that day's calls under the
+    // box just highlighted.
+    if (AP_.days[date]) { AP_.seq++; apRenderDay_(AP_.days[date]); return; }
     const tok = ++AP_.seq;
     apSetHtml_('[data-ap-day]', apLoadingHtml_('Loading ' + date + '…'));
     google.script.run
@@ -2854,7 +2858,10 @@
       const t = e.target;
       if (t.closest('[data-ap-close]')) { apClose_(true); return; }
       if (t.closest('[data-ap-ir]')) {
-        if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(AP_.agent, AP_.from, AP_.to);
+        // B3/CL-14: closing IR hands focus back to this button.
+        if (typeof irDrillToAgent_ === 'function') {
+          irDrillToAgent_(AP_.agent, AP_.from, AP_.to, { returnFocus: t.closest('[data-ap-ir]') });
+        }
         return;
       }
       const day = t.closest('[data-ap-date]');

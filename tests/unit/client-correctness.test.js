@@ -297,7 +297,8 @@ test('CL-22: a subscriber save that half-succeeds says which half, and reloads t
   assert.match(fn, /if \(saved\.length\) \{/);
   assert.match(fn, /'Partly saved: the ' \+ saved\.join/);
   const partial = between(fn, /if \(saved\.length\) \{/, /\} else \{/);
-  assert.match(partial, /alLoadInit_\(\);/);
+  // B3/CL-11 (broad-scan 2026-10-12): the reload is the subscriber lists only.
+  assert.match(partial, /alReloadSubscribers_\(\);/);
   assert.match(fn, /if \(i > 0\) saved\.push\(labels\[i - 1\]\);/);
 });
 

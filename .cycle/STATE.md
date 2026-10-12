@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 3 IMPLEMENTED (block 248): client lifecycle.**
+  - CL-1 latest dates re-read while visible; CL-2 agent-panel cached-day seq; CL-3 hidden-tab Overview park; CL-4 no-ring prefetch sig checks; CL-5 month-end clamp; CL-9 Export button release; CL-10 IR close/open token; CL-11 subscriber-only reload; CL-12 Dept Config send-time dept + lock; CL-13 idle-label stash; CL-14 IR focus chain; CL-15 Health toggles.
+  - Decision: CL-13 keeps re-entry (newest wins) -- the scan's "ignore re-entry" half would drop the user's latest preset pick.
+  - 2334 tests (new client-lifecycle suite, out-of-order fake runner); ci:ui all green incl. a new drive-agentpanel focus check; lint clean; 21 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-3 + #364 items), walk S30, S23, S56, S36, S20/S29, S32.
+  **Next:** Batch 3b (UX-1, the Outbound layout move) or Batch 4 (fallback tabs + bulk-path signals) -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 2 IMPLEMENTED (block 247): green-while-broken + backup integrity.**
   - ENG-10 a configured backup folder is never recreated or silently swapped for Sheets; ENG-11 scrubs don't stall on the inactive store; ENG-12 scrub/backup file lease; ENG-2 DQE-silence stays SILENT while an alerted dept is dark; ENG-1 reinstalls keep pending retries + Health "RETRY LOST"; ENG-13 backfills don't reset the Overview freshness clock.
   - 2322 tests; lint clean; module map current; 13 bites (one survivor got its own test). No client change (ci:ui not needed). No cache bump.

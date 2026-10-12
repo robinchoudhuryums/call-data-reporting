@@ -147,6 +147,7 @@
   let irPendingAgentSelection_ = null;
   let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
   let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
+  let irReturnFocusEl_ = null;     // B3/CL-14: the drill's opener, focused again on close"
   let irEditPopoverSeededCustom_ = false; // #1: edit popover opened over a custom-prior report
   let irListChangeHandler_ = null;
   // L3: per-email key. The IR prefs blob stores the AGENT SELECTION, which must
@@ -181,6 +182,13 @@
     }
     irPendingAgentSelection_ = [agentName];
     irPendingAutoRun_ = true;
+    // B3/CL-14: remember what launched the drill (the agent panel's
+    // "Individual report" button) so closing IR returns focus THERE -- the
+    // modal's own launcher is in the admin-only Reports menu, hidden for a
+    // manager, and focusing a hidden button drops keyboard focus to <body>.
+    const __ae = document.activeElement;
+    irReturnFocusEl_ = (opts && opts.returnFocus)
+      || (__ae && __ae !== document.body ? __ae : null);   // Safari leaves <body> focused on a click
     // Force a roster re-fetch for this range so renderIrAgentList re-runs
     // (and applies the pending selection + auto-run) even if the cached
     // roster matched.
@@ -207,6 +215,20 @@
     if (btn) btn.click();   // -> openModal -> ensureIrRoster -> renderIrAgentList
   }
 
+  // B3/CL-14: where focus goes when the IR modal closes (non-Insights path):
+  // the drill's opener while it is still on screen, else the Reports launcher
+  // when it is visible (an admin), else the page title -- never a hidden node.
+  function irFocusShown_(el) {
+    return !!(el && el.isConnected && typeof el.focus === 'function'
+      && el.getClientRects && el.getClientRects().length > 0);
+  }
+  function irFocusAfterClose_(launcher) {
+    const order = [irReturnFocusEl_, launcher, $('page-title')];
+    for (let i = 0; i < order.length; i++) {
+      if (irFocusShown_(order[i])) { try { order[i].focus(); } catch (e) { /* ignore */ } return; }
+    }
+  }
+
   function initIndividualReport() {
     const btn = $('individual-report-btn');
     const modal = $('individual-modal');
@@ -216,6 +238,10 @@
     const backdrop = modal.querySelector('[data-close]');
 
     function openModal() {
+      // B3/CL-10 (broad-scan 2026-10-12): a run still in flight from the last
+      // open belongs to a closed modal -- claim the token so it can never paint
+      // a previous agent's or department's report over this open.
+      reportReqSeq_.ir++;
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -230,6 +256,11 @@
       ensureIrRoster();
     }
     function closeModal() {
+      // B3/CL-10: cancel the in-flight run (releaseIfSuperseded still gives the
+      // Generate button back) and a drill's pending auto-run, which would
+      // otherwise generate into the hidden modal once its roster arrived.
+      reportReqSeq_.ir++;
+      irPendingAutoRun_ = false;
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
@@ -250,8 +281,9 @@
         if (h1) { try { h1.focus(); } catch (e) { /* ignore */ } }
       } else {
         document.body.style.overflow = '';
-        btn.focus();
+        irFocusAfterClose_(btn);
       }
+      irReturnFocusEl_ = null;
       // Revert the header-tab highlight to the underlying page's route.
       // initRouter's generic revert hook only covers .modal-close /
       // [data-close] clicks, which missed the "Back to Insights" button and

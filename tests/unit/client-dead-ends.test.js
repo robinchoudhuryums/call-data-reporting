@@ -66,9 +66,13 @@ test('C1-1: the Overview hard error is a Retry block beside the skeleton, never 
 test('C1-2: the async init latest-date snap yields to a window the user already picked', function () {
   const s2 = src('script-2-chrome.html');
   assert.ok(/var datesTouched_ = false;/.test(s2), 'the flag is declared');
-  const init = between(s2, /\.getLatestDataDates\(\);/.source ? /withSuccessHandler\(function \(dates\) \{/ : null, /\.getLatestDataDates\(\);/);
-  assert.ok(/if \(!datesTouched_\) \{\s*\$\('from-date'\)\.value = dqe;\s*\$\('to-date'\)\.value = dqe;/.test(init),
-    'the snap writes From/To only while untouched');
+  // B3/CL-1 (broad-scan 2026-10-12): the snap moved into applyLatestDates_,
+  // shared with the periodic re-read -- and only the BOOT call may write.
+  const init = between(s2, /withSuccessHandler\(function \(dates\) \{/, /\.getLatestDataDates\(\);/);
+  assert.ok(/applyLatestDates_\(dates, true\);/.test(init), 'the boot fetch applies as the boot call');
+  const apply = between(s2, /function applyLatestDates_\(/, /\n  function /);
+  assert.ok(/if \(isBoot && !datesTouched_\) \{\s*\$\('from-date'\)\.value = dqe;\s*\$\('to-date'\)\.value = dqe;/.test(apply),
+    'the snap writes From/To only at boot, and only while untouched');
   // Every user-driven window write sets the flag: typed dates, preset chips, the chart deep link.
   const fromL = between(s2, /\$\('from-date'\)\.addEventListener\('change'/, /\}\);/);
   const toL = between(s2, /\$\('to-date'\)\.addEventListener\('change'/, /\}\);/);
