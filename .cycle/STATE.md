@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 4 IMPLEMENTED (block 250): fallback tabs + bulk-path signals.**
+  - TOOL-1 export tabs re-read changed older dates (updated_at watermark, 10/run + pending; cdr-import correction UPDATEs bump updated_at); TOOL-2 Neon-down export failures not emailed (owner); TOOL-3 append before remove; TOOL-4 anchored prune; PIPE-2 bulk gap failure row + alert; PIPE-4 phone-history re-attach (owner); PIPE-6 enqueue failure row.
+  - Owner decisions this batch: TOOL-2 = skip Neon-down only; PIPE-4 = the re-attach design (the scan's naive fix would have orphaned the history or broken forced CDR writes under an FK).
+  - 2353 tests; Postgres 16 run of the PIPE-4 sequence with a plain FK; lint clean; 21 bites.
+
+  **Owner-side:** deploy cdr-import, cdr-report and the dashboard (Batches 1-4). If PC-1 / BF-1 already ran before this deploy, re-export those dates once by hand. Watch #47 for a week.
+  **Next:** Batch 5 (config, access and cache dimensions) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 3b IMPLEMENTED (block 249): UX-1, one Outbound home on My Department.**
   - The Outbound summary + Callbacks (+ Direct lines) moved under the outbound agent table; no duplicate agent table; "<dept> only" label + note when the table holds sub-queues.
   - Decision made while implementing: both sections now read the PAGE's window + INV-28 prior (obSectionWindow_), not Insights' -- otherwise a collapsed Insights region would leave them empty. Consequence: an Insights YoY/custom comparison no longer drives the outbound summary.

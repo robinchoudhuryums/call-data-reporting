@@ -1474,7 +1474,9 @@ function firstRingBackfill_(apply) {
         for (var b = 0; b < batches.length; b++) {
           var up = conn.createStatement();
           try { up.setQueryTimeout(BF_RING_QUERY_TIMEOUT_S_); } catch (e) { /* best-effort */ }
-          chunk.written += up.executeUpdate('UPDATE inbound_calls c SET first_ring_seconds = v.r '
+          // TOOL-1 (broad-scan 2026-10-12): bump updated_at so the cdr-report
+          // 'Inbound Calls' export re-reads these dates (its changed-date refresh).
+          chunk.written += up.executeUpdate('UPDATE inbound_calls c SET first_ring_seconds = v.r, updated_at = now() '
             + 'FROM (VALUES ' + batches[b].join(',') + ') AS v(d, id, r) '
             + 'WHERE c.call_date = v.d AND c.call_id = v.id AND c.first_ring_seconds IS NULL');
           up.close();
@@ -2581,7 +2583,9 @@ function perCallAgentRewrite_(apply) {
         if (overBudget()) break;
         var p = pairs[pi], n;
         if (apply) {
-          var up = q('UPDATE ' + tg.table + ' SET ' + tg.column + ' = ? WHERE ' + tg.column + ' = ?', [p.canonical, p.raw]);
+          // TOOL-1: every PCR target table has updated_at; bumping it lets the
+          // cdr-report export tabs pick the rewritten dates up.
+          var up = q('UPDATE ' + tg.table + ' SET ' + tg.column + ' = ?, updated_at = now() WHERE ' + tg.column + ' = ?', [p.canonical, p.raw]);
           n = up.executeUpdate(); up.close();
         } else {
           n = count('SELECT count(*)::text FROM ' + tg.table + ' WHERE ' + tg.column + ' = ?', [p.raw]);
@@ -2603,7 +2607,8 @@ function perCallAgentRewrite_(apply) {
           var ju = q('UPDATE ' + tbl + ' c SET journey = ('
             + "SELECT jsonb_agg(CASE WHEN x.e->>'name' = ? AND coalesce(x.e->>'kind', '') <> 'queue' "
             + "THEN jsonb_set(x.e, '{name}', to_jsonb(?::text)) ELSE x.e END ORDER BY x.ord) "
-            + 'FROM jsonb_array_elements(c.journey::jsonb) WITH ORDINALITY AS x(e, ord))::text '
+            + 'FROM jsonb_array_elements(c.journey::jsonb) WITH ORDINALITY AS x(e, ord))::text, '
+            + 'updated_at = now() '   // TOOL-1: the export tabs re-read rewritten dates
             + 'WHERE ' + has, [jpair.raw, jpair.canonical, jpair.raw]);
           jn = ju.executeUpdate(); ju.close();
         } else {

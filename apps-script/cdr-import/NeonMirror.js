@@ -120,6 +120,24 @@ function enqueueNeonMirror_(targetSS, dateObj) {
     Logger.log('enqueueNeonMirror_: queued %s for deferred Neon mirror.', iso);
   } catch (e) {
     Logger.log('enqueueNeonMirror_ failed (best-effort): ' + e);
+    // PIPE-6 (broad-scan 2026-10-12): in deferred mode the queue row IS the
+    // only record that this date still owes Neon its mirror + per-call
+    // capture -- a lost enqueue lost that date's capture with nothing but an
+    // execution-log line. Say so where the Health page and the failure
+    // watchdog look (failure-only step; still never throws -- the sheets are
+    // already written).
+    try {
+      var day = (dateObj instanceof Date)
+        ? Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(dateObj);
+      if (typeof logPipelineHealthWithFallback_ === 'function') {
+        logPipelineHealthWithFallback_(targetSS, {
+          step: 'neonMirror:enqueue', status: 'failure', rows: 0,
+          notes: day + ' was NOT queued for the deferred Neon mirror (' + String((e && e.message) || e).slice(0, 200)
+            + '). Add a row for it to the "' + NEON_MIRROR_QUEUE_SHEET + '" tab (or re-run the import) '
+            + 'so its Neon mirror and per-call capture run.',
+        });
+      }
+    } catch (e2) { /* best-effort, like the enqueue itself */ }
   }
 }
 

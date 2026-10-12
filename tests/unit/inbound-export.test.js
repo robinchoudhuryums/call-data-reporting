@@ -343,3 +343,208 @@ test('CRT-1: ic_/oc_removeRowsInRange_ delete matched rows as blocks and never r
     assert.equal(sheet._maxRows, 9, fn + ': padded before the delete (the fake does not shrink on delete)');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Broad scan 2026-10-12, Batch 4.
+// A Neon fake that answers the TOOL-1 changed-dates query separately from the
+// windowed json_agg fetch (which honors its BETWEEN range), and records both.
+function routedConn(byDate, changed, log) {
+  return {
+    prepareStatement: function (sql) {
+      const p = {};
+      return {
+        setString: function (i, v) { p[i] = v; },
+        executeQuery: function () {
+          let out;
+          if (/SELECT DISTINCT [co]\.call_date::text AS d FROM/.test(sql)) {
+            log.push({ kind: 'changed', since: p[1], before: p[2], floor: p[3] });
+            out = changed;
+          } else {
+            log.push({ kind: 'fetch', from: p[2], to: p[3] });
+            out = [];
+            Object.keys(byDate).sort().forEach(function (d) {
+              if (d >= p[2] && d <= p[3]) out = out.concat(byDate[d]);
+            });
+          }
+          let done = false;
+          return {
+            next: function () { if (done) return false; done = true; return true; },
+            getString: function () { return JSON.stringify(out); },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    createStatement: function () {
+      return { executeQuery: function () {
+        let done = false;
+        return { next: function () { if (done) return false; done = true; return true; },
+                 getString: function () { return 'true'; }, close: function () {} };
+      }, close: function () {} };
+    },
+    close: function () {},
+  };
+}
+function sheetRow(iso, id) { const r = new Array(24).fill(''); r[0] = iso; r[1] = id; return r; }
+function idsOn(sheet, iso) {
+  return sheet._rows.slice(1).filter(function (r) { return r[0] === iso; }).map(function (r) { return r[1]; });
+}
+
+test('TOOL-1: an incremental run also refreshes OLDER dates whose Neon rows changed since the watermark', function () {
+  const today = h.call('ic_isoToday_');
+  const d5 = h.call('ic_isoDaysAgo_', 5), d9 = h.call('ic_isoDaysAgo_', 9);
+  const sheet = fakeSheet([sheetRow(d9, 'old-9'), sheetRow(d5, 'old-5'), sheetRow(today, 'old-t')], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.state.props.INBOUND_EXPORT_WATERMARK = '2026-01-01T00:00:00.000Z';
+  delete h.state.props.INBOUND_EXPORT_PENDING;
+  const log = [];
+  h.ctx.getNeonConn = function () {
+    return routedConn({
+      [d9]: [neonRow({ date: d9, id: 'new-9' })],
+      [d5]: [neonRow({ date: d5, id: 'new-5a' }), neonRow({ date: d5, id: 'new-5b' })],
+      [today]: [neonRow({ date: today, id: 'new-t' })],
+    }, [d9, d5], log);
+  };
+  const before = Date.now();
+  const res = h.call('exportInboundCalls');
+  assert.deepEqual(JSON.parse(JSON.stringify(res.changedDates)), [d5, d9], 'newest first');
+  assert.deepEqual(idsOn(sheet, d5), ['new-5a', 'new-5b'], 'a changed older date is replaced, not duplicated');
+  assert.deepEqual(idsOn(sheet, d9), ['new-9']);
+  assert.deepEqual(idsOn(sheet, today), ['new-t'], 'the newest date still refreshes as before');
+  const ch = log.filter(function (e) { return e.kind === 'changed'; })[0];
+  assert.equal(ch.since, '2026-01-01T00:00:00.000Z', 'asks for rows changed since the stored watermark');
+  assert.equal(ch.before, today, 'only dates OLDER than the main window');
+  assert.ok(Date.parse(h.state.props.INBOUND_EXPORT_WATERMARK) <= before - 3500000,
+    'the new watermark is the run START minus the skew margin');
+  assert.equal(h.state.props.INBOUND_EXPORT_PENDING, '[]');
+});
+
+test('TOOL-1: at most IC_EXPORT_MAX_CHANGED_DATES_ a run, newest first; the rest wait in PENDING and run next time', function () {
+  const today = h.call('ic_isoToday_');
+  const changed = [], byDate = { [today]: [neonRow({ date: today, id: 't' })] };
+  for (let i = 2; i <= 13; i++) {
+    const d = h.call('ic_isoDaysAgo_', i);
+    changed.push(d); byDate[d] = [neonRow({ date: d, id: 'n' + i })];
+  }
+  const sheet = fakeSheet([sheetRow(today, 'old-t')], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.state.props.INBOUND_EXPORT_WATERMARK = '2026-01-01T00:00:00.000Z';
+  delete h.state.props.INBOUND_EXPORT_PENDING;
+  h.ctx.getNeonConn = function () { return routedConn(byDate, changed, []); };
+  const r1 = h.call('exportInboundCalls');
+  assert.equal(r1.changedDates.length, h.ctx.IC_EXPORT_MAX_CHANGED_DATES_);
+  assert.equal(r1.changedDates[0], h.call('ic_isoDaysAgo_', 2), 'newest first');
+  const pending = JSON.parse(h.state.props.INBOUND_EXPORT_PENDING);
+  assert.deepEqual(pending, [h.call('ic_isoDaysAgo_', 12), h.call('ic_isoDaysAgo_', 13)]);
+  // Next run: nothing NEW changed, but the pending pair is still refreshed.
+  h.ctx.getNeonConn = function () { return routedConn(byDate, [], []); };
+  const r2 = h.call('exportInboundCalls');
+  assert.deepEqual(JSON.parse(JSON.stringify(r2.changedDates)), pending);
+  assert.equal(h.state.props.INBOUND_EXPORT_PENDING, '[]');
+});
+
+test('TOOL-1: the first run sets a watermark without asking; an explicit range never reads or moves it', function () {
+  const today = h.call('ic_isoToday_');
+  const sheet = fakeSheet([], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  delete h.state.props.INBOUND_EXPORT_WATERMARK;
+  delete h.state.props.INBOUND_EXPORT_PENDING;
+  let log = [];
+  h.ctx.getNeonConn = function () { return routedConn({ [today]: [neonRow({ date: today })] }, ['2026-01-01'], log); };
+  h.call('exportInboundCalls');
+  assert.equal(log.filter(function (e) { return e.kind === 'changed'; }).length, 0, 'no baseline query');
+  assert.ok(h.state.props.INBOUND_EXPORT_WATERMARK, 'baseline watermark stored');
+  const wm = h.state.props.INBOUND_EXPORT_WATERMARK;
+  log = [];
+  h.call('exportInboundCalls', today, today);
+  assert.equal(log.filter(function (e) { return e.kind === 'changed'; }).length, 0);
+  assert.equal(h.state.props.INBOUND_EXPORT_WATERMARK, wm, 'an explicit range leaves the watermark alone');
+});
+
+test('TOOL-1: the outbound twin queries outbound_calls with the same plan and properties', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'outboundCallsExport.js'), 'utf8');
+  assert.match(src, /SELECT DISTINCT o\.call_date::text AS d FROM outbound_calls o "/);
+  assert.match(src, /"WHERE o\.updated_at > \?::timestamptz AND o\.call_date < \?::date AND o\.call_date >= \?::date\) x"/);
+  assert.match(src, /props\.setProperty\('OUTBOUND_EXPORT_WATERMARK', runStartIso\);/);
+  assert.match(src, /props\.setProperty\('OUTBOUND_EXPORT_PENDING', JSON\.stringify\(changedLater\)\);/);
+  assert.match(src, /ic_planChangedDates_\(changed, pending\.filter/);
+});
+
+test('TOOL-3: a failed append (the cell cap) leaves the previous copy of the date in place', function () {
+  const sheet = fakeSheet([sheetRow('2026-08-19', 'old-a'), sheetRow('2026-08-19', 'old-b')], { header: HEADERS(), maxRows: 3 });
+  sheet.insertRowsAfter = function () { throw new Error('This action would increase the number of cells beyond the limit'); };
+  h.state.spreadsheet = fakeSS(sheet);
+  h.ctx.getNeonConn = function () {
+    return neonConnReturning([neonRow({ date: '2026-08-19', id: 'n1' }), neonRow({ date: '2026-08-19', id: 'n2' }), neonRow({ date: '2026-08-19', id: 'n3' })]);
+  };
+  assert.throws(function () { h.call('exportInboundCalls', '2026-08-19', '2026-08-19'); }, /cells beyond the limit/);
+  assert.deepEqual(idsOn(sheet, '2026-08-19'), ['old-a', 'old-b'], 'the old copy survives -- it used to be deleted first');
+});
+
+test('TOOL-3: a successful run appends first, then removes ONLY the rows above the append', function () {
+  const sheet = fakeSheet([sheetRow('2026-08-18', 'keep'), sheetRow('2026-08-19', 'old')], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: '2026-08-19', id: 'fresh' })]); };
+  const res = h.call('exportInboundCalls', '2026-08-19', '2026-08-19');
+  assert.equal(res.replaced, 1);
+  assert.deepEqual(idsOn(sheet, '2026-08-19'), ['fresh']);
+  assert.deepEqual(idsOn(sheet, '2026-08-18'), ['keep']);
+});
+
+test('TOOL-3: a removal failure rolls the append back, so a run never leaves both copies', function () {
+  const sheet = fakeSheet([sheetRow('2026-08-19', 'old')], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  const realDelete = sheet.deleteRows;
+  let calls = 0;
+  sheet.deleteRows = function (start, n) {
+    if (calls++ === 0) throw new Error('Service error: Spreadsheets');   // the old-row removal fails
+    return realDelete(start, n);                                          // the rollback succeeds
+  };
+  h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: '2026-08-19', id: 'fresh' })]); };
+  assert.throws(function () { h.call('exportInboundCalls', '2026-08-19', '2026-08-19'); }, /Service error/);
+  assert.deepEqual(idsOn(sheet, '2026-08-19'), ['old'], 'back to the previous copy only');
+});
+
+test('TOOL-2: a Neon-down run tags its failure row; any other failure is untagged (and so still emails)', function () {
+  const sheet = fakeSheet([], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  const logged = [];
+  h.ctx.logPipelineHealth_ = function (ss, ev) { logged.push(JSON.parse(JSON.stringify(ev))); };
+  h.ctx.getNeonConn = function () { throw new Error('The database connection failed'); };
+  h.call('runInboundCallsExport_');
+  assert.equal(logged[0].notes, h.ctx.EXPORT_NEON_UNREACHABLE_TAG_ + 'The database connection failed');
+  logged.length = 0;
+  h.ctx.getNeonConn = function () {
+    return { prepareStatement: function () { throw new Error('ERROR: column "first_agent" does not exist'); }, close: function () {} };
+  };
+  h.call('runInboundCallsExport_');
+  assert.equal(logged[0].status, 'failure');
+  assert.equal(logged[0].notes.indexOf(h.ctx.EXPORT_NEON_UNREACHABLE_TAG_), -1, 'a SQL error is not the expected outage');
+  // The outbound runner tags the same way.
+  const ob = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'outboundCallsExport.js'), 'utf8');
+  assert.match(ob, /notes: \(\(e && e\.neonUnreachable\) \? EXPORT_NEON_UNREACHABLE_TAG_ : ''\) \+ String/);
+  assert.match(ob, /try \{ conn = getNeonConn\(\); \} catch \(eConn\) \{/);
+});
+
+test('TOOL-1 / TOOL-3: the outbound twin refreshes a changed older date and replaces (not duplicates) it', function () {
+  const W = h.ctx.OUTBOUND_EXPORT_HEADERS.length;
+  const obRow = function (iso, id) { const r = [iso, id, '', 'Ann', '101', 'CSR', true, 30, '', 1, '10:00:00', '']; return r.slice(0, W); };
+  const shRow = function (iso, id) { const r = new Array(W).fill(''); r[0] = iso; r[1] = id; return r; };
+  const today = h.call('oc_isoToday_');
+  const d4 = h.call('oc_isoDaysAgo_', 4);
+  const sheet = fakeSheet([shRow(d4, 'old-4'), shRow(today, 'old-t')], { header: h.ctx.OUTBOUND_EXPORT_HEADERS, maxCols: W });
+  h.state.spreadsheet = { getSheetByName: function (n) { return n === 'Outbound Calls' ? sheet : null; } };
+  h.state.props.OUTBOUND_EXPORT_WATERMARK = '2026-01-01T00:00:00.000Z';
+  delete h.state.props.OUTBOUND_EXPORT_PENDING;
+  const log = [];
+  h.ctx.getNeonConn = function () {
+    return routedConn({ [d4]: [obRow(d4, 'new-4')], [today]: [obRow(today, 'new-t')] }, [d4], log);
+  };
+  const res = h.call('exportOutboundCalls');
+  assert.deepEqual(JSON.parse(JSON.stringify(res.changedDates)), [d4]);
+  assert.deepEqual(idsOn(sheet, d4), ['new-4']);
+  assert.deepEqual(idsOn(sheet, today), ['new-t']);
+  assert.equal(h.state.props.OUTBOUND_EXPORT_PENDING, '[]');
+  assert.ok(h.state.props.OUTBOUND_EXPORT_WATERMARK > '2026-01-01');
+});

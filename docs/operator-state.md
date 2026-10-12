@@ -1031,6 +1031,15 @@ When something looks wrong, before assuming a code bug, check:
     be skipped forever. The first run after this deploy only seeds that list
     (no re-send of rows already alerted). Failure rows whose timestamp cannot
     be parsed are now counted in the email instead of dropped.
+    **Two failure kinds are shown on the Health page but NOT emailed
+    (broad-scan 2026-10-12, Batch 4; `pipelineWatchQuietFailure_`):** an
+    `inboundExport` / `outboundExport` row tagged "Neon unreachable (expected;
+    copy kept)" (TOOL-2, owner -- the capture's own rows already report the
+    outage; any untagged export failure still emails, #49/#50), and a
+    `bulkBackfill:paused` row (PIPE-2 -- a paused or stopped bulk run's
+    processed dates are absent from the QCD / CSR / CDR / Q Path sheets until
+    its final archive; the operator is at the pause alert, and a completed run
+    logs a success row that clears the Health row).
     Enable by running `installPipelineWatchTrigger()` from the dashboard editor
     (admin; sets `PIPELINE_WATCH_ENABLED=true` + installs the trigger);
     `uninstallPipelineWatchTrigger()` reverses it. Tunable Script Property:
@@ -1530,6 +1539,13 @@ When something looks wrong, before assuming a code bug, check:
     re-run skips), stops at the bulk time budget, and reports a per-file failure
     instead of "Could not access folder" -- re-run to continue.
 
+    **Only the EXACT importer name is pruned (TOOL-4, broad-scan 2026-10-12).**
+    The tab-name pattern is anchored (`^Call_Legs_YYYY-MM-DD$`), so a suffixed
+    copy -- "Call_Legs_2026-09-01 (2)", what Sheets names a duplicated recovery
+    tab -- is never aged as that date and deleted with the original; it is kept
+    (a name the prune does not understand is not acted on). Delete such copies
+    by hand once you are done with them.
+
     **Never-imported tabs are KEPT (PIPE-2, broad-scan 2026-10-01).** The prune
     used to be age-only, so a tab the import never landed (stalled pending loop,
     future-dated tab, lost hold) was deleted with its day never in history. An
@@ -1711,8 +1727,22 @@ When something looks wrong, before assuming a code bug, check:
     Report spreadsheet: CDR Tools → "📥 Inbound Calls Tab" →
     "Install daily export" (runs `runInboundCallsExport_` at 9 AM script-TZ: incremental
     export + retention prune, one `inboundExport` Pipeline Health row per
-    run; a Neon-down day is a LOG-ONLY failure row — expected during an
-    outage, never an email). **One-time after deploying the schema
+    run). **Broad-scan 2026-10-12, Batch 4:** (a) TOOL-2 (owner): a run that
+    cannot CONNECT to Neon logs a failure row tagged "Neon unreachable
+    (expected; copy kept)", which the Pipeline-failure watchdog (#32) does not
+    email -- every OTHER export failure (a SQL error, the cell cap) still
+    emails, and the Health page shows both. (b) TOOL-1: the incremental run
+    also re-reads every OLDER date whose `inbound_calls` rows changed since the
+    previous run (`updated_at` past the engine-written
+    `INBOUND_EXPORT_WATERMARK`; at most 10 such dates a run, newest first, the
+    rest held in `INBOUND_EXPORT_PENDING`) -- a parked-then-fixed date, a force
+    re-import of an older day, the PC-1 rewrite (#72) and the BF-1 backfill now
+    reach this copy by themselves (both bump `updated_at` since this batch; a
+    rewrite run BEFORE this deploy still needs the one-time re-export below).
+    Clearing the watermark just re-baselines. (c) TOOL-3: fresh rows are
+    APPENDED first and the old copy of those dates removed after, so a failed
+    write (e.g. at the cell cap, #62) leaves the previous copy in place.
+    **One-time after deploying the schema
     extension** (cols 16–17, Call Start / Is Internal): run
     `exportInboundCalls('<capture-start-ISO>', '<today-ISO>')` once from the
     editor so historical rows gain the two new columns — until then old rows
@@ -1775,9 +1805,11 @@ When something looks wrong, before assuming a code bug, check:
     "📤 Outbound Calls Tab" → "Install daily export" (runs
     `runOutboundCallsExport_` at 9 AM script-TZ: incremental export +
     retention prune, one `outboundExport` Pipeline Health row per run; a
-    Neon-down day is a LOG-ONLY failure row — expected during an outage,
-    never an email; a not-yet-created `outbound_calls` table is a clean
-    `no-table` skip, not a failure).
+    not-yet-created `outbound_calls` table is a clean `no-table` skip, not a
+    failure). The three Batch 4 rules of #49 apply here too: a Neon-down
+    failure is tagged and not emailed (TOOL-2), changed older dates are
+    re-read (`OUTBOUND_EXPORT_WATERMARK` / `OUTBOUND_EXPORT_PENDING`, TOOL-1),
+    and the write appends before it removes (TOOL-3).
     **One-time seed:** run `exportOutboundCalls('<capture-start-ISO>',
     '<today-ISO>')` once from the editor so the tab covers history rather
     than only the last 30 days (the no-arg seed window). Do this while Neon
@@ -1950,7 +1982,14 @@ When something looks wrong, before assuming a code bug, check:
     activity", which the client hides for any date that has `outbound_calls`
     rows (capture start 2026-07-10); the call-path drill, the Outbound
     report, and per-number dial counts all read `outbound_calls`. Set it to
-    `on` to resume (no redeploy).
+    `on` to resume (no redeploy). **While it is OFF, a force re-export no
+    longer wipes a date's existing children (PIPE-4, broad-scan 2026-10-12,
+    owner: the re-attach design):** the authoritative CDR replace copies the
+    date's children out keyed on (date, department, agent), deletes them with
+    their parents as before and re-attaches them to the re-created parents in
+    the same transaction; a child whose agent is no longer on that date is
+    dropped, as before. The pre-capture history therefore survives a
+    re-export of an old date.
     **(b) `NEON_RETENTION_ENABLED` (dashboard)** — `installNeonRetentionTrigger()`
     from the dashboard editor arms `runNeonRetentionWeekly_` (Sundays ~3 AM
     script-TZ, the day after the Saturday backup) and sets the flag;
@@ -3165,7 +3204,13 @@ When something looks wrong, before assuming a code bug, check:
     - **Re-run after** adding an `Agent Alias Overrides` row or fixing a
       roster spelling: capture only applies the rule going forward. The
       `Inbound Calls` / `Outbound Calls` export tabs pick up the rewritten
-      names on their next run (#49 / #50).
+      dates by themselves (TOOL-1, broad-scan 2026-10-12: the rewrite bumps
+      `updated_at`, and each daily export re-reads up to 10 changed older
+      dates, newest first -- a history-wide rewrite reaches the whole ~400-day
+      tab over several weeks of runs; for an immediate refresh run
+      `exportInboundCalls('<from>', '<to>')` / `exportOutboundCalls(...)` once).
+      A rewrite run BEFORE the Batch 4 deploy did not bump `updated_at`, so
+      re-export those dates once by hand (#49 / #50).
 
 73. **QCD violation-flag repair (QO-2, owner ruling 2026-10-02; cdr-report).**
     A QCD violation is now an abandoned rate of **4.00% or more** (it was

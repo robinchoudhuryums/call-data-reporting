@@ -275,6 +275,36 @@ function bulkMarkerSet_(ss) {
   } catch (e) { console.warn('bulkMarkerSet_: ' + (e && e.message ? e.message : e)); }
 }
 
+// PIPE-2 (broad-scan 2026-10-12): a force-processed bulk date is DELETED from
+// the five historical sheets at once, but its QCD / CSR Transfer / CDR / Q
+// Path rows wait in the Pending Archive until the run's FINAL archive. A
+// pause (the time budget) or a stop therefore leaves every processed date
+// absent from sheets the dashboard reads -- silently, until Resume. Each pause
+// / stop now logs a `bulkBackfill:paused` FAILURE row naming those dates and
+// the alert says the same; a completed run logs a SUCCESS row under the same
+// step, which clears the Health page. (DQE and Direct are written per date and
+// are not affected.) The dashboard's failure watchdog does not email this step
+// -- the operator is at the alert -- but the Health page shows it until the
+// run completes.
+function bulkGapNote_(queue, index) {
+  var done = (queue || []).slice(0, Math.max(0, index || 0));
+  if (!done.length) return '';
+  var span = done[0] + (done.length > 1 ? ' .. ' + done[done.length - 1] : '');
+  return done.length + ' processed date(s) (' + span + ') are ABSENT from the QCD, CSR Transfer, '
+    + 'CDR and Q Path Historical sheets until the run is resumed and its final archive writes them';
+}
+function bulkLogGap_(targetSS, queue, index, how) {
+  var note = bulkGapNote_(queue, index);
+  if (!note) return '';
+  try {
+    logPipelineHealthWithFallback_(targetSS, {
+      step: 'bulkBackfill:paused', status: 'failure', rows: Math.max(0, index || 0),
+      notes: how + ': ' + note + '.',
+    });
+  } catch (e) { /* best-effort -- the alert below still says it */ }
+  return note;
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -348,7 +378,10 @@ function processBulkQueue() {
       const remaining = queue.length - index;
       props.setProperty("bulkIndex",  String(index));
       saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
-      ui.alert("⏳ Time Limit", `Paused to avoid timeout.\n${remaining} dates remaining.\n\nClick 'Resume Bulk Processing' to continue.`, ui.ButtonSet.OK);
+      const gap = bulkLogGap_(targetSS, queue, index, 'paused (time limit)');   // PIPE-2
+      ui.alert("⏳ Time Limit", `Paused to avoid timeout.\n${remaining} dates remaining.\n\n`
+        + (gap ? `⚠️ Until then, ${gap}.\n\n` : '')
+        + `Click 'Resume Bulk Processing' to continue.`, ui.ButtonSet.OK);
       return;
     }
 
@@ -376,7 +409,9 @@ function processBulkQueue() {
       } else {
         props.setProperty("bulkIndex",  String(index));
         saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
-        ui.alert("⛔ Stopped", "Bulk processing stopped.", ui.ButtonSet.OK);
+        const gap = bulkLogGap_(targetSS, queue, index, 'stopped after an error on ' + dateStr);   // PIPE-2
+        ui.alert("⛔ Stopped", "Bulk processing stopped."
+          + (gap ? `\n\n⚠️ ${gap}. Click 'Resume Bulk Processing' to finish the run.` : ''), ui.ButtonSet.OK);
         return;
       }
     }
@@ -395,9 +430,15 @@ function processBulkQueue() {
       `Processed ${queue.length} dates`,
       `CDR: +${archiveResult.cdrCount}, QPath: +${archiveResult.qpathCount}, QCD: +${archiveResult.qcdCount}, CSR: +${archiveResult.csrCount}`
     ); 
+    // PIPE-2: the archive wrote the held dates -- clear the Health signal.
+    logPipelineHealthWithFallback_(targetSS, {
+      step: 'bulkBackfill:paused', status: 'success', rows: queue.length,
+      notes: 'bulk run complete: ' + queue.length + ' date(s) archived to the historical sheets.',
+    });
   } catch (e) {
     report.push("---");
     report.push(`⚠️ Archive failed: ${e.message}`);
+    bulkLogGap_(targetSS, queue, queue.length, 'final archive failed (' + e.message + ')');   // PIPE-2
     ui.alert("⚠️ Archive Warning", `Bulk processing complete, but archive failed:\n${e.message}\n\nYou can retry with 'Process Batch Archive' from the menu.`, ui.ButtonSet.OK);
   }
 

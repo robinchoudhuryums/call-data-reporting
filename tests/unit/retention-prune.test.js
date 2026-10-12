@@ -133,6 +133,18 @@ test('a Call_Legs tab whose date will not parse is KEPT, not guessed at', functi
   assert.equal(out.survivors.length, 4);
 });
 
+// TOOL-4 (broad-scan 2026-10-12): the pattern is anchored, so a SUFFIXED copy
+// of an over-age tab -- the "Copy of" / " (2)" names Sheets gives a duplicated
+// recovery tab -- is never aged as that date and deleted with the original.
+test('TOOL-4: a suffixed copy of an over-age Call_Legs tab is KEPT; the exact name is pruned', function () {
+  const out = prune([2026, 8, 31], [
+    'Call_Legs_2026-08-01', 'Call_Legs_2026-08-01 (2)', 'Call_Legs_2026-08-01_recovered',
+    'Call_Legs_2026-08-01x',
+  ]);
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-08-01 (2)', 'Call_Legs_2026-08-01_recovered', 'Call_Legs_2026-08-01x']);
+  assert.equal(out.result.deleted, 1, 'only the exact importer name ages out');
+});
+
 // ── 2. The cutoff boundary ────────────────────────────────────────────────
 
 test('the 14-day cutoff is EXCLUSIVE: exactly 14 days old survives, 15 does not', function () {

@@ -61,6 +61,7 @@ var HEALTH_FAILURE_ONLY_STEPS_ = [
   'bulkBackfill:CDR',               // CR-9: the bulk-path CDR Historical force-loss guard
   'processBatchArchive:CDR:neon',   // ING-3
   'processBatchArchive:QCD:neon',
+  'neonMirror:enqueue',             // PIPE-6: a deferred-mirror date that was never queued
 ];
 
 function healthFailureOnlyStep_(step) {

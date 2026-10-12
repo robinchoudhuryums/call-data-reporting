@@ -75,7 +75,11 @@ Health bullet; per-call table semantics are in
   **`writeCDRRowsToNeon({authoritative:true})` (P-6)** deletes the dates'
   `call_history_phones` CHILDREN first (parent-id subselect; deleted
   parents would strand their children), then the `call_history_dept`
-  parents, same txn; and **`writeInboundCallsToNeon({authoritative:true,
+  parents, same txn -- and, while `CDR_PHONES_MIRROR` is OFF (so nothing
+  re-writes the children), it first copies them into an `ON COMMIT DROP`
+  temp table keyed on `uq_call_hist` and re-attaches them to the
+  re-created parents before the commit (PIPE-4, Operator State #57;
+  FK-agnostic, verified on Postgres 16; `neon-write-mapping.test.js`); and **`writeInboundCallsToNeon({authoritative:true,
   expectedDateIso})` (L2 + P-1)** so a shrinking re-import can't leave a
   phantom in `inbound_calls` (NO sheet primary). **P-1 -- every caller MUST
   pass `expectedDateIso`** (records are dated from their own first leg;

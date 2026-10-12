@@ -130,7 +130,8 @@ test('BF-1 APPLY: one NULL-only UPDATE per chunk, values escaped, undecided rows
   h.ctx.getReachableNeonConn_ = function () { return backfillConn(log, ['2026-06-01', '2026-07-10'], ROWS_); };
   const out = h.call('backfillFirstRingFromJourney');
   assert.equal(log.updates.length, 2);
-  assert.match(log.updates[0], /^UPDATE inbound_calls c SET first_ring_seconds = v\.r FROM \(VALUES /);
+  // TOOL-1: the update bumps updated_at, so the cdr-report export tab re-reads these dates.
+  assert.match(log.updates[0], /^UPDATE inbound_calls c SET first_ring_seconds = v\.r, updated_at = now\(\) FROM \(VALUES /);
   assert.match(log.updates[0], /WHERE c\.call_date = v\.d AND c\.call_id = v\.id AND c\.first_ring_seconds IS NULL$/,
     'a value the capture already wrote is never overwritten');
   assert.ok(log.updates[0].indexOf("('2026-06-02'::date,'c1',4)") !== -1);

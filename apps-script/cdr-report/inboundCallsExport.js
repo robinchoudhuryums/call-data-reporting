@@ -8,16 +8,21 @@
 //
 // exportInboundCalls(fromIso?, toIso?) -- EDITOR-RUN (also schedulable):
 //   - With no args: REFRESHES from the last date already in the
-//     "Inbound Calls" tab through today (first run seeds the last 30 days).
-//     Starting AT the last exported date (not the day after) + the
-//     delete-then-append below means rows that landed in Neon AFTER the
-//     previous export run (late import, re-import) are picked up instead
-//     of being skipped forever.
+//     "Inbound Calls" tab through today (first run seeds the last 30 days),
+//     starting AT that last date so its late rows are picked up -- PLUS
+//     (TOOL-1, broad-scan 2026-10-12) every OLDER date whose Neon rows
+//     changed since the previous run (`updated_at` past the stored
+//     INBOUND_EXPORT_WATERMARK): a parked-then-fixed date, a force
+//     re-import of an older day, the PC-1 name rewrite, the BF-1 ring
+//     backfill. Before this, only the newest date was ever re-read, so
+//     those corrections never reached the outage copy. At most
+//     IC_EXPORT_MAX_CHANGED_DATES_ such dates per run, newest first; the
+//     rest wait in INBOUND_EXPORT_PENDING for the next run.
 //   - With an explicit range: refreshes exactly that [from, to] window.
-//   Both paths DELETE the sheet's existing rows inside the window before
-//   appending the fresh Neon rows, so re-runs are idempotent (no
-//   duplicates) and corrections that were DO-UPDATE'd into Neon (e.g. a
-//   force re-import) propagate into this fallback copy.
+//   Both paths APPEND the fresh Neon rows and only then remove the sheet's
+//   older rows for the dates the fetch returned (TOOL-3: a failed append --
+//   e.g. at the cell cap -- now leaves the previous copy in place), so
+//   re-runs are idempotent (no duplicates) and corrections propagate.
 //
 // Joins insurance_numbers so each call carries its insurer label (blank when
 // unlabeled / anonymous). Fetches via json_agg (one rs.getString) so it stays
@@ -79,11 +84,11 @@ function ic_isoDaysAgo_(n) {
 }
 /**
  * Removes existing data rows whose Call Date (col A) falls inside
- * [startIso, endIso] so the caller can re-append fresh Neon rows for the
- * window without duplicating. Crash-safe: kept rows + blank padding are
- * written back in ONE setValues over the original data height (same
- * pattern as autoImport's deleteHistoricalRowsForDate), so a mid-write
- * failure can't leave the sheet half-cleared. Returns the removed count.
+ * [startIso, endIso] (and in `onlyDates` when given) as contiguous blocks,
+ * bottom-up; kept rows are never rewritten (CRT-1 below). With `maxRow`
+ * (TOOL-3) only rows 2..maxRow are candidates -- the rows ABOVE a fresh
+ * append -- and no padding is inserted (the appended rows already keep the
+ * sheet from being emptied). Returns the removed count.
  */
 // F-10: col A is written as "YYYY-MM-DD" strings, but Sheets auto-coerces
 // date-shaped strings into Date VALUES, so getValues() returns Dates whose
@@ -110,8 +115,8 @@ function ic_cellDateIso_(disp) {
 // whole-window delete erased the fallback's rows for interior dates Neon
 // had lost (or that predate capture), replacing the unique surviving copy
 // with nothing. Per-date replace preserves exactly the fallback property.
-function ic_removeRowsInRange_(sheet, startIso, endIso, onlyDates) {
-  var lastRow = sheet.getLastRow();
+function ic_removeRowsInRange_(sheet, startIso, endIso, onlyDates, maxRow) {
+  var lastRow = maxRow || sheet.getLastRow();
   if (lastRow < 2) return 0;
   // CRT-1 (broad-scan 2026-09-23): this used to read the whole tab with
   // getValues, drop the matching rows and setValues the KEPT rows back. A
@@ -138,9 +143,150 @@ function ic_removeRowsInRange_(sheet, startIso, endIso, onlyDates) {
     bStart = prev = matchRows[k];
   }
   blocks.push([bStart, prev - bStart + 1]);
-  sheet.insertRowsAfter(sheet.getMaxRows(), matchRows.length);
+  if (!maxRow) sheet.insertRowsAfter(sheet.getMaxRows(), matchRows.length);
   for (var b = blocks.length - 1; b >= 0; b--) sheet.deleteRows(blocks[b][0], blocks[b][1]);
   return matchRows.length;
+}
+
+// TOOL-1: at most this many changed OLDER dates are re-read per run (newest
+// first); the rest wait in INBOUND_EXPORT_PENDING. Bounds a one-off
+// history-wide change (the PC-1 rewrite touches every date) to a few days a
+// run instead of one huge read past the execution ceiling.
+var IC_EXPORT_MAX_CHANGED_DATES_ = 10;
+// The watermark is the run's START minus this margin (script clock vs Neon
+// clock skew); a row changed inside the margin is simply re-read once more.
+var IC_EXPORT_WATERMARK_MARGIN_MS_ = 3600000;
+
+/** PURE (TOOL-1): merge changed + pending dates, newest first, cap; the rest stay pending. */
+function ic_planChangedDates_(changed, pending, cap) {
+  var seen = {};
+  var all = [].concat(changed || [], pending || []).filter(function (d) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d)) || seen[d]) return false;
+    seen[d] = true;
+    return true;
+  }).sort().reverse();
+  return { now: all.slice(0, cap), later: all.slice(cap) };
+}
+
+/**
+ * TOOL-1: the OLDER dates (before `beforeIso`, inside the keep window) whose
+ * inbound_calls rows changed since `sinceIso` -- dates only, so the read is
+ * tiny. Every insert/upsert sets updated_at = now(), and so do the one-off
+ * correction UPDATEs in cdr-import (PC-1, BF-1).
+ */
+function ic_changedDatesSince_(conn, sinceIso, beforeIso, floorIso) {
+  var stmt = conn.prepareStatement(
+    "SELECT COALESCE(json_agg(d ORDER BY d), '[]')::text AS j FROM (" +
+    "SELECT DISTINCT c.call_date::text AS d FROM inbound_calls c " +
+    "WHERE c.updated_at > ?::timestamptz AND c.call_date < ?::date AND c.call_date >= ?::date) x");
+  stmt.setString(1, sinceIso);
+  stmt.setString(2, beforeIso);
+  stmt.setString(3, floorIso);
+  var rs = stmt.executeQuery();
+  var json = rs.next() ? rs.getString('j') : '[]';
+  rs.close(); stmt.close();
+  var out = JSON.parse(json || '[]');
+  return Array.isArray(out) ? out : [];
+}
+
+function ic_keepCutoffIso_() {
+  var keep = parseInt(PropertiesService.getScriptProperties()
+                        .getProperty('INBOUND_EXPORT_KEEP_DAYS'), 10);
+  return ic_isoDaysAgo_((keep > 0) ? keep : INBOUND_EXPORT_KEEP_DAYS_DEFAULT);
+}
+
+/** One windowed json_agg read of inbound_calls (see the column notes inline). */
+function ic_fetchRows_(conn, startIso, endIso) {
+  // Aggregate the whole result set to ONE json string (json_agg) and fetch
+  // it with a single getString -- per-row JDBC reads are ~0.5s/row.
+  var sql =
+    "SELECT COALESCE(json_agg(json_build_array(" +
+    "c.call_date::text, c.call_id, COALESCE(i.insurance_name,''), " +
+    "COALESCE(c.caller_hash,''), COALESCE(c.dial_in_number,''), c.disposition, " +
+    "COALESCE(c.abandon_stage,''), c.abandoned_on_hold, c.hold_seconds, c.wait_seconds, " +
+    "COALESCE(c.entry_queue,''), COALESCE(c.final_queue,''), COALESCE(c.final_dept,''), " +
+    "c.num_queues, c.num_transfers, COALESCE(c.call_start,''), " +
+    "COALESCE(c.is_internal, FALSE), " +
+    // Journey only within the retention window (see ic_journeyDays_ above);
+    // the small origin/related columns always.
+    "CASE WHEN c.call_date >= ?::date THEN COALESCE(c.journey,'') ELSE '' END, " +
+    "COALESCE(c.origin_agent,''), COALESCE(c.origin_dept,''), " +
+    "COALESCE(c.related_call_id,''), COALESCE(c.related_call_kind,''), " +
+    // first_ring_seconds is read through to_jsonb so this export keeps
+    // working when it runs before cdr-import has added the column (a
+    // missing key reads NULL; a direct column reference would fail the
+    // whole query). Do not "simplify" it to c.first_ring_seconds.
+    "COALESCE(c.first_agent,''), (to_jsonb(c) ->> 'first_ring_seconds')::int" +
+    ") ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
+    "FROM inbound_calls c " +
+    "LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
+    "WHERE c.call_date BETWEEN ?::date AND ?::date";
+  var stmt = conn.prepareStatement(sql);
+  stmt.setString(1, ic_isoDaysAgo_(ic_journeyDays_()));
+  stmt.setString(2, startIso);
+  stmt.setString(3, endIso);
+  var rs = stmt.executeQuery();
+  var json = rs.next() ? rs.getString('j') : '[]';
+  // Meter the read (post-fetch, best-effort, never gates the parse below).
+  // This runs DAILY on a trigger and json_aggs a whole window, so it is one
+  // of the two largest unmetered readers the transfer-cap round found.
+  cdrNoteEgress_(json ? json.length : 0, 'export:inbound');
+  rs.close(); stmt.close();
+  return JSON.parse(json || '[]');
+}
+
+/**
+ * Appends one window's fresh rows, THEN removes the older copy of the dates
+ * the fetch returned (R8-E3 per-date replace). TOOL-3: the old order (delete,
+ * then append) lost the window's rows until the next good run whenever the
+ * append failed -- at the cell cap the grid insert is exactly what fails. A
+ * failure in the removal rolls the append back (it is the bottom block until
+ * the final sort), so a run never leaves both copies. Does not sort.
+ */
+function ic_writeWindow_(sheet, rows, startIso, endIso) {
+  var fetchedDates = {};
+  for (var fd = 0; fd < rows.length; fd++) {
+    if (rows[fd][0]) fetchedDates[String(rows[fd][0])] = true;
+  }
+  // Normalize booleans/nulls for the sheet.
+  var values = rows.map(function (r) {
+    r[7] = r[7] === true ? 'TRUE' : (r[7] === false ? 'FALSE' : '');
+    r[16] = r[16] === true ? 'TRUE' : (r[16] === false ? 'FALSE' : '');   // Is Internal
+    // D-3: queue/insurer/journey strings originate in the external feed --
+    // neutralize a leading =/+/@ so a crafted name can't land as a live
+    // formula in this tab (typeof guard: helper lives in dashboardCDR.js,
+    // same project global scope).
+    return r.map(function (v) {
+      if (v == null) return '';
+      return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
+    });
+  });
+  // Plain-text the Call Start column BEFORE the write or Sheets coerces the
+  // "10:23:33" strings to 1899-epoch time serials (the K-AC class). Two
+  // ranges: the full current height (so the post-append SORT can never move
+  // a time string onto an unformatted cell), plus -- after pre-expanding the
+  // grid so the append can't spill past getMaxRows unformatted (the
+  // buildDQE recurrence vector) -- the EXACT write range.
+  var oldLastRow = sheet.getLastRow();
+  var writeStart = oldLastRow + 1;
+  sheet.getRange(2, INBOUND_EXPORT_CALL_START_COL, sheet.getMaxRows() - 1, 1)
+       .setNumberFormat('@');
+  var rowsShort = writeStart + values.length - 1 - sheet.getMaxRows();
+  if (rowsShort > 0) sheet.insertRowsAfter(sheet.getMaxRows(), rowsShort);
+  sheet.getRange(writeStart, INBOUND_EXPORT_CALL_START_COL, values.length, 1)
+       .setNumberFormat('@');
+  sheet.getRange(writeStart, 1, values.length, INBOUND_EXPORT_HEADERS.length).setValues(values);
+  var replaced;
+  try {
+    replaced = ic_removeRowsInRange_(sheet, startIso, endIso, fetchedDates, oldLastRow);
+  } catch (e) {
+    try {
+      var lr = sheet.getLastRow();
+      sheet.deleteRows(lr - values.length + 1, values.length);
+    } catch (e2) { /* the rethrow below is the signal */ }
+    throw e;
+  }
+  return { written: values.length, replaced: replaced };
 }
 
 function exportInboundCalls(fromIso, toIso) {
@@ -188,99 +334,63 @@ function exportInboundCalls(fromIso, toIso) {
     return { written: 0, replaced: 0 };
   }
 
-  var conn = getNeonConn();
+  // TOOL-1: the watermark this run will store, taken at its START (minus a
+  // clock-skew margin) so a row changed while the run is reading is re-read
+  // next time rather than skipped.
+  var props = PropertiesService.getScriptProperties();
+  var runStartIso = new Date(Date.now() - IC_EXPORT_WATERMARK_MARGIN_MS_).toISOString();
+  var conn;
+  try { conn = getNeonConn(); } catch (eConn) {
+    // TOOL-2: only a failure to CONNECT is the expected Neon outage; the
+    // runner tags its row so the dashboard's failure watchdog stays quiet
+    // for it (any other failure -- a SQL error, the cell cap -- still emails).
+    if (eConn && typeof eConn === 'object') eConn.neonUnreachable = true;
+    throw eConn;
+  }
   try {
-    // Aggregate the whole result set to ONE json string (json_agg) and fetch
-    // it with a single getString -- per-row JDBC reads are ~0.5s/row.
-    var sql =
-      "SELECT COALESCE(json_agg(json_build_array(" +
-      "c.call_date::text, c.call_id, COALESCE(i.insurance_name,''), " +
-      "COALESCE(c.caller_hash,''), COALESCE(c.dial_in_number,''), c.disposition, " +
-      "COALESCE(c.abandon_stage,''), c.abandoned_on_hold, c.hold_seconds, c.wait_seconds, " +
-      "COALESCE(c.entry_queue,''), COALESCE(c.final_queue,''), COALESCE(c.final_dept,''), " +
-      "c.num_queues, c.num_transfers, COALESCE(c.call_start,''), " +
-      "COALESCE(c.is_internal, FALSE), " +
-      // Journey only within the retention window (see ic_journeyDays_ above);
-      // the small origin/related columns always.
-      "CASE WHEN c.call_date >= ?::date THEN COALESCE(c.journey,'') ELSE '' END, " +
-      "COALESCE(c.origin_agent,''), COALESCE(c.origin_dept,''), " +
-      "COALESCE(c.related_call_id,''), COALESCE(c.related_call_kind,''), " +
-      // first_ring_seconds is read through to_jsonb so this export keeps
-      // working when it runs before cdr-import has added the column (a
-      // missing key reads NULL; a direct column reference would fail the
-      // whole query). Do not "simplify" it to c.first_ring_seconds.
-      "COALESCE(c.first_agent,''), (to_jsonb(c) ->> 'first_ring_seconds')::int" +
-      ") ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
-      "FROM inbound_calls c " +
-      "LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
-      "WHERE c.call_date BETWEEN ?::date AND ?::date";
-    var stmt = conn.prepareStatement(sql);
-    stmt.setString(1, ic_isoDaysAgo_(ic_journeyDays_()));
-    stmt.setString(2, startIso);
-    stmt.setString(3, endIso);
-    var rs = stmt.executeQuery();
-    var json = rs.next() ? rs.getString('j') : '[]';
-    // Meter the read (post-fetch, best-effort, never gates the parse below).
-    // This runs DAILY on a trigger and json_aggs a whole window, so it is one
-    // of the two largest unmetered readers the transfer-cap round found.
-    cdrNoteEgress_(json ? json.length : 0, 'export:inbound');
-    rs.close(); stmt.close();
-
-    var rows = JSON.parse(json || '[]');
-    if (!rows.length) {
-      // Don't touch existing sheet rows when Neon returns nothing for the
-      // window -- an unexpectedly empty Neon result must not blank the
-      // fallback copy.
-      Logger.log('exportInboundCalls: no inbound_calls rows for %s..%s — sheet left untouched.', startIso, endIso);
-      return { written: 0, replaced: 0 };
+    var written = 0, replaced = 0, changedDone = [], changedLater = [];
+    var rows = ic_fetchRows_(conn, startIso, endIso);
+    if (rows.length) {
+      // Only AFTER a non-empty fetch: an unexpectedly empty Neon result must
+      // never blank the fallback copy (dates Neon no longer has keep theirs).
+      var r0 = ic_writeWindow_(sheet, rows, startIso, endIso);
+      written += r0.written; replaced += r0.replaced;
+    } else {
+      Logger.log('exportInboundCalls: no inbound_calls rows for %s..%s — window left untouched.', startIso, endIso);
     }
-    // Refresh-in-window: drop existing sheet rows for the DATES the fetch
-    // actually returned (R8-E3 per-date replace) so the append below can't
-    // duplicate them -- dates Neon no longer has keep their fallback rows.
-    // Only done AFTER a non-empty fetch (above guard).
-    var fetchedDates = {};
-    for (var fd = 0; fd < rows.length; fd++) {
-      if (rows[fd][0]) fetchedDates[String(rows[fd][0])] = true;
+    if (!fromIso) {
+      // TOOL-1: older dates whose Neon rows changed since the last run.
+      var since = props.getProperty('INBOUND_EXPORT_WATERMARK');
+      var pending = [];
+      try { pending = JSON.parse(props.getProperty('INBOUND_EXPORT_PENDING') || '[]') || []; } catch (ep) { pending = []; }
+      var floorIso = ic_keepCutoffIso_();
+      var changed = since ? ic_changedDatesSince_(conn, since, startIso, floorIso) : [];
+      var plan = ic_planChangedDates_(changed, pending.filter(function (d) { return d >= floorIso && d < startIso; }),
+                                      IC_EXPORT_MAX_CHANGED_DATES_);
+      for (var ci = 0; ci < plan.now.length; ci++) {
+        var d = plan.now[ci];
+        var dRows = ic_fetchRows_(conn, d, d);
+        if (dRows.length) {
+          var rd = ic_writeWindow_(sheet, dRows, d, d);
+          written += rd.written; replaced += rd.replaced;
+        }
+        changedDone.push(d);
+      }
+      changedLater = plan.later;
+      props.setProperty('INBOUND_EXPORT_WATERMARK', runStartIso);
+      props.setProperty('INBOUND_EXPORT_PENDING', JSON.stringify(changedLater));
     }
-    var replaced = ic_removeRowsInRange_(sheet, startIso, endIso, fetchedDates);
-    // Normalize booleans/nulls for the sheet.
-    var values = rows.map(function (r) {
-      r[7] = r[7] === true ? 'TRUE' : (r[7] === false ? 'FALSE' : '');
-      r[16] = r[16] === true ? 'TRUE' : (r[16] === false ? 'FALSE' : '');   // Is Internal
-      // D-3: queue/insurer/journey strings originate in the external feed --
-      // neutralize a leading =/+/@ so a crafted name can't land as a live
-      // formula in this tab (typeof guard: helper lives in dashboardCDR.js,
-      // same project global scope).
-      return r.map(function (v) {
-        if (v == null) return '';
-        return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
-      });
-    });
-    // Plain-text the Call Start column BEFORE the write or Sheets coerces the
-    // "10:23:33" strings to 1899-epoch time serials (the K-AC class). Two
-    // ranges: the full current height (so the post-append SORT can never move
-    // a time string onto an unformatted cell), plus -- after pre-expanding the
-    // grid so the append can't spill past getMaxRows unformatted (the
-    // buildDQE recurrence vector) -- the EXACT write range.
-    var writeStart = sheet.getLastRow() + 1;
-    sheet.getRange(2, INBOUND_EXPORT_CALL_START_COL, sheet.getMaxRows() - 1, 1)
-         .setNumberFormat('@');
-    var rowsShort = writeStart + values.length - 1 - sheet.getMaxRows();
-    if (rowsShort > 0) sheet.insertRowsAfter(sheet.getMaxRows(), rowsShort);
-    sheet.getRange(writeStart, INBOUND_EXPORT_CALL_START_COL, values.length, 1)
-         .setNumberFormat('@');
-    sheet.getRange(writeStart, 1, values.length, INBOUND_EXPORT_HEADERS.length).setValues(values);
-    // Keep the tab chronological -- an explicit mid-history range would
-    // otherwise leave its refreshed rows appended at the bottom. Same
-    // post-write sort pattern the historical sheets use.
+    // Keep the tab chronological -- an explicit mid-history range and the
+    // changed older dates are appended at the bottom. Same post-write sort
+    // pattern the historical sheets use.
     var finalLastRow = sheet.getLastRow();
-    if (finalLastRow > 2) {
+    if (written && finalLastRow > 2) {
       sheet.getRange(2, 1, finalLastRow - 1, INBOUND_EXPORT_HEADERS.length)
            .sort({ column: 1, ascending: true });
     }
-    Logger.log('exportInboundCalls: wrote %s rows for %s..%s (%s replaced; sheet now %s rows).',
-               values.length, startIso, endIso, replaced, finalLastRow - 1);
-    return { written: values.length, replaced: replaced };
+    Logger.log('exportInboundCalls: wrote %s rows for %s..%s + %s changed older date(s) (%s replaced; %s still pending; sheet now %s rows).',
+               written, startIso, endIso, changedDone.length, replaced, changedLater.length, finalLastRow - 1);
+    return { written: written, replaced: replaced, changedDates: changedDone, pendingDates: changedLater.length };
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -292,9 +402,19 @@ function exportInboundCalls(fromIso, toIso) {
 // so it stays off the six-engine readiness matrix); each run logs ONE
 // `inboundExport` Pipeline Health row. Neon-down is the EXPECTED failure
 // here (usage ceiling / free-tier suspend): the copy just stays at its last
-// good date, so the failure path is log-only -- no email, ever. The prune
+// good date. TOOL-2 (owner 2026-10-12): that row's notes start with
+// EXPORT_NEON_UNREACHABLE_TAG_, and the dashboard's Pipeline-failure watchdog
+// does not email a tagged export row (the capture's own rows already report
+// the outage); every OTHER export failure -- a SQL error, the cell cap --
+// still emails. The Health page shows both kinds. The prune
 // keeps the tab bounded (the daily append would otherwise grow it without
 // limit and slow every fallback read).
+
+// TOOL-2: the notes prefix of an export failure that is the expected Neon
+// outage. The dashboard's PipelineWatch.gs keys on the SAME literal
+// (PIPELINE_WATCH_QUIET_TAG_) -- cross-file-pins keeps them equal. Shared by
+// outboundCallsExport.js (one project scope).
+var EXPORT_NEON_UNREACHABLE_TAG_ = 'Neon unreachable (expected; copy kept): ';
 
 var INBOUND_EXPORT_TRIGGER_HOUR = 9;          // script TZ (America/Chicago)
 var INBOUND_EXPORT_KEEP_DAYS_DEFAULT = 400;   // prune floor; INBOUND_EXPORT_KEEP_DAYS overrides
@@ -343,7 +463,7 @@ function runInboundCallsExport_() {
       logPipelineHealth_(ss, {
         step: 'inboundExport', status: 'failure',
         durationMs: Date.now() - t0,
-        notes: String((e && e.message) || e),
+        notes: ((e && e.neonUnreachable) ? EXPORT_NEON_UNREACHABLE_TAG_ : '') + String((e && e.message) || e),
       });
     }
     Logger.log('runInboundCallsExport_ failed (expected during a Neon outage): '

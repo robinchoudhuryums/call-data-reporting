@@ -435,3 +435,32 @@ test('P-2: a hard error thrown while Neon was UNREACHABLE is flagged on the erro
   assert.equal(queuedDates_(sheet2)[0].attempts, 4, 'a failure Neon rejected still counts');
   assert.equal(mails.length, 1);
 });
+
+// PIPE-6 (broad-scan 2026-10-12): in deferred mode the queue row is the only
+// record that a date still owes Neon its mirror + per-call capture. A failed
+// enqueue used to be one Logger line; it now writes a failure-only
+// `neonMirror:enqueue` Pipeline Health row naming the date and the fix, and
+// still never throws (the sheets are already written).
+test('PIPE-6: a failed enqueue logs a neonMirror:enqueue failure row naming the date, and never throws', function () {
+  const logged = [];
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, ev) { logged.push(JSON.parse(JSON.stringify(ev))); };
+  const brokenSS = {
+    getSheetByName: function () { return null; },
+    insertSheet: function () { throw new Error('This action would increase the number of cells beyond the limit'); },
+  };
+  assert.doesNotThrow(function () { h.fn('enqueueNeonMirror_')(brokenSS, new Date(2026, 9, 9, 12)); });
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].step, 'neonMirror:enqueue');
+  assert.equal(logged[0].status, 'failure');
+  assert.match(logged[0].notes, /^2026-10-09 was NOT queued for the deferred Neon mirror \(This action would increase/);
+  assert.match(logged[0].notes, /Neon Mirror Queue/, 'names the tab to fix it in');
+
+  // A successful enqueue logs nothing.
+  logged.length = 0;
+  const rowsAppended = [];
+  const okSheet = { appendRow: function (r) { rowsAppended.push(r); }, setFrozenRows: function () {} };
+  h.fn('enqueueNeonMirror_')({ getSheetByName: function () { return okSheet; } }, new Date(2026, 9, 9, 12));
+  assert.equal(logged.length, 0);
+  assert.equal(rowsAppended.length, 1);
+  delete h.ctx.logPipelineHealthWithFallback_;
+});

@@ -198,3 +198,34 @@ test('PIPE-1: the ledger clears itself when the parked tab is removed, and says 
     assert.deepEqual(calls.map(function (c) { return c.iso; }), ['2026-09-23']);
   }, okImport(calls));
 });
+
+// PIPE-2 (broad-scan 2026-10-12): a paused / stopped bulk run leaves every
+// processed date absent from the QCD / CSR / CDR / Q Path sheets until its
+// final archive. The pause / stop logs a failure row naming them and returns
+// the sentence the alert shows; nothing processed yet = no row.
+test('PIPE-2: a bulk pause/stop names the processed dates absent until the archive, in a failure row', function () {
+  const logged = [];
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, ev) { logged.push(JSON.parse(JSON.stringify(ev))); };
+  const queue = ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'];
+  const note = h.call('bulkLogGap_', null, queue, 3, 'paused (time limit)');
+  assert.match(note, /^3 processed date\(s\) \(2026-09-01 \.\. 2026-09-03\) are ABSENT from the QCD, CSR Transfer, CDR and Q Path Historical sheets/);
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].step, 'bulkBackfill:paused');
+  assert.equal(logged[0].status, 'failure');
+  assert.equal(logged[0].rows, 3);
+  assert.match(logged[0].notes, /^paused \(time limit\): 3 processed date\(s\)/);
+  logged.length = 0;
+  assert.equal(h.call('bulkLogGap_', null, queue, 0, 'paused (time limit)'), '', 'nothing processed: no gap, no row');
+  assert.equal(logged.length, 0);
+  assert.equal(h.call('bulkGapNote_', ['2026-09-09'], 1).indexOf('1 processed date(s) (2026-09-09) are ABSENT'), 0);
+  delete h.ctx.logPipelineHealthWithFallback_;
+
+  // Wiring: both pause paths and the final archive use it; completion clears it.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const fnStart = src.indexOf('function processBulkQueue()');
+  const body = src.slice(fnStart, src.indexOf('\nfunction getDateRange(', fnStart));
+  assert.match(body, /bulkLogGap_\(targetSS, queue, index, 'paused \(time limit\)'\)/);
+  assert.match(body, /bulkLogGap_\(targetSS, queue, index, 'stopped after an error on ' \+ dateStr\)/);
+  assert.match(body, /bulkLogGap_\(targetSS, queue, queue\.length, 'final archive failed/);
+  assert.match(body, /step: 'bulkBackfill:paused', status: 'success'/, 'a completed run clears the Health row');
+});

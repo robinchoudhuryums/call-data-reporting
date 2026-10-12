@@ -326,3 +326,32 @@ test('EN-6: unparseable failure rows ride the email and the outcome when there A
   assert.match(h.state.sentEmails[0].body, /1 failure row\(s\) have no readable Timestamp/);
   assert.match(h.state.props.PIPELINE_WATCH_LAST_RESULT, /plus 1 UNPARSEABLE failure row/);
 });
+
+// TOOL-2 (owner 2026-10-12) + PIPE-2 (broad-scan Batch 4): two kinds of
+// failure row are shown on the Health page but NOT emailed -- an export
+// failure that is just Neon being unreachable (the capture rows already
+// report the outage), and a paused / stopped bulk run's gap row (the operator
+// is at the alert). Every other failure, export ones included, still emails.
+test('TOOL-2 / PIPE-2: the scan skips tagged Neon-down export rows and bulk gap rows, nothing else', function () {
+  const tag = h.ctx.PIPELINE_WATCH_QUIET_TAG_;
+  const rows = [
+    { tsMs: 300, step: 'inboundExport', status: 'failure', notes: tag + 'The database connection failed' },
+    { tsMs: 310, step: 'outboundExport', status: 'failure', notes: tag + 'Failed to establish a database connection' },
+    { tsMs: 320, step: 'inboundExport', status: 'failure', notes: 'This action would increase the number of cells beyond the limit' },
+    { tsMs: 330, step: 'outboundExport', status: 'failure', notes: 'ERROR: column "x" does not exist' },
+    { tsMs: 340, step: 'autoImport', status: 'failure', notes: tag + 'tag on a non-export step is not a pass' },
+    { tsMs: 350, step: 'bulkBackfill:paused', status: 'failure', notes: 'paused (time limit): 3 processed date(s) ...' },
+  ];
+  const r = h.call('pipelineWatchScan_', rows, 200);
+  deepEqual(r.newFailures.map(function (f) { return f.tsMs; }), [320, 330, 340],
+    'the cell-cap and SQL export failures and the untagged step still email');
+});
+
+test('TOOL-2: the quiet tag is the SAME literal cdr-report writes', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'inboundCallsExport.js'), 'utf8');
+  const m = src.match(/var EXPORT_NEON_UNREACHABLE_TAG_ = '([^']*)';/);
+  assert.ok(m, 'cdr-report declares EXPORT_NEON_UNREACHABLE_TAG_');
+  assert.equal(m[1], h.ctx.PIPELINE_WATCH_QUIET_TAG_, 'a drift here would start emailing every Neon outage again');
+});
