@@ -164,3 +164,23 @@ test('smoke: insights window = 7 days ending on the latest date (noon-anchored I
   assert.equal(h.call('smokeShiftIso_', '2026-07-01', -1), '2026-06-30');
   assert.equal(h.call('smokeShiftIso_', '2026-01-01', -1), '2025-12-31');
 });
+
+// ENG-9 (broad-scan 2026-10-12): the latest-date step exercises the REAL read,
+// not a 5-minute cached value (a cached date passed while the source failed).
+test('ENG-9: latest-dqe-date drops the cached date first, so a broken source fails the step', function () {
+  const hd = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'SmokeCheck.gs'] });
+  hd.state.userEmail = 'admin@x.com';
+  hd.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
+  // A DQE sheet whose date column holds nothing parseable -> the real read finds no date.
+  hd.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DQE Historical Data': [['Dept', 'Date'], ['CSR', ''], ['CSR', '']],
+    'DO NOT EDIT!': [['h']],
+  } });
+  hd.ctx.getDqeReadSource_ = function () { return 'sheet'; };          // lives in NeonRead.gs (not loaded)
+  hd.state.cache.set(hd.call('latestDateCacheKey_'), '2026-07-16');   // a stale 5-min value
+  const res = hd.call('runLiveSmoke');
+  const c = res.checks.filter(function (x) { return x.name === 'latest-dqe-date'; })[0];
+  assert.equal(c.ok, false, 'pre-fix this passed on the cached 2026-07-16');
+  assert.match(c.note, /unexpected value: null/, 'it failed on the REAL read, not on something else');
+  assert.equal(hd.call('latestDateCacheKey_'), 'latestDate:v1:sheet', 'the key getLatestDataDate itself uses');
+});

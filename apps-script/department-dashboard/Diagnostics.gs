@@ -304,11 +304,13 @@ function dumpCell() {
 /**
  * Traces the Missed Calls Report's abandoned-call calculation for a
  * single department + date range. Logs:
- *   - The dept's allExtensions (set of phone/queue extensions on the
- *     dept's DO NOT EDIT! roster cells).
- *   - Every queue-sentinel row in range: queue name, col D contents,
- *     whether its col-D extensions overlap allExtensions, and the
- *     parent-call IDs in col AD.
+ *   - The dept's queue-NAME set (missedSentinelQueueNameSet_, the report's
+ *     own R6 / R8-1 attribution -- ENG-14: this tool used to match sentinels
+ *     by col-D EXTENSION overlap, which the report stopped doing, so its
+ *     "== what the report will show" tally disagreed with the report).
+ *   - Every queue-sentinel row in range: queue name, whether that NAME is
+ *     in the dept's set, col D (informational) and the parent-call IDs in
+ *     col AD.
  *   - Every per-agent row in range whose agent IS on the roster:
  *     same info plus the parent IDs from col AD.
  *   - Final tallies: distinct abandoned parent IDs from agent rows,
@@ -351,8 +353,17 @@ function diagnoseAbandoned() {
 
   const dqr = getDeptQueueExts_(DEPT, rosterSet, values);
   const deptQueueExts = dqr.exts;
-  Logger.log('Dept queue exts (source=%s): %s',
+  Logger.log('Dept queue exts (source=%s; informational -- sentinels are attributed by NAME): %s',
              dqr.source, JSON.stringify(Object.keys(deptQueueExts).sort()));
+  // ENG-14: the report's sentinel attribution, from the report's own helper.
+  const deptQueueNames = missedSentinelQueueNameSet_(DEPT);
+  Logger.log('Dept queue NAMES (the report\'s sentinel match, case-insensitive): %s',
+             JSON.stringify(Object.keys(deptQueueNames).sort()));
+  // Narrowing: the report narrows slot timelines under QUEUE_SPLIT_SCOPE=dept,
+  // but never the AD-derived abandoned counts (ids carry no queue identity),
+  // so the tallies below hold under either scope.
+  Logger.log('QUEUE_SPLIT_SCOPE=%s (abandoned-call counts are not narrowed in either mode)',
+             (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
 
   const sentinelHits = [];   // matched sentinel rows
   const sentinelMiss = [];   // sentinel rows whose col D didn't overlap
@@ -371,15 +382,11 @@ function diagnoseAbandoned() {
     const isSentinel = /^A_Q_/.test(agent) || agent === 'Backup CSR';
     const colDRaw = String(rd[HISTORICAL_COLS.QUEUE_EXT - 1] || '');
     const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
-    // Both sentinel and agent rows match against deptQueueExts (col D
-    // is always the shared-queue extension).
-    let extMatch = false;
+    // Col-D extension overlap, logged for context only (ENG-14: no longer
+    // the sentinel test -- the report attributes sentinels by queue NAME).
     const matchedExt = [];
     for (let j = 0; j < rowExts.length; j++) {
-      if (deptQueueExts[rowExts[j]]) {
-        extMatch = true;
-        matchedExt.push(rowExts[j]);
-      }
+      if (deptQueueExts[rowExts[j]]) matchedExt.push(rowExts[j]);
     }
     // Guard against coerced/lost abandoned cells so a corrupted value isn't
     // counted as fake parent IDs (mirrors the Missed report's read-side guard).
@@ -394,7 +401,7 @@ function diagnoseAbandoned() {
         parsedExts: rowExts, matchedExts: matchedExt,
         adIds: adIds,
       };
-      if (extMatch) {
+      if (deptQueueNames[agent.toLowerCase()]) {   // ENG-14: by NAME, as the report does
         sentinelHits.push(rec);
         adIds.forEach(function (id) { parentsSentinel[id] = true; });
       } else {
@@ -412,7 +419,7 @@ function diagnoseAbandoned() {
   }
 
   Logger.log('');
-  Logger.log('--- Sentinel rows (queue-only abandoned) MATCHED to %s by extension overlap: %s', DEPT, sentinelHits.length);
+  Logger.log('--- Sentinel rows (queue-only abandoned) MATCHED to %s by queue NAME: %s', DEPT, sentinelHits.length);
   sentinelHits.forEach(function (s) {
     Logger.log('  %s  %s  colD="%s"  matched=%s  parentIDs=%s',
                s.date, s.queue, s.colD, JSON.stringify(s.matchedExts),
@@ -420,7 +427,7 @@ function diagnoseAbandoned() {
   });
 
   Logger.log('');
-  Logger.log('--- Sentinel rows in date range REJECTED (col-D had no overlap with dept allExtensions): %s', sentinelMiss.length);
+  Logger.log('--- Sentinel rows in date range REJECTED (queue name not in the dept\'s set): %s', sentinelMiss.length);
   sentinelMiss.forEach(function (s) {
     Logger.log('  %s  %s  colD="%s"  parsedExts=%s  parentIDs=%s',
                s.date, s.queue, s.colD, JSON.stringify(s.parsedExts),
@@ -448,6 +455,13 @@ function diagnoseAbandoned() {
              Object.keys(union).length);
   Logger.log('No-ring subset (noRingAbandonCount):              %s',
              Object.keys(parentsSentinel).length);
+  return {   // ENG-14: the tallies, for a caller (and the parity test)
+    agentParents: Object.keys(parentsAgent).length,
+    sentinelParents: Object.keys(parentsSentinel).length,
+    union: Object.keys(union).length,
+    sentinelHits: sentinelHits.length,
+    sentinelMiss: sentinelMiss.length,
+  };
 }
 
 

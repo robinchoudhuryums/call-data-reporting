@@ -279,3 +279,49 @@ test('B2/ENG-1: re-installing the digest triggers KEEPS pending retries; uninsta
   h.call('uninstallDigestTriggers');
   assert.deepEqual(names(), []);
 });
+
+// ENG-7 (broad-scan 2026-10-12): a failed Alert Log append after a send used
+// to abort the run mid-way, and the failure email's "re-send by hand" would
+// re-alert the depts already emailed.
+test('ENG-7: a failing Alert Log append does not stop the run; every dept is assessed, the outcome is FAILED-LOG and admins are told NOT to re-send', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  h2.ctx.appendAlertLog_ = function () { throw new Error('Service Spreadsheets timed out'); };
+  h2.state.sentEmails.length = 0;
+  const res = h2.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger');
+  assert.deepEqual(sent, ['CSR', 'Sales'], 'pre-fix the run died after CSR; Sales was never assessed');
+  assert.equal(res.length, 2);
+  assert.ok(res.every(function (r) { return r.status === 'sent'; }), 'a log failure does not turn a send into an error row');
+  assert.match(res[0].notes, /NOT written to the Alert Log/);
+  assert.equal(res.logFailures.length, 2);
+  assert.deepEqual(Array.from(res.sentDepts), ['CSR', 'Sales']);
+  const outcome = h2.call('alertsOutcomeString_', '2026-09-21', res, null);
+  assert.match(outcome, /^FAILED-LOG 2026-09-21: 2 Alert Log row\(s\) not written/);
+  assert.equal(h2.call('healthOutcomeIsBad_', outcome), true);
+
+  h2.call('alertsNotifyLogFailures_', '2026-09-21', res);
+  const mail = h2.state.sentEmails.filter(function (m) { return /not written/.test(m.subject); })[0];
+  assert.ok(mail, 'the admins get one email');
+  assert.match(mail.body, /Alerts sent: CSR, Sales/);
+  assert.match(mail.body, /Do not re-send/);
+});
+
+test('ENG-7: an error that still escapes the run names the depts already emailed in the trigger failure email', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  h2.ctx.getCompanyHolidayRanges_ = function () { return []; };
+  h2.ctx.digestLatestDqeIso_ = function () { return '2026-09-21'; };
+  // CSR sends, then something outside the per-dept try throws on Sales.
+  h2.ctx.readAlertConfig_ = function () {
+    return [{ department: 'CSR', active: true, threshold: 90, skipDates: '' },
+            { department: 'Sales', threshold: 90, skipDates: '', get active() { throw new Error('boom'); } }];
+  };
+  h2.state.sentEmails.length = 0;
+  h2.call('alertsGatedAttempt_', new Date('2026-09-22T08:05:00-05:00'), 'trigger');
+  assert.deepEqual(sent, ['CSR']);
+  const mail = h2.state.sentEmails.filter(function (m) { return /trigger failed/.test(m.subject); })[0];
+  assert.ok(mail);
+  assert.match(mail.body, /Already emailed before the stop \(a manual Send would repeat them\): CSR/);
+});

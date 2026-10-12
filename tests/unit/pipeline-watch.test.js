@@ -355,3 +355,19 @@ test('TOOL-2: the quiet tag is the SAME literal cdr-report writes', function () 
   assert.ok(m, 'cdr-report declares EXPORT_NEON_UNREACHABLE_TAG_');
   assert.equal(m[1], h.ctx.PIPELINE_WATCH_QUIET_TAG_, 'a drift here would start emailing every Neon outage again');
 });
+
+// ENG-3 (broad-scan 2026-10-12): the seen-key store is bounded in BYTES too.
+test('ENG-3: a 200-row failure burst stores under the per-value limit, newest keys kept', function () {
+  h.state.props = {};
+  const base = Date.parse('2026-10-12T15:00:00Z');
+  const rows = [];
+  for (let i = 0; i < 200; i++) rows.push({ tsMs: base + i * 1000, step: 'processIntegratedHistory:QCD:neon' });
+  h.call('pipelineWatchSeenWrite_', h.ctx.PropertiesService.getScriptProperties(), {}, rows, base + 200000);
+  const raw = h.state.props.PIPELINE_WATCH_SEEN;
+  assert.ok(raw, 'stored -- the write no longer throws over the limit');
+  assert.ok(Buffer.byteLength(raw, 'utf8') <= 8000, 'under the byte cap: ' + Buffer.byteLength(raw, 'utf8'));
+  const kept = Object.keys(JSON.parse(raw));
+  assert.ok(kept.length < 200, 'oldest dropped to fit');
+  assert.ok(kept.indexOf(String(base + 199000) + '|processIntegratedHistory:QCD:neon') !== -1, 'the newest row survives');
+  assert.ok(kept.indexOf(String(base) + '|processIntegratedHistory:QCD:neon') === -1, 'the oldest went first');
+});

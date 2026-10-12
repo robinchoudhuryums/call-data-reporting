@@ -1,6 +1,21 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 6 IMPLEMENTED (block 252): engine robustness, low tier.**
+  - Fixes:
+    - ENG-3: PIPELINE_WATCH_SEEN byte cap.
+    - ENG-4: queue-report marker written before the claim is released.
+    - ENG-5: fixed 6 h beacon window.
+    - ENG-6: digest IDLE outcome renders muted.
+    - ENG-7: an Alert Log append failure no longer aborts the run (FAILED-LOG + do-not-re-send email).
+    - ENG-9: smoke check reads uncached.
+    - ENG-14: diagnoseAbandoned matches by queue name via the report's helper.
+  - Also this session: SEC-4's wait-join cap note queued in Batch 9 (owner).
+  - Verification: 2375 tests; lint clean; module map regenerated; 9 bites. No client change, so ci:ui was not needed.
+
+  **Owner-side:** deploy the dashboard (Batches 1-6). No new operator steps.
+  **Next:** Batch 7 (pipeline data rules: cdr-import + cdr-report) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 5 IMPLEMENTED (block 251): config, access + cache dimensions.**
   - Fixes:
     - CFG-1: first active row wins for the parent map.

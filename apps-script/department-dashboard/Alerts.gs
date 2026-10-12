@@ -453,6 +453,7 @@ function alertsGatedAttempt_(now, source) {
       // classifier paints it amber.
       recordAlertsOutcome_(alertsOutcomeString_(dateIso, results,
         late ? { lateLatest: latest || '(none)' } : null));
+      if (results.logFailures && results.logFailures.length) alertsNotifyLogFailures_(dateIso, results);   // ENG-7
       alertsClearRetryTriggers_();
       return { decision: late ? 'run-late' : 'run' };
     } catch (e) {
@@ -460,6 +461,7 @@ function alertsGatedAttempt_(now, source) {
       recordAlertsOutcome_('FAILED (threw): ' + (e && e.message ? e.message : String(e)) + ' -- assessing ' + dateIso);
       // Surface to admins via email so a silent trigger failure
       // doesn't go unnoticed.
+      var alreadySent = (e && Array.isArray(e.alertsSent)) ? e.alertsSent : [];   // ENG-7
       try {
         sendAppEmail_({
           to: getAdminEmails_().join(','),
@@ -468,18 +470,27 @@ function alertsGatedAttempt_(now, source) {
             tone: 'bad', kicker: 'Admin notice · Daily alerts', title: 'Daily alert trigger failed',
             subtitle: 'Assessing ' + dateIso,
             tiles: [{ label: 'Date assessed', value: dateIso }, { label: 'Handler', value: 'runDailyAlerts_' },
-                    { label: 'Alerts sent', value: 'none', sub: 'this run', tone: 'bad' }],
+                    alreadySent.length
+                      ? { label: 'Alerts sent', value: String(alreadySent.length), sub: 'before it stopped', tone: 'warn' }
+                      : { label: 'Alerts sent', value: 'none', sub: 'this run', tone: 'bad' }],
             callout: { kicker: 'Error', html: appEsc_(e && e.message ? e.message : String(e)), tone: 'warn' },
             stepsTitle: 'What to check',
             steps: [{ head: 'Alert Log.', body: 'The Alerts modal shows the last runs; an <em>error</em> row names the dept it died on.' },
                     { head: 'Execution log.', body: 'Apps Script → Executions → runDailyAlerts_ for the full trace.' },
-                    { head: 'Re-send by hand.', body: 'Alerts modal → Send for ' + appEsc_(dateIso) + ' once the cause is fixed; the trigger re-runs tomorrow regardless.' }],
+                    // ENG-7: a manual Send re-assesses EVERY dept, so name the ones already emailed.
+                    { head: 'Re-send by hand.', body: alreadySent.length
+                        ? ('Already emailed before the stop: <strong>' + appEsc_(alreadySent.join(', ')) + '</strong>. '
+                          + 'Alerts modal → Send for ' + appEsc_(dateIso) + ' re-assesses every dept and WOULD email those again -- '
+                          + 'Preview first and decide whether a repeat is acceptable.')
+                        : ('Alerts modal → Send for ' + appEsc_(dateIso) + ' once the cause is fixed; the trigger re-runs tomorrow regardless.') }],
             mono: { title: 'Stack', text: (e && e.stack) ? e.stack : '(no stack)' },
             ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Alerts',
             footerHtml: 'Sent by the daily alerts trigger when it throws before assessing any department. Operator State #8.',
           },
           body: 'runDailyAlerts_ threw: ' + (e && e.message ? e.message : String(e))
-              + '\nDate: ' + dateIso + '\nStack: ' + (e && e.stack ? e.stack : '(no stack)'),
+              + '\nDate: ' + dateIso
+              + (alreadySent.length ? '\nAlready emailed before the stop (a manual Send would repeat them): ' + alreadySent.join(', ') : '')
+              + '\nStack: ' + (e && e.stack ? e.stack : '(no stack)'),
         });
       } catch (e2) { /* best-effort */ }
     }
@@ -570,7 +581,9 @@ function alertsOutcomeString_(dateIso, results, opts) {
   var fired = counts.sent || 0;
   var detail = Object.keys(counts).sort().map(function (k) { return counts[k] + ' ' + k; }).join(', ');
   var lead;
+  var unlogged = (results && results.logFailures) ? results.logFailures.length : 0;   // ENG-7
   if (errors) lead = 'FAILED-PARTIAL ' + dateIso + ': ' + errors + ' dept error(s); ';
+  else if (unlogged) lead = 'FAILED-LOG ' + dateIso + ': ' + unlogged + ' Alert Log row(s) not written (sends stand); ';
   else if (opts.lateLatest) lead = 'LATE ' + dateIso + ': DQE data was still only through ' + opts.lateLatest
     + ' at the ' + ALERTS_CUTOFF_HOUR_ + ':00 cutoff; ';
   else if (n > 0 && (counts['no-data'] || 0) === n) lead = 'EMPTY ' + dateIso + ': every dept had no data; ';
@@ -578,6 +591,40 @@ function alertsOutcomeString_(dateIso, results, opts) {
   var head = lead + n + ' dept(s) assessed, ' + fired + ' fired'
     + (detail ? ' (' + detail + ')' : '');
   return head + '. At ' + new Date();
+}
+
+/**
+ * ENG-7: the run finished but some Alert Log rows did not land. One admin
+ * email naming them, and which depts were emailed, so nobody re-sends to
+ * reconstruct a log that only failed to WRITE.
+ */
+function alertsNotifyLogFailures_(dateIso, results) {
+  try {
+    var to = getAdminEmails_().join(',');
+    if (!to) return;
+    var lf = results.logFailures || [];
+    var sent = results.sentDepts || [];
+    var lines = lf.map(function (f) { return f.department + ' (' + f.status + '): ' + f.error; });
+    sendAppEmail_({
+      to: to,
+      subject: '[Dashboard] Daily alerts: ' + lf.length + ' Alert Log row(s) not written for ' + dateIso,
+      notice: {
+        tone: 'warn', kicker: 'Admin notice · Daily alerts', title: 'Alert Log rows not written',
+        subtitle: 'The run finished; the audit rows below did not land',
+        tiles: [{ label: 'Date assessed', value: dateIso },
+                { label: 'Rows not logged', value: String(lf.length), tone: 'warn' },
+                { label: 'Alerts sent', value: String(sent.length), sub: sent.join(', ') || 'none' }],
+        callout: { kicker: 'Do not re-send', html: 'Every department was assessed and the emails above went out. '
+          + 'Only the Alert Log append failed, so a manual Send would email the same managers again.', tone: 'warn' },
+        mono: { title: 'Unlogged rows', text: lines.join('\n') },
+        ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Alerts',
+        footerHtml: 'Sent by the daily alerts trigger when an Alert Log append fails (ENG-7).',
+      },
+      body: 'Daily alerts for ' + dateIso + ' finished, but ' + lf.length + ' Alert Log row(s) were not written:\n'
+        + lines.join('\n') + '\n\nAlerts sent: ' + (sent.join(', ') || 'none')
+        + '\nDo not re-send: only the log append failed.',
+    });
+  } catch (e) { Logger.log('alertsNotifyLogFailures_: ' + (e && e.message ? e.message : e)); }
 }
 
 /** O-5: the *_LAST / *_LAST_RESULT pair the Health page's outcome table reads. */
@@ -626,9 +673,28 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   // looked at 2026-05-19 at 9:13am" which would otherwise vanish at
   // session end.
   const loggedBy = dryRun ? ('preview:' + (triggeredBy || '')) : (triggeredBy || '');
+  // ENG-7 (broad-scan 2026-10-12): a failed Alert Log append NEVER throws out
+  // of here. It used to: the append after a SEND threw, the per-dept catch
+  // tried to log an `error` row (which threw again), and the run aborted
+  // mid-way -- the remaining depts were never assessed, and the failure
+  // email's "re-send by hand" re-alerted every dept already emailed. Now the
+  // run finishes, the unlogged rows are named on the result
+  // (`results.logFailures`) and in each record's notes, and the trigger path
+  // emails the admins the list. (The F2 pre-flight above still refuses to
+  // send at all when the sheet is missing.)
+  const logFailures = [];
+  const sentDepts = [];
   const pushAndLog = function (rec) {
     results.push(rec);
-    appendAlertLog_(rec, loggedBy, dateIso);
+    if (rec && rec.status === 'sent') sentDepts.push(rec.department);
+    try {
+      appendAlertLog_(rec, loggedBy, dateIso);
+    } catch (logErr) {
+      const why = (logErr && logErr.message) ? logErr.message : String(logErr);
+      logFailures.push({ department: rec.department, status: rec.status, error: why });
+      rec.notes = String(rec.notes || '') + ' [NOT written to the Alert Log: ' + why + ']';
+      Logger.log('runAlertsCore_: Alert Log append failed for %s (%s): %s', rec.department, rec.status, why);
+    }
   };
 
   // E8: Skip Dates honored ONLY on the time-triggered path. Manual
@@ -647,6 +713,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
     if (!Object.keys(alertKnownDeptSet).length) alertKnownDeptSet = null;
   } catch (deptErr) { alertKnownDeptSet = null; }
 
+  try {
   cfg.forEach(function (entry) {
     // OPS-9: a duplicate dept row (first row wins; see
     // parseAlertConfigValues_) must not re-evaluate + re-email the dept.
@@ -801,7 +868,15 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       });
     }
   });
+  } catch (runErr) {
+    // ENG-7: anything that still escapes carries the depts ALREADY emailed, so
+    // the failure email can say which ones a manual re-send would repeat.
+    try { runErr.alertsSent = sentDepts.slice(); } catch (ae) { /* frozen error */ }
+    throw runErr;
+  }
 
+  results.logFailures = logFailures;   // ENG-7 (not serialized to the client; the notes carry it)
+  results.sentDepts = sentDepts;
   return results;
 }
 

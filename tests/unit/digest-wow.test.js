@@ -169,14 +169,16 @@ function installDigestMarkerFixture_(configRows) {
   h.state.cache.clear();
 }
 
-test('P6: zero matching subscribers -> marker NOT claimed, NO-SUBSCRIBERS result', function () {
+test('P6 / ENG-6: zero matching subscribers -> marker NOT claimed, an informational IDLE result', function () {
   installDigestMarkerFixture_([]);
   let sends = 0;
   h.ctx.sendDigestEmail_ = function () { sends++; };
   h.call('sendDigestsForCadence_', 'daily');
   assert.equal(sends, 0);
   assert.equal(h.state.props.DIGEST_RUN_MARKER_daily, undefined, 'window left unclaimed');
-  assert.match(String(h.state.props.DIGEST_LAST_RESULT_daily), /^NO-SUBSCRIBERS/);
+  assert.match(String(h.state.props.DIGEST_LAST_RESULT_daily), /^IDLE /);
+  assert.ok(!/fail|error|unreachable|skipped/i.test(h.state.props.DIGEST_LAST_RESULT_daily),
+    'ENG-6: carries no failure word, so the Health classifier reads it as informational');
 });
 
 test('P6: every row failing dept validation -> marker cleared, FAILED-ALL-VALIDATION result', function () {

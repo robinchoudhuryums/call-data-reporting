@@ -1316,6 +1316,49 @@ test('S2B-8: the poll stands down while a manual blast owns the day', function (
   }
 });
 
+// ENG-4 (broad-scan 2026-10-12): the dedupe marker is written BEFORE the
+// claim is released, on both paths -- no gap where neither guards the day.
+test('ENG-4: the poll and the manual blast write LAST_SENT before releasing the claim; a no-op run still never claims', function () {
+  const saved = { send: h.ctx.sendQueueReportForDate_, prev: h.ctx.prevBusinessDayIso_, rel: h.ctx.queueReportReleaseSend_,
+                  hol: h.ctx.isCompanyHoliday_, latest: h.ctx.queueReportQcdLatestIso_, Date: h.ctx.Date };
+  const atRelease = [];
+  h.ctx.queueReportReleaseSend_ = function (props) { atRelease.push(h.state.props.QUEUE_REPORT_LAST_SENT || null); saved.rel(props); };
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-07-10'; };
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  h.ctx.queueReportQcdLatestIso_ = function () { return '2026-07-10'; };
+  const fixed = new saved.Date('2026-07-13T07:00:00-05:00');
+  h.ctx.Date = function (a) { return arguments.length ? new saved.Date(a) : new saved.Date(fixed.getTime()); };
+  h.ctx.Date.now = function () { return fixed.getTime(); };
+  try {
+    h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com' };
+    h.ctx.sendQueueReportForDate_ = function () { return { count: 2, failed: [] }; };
+    h.call('runDailyQueueReport_');
+    assert.deepEqual(atRelease, ['2026-07-10'], 'poll: the marker was already there when the claim went');
+
+    // A no-subscriber run claims nothing (the O-9 rule survives the move).
+    atRelease.length = 0;
+    h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com' };
+    h.ctx.sendQueueReportForDate_ = function () { return { count: 0, failed: [], noRecipients: true }; };
+    h.call('runDailyQueueReport_');
+    assert.deepEqual(atRelease, [null]);
+    assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, undefined);
+
+    // Manual blast of the previous business day (prevBusinessDayIso_ is stubbed).
+    h.ctx.Date = saved.Date;
+    atRelease.length = 0;
+    h.state.userEmail = 'admin@x.com';
+    h.state.props = { ADMIN_EMAILS: 'admin@x.com' };
+    h.ctx.sendQueueReportForDate_ = function () { return { count: 1, failed: [] }; };
+    const r = h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+    assert.equal(r.markerClaimed, true);
+    assert.deepEqual(atRelease, ['2026-07-10'], 'manual: the marker was already there when the claim went');
+  } finally {
+    h.ctx.sendQueueReportForDate_ = saved.send; h.ctx.prevBusinessDayIso_ = saved.prev; h.ctx.queueReportReleaseSend_ = saved.rel;
+    h.ctx.isCompanyHoliday_ = saved.hol; h.ctx.queueReportQcdLatestIso_ = saved.latest; h.ctx.Date = saved.Date;
+    h.state.props = {};
+  }
+});
+
 // EN-3 (broad-scan 2026-10-01): a persistent throw used to email every admin
 // on EVERY 30-minute poll (~36 a day); now once per error signature per day.
 test('EN-3: a persistent runDailyQueueReport_ throw emails ONCE per signature per day, while every poll is still recorded', function () {

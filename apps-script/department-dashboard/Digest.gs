@@ -489,8 +489,13 @@ function sendDigestsForCadence_(cadence, runOpts) {
         (failures.length
           ? 'FAILED-ALL-VALIDATION ' + window.toIso + ': 0 attempted, ' + failures.length
             + ' row(s) failed dept validation (see admin email) -- run marker cleared; '
-          : 'NO-SUBSCRIBERS ' + window.toIso + ': no active ' + cadence
-            + ' rows matched -- run marker NOT claimed; ')
+          // ENG-6 (broad-scan 2026-10-12): IDLE, not NO-SUBSCRIBERS. A cadence
+          // nobody subscribes to (often weekly or monthly) is a normal state,
+          // and the old bad-prefix outcome kept its Health row amber forever.
+          // The queue report keeps NO-SUBSCRIBERS (O-9): there an armed
+          // trigger with no recipient IS the mistake.
+          : 'IDLE ' + window.toIso + ': no active ' + cadence
+            + ' subscriber rows matched -- nothing to send, run marker NOT claimed; ')
         + 'a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next trigger '
         + 'inside the same window) will deliver once rows exist. At ' + new Date());
     } else if (sent === 0) {

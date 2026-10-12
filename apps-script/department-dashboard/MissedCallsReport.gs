@@ -447,6 +447,21 @@ function missedGridsFromDal_(dalRows) {
   return { values: values, displays: displays };
 }
 
+/**
+ * R6 / R8-1: the queue-NAME set a sentinel row is attributed by -- lowercased
+ * keys of inboundQueuesForDept_ (falling back to queuesForDept_). ONE place,
+ * so diagnoseAbandoned (ENG-14) reports exactly what this report shows.
+ */
+function missedSentinelQueueNameSet_(dept) {
+  const out = {};
+  const names =
+    (typeof inboundQueuesForDept_ === 'function') ? (inboundQueuesForDept_(dept) || [])
+    : (typeof queuesForDept_ === 'function')      ? (queuesForDept_(dept) || [])
+    : [];
+  names.forEach(function (q) { out[String(q).trim().toLowerCase()] = true; });
+  return out;
+}
+
 function computeMissedCallsReport_(dept, from, to, scope) {
   const roster = getRosterForDepartment_(dept);
   const rosterSet = {};
@@ -564,13 +579,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   // missing, map its RAW name in Dept Config's "Inbound queue aliases"
   // field (Operator State #14 -- the QCD Queues field only accepts
   // canonical names seen in QCD col D, so raw-only names go in aliases).
-  const deptQueueNames = {};
-  const sentinelQueueNames =
-    (typeof inboundQueuesForDept_ === 'function') ? (inboundQueuesForDept_(dept) || [])
-    : (typeof queuesForDept_ === 'function')      ? (queuesForDept_(dept) || [])
-    : [];
-  sentinelQueueNames
-    .forEach(function (q) { deptQueueNames[String(q).trim().toLowerCase()] = true; });
+  const deptQueueNames = missedSentinelQueueNameSet_(dept);
 
   // Chart buckets: 8 AM-5 PM CST in 30-min slots = 18 buckets
   const totalBuckets = (MISSED_CHART_END_HOUR - MISSED_CHART_START_HOUR)

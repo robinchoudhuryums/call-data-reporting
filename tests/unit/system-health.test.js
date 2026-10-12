@@ -487,10 +487,11 @@ test('R19 beacon: first report emails the admins with user/route/message; repeat
   assert.equal(h.state.sentEmails.length, 2);
 });
 
-test('R19 beacon: rolling-window cap stops emails but keeps accepting reports; empty message rejected; role-none rejected', function () {
+test('R19 beacon: window cap stops emails but keeps accepting reports; empty message rejected; role-none rejected', function () {
   installHealth({});
   h.state.sentEmails.length = 0;
-  h.state.cache.set('cissue:count', '15');   // window cap reached
+  h.state.cache.set('cissue:start', String(Date.now() - 60000));   // ENG-5: a window opened a minute ago...
+  h.state.cache.set('cissue:count', '15');                          // ...whose cap is reached
   const out = h.call('reportClientIssue', { kind: 'uncaught', message: 'some new error' });
   assert.equal(out.ok, true);
   assert.equal(out.emailed, false, 'cap reached -> the report itself is not emailed');
@@ -1182,6 +1183,14 @@ test('ENG-6: a malformed EMAIL_BCC entry is named on the Health page; a clean or
   assert.equal(rowByKey(h.call('getSystemHealth'), 'email-bcc'), undefined);
 });
 
+test('ENG-6: a digest cadence with no subscribers (IDLE) renders muted, not amber; the queue report\'s NO-SUBSCRIBERS stays amber', function () {
+  installHealth({ props: { NEON_HOST: 'h',
+    DIGEST_LAST_monthly: isoDaysAgo_(1), DIGEST_LAST_RESULT_monthly: 'IDLE 2026-09-30: no active monthly subscriber rows matched -- nothing to send' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-digest-monthly').status, 'muted');
+  assert.equal(h.call('healthOutcomeIsBad_', 'IDLE 2026-09-30: no active monthly subscriber rows matched'), false);
+  assert.equal(h.call('healthOutcomeIsBad_', 'NO-SUBSCRIBERS 2026-07-10 — the data was ready'), true, 'O-9 untouched');
+});
+
 test('ENG-5: a digest / queue-report send that STARTED after its last outcome and never finished reads INTERRUPTED', function () {
   const hoursAgo = function (n) { return new Date(Date.now() - n * 3600000).toISOString(); };
   // Killed mid-send: started 2h ago, last outcome (yesterday's ok) 1 day ago.
@@ -1611,6 +1620,38 @@ test('ESC-DDL: the esc-schema row reads ONCE on the shared connection; unreachab
     assert.equal(t.status, 'warn');
     assert.equal(t.value, 'probe failed');
   } finally { h.ctx.escSchemaRead_ = undefined; h.ctx.escSchemaVerdict_ = undefined; }
+});
+
+// ENG-5 (broad-scan 2026-10-12): the 6 h window is FIXED. Each put used to
+// re-arm a full 6 h TTL, so a trickle of errors never let it close.
+test('ENG-5: counters expire WITH their window (TTL = time left), and an elapsed window starts everyone at zero', function () {
+  installHealth({ props: { ADMIN_EMAILS: 'admin@x.com' } });
+  h.state.cache = new Map();
+  h.state.sentEmails.length = 0;
+  const realCS = h.ctx.CacheService;
+  const ttls = [];
+  h.ctx.CacheService = { getScriptCache: function () {
+    const c = realCS.getScriptCache();
+    return { get: c.get, remove: c.remove, put: function (k, v, t) { ttls.push({ k: k, t: t }); return c.put(k, v, t); } };
+  } };
+  try {
+    const opened = Date.now() - 5 * 3600 * 1000;   // a window that opened 5 h ago
+    h.state.cache.set('cissue:start', String(opened));
+    h.state.cache.set('cissue:count', '3');
+    assert.equal(h.call('reportClientIssue', { kind: 'uncaught', message: 'late in the window' }).emailed, true);
+    const countPut = ttls.filter(function (x) { return x.k === 'cissue:count'; })[0];
+    assert.ok(countPut.t <= 3600 && countPut.t > 3500, 'TTL is what is LEFT of the window (~1 h), not a fresh 6 h: ' + countPut.t);
+    assert.equal(h.state.cache.get('cissue:count'), '4');
+    assert.equal(h.state.cache.get('cissue:start'), String(opened), 'an email inside the window does not move its start');
+
+    // The window has elapsed (a cache that kept the keys): a fresh window, counts at zero.
+    h.state.cache.set('cissue:start', String(Date.now() - 7 * 3600 * 1000));
+    h.state.cache.set('cissue:count', '15');
+    h.state.cache.set('cissue:capat', 'old');
+    assert.equal(h.call('reportClientIssue', { kind: 'uncaught', message: 'new window' }).emailed, true, 'an old cap does not carry over');
+    assert.equal(h.state.cache.get('cissue:count'), '1');
+    assert.ok(!h.state.cache.get('cissue:capat'), 'the old cap marker is gone');
+  } finally { h.ctx.CacheService = realCS; }
 });
 
 // AC-6 (broad-scan 2026-10-01): one signed-in user could spend the whole

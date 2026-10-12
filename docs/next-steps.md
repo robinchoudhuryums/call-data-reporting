@@ -651,7 +651,7 @@ this is the sequence. IDs are the scan's. Sizes: S < 2 h, M ½–2 days.
 | 3b | One Outbound home on My Department | **UX-1** (owner 2026-10-12): Outbound summary + Callbacks (+ Direct lines) move under the outbound agent table; the summary drops its duplicate agent table and labels its own-group count | IMPLEMENTED (block 249) |
 | 4 | Fallback tabs + bulk-path signals | TOOL-1 changed-date re-export · PIPE-2 bulk gap row · TOOL-2 (owner: skip Neon-down only) · TOOL-3/4 · PIPE-4 re-attach (owner) · PIPE-6 | IMPLEMENTED (block 250) |
 | 5 | Config, access + cache dimensions | CFG-1 parent-map row rule · PC-4 orphan-rename collisions (owner: skip + warn) · DATA-1/2/4/5/10 · SEC-3/4/5 · ENG-8 | IMPLEMENTED (block 251) |
-| 6 | Engine robustness (low) | ENG-3/4/5/6/7/9/14 | queued |
+| 6 | Engine robustness (low) | ENG-3/4/5/6/7/9/14 | IMPLEMENTED (block 252) |
 | 7 | Pipeline data rules | PIPE-1 authoritative bulk mirrors · PIPE-3 tab-date check · PIPE-5 | queued |
 | 8 | Repair, per-call + drill edges | PIPE-9..15 · TOOL-5 | queued |
 | 9 | Agent app + a11y | UI-1/2 · CL-6/7/8 · **SEC-4 follow-on** (owner 2026-10-12): say on the agent app when the wait-join ceiling (`AH_WAIT_JOIN_MAX_ROWS_`, 3000 rows) cut off older rings -- carry `join.truncated` into the payload and render a note -- instead of older rings silently showing the time only | queued |

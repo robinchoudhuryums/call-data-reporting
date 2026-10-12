@@ -29,6 +29,15 @@
  * Returns the ISO string ('YYYY-MM-DD') or null if the sheet is
  * empty.
  */
+/**
+ * The getLatestDataDate cache key, in ONE place (ENG-9: the smoke check
+ * removes it to exercise the real read path rather than a 5-min cached value).
+ */
+function latestDateCacheKey_() {
+  const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  return 'latestDate:v1:' + source;
+}
+
 function getLatestDataDate() {
   // CORE-1/DEEP-1: signed-in gate (role 'none' refused). The F-28 commit
   // message claimed this gate but it never landed -- until now these
@@ -44,7 +53,7 @@ function getLatestDataDate() {
   // computed from the other source (Neon can lag the sheet mid-backfill).
   // Default 'sheet' => byte-identical to pre-cutover behavior.
   const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const KEY = 'latestDate:v1:' + source;
+  const KEY = latestDateCacheKey_();
   // Sentinel for the negative case (sheet missing / empty) so we
   // don't reopen the spreadsheet on every page load when the data
   // pipeline is broken or before first ingest.
