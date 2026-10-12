@@ -2258,7 +2258,12 @@ When something looks wrong, before assuming a code bug, check:
     DeveloperMetadata marker on the CDR Report workbook and removes it when the
     invocation ends (a pause included), because its force path deletes rows by
     position and a sort in between would delete other dates. A marker older
-    than 45 minutes is a killed run's leftover and is ignored. The bulk path (`processBatchArchive`) now logs
+    than 45 minutes is a killed run's leftover and is ignored. **PIPE-5
+    (2026-10-12):** a force Manual Export raises the same marker for its run
+    (its force-delete has the same read-then-delete window), and the
+    STANDALONE DQE build (cdr-report's daily trigger, `runDailyDQEBuild_`)
+    skips its post-write sort while the marker is fresh -- the nightly check
+    orders the sheet later. The bulk path (`processBatchArchive`) now logs
     its own post-write sort failure under the same step name, so the next
     clean nightly run supersedes it; until the check is installed such a row
     stays flagged in "Recent pipeline step failures", which is correct — the

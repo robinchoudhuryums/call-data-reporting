@@ -1636,7 +1636,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the three compute stages (`calculateMetricsInMemory` / `calcQcdReport` /
   `calcCsrReport`), the Raw Data staging rewrite and both output-sheet writes
   -- BEFORE the force-delete, so any of them throwing is a no-op
-  (`csr-transfer.test.js` pins the order). New force-path
+  (`csr-transfer.test.js` pins the order); so does PIPE-3's tab-date check
+  (`assertSourceDateMatchesTab_`: the tab's date must be the source's most
+  common call date, or nothing is deleted or written). New force-path
   writers must keep source validation and every delete-independent write ahead of
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy

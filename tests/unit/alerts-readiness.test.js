@@ -325,3 +325,16 @@ test('ENG-7: an error that still escapes the run names the depts already emailed
   assert.ok(mail);
   assert.match(mail.body, /Already emailed before the stop \(a manual Send would repeat them\): CSR/);
 });
+
+test('ENG-7 follow-on: each unlogged row carries logFailed (a serializable field), and the modal warns on it', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  let n = 0;
+  h2.ctx.appendAlertLog_ = function () { if (++n === 2) throw new Error('timed out'); };
+  const res = JSON.parse(JSON.stringify(h2.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger')));
+  assert.deepEqual(res.map(function (r) { return !!r.logFailed; }), [false, true], 'survives JSON (the client sees it)');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-7-admin.html'), 'utf8');
+  assert.match(src, /filter\(function \(r\) \{ return r\.logFailed; \}\)/, 'the send handler counts unlogged rows');
+  assert.match(src, /do not send again to rebuild the log/);
+});

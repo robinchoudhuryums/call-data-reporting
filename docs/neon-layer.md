@@ -91,9 +91,14 @@ Health bullet; per-call table semantics are in
   wrong grid, refused with `allStray`/`allUnparsed` + a failure row + email). It reports
   `unreachable` when Neon is down so a deferred-mirror date stays queued.
   Pinned by the inbound-/outbound-calls suites.
-  Partial-set callers -- the bulk archive after `dedupeAlreadyArchived_`,
-  the row-batched backfills (`backfillDQEHistory*`,
-  `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
+  The bulk archive (`processBatchArchive`) passes it too since PIPE-1:
+  `dedupeAlreadyArchived_` drops WHOLE dates, so every date left in its
+  payload is complete (the old "partial set" note was wrong, and the
+  upsert-only mirror kept rows a shrinking bulk force-rebuild had removed).
+  Partial-set callers -- the row-batched backfills (`backfillDQEHistory*`,
+  `backfillDirectCallToNeon`) -- must NOT pass authoritative; after a bulk
+  rebuild's `backfillDQEHistoryUpsert()`, run `previewNeonExtraRows()` /
+  `pruneNeonExtraRows()` (R37) for the dqe_history rows it cannot remove. Duplicate
   conflict-key rows are deduped last-write-wins first (IMP-6; since P10
   `backfillCDRHistory`'s batches too). The
   `call_history_phones` children are per-parent DELETE-then-insert (IMP-4 --

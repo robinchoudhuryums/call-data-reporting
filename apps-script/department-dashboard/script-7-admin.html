@@ -1340,9 +1340,18 @@
         btn.disabled = true; btn.textContent = prev;
         alRenderResults_(results || [], /*isPreview=*/false);
         const sent = (results || []).filter(function (r) { return r.status === 'sent'; }).length;
-        alSetRunStatus_('success', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's')
-          + ' sent. Refresh the page to see the updated log.');
-        showToast(sent + ' alert' + (sent === 1 ? '' : 's') + ' sent', 'success');
+        // ENG-7 follow-on: rows the server could not write to the Alert Log.
+        const unlogged = (results || []).filter(function (r) { return r.logFailed; }).length;
+        if (unlogged) {
+          alSetRunStatus_('warn', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's') + ' sent, but '
+            + unlogged + ' row' + (unlogged === 1 ? ' was' : 's were') + ' NOT written to the Alert Log '
+            + '(see Notes). The sends stand -- do not send again to rebuild the log.');
+          showToast(sent + ' sent; ' + unlogged + ' not logged', 'error', 8000);
+        } else {
+          alSetRunStatus_('success', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's')
+            + ' sent. Refresh the page to see the updated log.');
+          showToast(sent + ' alert' + (sent === 1 ? '' : 's') + ' sent', 'success');
+        }
         // Re-fetch the log so the new entries appear inline.
         google.script.run
           .withSuccessHandler(function (data) { if (data) alRenderLog_(data.log || []); })

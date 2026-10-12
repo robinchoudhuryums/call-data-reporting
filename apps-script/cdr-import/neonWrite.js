@@ -156,9 +156,10 @@ function neonDedupeByKey_(rows, label, keyFn) {
 // whose payload is provably the COMPLETE set for its date(s) -- the daily
 // builds, the dup-guard re-mirror, the deferred per-date mirror -- pass
 // { authoritative: true } and the writer DELETEs those dates inside the
-// SAME transaction before inserting (rollback undoes both). Partial-set
-// callers (bulk archive after dedupeAlreadyArchived_, the row-batched
-// backfills) must NOT pass it.
+// SAME transaction before inserting (rollback undoes both). So does the bulk
+// archive (PIPE-1): dedupeAlreadyArchived_ drops WHOLE dates, so its payload
+// is complete per date. Partial-set callers (the row-batched backfills) must
+// NOT pass it.
 function neonDistinctIsoDates_(rows, dateFn) {
   var seen = {};
   var out = [];
@@ -702,8 +703,8 @@ function writeCDRRowsToNeon(rows, opts) {
     // inside the SAME transaction as the main insert. A shrinking force
     // re-import (agent consolidated under an alias, a corrected row
     // removed) can no longer leave phantom parent/child rows.
-    // Partial-set callers (the bulk archive after dedupeAlreadyArchived_,
-    // neonbackfill's row-batched backfill) must NOT pass it.
+    // The bulk archive passes it too (PIPE-1: its date-level dedup leaves
+    // complete dates); neonbackfill's row-batched backfill must NOT.
     // Known window: the main txn (delete + parent insert) commits before
     // the phone-child step runs its own txn -- a phone-insert failure
     // after that commit leaves the date's children absent until the

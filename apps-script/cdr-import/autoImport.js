@@ -144,9 +144,19 @@ function runManualExport() {
   }
 
   let outcome;
+  // PIPE-5 (broad-scan 2026-10-12): a force Manual Export deletes a date's
+  // rows from a date-column READ (deleteHistoricalRowsForDate), the same
+  // window the CR-5 marker protects for the bulk chain -- so it raises the
+  // marker too, and cdr-report's nightly sort and its DQE build's post-write
+  // sort stand down until it ends. The opened workbook is handed to
+  // processNewImport so it is opened once.
+  let markerSS = null;
   try {
-    outcome = processNewImport(true, dateArg, false);
+    try { markerSS = SpreadsheetApp.openById(getTargetSsId_()); bulkMarkerSet_(markerSS); }
+    catch (markerErr) { markerSS = null; }   // best-effort: the import opens the workbook itself
+    outcome = processNewImport(true, dateArg, false, markerSS);
   } finally {
+    bulkMarkerClear_(markerSS);
     lock.releaseLock();
   }
 
@@ -450,6 +460,12 @@ function processBulkQueue() {
   report.push("ℹ️ DQE Neon mirror was deferred (skipNeon). Run "
     + "backfillDQEHistoryUpsert() in the CDR Report project to mirror these "
     + "dates to dqe_history (DO UPDATE).");
+  // PIPE-1: the upsert only adds and overwrites -- a rebuilt date whose agent
+  // set SHRANK (an alias, a rename, a removed row) keeps the old dqe_history
+  // row until the prune runs, and a Neon-reading dashboard counts it twice.
+  report.push("ℹ️ THEN run previewNeonExtraRows() and, if it lists rows, "
+    + "pruneNeonExtraRows() (CDR Report project) to delete Neon rows these "
+    + "rebuilt dates no longer have.");
   report.push("ℹ️ Direct-call Neon mirror was deferred (skipNeon). Run "
     + "backfillDirectCallToNeon() in THIS (CDR Import) project to mirror these "
     + "dates to direct_call_history (DO UPDATE).");
@@ -581,6 +597,13 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const sourceData  = sourceSheet.getDataRange().getDisplayValues();
     if (sourceData.length < 2) throw new Error("Source sheet empty.");
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
+    // PIPE-3 (broad-scan 2026-10-12): CDR / Q Path / QCD / CSR stamp their
+    // rows with the TAB's date, never the calls' own -- a mislabeled tab wrote
+    // another day's data under this date, after force-deleting it, plus an
+    // authoritative Neon replace. DQE and Direct already refuse (F2 / P-4);
+    // this is the same check for the other four, from the one grid they all
+    // compute from, and it runs BEFORE the Raw Data rewrite and the delete.
+    assertSourceDateMatchesTab_(cleanData, dateObj, latestName);
 
     // I-6: COMPUTE before the force-delete block too. P-3 moved the source
     // validation ahead of it; the three compute stages still ran AFTER it, so
@@ -1456,11 +1479,14 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
             phonesX:    r[23], phonesY:    r[24], phonesZ:    r[25]
           };
         });
-        // P-6 note: deliberately NOT authoritative -- this bulk payload is
-        // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a
-        // date; an authoritative delete here would nuke legitimate Neon
-        // rows (same reasoning as the bulk QCD mirror below).
-        var neonCdrRes = writeCDRRowsToNeon(neonCdrRows);
+        // PIPE-1 (broad-scan 2026-10-12): AUTHORITATIVE per date. The old
+        // note here said the payload "can be a PARTIAL set for a date" -- it
+        // cannot: dedupeAlreadyArchived_ drops WHOLE dates (any date the sheet
+        // already holds), so every date left in cdrRows is that date's
+        // complete queued set. Upsert-only, a bulk force-rebuild whose new set
+        // was smaller (a queue gone, an agent moved or aliased) left the old
+        // rows in Neon, and a Neon-reading dashboard double-counted them.
+        var neonCdrRes = writeCDRRowsToNeon(neonCdrRows, { authoritative: true });
         if (neonCdrRes && neonCdrRes.skipped) {
           console.log('processBatchArchive: Neon CDR mirror skipped ('
             + neonCdrRes.skipped + ' rows — Neon unreachable).');
@@ -1493,11 +1519,9 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
             violations:    r[11]
           };
         });
-        // IMP-5 note: deliberately NOT authoritative -- this bulk payload is
-        // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a date
-        // (rows already archived earlier are dropped); an authoritative
-        // delete here would nuke legitimate Neon rows.
-        var neonQcdRes = writeQCDRowsToNeon(neonQcdRows);
+        // PIPE-1: authoritative per date, as the CDR mirror above (the
+        // date-level dedup leaves only complete dates in qcdRows).
+        var neonQcdRes = writeQCDRowsToNeon(neonQcdRows, { authoritative: true });
         if (neonQcdRes && neonQcdRes.skipped) {
           console.log('processBatchArchive: Neon QCD mirror skipped ('
             + neonQcdRes.skipped + ' rows — Neon unreachable).');
@@ -2938,6 +2962,56 @@ function parsePendingDate(val) {
  * a Number; whitespace-only is empty (`Number(" ")` used to stage as 0, a
  * phantom zero in a duration or count column); everything else stays text.
  */
+/**
+ * PIPE-3: the calendar days of the source grid's call START times (col C,
+ * the column every engine decodes with simulateSplitCol2), most common first.
+ * Accepts the display shapes the DQE build accepts: "M/D/YYYY ..." and ISO.
+ * Pure -- unit-tested.
+ */
+function sourceCallDateCounts_(grid) {
+  const counts = {};
+  let total = 0;
+  for (let i = 1; i < (grid || []).length; i++) {
+    const v = String((grid[i] || [])[2] == null ? '' : grid[i][2]).trim();
+    if (!v) continue;
+    const datePart = v.split(/\s+/)[0];
+    let iso = null;
+    const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) iso = m[1] + '-' + m[2] + '-' + m[3];
+    else {
+      const p = datePart.split('/');
+      if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
+        const y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
+        iso = y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
+      }
+    }
+    if (!iso) continue;
+    counts[iso] = (counts[iso] || 0) + 1;
+    total++;
+  }
+  const days = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || (a < b ? -1 : 1); });
+  return { counts: counts, total: total, days: days };
+}
+
+/**
+ * PIPE-3: refuse a source tab whose calls are mostly on ANOTHER day. A few
+ * legs from the day before are normal (the P-7 carry-over), so the rule is
+ * "the tab's date must be the most common call date", not "every row". A grid
+ * with no parseable start time is left to the existing empty-source handling.
+ */
+function assertSourceDateMatchesTab_(grid, dateObj, tabName) {
+  const c = sourceCallDateCounts_(grid);
+  if (!c.total || !dateObj || isNaN(dateObj.getTime())) return;
+  const exp = dateObj.getFullYear() + '-' + ('0' + (dateObj.getMonth() + 1)).slice(-2) + '-'
+    + ('0' + dateObj.getDate()).slice(-2);
+  const top = c.days[0];
+  if ((c.counts[exp] || 0) >= c.counts[top]) return;
+  throw new Error('Source date mismatch: ' + (tabName || 'the source tab') + ' is dated ' + exp
+    + ' but ' + c.counts[top] + ' of its ' + c.total + ' calls are on ' + top
+    + ' (only ' + (c.counts[exp] || 0) + ' on ' + exp + '). Nothing was deleted or written -- '
+    + 'rename the tab or re-download the right day, then import again.');
+}
+
 function stageRawDataCell_(cell) {
   if (cell === "" || cell === null || cell === undefined) return "";
   if (typeof cell === 'number') return cell;

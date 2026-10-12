@@ -818,3 +818,42 @@ test('P-7 (broad-scan 2026-09-17): a D-1 carry-over leg is DROPPED, not written 
   assert.ok(!rows.some(function (r) { return String(r[2]).indexOf('A_Q_CSR') === 0; }), 'no sentinel row from the stray');
   assert.ok(logs.some(function (l) { return /P-7.*dropped 2 stray leg/.test(l); }), 'the drop is logged with its count');
 });
+
+// PIPE-5 (broad-scan 2026-10-12): the STANDALONE build (cdr-report's trigger,
+// which passes deferSortWhileBulk) skips its post-write sort while cdr-import's
+// CR-5 marker is fresh -- a sort between a force path's date-column read and
+// its row deletes removes other dates' rows. The inline build never passes it.
+test('PIPE-5: the post-write sort is deferred only for the standalone build AND a fresh bulk marker', function () {
+  const run = function (opts, markerAgeMin) {
+    const rawGrid = [new Array(26).fill('')].concat([
+      rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+      rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    ]);
+    const older = new Array(34).fill(''); older[1] = '3/2/2026'; older[2] = 'Zed';
+    const ss = makeFakeSpreadsheet({ sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill(''), older],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    } });
+    const markers = markerAgeMin == null ? [] : [{ getValue: function () { return new Date(Date.now() - markerAgeMin * 60000).toISOString(); } }];
+    ss.createDeveloperMetadataFinder = function () {
+      return { withKey: function (k) { return { find: function () { return k === 'cdrImport.bulkInProgress' ? markers : []; } }; } };
+    };
+    h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'), opts);
+    return (ss._sheet('DQE Historical Data')._sortCalls || []).length;
+  };
+  assert.equal(run({ deferSortWhileBulk: true }, 5), 0, 'standalone build + fresh marker: no sort');
+  assert.equal(run({ deferSortWhileBulk: true }, 120), 1, 'a stale marker (a killed run) is ignored');
+  assert.equal(run({ deferSortWhileBulk: true }, null), 1, 'no marker: sorts as before');
+  assert.equal(run(undefined, 5), 1, 'the inline build (no opt) still sorts -- it IS the bulk chain');
+
+  const fs = require('fs'), path = require('path');
+  const rep = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'buildDQEHistoricalData.js'), 'utf8');
+  const imp = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(rep, /buildDQEHistoricalData\(rawSheet, dqeSheet, \{ deferSortWhileBulk: true \}\);\s+\/\/ PIPE-5/, 'the trigger passes the opt');
+  assert.equal(/var DQE_BULK_MARKER_KEY_ = '([^']+)';/.exec(rep)[1], /var BULK_IN_PROGRESS_KEY_ = '([^']+)';/.exec(imp)[1], 'one marker key');
+  // Manual Export raises the marker around its force import and clears it on every exit.
+  const fn = imp.slice(imp.indexOf('function runManualExport('), imp.indexOf('\nfunction ', imp.indexOf('function runManualExport(') + 1));
+  assert.ok(fn.indexOf('bulkMarkerSet_(markerSS)') > 0 && fn.indexOf('bulkMarkerSet_(markerSS)') < fn.indexOf('processNewImport(true, dateArg, false, markerSS)'));
+  assert.match(fn, /\} finally \{\s*\n\s*bulkMarkerClear_\(markerSS\);\s*\n\s*lock\.releaseLock\(\);/);
+});

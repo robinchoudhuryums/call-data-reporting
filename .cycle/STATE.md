@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — Broad scan Batch 7 IMPLEMENTED (block 253): pipeline data rules, plus the Batch 6 follow-ons.**
+  - Fixes:
+    - PIPE-1: bulk CDR/QCD Neon mirrors are authoritative per date, and the bulk report names the DQE prune.
+    - PIPE-3: processNewImport refuses a tab whose most common call date is not the tab's date, before any write or delete.
+    - PIPE-5: Manual Export raises the CR-5 marker, and the standalone DQE build defers its sort while it is fresh.
+    - Follow-ons: ENG-7 logFailed row field plus the modal warning; ENG-14 diagnoseAbandoned says when the sheet is gone.
+  - Verification: 2380 tests; ci:ui green; lint clean; INV-16 in sync; 9 bites.
+
+  **Owner-side:** deploy cdr-import, cdr-report and the dashboard. After the next bulk rebuild, run the upsert and then previewNeonExtraRows / pruneNeonExtraRows.
+  **Next:** Batch 8 (repair, per-call and drill edges) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 6 IMPLEMENTED (block 252): engine robustness, low tier.**
   - Fixes:
     - ENG-3: PIPELINE_WATCH_SEEN byte cap.

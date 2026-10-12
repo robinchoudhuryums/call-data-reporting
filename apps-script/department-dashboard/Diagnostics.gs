@@ -334,9 +334,20 @@ function diagnoseAbandoned() {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) { Logger.log('Historical sheet not found.'); return; }
+  // ENG-14 follow-on: this tool reads the SHEET only (DQE_SHEET_ONLY_ALLOWED --
+  // it exists to trace cells). On a Neon-read install whose sheet is retired or
+  // trimmed, say that, so an empty trace is never read as "no abandons".
+  const neonReads = (typeof getDqeReadSource_ === 'function') && getDqeReadSource_() === 'neon';
+  const sheetGone = function (why) {
+    Logger.log('diagnoseAbandoned: %s.%s', why, neonReads
+      ? ' DQE_READ_SOURCE=neon, so the report reads Neon -- this sheet-only trace cannot reproduce it; '
+        + 'compare against the Missed report itself (or restore the sheet range) instead.'
+      : '');
+    return { sheetUnavailable: true, neonReads: !!neonReads };
+  };
+  if (!sheet) return sheetGone('Historical sheet not found');
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) { Logger.log('No data rows.'); return; }
+  if (lastRow < 2) return sheetGone('No data rows on the Historical sheet');
 
   const roster = getRosterForDepartment_(DEPT);
   const rosterSet = {};

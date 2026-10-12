@@ -74,3 +74,13 @@ test('ENG-14: diagnoseAbandoned matches sentinels by NAME (the report\'s helper)
   const r = hd.call('computeMissedCallsReport_', 'CSR', '2026-10-09', '2026-10-09', 'roster');
   assert.equal(r.meta.abandonedCallCount, t.union);
 });
+
+test('ENG-14 follow-on: with the sheet retired on a Neon-read install, diagnoseAbandoned says it cannot trace (never an empty tally)', function () {
+  const hd = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'MissedCallsReport.gs', 'Diagnostics.gs'] });
+  hd.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com', DQE_READ_SOURCE: 'neon' };
+  hd.state.userEmail = 'admin@x.com';
+  hd.ctx.getLatestDataDate = function () { return '2026-10-09'; };
+  hd.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'] }) } });
+  const r = JSON.parse(JSON.stringify(hd.call('diagnoseAbandoned')));
+  assert.deepEqual(r, { sheetUnavailable: true, neonReads: true });
+});

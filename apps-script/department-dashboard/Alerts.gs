@@ -693,6 +693,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       const why = (logErr && logErr.message) ? logErr.message : String(logErr);
       logFailures.push({ department: rec.department, status: rec.status, error: why });
       rec.notes = String(rec.notes || '') + ' [NOT written to the Alert Log: ' + why + ']';
+      rec.logFailed = true;   // a per-row FIELD the modal can count (an array property does not serialize)
       Logger.log('runAlertsCore_: Alert Log append failed for %s (%s): %s', rec.department, rec.status, why);
     }
   };
@@ -875,7 +876,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
     throw runErr;
   }
 
-  results.logFailures = logFailures;   // ENG-7 (not serialized to the client; the notes carry it)
+  results.logFailures = logFailures;   // ENG-7 (not serialized to the client; each row's logFailed + notes carry it)
   results.sentDepts = sentDepts;
   return results;
 }
