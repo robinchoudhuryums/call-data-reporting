@@ -1,6 +1,7 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **NEXT (2026-10-12):** CE-1..CE-3 + FO-1..FO-4 + BF-1/BF-2 + the sync-docs pass are MERGED (#364, `e73574d`) but NOT deployed. Owner deploy order (Operator State #49): (1) push cdr-import, then from its editor `previewFirstRingBackfill()` -> Neon backup -> `backfillFirstRingFromJourney()` (re-run if it stops at the time budget); (2) push cdr-report, then `exportInboundCalls('<earliest date to cover>', '<today>')` once; (3) push the dashboard + new deployment version, walk S48, S59, S60. Pending: /reflect over blocks 241-245. Open owner question: managers seeing call ids at the 6c release.
 - **2026-10-09 — /sync-docs after CE-1..BF-2.** CLAUDE.md: the Operator State #49 index line names the direct-line fallback + the BF-1 backfill. architecture.md: the Outbound row's three new RPCs + `outboundDirect:v2:`, the export's cols 23-24. fix-history: the Callback-episodes intro past tense. Harness README: the FO-1/2/3 driver checks. CLAUDE.md 172.8 KB (27.2 KB headroom); nothing prunable without dropping a rule -- the two largest bullets sit ~200 B under the 4 KB ratchet, so route their next additions to a split doc.
   **Where I left off:** PR opened and merged per the owner's instruction.
 - **2026-10-09 — BF-1 + BF-2 IMPLEMENTED (block 245).**
@@ -5618,7 +5619,7 @@ when a change's correctness is outside the harness's reach, stage the rollout.
 Invariant candidates INV-56..60 proposed (block `.cycle/blocks/149-a-reflect.md`);
 metrics.csv + estimates.csv seeded (first rows).
 
-Subsystem cycles since last Seams audit: 4
+Subsystem cycles since last Seams audit: 5
 
 ## 2026-09-04 (late) — R28/R29 email family
 - Completed: R28 default admin BCC chokepoint (PR #283) + welcome email on a new grant (PR #284); R29 EmailKit v2 notice family for the welcome email and all 16 admin notices (block 169). Also merged this session: #280 rowDateIso_ memo, #281 Neon retention (phones gate, weekly prune, CDR_BACKFILL_BEFORE), #282 runbook fix.
