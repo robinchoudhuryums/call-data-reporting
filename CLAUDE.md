@@ -2174,6 +2174,7 @@ items for anything it flags or doesn't cover.)
 72. Per-call agent-name rewrite (PC-1) -- capture now stores the roster-canonical name; run the cdr-import preview, back up Neon, then the rewrite once after deploy, and again after a new alias override
 73. QCD violation-flag repair (QO-2) -- a violation is 4.00% or more; run `previewQcdViolationFlags` then `repairQcdViolationFlags` (cdr-report) once after deploy; dated from 2026-08-01, re-run if Neon was unreachable
 74. Outbound source probe (Batch C) -- `probeOutboundSourceAgreement` (dashboard) compares the CDR Historical sheet's placed counts with Neon `outbound_calls`; its verdict picks Batch D's source, never on INCONCLUSIVE/FAILED
+75. Internal-call wait, before vs after (WS-1) -- `previewInternalWaitStart` (cdr-import, read-only) logs each internal call's old and new wait; expect SUSPECT 0 and 0 external changes, then re-import to make it stick
 
 ## Cycle Workflow Config
 

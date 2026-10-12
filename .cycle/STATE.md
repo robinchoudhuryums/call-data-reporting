@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-12 — WS-1 IMPLEMENTED (block 255): the internal-call wait starts at the requester's queue leg (owner option 1, the Batch 8 follow-on).**
+  - Change: call_start / call_date are unchanged; external calls are unchanged.
+  - New read-only tool previewInternalWaitStart (CDR Tools → Diagnostics, pick a date or all dates). It logs each internal call's old and new wait, flags SUSPECT rows, checks that external calls do not move, and shows what Neon stores. Runbook: Operator State #75.
+  - Verification: 2391 tests; 5 bites.
+
+  **Owner-side:** push cdr-import, run the tool on all dates (expect SUSPECT 0 and 0 external changes), then Manual Export the dates you want corrected and re-run the tool to see "Neon has: … (NEW)".
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 8 IMPLEMENTED (block 254): repair, per-call and drill edges.**
   - Fixes:
     - PIPE-9: merge re-run re-blanks AI..AK and queues the Neon clear.
@@ -13,7 +20,7 @@
     - PIPE-15: force backfills without HMAC_SECRET refuse mirrored dates.
   - Decision while implementing: PIPE-15 refuses per already-mirrored DATE rather than the whole run, so the deferred mirror still writes new dates.
   - Verification: 2388 tests; lint clean; INV-16 in sync; 11 bites. No client change.
-  - Follow-ons: the internal-record wait START (still legs[0]) wants an owner ruling; PIPE-15's mirrored-date read fails open.
+  - Follow-ons: the internal-record wait START -> done as WS-1 (block 255); PIPE-15's mirrored-date read fails open.
 
   **Owner-side:** deploy cdr-report and cdr-import. No new operator steps.
   **Next:** Batch 9 or later -- owner picks.

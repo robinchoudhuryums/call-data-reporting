@@ -3280,3 +3280,30 @@ When something looks wrong, before assuming a code bug, check:
       numbers), fixed and swept in `cross-file-pins.test.js`. Re-run after the
       deploy that carries the fix; a malformed Neon row now reads `FAILED`,
       never zeros.
+
+75. **Internal-call wait: before vs after (WS-1, 2026-10-12; cdr-import).**
+    On an internal call (an agent dialing a queue), `wait_seconds` now starts
+    at the requester's QUEUE leg, not the earliest leg under the call id. A
+    warm transfer can file a colleague's earlier leg under the same id, and its
+    whole conversation used to count as queue wait. `call_start` / `call_date`
+    are unchanged, and so is every customer (external) call.
+    `previewInternalWaitStart` is the read-only check. Run it from CDR Tools →
+    🔍 Diagnostics → **Internal-call wait: before vs after** (pick a date, or
+    all dates). It rebuilds each surviving `Call_Legs_*` date with the current
+    code and logs the old and new wait side by side. It writes nothing.
+    - **Before re-importing**, after the cdr-import push: run **all dates**.
+      Expect `SUSPECT 0` and `External records … changed 0`. Any other value
+      is a bug: stop and report the lines. `CHANGED` rows list the largest cuts
+      first. For each one, check that "after starts at" names the requester's
+      leg into the queue and "before started at" names someone else's leg.
+      Spot-check one against the raw legs on that `Call_Legs_*` tab.
+    - **To make it stick**, Manual Export the dates you want corrected. Only
+      dates still inside the ~14-day window can be re-imported. Stored rows
+      keep the old value until then.
+    - **After a re-import**, run that date again. "Neon has" should now read
+      `(NEW)` on every CHANGED row. `(old)` means the re-import did not reach
+      Neon (check the date's `:Inbound` Pipeline Health row); `neither` is worth
+      reporting.
+    - Customers are never named in the log: an external party prints as
+      `(external party)` / `(external number)`. Times are PST, as `call_start`
+      stores them. Pinned by `tests/unit/inbound-calls.test.js` (WS-1).

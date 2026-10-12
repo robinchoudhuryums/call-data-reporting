@@ -176,13 +176,16 @@ only consulted when nothing answered, which makes the fallback safe).
 (3) The requester -- `origin_agent` / `origin_dept` and the ext the
 related-call match keys on -- comes from the **earliest QUEUE leg, not
 `legs[0]`**: a colleague's leg can start first. TIMING fields
-(`call_start` / `call_date` / the wait's START) still key on `legs[0]` by
-design; this changes identity, not the record's clock. **The ANSWER-side
-fields read the requester's legs (P22 + PIPE-13):** `abandoned_on_hold`,
-`hold_seconds`, `final_dept` and the wait's END point (the first answered
-talk leg) all scope to the legs `icLegFromOriginator_` passes, falling back
-to every leg when none matches -- a sibling's earlier answer under a merged
-root used to supply both `final_dept` and the wait's end. **The same root is
+(`call_start` / `call_date`) still key on `legs[0]` by design; this changes
+identity, not the record's clock. **The ANSWER-side fields read the
+requester's legs (P22 + PIPE-13):** `abandoned_on_hold`, `hold_seconds`,
+`final_dept` and the wait's END point (the first answered talk leg) all scope
+to the legs `icLegFromOriginator_` passes, falling back to every leg when none
+matches -- a sibling's earlier answer under a merged root used to supply both
+`final_dept` and the wait's end. **The wait's START is the requester's queue
+leg (WS-1)**, not `legs[0]`: a colleague's leg can begin minutes earlier, and
+its whole conversation used to count as queue wait. `previewInternalWaitStart`
+prints the old and new wait side by side (Operator State #75). **The same root is
 ALSO captured in `outbound_calls`** -- its gate is no-Incoming + an answered
 external Outgoing leg, which a merged tree satisfies -- so one id can name a
 row in both tables and the Outbound report counts that leg as the answering

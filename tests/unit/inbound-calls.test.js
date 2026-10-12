@@ -1291,7 +1291,113 @@ test('PIPE-13: a sibling\'s earlier answer no longer sets the assist record\'s f
   assert.equal(r.isInternal, true);
   assert.equal(r.disposition, 'answered');
   assert.equal(r.finalDept, 'Billing', "Margie's call was answered by Billing, not the colleague's Field Ops leg");
-  assert.equal(r.waitSeconds, 60, "the wait ends at Margie's own answer (07:31:00), not the sibling's (07:30:05)");
+  // The wait ENDS at Margie's own answer (07:31:00, not the sibling's 07:30:05)
+  // and, since WS-1, STARTS at her queue leg (07:30:20, not the sibling's 07:30:00).
+  assert.equal(r.waitSeconds, 40, "Margie's queue leg 07:30:20 -> her answer 07:31:00");
+});
+
+// WS-1 (owner 2026-10-12, the Batch 8 follow-on): an internal-origin record's
+// wait STARTS at the requester's queue leg. legs[0] can be a colleague's leg
+// that began minutes earlier under the same root, which counted their whole
+// conversation as queue wait. call_start / call_date keep the earliest leg.
+const WS_SHARED_TREE = function (answered) {
+  return [
+    // Marie talks to her customer for 12 minutes.
+    leg({ callId: '890001', legId: 4, start: '08/21/2026 07:00:00', connected: '08/21/2026 07:00:04',
+          stop: '08/21/2026 07:12:00', direction: 'Outgoing', talk: '0:11:56',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555', calleeName: 'DOE JANE',
+          answered: 'Answered', dept: 'Field Operations (Market Activity)' }),
+    // Margie's leg into the Billing queue under the same root.
+    leg({ callId: '890001', legId: 1, start: '08/21/2026 07:12:00', connected: '08/21/2026 07:12:01',
+          stop: answered ? '08/21/2026 07:12:30' : '08/21/2026 07:13:30', direction: 'Internal',
+          callTime: answered ? '0:00:30' : '0:01:30',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_Billing',
+          missed: answered ? '-' : 'Missed', abandoned: answered ? '-' : 'Abandoned', dept: 'Customer Success' }),
+  ].concat(answered ? [
+    leg({ callId: '890001', legId: 2, start: '08/21/2026 07:12:01', connected: '08/21/2026 07:12:30',
+          stop: '08/21/2026 07:15:00', direction: 'Internal', talk: '0:02:30',
+          caller: '363', callerName: 'Margie Ingay', callee: '150', calleeName: 'Bill Agent',
+          answered: 'Answered', dept: 'Billing' }),
+  ] : []);
+};
+
+test('WS-1: the wait starts at the requester\'s queue leg; the record keeps its clock', function () {
+  const ans = rec(build(WS_SHARED_TREE(true)), '890001');
+  assert.equal(ans.disposition, 'answered');
+  assert.equal(ans.waitSeconds, 30, "07:12:00 queue leg -> 07:12:30 answer, not Marie's 07:00:00 start (750 s)");
+  assert.equal(ans.callStart, '07:00:00', 'call_start still keys on the earliest leg');
+  assert.equal(ans.callDate, '2026-08-21');
+  const ab = rec(build(WS_SHARED_TREE(false)), '890001');
+  assert.equal(ab.disposition, 'abandoned');
+  assert.equal(ab.waitSeconds, 90, '07:12:00 queue leg -> 07:13:30 hang-up, not 810 s');
+});
+
+test('WS-1 diag: the before/after scratch fields only appear when asked for, and external records agree', function () {
+  const plain = rec(build(WS_SHARED_TREE(true)), '890001');
+  assert.ok(!('_waitFirstLeg' in plain), 'the capture never carries the scratch fields to Neon');
+  const diag = h.call('buildInboundCallRecords_', WS_SHARED_TREE(true), { waitDiag: true })
+    .filter((r) => r.callId === '890001')[0];
+  assert.equal(diag._waitFirstLeg, 750);
+  assert.equal(diag.waitSeconds, 30);
+  assert.equal(diag._waitOldStartLeg, 'Marie (Muskaan) Jindal -> (external number) @ 07:00:00',
+    'the customer is never named, not even by CNAM');
+  assert.equal(diag._waitNewStartLeg, 'Margie Ingay -> A_Q_Billing @ 07:12:00');
+  assert.equal(h.call('icWaitLegLabel_', leg({ callId: '1', legId: 1, start: '08/21/2026 07:00:00', direction: 'Incoming',
+      caller: '12145550000', callerName: 'SMITH JOHN', callee: '144', calleeName: 'A_Q_Billing' })),
+    '(external party) -> A_Q_Billing @ 07:00:00', 'an external CALLER is never named either');
+  const ext = h.call('buildInboundCallRecords_', [
+    leg({ callId: '891001', legId: 1, start: '06/04/2026 11:00:00', stop: '06/04/2026 11:00:20', direction: 'Incoming', caller: '12145550000', callee: '999', calleeName: 'Introduction - New' }),
+    leg({ callId: '891001', legId: 2, start: '06/04/2026 11:00:20', connected: '06/04/2026 11:01:05', stop: '06/04/2026 11:03:00', direction: 'Incoming', caller: '12145550000', callee: '214', calleeName: 'Maria G', talk: '0:01:55', answered: 'Answered', dept: 'CSR' }),
+  ], { waitDiag: true })[0];
+  assert.equal(ext.waitSeconds, 65);
+  assert.equal(ext._waitFirstLeg, 65, 'an external record measures the same both ways');
+});
+
+test('WS-1 preview: before vs after per record, external check, Neon state, no customer identity', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const header = [new Array(44).fill('h')];
+  const unchanged = [
+    leg({ callId: '892001', legId: 1, start: '08/21/2026 09:00:00', connected: '08/21/2026 09:00:01',
+          stop: '08/21/2026 09:00:45', direction: 'Internal', callTime: '0:00:45',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_Billing', dept: 'Customer Success' }),
+    leg({ callId: '892001', legId: 2, start: '08/21/2026 09:00:01', connected: '08/21/2026 09:00:45',
+          stop: '08/21/2026 09:02:00', direction: 'Internal', talk: '0:01:15',
+          caller: '363', callerName: 'Margie Ingay', callee: '150', calleeName: 'Bill Agent', answered: 'Answered', dept: 'Billing' }),
+  ];
+  const external = [
+    leg({ callId: '893001', legId: 1, start: '08/21/2026 10:00:00', connected: '08/21/2026 10:00:20',
+          stop: '08/21/2026 10:03:00', direction: 'Incoming', caller: '12145550000', callerName: 'SMITH JOHN',
+          callee: '214', calleeName: 'Maria G', talk: '0:02:40', answered: 'Answered', dept: 'CSR' }),
+  ];
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Call_Legs_2026-08-21': header.concat(WS_SHARED_TREE(true), unchanged, external) } });
+  const saved = { conn: h.ctx.getReachableNeonConn_, log: h.ctx.Logger };
+  const logged = [];
+  h.ctx.Logger = { log: function () { logged.push(Array.from(arguments).join(' ')); } };
+  h.ctx.getReachableNeonConn_ = function () {
+    return { createStatement: function () { return {
+      setQueryTimeout: function () {},
+      executeQuery: function () { let n = 0; return { next: () => n++ === 0,
+        getString: () => JSON.stringify([['2026-08-21', '890001', 750], ['2026-08-21', '892001', 44]]), close: () => {} }; },
+      close: function () {} }; }, close: function () {} };
+  };
+  let out;
+  try { out = JSON.parse(JSON.stringify(h.call('previewInternalWaitStart', '2026-08-21'))); }
+  finally { h.ctx.getReachableNeonConn_ = saved.conn; h.ctx.Logger = saved.log; }
+  assert.deepEqual([out.internal, out.unchanged, out.changed, out.suspect], [2, 1, 1, 0]);
+  assert.deepEqual([out.external, out.externalChanged], [1, 0]);
+  assert.equal(out.rows.length, 1, 'only the changed record is listed');
+  const row = out.rows[0];
+  assert.deepEqual([row.callId, row.before, row.after, row.kind], ['890001', 750, 30, 'CHANGED']);
+  assert.equal(row.neon, '750s (old)', 'Neon still holds the pre-deploy value until the date is re-imported');
+  assert.equal(out.neonOld, 1);
+  const all = logged.join('\n');
+  assert.match(all, /wait BEFORE 750s {2}AFTER 30s {2}\(-720s\)/);
+  assert.match(all, /before started at: Marie \(Muskaan\) Jindal -> \(external number\) @ 07:00:00/);
+  assert.match(all, /after starts at: {3}Margie Ingay -> A_Q_Billing @ 07:12:00/);
+  assert.match(all, /SUSPECT 0(?!\d)/);
+  assert.match(all, /External records: 1 \| changed 0 \(expected 0\)/);
+  assert.ok(!/2145550000|19454445555|SMITH|DOE JANE/.test(all), 'no customer number or name is logged');
 });
 
 

@@ -489,8 +489,27 @@ function icConcurrentMatches_(busy, ext, tMs, excludeRoot) {
   });
 }
 
-function buildInboundCallRecords_(rawRows) {
+// WS-1 preview only: "who -> whom @ HH:MM:SS" for one leg, safe to log -- an
+// external party is never named (no number, no CNAM), internal staff and
+// queue names are.
+function icWaitLegLabel_(leg) {
+  if (!leg) return null;
+  var who = icExternalNumber_(leg[IC_COL.CALLER]) ? '(external party)'
+    : (String(leg[IC_COL.CALLER_NAME] == null ? '' : leg[IC_COL.CALLER_NAME]).trim()
+       || ('ext ' + icDigits_(leg[IC_COL.CALLER])));
+  var cn = String(leg[IC_COL.CALLEE_NAME] == null ? '' : leg[IC_COL.CALLEE_NAME]).trim();
+  var to = icIsQueueName_(cn) ? cn
+    : (icExternalNumber_(leg[IC_COL.CALLEE]) ? '(external number)'
+       : (cn || ('ext ' + icDigits_(leg[IC_COL.CALLEE]))));
+  return who + ' -> ' + to + ' @ ' + (icIsoTime_(icParseTs_(leg[IC_COL.START])) || '?');
+}
+
+// `opts.waitDiag` (previewInternalWaitStart only) keeps two scratch fields on
+// each record -- the wait measured the PRE-WS-1 way and whose leg started it --
+// so the preview can print before/after from ONE build. The capture never sets it.
+function buildInboundCallRecords_(rawRows, opts) {
   if (!rawRows || !rawRows.length) return [];
+  var waitDiag = !!(opts && opts.waitDiag);
 
   // 1) Group legs by ROOT call id (icGroupLegsByRoot_).
   var groups = icGroupLegsByRoot_(rawRows);
@@ -696,6 +715,17 @@ function buildInboundCallRecords_(rawRows) {
     // Wait seconds: from first incoming Start to the first answer Connected,
     // or to the abandon Stop.
     var firstStart = icParseTs_((isInternalOrigin ? legs[0] : incoming[0])[IC_COL.START]);
+    // WS-1 (owner 2026-10-12, the Batch 8 follow-on): on an internal-origin
+    // record the wait STARTS at the requester's queue leg (originLeg), not
+    // legs[0] -- on a merged tree legs[0] can be a colleague's leg that began
+    // minutes earlier, so their whole conversation read as queue wait. Only the
+    // wait moves: call_start / call_date and the related-call cross-ref keep
+    // firstStart (the record's clock). External records are unchanged.
+    var waitStart = firstStart;
+    if (isInternalOrigin) {
+      var originStartMs = icParseTs_(originLeg[IC_COL.START]);
+      if (!isNaN(originStartMs)) waitStart = originStartMs;
+    }
     var endMs = NaN;
     if (answered) {
       for (var w = 0; w < answerScope.length; w++) {   // PIPE-13: the requester's own answer
@@ -707,12 +737,12 @@ function buildInboundCallRecords_(rawRows) {
     } else if (abandonLeg) {
       endMs = icParseTs_(abandonLeg[IC_COL.STOP]);
     }
-    var waitSeconds = (!isNaN(firstStart) && !isNaN(endMs))
-      ? Math.max(0, Math.round((endMs - firstStart) / 1000)) : null;
+    var waitSeconds = (!isNaN(waitStart) && !isNaN(endMs))
+      ? Math.max(0, Math.round((endMs - waitStart) / 1000)) : null;
 
     var callDate = icIsoDate_(firstStart);
 
-    (isInternalOrigin ? internalPending : records).push({
+    var rec = {
       callId:          root,
       isInternal:      isInternalOrigin,
       // Scratch for the related-call cross-ref (deleted before return):
@@ -750,7 +780,17 @@ function buildInboundCallRecords_(rawRows) {
       numQueues:       queues.length,
       numTransfers:    Math.max(0, queues.length - 1),
       journey:         icBuildJourney_(legs)
-    });
+    };
+    if (waitDiag) {
+      // The wait the pre-WS-1 rule stored, and whose leg each rule started at.
+      rec._waitFirstLeg = (!isNaN(firstStart) && !isNaN(endMs))
+        ? Math.max(0, Math.round((endMs - firstStart) / 1000)) : null;
+      var firstLeg = isInternalOrigin ? legs[0] : incoming[0];
+      rec._waitOldStartLeg = icWaitLegLabel_(firstLeg);
+      rec._waitNewStartLeg = icWaitLegLabel_(isInternalOrigin ? originLeg : firstLeg);
+      rec._waitStartIsQueueLeg = !isInternalOrigin || firstLeg === originLeg;
+    }
+    (isInternalOrigin ? internalPending : records).push(rec);
   });
 
   // --- Internal-transfer path enrichment (journey-only, strictly additive) ---
@@ -2382,6 +2422,165 @@ function previewOutboundAssistLinksForDate() {
   if (arg.cancelled) return;
   previewOutboundAssistLinks(arg.dateIso);
 }
+
+// ── WS-1 verification: internal-call wait, BEFORE vs AFTER ───────────────────
+// READ-ONLY. Rebuilds the inbound records from surviving Call_Legs_* sheets
+// with the CURRENT capture code and prints, for every internal-origin record,
+// the wait the old rule measured (from the group's earliest leg) beside the
+// wait the new rule measures (from the requester's queue leg). Writes nothing.
+//
+// How to read it (Logger):
+//   * UNCHANGED -- the queue leg WAS the earliest leg, so both rules agree.
+//     This should be most internal records.
+//   * CHANGED   -- a colleague's leg started earlier under the same root; the
+//     line names both legs so you can check the new start is the requester's.
+//     The new wait is always SHORTER, by exactly the gap between the two legs.
+//   * SUSPECT   -- the new wait is LONGER than the old, or one side is blank
+//     where the other is not. The rule cannot produce this; any SUSPECT line is
+//     a bug to report.
+//   * External (customer) records are checked too and must show 0 changed.
+//   * "Neon has" is what inbound_calls stores today: it reads the OLD value
+//     until the date is re-imported after the deploy, then the NEW one. Use it
+//     to confirm a re-import took (Manual Export of that date).
+// Times are PST, as call_start stores them (the dashboard shows CST = +2h).
+var WS_PREVIEW_DETAIL_CAP_ = 200;
+
+/** EDITOR-RUN / menu, read-only. `dateIso` 'YYYY-MM-DD', 'all', or blank = latest sheet. */
+function previewInternalWaitStart(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') {
+    sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  } else if (!dateIso) {
+    sheets = sheets.slice(-1);
+  }
+  var out = { dates: [], internal: 0, unchanged: 0, changed: 0, suspect: 0,
+              external: 0, externalChanged: 0, maxCutSec: 0, rows: [],
+              neonChecked: false, neonOld: 0, neonNew: 0, neonOther: 0, neonMissing: 0,
+              stoppedAtBudget: false };
+  if (!sheets.length) {
+    Logger.log('previewInternalWaitStart: no Call_Legs sheet for %s.', dateIso || '(latest)');
+    return out;
+  }
+  var t0 = Date.now(), budget = 4 * 60 * 1000;
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > budget) { out.stoppedAtBudget = true; break; }
+    var rows = sheets[i].sheet.getDataRange().getDisplayValues();
+    rows.shift();
+    var recs = buildInboundCallRecords_(rows, { waitDiag: true }) || [];
+    var day = { iso: sheets[i].iso, internal: 0, changed: 0, suspect: 0, externalChanged: 0 };
+    recs.forEach(function (r) {
+      var before = r._waitFirstLeg, after = r.waitSeconds;
+      if (!r.isInternal) {
+        out.external++;
+        if (before !== after) { out.externalChanged++; day.externalChanged++; }
+        return;
+      }
+      out.internal++; day.internal++;
+      var kind;
+      if (before === after) kind = 'UNCHANGED';
+      else if (before == null || after == null || after > before) kind = 'SUSPECT';
+      else kind = 'CHANGED';
+      if (kind === 'UNCHANGED') { out.unchanged++; return; }
+      if (kind === 'SUSPECT') { out.suspect++; day.suspect++; } else { out.changed++; day.changed++; }
+      if (kind === 'CHANGED') out.maxCutSec = Math.max(out.maxCutSec, before - after);
+      out.rows.push({ kind: kind, date: r.callDate, callId: r.callId, callStart: r.callStart,
+                      queue: r.entryQueue, disposition: r.disposition, requester: r.originAgent,
+                      before: before, after: after, oldStart: r._waitOldStartLeg,
+                      newStart: r._waitNewStartLeg, neon: undefined });
+    });
+    out.dates.push(day);
+  }
+
+  // Best-effort: what Neon stores today for the changed records.
+  if (out.rows.length) {
+    var conn = null;
+    try {
+      conn = getReachableNeonConn_();
+      if (conn) {
+        var isos = out.dates.map(function (d) { return d.iso; });
+        var st = conn.createStatement();
+        try { st.setQueryTimeout(60); } catch (e) { /* best-effort */ }
+        var rs = st.executeQuery("SELECT COALESCE(json_agg(json_build_array(call_date::text, call_id, wait_seconds)), '[]')::text "
+          + "FROM inbound_calls WHERE COALESCE(is_internal, FALSE) AND call_date BETWEEN '"
+          + isos[0] + "'::date AND '" + isos[isos.length - 1] + "'::date");
+        var stored = {};
+        JSON.parse((rs.next() ? rs.getString(1) : '[]') || '[]').forEach(function (x) {
+          stored[x[0] + '|' + x[1]] = x[2];
+        });
+        rs.close(); st.close();
+        out.neonChecked = true;
+        out.rows.forEach(function (row) {
+          var key = row.date + '|' + row.callId;
+          if (!(key in stored)) { row.neon = 'not in Neon'; out.neonMissing++; return; }
+          var v = stored[key];
+          if (v === row.after) { row.neon = v + 's (NEW)'; out.neonNew++; }
+          else if (v === row.before) { row.neon = v + 's (old)'; out.neonOld++; }
+          else { row.neon = (v == null ? 'blank' : v + 's') + ' (neither)'; out.neonOther++; }
+        });
+      }
+    } catch (e) {
+      Logger.log('previewInternalWaitStart: Neon read skipped -- ' + (e && e.message ? e.message : e));
+    } finally {
+      if (conn) { try { conn.close(); } catch (ce) {} }
+    }
+  }
+
+  Logger.log('previewInternalWaitStart (READ-ONLY): ' + out.dates.length + ' date(s) '
+    + (out.dates.length ? out.dates[0].iso + '..' + out.dates[out.dates.length - 1].iso : '')
+    + (out.stoppedAtBudget ? ' -- STOPPED at the 4-min budget; run a single date for the rest' : ''));
+  Logger.log('  Internal records: ' + out.internal + ' | UNCHANGED ' + out.unchanged
+    + ' | CHANGED ' + out.changed + (out.changed ? ' (largest cut ' + out.maxCutSec + 's)' : '')
+    + ' | SUSPECT ' + out.suspect + (out.suspect ? '  <-- should be 0, report these' : ''));
+  Logger.log('  External records: ' + out.external + ' | changed ' + out.externalChanged
+    + (out.externalChanged ? '  <-- should be 0, report this' : ' (expected 0)'));
+  if (out.neonChecked) {
+    Logger.log('  Neon today, for the changed records: ' + out.neonOld + ' still old (not re-imported yet), '
+      + out.neonNew + ' already NEW, ' + out.neonOther + ' neither, ' + out.neonMissing + ' not in Neon.');
+  } else if (out.rows.length) {
+    Logger.log('  Neon not checked (unreachable or NEON_* unset) -- the before/after above stands on its own.');
+  }
+  if (out.dates.length > 1) {
+    out.dates.forEach(function (d) {
+      Logger.log('  ' + d.iso + ': ' + d.internal + ' internal, ' + d.changed + ' changed'
+        + (d.suspect ? ', ' + d.suspect + ' SUSPECT' : '') + (d.externalChanged ? ', ' + d.externalChanged + ' EXTERNAL changed' : ''));
+    });
+  }
+  // SUSPECT first, then the biggest cuts.
+  out.rows.sort(function (a, b) {
+    if (a.kind !== b.kind) return a.kind === 'SUSPECT' ? -1 : 1;
+    return (b.before - b.after) - (a.before - a.after);
+  });
+  out.rows.slice(0, WS_PREVIEW_DETAIL_CAP_).forEach(function (row) {
+    Logger.log(row.kind + ' ' + row.date + ' ' + row.callId + ' @ ' + (row.callStart || '?')
+      + ' -> ' + (row.queue || '(no queue)') + ' (' + (row.disposition || '?') + ')'
+      + ' | requester ' + (row.requester || '(unknown)')
+      + '\n   wait BEFORE ' + (row.before == null ? 'blank' : row.before + 's')
+      + '  AFTER ' + (row.after == null ? 'blank' : row.after + 's')
+      + (row.before != null && row.after != null ? '  (' + (row.after - row.before) + 's)' : '')
+      + '\n   before started at: ' + row.oldStart
+      + '\n   after starts at:   ' + row.newStart
+      + (row.neon !== undefined ? '\n   Neon has: ' + row.neon : ''));
+  });
+  if (out.rows.length > WS_PREVIEW_DETAIL_CAP_) {
+    Logger.log('... ' + (out.rows.length - WS_PREVIEW_DETAIL_CAP_) + ' more not shown (the largest cuts are listed first).');
+  }
+  return out;
+}
+
+/** CDR Tools menu: pick a date (blank = latest). */
+function previewInternalWaitStartForDate() {
+  var arg = icPreviewDateArg_();
+  if (arg.cancelled) return;
+  previewInternalWaitStart(arg.dateIso);
+}
+/** CDR Tools menu: every surviving Call_Legs date (summary per date). */
+function previewInternalWaitStartAllDates() { return previewInternalWaitStart('all'); }
 
 /**
  * READ-ONLY leg-shape probe (broad-scan 2026-09-23 follow-ups S2C-5 + S2C-1,
