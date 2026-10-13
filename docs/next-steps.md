@@ -656,11 +656,11 @@ this is the sequence. IDs are the scan's. Sizes: S < 2 h, M ½–2 days.
 | 8 | Repair, per-call + drill edges | PIPE-9..15 · TOOL-5 | IMPLEMENTED (block 254) |
 | 9 | Agent app + a11y | UI-1/2 · CL-6/7/8 · **SEC-4 follow-on** (owner 2026-10-12): say on the agent app when the wait-join ceiling (`AH_WAIT_JOIN_MAX_ROWS_`, 3000 rows) cut off older rings -- carry `join.truncated` into the payload and render a note -- instead of older rings silently showing the time only | IMPLEMENTED (block 256) |
 | 10 | Cache anchors + combined-view perf | DATA-6/7/8 | queued |
-| 11 | Docs, deploy, code health | DOC-1..7 · DEP-1/2 · SEC-7 · TOOL-6 · DATA-9 | queued |
+| 11 | Docs, deploy, code health | DOC-1..7 · DEP-1/2 · SEC-7 · TOOL-6 · DATA-9 · **PIPE-7** (owner 2026-10-13, option A): when the import short-circuits a date as "already in history", check Neon for that date's `inbound_calls` / `outbound_calls` rows and, if there are none, run the per-call backfill for that one date -- a daily run killed between the sheet writes and the per-call capture currently never captures that day automatically (cdr-import `processNewImport` / the catch-up) | queued |
 
 **Deferred (owner rulings):** SEC-1 (IR/Insights floater rule) · SEC-2 (Agent
 Day outbound for managers -- the open "call ids at 6c" question) · SEC-6
-(accepted) · PIPE-7 (design) · PIPE-8 (operator: Operator State #8) · **UX-2**
+(accepted) · PIPE-8 (operator: Operator State #8) · **UX-2**
 (the Insights ranked brief + one-line sections; prototype screenshots exist --
 needs the urgency rule, manager visibility and the amber/red colour call).
 
