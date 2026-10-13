@@ -16,7 +16,7 @@
   - Deploy cdr-import, cdr-report and the dashboard.
   - RE-CONSENT cdr-import right after its push (run any function, accept), Operator State #9.
   - Delete dbReporting.gs in the cdr-report web editor (INV-17).
-  **Next:** the deferred owner rulings (SEC-1 floaters, SEC-2 Agent Day outbound, UX-2 Insights brief, PIPE-8 operator), or the recorded follow-ons -- owner picks.
+  **Next:** UX-2 is RULED (owner 2026-10-13, option A x3 -- docs/next-steps.md has the rule) and ready to build; still deferred: SEC-1 floaters, SEC-2 Agent Day outbound, PIPE-8 operator; or the recorded follow-ons -- owner picks.
   **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-13 — Broad scan Batch 10 IMPLEMENTED (block 257): cache anchors + combined-view perf.**
   - Fixes:

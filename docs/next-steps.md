@@ -660,9 +660,26 @@ this is the sequence. IDs are the scan's. Sizes: S < 2 h, M ½–2 days.
 
 **Deferred (owner rulings):** SEC-1 (IR/Insights floater rule) · SEC-2 (Agent
 Day outbound for managers -- the open "call ids at 6c" question) · SEC-6
-(accepted) · PIPE-8 (operator: Operator State #8) · **UX-2**
-(the Insights ranked brief + one-line sections; prototype screenshots exist --
-needs the urgency rule, manager visibility and the amber/red colour call).
+(accepted) · PIPE-8 (operator: Operator State #8).
+
+**UX-2 RULED (owner 2026-10-13, option A on all three) -- ready to build.** The
+Insights ranked brief + one-line sections (Agents the only section open):
+1. **Urgency rule** -- colour a row ONLY where a standard already exists: the
+   top line against the dept answer target + its amber band
+   (`getAnswerStandardFor_`; default 80/10, CSR 92/2), Queue health against
+   `ABANDON_STANDARD_PCT` (4.00%+ over the window = red; under 4% with a
+   violation day = amber), Agents against the cards' behind-team tier
+   (`INS_PEER_GAP_PTS` 5, `INS_MIN_VOL` 5; behind AND slipping = red, behind
+   or slipping-while-on-par = amber). Callbacks, Team detail and the 12-month
+   trend stay grey until a standard exists. Tie order Queue -> Agents ->
+   Callbacks -> Team detail -> Trend; on a >7-day window mismatch the Agents
+   row drops "slipping" (amber at most); a row the viewer cannot see is
+   omitted, a config gap is a grey row; every row carries its word label.
+2. **Visibility** -- admins first (`data-admin-only`, so View-as hides it)
+   for ~2 weeks, then release to managers.
+3. **Colours** -- red = `--warn`; amber = a NEW caution token (the `--stale`
+   amber under its own name, defined at all five token sites).
+Options sheet: the "UX-2 Insights Brief: Decisions" doc (owner's artifacts).
 
 ## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
 
