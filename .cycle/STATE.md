@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-13 — Broad scan Batch 10 IMPLEMENTED (block 257): cache anchors + combined-view perf.**
+  - Fixes:
+    - DATA-6: `summary` / `insights` keys carry the latest QCD date (qcdFreshnessTag_).
+    - DATA-7: the combined view computes QCD/CSR for the requested dept only, and CSR's two transfer calls share one date-column read.
+    - DATA-8: a narrowed crossover slice is subtracted when another dept fell open (B-1) to the all-queue superset (latent, QUEUE_SPLIT_SCOPE=dept only).
+  - Also this session: PIPE-7 option A added to Batch 11 (owner).
+  - Verification: 2401 tests; ci:ui green; lint clean; 7 bites.
+
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 11 (docs, deploy, code health + PIPE-7; SEC-7 needs one re-consent) -- the last broad-scan batch.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-12 — Broad scan Batch 9 IMPLEMENTED (block 256): agent app + accessibility.**
   - Fixes:
     - UI-1: agent-panel and inbound-drill tabs get arrow keys + roving tabindex.

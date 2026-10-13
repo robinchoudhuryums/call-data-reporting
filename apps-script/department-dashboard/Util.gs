@@ -606,6 +606,21 @@ function reportFreshnessTag_() {
 }
 
 /**
+ * DATA-6 (broad-scan 2026-10-12): the QCD-side twin of reportFreshnessTag_ for
+ * a key whose payload EMBEDS queue data (My Department's QCD snapshot,
+ * Insights' Queue health). The DQE date alone did not move when QCD landed
+ * separately or a date's QCD was force re-imported, so the embedded queue
+ * section could lag the 6 h TTL. Reuses the all-dept report's D-1 anchor (the
+ * latest QCD date, with its trigger-context fallback) -- one way to read it.
+ * 'na' on any failure, like its twin.
+ */
+function qcdFreshnessTag_() {
+  try {
+    return (typeof qcdAllFreshnessAnchor_ === 'function') ? String(qcdAllFreshnessAnchor_() || 'na') : 'na';
+  } catch (e) { return 'na'; }
+}
+
+/**
  * Combined DQE+QCD read-source cache-key suffix (CORE-3, extended for the #3
  * QCD read-back). Returns e.g. 'sheet-sheet' | 'neon-sheet' | 'neon-neon'.
  *

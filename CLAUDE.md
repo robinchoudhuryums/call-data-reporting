@@ -1890,7 +1890,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ambiguous AF↔AD pairings so a narrowed ring never drills a wrong call). **Phase 2 INVERTS the
   Phase 0 rule:** a `queueScoped` row is never de-duplicated -- two
   narrowed rows PARTITION the agent's day, so summing is correct and
-  subtracting would under-count. The relationship bar + `subqSplitChip_`
+  subtracting would under-count -- EXCEPT against a dept whose whole window
+  fell open (B-1): that row is the all-queue superset, so the narrowed slice
+  is subtracted (DATA-8, `queue-split.test.js`). The relationship bar + `subqSplitChip_`
   are HIDDEN (Round-16 owner; `SUBQ_BAR_HIDDEN_`); the B-1 mismatch signal
   is `auditQueueSplitAttribution()` (Operator State #41).
 - **Scope is locked to `roster` (Phase 14/15 roster-only flip).** Both public

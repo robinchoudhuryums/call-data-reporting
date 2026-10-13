@@ -115,3 +115,21 @@ test('DATA-2 / DATA-10: Insights and the agent app\'s team + history keys carry 
   assert.match(ah, /tag = tag \+ ':' \+ \(\(typeof rosterSetHash_ === 'function'\) \? rosterSetHash_\(\[who\.dept\]\) : 'na'\);[\s\S]{0,400}var teamKey = AGENT_HOME_CACHE_PREFIX_ \+ ':team:'[^;]+tag;/);
   assert.match(ah, /var key = 'agentHist:v1:'[^;]+rosterSetHash_\(\[who\.dept\]\)/);
 });
+
+// DATA-6 (broad-scan 2026-10-12): the two keys that EMBED queue data carry the
+// latest QCD date, so a QCD landing (or a force re-import) after the DQE date
+// mints a new key instead of serving the old Queue panel for the 6 h TTL.
+test('DATA-6: summary and Insights keys carry the QCD freshness tag; the tag follows the latest QCD date', function () {
+  const fs = require('fs'), path = require('path');
+  const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  const src = function (f) { return fs.readFileSync(path.join(dash, f), 'utf8'); };
+  assert.match(src('Data.gs'), /'summary:v\d+:'[\s\S]{0,400}\+ ':q' \+ qcdFreshnessTag_\(\)/);
+  assert.match(src('InsightsReport.gs'), /const cacheKey = INSIGHTS_CACHE_KEY_PREFIX[^;]+\+ ':q' \+ qcdFreshnessTag_\(\)/);
+  const hu = loadGas({ files: ['Config.gs', 'Util.gs'] });
+  hu.ctx.qcdAllFreshnessAnchor_ = function () { return '2026-10-09'; };
+  assert.equal(hu.call('qcdFreshnessTag_'), '2026-10-09');
+  hu.ctx.qcdAllFreshnessAnchor_ = function () { throw new Error('read failed'); };
+  assert.equal(hu.call('qcdFreshnessTag_'), 'na', 'a failure degrades to the unanchored key, never a throw');
+  delete hu.ctx.qcdAllFreshnessAnchor_;
+  assert.equal(hu.call('qcdFreshnessTag_'), 'na', 'QCDReport.gs absent (selective load) -> na');
+});

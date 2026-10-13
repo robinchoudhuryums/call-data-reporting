@@ -659,6 +659,46 @@ test('L7: mixed-changeover crossover rows (un-scoped but UNEQUAL figures) are no
   assert.equal(dup.totals.crossoverAgentCount, 1);
 });
 
+// DATA-8 (broad-scan 2026-10-12): MIXED narrowed + B-1 fall-open crossover.
+// Dept A narrowed Anna to its own queues (a scoped slice); dept B's whole
+// window fell open (B-1), so B's row carries Anna's ALL-queue day, which
+// already contains A's slice. Summing both counted the slice twice.
+test('DATA-8: a narrowed slice is dropped when another dept fell open to the all-queue superset', function () {
+  const part = function (dept, r, scoped, fellOpen) {
+    return { meta: { department: dept, queueSplitFellOpen: !!fellOpen },
+             rows: [{ agent: 'Anna', matchedViaRoster: true, queueScoped: !!scoped,
+                      totalRung: r, totalMissed: 0, totalAnswered: r,
+                      totalUnique: r, tttSeconds: r * 10, daysActive: 1 }],
+             totals: { totalRung: r, totalMissed: 0, totalAnswered: r,
+                       totalUnique: r, tttSeconds: r * 10, rosterAgentCount: 1,
+                       queueOnlyAgentCount: 0, ansPerDayAnswered: r, ansPerDayAgentDays: 1 },
+             qcd: null, csrTransfer: null,
+             diagnostics: { rosterWithNoData: [], queueOnlyMatched: [] } };
+  };
+  // A narrowed (6 of Anna's 10), B fell open (all 10).
+  const a = part('CSR', 6, true, false), b = part('Spanish', 10, false, true);
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.totalRung, 10, 'the all-queue day, once -- not 6 + 10');
+  assert.equal(r.totals.tttSeconds, 100);
+  assert.equal(r.totals.rosterAgentCount, 1, 'one agent');
+  assert.equal(r.totals.crossoverAgentCount, 1, 'the caption explains the subtotals no longer add up');
+  assert.equal(r.totals.ansPerDay, 10, 'the per-agent-day pair counts Anna once');
+  // Order does not matter.
+  const r2 = hData.call('combineSummaries_', b, [b, a]);
+  assert.equal(r2.totals.totalRung, 10);
+
+  // An un-scoped row that did NOT fall open (a changeover range, partly
+  // narrowed -- L7) is no superset: left summed, fail open.
+  const c = part('CSR', 6, true, false), d = part('Spanish', 7, false, false);
+  const mixed = hData.call('combineSummaries_', c, [c, d]);
+  assert.equal(mixed.totals.totalRung, 13);
+  assert.equal(mixed.totals.crossoverAgentCount, 0);
+
+  // Two narrowed slices still partition the day (the P2 + P0 rule above).
+  const e = part('CSR', 6, true, false), f = part('Spanish', 4, true, false);
+  assert.equal(hData.call('combineSummaries_', e, [e, f]).totals.totalRung, 10);
+});
+
 // L3 (broad-scan 2026-08-27): EVERY Overview accumulation pass narrows.
 // The card `periods` (Yesterday/Last30/YTD) + 30/60/90-day chart pass was
 // rebuilt per-dept through queueSplitNarrowedCopy_ like the main pass and

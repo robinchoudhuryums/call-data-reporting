@@ -795,6 +795,24 @@ function combineSummaries_(primary, parts) {
   const seenRoster = {};
   const seenQueueOnly = {};
   let crossoverAgentCount = 0;
+  // DATA-8 (broad-scan 2026-10-12): the MIXED case the two rules below miss.
+  // One dept narrowed the agent (a scoped row: its own queues' slice) while
+  // another fell open for the WHOLE window under B-1 (an un-scoped row
+  // carrying the agent's ALL-queue figures on every day). The all-queue row
+  // already contains the slice, so summing both counts the slice twice. Only
+  // a B-1 fall-open is safe to treat as a superset: an un-scoped row from a
+  // changeover range is partly narrowed (L7), so it is left summed.
+  const scopedRosterRows = {};
+  const supersetRoster = {};
+  parts.forEach(function (p) {
+    const fellOpen = !!(p && p.meta && p.meta.queueSplitFellOpen);
+    (p.rows || []).forEach(function (r) {
+      const name = String(r.agent || '');
+      if (!name || !r.matchedViaRoster) return;
+      if (r.queueScoped) (scopedRosterRows[name] = scopedRosterRows[name] || []).push(r);
+      else if (fellOpen && !supersetRoster[name]) supersetRoster[name] = r;
+    });
+  });
   parts.forEach(function (p) {
     (p.rows || []).forEach(function (r) {
       const name = String(r.agent || '');
@@ -852,6 +870,25 @@ function combineSummaries_(primary, parts) {
         if (!seenQueueOnly[name]) { seenQueueOnly[name] = true; return; }
         grand.queueOnlyAgentCount -= 1;
       }
+    });
+  });
+  // DATA-8: drop each narrowed slice an all-queue superset row already holds.
+  Object.keys(scopedRosterRows).forEach(function (name) {
+    const sup = supersetRoster[name];
+    if (!sup) return;
+    const supInTeam = !teamAvgExcludeSet_(sup.dept)[name];
+    scopedRosterRows[name].forEach(function (r) {
+      crossoverAgentCount++;
+      if (supInTeam && !teamAvgExcludeSet_(r.dept)[name]) {
+        grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
+        grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+      }
+      grand.totalUnique   -= Number(r.totalUnique) || 0;
+      grand.totalRung     -= Number(r.totalRung) || 0;
+      grand.totalMissed   -= Number(r.totalMissed) || 0;
+      grand.totalAnswered -= Number(r.totalAnswered) || 0;
+      grand.tttSeconds    -= Number(r.tttSeconds) || 0;
+      grand.rosterAgentCount -= 1;
     });
   });
   grand.crossoverAgentCount = crossoverAgentCount;
@@ -1030,7 +1067,9 @@ function getDepartmentSummary(req) {
   const rosterHash = rosterSetHash_(deptSet);
   const cacheKey = 'summary:v23:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
-                 + ':' + reportFreshnessTag_() + ':' + rosterHash;
+                 + ':' + reportFreshnessTag_()
+                 + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
+                 + ':' + rosterHash;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -1046,7 +1085,13 @@ function getDepartmentSummary(req) {
   }
 
   const t0 = Date.now();
-  const parts = deptSet.map(function (d) { return computeSummary_(d, from, to, scope); });
+  // DATA-7 (broad-scan 2026-10-12): only the REQUESTED dept's QCD snapshot and
+  // CSR transfer block ship (combineSummaries_ keeps the primary's), so the
+  // other depts skip computing them -- a read each, and a child's read
+  // failure no longer blocks caching a payload that never contained it.
+  const parts = deptSet.map(function (d) {
+    return computeSummary_(d, from, to, scope, { sections: d === dept });
+  });
   // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
   // 'subs' scope it is not among the parts, so it is computed separately --
   // one extra per-dept compute on a scope the client never sends -- rather
@@ -1133,9 +1178,16 @@ function isIsoDate_(s) {
  *   'queue'  - only rows whose Col D queue extensions overlap this
  *              dept's queue extension union
  *   'both'   - union of the above (an agent matched by either path)
+ *
+ * opts.sections === false (DATA-7): skip the dept's QCD snapshot and CSR
+ * transfer block (qcd/csrTransfer come back null). Only the combined view
+ * passes it, for the non-primary depts -- combineSummaries_ ships the
+ * PRIMARY's sections and discards a child's, so computing them only cost a
+ * read and, on a failure, the whole payload's cache put.
  */
-function computeSummary_(dept, from, to, scope) {
+function computeSummary_(dept, from, to, scope, opts) {
   scope = scope || 'roster';
+  const withSections = !(opts && opts.sections === false);
 
   const roster = getRosterForDepartment_(dept);
   const rosterSet = {};
@@ -1543,17 +1595,19 @@ function computeSummary_(dept, from, to, scope) {
   // QCD mapping OR no recent QCD rows; client renders nothing.
   // R11-C1: the E5 prior window rides along so the QCD range block (and the
   // Avg-answer tile chip it feeds) gets a prior baseline in the same scan.
-  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ,
-    { from: from, to: to, priorFrom: priorFrom, priorTo: priorTo });
+  const qcdSnapshot = withSections ? computeDeptQcdSnapshot_(dept, ssTZ,
+    { from: from, to: to, priorFrom: priorFrom, priorTo: priorTo }) : null;
 
   // R10-5: CSR-only range transfer stats from CSR Transfer Historical Data
   // (the dashboard's first read of that sheet -- INV-52 said "not consumed";
   // read-only, best-effort, null for every other dept / missing sheet).
   // R11-C1: + the prior window's stats for the Transfer % tile's delta chip
   // (attached as .prior; nullable independently of the current block).
-  const csrTransfer = computeCsrTransferRange_(dept, from, to);
+  // DATA-7: the two calls share one read of the sheet's date column.
+  const csrCtx = {};
+  const csrTransfer = withSections ? computeCsrTransferRange_(dept, from, to, csrCtx) : null;
   if (csrTransfer && priorFrom && priorTo) {
-    csrTransfer.prior = computeCsrTransferRange_(dept, priorFrom, priorTo);
+    csrTransfer.prior = computeCsrTransferRange_(dept, priorFrom, priorTo, csrCtx);
   }
 
   return {
@@ -1626,7 +1680,7 @@ function computeSummary_(dept, from, to, scope) {
  * numeric parses. Best-effort: null when the dept isn't CSR, the sheet is
  * missing/empty, or no rows land in range -- the client renders no tile.
  */
-function computeCsrTransferRange_(dept, from, to) {
+function computeCsrTransferRange_(dept, from, to, ctx) {
   try {
     if (String(dept) !== 'CSR' || !from || !to) return null;
     const ss = openSpreadsheet_();
@@ -1661,7 +1715,16 @@ function computeCsrTransferRange_(dept, from, to) {
     // never fall outside it -- and tight in the ordinary appended-in-order
     // case. Same total rows scanned for dates as before; far fewer cells.
     const tz0 = ss.getSpreadsheetTimeZone();
-    const dateCol = sheet.getRange(2, CSR_TRANSFER_DATE_COL_, lastRow - 1, 1).getDisplayValues();
+    // DATA-7: `ctx` (one computeSummary_ call) shares this column between the
+    // current and prior windows -- same sheet, same execution, read once.
+    // Keyed on lastRow so a ctx can never hand back a column of another size.
+    let dateCol;
+    if (ctx && ctx.csrDateCol && ctx.csrLastRow === lastRow) {
+      dateCol = ctx.csrDateCol;
+    } else {
+      dateCol = sheet.getRange(2, CSR_TRANSFER_DATE_COL_, lastRow - 1, 1).getDisplayValues();
+      if (ctx) { ctx.csrDateCol = dateCol; ctx.csrLastRow = lastRow; }
+    }
     let firstIdx = -1, lastIdx = -1;
     for (let d = 0; d < dateCol.length; d++) {
       const dIso = rowDateIso_(dateCol[d][0], tz0);
