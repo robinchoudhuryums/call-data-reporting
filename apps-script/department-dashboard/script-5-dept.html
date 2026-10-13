@@ -2883,8 +2883,16 @@
       const pa = Number(row.totalAnswered) || 0, pm = Number(row.totalMissed) || 0, pt = pa + pm;
       if (!pt) return zeroCell_('–');
       const prate = Math.round(pa / pt * 100);
-      return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true, null,
+      const rateHtml = '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true, null,
         row.dept || getRequestedDept()) + '">' + prate + '%</span>';
+      if (!careOn_()) return rateHtml;
+      // Calm Care: a thin bar to this dept's own goal under the rate (60-100%
+      // scale, so near-goal differences stay visible).
+      const goal = answerStdFor_(row.dept || getRequestedDept()).target;
+      const w = Math.max(0, Math.min(100, (prate - 60) / 40 * 100));
+      const g = Math.max(0, Math.min(100, (goal - 60) / 40 * 100));
+      return rateHtml + '<span class="care-rate-bar" aria-hidden="true" title="Goal ' + goal + '%">'
+        + '<i style="width:' + w.toFixed(1) + '%"></i><b style="left:' + g.toFixed(1) + '%"></b></span>';
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);

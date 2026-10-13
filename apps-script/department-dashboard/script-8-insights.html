@@ -1570,6 +1570,45 @@
     headEl.appendChild(row);
   }
 
+  // Calm Care preview: the Insights at-a-glance sentence (+ its behind-team
+  // chips) is the best one-line summary of the team, so the care theme ALSO
+  // shows it at the top of My Department, above the team numbers -- a mirror
+  // of #ins-headline refreshed on every Insights render, never a second
+  // composer, so the two cannot disagree. Same window as the dept controls
+  // (Insights is converged to them). A chip opens the Insights tab and
+  // spotlights that agent's card, as it does in place. Other themes: no-op.
+  function careMirrorHeadline_() {
+    var host = $('care-dept-headline');
+    if (!careOn_()) { if (host && host.parentNode) host.parentNode.removeChild(host); return; }
+    var src = $('ins-headline');
+    var empty = !src || src.style.display === 'none' || !src.innerHTML.trim();
+    if (!host) {
+      // Above the two-column layout, so it leads at every width (on a phone
+      // the side panels stack first inside the layout).
+      var anchor = document.querySelector('#dept-page .dept-layout');
+      if (!anchor || !anchor.parentNode) return;
+      host = document.createElement('section');
+      host.id = 'care-dept-headline';
+      host.setAttribute('aria-label', 'Team summary');
+      anchor.parentNode.insertBefore(host, anchor);
+      host.addEventListener('click', function (e) {
+        var chip = e.target.closest('.ds-attn-chip');
+        var more = e.target.closest('.care-headline-more');
+        if (!chip && !more) return;
+        if (typeof careSelectTab_ === 'function') careSelectTab_('insights');
+        if (chip) {
+          var name = chip.getAttribute('data-agent');
+          setTimeout(function () { insSpotlightAgentCard_(name); }, 60);
+        }
+      });
+    }
+    if (empty) { host.hidden = true; host.innerHTML = ''; return; }
+    host.hidden = false;
+    host.className = src.className + ' care-headline';
+    host.innerHTML = src.innerHTML
+      + '<button type="button" class="link-btn care-headline-more">See the full Insights</button>';
+  }
+
   // A1: scroll to + pulse an agent's card by name (the strip chip target).
   // Reuses the .qs-spotlight accent-ring pulse (reduced-motion aware via CSS).
   function insSpotlightAgentCard_(name) {
@@ -1763,6 +1802,7 @@
     }
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderNeedsAttentionStrip_(data);
+    careMirrorHeadline_();   // Calm Care: the same sentence leads the Agents tab
     // I4: the 12-month trend chart moved OUT of the collapsed Team-detail to
     // its own always-visible section at the bottom of the report, so it renders
     // in the main pass now -- measure-guarded (insDrawTrendChart_), since this

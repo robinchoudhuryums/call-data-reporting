@@ -8482,6 +8482,69 @@ body[data-theme="care"] .care-acct-panel :is(.help-btn, .header-menu-item):focus
   body[data-theme="care"] .dash-header .header-nav .header-menu-btn { white-space: nowrap; }
 }
 
+/* Overview department card (care only; ovBuildCareTile_ in script-3). */
+body[data-theme="care"] .ovc-tile { gap: 10px; }
+body[data-theme="care"] .ovc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body[data-theme="care"] .ovc-head .ov-dept-name { font-size: 18px; font-weight: 700; }
+body[data-theme="care"] .ovc-status { flex: none; font-size: 12.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+body[data-theme="care"] .ovc-status--good   { background: var(--good-soft);  color: var(--good); }
+body[data-theme="care"] .ovc-status--watch  { background: var(--stale-soft); color: var(--stale); }
+body[data-theme="care"] .ovc-status--bad    { background: var(--bad-soft);   color: var(--bad); }
+body[data-theme="care"] .ovc-status--nodata { background: var(--paper-2);    color: var(--muted); }
+body[data-theme="care"] .ovc-rate { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+body[data-theme="care"] .ovc-pct { font-size: 34px; font-weight: 700; line-height: 1; letter-spacing: -0.02em !important; }
+body[data-theme="care"] .ovc-cap { font-size: 13px; color: var(--muted); }
+body[data-theme="care"] .ovc-goal { position: relative; height: 8px; border-radius: 999px; background: var(--paper-2); }
+body[data-theme="care"] .ovc-goal-fill { height: 8px; border-radius: 999px; background: var(--muted); }
+body[data-theme="care"] .ovc-tile--good  .ovc-goal-fill { background: var(--good); }
+body[data-theme="care"] .ovc-tile--watch .ovc-goal-fill { background: var(--stale); }
+body[data-theme="care"] .ovc-tile--bad   .ovc-goal-fill { background: var(--bad); }
+body[data-theme="care"] .ovc-goal-tick { position: absolute; top: -4px; width: 2px; height: 16px; border-radius: 1px; background: var(--ink); }
+body[data-theme="care"] .ovc-goal-cap { font-size: 13px; color: var(--muted); margin-top: -2px; }
+body[data-theme="care"] .ovc-wow { font-weight: 700; }
+body[data-theme="care"] .ovc-wow--up { color: var(--good); }
+body[data-theme="care"] .ovc-wow--down { color: var(--bad); }
+body[data-theme="care"] .ovc-stats { margin: 2px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+body[data-theme="care"] .ovc-stats dt { font-size: 12.5px; color: var(--muted); }
+body[data-theme="care"] .ovc-stats dd { margin: 0; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+body[data-theme="care"] .ovc-quiet, body[data-theme="care"] .ovc-ob { font-size: 13px; color: var(--muted); }
+body[data-theme="care"] .ovc-quiet .ovc-bad { color: var(--bad); font-weight: 600; }
+body[data-theme="care"] .ovc-ob { color: var(--dir-out); }
+body[data-theme="care"] .ovc-ob .ov-dir-pill { font-size: 11.5px; }
+body[data-theme="care"] .ovc-foot { font-size: 12.5px; color: var(--muted); }
+body[data-theme="care"] .ovc-nodata { margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted); }
+body[data-theme="care"] .ovc-tile .ov-alert-pill { align-self: flex-start; }
+
+/* Team headline on My Department (care only; careMirrorHeadline_). */
+body[data-theme="care"] #care-dept-headline { margin: 0 0 18px; padding: 16px 20px; border-left: 0; border-radius: 16px; }
+body[data-theme="care"] #care-dept-headline .report-headline-line { font-size: 16px; line-height: 1.55; }
+body[data-theme="care"] #care-dept-headline .report-headline-kicker { font-size: 12.5px; font-weight: 700; margin-bottom: 4px; }
+body[data-theme="care"] #care-dept-headline .care-headline-more { margin-top: 8px; font-size: 13.5px; font-weight: 600; color: var(--accent); }
+@media (max-width: 1099px) { body[data-theme="care"] #dept-page[data-care-tab="agents"] .dept-side { order: 1; } }
+body[data-theme="care"] #dept-page[data-care-tab="missed"] #care-dept-headline,
+body[data-theme="care"] #dept-page[data-care-tab="insights"] #care-dept-headline { display: none !important; }
+
+/* Agent table cell (care only; answeredBarHtml_ care branch + the pct cell). */
+body[data-theme="care"] .care-ans { gap: 7px; min-width: 220px; }
+body[data-theme="care"] .care-ans-nums { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; font-size: 13.5px; color: var(--muted); }
+body[data-theme="care"] .care-ans-nums b { font-size: 15.5px; font-weight: 700; color: var(--ink); margin-right: 3px; font-variant-numeric: tabular-nums; }
+body[data-theme="care"] .care-ans.ans-bar--fail .miss-n b { color: var(--bad); }
+body[data-theme="care"] .care-ans .ans-perday { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+body[data-theme="care"] .care-ans .wow-chip { background: none; padding: 0; margin-left: 5px; font-size: 12px; vertical-align: 0; }
+body[data-theme="care"] .care-ans .wow-chip-muted { display: none; }
+body[data-theme="care"] .care-ans-track { display: flex; height: 6px; border-radius: 999px; overflow: hidden; background: transparent; }
+body[data-theme="care"] .care-ans-track .ans-seg { height: 6px; }
+body[data-theme="care"] .care-rate-bar { position: relative; display: block; width: 72px; height: 4px; margin: 7px 0 0 auto;
+  border-radius: 999px; background: var(--paper-2); }
+body[data-theme="care"] .care-rate-bar i { display: block; height: 4px; border-radius: 999px; background: var(--muted); }
+body[data-theme="care"] .ans-rate.bm-target + .care-rate-bar i { background: var(--good); }
+body[data-theme="care"] .ans-rate.bm-watch  + .care-rate-bar i { background: var(--stale); }
+body[data-theme="care"] .ans-rate.bm-bad    + .care-rate-bar i { background: var(--bad); }
+body[data-theme="care"] .care-rate-bar b { position: absolute; top: -3px; width: 2px; height: 10px; border-radius: 1px; background: var(--ink); }
+body[data-theme="care"] .ans-rate.bm-watch { color: var(--stale); }
+body[data-theme="care"] .ans-rate { font-size: 15px; font-weight: 700; }
+
 /* Dark mode: care keeps its teal accent (lightened for AA on the dark paper) */
 body[data-theme="care"][data-mode="dark"] {
   --accent: #4fc3ad;

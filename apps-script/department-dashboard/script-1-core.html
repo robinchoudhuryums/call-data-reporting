@@ -1726,6 +1726,7 @@
   // R17b: optional maxBlocks overrides the shared 36-block ceiling for
   // narrow surfaces (the Team Rings side panel fits ~12 blocks per row);
   // every pre-existing caller omits it and is byte-identical.
+  var ANS_COHORT_MAX_ = 0;
   function ansTallyUnitFor_(rows, maxBlocks) {
     var cap = maxBlocks > 0 ? maxBlocks : ANS_TALLY_MAX_BLOCKS_;
     var max = 0;
@@ -1733,6 +1734,7 @@
       var t = (Number(r.totalAnswered) || 0) + (Number(r.totalMissed) || 0);
       if (t > max) max = t;
     });
+    ANS_COHORT_MAX_ = max;   // Calm Care's volume bar scales to the busiest row
     if (!max) return 0;
     for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) {
       if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= cap) return ANS_TALLY_UNITS_[i];
@@ -1826,6 +1828,10 @@
     var title = team
       ? ans + ' answered over ' + days + ' agent-days with rings (per agent; floaters and team-average exclusions left out)'
       : ans + ' answered over ' + days + ' day' + (days === 1 ? '' : 's') + ' with rings';
+    if (careOn_()) {
+      return '<span class="ans-perday" title="' + escapeHtml(title) + '">'
+        + Number(v).toFixed(1) + (team ? ' per agent per day' : ' per day') + '</span>';
+    }
     return '<span class="ans-perday" title="' + escapeHtml(title) + '">&middot; '
       + Number(v).toFixed(1) + ' ' + careCopy_('ans/day', 'answered per day') + '</span>';
   }
@@ -1853,6 +1859,27 @@
     // the missed segment light/translucent so healthy rows recede; failing
     // keeps the full red + a bold value (styles.html .ans-bar--pass/--fail).
     var passCls = total ? (rate >= answerStdFor_(deptCtx).target ? ' ans-bar--pass' : ' ans-bar--fail') : '';
+    // Calm Care: the cell reads as two figures and one bar. "20 answered,
+    // 5 missed" in words (change arrows beside them, noise-level changes
+    // hidden), the per-day pace in quiet text, and ONE stacked bar whose
+    // LENGTH is the row's volume against the busiest row in the table --
+    // the scale the bead tally gave, without a block per call. The rung
+    // total moves to the tooltip. Display only; the CSV writes barCell().
+    if (careOn_()) {
+      var vol = (tallyUnit > 0 && ANS_COHORT_MAX_ > 0) ? Math.max(4, Math.min(100, total / ANS_COHORT_MAX_ * 100)) : 100;
+      var cSegs = total
+        ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+          + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
+        : '<span class="ans-seg none" style="width:100%"></span>';
+      return '<div class="ans-bar care-ans' + passCls + '" title="' + escapeHtml(title) + '">'
+        +   '<div class="care-ans-nums">'
+        +     '<span class="ans-n"><b>' + a + '</b> answered' + aChip + '</span>'
+        +     '<span class="miss-n"><b>' + m + '</b> missed' + mChip + '</span>'
+        +     ansPerDayHtml_(row)
+        +   '</div>'
+        +   '<div class="ans-track care-ans-track" style="width:' + vol.toFixed(1) + '%">' + cSegs + '</div>'
+        + '</div>';
+    }
     var track;
     if (useTally) {
       track = '<div class="ans-tally" aria-hidden="true">'

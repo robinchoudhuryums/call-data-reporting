@@ -1003,7 +1003,102 @@
       + '</div>';
   }
 
+  // ---- Calm Care preview: the department card -------------------------
+  // CARE THEME ONLY (ovBuildGridTile_ hands off here). One question per card:
+  // how did this department answer against ITS OWN goal (answerStdFor_, so
+  // CSR is judged at 92 while the company default is 80)? A status word,
+  // the rate with a bar to the goal, three numbers, and ONE quiet line for
+  // the queue figures -- instead of 6-8 equal-weight chips. Same data-dept /
+  // flash key / classes as the shipped tile, so solo-on-click, the chart
+  // spotlight and the change flash all keep working.
+  var OVC_BAR_FLOOR_ = 60;   // the goal bar's left edge (%): differences near goal stay visible
+  function ovCareStatus_(dept, st) {
+    var pct = parseFloat(st.pctFormatted);
+    if (!isFinite(pct)) return { key: 'nodata', label: 'No agent data', pct: null };
+    var std = answerStdFor_(dept.name);
+    if (pct >= std.target) return { key: 'good', label: 'Meeting goal', pct: pct, std: std };
+    if (pct >= std.target - std.band) return { key: 'watch', label: 'Close to goal', pct: pct, std: std };
+    return { key: 'bad', label: 'Below goal', pct: pct, std: std };
+  }
+  function ovCareGap_(dept) {
+    var s = ovCareStatus_(dept, ovPeriodStats_(dept));
+    return s.pct == null ? Infinity : s.pct - s.std.target;   // most-behind first; no data last
+  }
+  function ovBuildCareTile_(dept, color, isChild, routable, isViewer) {
+    var st = ovPeriodStats_(dept);
+    var status = ovCareStatus_(dept, st);
+    var std = answerStdFor_(dept.name);
+    var spark = irSparklineGoal_(dept.trend || [], color, { label: '% answered (30-day)', goal: std.target });
+    var span = 100 - OVC_BAR_FLOOR_;
+    var fillW = status.pct == null ? 0 : Math.max(0, Math.min(100, (status.pct - OVC_BAR_FLOOR_) / span * 100));
+    var tickL = Math.max(0, Math.min(100, (std.target - OVC_BAR_FLOOR_) / span * 100));
+    var wow = '';
+    if (dept.wow && typeof dept.wow.deltaPct === 'number') {
+      var d = Number(dept.wow.deltaPct) || 0;
+      wow = Math.abs(d) < 0.1 ? 'flat this week'
+        : '<span class="ovc-wow ovc-wow--' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '▲ ' : '▼ ') + Math.abs(d).toFixed(1) + ' pts</span> this week';
+    }
+    var q = dept.qcd || null, quiet = [], quietTip = [];
+    if (q && q.abandonedPctStr) {
+      var over = (Number(q.abandonedPct) || 0) >= ABANDON_STANDARD_;
+      quiet.push('<span' + (over ? ' class="ovc-bad"' : '') + '>' + escapeHtml(q.abandonedPctStr) + ' abandoned</span>');
+      (q.perQueue || []).forEach(function (pq) {
+        quietTip.push(pq.queue + ': ' + (pq.abandonedPctStr || '0.00%') + ' abandoned'
+          + ((Number(pq.violations) || 0) > 0 ? ', ' + pq.violations + ' violation' + (pq.violations == 1 ? '' : 's') : ''));
+      });
+    }
+    if (q) {
+      var mv = Number(q.violationsMtd) || 0;
+      quiet.push('<span' + (mv > 0 ? ' class="ovc-bad"' : '') + '>' + mv + ' violation' + (mv === 1 ? '' : 's') + ' this month</span>');
+    }
+    var ob = dept.outbound && dept.outbound[ovCardPeriod];
+    var obLine = ob
+      ? '<div class="ovc-ob" title="' + escapeHtml('Outbound calls placed by this department’s roster agents in the selected window. ' + OB_CONNECTED_DEF_) + '">'
+        + '<span class="ov-dir-pill">Outbound</span> '
+        + (ob.placed > 0 ? fmtNumber(ob.placed) + ' placed · ' + (ob.pct != null ? Number(ob.pct).toFixed(0) + '% connected' : fmtNumber(ob.connected) + ' connected')
+                         : 'no outbound calls')
+        + '</div>'
+      : '';
+    var viewerBadge = isViewer
+      ? '<span class="ov-dept-viewer-badge">' + ((isAllDeptViewer_() && !viewAsDept_) ? 'selected' : 'My Dept') + '</span>' : '';
+    var cls = 'ov-dept-tile ovc-tile ovc-tile--' + status.key
+      + (isChild ? ' ov-dept-tile-child' : '') + (isViewer ? ' ov-dept-tile-viewer' : '')
+      + (routable ? ' ov-dept-tile-clickable' : '');
+    var activeN = dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize;
+    return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
+      +   '<div class="ovc-head">'
+      +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + viewerBadge + '</span>'
+      +     '<span class="ovc-status ovc-status--' + status.key + '">' + status.label + '</span>'
+      +   '</div>'
+      +   (isChild ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>' : '')
+      +   ovBuildAlertPill_(dept)
+      +   ovBuildDqeSilenceNote_(dept)
+      +   (status.key === 'nodata'
+            // No rings in the window: say so once instead of a dash, an empty
+            // goal bar and three zeros (the queue figures below still count).
+            ? '<p class="ovc-nodata" data-flash-key="ov:' + escapeHtml(dept.name) + '">No agent calls in this window. Queue figures below still count.</p>'
+            : '<div class="ovc-rate">'
+            +   '<span class="ovc-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</span>'
+            +   '<span class="ovc-cap">' + escapeHtml(ovPeriodCap_()) + '</span>'
+            + '</div>'
+            + '<div class="ovc-goal" aria-hidden="true"><div class="ovc-goal-fill" style="width:' + fillW.toFixed(1) + '%"></div>'
+            +   '<div class="ovc-goal-tick" style="left:' + tickL.toFixed(1) + '%"></div></div>'
+            + '<div class="ovc-goal-cap">Goal ' + std.target + '%' + (wow ? ' \u00b7 ' + wow : '') + '</div>'
+            + '<dl class="ovc-stats" title="' + escapeHtml(fmtNumber(st.rung) + ' rings in this window') + '">'
+            +   '<div><dt>Answered</dt><dd>' + fmtNumber(st.answered) + '</dd></div>'
+            +   '<div><dt>Missed</dt><dd>' + fmtNumber(st.missed) + '</dd></div>'
+            +   '<div><dt>Avg talk</dt><dd>' + escapeHtml(careDur_(st.attFormatted)) + '</dd></div>'
+            + '</dl>')
+      +   (quiet.length ? '<div class="ovc-quiet"' + (quietTip.length ? ' title="' + escapeHtml(quietTip.join('\n')) + '"' : '') + '>' + quiet.join(' · ') + '</div>' : '')
+      +   obLine
+      +   '<div class="ov-dept-tile-spark">' + spark + '</div>'
+      +   '<div class="ovc-foot" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' + dept.activeAgents + ' of ' + activeN + ' agents active'
+      +     (ovCardPeriod === 'yesterday' ? '' : ' on the latest day') + '</div>'
+      + '</div>';
+  }
+
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
+    if (careOn_()) return ovBuildCareTile_(dept, color, isChild, routable, isViewer);
     const st = ovPeriodStats_(dept);
     // Round-16 (owner, Option 3): the grid tiles' trend corner is a GOAL-GAP
     // mini line chart -- the honest 70-100% band (R11-L's fix carries over),
@@ -1194,6 +1289,15 @@
       }
     });
 
+    // Calm Care: worst-first (furthest below its own goal), departments with
+    // no agent data last. Colours stay keyed to the original slot, so a card
+    // still matches its line on the trend chart.
+    if (careOn_()) {
+      groups.sort(function (a, b) {
+        var ga = ovCareGap_(a.parent), gb = ovCareGap_(b.parent);
+        return (ga === gb) ? 0 : (ga < gb ? -1 : 1);
+      });
+    }
     // Move the viewer's group to the front (stable for the rest).
     if (viewerTopName) {
       const vi = groups.findIndex(function (g) { return g.parent.name === viewerTopName; });
