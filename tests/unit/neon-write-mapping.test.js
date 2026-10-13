@@ -245,6 +245,7 @@ test('P-6: authoritative CDR write deletes phone children THEN parents for the p
   const log = [];
   h.ctx.getReachableNeonConn_ = function () { return seqConn(log); };
   delete h.state.props.HMAC_SECRET;
+  h.state.props.CDR_PHONES_MIRROR = 'on';   // mirror ON: the children are re-written, nothing stashed (PIPE-4)
   h.fn('writeCDRRowsToNeon')([
     { callDate: '2026-06-22', dept: 'CSR',   agentName: 'Anna' },
     { callDate: '2026-06-23', dept: 'Sales', agentName: 'Bob' },
@@ -259,6 +260,54 @@ test('P-6: authoritative CDR write deletes phone children THEN parents for the p
     'parents deleted second');
   assert.deepEqual(Array.from(log[1].params), ['2026-06-22', '2026-06-23']);
   assert.match(sqls[2], /INSERT INTO call_history_dept/, 'insert runs after both deletes');
+  assert.ok(!sqls.some(function (q) { return /cdr_phones_keep_/.test(q); }), 'mirror ON: no stash, no re-attach');
+  delete h.state.props.CDR_PHONES_MIRROR;
+});
+
+// PIPE-4 (broad-scan 2026-10-12): with the phone mirror OFF (the default), an
+// authoritative replace used to wipe the date's phone children for good --
+// Caller Lookup's only copy of pre-capture outbound history. They are now
+// stashed by (call_date, department, agent_name), deleted as before, and
+// re-attached to the re-created parents in the SAME transaction.
+test('PIPE-4: mirror OFF -- children are stashed, deleted, then re-attached to the new parents before the commit', function () {
+  const log = [];
+  let commits = 0;
+  h.ctx.getReachableNeonConn_ = function () {
+    const c = seqConn(log);
+    c.commit = function () { log.push({ sql: '<COMMIT>', params: [] }); commits++; };
+    return c;
+  };
+  delete h.state.props.HMAC_SECRET;
+  delete h.state.props.CDR_PHONES_MIRROR;
+  const res = h.fn('writeCDRRowsToNeon')([
+    { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna' },
+    { callDate: '2026-06-23', dept: 'Sales', agentName: 'Bob' },
+  ], { authoritative: true });
+  const sqls = log.map(function (e) { return e.sql; });
+  const iStash = sqls.findIndex(function (q) { return /CREATE TEMP TABLE cdr_phones_keep_ ON COMMIT DROP AS/.test(q); });
+  const iChildDel = sqls.findIndex(function (q) { return /DELETE FROM call_history_phones/.test(q); });
+  const iParentDel = sqls.findIndex(function (q) { return /DELETE FROM call_history_dept/.test(q); });
+  const iInsert = sqls.findIndex(function (q) { return /INSERT INTO call_history_dept/.test(q); });
+  const iReattach = sqls.findIndex(function (q) { return /INSERT INTO call_history_phones[\s\S]*FROM cdr_phones_keep_ k JOIN call_history_dept n/.test(q); });
+  const iCommit = sqls.indexOf('<COMMIT>');
+  assert.ok(iStash === 0 && iChildDel > iStash && iParentDel > iChildDel && iInsert > iParentDel
+    && iReattach > iInsert && iCommit > iReattach, 'order: stash, child delete, parent delete, insert, re-attach, commit -- ' + sqls.join(' | '));
+  assert.deepEqual(Array.from(log[iStash].params), ['2026-06-22', '2026-06-23'], 'the stash covers exactly the replaced dates');
+  assert.match(sqls[iStash], /JOIN call_history_dept d ON d\.id = p\.call_history_id/);
+  assert.match(sqls[iReattach], /ON n\.call_date = k\.call_date AND n\.department = k\.department AND n\.agent_name = k\.agent_name/,
+    'matched on uq_call_hist');
+  assert.match(sqls[iReattach], /ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING$/);
+  assert.equal(commits, 1, 'one transaction');
+  assert.equal(res.phonesGated, true);
+});
+
+test('PIPE-4: a non-authoritative write never stashes or re-attaches', function () {
+  const log = [];
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(log); };
+  delete h.state.props.HMAC_SECRET;
+  delete h.state.props.CDR_PHONES_MIRROR;
+  h.fn('writeCDRRowsToNeon')([{ callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna' }]);
+  assert.ok(!log.some(function (e) { return /cdr_phones_keep_/.test(e.sql); }));
 });
 
 test('P-6: non-authoritative CDR write issues no deletes (pre-P-6 behavior byte-identical)', function () {

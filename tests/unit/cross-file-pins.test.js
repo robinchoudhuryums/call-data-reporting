@@ -1002,7 +1002,8 @@ test('6c: the outbound vetting gate and the My Department outbound surfaces are 
     'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-ob-fold is ' + (foldHidden ? 'hidden' : 'visible')
     + ' -- release (or hold) the Insights Outbound fold with the report (Operator State #63).');
   assert.match(read('script-8-insights.html', DASH),
-    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(dir === 'in' \|\| !meta \|\| !meta\.department/,
+    // UX-1: the window is the page's (obSectionWindow_), so the guard is just "no window".
+    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(dir === 'in' \|\| !meta\) \{ insObHide_\(\); return; \}/,
     'the Insights Outbound fold must take its permission from obEffectiveDir_ (obAllowed_, the ONE client gate) and hide on Inbound');
 
   // G1: the Insights Callbacks fold (the Outbound report moving onto My

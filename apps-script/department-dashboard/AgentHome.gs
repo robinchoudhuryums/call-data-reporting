@@ -245,6 +245,10 @@ function getAgentHome(req) {
   // self-bust -- but a CUSTOM window, or a re-import that rebuilds a date
   // already in history, moves neither and left both blobs stale for the TTL.
   tag = tag + ':' + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');
+  // DATA-10 (broad-scan 2026-10-12): + the dept roster (DL-5) -- the team blob
+  // is the roster's figures, and a roster edit moves neither the window nor
+  // the freshness tag, so a hire / removal reached the agent app only at the TTL.
+  tag = tag + ':' + ((typeof rosterSetHash_ === 'function') ? rosterSetHash_([who.dept]) : 'na');
   var cache = CacheService.getScriptCache();
 
   // TEAM blob: one compute per (dept, window), shared by the whole team.
@@ -291,6 +295,11 @@ function getAgentHome(req) {
     // timestamp alone -- labeled coverage, never a guessed wait.
     var join = ahWaitJoin_(who.agentName, from, to);
     detail.waitsAvailable = join.available;
+    // SEC-4 follow-on (owner 2026-10-12): carry the ceiling into the payload
+    // so the page can say older rings show the time only, rather than leave
+    // them silently bare.
+    detail.waitsTruncated = !!join.truncated;
+    detail.waitsCoverFrom = join.truncated ? (join.coverFrom || null) : null;
     detail.missedDays = detail.missedDays.map(function (day) {
       return { date: day.date, entries: day.times.map(function (t) {
         var m = join.map[day.date + '|' + ahTimeSec_(t)] || {};
@@ -318,6 +327,8 @@ function getAgentHome(req) {
       trendFrom: trendFrom,
       workWindow: (typeof DASHBOARD_WORK_WINDOW !== 'undefined') ? DASHBOARD_WORK_WINDOW : '',
       waitsAvailable: !!detail.waitsAvailable,   // Phase C: capture reachability, not coverage
+      waitsTruncated: !!detail.waitsTruncated,   // SEC-4: the wait join hit its row ceiling
+      waitsCoverFrom: detail.waitsCoverFrom || null,   // ...and covers rings from this date on
     },
     me: ownView.me,
     meAttFormatted: formatSecondsHms_(ownView.me.attSeconds),
@@ -327,6 +338,23 @@ function getAgentHome(req) {
     trend: detail.trend,
     missedDays: detail.missedDays,
     missedTotal: detail.missedTotal,
+  };
+}
+
+/**
+ * CL-8 (broad-scan 2026-10-12): the work window the agent page states, from
+ * the pinned display constants (INV-06) -- including R49's earlier floor for
+ * the CSR queue family, which is per QUEUE, so the page names the queues
+ * rather than guessing whether this agent's calls came through them.
+ */
+function agentWorkWindow_() {
+  if (typeof DASHBOARD_WORK_WINDOW === 'undefined') return '';
+  var early = (typeof DASHBOARD_EARLY_WINDOW !== 'undefined') ? DASHBOARD_EARLY_WINDOW : null;
+  return {
+    cst: DASHBOARD_WORK_WINDOW.cst,
+    pst: DASHBOARD_WORK_WINDOW.pst,
+    earlyCst: early ? early.cst : '',
+    earlyQueues: early ? early.queues.slice() : [],
   };
 }
 
@@ -349,8 +377,15 @@ function getAgentHome(req) {
  * agent's missed ring legs in range. Conflicting duplicates are DROPPED
  * (never guess). Unreachable/missing table -> { map: {}, available: false }.
  */
+// SEC-4 (broad-scan 2026-10-12): the row ceiling on the wait join. Each row
+// carries a whole journey (0.2-6 KB) and the window may be a year (SEC-1's
+// agent-app cap), so the unbounded fetch was a Neon-egress cost with no
+// ceiling. Newest first: a ring past the cap keeps nulls, which the client
+// already renders as "timestamp only" -- labeled coverage, never a guess.
+var AH_WAIT_JOIN_MAX_ROWS_ = 3000;
+
 function ahWaitJoin_(agentName, fromIso, toIso) {
-  var out = { map: {}, available: false };
+  var out = { map: {}, available: false, truncated: false, coverFrom: null };
   if (typeof getDashboardNeonConn_ !== 'function') return out;
   var conn = null;
   try {
@@ -359,10 +394,15 @@ function ahWaitJoin_(agentName, fromIso, toIso) {
     var stmt = conn.prepareStatement(
       "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
       + 'SELECT call_date::text AS d, call_start, journey FROM inbound_calls '
-      + 'WHERE call_date BETWEEN ?::date AND ?::date AND journey LIKE ?) t');
+      + "WHERE call_date BETWEEN ?::date AND ?::date AND journey LIKE ? "
+      + 'ORDER BY call_date DESC, call_start DESC LIMIT ' + (AH_WAIT_JOIN_MAX_ROWS_ + 1) + ') t');
     stmt.setString(1, fromIso);
     stmt.setString(2, toIso);
-    stmt.setString(3, '%' + agentName + '%');
+    // SEC-4: PCR-5's pattern -- the name QUOTED as the JSON string value it
+    // is in a journey, with LIKE's own wildcards escaped. A bare '%Ann%'
+    // matched every "Anna" / "Annette" call (and a name holding % or _ matched
+    // anything), all fetched and then dropped by the exact check below.
+    stmt.setString(3, ahJourneyLikePattern_(agentName));
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
     // P30: this journey-bearing fetch (0.2-6KB per row) was a whole missing
@@ -370,6 +410,16 @@ function ahWaitJoin_(agentName, fromIso, toIso) {
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'agentHome');
     rs.close(); stmt.close();
     var recs = JSON.parse(json || '[]');
+    if (recs.length > AH_WAIT_JOIN_MAX_ROWS_) {
+      recs = recs.slice(0, AH_WAIT_JOIN_MAX_ROWS_);
+      out.truncated = true;
+      // SEC-4 follow-on: newest first, so the last kept row's date is where
+      // coverage stops -- rings on that date may be partly covered, older
+      // ones not at all. The agent page says so instead of going quiet.
+      out.coverFrom = recs[recs.length - 1].d || null;
+      Logger.log('ahWaitJoin_: hit the ' + AH_WAIT_JOIN_MAX_ROWS_ + '-row ceiling for ' + fromIso + '..' + toIso
+        + ' -- older rings keep the timestamp only (SEC-4).');
+    }
     for (var i = 0; i < recs.length; i++) {
       var startSec = ahTimeSec_(recs[i].call_start);
       var journey;
@@ -399,6 +449,11 @@ function ahWaitJoin_(agentName, fromIso, toIso) {
     if (conn) { try { conn.close(); } catch (e2) {} }
   }
   return out;
+}
+
+/** SEC-4: the journey LIKE pattern -- AgentDay's PCR-5 rule (one rule, two readers). */
+function ahJourneyLikePattern_(agentName) {
+  return '%' + JSON.stringify(String(agentName == null ? '' : agentName)).replace(/[\\%_]/g, '\\$&') + '%';
 }
 
 // ── Phase C: My History (12-month own trajectory) ────────────────────────
@@ -482,7 +537,8 @@ function getAgentHistory(req) {
 
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   var cache = CacheService.getScriptCache();
-  var key = 'agentHist:v1:' + who.dept + ':' + latest + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
+  var key = 'agentHist:v1:' + who.dept + ':' + latest + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
+          + ':' + ((typeof rosterSetHash_ === 'function') ? rosterSetHash_([who.dept]) : 'na');   // DATA-10: the team monthly averages are the roster's
   var months = null, hit = false;
   var cached = cache.get(key);
   if (cached) { try { months = JSON.parse(cached); hit = true; } catch (e) { months = null; } }

@@ -291,9 +291,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   chip):** the hand-off buttons carry a window only when you explicitly
   cross over; the plain NAV-TAB path now SILENTLY converges --
   `adoptSharedWindow_(page)` (called from `setPage`'s `dept`/`insights`
-  branches) compares the two pages' last-rendered windows
-  (`pageActiveWindow_`, recorded WITH a timestamp in `refresh()` and
-  `insSyncPeriodBar_`) and, when the OTHER page's window is the more
+  branches) compared the two pages' last-rendered windows
+  (`pageActiveWindow_`, recorded WITH a timestamp) and, when the OTHER page's window was the more
   RECENT one and differs from this page's inputs, rewrites the entered
   page's date inputs and re-runs (dept: the setPage refresh branch;
   Insights: `runInsReport`, or the first-entry pending auto-run just reads
@@ -301,16 +300,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   so the two pages feel like one top-line date strip (owner feedback,
   post-deploy R9). The `.dsync-chip` markup/CSS,
   `maybeShowDateSyncChip_`/`applyDateSync_`, and the dismissal memo are
-  all retired. **#5 Option A hover-prefetch (client-only):** the cross-page
+  all retired. **DOC-6: this whole shared-window store is retired too** --
+  `adoptSharedWindow_` went in M2 and `pageActiveWindow_` in N1, because
+  Insights now renders INLINE on My Department and takes that page's window
+  (`insSyncToDeptWindow_`); there is no second page window to converge. **#5 Option A hover-prefetch (client-only):** the cross-page
   hand-offs that land on My Department -- the Insights **"My Department ->"**
   button + Queue-health **"See missed calls ->"** link (delegated ~300ms
   hover intent on `#insights-page`) -- warm My Department's summary
   for the target window via `prefetchDeptSummary_` (one `getDepartmentSummary`
   call, `req={department,from,to}`, seeded into the D1b store under the
   `'summary'` key so `refresh()`'s SWR paints instantly on click). Guards
-  mirror the IR hover-prefetch: one fetch per signature per session
-  (`deptSummaryPrefetched_`), skipped when the store is already warm,
-  best-effort (a failed prefetch is silent). ONLY the My-Department direction
+  mirrored the IR hover-prefetch: one fetch per signature per session,
+  skipped when the store was already warm, best-effort. **DOC-6: RETIRED in
+  N1 with its last callers** (`prefetchDeptSummary_` and its once-per-
+  signature memo are gone, script-5-dept notes it) -- the Insights region
+  now loads with the dept page, so there is no hop left to pre-warm. ONLY the My-Department direction
   is prefetched -- the Insights direction's request signature (agents +
   compare mode + resolved prior window) isn't reliably known at hover time,
   so it's intentionally left cold (a sig miss would just waste the call).
@@ -706,7 +710,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   values (IR/Insights/Inbound) + inbound abandon-% cells. Default
   is BINARY (highlight only the notable direction -- tables, IR tiles).
   The `symmetric` flag (passed `true` by the ds-kpi tiles -- `dsKpiTile_`,
-  `crTeamTile_`, `inboundKpiTile_`) tints BOTH sides of the SAME 92%/5%
+  `inboundKpiTile_`; the retired Compare Ranges' `crTeamTile_` was the
+  third) tints BOTH sides of the SAME 92%/5%
   standard, so a below-target answer rate reads orange "watch" and a
   healthy abandon rate reads green instead of plain black. Still no
   invented thresholds (only %-formatted answer/abandon values tint;
@@ -1083,6 +1088,29 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   never `loader.textContent = 'Error: …'`. (8) A `getLatestDataDates` failure
   is toasted and beaconed before the today-range fallback. New surfaces of
   the same shape adopt the helper, not the pattern it replaced.
+- **Request lifecycle rules (broad-scan 2026-10-12 Batch 3, pinned in
+  `client-lifecycle.test.js`).** (1) A value read at BOOT that the server can
+  change during the day is re-read: the latest data dates go through
+  `refreshLatestDates_` every 5 min while the tab is visible (and on
+  return), feeding every `clampInputsToLatest_` and the pill -- but only the
+  boot call (`applyLatestDates_(dates, true)`) may write the date inputs.
+  (2) A path that renders from a CACHE claims the same sequence token as the
+  fetch path (`AP_.seq++` in `apSelectDay_`), or an older in-flight fetch
+  paints over it. (3) Closing a modal claims its report token
+  (`reportReqSeq_.ir++` on IR close and open) and cancels a pending auto-run.
+  (4) A busy button stashes its idle label ONCE (`dataset.idleLabel`) --
+  reading `innerHTML` at run time captures the spinner when runs overlap.
+  (5) A write's response handler names what was SENT (capture it before the
+  call), never a global it reads at response time, and the controls that
+  would change the target are locked in flight (`dcSetBusy_`). (6) A shared
+  capture-failure handler releases every busy trigger it can reach,
+  `#dept-export-btn` and `insExportBusy_` included. (7) Focus on close goes
+  to the first SHOWN element of opener → launcher → `#page-title`
+  (`irFocusAfterClose_`); a hidden launcher drops focus to `<body>`. (8) A
+  section reload after a write re-reads only that section
+  (`alReloadSubscribers_`, the `alCfgApplySection_` rule) and keeps the
+  user's unsaved edits elsewhere (the Health UI toggles' dirty flag).
+  (9) Auto-refresh timers do nothing in a hidden tab.
 - **The Window selector and the chart's range control are ONE option set now
   (R50).** Window (`#ov-period-bar`) drives the dept CARDS and the agent table
   below; Chart (`#ov-chart-range`) drives the trend. They were built apart and
@@ -1122,11 +1150,12 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   was an intentional `#8` decision; it's safe to retire because the
   tile-hover→line-spotlight link works by **dept-name lookup**
   (`ovSpotlightDept_` matches `ds._deptName`), NOT DOM proximity, so
-  the stack preserves it. Sub-queue **children render as dense chips**
+  the stack preserves it. Sub-queue **children render as compact cards**
   beneath the parent tile inside the `.ov-dept-group` cell
-  (`ovBuildSubqChip_`: name + % answered + alert marker), each
-  **expanding on click to the child's full tile** (`.ov-subq-tile-wrap`,
-  hidden until expanded). The chips sit in the group cell, NOT inside the
+  (`ovBuildSubqCard_`: a strip with name + Ans % + WoW arrow, Abd %,
+  violations and alert markers), each **expanding in place on click into a
+  near-full card** (`.ov-subq-detail`, `ovToggleSubqCard_` -- DOC-6: the
+  older chip + separate full-tile design is gone). The cards sit in the group cell, NOT inside the
   parent card — parent DQE metrics are independent, NOT a roll-up of
   children, so nesting them in would falsely imply aggregation. Chips
   carry `data-dept` so hovering one spotlights the child's chart line
@@ -1949,7 +1978,16 @@ block) unless noted, and the two behavioural ones are also driven in
   (CL-13).** `role="tab"` promises arrow-key movement, a roving `tabindex`
   (only the selected tab is in the Tab order) and `role="tabpanel"` panels
   with `aria-labelledby`. The agent app's two tabs carry all of it, and
-  `drive-agent.js` presses ArrowRight / Home on them.
+  `drive-agent.js` presses ArrowRight / Home on them; since UI-1 (broad-scan
+  2026-10-12) so do the My Department agent panel's day tabs
+  (`drive-agentpanel.js` presses ArrowLeft / End) and the Inbound drill's
+  Volume / Abandon % sub-tabs (source-pinned in `client-correctness.test.js`;
+  the Inbound report has no driver). All four follow IR's R12-9 handler:
+  Left/Right wrap, Home/End jump, selection follows focus.
+- **A page's loading and error lines are live regions (UI-2).** An error is
+  `role="alert"`, a loading line `role="status" aria-live="polite"`, so a
+  screen reader hears the swap the eye sees. The agent page carries both on
+  each tab.
 - **A dialog traps Tab, names itself, and gives focus back.** `role="dialog"`
   / `alertdialog` with `aria-modal` promises a boundary the browser does not
   enforce: use the shared `trapFocus_` / `releaseFocus_`, point
@@ -2090,7 +2128,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   and false-warned, LM1) Pipeline Health entries, OR the latest is older than
   `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header freshness pill).
   A `rows:0` DQE-step `success` (a no-op build of an already-in-history date)
-  does NOT count as freshness -- the helper requires `rows>0` (F5).
+  does NOT count as freshness -- the helper requires `rows>0` (F5). Nor does a
+  BACKFILL: a row whose note names a built date more than
+  `OVERVIEW_FRESH_BUILD_MAX_LAG_DAYS_` (=5) days before its own timestamp is
+  skipped (`ovPipelineRowIsFreshBuild_`, B2/ENG-13), so re-importing last
+  month cannot reset the clock while today's ingest is down.
   (2) **Orphan Fix nag** (`#ov-orphan-nag` / `ovRenderOrphanNag_` /
   `computeOverviewOrphanNag_`) counts orphans with `lastSeen` inside
   `OVERVIEW_ORPHAN_NAG_DAYS` (=7d), samples up to 3 names by row-count desc,
@@ -2104,7 +2146,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   stripped by `personalizeOverview_` (`companyOverview:v28`).
 - **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
   `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
-  6c pin in `cross-file-pins.test.js` moves it with the gate and the two Insights outbound folds).
+  6c pin in `cross-file-pins.test.js` moves it with the gate and the two outbound sections under the table).
   The client's permission IS the switch's visibility (`obAllowed_`), so
   view-as-manager falls back to Inbound with no role check. Outbound and Both
   render a SEPARATE table, `#agents-ob-table` (`obViewRender_`, script-5), so
@@ -2122,30 +2164,37 @@ stay pinned by INV-39, INV-53 and INV-06.
   scrolls rather than the two overlapping). Rows open the inline agent panel
   (`apTbody_` follows the visible table). The choice persists in
   `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
-- **Outbound on the Overview tiles and in Insights (owner 2026-10, Batch E).**
+- **Outbound on the Overview tiles and under the outbound table (owner 2026-10, Batch E; moved by UX-1).**
   Both admin-only until the 6c release. **Tiles (E2):** `ovBuildOutboundLine_`
   (script-3) adds one violet line (`.ov-dir-pill` "Outbound", Placed, Conn +
   connect %) under ATT on every grid tile and expanded sub-queue card, for the
   SAME card window the inbound stats show; a window that starts before outbound
   capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
   only to admins and only when its Neon read worked, so "render when present"
-  is the whole client gate. **Insights (E1):** the `#ins-ob-fold` fold
-  (`insObSync_`, script-8) sits after Queue health. It reads
-  `getDeptOutboundSummary` twice -- the region's window and its prior window
-  -- keeps only the dept's OWN group (`insObOwnScope_`: its `deptGroups`
-  subtotal and agents, since Insights is one department per run while the
-  summary folds a parent's sub-queues in for My Department), and renders
-  five tiles with `insDeltaBadge_` deltas (per day when the
-  windows differ in length, CL-2) plus a per-agent table in a horizontal
-  scroller (`.ins-ob-scroll`; the bare table pushed the page to 510 px at
-  360). It shows only on the Outbound or Both direction (`obEffectiveDir_`,
+  is the whole client gate. **The Outbound summary (E1, moved by UX-1):** the
+  `#ins-ob-fold` fold (`insObSync_`, script-8; ids keep their historical
+  `ins-*` prefix) sits in `#dept-ob-sections` DIRECTLY UNDER the outbound
+  agent table, outside the Insights region (owner 2026-10-12, broad-scan
+  Batch 3b). It reads the PAGE's window -- `obSectionWindow_` (script-5):
+  the loaded `state.meta` window and its INV-28 prior, the same one the
+  table's chips use -- never Insights' last result, so a collapsed Insights
+  region cannot leave it empty or stale; `obViewSync_` drives it after every
+  dept render. It reads `getDeptOutboundSummary` twice (window + prior, via
+  the store the table shares), keeps only the dept's OWN group
+  (`insObOwnScope_`: its `deptGroups` subtotal and agents), and renders five
+  tiles with `insDeltaBadge_` deltas. It has NO agent table (the outbound
+  table above is that); when the table also holds sub-queue agents, its head
+  reads "<dept> only · N placed" and a note names the left-out sub-queues and
+  the table's total (`insObHeadText_` / `insObOwnScope_`'s `scope`). It
+  shows only on the Outbound or Both direction (`obEffectiveDir_`,
   i.e. `obAllowed_()`, the same gate as Batch D -- owner 2026-10-08 aligned it
   with the G1 Callbacks fold; `obViewSync_` re-syncs both folds on a switch),
   so Inbound, View-as and managers never fetch. A prior window that starts before capture shows
-  no comparison and says why. It is not fetched on the SWR pre-paint, and a
-  repeat render of the same windows repaints from the last result. The fold
-  persists as `ob` in the Insights folds store and is open by default.
-  Rendered-gated by `drive-outbound-e.js`.
+  no comparison and says why. A repeat sync of the same windows repaints from
+  the last result. The fold persists as `ob` in the Insights folds store and
+  is open by default. Rendered-gated by `drive-outbound-e.js` (incl. its
+  placement and staying visible with the Insights region collapsed);
+  `outbound-home.test.js` pins the markup and the window source.
 - **Prior-period chips on outbound (owner 2026-10, Batch F).** The E5
   `wow-chip` dialect, via ONE helper pair in script-5 (`obPriorChip_` /
   `obRateChip_`) shared by the Overview tile line and the My Department
@@ -2161,10 +2210,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   gets no chip (E5's rule), Total / subtotal rows get none, and a prior
   window starting before outbound capture shows none. Pinned by
   `overview-outbound.test.js` (the chip run for real) and both outbound drivers.
-- **Callbacks in Insights -- the Outbound report moving onto My Department
-  (owner 2026-10, Batch G1).** The `#ins-cb-fold` fold (`insCbSync_`,
-  script-8) sits after the Outbound fold and carries the retired modal's callback
-  analysis for the region's dept + window: the seven contact-EPISODE tiles
+- **Callbacks -- the Outbound report moving onto My Department (owner
+  2026-10, Batch G1; moved under the outbound table by UX-1).** The
+  `#ins-cb-fold` fold (`insCbSync_`, script-8) sits after the Outbound summary
+  in `#dept-ob-sections` and carries the retired modal's callback analysis
+  for the PAGE's dept + window (`insCbWindow_` reads `obSectionWindow_`): the seven contact-EPISODE tiles
   (CE-1 -- own team, another team, got through and not called back are
   SEPARATE tiles by ruling, never one "called back"; prior deltas on the two
   own-team rates from `callbackPrior`), the "how fast" strip, the daily chart,

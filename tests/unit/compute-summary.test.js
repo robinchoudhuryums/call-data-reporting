@@ -358,3 +358,33 @@ test('DATA-3: a CSR Transfer read that THROWS flags the section and the summary 
       'the degraded payload is served, never pinned');
   } finally { h.ctx.computeCsrTransferRange_ = realCsr; h.ctx.BEST_EFFORT_READ_FAILED_ = false; }
 });
+
+// DATA-7 (broad-scan 2026-10-12): opts.sections === false skips the QCD
+// snapshot and the CSR transfer read; every other figure is unchanged.
+test('DATA-7: computeSummary_ with sections:false reads neither QCD nor CSR, and the rows are identical', function () {
+  const rows = function () {
+    return [dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', unique: 5, rung: 10, missed: 2, answered: 8,
+                     ttt: '0:15:03', att: '0:03:01' })];
+  };
+  install(rows());
+  const calls = { qcd: 0, csr: 0 };
+  const realQ = h.ctx.computeDeptQcdSnapshot_, realC = h.ctx.computeCsrTransferRange_;
+  h.ctx.computeDeptQcdSnapshot_ = function () { calls.qcd++; return realQ.apply(null, arguments); };
+  h.ctx.computeCsrTransferRange_ = function () { calls.csr++; return realC.apply(null, arguments); };
+  try {
+    const full = JSON.parse(JSON.stringify(h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-09', 'roster')));
+    assert.deepEqual([calls.qcd, calls.csr], [1, 1], 'the default still computes both');
+    install(rows());
+    calls.qcd = 0; calls.csr = 0;
+    const lean = JSON.parse(JSON.stringify(h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-09', 'roster', { sections: false })));
+    assert.deepEqual([calls.qcd, calls.csr], [0, 0], 'neither section is read');
+    assert.equal(lean.qcd, null);
+    assert.equal(lean.csrTransfer, null);
+    delete full.meta.generatedAt; delete lean.meta.generatedAt;
+    assert.deepEqual(lean.rows, full.rows, 'the agent rows are untouched');
+    assert.deepEqual(lean.totals, full.totals);
+  } finally {
+    h.ctx.computeDeptQcdSnapshot_ = realQ;
+    h.ctx.computeCsrTransferRange_ = realC;
+  }
+});

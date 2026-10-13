@@ -116,8 +116,10 @@
       </span>
       <span class="agent-dates" id="agent-dates"></span>
     </div>
-    <div class="agent-loading" id="agent-loading">Loading your numbers…</div>
-    <div class="agent-error" id="agent-error" style="display:none;"></div>
+    <!-- UI-2: loading is a polite status, an error is an alert, so a screen
+         reader hears both instead of a silent swap. -->
+    <div class="agent-loading" id="agent-loading" role="status" aria-live="polite">Loading your numbers…</div>
+    <div class="agent-error" id="agent-error" role="alert" style="display:none;"></div>
     <div id="agent-body" style="display:none;">
       <div class="agent-kpis" id="agent-kpis"></div>
       <div class="agent-rank" id="agent-rank"></div>
@@ -132,16 +134,18 @@
           <div id="agent-missed"></div>
         </div>
       </div>
-      <div class="agent-foot">Times shown are your own missed rings during the 8:30 AM – 5:00 PM CST
-        work window<span id="agent-ww"></span>. Team figures are totals and averages for your whole
+      <!-- CL-8: the window text is filled from window.__WORK_WINDOW__ (the
+           pinned constants); the literal here is only the injection fallback. -->
+      <div class="agent-foot">Times shown are your own missed rings during the
+        <span id="agent-ww">8:30 AM – 5:00 PM CST</span> work window. Team figures are totals and averages for your whole
         department roster — individual teammates aren't shown. Data updates once daily after the
         morning import.</div>
     </div>
     </div><!-- /agent-home-page -->
     <!-- Phase C: My History -->
     <div id="agent-history-page" role="tabpanel" aria-labelledby="agent-tab-history" tabindex="0" style="display:none;">
-      <div class="agent-loading" id="agent-hist-loading">Loading your history…</div>
-      <div class="agent-error" id="agent-hist-error" style="display:none;"></div>
+      <div class="agent-loading" id="agent-hist-loading" role="status" aria-live="polite">Loading your history…</div>
+      <div class="agent-error" id="agent-hist-error" role="alert" style="display:none;"></div>
       <div id="agent-hist-body" style="display:none;">
         <div class="agent-card">
           <h2 id="agent-hist-trend-title">Answer rate by month — you vs team average</h2>

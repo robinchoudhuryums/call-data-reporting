@@ -166,3 +166,28 @@ test('DATA-6: passed roster names are used instead of re-reading every roster', 
     assert.equal(rosterReads, 0, 'no roster sheet reads when the caller supplies the names');
   } finally { h.ctx.getRosterForDepartment_ = realGet; }
 });
+
+// PC-4 (broad-scan 2026-10-12): a day on which the target already has a row
+// is SKIPPED -- renaming it made two (date, toName) rows that sheet readers
+// sum, while Neon skipped the day; the stores drifted for good.
+test('PC-4: colliding days stay under fromName and are reported; the other days rename', function () {
+  const sheet = install([
+    dqeRowFor('03/09/2026', 'Roman Paulose'),
+    dqeRowFor('03/09/2026', 'Roman (Robin) Paulose'),   // collision on 03/09
+    dqeRowFor('03/10/2026', 'Roman Paulose'),
+    dqeRowFor('2026-03-11', 'Roman Paulose'),
+    dqeRowFor('3/11/2026', 'Roman (Robin) Paulose'),    // same day, other date shape
+  ]);
+  const out = {};
+  const affected = h.call('renameHistoricalAgent_', 'Roman Paulose', 'Roman (Robin) Paulose', out);
+  assert.equal(affected, 1, 'only 03/10 renames');
+  assert.deepEqual(Array.from(out.collisionDates), ['2026-03-09', '2026-03-11']);
+  assert.equal(sheet._data[1][2], 'Roman Paulose', 'the colliding row is untouched');
+  assert.equal(sheet._data[3][2], 'Roman (Robin) Paulose');
+  assert.equal(sheet._data[4][2], 'Roman Paulose');
+  const perDay = {};
+  sheet._data.slice(1).forEach(function (r) {
+    if (r[2] === 'Roman (Robin) Paulose') perDay[r[1]] = (perDay[r[1]] || 0) + 1;
+  });
+  assert.ok(Object.keys(perDay).every(function (d) { return perDay[d] === 1; }), 'no duplicate (date, toName) row');
+});

@@ -138,11 +138,13 @@ function tileLines() {
     !onInbound.shown && onInbound.called === 0, JSON.stringify(onInbound));
   await pg.click('#dept-dir-switch [data-dir="out"]');
   await pg.waitForTimeout(2500);
-  const insMeta = require('./payloads/insights.json').meta;
+  // UX-1: the summary reads the PAGE's window (the dept summary payload's
+  // meta: window + INV-28 prior), not Insights'.
+  const insMeta = require('./payloads/summary-30d.json').meta;
   // The mock's resolution order: the 30-day Batch D capture first, then the windows map.
   const ob30 = require('./payloads/dept-outbound-30d.json');
   const raw = (ob30.meta.from === insMeta.from && ob30.meta.to === insMeta.to) ? ob30 : win[insMeta.from + '|' + insMeta.to];
-  // Insights is ONE department: the dept's own group, never its sub-queues'.
+  // The summary is ONE department: the dept's own group, never its sub-queues'.
   const grp = raw && (raw.deptGroups || []).filter((g) => g.dept === insMeta.department)[0];
   const cur = raw && (grp ? { totals: grp.totals, agents: raw.agents.filter((a) => a.scopeDept === insMeta.department) } : raw);
   const ins = await pg.evaluate(() => {
@@ -152,12 +154,20 @@ function tileLines() {
       head: (document.getElementById('ins-ob-fold-head') || {}).textContent || '',
       tiles: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
       deltas: document.querySelectorAll('#ins-ob-kpis .pr-delta').length,
-      rows: document.querySelectorAll('#ins-ob-agents tbody tr').length,
+      agentTable: !!document.querySelector('#ins-ob-fold table'),
+      note: ((document.getElementById('ins-ob-note') || {}).textContent || ''),
+      underTable: (function () {
+        var t = document.getElementById('agents-ob-wrap');
+        var reg = document.getElementById('dept-insights-region');
+        return !!t && !!f && (t.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+          && !!reg && !reg.contains(f);
+      })(),
       calls: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
         .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'),
     };
   });
   record('admin: the Insights Outbound fold is shown', ins.shown, JSON.stringify(ins.head));
+  record('UX-1: the summary sits under the outbound agent table, outside the Insights region', ins.underTable);
   record('admin: its headline reads the current window’s totals',
     !!cur && ins.head.indexOf(fmt(cur.totals.obTotal) + ' placed') !== -1
       && ins.head.indexOf(cur.totals.obConnectRate.toFixed(1) + '% connected') !== -1, ins.head);
@@ -166,9 +176,25 @@ function tileLines() {
     ins.calls.join(', '));
   record('admin: five KPI tiles, each compared with the prior window', ins.tiles === 5 && ins.deltas === 5,
     'tiles=' + ins.tiles + ' deltas=' + ins.deltas);
-  record('admin: one agent row per agent of the dept’s OWN roster (no sub-queue agents)',
-    !!cur && !!grp && ins.rows === cur.agents.length && cur.agents.length < raw.agents.length,
-    'rows=' + ins.rows + ' agents=' + (cur && cur.agents.length));
+  // UX-1: no agent table of its own (the outbound table above is it), and the
+  // own-group count is LABELLED when the table also holds sub-queue agents.
+  record('UX-1: the summary has no agent table of its own', !ins.agentTable);
+  record('UX-1: the head and note say the count is the dept’s own group, naming the table’s total',
+    !!grp && raw.deptGroups.length > 1 && ins.head.indexOf(insMeta.department + ' only · ') === 0
+      && ins.note.indexOf(insMeta.department + '’s own group') !== -1
+      && ins.note.indexOf(fmt(raw.totals.obTotal) + ' placed in all') !== -1,
+    JSON.stringify({ head: ins.head, note: ins.note }));
+  // UX-1: collapsing the Insights region leaves both sections on screen.
+  const collapsed = await pg.evaluate(() => {
+    var reg = document.getElementById('dept-insights-region');
+    reg.open = false;
+    var vis = function (id) { var e = document.getElementById(id); return !!e && e.getClientRects().length > 0; };
+    var r = { ob: vis('ins-ob-fold'), cb: vis('ins-cb-fold') };
+    reg.open = true;
+    return r;
+  });
+  record('UX-1: with the Insights region collapsed, the Outbound summary and Callbacks stay visible',
+    collapsed.ob && collapsed.cb, JSON.stringify(collapsed));
   // "Same windows never re-fetch" is asserted on a DIRECTION change below, not
   // on Refresh: on Outbound an explicit Refresh refetches the Batch D table by
   // design (OB_VIEW_.key = null) with the SAME arguments, so a call count can

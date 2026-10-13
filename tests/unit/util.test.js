@@ -185,6 +185,7 @@ function installHolidaySheet(rows, opts) {
   opts = opts || {};
   h.state.props = h.state.props || {};
   h.state.props.SPREADSHEET_ID = 'fake';
+  delete h.state.props.COMPANY_HOLIDAYS_SHEET_COPY;   // ENG-8: each fixture starts with no last-good copy
   const sheets = {};
   if (rows !== null) sheets[h.consts.SHEETS.COMPANY_HOLIDAYS] = [h.consts.COMPANY_HOLIDAYS_HEADERS.slice()].concat(rows);
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets, timeZone: opts.timeZone });
@@ -272,6 +273,41 @@ test('H1: a FAILED sheet read falls back to the property and is reported, never 
     delete h.state.spreadsheet;
     h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
     deepEqual(h.call('getCompanyHolidayRanges_'), [{ from: '2026-09-07', to: '2026-09-07' }]);
+  } finally { uninstallHolidaySheet(); }
+});
+
+test('ENG-8: a failed read serves the LAST-GOOD sheet copy (the property is cleared after H1), retries once, and an empty sheet retires the copy', function () {
+  try {
+    installHolidaySheet([['2026-12-25', 'Christmas', '', '']]);
+    setHolidays(null);   // H1 end state: the property is cleared
+    deepEqual(h.call('getCompanyHolidayRanges_'), [{ from: '2026-12-25', to: '2026-12-25' }]);
+    assert.equal(h.state.props.COMPANY_HOLIDAYS_SHEET_COPY, '[{"from":"2026-12-25","to":"2026-12-25"}]', 'a good read keeps a copy');
+
+    // The sheet now fails EVERY read: the copy serves, never a silent [].
+    const ss = h.state.spreadsheet;
+    const real = ss.getSheetByName;
+    let calls = 0;
+    ss.getSheetByName = function () { calls++; throw new Error('Service Spreadsheets timed out'); };
+    h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
+    deepEqual(h.call('getCompanyHolidayRanges_'), [{ from: '2026-12-25', to: '2026-12-25' }]);
+    assert.equal(h.call('companyHolidaySource_'), 'sheet-copy+sheet-error');
+    assert.equal(h.call('isCompanyHoliday_', '2026-12-25'), true);
+    assert.equal(calls, 2, 'one retry, then the copy (memoized for the execution)');
+
+    // A transient failure that clears on the retry reads the sheet itself.
+    let n = 0;
+    ss.getSheetByName = function (name) { n++; if (n === 1) throw new Error('timed out'); return real.call(ss, name); };
+    h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
+    h.call('getCompanyHolidayRanges_');
+    assert.equal(h.call('companyHolidaySource_'), 'sheet');
+
+    // The operator EMPTIES the sheet: the copy is retired, so a later failure
+    // cannot resurrect the cleared dates.
+    ss.getSheetByName = real;
+    installHolidaySheet([]);
+    h.state.props.COMPANY_HOLIDAYS_SHEET_COPY = '[{"from":"2026-12-25","to":"2026-12-25"}]';
+    deepEqual(h.call('getCompanyHolidayRanges_'), []);
+    assert.equal(h.state.props.COMPANY_HOLIDAYS_SHEET_COPY, undefined);
   } finally { uninstallHolidaySheet(); }
 });
 

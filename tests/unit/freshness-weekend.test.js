@@ -134,3 +134,29 @@ test('client pill: the header freshness pill applies the same non-business credi
   assert.ok(/isCompanyHolidayIso_/.test(src),
     'company holidays are non-business days too (OPS-7 parity)');
 });
+
+// B2/ENG-13 (broad-scan 2026-10-12): a build of an OLD date (bulk backfill, a
+// historical Manual Export) is not fresh ingest -- it used to reset the clock,
+// turning the banner green while the daily ingest was dead.
+test('B2/ENG-13: a recent BACKFILL of an old date does not reset the freshness clock', function () {
+  const backfill = rowHoursAgo(1, { step: 'bulkBackfill:DQE', notes: 'Tue Mar 10 2026' });
+  const lastDaily = rowHoursAgo(60, { notes: 'Mon Sep 21 2026' });
+  // The daily row's built date must be near ITS timestamp; derive it from the row.
+  lastDaily.notes = 'callDate=' + (+lastDaily.timestamp.slice(5, 7)) + '/' + (+lastDaily.timestamp.slice(8, 10))
+    + '/' + lastDaily.timestamp.slice(0, 4);
+  install([backfill, lastDaily], 0);
+  const out = h.call('computeOverviewPipelineFreshness_');
+  assert.equal(out.isStale, true, 'the backfill (built March) is not fresh data landing');
+  assert.ok(out.hoursSinceFresh >= 59 && out.hoursSinceFresh <= 61, 'the clock reads the last DAILY build');
+});
+
+test('B2/ENG-13: the note parser reads both shapes; a build a few days behind its run still counts', function () {
+  assert.equal(h.call('ovPipelineNoteDateIso_', 'callDate=9/21/2026 | WARN: 2 leg(s)'), '2026-09-21');
+  assert.equal(h.call('ovPipelineNoteDateIso_', 'Mon Sep 21 2026 | 0 rows written'), '2026-09-21');
+  assert.equal(h.call('ovPipelineNoteDateIso_', 'no date here'), null);
+  assert.equal(h.call('ovPipelineRowIsFreshBuild_', { timestamp: '2026-09-21 06:10', notes: 'Fri Sep 18 2026' }), true,
+    'a Monday build of Friday');
+  assert.equal(h.call('ovPipelineRowIsFreshBuild_', { timestamp: '2026-09-21 06:10', notes: 'Fri Sep 11 2026' }), false);
+  assert.equal(h.call('ovPipelineRowIsFreshBuild_', { timestamp: '2026-09-21 06:10', notes: '' }), true,
+    'no date in the note: the pre-ENG-13 behaviour');
+});

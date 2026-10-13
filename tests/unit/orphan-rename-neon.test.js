@@ -31,7 +31,11 @@ function install(opts) {
     assertOnSomeRoster_: function () {},
     assertNotOnAnyRoster_: function () {},
     assertOrphanFixLogExists_: function () {},
-    renameHistoricalAgent_: function () { events.push('sheet-rename'); return opts.sheetRows; },
+    renameHistoricalAgent_: function (f, t, out) {
+      events.push('sheet-rename');
+      if (out) out.collisionDates = (opts.collisions || []).slice();   // PC-4
+      return opts.sheetRows;
+    },
     upsertAgentAlias_: function () { events.push('alias'); },
     renameAgentInNeon_: function () { events.push('neon'); return opts.neonResult; },
     appendOrphanFixLog_: function (rec) { events.push('log:' + rec.action + ':' + (rec.notes || '')); },
@@ -96,4 +100,36 @@ test('S2B-3: the Neon rename rides the shared connection and bounds its statemen
   assert.match(fn, /conn = getDashboardNeonConn_\(\);/, 'the shared, down-memoized connection');
   assert.ok(!/Jdbc\.getConnection/.test(fn), 'no private JDBC connection');
   assert.equal((fn.match(/setQueryTimeout\(ORPHAN_NEON_STMT_TIMEOUT_S_\)/g) || []).length, 2, 'both statements bounded');
+});
+
+// PC-4 (broad-scan 2026-10-12, owner: skip collisions + warn). Days on which
+// the target agent already has a row stay under the orphan's name on BOTH
+// stores; the result names them and every audit row says so.
+test('PC-4: a rename that skipped colliding days returns them and names them in the audit row', function () {
+  const ev = install({ neon: true, sheetRows: 4, collisions: ['2026-09-02', '2026-09-03'],
+                       neonResult: { renamed: 4, skipped: 2 } });
+  const res = h.call('applyOrphanRename', REQ);
+  assert.equal(res.renamed, 4);
+  assert.deepEqual(Array.from(res.collisionDates), ['2026-09-02', '2026-09-03']);
+  assert.ok(ev.some(function (e) {
+    return /^log:rename:.*2 day\(s\) left under "Ann Orphan" because "Ann \(Annie\) Roster" already has a row that day .*repairDqeDuplicateMerge.*2026-09-02, 2026-09-03/.test(e);
+  }), JSON.stringify(ev));
+});
+
+test('PC-4: when only colliding days remain, the retry explains instead of throwing or logging "0 renamed"', function () {
+  const ev = install({ neon: true, sheetRows: 0, collisions: ['2026-09-02'], neonResult: { renamed: 0, skipped: 1 } });
+  const realOpen = h.ctx.openSpreadsheet_;
+  h.ctx.openSpreadsheet_ = function () { return { getSheetByName: function () { return {}; } }; };   // the alias-sheet pre-flight
+  let res;
+  try { res = h.call('applyOrphanRename', Object.assign({ alsoAddAlias: true }, REQ)); }
+  finally { h.ctx.openSpreadsheet_ = realOpen; }
+  assert.equal(res.renamed, 0);
+  assert.deepEqual(Array.from(res.collisionDates), ['2026-09-02']);
+  assert.ok(!ev.some(function (e) { return e.indexOf('log:neon-rename') === 0; }), 'no misleading "0 renamed" row');
+  assert.ok(ev.some(function (e) { return /^log:alias-add:.*left under "Ann Orphan"/.test(e); }),
+    'the alias write is audited with the collision note: ' + JSON.stringify(ev));
+  // Without an alias nothing changed anywhere: no row at all, still no throw.
+  const ev2 = install({ neon: false, sheetRows: 0, collisions: ['2026-09-02'], neonResult: null });
+  assert.doesNotThrow(function () { h.call('applyOrphanRename', REQ); });
+  assert.ok(!ev2.some(function (e) { return e.indexOf('log:') === 0; }), JSON.stringify(ev2));
 });

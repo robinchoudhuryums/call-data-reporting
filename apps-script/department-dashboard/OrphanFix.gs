@@ -263,8 +263,19 @@ function applyOrphanRename(req) {
   let aliasAdded = false;
   let neonRename = null;
   const neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
+  let collisionDates = [];
   try {
-    affected = renameHistoricalAgent_(fromName, toName);
+    const renameOut = {};
+    affected = renameHistoricalAgent_(fromName, toName, renameOut);
+    collisionDates = renameOut.collisionDates || [];
+    // PC-4: the colliding days stay under fromName on BOTH stores (Neon's
+    // NOT EXISTS guard skips the same days), named in every audit row.
+    const collisionNote = collisionDates.length
+      ? ' | ' + collisionDates.length + ' day(s) left under "' + fromName + '" because "' + toName
+        + '" already has a row that day (merge them deliberately: cdr-report previewDqeDuplicateMerge / '
+        + 'repairDqeDuplicateMerge, #56): ' + collisionDates.slice(0, 20).join(', ')
+        + (collisionDates.length > 20 ? ', ...' : '')
+      : '';
     if (affected === 0) {
       // S2B-4: nothing left on the SHEET is exactly the state a FAILED Neon
       // mirror leaves behind (the sheet rename committed, the Neon one did
@@ -274,7 +285,11 @@ function applyOrphanRename(req) {
       // retry, audited as its own `neon-rename` row. Nothing on either side
       // is still the original error.
       const retry = neonConfigured ? renameAgentInNeon_(fromName, toName) : null;
-      if (!retry || (retry.renamed === 0 && retry.skipped === 0)) {
+      // PC-4: a Neon retry that renamed NOTHING because every remaining orphan
+      // row is a colliding day used to log "0 renamed" and look like a no-op
+      // the admin could never get past. Those days are now reported instead.
+      const neonDid = !!(retry && (retry.renamed > 0 || (retry.skipped > 0 && !collisionDates.length)));
+      if (!neonDid && !collisionDates.length) {
         throw new Error('No rows in DQE Historical Data have agent name "'
                         + fromName + '". Nothing renamed.'
                         + (neonConfigured && !retry ? ' (The Neon mirror could not be reached either -- try again later.)' : ''));
@@ -283,10 +298,19 @@ function applyOrphanRename(req) {
         upsertAgentAlias_(fromName, toName, admin, notes);
         aliasAdded = true;
       }
-      appendOrphanFixLog_({
-        admin: admin, action: 'neon-rename', fromName: fromName, toName: toName, affected: 0,
-        notes: notes + orphanNeonNote_(retry, true) + (aliasAdded ? ' | alias added' : ''),
-      });
+      if (neonDid) {
+        appendOrphanFixLog_({
+          admin: admin, action: 'neon-rename', fromName: fromName, toName: toName, affected: 0,
+          notes: notes + orphanNeonNote_(retry, true) + (aliasAdded ? ' | alias added' : '') + collisionNote,
+        });
+      } else if (aliasAdded) {
+        // Nothing renamed (only colliding days remain) -- the alias still
+        // steers future builds; audit it as the alias write it is.
+        appendOrphanFixLog_({
+          admin: admin, action: 'alias-add', fromName: fromName, toName: toName, affected: 0,
+          notes: notes + collisionNote,
+        });
+      }
       neonRename = retry;
     } else {
       if (alsoAddAlias) {
@@ -305,7 +329,7 @@ function applyOrphanRename(req) {
         fromName: fromName,
         toName:   toName,
         affected: affected,
-        notes:    notes + (neonConfigured ? ' | Neon: mirror follows (see the neon-rename row)' : ''),
+        notes:    notes + (neonConfigured ? ' | Neon: mirror follows (see the neon-rename row)' : '') + collisionNote,
       });
       // Best-effort: mirror the rename into Neon's dqe_history so it isn't
       // lost once aged rows drop from the sheet. Never throws -- the sheet
@@ -338,6 +362,9 @@ function applyOrphanRename(req) {
     // reconciliation (see renameAgentInNeon_).
     neonRenamed: neonRename ? neonRename.renamed : null,
     neonSkipped: neonRename ? neonRename.skipped : null,
+    // PC-4: days left under fromName because toName already had a row that
+    // day (the modal warns and names the merge runbook).
+    collisionDates: collisionDates,
     // Item 5a: refreshed aliases + log so the client updates in place
     // (removes the fixed orphan, refreshes the aliases/log panels) without
     // a full re-fetch that would recompute the orphan scan.
@@ -616,14 +643,36 @@ function readOrphanFixLog_(maxRows) {
  * window from read -> compute -> write to the back-to-back re-read ->
  * write RPCs; it is a mitigation, not a serialization.
  */
-function renameHistoricalAgent_(fromName, toName) {
+// PC-4 (broad-scan 2026-10-12, owner: skip collisions + warn). A day that
+// already has a row under `toName` is SKIPPED: renaming the orphan's row too
+// made two (date, toName) rows, which every sheet reader sums (double count)
+// while the Neon mirror skips that day on its unique key -- the two stores
+// then disagreed forever and the orphan could never be cleared. Both stores
+// now rename exactly the non-colliding days, and the colliding days are
+// reported (out.collisionDates) for a deliberate merge
+// (cdr-report previewDqeDuplicateMerge / repairDqeDuplicateMerge, #56).
+function orphanDayKey_(disp) {
+  const t = String(disp == null ? '' : disp).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2) : t;
+}
+
+function renameHistoricalAgent_(fromName, toName, out) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) throw new Error('Historical sheet not found.');
   const lastRow = sheet.getLastRow();
+  if (out) out.collisionDates = [];
   if (lastRow < 2) return 0;
   const range = sheet.getRange(2, HISTORICAL_COLS.AGENT, lastRow - 1, 1);
   const original = range.getValues();
+  const days = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getDisplayValues();
+  const toDays = {};
+  for (let i = 0; i < original.length; i++) {
+    if (String(original[i][0] || '').trim() === toName) toDays[orphanDayKey_(days[i][0])] = true;
+  }
+  const collided = {};
   const updated = new Array(original.length);
   let affected = 0;
   // S2B-7 (broad-scan 2026-09-23): the whole column is written back in ONE
@@ -634,13 +683,18 @@ function renameHistoricalAgent_(fromName, toName) {
   // raw. The apostrophe is a Sheets text marker, not content, so every reader
   // still sees the exact name (INV-04).
   for (let i = 0; i < original.length; i++) {
-    if (String(original[i][0] || '').trim() === fromName) {
+    const dayKey = orphanDayKey_(days[i][0]);
+    if (String(original[i][0] || '').trim() === fromName && toDays[dayKey]) {
+      collided[dayKey] = true;   // PC-4: left under fromName (see above)
+      updated[i] = [sheetSafeCell_(original[i][0])];
+    } else if (String(original[i][0] || '').trim() === fromName) {
       updated[i] = [sheetSafeCell_(toName)];
       affected++;
     } else {
       updated[i] = [sheetSafeCell_(original[i][0])];
     }
   }
+  if (out) out.collisionDates = Object.keys(collided).sort();
   if (affected === 0) return 0;
 
   const raceMsg = 'DQE Historical Data changed while preparing the rename — '

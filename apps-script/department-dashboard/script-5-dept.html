@@ -3962,6 +3962,19 @@
     try { return getComputedStyle(sw).display !== 'none'; } catch (e) { return false; }
   }
   function obEffectiveDir_() { return obAllowed_() ? obDir_ : 'in'; }
+  // UX-1 (broad-scan 2026-10-12 Batch 3b): the window the Outbound summary and
+  // Callbacks sections under the outbound table read -- the PAGE's own loaded
+  // window and its server-resolved INV-28 prior (state.meta, the same one the
+  // table's prior-period chips use). They used to read Insights' last result,
+  // which only exists while the Insights region is open and generated, so a
+  // collapsed region left them empty or on an old window. null until loaded.
+  function obSectionWindow_() {
+    var m = (typeof state !== 'undefined' && state && state.meta) || {};
+    var dept = getRequestedDept();
+    if (!dept || !m.from || !m.to) return null;
+    return { department: dept, from: m.from, to: m.to,
+             priorFrom: m.priorFrom || '', priorTo: m.priorTo || '' };
+  }
 
   function obSyncButtons_(dir) {
     var sw = $('dept-dir-switch');
@@ -4099,8 +4112,9 @@
     var dir = obEffectiveDir_();
     obSyncButtons_(dir);
     document.body.setAttribute('data-dir', dir);
-    // G1: the Insights Outbound + Callbacks folds follow the switch (Outbound / Both).
-    if (typeof insObSync_ === 'function' && typeof insLastData !== 'undefined' && insLastData) insObSync_(insLastData);
+    // G1 / UX-1: the Outbound summary + Callbacks sections under the table
+    // follow the switch (Outbound / Both) and the page's window.
+    if (typeof insObSync_ === 'function') insObSync_();
     if (typeof insCbSync_ === 'function') insCbSync_();
     var obWrap = $('agents-ob-wrap');
     var tob = $('dept-team-outbound');

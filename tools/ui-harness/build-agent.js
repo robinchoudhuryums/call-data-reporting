@@ -86,7 +86,8 @@ html = html.replace("<?!= include_('agentApp') ?>", read('agentApp.html'));
 html = html.replace('<?!= userJson ?>', JSON.stringify({
   email: 'agent1@x.com', role: 'agent', agentDept: 'CSR', agentName: 'Maria Lopez',
 }));
-html = html.replace('<?!= workWindowJson ?>', JSON.stringify('8:30 AM – 5:00 PM CST'));
+// CL-8: the same object the server injects (agentWorkWindow_, AgentHome.gs).
+html = html.replace('<?!= workWindowJson ?>', JSON.stringify(h.call('agentWorkWindow_')));
 // R23: the server-resolved dept answer standard (CSR pilot -> the 92/2 seed).
 html = html.replace('<?!= answerStdJson ?>', JSON.stringify({ target: 92, band: 2 }));
 // Update notice: empty stamp keeps the notice suppressed in the harness.
@@ -113,8 +114,24 @@ const mock = `<script>
       withFailureHandler: function (f) { onErr = f; return api; },
       withUserObject: function () { return api; },
       getLatestDataDate: function () { setTimeout(function () { onOk(LATEST); }, 10); },
-      getAgentHome: function (req) { setTimeout(function () { onOk(PAYLOAD); }, 20); },
-      getAgentHistory: function (req) { setTimeout(function () { onOk(HISTORY); }, 20); },
+      // Batch 9 test hooks (drive-agent.js's second page sets them before boot):
+      // __MOCK_FAIL_HOME__ = a message -> every getAgentHome fails with it;
+      // __MOCK_FAIL_HIST__ = N -> the next N getAgentHistory calls fail;
+      // __MOCK_HOME_META__ = fields merged into the payload's meta.
+      getAgentHome: function (req) {
+        setTimeout(function () {
+          if (window.__MOCK_FAIL_HOME__) { onErr(new Error(window.__MOCK_FAIL_HOME__)); return; }
+          var p = JSON.parse(JSON.stringify(PAYLOAD));
+          if (window.__MOCK_HOME_META__) Object.keys(window.__MOCK_HOME_META__).forEach(function (k) { p.meta[k] = window.__MOCK_HOME_META__[k]; });
+          onOk(p);
+        }, 20);
+      },
+      getAgentHistory: function (req) {
+        setTimeout(function () {
+          if (window.__MOCK_FAIL_HIST__ > 0) { window.__MOCK_FAIL_HIST__--; onErr(new Error('history unavailable')); return; }
+          onOk(HISTORY);
+        }, 20);
+      },
       reportClientIssue: function (p) { window.__MOCK_BEACONS__.push(p); setTimeout(function () { onOk({ok:true}); }, 5); },
       // Live-presence heartbeat: fires at load; fire-and-forget ack.
       recordPresence: function () { setTimeout(function () { onOk({ok:true}); }, 5); },

@@ -18,11 +18,15 @@
 // exportOutboundCalls(fromIso?, toIso?) -- EDITOR-RUN (also schedulable):
 //   - No args: refreshes from the last date already in the "Outbound Calls"
 //     tab through today (first run seeds the last 30 days), starting AT that
-//     last date so late/re-imported rows are picked up, never skipped.
+//     last date so its late rows are picked up -- PLUS (TOOL-1) every OLDER
+//     date whose Neon rows changed since the last run (updated_at past
+//     OUTBOUND_EXPORT_WATERMARK), at most OC_EXPORT_MAX_CHANGED_DATES_ per run,
+//     the rest in OUTBOUND_EXPORT_PENDING. The inbound twin's notes apply.
 //   - Explicit range: refreshes exactly that [from, to] window.
-//   Both DELETE the sheet's rows for the DATES the fetch returned before
-//   appending, so re-runs are idempotent and Neon corrections propagate,
-//   while dates Neon no longer has keep their fallback rows (R8-E3).
+//   Both APPEND the fresh rows and only then remove the older rows for the
+//   DATES the fetch returned (TOOL-3), so re-runs are idempotent, Neon
+//   corrections propagate, a failed append keeps the previous copy, and
+//   dates Neon no longer has keep their fallback rows (R8-E3).
 //
 // PHI: `callee_hash` is the HMAC, never a raw number -- the same hash space
 // Caller Lookup queries by, which is what makes the fallback lookup possible.
@@ -84,11 +88,12 @@ function oc_cellDateIso_(disp) {
  * Removes data rows whose Call Date (col A) is inside [startIso, endIso] AND
  * (when `onlyDates` is given) whose date the fresh fetch actually returned --
  * the R8-E3 per-date replace that keeps the fallback's rows for interior
- * dates Neon has lost. Crash-safe: kept rows + blank padding go back in ONE
- * setValues over the original height. Returns the removed count.
+ * dates Neon has lost -- as contiguous blocks, bottom-up (CRT-1 below). With
+ * `maxRow` (TOOL-3) only rows 2..maxRow -- those above a fresh append -- are
+ * candidates and no padding is inserted. Returns the removed count.
  */
-function oc_removeRowsInRange_(sheet, startIso, endIso, onlyDates) {
-  var lastRow = sheet.getLastRow();
+function oc_removeRowsInRange_(sheet, startIso, endIso, onlyDates, maxRow) {
+  var lastRow = maxRow || sheet.getLastRow();
   if (lastRow < 2) return 0;
   // CRT-1 (broad-scan 2026-09-23): this used to read the whole tab with
   // getValues, drop the matching rows and setValues the KEPT rows back. A
@@ -115,9 +120,112 @@ function oc_removeRowsInRange_(sheet, startIso, endIso, onlyDates) {
     bStart = prev = matchRows[k];
   }
   blocks.push([bStart, prev - bStart + 1]);
-  sheet.insertRowsAfter(sheet.getMaxRows(), matchRows.length);
+  if (!maxRow) sheet.insertRowsAfter(sheet.getMaxRows(), matchRows.length);
   for (var b = blocks.length - 1; b >= 0; b--) sheet.deleteRows(blocks[b][0], blocks[b][1]);
   return matchRows.length;
+}
+
+// TOOL-1: the inbound twin's bounds (IC_EXPORT_MAX_CHANGED_DATES_ et al).
+var OC_EXPORT_MAX_CHANGED_DATES_ = 10;
+var OC_EXPORT_WATERMARK_MARGIN_MS_ = 3600000;
+
+/** TOOL-1: older outbound_calls dates changed since `sinceIso` (dates only). */
+function oc_changedDatesSince_(conn, sinceIso, beforeIso, floorIso) {
+  var stmt = conn.prepareStatement(
+    "SELECT COALESCE(json_agg(d ORDER BY d), '[]')::text AS j FROM (" +
+    "SELECT DISTINCT o.call_date::text AS d FROM outbound_calls o " +
+    "WHERE o.updated_at > ?::timestamptz AND o.call_date < ?::date AND o.call_date >= ?::date) x");
+  stmt.setString(1, sinceIso);
+  stmt.setString(2, beforeIso);
+  stmt.setString(3, floorIso);
+  var rs = stmt.executeQuery();
+  var json = rs.next() ? rs.getString('j') : '[]';
+  rs.close(); stmt.close();
+  var out = JSON.parse(json || '[]');
+  return Array.isArray(out) ? out : [];
+}
+
+function oc_keepCutoffIso_() {
+  var keep = parseInt(PropertiesService.getScriptProperties()
+                        .getProperty('OUTBOUND_EXPORT_KEEP_DAYS'), 10);
+  return oc_isoDaysAgo_((keep > 0) ? keep : OUTBOUND_EXPORT_KEEP_DAYS_DEFAULT);
+}
+
+/** One windowed json_agg read of outbound_calls. */
+function oc_fetchRows_(conn, startIso, endIso) {
+  var sql =
+    "SELECT COALESCE(json_agg(json_build_array(" +
+    "o.call_date::text, o.call_id, COALESCE(o.callee_hash,''), " +
+    "COALESCE(o.agent_name,''), COALESCE(o.agent_ext,''), COALESCE(o.department,''), " +
+    "COALESCE(o.connected, FALSE), COALESCE(o.talk_seconds,0), " +
+    // PC-6 (broad-scan 2026-10-01): an UNKNOWN ring stays BLANK. COALESCE
+    // to 0 made the sheet fallback classify it as a "brief" (misdial) ring
+    // -- the Neon path reads NULL as unknown -- and Caller Lookup / the
+    // journey fallback showed ringSeconds 0; every reader maps '' to unknown.
+    "COALESCE(o.ring_seconds::text,''), COALESCE(o.attempts,0), " +
+    "COALESCE(o.call_start,''), " +
+    // Journey only within the retention window -- it is the only HEAVY
+    // column, and the 400-day row retention stays cheap without it.
+    "CASE WHEN o.call_date >= ?::date THEN COALESCE(o.journey,'') ELSE '' END" +
+    ") ORDER BY o.call_date, o.call_id), '[]')::text AS j " +
+    "FROM outbound_calls o " +
+    "WHERE o.call_date BETWEEN ?::date AND ?::date";
+  var stmt = conn.prepareStatement(sql);
+  stmt.setString(1, oc_isoDaysAgo_(oc_journeyDays_()));
+  stmt.setString(2, startIso);
+  stmt.setString(3, endIso);
+  var rs = stmt.executeQuery();
+  var json = rs.next() ? rs.getString('j') : '[]';
+  cdrNoteEgress_(json ? json.length : 0, 'export:outbound');   // daily trigger
+  rs.close(); stmt.close();
+  return JSON.parse(json || '[]');
+}
+
+/**
+ * Appends one window's rows, THEN removes the older copy of the fetched dates
+ * (TOOL-3; the inbound twin's ic_writeWindow_ explains). Does not sort.
+ */
+function oc_writeWindow_(sheet, rows, startIso, endIso) {
+  var fetchedDates = {};
+  for (var fd = 0; fd < rows.length; fd++) {
+    if (rows[fd][0]) fetchedDates[String(rows[fd][0])] = true;
+  }
+  var values = rows.map(function (r) {
+    r[6] = r[6] === true ? 'TRUE' : (r[6] === false ? 'FALSE' : '');   // Connected
+    // D-3: agent/department/journey strings originate in the external CDR
+    // feed -- neutralize a leading =/+/@ so a crafted value can't land as a
+    // live formula (typeof guard: helper lives in dashboardCDR.js, same
+    // project global scope).
+    return r.map(function (v) {
+      if (v == null) return '';
+      return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
+    });
+  });
+  // Plain-text Call Start BEFORE the write or Sheets coerces "10:23:33" to
+  // an 1899-epoch time serial (the K-AC class). Full current height (so the
+  // post-append sort can't move a time string onto an unformatted cell),
+  // then -- after pre-expanding the grid so the append can't spill past
+  // getMaxRows unformatted -- the EXACT write range.
+  var oldLastRow = sheet.getLastRow();
+  var writeStart = oldLastRow + 1;
+  sheet.getRange(2, OUTBOUND_EXPORT_CALL_START_COL, sheet.getMaxRows() - 1, 1)
+       .setNumberFormat('@');
+  var rowsShort = writeStart + values.length - 1 - sheet.getMaxRows();
+  if (rowsShort > 0) sheet.insertRowsAfter(sheet.getMaxRows(), rowsShort);
+  sheet.getRange(writeStart, OUTBOUND_EXPORT_CALL_START_COL, values.length, 1)
+       .setNumberFormat('@');
+  sheet.getRange(writeStart, 1, values.length, OUTBOUND_EXPORT_HEADERS.length).setValues(values);
+  var replaced;
+  try {
+    replaced = oc_removeRowsInRange_(sheet, startIso, endIso, fetchedDates, oldLastRow);
+  } catch (e) {
+    try {
+      var lr = sheet.getLastRow();
+      sheet.deleteRows(lr - values.length + 1, values.length);
+    } catch (e2) { /* the rethrow below is the signal */ }
+    throw e;
+  }
+  return { written: values.length, replaced: replaced };
 }
 
 function exportOutboundCalls(fromIso, toIso) {
@@ -157,7 +265,14 @@ function exportOutboundCalls(fromIso, toIso) {
     return { written: 0, replaced: 0 };
   }
 
-  var conn = getNeonConn();
+  var props = PropertiesService.getScriptProperties();
+  var runStartIso = new Date(Date.now() - OC_EXPORT_WATERMARK_MARGIN_MS_).toISOString();
+  var conn;
+  try { conn = getNeonConn(); } catch (eConn) {
+    // TOOL-2: a failure to CONNECT is the expected outage (see the inbound twin).
+    if (eConn && typeof eConn === 'object') eConn.neonUnreachable = true;
+    throw eConn;
+  }
   try {
     // A not-yet-created outbound_calls table is a CLEAN skip, not an error:
     // the dashboard can be deployed ahead of the capture (the NeonCoverage
@@ -175,76 +290,47 @@ function exportOutboundCalls(fromIso, toIso) {
       return { written: 0, replaced: 0, skipped: 'no-table' };
     }
 
-    var sql =
-      "SELECT COALESCE(json_agg(json_build_array(" +
-      "o.call_date::text, o.call_id, COALESCE(o.callee_hash,''), " +
-      "COALESCE(o.agent_name,''), COALESCE(o.agent_ext,''), COALESCE(o.department,''), " +
-      "COALESCE(o.connected, FALSE), COALESCE(o.talk_seconds,0), " +
-      // PC-6 (broad-scan 2026-10-01): an UNKNOWN ring stays BLANK. COALESCE
-      // to 0 made the sheet fallback classify it as a "brief" (misdial) ring
-      // -- the Neon path reads NULL as unknown -- and Caller Lookup / the
-      // journey fallback showed ringSeconds 0; every reader maps '' to unknown.
-      "COALESCE(o.ring_seconds::text,''), COALESCE(o.attempts,0), " +
-      "COALESCE(o.call_start,''), " +
-      // Journey only within the retention window -- it is the only HEAVY
-      // column, and the 400-day row retention stays cheap without it.
-      "CASE WHEN o.call_date >= ?::date THEN COALESCE(o.journey,'') ELSE '' END" +
-      ") ORDER BY o.call_date, o.call_id), '[]')::text AS j " +
-      "FROM outbound_calls o " +
-      "WHERE o.call_date BETWEEN ?::date AND ?::date";
-    var stmt = conn.prepareStatement(sql);
-    stmt.setString(1, oc_isoDaysAgo_(oc_journeyDays_()));
-    stmt.setString(2, startIso);
-    stmt.setString(3, endIso);
-    var rs = stmt.executeQuery();
-    var json = rs.next() ? rs.getString('j') : '[]';
-    cdrNoteEgress_(json ? json.length : 0, 'export:outbound');   // daily trigger
-    rs.close(); stmt.close();
-
-    var rows = JSON.parse(json || '[]');
-    if (!rows.length) {
+    var written = 0, replaced = 0, changedDone = [], changedLater = [];
+    var rows = oc_fetchRows_(conn, startIso, endIso);
+    if (rows.length) {
       // An unexpectedly empty Neon result must NEVER blank the fallback copy.
-      Logger.log('exportOutboundCalls: no outbound_calls rows for %s..%s — sheet left untouched.',
+      var r0 = oc_writeWindow_(sheet, rows, startIso, endIso);
+      written += r0.written; replaced += r0.replaced;
+    } else {
+      Logger.log('exportOutboundCalls: no outbound_calls rows for %s..%s — window left untouched.',
                  startIso, endIso);
-      return { written: 0, replaced: 0 };
     }
-    var fetchedDates = {};
-    for (var fd = 0; fd < rows.length; fd++) {
-      if (rows[fd][0]) fetchedDates[String(rows[fd][0])] = true;
+    if (!fromIso) {
+      // TOOL-1: older dates whose Neon rows changed since the last run.
+      var since = props.getProperty('OUTBOUND_EXPORT_WATERMARK');
+      var pending = [];
+      try { pending = JSON.parse(props.getProperty('OUTBOUND_EXPORT_PENDING') || '[]') || []; } catch (ep) { pending = []; }
+      var floorIso = oc_keepCutoffIso_();
+      var changed = since ? oc_changedDatesSince_(conn, since, startIso, floorIso) : [];
+      // ic_planChangedDates_ is the inbound twin's pure planner (one project scope).
+      var plan = ic_planChangedDates_(changed, pending.filter(function (d) { return d >= floorIso && d < startIso; }),
+                                      OC_EXPORT_MAX_CHANGED_DATES_);
+      for (var ci = 0; ci < plan.now.length; ci++) {
+        var d = plan.now[ci];
+        var dRows = oc_fetchRows_(conn, d, d);
+        if (dRows.length) {
+          var rd = oc_writeWindow_(sheet, dRows, d, d);
+          written += rd.written; replaced += rd.replaced;
+        }
+        changedDone.push(d);
+      }
+      changedLater = plan.later;
+      props.setProperty('OUTBOUND_EXPORT_WATERMARK', runStartIso);
+      props.setProperty('OUTBOUND_EXPORT_PENDING', JSON.stringify(changedLater));
     }
-    var replaced = oc_removeRowsInRange_(sheet, startIso, endIso, fetchedDates);
-    var values = rows.map(function (r) {
-      r[6] = r[6] === true ? 'TRUE' : (r[6] === false ? 'FALSE' : '');   // Connected
-      // D-3: agent/department/journey strings originate in the external CDR
-      // feed -- neutralize a leading =/+/@ so a crafted value can't land as a
-      // live formula (typeof guard: helper lives in dashboardCDR.js, same
-      // project global scope).
-      return r.map(function (v) {
-        if (v == null) return '';
-        return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
-      });
-    });
-    // Plain-text Call Start BEFORE the write or Sheets coerces "10:23:33" to
-    // an 1899-epoch time serial (the K-AC class). Full current height (so the
-    // post-append sort can't move a time string onto an unformatted cell),
-    // then -- after pre-expanding the grid so the append can't spill past
-    // getMaxRows unformatted -- the EXACT write range.
-    var writeStart = sheet.getLastRow() + 1;
-    sheet.getRange(2, OUTBOUND_EXPORT_CALL_START_COL, sheet.getMaxRows() - 1, 1)
-         .setNumberFormat('@');
-    var rowsShort = writeStart + values.length - 1 - sheet.getMaxRows();
-    if (rowsShort > 0) sheet.insertRowsAfter(sheet.getMaxRows(), rowsShort);
-    sheet.getRange(writeStart, OUTBOUND_EXPORT_CALL_START_COL, values.length, 1)
-         .setNumberFormat('@');
-    sheet.getRange(writeStart, 1, values.length, OUTBOUND_EXPORT_HEADERS.length).setValues(values);
     var finalLastRow = sheet.getLastRow();
-    if (finalLastRow > 2) {
+    if (written && finalLastRow > 2) {
       sheet.getRange(2, 1, finalLastRow - 1, OUTBOUND_EXPORT_HEADERS.length)
            .sort({ column: 1, ascending: true });
     }
-    Logger.log('exportOutboundCalls: wrote %s rows for %s..%s (%s replaced; sheet now %s rows).',
-               values.length, startIso, endIso, replaced, finalLastRow - 1);
-    return { written: values.length, replaced: replaced };
+    Logger.log('exportOutboundCalls: wrote %s rows for %s..%s + %s changed older date(s) (%s replaced; %s still pending; sheet now %s rows).',
+               written, startIso, endIso, changedDone.length, replaced, changedLater.length, finalLastRow - 1);
+    return { written: written, replaced: replaced, changedDates: changedDone, pendingDates: changedLater.length };
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -291,12 +377,13 @@ function runOutboundCallsExport_() {
     }
   } catch (e) {
     // Neon-down is the EXPECTED failure here (the copy just stays at its last
-    // good date), so this path is log + Pipeline Health only -- never email.
+    // good date). TOOL-2: such a row is tagged so the dashboard's watchdog does
+    // not email it; any other failure is untagged and emails.
     if (typeof logPipelineHealth_ === 'function') {
       logPipelineHealth_(ss, {
         step: 'outboundExport', status: 'failure',
         durationMs: Date.now() - t0,
-        notes: String((e && e.message) || e),
+        notes: ((e && e.neonUnreachable) ? EXPORT_NEON_UNREACHABLE_TAG_ : '') + String((e && e.message) || e),
       });
     }
     Logger.log('runOutboundCallsExport_ failed (expected during a Neon outage): '

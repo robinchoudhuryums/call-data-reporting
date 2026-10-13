@@ -148,6 +148,10 @@ function liveSmokeChecks_() {
   //    DQE_READ_SOURCE=neon, the sheet scan otherwise).
   var latestIso = null;
   run('latest-dqe-date', function () {
+    // ENG-9 (broad-scan 2026-10-12): drop the 5-min cached value first, so
+    // this step exercises the real read (Neon or the sheet scan) -- it used
+    // to pass on a cached date while the source itself was failing.
+    try { CacheService.getScriptCache().remove(latestDateCacheKey_()); } catch (eC) { /* read anyway */ }
     var raw = getLatestDataDate();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(raw || ''))) {
       throw new Error('unexpected value: ' + raw);

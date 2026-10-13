@@ -558,6 +558,40 @@ test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, n
   }
 });
 
+// DATA-7 (broad-scan 2026-10-12): the combined view computes the QCD snapshot
+// and CSR transfer block for the REQUESTED dept only -- the children's were
+// computed, then discarded by combineSummaries_.
+test('DATA-7: the combined view asks only the requested dept for its sections', function () {
+  const ctx = hData.ctx;
+  const saved = {};
+  ['resolveUser_', 'assertDeptAccess_', 'subQueueChildMap_', 'computeSummary_',
+   'getOverviewParentMap_', 'logReportUsage_', 'reportFreshnessTag_', 'getRosterForDepartment_'].forEach(function (k) { saved[k] = ctx[k]; });
+  try {
+    hData.state.userEmail = 'admin@x.com';
+    hData.state.props.SPREADSHEET_ID = 'fake';
+    hData.state.cache.clear();
+    ctx.resolveUser_ = function () { return { role: 'admin', email: 'admin@x.com', departments: ['Parent', 'Child'] }; };
+    ctx.assertDeptAccess_ = function () {};
+    ctx.subQueueChildMap_ = function () { return { Parent: ['Child'] }; };
+    ctx.getOverviewParentMap_ = function () { return { Child: 'Parent' }; };
+    ctx.logReportUsage_ = function () {};
+    ctx.reportFreshnessTag_ = function () { return 'na'; };
+    ctx.getRosterForDepartment_ = function () { return { names: ['P'], byAgent: {}, allExtensions: {} }; };
+    const asked = {};
+    ctx.computeSummary_ = function (d, from, to, scope, opts) {
+      asked[d] = !(opts && opts.sections === false);
+      return part(d, [{ agent: d + '-agent', matchedViaRoster: true }], { totalRung: 1, rosterAgentCount: 1, daysActive: 1 });
+    };
+    const r = hData.call('getDepartmentSummary', { department: 'Parent', from: '2026-09-01', to: '2026-09-02' });
+    assert.deepEqual(JSON.parse(JSON.stringify(asked)), { Parent: true, Child: false }, 'the child skips QCD + CSR');
+    assert.equal(r.qcd.tag, 'Parent', 'the shipped snapshot is still the requested dept\'s');
+    assert.equal(r.rows.length, 2, 'both depts\' rows are still combined');
+  } finally {
+    Object.keys(saved).forEach(function (k) { ctx[k] = saved[k]; });
+    hData.state.cache.clear();
+  }
+});
+
 // ---- AC-1 (broad-scan 2026-10-01): a fail-closed user is served, not locked out --
 
 test('AC-1: a manager whose sub-queue access failed closed gets the OWN-dept view, not a throw', function () {

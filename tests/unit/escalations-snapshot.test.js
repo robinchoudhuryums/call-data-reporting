@@ -65,6 +65,24 @@ test('E2: store → load round-trips through chunked properties; a torn write re
   assert.equal(h.call('escSnapshotLoad_'), null);
 });
 
+test('SEC-3: a snapshot read drops DELETED ids, so a failed post-delete refresh cannot serve the deleted row', function () {
+  h.state.props = {};
+  h.call('escSnapshotStore_', [row('a', 'CSR', 'pending'), row('b', 'Sales', 'pending')]);
+  h.call('escSnapshotNoteDeleted_', ['b']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('escSnapshotLoad_'))).rows.map(function (r) { return r.id; }), ['a']);
+  // Idempotent, capped, newest kept.
+  h.call('escSnapshotNoteDeleted_', ['b']);
+  assert.deepEqual(JSON.parse(h.state.props.ESC_SNAPSHOT_DELETED), ['b']);
+  const many = []; for (let i = 0; i < 250; i++) many.push('x' + i);
+  h.call('escSnapshotNoteDeleted_', many);
+  const kept = JSON.parse(h.state.props.ESC_SNAPSHOT_DELETED);
+  assert.equal(kept.length, 200);
+  assert.equal(kept[kept.length - 1], 'x249');
+  // A corrupt list never costs the snapshot.
+  h.state.props.ESC_SNAPSHOT_DELETED = '{not json';
+  assert.equal(h.call('escSnapshotLoad_').rows.length, 2);
+});
+
 test('E2: a SHRINKING snapshot deletes the stale higher chunks before re-pointing meta', function () {
   h.state.props = {};
   // Big first store (multiple chunks)...

@@ -277,7 +277,14 @@
       return;
     }
     const gen = $('qcd-alldept-refresh-btn');
-    const orig = gen ? gen.innerHTML : '';
+    // B3/CL-13 (broad-scan 2026-10-12): the idle label is stashed ONCE. A run
+    // started while another was in flight read the spinner back as its
+    // "original" label, and the superseded first run (which returns before
+    // restoring) never put the real one back -- the button stayed on
+    // "Updating…". Re-entry itself stays allowed: the preset selector re-runs on
+    // every change and the newest request wins (the token below).
+    if (gen && !gen.dataset.idleLabel) gen.dataset.idleLabel = gen.innerHTML;
+    const orig = gen ? gen.dataset.idleLabel : '';
     if (gen) { gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Updating…'; }
     // Stale-response token: the preset selector re-runs immediately on every
     // change, so rapid switches overlap requests -- only the newest response

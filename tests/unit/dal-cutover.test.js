@@ -304,6 +304,35 @@ test('R8-C2: the sheet source still caches its negative (empty install, no outag
   assert.equal(cachedNegative, 1, 'sheet-source empty install keeps the cheap negative cache');
 });
 
+test('DATA-5: getLatestDataDates does NOT cache a blob whose component came back empty after a failed neon read', function () {
+  install('neon');
+  h.ctx.neonGetMaxDqeDate_ = function () { return null; };   // neon errored
+  h.ctx.neonGetMinDqeDate_ = function () { return null; };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': ROSTER } });   // trimmed sheet
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.state.cache.clear();
+  try {
+    const out = h.call('getLatestDataDates');
+    assert.equal(out.dqe, null);
+    let pinned = 0;
+    h.state.cache.forEach(function (v, k) { if (String(k).indexOf('latestDates:') === 0) pinned++; });
+    assert.equal(pinned, 0, 'no latestDates: blob pinned -- the next 5-min refresh retries the recovered source');
+
+    // The sheet source with the same empty install keeps caching (no outage).
+    install('sheet');
+    h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': ROSTER } });
+    h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+    h.state.cache.clear();
+    h.call('getLatestDataDates');
+    pinned = 0;
+    h.state.cache.forEach(function (v, k) { if (String(k).indexOf('latestDates:') === 0) pinned++; });
+    assert.equal(pinned, 1, 'an empty install on the sheet source still caches');
+  } finally {
+    delete h.ctx.neonGetMaxDqeDate_;
+    delete h.ctx.neonGetMinDqeDate_;
+  }
+});
+
 // ---- F9: one shared DQE date-column scan for both bounds --------------------
 // getLatestDataDate (MAX) and getLatestDataDates (MAX + MIN/dqeEarliest) each
 // ran their own whole-column getValues(), so a cold cache read a multi-year

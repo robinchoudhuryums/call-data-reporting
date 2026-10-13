@@ -22,6 +22,13 @@ const DQE_WINDOW_START = (6 * 60 + 30) * 60;  // 6:30 AM PST in seconds
 const DQE_WINDOW_END   = 15 * 60 * 60;        // 3:00 PM PST in seconds
 ```
 
+**R49 (owner 2026-09-16): the CSR queue family starts half an hour earlier.**
+Legs that rang through `A_Q_CSR`, `A_Q_Intake`, `Backup CSR` or `A_Q_Spanish`
+(`DQE_EARLY_QUEUES`) count from **6:00 AM Pacific / 8:00 AM Central**; every
+other queue keeps 6:30. The floor is per QUEUE, never per dept, and the end
+(3:00 PM Pacific) is the same for all. One helper, `dqeWindowStartForQueue_`,
+owns it -- see CLAUDE.md "The work-window FLOOR is per QUEUE".
+
 `Total Rung`, `Total Missed`, `Total Answered`, `TTT`, `ATT`, and the 19
 missed-call time-slot columns (K-AC) all filter to this window. Calls
 outside the window are dropped from those aggregates entirely.
@@ -537,8 +544,8 @@ complete set of prefixes.
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
-| `OutboundReport.gs` | `outboundReport:vN:` | `v8` |
-| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v2` |
+| `OutboundReport.gs` | `outboundReport:vN:` | `v9` |
+| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v3` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
 | `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |

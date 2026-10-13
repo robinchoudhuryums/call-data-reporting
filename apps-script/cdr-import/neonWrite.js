@@ -156,9 +156,10 @@ function neonDedupeByKey_(rows, label, keyFn) {
 // whose payload is provably the COMPLETE set for its date(s) -- the daily
 // builds, the dup-guard re-mirror, the deferred per-date mirror -- pass
 // { authoritative: true } and the writer DELETEs those dates inside the
-// SAME transaction before inserting (rollback undoes both). Partial-set
-// callers (bulk archive after dedupeAlreadyArchived_, the row-batched
-// backfills) must NOT pass it.
+// SAME transaction before inserting (rollback undoes both). So does the bulk
+// archive (PIPE-1): dedupeAlreadyArchived_ drops WHOLE dates, so its payload
+// is complete per date. Partial-set callers (the row-batched backfills) must
+// NOT pass it.
 function neonDistinctIsoDates_(rows, dateFn) {
   var seen = {};
   var out = [];
@@ -702,12 +703,13 @@ function writeCDRRowsToNeon(rows, opts) {
     // inside the SAME transaction as the main insert. A shrinking force
     // re-import (agent consolidated under an alias, a corrected row
     // removed) can no longer leave phantom parent/child rows.
-    // Partial-set callers (the bulk archive after dedupeAlreadyArchived_,
-    // neonbackfill's row-batched backfill) must NOT pass it.
+    // The bulk archive passes it too (PIPE-1: its date-level dedup leaves
+    // complete dates); neonbackfill's row-batched backfill must NOT.
     // Known window: the main txn (delete + parent insert) commits before
     // the phone-child step runs its own txn -- a phone-insert failure
     // after that commit leaves the date's children absent until the
     // caller's retry (the throw already notifies / keeps the date queued).
+    var keepPhones = false;   // PIPE-4 (below)
     if (opts && opts.authoritative) {
       var cdrIsoDates = neonDistinctIsoDates_(rows, function (r) {
         // All current callers pass ISO callDate already. (Since I2-9
@@ -717,6 +719,30 @@ function writeCDRRowsToNeon(rows, opts) {
         return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : parseDateForNeon(s);
       });
       if (cdrIsoDates.length) {
+        // PIPE-4 (broad-scan 2026-10-12, owner: the re-attach design). While
+        // the phone mirror is OFF (R27, the default) nothing re-writes the
+        // children, so the delete below permanently wiped a re-exported date's
+        // Caller Lookup "earlier outbound" history -- for pre-2026-07-10
+        // dates the only copy. The parents are re-created with NEW ids, so
+        // the children cannot simply be kept: they are copied out keyed on
+        // uq_call_hist (call_date, department, agent_name), deleted as before
+        // (FK-agnostic), and re-attached to the re-created parents below, in
+        // this same transaction. A child whose agent is no longer on that
+        // date has no parent to join and is dropped, exactly as before.
+        // With the mirror ON the children are re-written from the payload,
+        // so nothing is stashed.
+        keepPhones = !cdrPhonesMirrorEnabled_();
+        if (keepPhones) {
+          var keep = conn.prepareStatement(
+            'CREATE TEMP TABLE cdr_phones_keep_ ON COMMIT DROP AS '
+            + 'SELECT d.call_date, d.department, d.agent_name, '
+            + 'p.list_type, p.phone_hash, p.duration_sec, p.occurrences '
+            + 'FROM call_history_phones p JOIN call_history_dept d ON d.id = p.call_history_id '
+            + 'WHERE d.call_date IN (' + cdrIsoDates.map(function () { return '?::date'; }).join(',') + ')');
+          for (var kd = 0; kd < cdrIsoDates.length; kd++) keep.setString(kd + 1, cdrIsoDates[kd]);
+          keep.execute();
+          keep.close();
+        }
         var chDel = conn.prepareStatement(
           'DELETE FROM call_history_phones WHERE call_history_id IN ' +
           '(SELECT id FROM call_history_dept WHERE call_date IN (' +
@@ -743,9 +769,24 @@ function writeCDRRowsToNeon(rows, opts) {
     var inlineRes = neonInsertInline_(conn, CDR_INSERT_HEAD_, CDR_INSERT_TAIL_, rows,
       function (r) { return cdrInlineTuple_(r, hasHmac, hmacSecret); },
       function (c, chunk) { cdrBoundInsert_(c, chunk, hasHmac, hmacSecret); });
+    // PIPE-4: re-attach the stashed phone children to the re-created parents
+    // (same transaction -- a failure rolls the whole replace back).
+    var phonesReattached = 0;
+    if (keepPhones) {
+      var ra = conn.createStatement();
+      ra.execute('INSERT INTO call_history_phones '
+        + '(call_history_id, list_type, phone_hash, duration_sec, occurrences) '
+        + 'SELECT n.id, k.list_type, k.phone_hash, k.duration_sec, k.occurrences '
+        + 'FROM cdr_phones_keep_ k JOIN call_history_dept n '
+        + 'ON n.call_date = k.call_date AND n.department = k.department AND n.agent_name = k.agent_name '
+        + 'ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING');
+      if (typeof ra.getUpdateCount === 'function') phonesReattached = ra.getUpdateCount();
+      ra.close();
+    }
     conn.commit();
 
-    Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows' + neonInlineNote_(inlineRes) + '.');
+    Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows' + neonInlineNote_(inlineRes)
+      + (keepPhones ? ' (' + phonesReattached + ' phone child row(s) re-attached, PIPE-4)' : '') + '.');
 
     // Phone child-table inserts (requires HMAC_SECRET + parent row IDs).
     // Skipped when opts.skipPhones -- the deferred off-path mirror (#1)
@@ -772,7 +813,8 @@ function writeCDRRowsToNeon(rows, opts) {
     }
 
     return { inserted: rows.length, skipped: 0, phones: phoneCount,
-             phonesDeferred: !!(opts && opts.skipPhones), phonesGated: !phonesOn };
+             phonesDeferred: !!(opts && opts.skipPhones), phonesGated: !phonesOn,
+             phonesReattached: phonesReattached };
 
   } catch (e) {
     try { conn.rollback(); } catch (re) {}

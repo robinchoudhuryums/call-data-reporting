@@ -229,6 +229,28 @@ test('A-3: an INACTIVE first copy does not shadow an active later copy', functio
     'inactive rows never block an active one (deactivate-all still reverts to constants)');
 });
 
+// CFG-1 (broad-scan 2026-10-12): the Overview Parent map is FIRST-active-row
+// wins too. It widens manager ACCESS (INV-38), so a later duplicate row must
+// never add an edge the row the modal edits does not have.
+test('CFG-1: getOverviewParentMap_ takes the FIRST active row; a later duplicate cannot add or move an edge', function () {
+  setConfig([
+    row({ dept: 'PAP', parent: '' }),          // the row the modal edits: no parent set here
+    row({ dept: 'PAP', parent: 'Power' }),     // a hand-added duplicate
+    row({ dept: 'Spanish', parent: 'CSR' }),
+    row({ dept: 'Spanish', parent: 'Sales' }), // duplicate pointing elsewhere
+  ]);
+  const map = h.call('getOverviewParentMap_');
+  const seed = h.consts.OVERVIEW_PARENT_OF || {};
+  assert.equal(map.PAP, seed.PAP, 'an empty field on the first row falls back to the constant, never the duplicate');
+  assert.notEqual(map.PAP, 'Power');
+  assert.equal(map.Spanish, 'CSR', 'the first row wins over a later duplicate');
+  setConfig([
+    row({ dept: 'PAP', parent: 'Power', active: false }),
+    row({ dept: 'PAP', parent: 'Sales' }),
+  ]);
+  assert.equal(h.call('getOverviewParentMap_').PAP, 'Sales', 'an inactive first copy does not shadow the active one');
+});
+
 // --- R8-3 (audit 2026-07-21): CORE-7 completion -- the sheet deactivate must
 // write ONLY the Active cell. The old whole-block getValues -> setValues
 // round-trip re-armed neutralized formula cells (leading apostrophe is

@@ -1125,13 +1125,18 @@
     showToast("Couldn't capture the report image — please try again.", 'error');
     // E-5: pr/cr export buttons died with the retired Performance / Compare
     // Ranges reports -- only the two live exporters remain.
-    ['ir-export-btn', 'ins-export-btn'].forEach(function (id) {
+    // B3/CL-9 (broad-scan 2026-10-12): Insights' busy feedback targets the LIVE
+    // dept Export trigger (#dept-export-btn, R16c) and gates re-entry on
+    // insExportBusy_ -- a failed capture left both set, so the whole Export
+    // menu (CSV / TSV included) stayed dead on "Capturing…" until reload.
+    ['ir-export-btn', 'ins-export-btn', 'dept-export-btn'].forEach(function (id) {
       var btn = document.getElementById(id);
       if (btn && btn.dataset && btn.dataset.label) {
         btn.innerHTML = btn.dataset.label;
         btn.disabled = false;
       }
     });
+    if (typeof insExportBusy_ !== 'undefined') insExportBusy_ = false;
   }
 
   /**
@@ -1164,6 +1169,15 @@
     const today = nowArg ? new Date(nowArg) : new Date();
     const dayOf = function (d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
     const shift = function (d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    // B3/CL-5 (broad-scan 2026-10-12): the same day n months back, CLAMPED to
+    // that month's last day. setMonth / setFullYear overflow instead -- on
+    // May 31 "Last 3 months" started Mar 3 (Feb 31 rolls over), and on Feb 29
+    // "Last 12 months" started Mar 1 -- silently dropping days off the front.
+    const monthsBack = function (d, n) {
+      const y = d.getFullYear(), m = d.getMonth() - n;
+      const last = new Date(y, m + 1, 0).getDate();
+      return new Date(y, m, Math.min(d.getDate(), last));
+    };
     const t0 = dayOf(today);
     const yest = shift(t0, -1);
     let s = null, e = yest;   // default: open-ended presets END YESTERDAY
@@ -1177,8 +1191,8 @@
     else if (v === 'lastMonth')   { s = new Date(t0.getFullYear(), t0.getMonth() - 1, 1);
                                     e = new Date(t0.getFullYear(), t0.getMonth(), 0); }
     else if (v === 'last30')      { s = shift(t0, -30); }
-    else if (v === 'last3Months') { s = new Date(t0); s.setMonth(t0.getMonth() - 3); }
-    else if (v === 'last12Months'){ s = new Date(t0); s.setFullYear(t0.getFullYear() - 1); }
+    else if (v === 'last3Months') { s = monthsBack(t0, 3); }
+    else if (v === 'last12Months'){ s = monthsBack(t0, 12); }
     else if (v === 'lastYear')    { s = new Date(t0.getFullYear() - 1, 0, 1);
                                     e = new Date(t0.getFullYear() - 1, 11, 31); }
     if (!s) return null;   // 'custom' and anything unrecognized

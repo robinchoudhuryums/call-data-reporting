@@ -1,5 +1,10 @@
 <script>
 (function () {
+  // CL-7 (broad-scan 2026-10-12): the directive must be the FIRST statement of
+  // the function -- below initAgentMode_ it was an inert string, and strict
+  // mode was off for the whole app.
+  'use strict';
+
   // I5 (broad-scan 2026-08-27): the agent app shares styles.html, whose dark
   // palette activates via body[data-mode="dark"] -- but nothing here ever set
   // it, so a system-dark agent got a bright page while the manager app
@@ -31,7 +36,6 @@
       render();
     });
   })();
-  'use strict';
 
   // Agent app (Phase B, docs/agent-role-plan.md). Small on purpose: no
   // Chart.js (the trend is inline SVG), no router, no modals. Everything
@@ -333,6 +337,15 @@
       var rest = days.length - shown.length;
       html += '<div class="agent-mday"><span class="dt"></span><span class="agent-zero">+ ' + rest + ' earlier day(s) in this window</span></div>';
     }
+    // SEC-4 follow-on (owner 2026-10-12): the wait lookup reads a bounded
+    // number of calls, newest first. Say where it stopped instead of letting
+    // the older rings go quietly bare.
+    if (d.meta && d.meta.waitsTruncated) {
+      html += '<div class="agent-mday agent-waits-cut"><span class="dt"></span><span class="agent-zero">'
+        + 'Wait times cover your most recent calls'
+        + (d.meta.waitsCoverFrom ? ' (from ' + esc(isoToLabel(d.meta.waitsCoverFrom, true)) + ' on)' : '')
+        + ' — earlier rings in this window show the time only. Pick a shorter range to see them.</span></div>';
+    }
     $('agent-missed').innerHTML = html;
   }
 
@@ -344,8 +357,15 @@
   }
 
   // ── Loading ───────────────────────────────────────────────────────────
+  // CL-6 (broad-scan 2026-10-12): the window whose numbers are on screen. A
+  // range the server rejects used to wipe them and leave the controls naming
+  // the rejected range; now the page goes back to this window, says what was
+  // refused, and keeps the agent's numbers.
+  var lastGood_ = null;
+  function rangeLabel_(w) { return w.from === w.to ? w.from : (w.from + ' – ' + w.to); }
   function load() {
     var tok = ++loadSeq;
+    var reqWin = { from: win.from, to: win.to, preset: win.preset };
     paintControls();
     $('agent-error').style.display = 'none';
     $('agent-loading').style.display = '';
@@ -353,7 +373,7 @@
     google.script.run
       .withSuccessHandler(function (d) {
         if (tok !== loadSeq) return;
-        try { render(d); } catch (e) {
+        try { render(d); lastGood_ = reqWin; } catch (e) {
           reportIssue_('render-failure', 'Agent render failed: ' + (e && e.message ? e.message : String(e)), e && e.stack);
           showError('Something went wrong rendering your numbers. The admin has been notified.');
         }
@@ -362,6 +382,15 @@
         if (tok !== loadSeq) return;
         var msg = err && err.message ? err.message : String(err);
         reportIssue_('load-failure', 'Agent home load failed: ' + msg);
+        if (lastGood_) {
+          win = { from: lastGood_.from, to: lastGood_.to, preset: lastGood_.preset };
+          paintControls();
+          $('agent-loading').style.display = 'none';
+          $('agent-body').style.display = '';
+          showInlineError('Couldn’t load ' + rangeLabel_(reqWin) + ': ' + msg
+            + ' Still showing ' + rangeLabel_(lastGood_) + '.');
+          return;
+        }
         showError('Error loading your numbers: ' + msg);
       })
       .getAgentHome(reqParams_({ from: win.from, to: win.to }));
@@ -416,7 +445,16 @@
     $('agent-hist-loading').style.display = 'none';
     $('agent-hist-body').style.display = 'none';
     var el = $('agent-hist-error');
-    el.textContent = msg; el.style.display = '';
+    el.textContent = msg + ' ';
+    // CL-6: a failed history load had no way back short of reloading the page.
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'agent-chip';
+    retry.id = 'agent-hist-retry';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', function () { loadHistory_(); });
+    el.appendChild(retry);
+    el.style.display = '';
   }
 
   function monthLabel_(mk) {
@@ -501,11 +539,28 @@
     chip.textContent = (latestIso === yesterdayIso_()) ? 'Yesterday' : ('Latest day (' + latestIso + ')');
   }
 
+  // CL-6: the date pickers stop at the latest data date once it is known.
+  function setDateMax_() {
+    if (!latestIso) return;
+    $('agent-from').setAttribute('max', latestIso);
+    $('agent-to').setAttribute('max', latestIso);
+  }
+
   // ── Boot ──────────────────────────────────────────────────────────────
   $('agent-name').textContent = USER.agentName || USER.email || '';
   $('agent-dept').textContent = USER.agentDept || '';
-  if (window.__WORK_WINDOW__) {
-    $('agent-ww').textContent = '';   // window text already in the sentence; keep terse
+  // CL-8 (broad-scan 2026-10-12): state the window from the pinned constants
+  // (agentWorkWindow_), including R49's earlier start for the CSR queue family.
+  // That floor is per QUEUE, so name the queues rather than guess whether this
+  // agent's calls came through them. A missing injection keeps the literal.
+  var WW_ = window.__WORK_WINDOW__;
+  if (WW_ && typeof WW_ === 'object' && WW_.cst) {
+    var wwText = WW_.cst;
+    var earlyStart = String(WW_.earlyCst || '').split(' – ')[0];
+    if (earlyStart && WW_.earlyQueues && WW_.earlyQueues.length) {
+      wwText += ' (from ' + earlyStart + ' for calls through the ' + WW_.earlyQueues.join(', ') + ' queues)';
+    }
+    $('agent-ww').textContent = wwText;
   }
   if (PREVIEW_) {
     var pb = $('agent-preview-banner');
@@ -538,6 +593,7 @@
         win.preset = 'custom';
         $('agent-from').value = win.from || '';
         $('agent-to').value = win.to || '';
+        setDateMax_();
         paintControls();
         return;   // custom loads on Apply
       }
@@ -550,6 +606,16 @@
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f > t) {
       showInlineError('Pick a valid date range (from on or before to).');
       return;
+    }
+    // CL-6: nothing exists past the latest data date -- end the range there
+    // (the presets already do) rather than asking for empty days.
+    if (latestIso && t > latestIso) {
+      if (f > latestIso) {
+        showInlineError('There is no data after ' + latestIso + ' yet. Pick a range that starts on or before it.');
+        return;
+      }
+      t = latestIso;
+      $('agent-to').value = t;
     }
     win.preset = 'custom'; win.from = f; win.to = t;
     load();
@@ -568,6 +634,7 @@
       relabelYesterdayChip_();   // C2-8
       if (latestIso) $('agent-fresh').textContent = 'Data through ' + isoToLabel(latestIso, true);
       else noteUnknownFreshness_();
+      setDateMax_();   // CL-6
       applyPreset('mtd');
       load();
     })

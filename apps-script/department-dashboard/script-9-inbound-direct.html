@@ -405,9 +405,10 @@
     const drill = document.createElement('tr');
     drill.className = 'inbound-drill-row';
     drill.innerHTML = '<td colspan="7">'
-      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist">'
-      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab" aria-selected="' + (inboundDrillMetric === 'calls') + '">Volume</button>'
-      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab" aria-selected="' + (inboundDrillMetric === 'rate') + '">Abandon %</button>'
+      // UI-1 (broad-scan 2026-10-12): roving tabindex + the arrow keys below.
+      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist" aria-label="Daily trend metric">'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab" aria-selected="' + (inboundDrillMetric === 'calls') + '" tabindex="' + (inboundDrillMetric === 'calls' ? '0' : '-1') + '">Volume</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab" aria-selected="' + (inboundDrillMetric === 'rate') + '" tabindex="' + (inboundDrillMetric === 'rate' ? '0' : '-1') + '">Abandon %</button>'
       + '</div>'
       + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
       + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
@@ -421,9 +422,25 @@
       drill.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
         b.classList.toggle('active', b === tab);
         b.setAttribute('aria-selected', b === tab ? 'true' : 'false');   // C2-13
+        b.setAttribute('tabindex', b === tab ? '0' : '-1');               // UI-1
       });
       const cached = inboundDrillCache[inboundDrillKey_(insurer)];
       if (cached) inboundRenderDrillChart_(drill, cached);
+    });
+    // UI-1: the APG tabs keyboard model (the R12-9 IR pattern) -- Left/Right
+    // wrap, Home/End jump; selection follows focus through the click handler.
+    drill.querySelector('.inbound-drill-tabs').addEventListener('keydown', function (e) {
+      const tab = e.target.closest && e.target.closest('.pr-trend-subtab');
+      if (!tab || ['ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(e.key) === -1) return;
+      e.preventDefault();
+      const tabs = Array.prototype.slice.call(drill.querySelectorAll('.pr-trend-subtab'));
+      let i = tabs.indexOf(tab);
+      if (e.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+      else if (e.key === 'Home') i = 0;
+      else i = tabs.length - 1;
+      tabs[i].click();
+      tabs[i].focus();
     });
 
     const drillKey = inboundDrillKey_(insurer);
@@ -1751,8 +1768,10 @@
         fmtNumber(cb.other) + ' · may be unrelated', ''),
       inboundKpiTile_('Caller got through', pct(cb.gotThroughPct),
         fmtNumber(cb.gotThrough) + ' · reached the team on a later call', ''),
+      // B1/PC-2: while an ingest lags, "pending" is held open for the days not
+      // loaded -- say so, so the tile is not read against today's date.
       inboundKpiTile_('Not called back', fmtNumber(cb.none),
-        'no dial inside the window', ''),
+        cb.dataLagging && cb.dataThrough ? 'calls loaded through ' + cb.dataThrough : 'no dial inside the window', ''),
       inboundKpiTile_('Median time to callback',
         cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
         'own team · from the first attempt', ''),
@@ -2169,8 +2188,10 @@
     const blocks = eps.map(function (ep) {
       const chips = [];
       if (ep.status === 'pending') {
+        // B1/PC-2: held open because the window's last days' calls are not loaded yet.
         chips.push('<span class="ds-chip ds-chip--warn">Still inside the window · '
-          + (ep.daysLeft > 0 ? ep.daysLeft + ' day' + (ep.daysLeft === 1 ? '' : 's') + ' left' : 'last day')
+          + (ep.awaitingData ? 'waiting on calls not loaded yet'
+            : (ep.daysLeft > 0 ? ep.daysLeft + ' day' + (ep.daysLeft === 1 ? '' : 's') + ' left' : 'last day'))
           + '</span>');
       } else {
         chips.push('<span class="ds-chip ds-chip--bad">Missed</span>');
@@ -2201,6 +2222,7 @@
     return '<div class="heat-drill-head"><strong>Not called back</strong> · '
       + eps.length + ' episode' + (eps.length === 1 ? '' : 's')
       + (meta.pending ? ' · ' + meta.pending + ' still inside the window' : '')
+      + (meta.dataLagging && meta.dataThrough ? ' · calls loaded through ' + escapeHtml(String(meta.dataThrough)) : '')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
       + '</div><div class="heat-drill-list">' + blocks + '</div>';
   }
@@ -2382,6 +2404,11 @@
           nb.push('The copy names the line each call rang only from ' + meta.fallbackCoverageStart
             + ', so earlier calls are missing here.');
         }
+      }
+      if (meta.dataLagging && meta.dataThrough) {
+        // B1/PC-2: "still in window" is held open for the days not loaded yet.
+        nb.push('Calls are loaded through ' + meta.dataThrough
+          + '; episodes whose window reaches past that still count as in window.');
       }
       note.style.display = nb.length ? '' : 'none';
       note.textContent = nb.join(' ');
@@ -2717,6 +2744,11 @@
     wireBackup('health-backup-now',       'runNeonBackupNow',           'Backing up… (can take a minute)');
     // R7 (G-3): UI surface toggles editor.
     const uiSave = $('health-uiflags-save');
+    // B3/CL-15: a tick the admin has not saved yet survives a Health reload.
+    const uiList = $('health-uiflags-list');
+    if (uiList) uiList.addEventListener('change', function (e) {
+      if (e.target && e.target.matches && e.target.matches('input[type=checkbox]')) healthUiFlagsDirty_ = true;
+    });
     if (uiSave) uiSave.addEventListener('click', function () {
       const list = $('health-uiflags-list');
       if (!list) return;
@@ -2728,6 +2760,7 @@
       google.script.run
         .withSuccessHandler(function (resp) {
           uiSave.disabled = false;
+          healthUiFlagsDirty_ = false;   // B3/CL-15: the list now matches the server
           if (st) st.textContent = 'Saved — '
             + ((resp && resp.flags && resp.flags.length) ? (resp.flags.length + ' surface(s) hidden') : 'all surfaces visible')
             + '. Users pick this up on their next page load.';
@@ -2742,14 +2775,31 @@
 
   // R7 (G-3): render the UI-toggle checkboxes from the server registry
   // (checked = HIDDEN). Loaded alongside the health table.
+  // B3/CL-15 (broad-scan 2026-10-12): three fixes. (1) Every Health reload
+  // (Refresh, a backup action) re-rendered this list from the server, wiping
+  // ticks the admin had not saved -- unsaved ticks are now kept, with a note.
+  // (2) The load carries a request token, so a slower earlier response cannot
+  // paint over a newer one. (3) A load FAILURE used to hide the section
+  // silently; it now says so (a server with no registry still hides it).
+  var healthUiFlagsSeq_ = 0;
+  var healthUiFlagsDirty_ = false;
   function healthLoadUiFlags_() {
     const list = $('health-uiflags-list');
     const section = $('health-uiflags-section');
     if (!list || !section) return;
+    const tok = ++healthUiFlagsSeq_;
+    const st = $('health-uiflags-status');
+    const save = $('health-uiflags-save');
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (tok !== healthUiFlagsSeq_) return;
         if (!resp || !resp.registry) { section.style.display = 'none'; return; }
         section.style.display = '';
+        if (save) save.disabled = false;
+        if (healthUiFlagsDirty_ && list.querySelector('input[type=checkbox]')) {
+          if (st) st.textContent = 'Unsaved changes kept — Save to apply them.';
+          return;
+        }
         const flags = resp.flags || [];
         list.innerHTML = Object.keys(resp.registry).map(function (k) {
           const on = flags.indexOf(k) !== -1;
@@ -2758,7 +2808,19 @@
             + ' <code class="health-uiflag-key">' + escapeHtml(k) + '</code></label>';
         }).join('');
       })
-      .withFailureHandler(function () { section.style.display = 'none'; })
+      .withFailureHandler(function (err) {
+        if (tok !== healthUiFlagsSeq_) return;
+        section.style.display = '';
+        if (healthUiFlagsDirty_ && list.querySelector('input[type=checkbox]')) {
+          if (st) st.textContent = 'Couldn’t re-read the saved toggles ('
+            + (err && err.message ? err.message : String(err)) + '); your unsaved changes are kept.';
+          return;
+        }
+        if (save) save.disabled = true;
+        list.innerHTML = '<div class="ds-note">Couldn’t load the UI toggles: '
+          + escapeHtml(err && err.message ? err.message : String(err))
+          + ' — press Refresh to try again.</div>';
+      })
       .getUiFlags();
   }
 

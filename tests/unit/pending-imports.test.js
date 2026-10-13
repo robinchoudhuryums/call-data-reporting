@@ -198,3 +198,97 @@ test('PIPE-1: the ledger clears itself when the parked tab is removed, and says 
     assert.deepEqual(calls.map(function (c) { return c.iso; }), ['2026-09-23']);
   }, okImport(calls));
 });
+
+// PIPE-2 (broad-scan 2026-10-12): a paused / stopped bulk run leaves every
+// processed date absent from the QCD / CSR / CDR / Q Path sheets until its
+// final archive. The pause / stop logs a failure row naming them and returns
+// the sentence the alert shows; nothing processed yet = no row.
+test('PIPE-2: a bulk pause/stop names the processed dates absent until the archive, in a failure row', function () {
+  const logged = [];
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, ev) { logged.push(JSON.parse(JSON.stringify(ev))); };
+  const queue = ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'];
+  const note = h.call('bulkLogGap_', null, queue, 3, 'paused (time limit)');
+  assert.match(note, /^3 processed date\(s\) \(2026-09-01 \.\. 2026-09-03\) are ABSENT from the QCD, CSR Transfer, CDR and Q Path Historical sheets/);
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].step, 'bulkBackfill:paused');
+  assert.equal(logged[0].status, 'failure');
+  assert.equal(logged[0].rows, 3);
+  assert.match(logged[0].notes, /^paused \(time limit\): 3 processed date\(s\)/);
+  logged.length = 0;
+  assert.equal(h.call('bulkLogGap_', null, queue, 0, 'paused (time limit)'), '', 'nothing processed: no gap, no row');
+  assert.equal(logged.length, 0);
+  assert.equal(h.call('bulkGapNote_', ['2026-09-09'], 1).indexOf('1 processed date(s) (2026-09-09) are ABSENT'), 0);
+  delete h.ctx.logPipelineHealthWithFallback_;
+
+  // Wiring: both pause paths and the final archive use it; completion clears it.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const fnStart = src.indexOf('function processBulkQueue()');
+  const body = src.slice(fnStart, src.indexOf('\nfunction getDateRange(', fnStart));
+  assert.match(body, /bulkLogGap_\(targetSS, queue, index, 'paused \(time limit\)'\)/);
+  assert.match(body, /bulkLogGap_\(targetSS, queue, index, 'stopped after an error on ' \+ dateStr\)/);
+  assert.match(body, /bulkLogGap_\(targetSS, queue, queue\.length, 'final archive failed/);
+  assert.match(body, /step: 'bulkBackfill:paused', status: 'success'/, 'a completed run clears the Health row');
+});
+
+// PIPE-7 (owner 2026-10-13, option A): a run killed between the sheet writes
+// and the per-call capture left the date "already in history", so the
+// catch-up remembered it and its inbound_calls / outbound_calls rows were
+// never written. The catch-up now runs the NON-force per-call backfills for
+// that one date (each skips a date Neon already holds).
+test('PIPE-7: an ALREADY-IN-HISTORY date gets its per-call capture checked and filled', function () {
+  const calls = [];
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-23']);
+  const saved = { imp: h.ctx.processNewImport, ib: h.ctx.backfillInboundCalls, ob: h.ctx.backfillOutboundCalls };
+  h.ctx.processNewImport = function () { return 'ALREADY IN HISTORY'; };
+  h.ctx.backfillInboundCalls = function (f, t, force) { calls.push(['in', f, t, force]); return { inserted: 5, failures: 0, unreachable: false }; };
+  h.ctx.backfillOutboundCalls = function (f, t, force) { calls.push(['out', f, t, force]); return { inserted: 0, failures: 0, unreachable: false }; };
+  try {
+    h.call('processPendingImports_');
+    assert.deepEqual(calls, [['in', '2026-09-23', '2026-09-23', false], ['out', '2026-09-23', '2026-09-23', false]],
+      'both per-call backfills, for that one date, NON-force (a date Neon already holds is skipped by them)');
+    assert.ok(JSON.parse(h.state.props.lastSheets).indexOf('Call_Legs_2026-09-23') !== -1, 'settled -> remembered');
+  } finally {
+    h.ctx.processNewImport = saved.imp; h.ctx.backfillInboundCalls = saved.ib; h.ctx.backfillOutboundCalls = saved.ob;
+  }
+});
+
+test('PIPE-7: Neon unreachable keeps the date pending (ledgered, retried later), never remembered', function () {
+  let imports = 0;
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-23']);
+  const saved = { imp: h.ctx.processNewImport, ib: h.ctx.backfillInboundCalls, ob: h.ctx.backfillOutboundCalls };
+  h.ctx.processNewImport = function () { imports++; return 'ALREADY IN HISTORY'; };
+  h.ctx.backfillInboundCalls = function () { return { inserted: 0, failures: 0, unreachable: true }; };
+  h.ctx.backfillOutboundCalls = function () { return { inserted: 0, failures: 0, unreachable: false }; };
+  try {
+    h.call('processPendingImports_');
+    assert.equal(imports, 1, 'not retried in the same run');
+    assert.ok(!h.state.props.lastSheets || JSON.parse(h.state.props.lastSheets).indexOf('Call_Legs_2026-09-23') === -1,
+      'not remembered -- remembering it is exactly how the gap became permanent');
+    const fails = JSON.parse(h.state.props[h.ctx.PENDING_IMPORT_FAILS_PROP_] || '{}');
+    assert.equal(fails['2026-09-23'].n, 1, 'counted in the existing ledger, so it parks like a failed import');
+    assert.match(fails['2026-09-23'].err, /PIPE-7/);
+  } finally {
+    h.ctx.processNewImport = saved.imp; h.ctx.backfillInboundCalls = saved.ib; h.ctx.backfillOutboundCalls = saved.ob;
+  }
+});
+
+test('PIPE-7: a normal import does not run the per-call backfills (the import captured them itself)', function () {
+  let backfills = 0;
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-23']);
+  const saved = { imp: h.ctx.processNewImport, ib: h.ctx.backfillInboundCalls, ob: h.ctx.backfillOutboundCalls };
+  h.ctx.processNewImport = function (f, iso) {
+    h.state.props.lastSheets = JSON.stringify(['Call_Legs_' + iso]);
+    return 'DONE: 1s';
+  };
+  h.ctx.backfillInboundCalls = function () { backfills++; return {}; };
+  h.ctx.backfillOutboundCalls = function () { backfills++; return {}; };
+  try {
+    h.call('processPendingImports_');
+    assert.equal(backfills, 0);
+  } finally {
+    h.ctx.processNewImport = saved.imp; h.ctx.backfillInboundCalls = saved.ib; h.ctx.backfillOutboundCalls = saved.ob;
+  }
+});

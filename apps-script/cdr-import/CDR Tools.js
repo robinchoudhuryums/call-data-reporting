@@ -79,6 +79,8 @@ function onOpen() {
     .addItem('QCD vs DQE diagnostic (pick date)…',               'diagnoseQcdVsDqe')
     .addItem('Work-window edge census',                          'runWorkWindowCensus')
     .addItem('Outbound assist links (pick date)…',               'previewOutboundAssistLinksForDate')
+    .addItem('Internal-call wait: before vs after (pick date)…', 'previewInternalWaitStartForDate')
+    .addItem('Internal-call wait: before vs after (all dates)',  'previewInternalWaitStartAllDates')
     .addItem('Transfer shapes for a dept…',                      'showTransferShapesDialog');
 
   ui.createMenu("CDR Tools")

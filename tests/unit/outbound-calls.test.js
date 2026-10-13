@@ -300,3 +300,61 @@ test('ING-6: backfillOutboundCalls honours the tunable IC_BACKFILL_TIME_LIMIT_MS
     h.ctx.writeOutboundCallsToNeon = saved.write;
   }
 });
+
+// PIPE-12 (broad-scan 2026-10-12): a second attempt that connected used to
+// take its ring time from attempt 1's CONNECTED cell (a leg that never
+// connected -- the value FO-1 found untrustworthy).
+test('PIPE-12: a call connected on a LATER attempt measures ring on that attempt', function () {
+  const recs = build([
+    leg({ callId: '900010', legId: 1, start: '07/22/2026 11:00:00', connected: '07/22/2026 11:00:02',
+      stop: '07/22/2026 11:00:40', direction: 'Outgoing', caller: '214', callee: '+12145550111', missed: 'Missed', dept: 'CSR' }),
+    leg({ callId: '900011', legId: 2, start: '07/22/2026 11:01:00', connected: '07/22/2026 11:01:09',
+      stop: '07/22/2026 11:04:00', direction: 'Outgoing', talk: '0:02:51', caller: '214', callee: '+12145550111',
+      answered: 'Answered', parent: '900010', dept: 'CSR' }),
+  ]);
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].attempts, 2);
+  assert.equal(recs[0].connected, true);
+  assert.equal(recs[0].ringSeconds, 9, 'attempt 2 start -> its connect (pre-fix: 2, from attempt 1)');
+  assert.equal(recs[0].callStart, '11:00:00', 'the call still starts at attempt 1');
+});
+
+// PIPE-15 (broad-scan 2026-10-12): without HMAC_SECRET the writers store a NULL
+// phone hash, so a FORCE backfill's authoritative replace put NULL over the
+// good hashes an already-mirrored date held. Both backfills (this suite loads
+// inboundCalls.js too) now refuse each already-mirrored date when the secret
+// is missing, and still write a date Neon has never seen (the PC-10 path).
+test('PIPE-15: force backfills without HMAC_SECRET refuse already-mirrored dates, still write new ones', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const saved = { im: h.ctx.icFetchMirroredDates_, om: h.ctx.ocFetchMirroredDates_,
+                  iw: h.ctx.writeInboundCallsToNeon, ow: h.ctx.writeOutboundCallsToNeon };
+  const written = { in: [], out: [] };
+  h.ctx.icFetchMirroredDates_ = function () { return { '2026-09-01': true }; };
+  h.ctx.ocFetchMirroredDates_ = function () { return { '2026-09-01': true }; };
+  h.ctx.writeInboundCallsToNeon = function (legs, o) { written.in.push(o.expectedDateIso); return { inserted: 1 }; };
+  h.ctx.writeOutboundCallsToNeon = function (legs, o) { written.out.push(o.expectedDateIso); return { inserted: 1 }; };
+  const sheets = () => makeFakeSpreadsheet({ sheets: {
+    'Call_Legs_2026-09-01': [['CALL ID'], ['1']], 'Call_Legs_2026-09-02': [['CALL ID'], ['2']] } });
+  try {
+    delete h.state.props.HMAC_SECRET;
+    for (const [fn, key] of [['backfillInboundCalls', 'in'], ['backfillOutboundCalls', 'out']]) {
+      h.state.spreadsheet = sheets();
+      const res = h.call(fn, null, null, true);
+      assert.deepEqual(Array.from(written[key]), ['2026-09-02'], fn + ': only the never-mirrored date is written');
+      assert.equal(res.failures, 1, fn + ': the refused date is a FAILURE (keeps a deferred-mirror date queued)');
+    }
+    // With the secret set, force rewrites everything as before.
+    h.state.props.HMAC_SECRET = 's3cret';
+    written.in = []; written.out = [];
+    h.state.spreadsheet = sheets();
+    assert.equal(h.call('backfillInboundCalls', null, null, true).failures, 0);
+    h.state.spreadsheet = sheets();
+    assert.equal(h.call('backfillOutboundCalls', null, null, true).failures, 0);
+    assert.deepEqual(Array.from(written.in), ['2026-09-01', '2026-09-02']);
+    assert.deepEqual(Array.from(written.out), ['2026-09-01', '2026-09-02']);
+  } finally {
+    delete h.state.props.HMAC_SECRET;
+    h.ctx.icFetchMirroredDates_ = saved.im; h.ctx.ocFetchMirroredDates_ = saved.om;
+    h.ctx.writeInboundCallsToNeon = saved.iw; h.ctx.writeOutboundCallsToNeon = saved.ow;
+  }
+});

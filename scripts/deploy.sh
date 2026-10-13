@@ -169,7 +169,7 @@ if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
   # "gated" path while the PR's blocking `lint` and `ui-harness` jobs would
   # have gone red. CI=1 here makes the gate mean what CI means; the one
   # escape hatch stays DEPLOY_SKIP_CI=1 (emergencies only). Install the tools
-  # with `npm ci` and `cd tools/ui-harness && npm i playwright`.
+  # with `npm ci` and `cd tools/ui-harness && npm i playwright@1.62.1`.
   echo "==> npm run lint:gas   (undeclared-identifier net, H3; eslint REQUIRED -- CI=1)"
   CI=1 TZ="$CI_TZ" npm run lint:gas
   # F-10: the rendered-UI gate -- the only automated coverage of ~20K lines
@@ -212,13 +212,18 @@ esac
 if [ -n "$STAMP_FILE" ] && [ -f "$STAMP_FILE" ]; then
   GIT_DESC="$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')"
   [ -n "$TREE_DIRTY" ] && GIT_DESC="${GIT_DESC}+dirty"   # DEP-3: the one definition
-  STAMP="deploy.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) | git ${GIT_DESC} | ${GIT_BRANCH}"
-  # Restore the committed placeholder no matter how this script exits. The
-  # restore can only no-op if the file is somehow UNTRACKED (caught in the
-  # simulation that validated this block) -- say so instead of staying
-  # silently stamped, since a stamped working tree is exactly the churn this
-  # design exists to avoid.
-  trap 'git checkout --quiet -- "$STAMP_FILE" 2>/dev/null         || echo "warn: could not restore build-stamp placeholder -- check git status" >&2' EXIT
+  # DEP-2 (broad-scan 2026-10-12): the stamp lands inside a single-quoted JS
+  # string, so a branch name holding ' or \ would write an unparseable file
+  # AFTER every gate had passed. Keep the branch to a safe character set.
+  STAMP_BRANCH="$(printf '%s' "$GIT_BRANCH" | tr -c 'A-Za-z0-9._/@+-' '_')"
+  STAMP="deploy.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) | git ${GIT_DESC} | ${STAMP_BRANCH}"
+  # Restore the file no matter how this script exits. DEP-2: from a COPY taken
+  # just before the write, not `git checkout` -- that dropped an uncommitted
+  # edit to the stamp file and could not restore an untracked one. If even the
+  # copy fails, say where it is instead of staying silently stamped.
+  STAMP_BAK="$(mktemp)"
+  cp -p "$STAMP_FILE" "$STAMP_BAK"
+  trap 'if cp -f "$STAMP_BAK" "$STAMP_FILE" 2>/dev/null; then rm -f "$STAMP_BAK"; else echo "warn: could not restore the build-stamp file (its pre-deploy copy is at $STAMP_BAK) -- check git status" >&2; fi' EXIT
   {
     echo "// Written by scripts/deploy.sh for THIS push only -- the committed file"
     echo "// holds a placeholder; see its header. Do not commit a real stamp."

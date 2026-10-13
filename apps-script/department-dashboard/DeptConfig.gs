@@ -275,8 +275,16 @@ function getOverviewParentMap_() {
   if (typeof OVERVIEW_PARENT_OF !== 'undefined') {
     Object.keys(OVERVIEW_PARENT_OF).forEach(function (k) { map[k] = OVERVIEW_PARENT_OF[k]; });
   }
-  readDeptConfigRows_().forEach(function (r) {
-    if (r.active && r.overviewParent) map[r.dept] = r.overviewParent;
+  // CFG-1 (broad-scan 2026-10-12): the FIRST active row per dept decides, as
+  // for every other field (A-3, getActiveDeptConfigMap_). Iterating every row
+  // let a hand-added later duplicate win -- and this map widens manager ACCESS
+  // (INV-38), so a stray "PAP -> Power" row granted Power's managers PAP's
+  // agent-level data, while a modal save (which edits the first row) reported
+  // success without removing the edge. An empty Overview Parent on that first
+  // row falls back to the constant, like every other field.
+  const active = getActiveDeptConfigMap_();
+  Object.keys(active).forEach(function (dept) {
+    if (active[dept].overviewParent) map[dept] = active[dept].overviewParent;
   });
   return map;
 }
@@ -467,10 +475,19 @@ function getFinalDeptLabels_(dept) {
  * Without the union, adding one would double-count every call whose label maps
  * to a dept OTHER than the one being queried.
  *
- * Fails OPEN on a config-read error (returns the empty union), which makes
- * every label look unmapped and sends the on-hold arm to its entry-queue
- * fallback. That is the safe direction: attribution degrades to the entry queue
- * rather than a dept losing calls, and it can never double-count.
+ * Two failure shapes, both safe (DATA-9, broad-scan 2026-10-12 -- this comment
+ * used to claim the first returned the empty union):
+ *  - A Dept Config read ERROR never reaches the catch below: readDeptConfigRows_
+ *    swallows it, serves the constants and raises deptConfigReadFailed_ (so the
+ *    payload is not cached). The union is then every roster dept NAME without
+ *    the configured labels -- and each dept's own getFinalDeptLabels_ has lost
+ *    the same labels, so union and per-dept lists stay CONSISTENT: a label
+ *    neither claims falls back to its entry queue, and nothing double-counts.
+ *  - A ROSTER read that throws lands in the catch and returns the EMPTY union:
+ *    every label looks unmapped and the on-hold arm takes its entry-queue
+ *    fallback -- attribution degrades rather than a dept losing calls.
+ * The unsafe shape is a union PARTIAL against FULL per-dept lists, which would
+ * double-count; neither path produces it.
  */
 function getAllFinalDeptLabels_() {
   const out = [];

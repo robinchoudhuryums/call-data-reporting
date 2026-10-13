@@ -2761,7 +2761,11 @@
         b.setAttribute('aria-pressed', on ? 'true' : 'false');
       });
     }
-    if (AP_.days[date]) { apRenderDay_(AP_.days[date]); return; }
+    // B3/CL-2 (broad-scan 2026-10-12): the cached-day path also claims the
+    // sequence -- without it, a fetch still in flight for the PREVIOUS day
+    // landed after this instant render and painted that day's calls under the
+    // box just highlighted.
+    if (AP_.days[date]) { AP_.seq++; apRenderDay_(AP_.days[date]); return; }
     const tok = ++AP_.seq;
     apSetHtml_('[data-ap-day]', apLoadingHtml_('Loading ' + date + '…'));
     google.script.run
@@ -2821,7 +2825,10 @@
     const tier = adTierNote_(meta);
     const tabBtn = function (key, label, n) {
       const on = key === tab;
+      // UI-1 (broad-scan 2026-10-12): roving tabindex -- only the selected tab
+      // is in the Tab order; the arrow keys move between tabs (apWire_).
       return '<button type="button" role="tab" class="ap-tab ap-tab--' + key + (on ? ' is-on' : '') + '" data-ap-tab="' + key + '"'
+        + ' id="ap-tab-' + key + '" tabindex="' + (on ? '0' : '-1') + '"'
         + ' aria-selected="' + (on ? 'true' : 'false') + '">' + escapeHtml(label)
         + '<span class="ap-tab-n">' + fmtNumber(n) + '</span></button>';
     };
@@ -2837,12 +2844,12 @@
       + (rec.note ? '<p class="ap-note">' + escapeHtml(rec.note) + '</p>' : '')
       + (meta.truncated ? '<p class="ap-note">This day exceeded the display cap; the lists show the first '
           + inbound.length + ' inbound and ' + outbound.length + ' outbound calls.</p>' : '')
-      + '<div class="ap-tabs" role="tablist">'
+      + '<div class="ap-tabs" role="tablist" aria-label="Calls on this day">'
       +   tabBtn('in', 'Inbound calls', inbound.length)
       +   tabBtn('out', 'Outbound calls', outbound.length)
       +   (showRings ? tabBtn('rings', 'Missed rings', rings.length) : '')
       + '</div>'
-      + '<div class="ap-list" role="tabpanel">' + list + '</div>';
+      + '<div class="ap-list" role="tabpanel" aria-labelledby="ap-tab-' + tab + '">' + list + '</div>';
   }
 
   function apRenderDay_(data) {
@@ -2854,7 +2861,10 @@
       const t = e.target;
       if (t.closest('[data-ap-close]')) { apClose_(true); return; }
       if (t.closest('[data-ap-ir]')) {
-        if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(AP_.agent, AP_.from, AP_.to);
+        // B3/CL-14: closing IR hands focus back to this button.
+        if (typeof irDrillToAgent_ === 'function') {
+          irDrillToAgent_(AP_.agent, AP_.from, AP_.to, { returnFocus: t.closest('[data-ap-ir]') });
+        }
         return;
       }
       const day = t.closest('[data-ap-date]');
@@ -2874,7 +2884,23 @@
       }
     });
     row.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); apClose_(true); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); apClose_(true); return; }
+      // UI-1: the APG tabs keyboard model (the R12-9 IR pattern) --
+      // Left/Right wrap, Home/End jump, and selection follows focus.
+      const tab = e.target.closest && e.target.closest('[data-ap-tab]');
+      if (!tab || ['ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(e.key) === -1) return;
+      e.preventDefault();
+      const tabs = Array.prototype.slice.call(AP_.node ? AP_.node.querySelectorAll('[data-ap-tab]') : []);
+      let i = tabs.indexOf(tab);
+      if (i === -1) return;
+      if (e.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+      else if (e.key === 'Home') i = 0;
+      else i = tabs.length - 1;
+      AP_.tab = tabs[i].getAttribute('data-ap-tab');
+      if (AP_.days[AP_.date]) apRenderDay_(AP_.days[AP_.date]);
+      const again = AP_.node && AP_.node.querySelector('[data-ap-tab="' + AP_.tab + '"]');
+      if (again) again.focus();
     });
   }
 

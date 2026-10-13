@@ -174,10 +174,12 @@ test('PC-1 rewrite: APPLY issues bound UPDATEs for exactly the mapped pairs (que
   };
   const out = h.call('rewritePerCallAgentNames');
   assert.equal(log.updates.length, 2);
-  assert.match(log.updates[0].q, /^UPDATE outbound_calls SET agent_name = \? WHERE agent_name = \?$/);
+  // TOOL-1: both rewrites bump updated_at, so the cdr-report export tabs re-read the dates.
+  assert.match(log.updates[0].q, /^UPDATE outbound_calls SET agent_name = \?, updated_at = now\(\) WHERE agent_name = \?$/);
   assert.deepEqual(Array.from(log.updates[0].binds), ['Roman (Robin) Paulose', 'Roman Robin Paulose']);
   assert.match(log.updates[1].q, /UPDATE inbound_calls c SET journey/);
   assert.match(log.updates[1].q, /coalesce\(x\.e->>'kind', ''\) <> 'queue'/);
+  assert.match(log.updates[1].q, /\)::text, updated_at = now\(\) WHERE /);
   assert.deepEqual(Array.from(log.updates[1].binds), ['Roman Robin Paulose', 'Roman (Robin) Paulose', 'Roman Robin Paulose']);
   assert.equal(out.stoppedAtBudget, false);
 });

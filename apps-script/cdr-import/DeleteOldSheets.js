@@ -156,7 +156,13 @@ function deleteOldCDRSheets() {
     var sheet = sheets[i];
     var name = sheet.getName();
     if (name.indexOf(RETENTION_SHEET_PREFIX) !== 0) continue;
-    var dateMatch = name.match(/Call_Legs_(\d{4})-(\d{2})-(\d{2})/);
+    // TOOL-4 (broad-scan 2026-10-12): ANCHORED at both ends. The unanchored
+    // pattern also matched a suffixed copy -- "Call_Legs_2026-09-01 (2)", the
+    // name Sheets gives a duplicated recovery tab -- and aged it as that date,
+    // so a hand-made recovery copy was deleted with the original. Only the
+    // exact name the importer writes is pruned; anything else is kept (the
+    // same "a name I do not understand is not acted on" posture as below).
+    var dateMatch = name.match(/^Call_Legs_(\d{4})-(\d{2})-(\d{2})$/);
     if (!dateMatch) continue;
     // Reject out-of-range components instead of letting Date normalise them.
     // Date.UTC(2020, 12, 99) is a real timestamp (2021-04-09), so a nonsense

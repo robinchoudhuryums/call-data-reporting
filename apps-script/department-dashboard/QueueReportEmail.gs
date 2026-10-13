@@ -179,7 +179,18 @@ function runDailyQueueReport_() {
     // ENG-5: stamp the send's START (see queueReportRecordResult_).
     props.setProperty(QUEUE_REPORT_STARTED_PROP, new Date().toISOString());
     let result;
-    try { result = sendQueueReportForDate_(targetIso, {}); }
+    try {
+      result = sendQueueReportForDate_(targetIso, {});
+      // ENG-4 (broad-scan 2026-10-12): the dedupe marker is written BEFORE the
+      // claim is released. Released first, a manual blast checking in that
+      // gap saw neither the claim nor the marker and sent the day again.
+      // Same rule as the O-1 branch below (at least one delivery, or a clean
+      // run), so a no-op / partial / empty / all-failed run never claims it.
+      if (result && !result.noRecipients && !result.partialReport && !result.emptyReport
+          && (result.count > 0 || !(result.failed || []).length)) {
+        props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
+      }
+    }
     finally { queueReportReleaseSend_(props); }
     const failed = result.failed || [];
 
@@ -240,7 +251,7 @@ function runDailyQueueReport_() {
     //    marker unset so the next poll retries -- nobody received it, so a
     //    retry can't duplicate. Notify once per target date.
     if (result.count > 0 || !failed.length) {
-      props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
+      // (the marker was written before the claim was released -- ENG-4)
       const lateSend = Number(Utilities.formatDate(now, TZ, 'H')) >= QUEUE_REPORT_WINDOW_END_HOUR;
       queueReportRecordResult_(props,
         'Sent ' + targetIso + ' to ' + result.count + ' subscriber'
@@ -1534,20 +1545,24 @@ function sendQcdAllDeptToSubscribers(req) {
       : 'Another write is in progress -- try again in a moment.');
   }
   let result;
-  try { result = sendQueueReportForDate_(date, {}); }
+  let markerClaimed = false;
+  try {
+    result = sendQueueReportForDate_(date, {});
+    // ENG-4: the marker lands BEFORE the claim is released (see the poll).
+    if (result && !result.emptyReport && !result.partialReport
+        && result.count > 0 && date === prevBusinessDayIso_(new Date())) {
+      try {
+        props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, date);
+        markerClaimed = true;
+      } catch (e) { /* best-effort -- worst case the morning poll re-sends */ }
+    }
+  }
   finally { queueReportReleaseSend_(props); }
   // D-1: surface the empty-report refusal to the admin instead of "0 sent".
   if (result.emptyReport) throw new Error('Not sent: ' + result.reason + '.');
   // ENG-8 (broad-scan 2026-09-23): a PARTIAL compute is the same kind of
   // refusal (nothing sent) and used to toast "Sent … to 0 subscribers".
   if (result.partialReport) throw new Error('Not sent: ' + result.reason + '. Retry once Neon is reachable.');
-  let markerClaimed = false;
-  if (result.count > 0 && date === prevBusinessDayIso_(new Date())) {
-    try {
-      PropertiesService.getScriptProperties().setProperty(QUEUE_REPORT_LAST_SENT_PROP, date);
-      markerClaimed = true;
-    } catch (e) { /* best-effort -- worst case the morning poll re-sends */ }
-  }
   Logger.log('sendQcdAllDeptToSubscribers: %s -> %s sent, %s failed, markerClaimed=%s',
     date, result.count, (result.failed || []).length, markerClaimed);
   // ENG-8: flags the toast needs to tell "nobody subscribed" and "every send

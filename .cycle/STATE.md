@@ -1,6 +1,162 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-13 -- /sync-docs over 7768d2d..2005240 (broad-scan batches 1-11, WS-1, UX-2, the probe).** 16 drifts fixed across CLAUDE.md + six split docs: PC-4 collisions (#56, S31), PIPE-7 (#56, tests/README), TOOL-6 dbReporting.gs web-editor delete (#29), WS-1 wait exception (CLAUDE.md + per-call-capture), UX-1 leftovers (S46, client-ui-conventions heading, architecture), ENG-6 IDLE (#12), ENG-7 / ENG-8 / PipelineWatch quiet kinds / DATA-6 / DATA-3 in CLAUDE.md, the R49 mirrors, the span-reader callers, the beacon sites, the swept prefs keys, the phone-hash file wording, script.html:: locations -> fragments; Health-row inventory trimmed to Operator State pointers. CLAUDE.md 174.5 KB (25.5 KB headroom).
+- **2026-10-13 -- UX-2 RULED + the brief-threshold probe written (Operator State #76).**
+  - Owner: option A on all three UX-2 decisions (docs/next-steps.md). No threshold yet, by owner choice, for Callbacks, outbound connect %, ATT or missed-call counts.
+  - `probeBriefThresholds()` (Diagnostics.gs, editor, admin, read-only): share of answered (raw + per day worked, SD / CV / >1 / >2 SD), queue wait (vs company, vs own prior-3-month median, daily jumpiness, volume correlations), monthly answer-rate swings (MoM / vs3, counts at 2/3/5, pooled p50/p90/p95). Window BRIEF_PROBE_FROM/_TO or the 12 whole months ending last month.
+  - Verification: 2413 tests (new brief-thresholds-probe suite, 6 bites), lint clean, module map regenerated. No client change, so ci:ui was not re-run.
+  **Owner-side:** deploy the dashboard, run `probeBriefThresholds` from the editor, bring back the log.
+  **Next:** pick the share / queue-wait / trend thresholds from that log, then build UX-2.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-13 — Broad scan Batch 11 IMPLEMENTED (block 258): docs, deploy, code health + PIPE-7. The 2026-10-12 batch plan is COMPLETE.**
+  - Fixes:
+    - PIPE-7 (option A): the catch-up fills per-call capture for an already-imported date, and keeps it pending while Neon is down.
+    - DEP-2: stamp branch sanitized; the trap restores from a copy.
+    - DEP-1: playwright pinned everywhere.
+    - SEC-7: cdr-import uses drive.readonly; the scope suite now tells Drive reads from writes.
+    - TOOL-6: dbReporting.js deleted.
+    - DATA-9: comment.
+    - DOC-1..7.
+  - Verification: 2407 tests; ci:ui green; lint clean; 9 bites.
+
+  **Owner-side:**
+  - Deploy cdr-import, cdr-report and the dashboard.
+  - RE-CONSENT cdr-import right after its push (run any function, accept), Operator State #9.
+  - Delete dbReporting.gs in the cdr-report web editor (INV-17).
+  **Next:** UX-2 is RULED (owner 2026-10-13, option A x3 -- docs/next-steps.md has the rule) and ready to build; still deferred: SEC-1 floaters, SEC-2 Agent Day outbound, PIPE-8 operator; or the recorded follow-ons -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-13 — Broad scan Batch 10 IMPLEMENTED (block 257): cache anchors + combined-view perf.**
+  - Fixes:
+    - DATA-6: `summary` / `insights` keys carry the latest QCD date (qcdFreshnessTag_).
+    - DATA-7: the combined view computes QCD/CSR for the requested dept only, and CSR's two transfer calls share one date-column read.
+    - DATA-8: a narrowed crossover slice is subtracted when another dept fell open (B-1) to the all-queue superset (latent, QUEUE_SPLIT_SCOPE=dept only).
+  - Also this session: PIPE-7 option A added to Batch 11 (owner).
+  - Verification: 2401 tests; ci:ui green; lint clean; 7 bites.
+
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 11 (docs, deploy, code health + PIPE-7; SEC-7 needs one re-consent) -- the last broad-scan batch.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 9 IMPLEMENTED (block 256): agent app + accessibility.**
+  - Fixes:
+    - UI-1: agent-panel and inbound-drill tabs get arrow keys + roving tabindex.
+    - UI-2: agent page live regions.
+    - CL-6: a rejected range keeps the numbers and puts the controls back; custom clamp; History Retry.
+    - CL-7: strict mode actually on.
+    - CL-8: the work window from the constants, incl. the CSR family's 8:00 start.
+    - SEC-4: the note for the capped wait lookup.
+  - Verification: 2396 tests; ci:ui all green (11 new rendered checks); lint clean; 9 bites (2 rendered).
+  - Also answered: PIPE-7's design choice. Recommended option A (on "already in history", check Neon for the date's per-call rows and backfill if missing); awaiting the owner.
+
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 10 (cache anchors + combined-view perf) or Batch 11 (docs, deploy, code health; SEC-7 needs one re-consent) -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — WS-1 IMPLEMENTED (block 255): the internal-call wait starts at the requester's queue leg (owner option 1, the Batch 8 follow-on).**
+  - Change: call_start / call_date are unchanged; external calls are unchanged.
+  - New read-only tool previewInternalWaitStart (CDR Tools → Diagnostics, pick a date or all dates). It logs each internal call's old and new wait, flags SUSPECT rows, checks that external calls do not move, and shows what Neon stores. Runbook: Operator State #75.
+  - Verification: 2391 tests; 5 bites.
+
+  **Owner-side:** push cdr-import, run the tool on all dates (expect SUSPECT 0 and 0 external changes), then Manual Export the dates you want corrected and re-run the tool to see "Neon has: … (NEW)".
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 8 IMPLEMENTED (block 254): repair, per-call and drill edges.**
+  - Fixes:
+    - PIPE-9: merge re-run re-blanks AI..AK and queues the Neon clear.
+    - TOOL-5: drill names Raw Data's day.
+    - PIPE-10: PST shift heals a lagging AF.
+    - PIPE-11: no-op abandoned-id repair takes no snapshot.
+    - PIPE-12: outbound ring on the connecting attempt.
+    - PIPE-13: final_dept/wait end scoped to the requester.
+    - PIPE-14: BF-1 preview runs no DDL.
+    - PIPE-15: force backfills without HMAC_SECRET refuse mirrored dates.
+  - Decision while implementing: PIPE-15 refuses per already-mirrored DATE rather than the whole run, so the deferred mirror still writes new dates.
+  - Verification: 2388 tests; lint clean; INV-16 in sync; 11 bites. No client change.
+  - Follow-ons: the internal-record wait START -> done as WS-1 (block 255); PIPE-15's mirrored-date read fails open.
+
+  **Owner-side:** deploy cdr-report and cdr-import. No new operator steps.
+  **Next:** Batch 9 or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 7 IMPLEMENTED (block 253): pipeline data rules, plus the Batch 6 follow-ons.**
+  - Fixes:
+    - PIPE-1: bulk CDR/QCD Neon mirrors are authoritative per date, and the bulk report names the DQE prune.
+    - PIPE-3: processNewImport refuses a tab whose most common call date is not the tab's date, before any write or delete.
+    - PIPE-5: Manual Export raises the CR-5 marker, and the standalone DQE build defers its sort while it is fresh.
+    - Follow-ons: ENG-7 logFailed row field plus the modal warning; ENG-14 diagnoseAbandoned says when the sheet is gone.
+  - Verification: 2380 tests; ci:ui green; lint clean; INV-16 in sync; 9 bites.
+
+  **Owner-side:** deploy cdr-import, cdr-report and the dashboard. After the next bulk rebuild, run the upsert and then previewNeonExtraRows / pruneNeonExtraRows.
+  **Next:** Batch 8 (repair, per-call and drill edges) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 6 IMPLEMENTED (block 252): engine robustness, low tier.**
+  - Fixes:
+    - ENG-3: PIPELINE_WATCH_SEEN byte cap.
+    - ENG-4: queue-report marker written before the claim is released.
+    - ENG-5: fixed 6 h beacon window.
+    - ENG-6: digest IDLE outcome renders muted.
+    - ENG-7: an Alert Log append failure no longer aborts the run (FAILED-LOG + do-not-re-send email).
+    - ENG-9: smoke check reads uncached.
+    - ENG-14: diagnoseAbandoned matches by queue name via the report's helper.
+  - Also this session: SEC-4's wait-join cap note queued in Batch 9 (owner).
+  - Verification: 2375 tests; lint clean; module map regenerated; 9 bites. No client change, so ci:ui was not needed.
+
+  **Owner-side:** deploy the dashboard (Batches 1-6). No new operator steps.
+  **Next:** Batch 7 (pipeline data rules: cdr-import + cdr-report) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 5 IMPLEMENTED (block 251): config, access + cache dimensions.**
+  - Fixes:
+    - CFG-1: first active row wins for the parent map.
+    - PC-4: orphan rename skips collision days and warns (owner).
+    - DATA-4: outage-empty QCD Neon read is flagged.
+    - SEC-3: deleted ids excluded from the snapshot; a failed refresh is reported.
+    - ENG-8: last-good holiday copy plus one retry.
+    - DATA-1/2/10: roster hash on the companyOverview, insights and agent-app keys.
+    - DATA-5: no latestDates cache after a failed source.
+    - SEC-4: escaped LIKE plus a LIMIT in ahWaitJoin_.
+    - SEC-5: a foreign row reads as not found.
+  - Owner decision this batch: PC-4 = skip collisions + warn.
+  - Verification: 2367 tests; ci:ui green; lint clean; module map regenerated; 14 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-5). No new operator steps.
+  **Next:** Batch 6 (engine robustness, low tier) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 4 IMPLEMENTED (block 250): fallback tabs + bulk-path signals.**
+  - TOOL-1 export tabs re-read changed older dates (updated_at watermark, 10/run + pending; cdr-import correction UPDATEs bump updated_at); TOOL-2 Neon-down export failures not emailed (owner); TOOL-3 append before remove; TOOL-4 anchored prune; PIPE-2 bulk gap failure row + alert; PIPE-4 phone-history re-attach (owner); PIPE-6 enqueue failure row.
+  - Owner decisions this batch: TOOL-2 = skip Neon-down only; PIPE-4 = the re-attach design (the scan's naive fix would have orphaned the history or broken forced CDR writes under an FK).
+  - 2353 tests; Postgres 16 run of the PIPE-4 sequence with a plain FK; lint clean; 21 bites.
+
+  **Owner-side:** deploy cdr-import, cdr-report and the dashboard (Batches 1-4). If PC-1 / BF-1 already ran before this deploy, re-export those dates once by hand. Watch #47 for a week.
+  **Next:** Batch 5 (config, access and cache dimensions) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 3b IMPLEMENTED (block 249): UX-1, one Outbound home on My Department.**
+  - The Outbound summary + Callbacks (+ Direct lines) moved under the outbound agent table; no duplicate agent table; "<dept> only" label + note when the table holds sub-queues.
+  - Decision made while implementing: both sections now read the PAGE's window + INV-28 prior (obSectionWindow_), not Insights' -- otherwise a collapsed Insights region would leave them empty. Consequence: an Insights YoY/custom comparison no longer drives the outbound summary.
+  - 2337 tests (new outbound-home suite); ci:ui all green incl. 4 new UX-1 driver checks; screenshot matched the mock; 7 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-3b + #364 items), walk S57-S59 (+ S30, S23, S56, S36, S20/S29, S32 from Batch 3).
+  **Next:** Batch 4 (fallback tabs + bulk-path signals) or later -- owner picks. UX-2 still deferred.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 3 IMPLEMENTED (block 248): client lifecycle.**
+  - CL-1 latest dates re-read while visible; CL-2 agent-panel cached-day seq; CL-3 hidden-tab Overview park; CL-4 no-ring prefetch sig checks; CL-5 month-end clamp; CL-9 Export button release; CL-10 IR close/open token; CL-11 subscriber-only reload; CL-12 Dept Config send-time dept + lock; CL-13 idle-label stash; CL-14 IR focus chain; CL-15 Health toggles.
+  - Decision: CL-13 keeps re-entry (newest wins) -- the scan's "ignore re-entry" half would drop the user's latest preset pick.
+  - 2334 tests (new client-lifecycle suite, out-of-order fake runner); ci:ui all green incl. a new drive-agentpanel focus check; lint clean; 21 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-3 + #364 items), walk S30, S23, S56, S36, S20/S29, S32.
+  **Next:** Batch 3b (UX-1, the Outbound layout move) or Batch 4 (fallback tabs + bulk-path signals) -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 2 IMPLEMENTED (block 247): green-while-broken + backup integrity.**
+  - ENG-10 a configured backup folder is never recreated or silently swapped for Sheets; ENG-11 scrubs don't stall on the inactive store; ENG-12 scrub/backup file lease; ENG-2 DQE-silence stays SILENT while an alerted dept is dark; ENG-1 reinstalls keep pending retries + Health "RETRY LOST"; ENG-13 backfills don't reset the Overview freshness clock.
+  - 2322 tests; lint clean; module map current; 13 bites (one survivor got its own test). No client change (ci:ui not needed). No cache bump.
+
+  **Owner-side:** deploy the dashboard (with Batch 1 + the #364 items), glance at the Health rows named in block 247.
+  **Next:** owner picks the next batch (3 = client correctness, then 3b UX-1).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan + Batch 1 IMPLEMENTED (block 246).** The scan (3 stages; no Critical/High; full batch plan in docs/next-steps.md "Broad scan 2026-10-12") was followed by Batch 1, callback correctness before 6c:
+  - PC-1 episodes join across the window's edges (lookback + join-only trailing, one read span for all four fetchers); PC-2 pending vs the LOADED calls (disclosed); PC-3 manager callback-path entitlement (gated on 6c, Neon-only); PC-5 meta.unmapped; DATA-3 roster hash. outboundReport:v9, outboundDirect:v3.
+  - 2309 tests; ci:ui green; lint clean; Postgres 16 run of the new SQL; nine bites.
+  - Owner decisions this session: UX-1 (Outbound + Callbacks move under the outbound table) is Batch 3b, after Batch 3; UX-2 (the Insights ranked brief) deferred pending the urgency rule / manager visibility / amber-vs-red call.
+
+  **Owner-side:** deploy the dashboard (with the CE/FO/BF items still pending from #364), walk S48, S59, S60; re-check #47 a week later.
+  **Next:** owner picks the next batch (2 = green-while-broken + backup integrity is the suggested order).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **NEXT (2026-10-12):** CE-1..CE-3 + FO-1..FO-4 + BF-1/BF-2 + the sync-docs pass are MERGED (#364, `e73574d`) but NOT deployed. Owner deploy order (Operator State #49): (1) push cdr-import, then from its editor `previewFirstRingBackfill()` -> Neon backup -> `backfillFirstRingFromJourney()` (re-run if it stops at the time budget); (2) push cdr-report, then `exportInboundCalls('<earliest date to cover>', '<today>')` once; (3) push the dashboard + new deployment version, walk S48, S59, S60. Pending: /reflect over blocks 241-245. Open owner question: managers seeing call ids at the 6c release.
 - **2026-10-09 — /sync-docs after CE-1..BF-2.** CLAUDE.md: the Operator State #49 index line names the direct-line fallback + the BF-1 backfill. architecture.md: the Outbound row's three new RPCs + `outboundDirect:v2:`, the export's cols 23-24. fix-history: the Callback-episodes intro past tense. Harness README: the FO-1/2/3 driver checks. CLAUDE.md 172.8 KB (27.2 KB headroom); nothing prunable without dropping a rule -- the two largest bullets sit ~200 B under the 4 KB ratchet, so route their next additions to a split doc.
   **Where I left off:** PR opened and merged per the owner's instruction.

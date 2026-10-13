@@ -974,7 +974,7 @@
     "key": "props-count",
     "label": "Stored properties",
     "status": "muted",
-    "value": "23 stored — 11 operator config · 11 engine state · 0 tool params · 1 unrecognized",
+    "value": "24 stored — 11 operator config · 12 engine state · 0 tool params · 1 unrecognized",
     "hint": "The settings page lists only the first 50 (read-only past that); this is the complete view. Values are omitted on purpose (the store holds NEON_PASS / HMAC_SECRET) — read a single value in the editor via PropertiesService.getScriptProperties().getProperty(key)."
    },
    {
@@ -988,9 +988,9 @@
    {
     "section": "props",
     "key": "props-engine",
-    "label": "Engine state (11)",
+    "label": "Engine state (12)",
     "status": "muted",
-    "value": "ALERTS_LAST, ALERTS_LAST_RESULT, DIGEST_LAST_RESULT_weekly, DIGEST_LAST_weekly, DIGEST_STARTED_weekly, NEON_BACKUP_LAST, NEON_BACKUP_LAST_RESULT, NEON_BACKUP_SCRUB_PENDING, QUEUE_REPORT_LAST, QUEUE_REPORT_LAST_RESULT, SMOKE_LAST_RESULT",
+    "value": "ALERTS_LAST, ALERTS_LAST_RESULT, COMPANY_HOLIDAYS_SHEET_COPY, DIGEST_LAST_RESULT_weekly, DIGEST_LAST_weekly, DIGEST_STARTED_weekly, NEON_BACKUP_LAST, NEON_BACKUP_LAST_RESULT, NEON_BACKUP_SCRUB_PENDING, QUEUE_REPORT_LAST, QUEUE_REPORT_LAST_RESULT, SMOKE_LAST_RESULT",
     "hint": "Written by the code itself (outcome stamps, markers, snapshots). Never hand-set; clearing one just re-arms its engine."
    },
    {
@@ -1006,7 +1006,7 @@
     "key": "props-store",
     "label": "Script Properties storage (500 KB cap)",
     "status": "ok",
-    "value": "1 KB of 500 KB (0%) · largest: NEON_BACKUP_SCRUB_PENDING 1 KB, QUEUE_REPORT_LAST_RESULT 1 KB, NEON_BACKUP_LAST_RESULT 1 KB",
+    "value": "1 KB of 500 KB (0%) · largest: NEON_BACKUP_SCRUB_PENDING 1 KB, COMPANY_HOLIDAYS_SHEET_COPY 1 KB, QUEUE_REPORT_LAST_RESULT 1 KB",
     "hint": "One 500 KB quota for every key. The escalation snapshots (ESC_SNAPSHOT_*, rows + threads) are self-capped at ~48 KB each; an unrecognized key below may be a large leftover worth deleting (Operator State #53)."
    },
    {
@@ -2060,7 +2060,7 @@
     "key": "props-count",
     "label": "Stored properties",
     "status": "muted",
-    "value": "23 stored — 11 operator config · 11 engine state · 0 tool params · 1 unrecognized",
+    "value": "24 stored — 11 operator config · 12 engine state · 0 tool params · 1 unrecognized",
     "hint": "The settings page lists only the first 50 (read-only past that); this is the complete view. Values are omitted on purpose (the store holds NEON_PASS / HMAC_SECRET) — read a single value in the editor via PropertiesService.getScriptProperties().getProperty(key)."
    },
    {
@@ -2074,9 +2074,9 @@
    {
     "section": "props",
     "key": "props-engine",
-    "label": "Engine state (11)",
+    "label": "Engine state (12)",
     "status": "muted",
-    "value": "ALERTS_LAST, ALERTS_LAST_RESULT, DIGEST_LAST_RESULT_weekly, DIGEST_LAST_weekly, DIGEST_STARTED_weekly, NEON_BACKUP_LAST, NEON_BACKUP_LAST_RESULT, NEON_BACKUP_SCRUB_PENDING, QUEUE_REPORT_LAST, QUEUE_REPORT_LAST_RESULT, SMOKE_LAST_RESULT",
+    "value": "ALERTS_LAST, ALERTS_LAST_RESULT, COMPANY_HOLIDAYS_SHEET_COPY, DIGEST_LAST_RESULT_weekly, DIGEST_LAST_weekly, DIGEST_STARTED_weekly, NEON_BACKUP_LAST, NEON_BACKUP_LAST_RESULT, NEON_BACKUP_SCRUB_PENDING, QUEUE_REPORT_LAST, QUEUE_REPORT_LAST_RESULT, SMOKE_LAST_RESULT",
     "hint": "Written by the code itself (outcome stamps, markers, snapshots). Never hand-set; clearing one just re-arms its engine."
    },
    {
@@ -2092,7 +2092,7 @@
     "key": "props-store",
     "label": "Script Properties storage (500 KB cap)",
     "status": "ok",
-    "value": "1 KB of 500 KB (0%) · largest: NEON_BACKUP_SCRUB_PENDING 1 KB, QUEUE_REPORT_LAST_RESULT 1 KB, NEON_BACKUP_LAST_RESULT 1 KB",
+    "value": "1 KB of 500 KB (0%) · largest: NEON_BACKUP_SCRUB_PENDING 1 KB, COMPANY_HOLIDAYS_SHEET_COPY 1 KB, QUEUE_REPORT_LAST_RESULT 1 KB",
     "hint": "One 500 KB quota for every key. The escalation snapshots (ESC_SNAPSHOT_*, rows + threads) are self-capped at ~48 KB each; an unrecognized key below may be a large leftover worth deleting (Operator State #53)."
    },
    {
@@ -2603,7 +2603,7 @@
     "key": "props-count",
     "label": "Stored properties",
     "status": "muted",
-    "value": "23 stored — 11 operator config · 11 engine state · 0 tool params · 1 unrecognized",
+    "value": "24 stored — 11 operator config · 12 engine state · 0 tool params · 1 unrecognized",
     "hint": "The settings page lists only the first 50 (read-only past that); this is the complete view. Values are omitted on purpose (the store holds NEON_PASS / HMAC_SECRET) — read a single value in the editor via PropertiesService.getScriptProperties().getProperty(key)."
    },
    {
@@ -2617,9 +2617,9 @@
    {
     "section": "props",
     "key": "props-engine",
-    "label": "Engine state (11)",
+    "label": "Engine state (12)",
     "status": "muted",
-    "value": "ALERTS_LAST, ALERTS_LAST_RESULT, DIGEST_LAST_RESULT_weekly, DIGEST_LAST_weekly, DIGEST_STARTED_weekly, NEON_BACKUP_LAST, NEON_BACKUP_LAST_RESULT, NEON_BACKUP_SCRUB_PENDING, QUEUE_REPORT_LAST, QUEUE_REPORT_LAST_RESULT, SMOKE_LAST_RESULT",
+    "value": "ALERTS_LAST, ALERTS_LAST_RESULT, COMPANY_HOLIDAYS_SHEET_COPY, DIGEST_LAST_RESULT_weekly, DIGEST_LAST_weekly, DIGEST_STARTED_weekly, NEON_BACKUP_LAST, NEON_BACKUP_LAST_RESULT, NEON_BACKUP_SCRUB_PENDING, QUEUE_REPORT_LAST, QUEUE_REPORT_LAST_RESULT, SMOKE_LAST_RESULT",
     "hint": "Written by the code itself (outcome stamps, markers, snapshots). Never hand-set; clearing one just re-arms its engine."
    },
    {
@@ -2635,7 +2635,7 @@
     "key": "props-store",
     "label": "Script Properties storage (500 KB cap)",
     "status": "ok",
-    "value": "1 KB of 500 KB (0%) · largest: NEON_BACKUP_SCRUB_PENDING 1 KB, QUEUE_REPORT_LAST_RESULT 1 KB, NEON_BACKUP_LAST_RESULT 1 KB",
+    "value": "1 KB of 500 KB (0%) · largest: NEON_BACKUP_SCRUB_PENDING 1 KB, COMPANY_HOLIDAYS_SHEET_COPY 1 KB, QUEUE_REPORT_LAST_RESULT 1 KB",
     "hint": "One 500 KB quota for every key. The escalation snapshots (ESC_SNAPSHOT_*, rows + threads) are self-capped at ~48 KB each; an unrecognized key below may be a large leftover worth deleting (Operator State #53)."
    },
    {

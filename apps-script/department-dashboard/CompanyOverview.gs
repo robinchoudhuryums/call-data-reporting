@@ -119,7 +119,13 @@ function overviewCacheKey_() {
   // key within getLatestDataDate's 5-min tier instead of waiting out the TTL.
   var fresh = (typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na';
   var rf = (typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung';   // DD-2
-  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf;
+  // DATA-1 (broad-scan 2026-10-12): + every dept's roster (DL-5's all-dept
+  // hash, the same one the YTD chart on this page carries). The freshness tag
+  // does not move on a `DO NOT EDIT!` edit, so a hire or removal left the
+  // tiles' "X of Y agents" and per-dept rollups stale for the TTL while the
+  // chart beside them updated. In this ONE helper, so every bust site inherits it.
+  var rh = (typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na';
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf + ':' + rh;
 }
 
 // Chart-range slider (hybrid). The multi-dept chart ships a 90-day series
@@ -1477,6 +1483,14 @@ function computeOverviewPipelineFreshness_() {
       // no new data) is NOT evidence that fresh DQE data landed. Require a
       // positive row count so a no-op re-import can't reset the staleness clock.
       if (!(Number(r.rows) > 0)) continue;
+      // B2/ENG-13 (broad-scan 2026-10-12): a build of an OLD date -- a bulk
+      // backfill, or a Manual Export of a historical day -- is not fresh data
+      // landing. It used to reset the clock, so the banner went green while the
+      // daily ingest was dead (and the header pill, which reads the latest DQE
+      // date, stayed amber). Count a row only when the date it built (its note)
+      // is within OVERVIEW_FRESH_BUILD_MAX_LAG_DAYS_ of when it ran; a note
+      // with no date keeps the old behaviour.
+      if (!ovPipelineRowIsFreshBuild_(r)) continue;
       // r.timestamp is 'yyyy-MM-dd HH:mm' in script TZ; parse via
       // Utilities to honor that TZ instead of letting Date treat it
       // as local-machine time.
@@ -1497,6 +1511,37 @@ function computeOverviewPipelineFreshness_() {
     Logger.log('computeOverviewPipelineFreshness_ failed: %s', e);
     return null;
   }
+}
+
+// B2/ENG-13: how far behind its run a DQE build's date may be and still count
+// as fresh ingest -- a Monday build of Friday is 3 days, a post-holiday build 4;
+// a backfill is weeks or months.
+var OVERVIEW_FRESH_BUILD_MAX_LAG_DAYS_ = 5;
+var OV_MONTHS_ = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+
+/**
+ * PURE (B2/ENG-13). The ISO date a DQE Pipeline Health row BUILT, from its
+ * note: `callDate=M/D/YYYY` (buildDQE) or a leading `Date.toDateString()`
+ * (`Mon Sep 21 2026`, the integrated + bulk paths). null when absent.
+ */
+function ovPipelineNoteDateIso_(notes) {
+  var n = String(notes || '');
+  var pad = function (x) { return (x < 10 ? '0' : '') + x; };
+  var m = /callDate=(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(n);
+  if (m) return m[3] + '-' + pad(+m[1]) + '-' + pad(+m[2]);
+  m = /^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}) (\d{4})/.exec(n);
+  if (m) return m[3] + '-' + pad(OV_MONTHS_[m[1]]) + '-' + pad(+m[2]);
+  return null;
+}
+
+/** PURE (B2/ENG-13). False only when the row names a built date too far behind its own timestamp. */
+function ovPipelineRowIsFreshBuild_(r) {
+  var built = ovPipelineNoteDateIso_(r && r.notes);
+  var ran = String((r && r.timestamp) || '').slice(0, 10);
+  if (!built || !/^\d{4}-\d{2}-\d{2}$/.test(ran)) return true;
+  var days = (Date.UTC(+ran.slice(0, 4), +ran.slice(5, 7) - 1, +ran.slice(8, 10))
+            - Date.UTC(+built.slice(0, 4), +built.slice(5, 7) - 1, +built.slice(8, 10))) / 86400000;
+  return days <= OVERVIEW_FRESH_BUILD_MAX_LAG_DAYS_;
 }
 
 /** The freshness verdict for a latest-DQE-build instant, measured at nowMs. */
@@ -1866,7 +1911,10 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     const _mtdStartWin = mtdStartIso_(_readTo);
     const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
     let grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
-    if (!grid || grid.missing || grid.empty) return out;
+    if (!grid || grid.missing || grid.empty) {
+      if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeQcdSnapshots_');   // DATA-4
+      return out;
+    }
 
     const tz = ssTZ || TZ;
     // QO-1 (broad-scan 2026-10-01): "MTD" is month-to-date through the LATEST
@@ -2046,6 +2094,12 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // Every caller looks this object up BY DEPT NAME -- nothing iterates its
     // keys -- so an extra key is safe.
     out._companyDaily = companyQcdDaily;
+    // DATA-4: no dept got a snapshot (a trimmed fallback sheet reads as rows
+    // outside the window) -- flag it when this execution fell back from Neon.
+    if (!Object.keys(out).some(function (k) { return k !== '_companyDaily'; })
+        && typeof qcdFlagEmptyIfOutage_ === 'function') {
+      qcdFlagEmptyIfOutage_('computeQcdSnapshots_');
+    }
 
   } catch (e) {
     // D-5: mark the execution so the Overview / trend puts skip (see QCDReport.gs).

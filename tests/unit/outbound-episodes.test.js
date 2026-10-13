@@ -489,3 +489,76 @@ test('CE-3: a dept view’s line owners are its (and its sub-queues’) roster p
   assert.deepEqual(names, ['Casey', 'Pat', 'Sales Voicemails', 'Sam']);
   assert.deepEqual(JSON.parse(JSON.stringify(h.ctx.obDirectScopeNames_(['CSR'], { Cara: ['CSR'] }))), ['Cara']);
 });
+
+// ── B1/PC-1: the window's EDGES (broad-scan 2026-10-12) ─────────────────────
+// An in-window attempt that continues an episode opened before the window
+// JOINS it -- it is not a new episode of this window -- and an attempt after
+// the window joins (never opens), so per-day views add up to the week.
+
+test('B1/PC-1: an attempt continuing an episode opened BEFORE the window joins it and is not counted', function () {
+  const eps = run({ ab: [ab(1, '2026-08-31', '08:00:00', 'a_q_csr'), ab(1, '2026-09-01', '09:00:00', 'a_q_csr')] });
+  assert.deepEqual(eps, [], 'Tuesday joined Monday’s episode, which started outside the window');
+});
+
+test('B1/PC-1: ...but once that earlier episode CLOSED, the in-window attempt opens a counted one', function () {
+  const eps = run({ ab: [ab(1, '2026-08-31', '08:00:00', 'a_q_csr'), ab(1, '2026-09-01', '09:00:00', 'a_q_csr')],
+                    ob: [ob(1, '2026-08-31', '10:00:00', 'Cara', true)] });
+  assert.equal(eps.length, 1);
+  assert.equal(eps[0].firstIso, '2026-09-01');
+  assert.equal(eps[0].attempts.length, 1);
+});
+
+test('B1/PC-1: an attempt more than a window before is no predecessor', function () {
+  const eps = run({ ab: [ab(1, '2026-08-28', '08:00:00', 'a_q_csr'), ab(1, '2026-09-01', '09:00:00', 'a_q_csr')] });
+  assert.deepEqual(eps.map((e) => e.firstIso), ['2026-09-01'], '08-28 + 3 = 08-31: the 09-01 attempt opens its own');
+});
+
+test('B1/PC-1: one-day views ADD UP to the multi-day view (episode counts)', function () {
+  const ev = { ab: [ab(1, '2026-09-14', '08:00:00', 'a_q_csr'), ab(1, '2026-09-15', '08:00:00', 'a_q_csr'),
+                    ab(2, '2026-09-15', '09:00:00', 'a_q_csr'), ab(1, '2026-09-16', '08:00:00', 'a_q_csr'),
+                    ab(3, '2026-09-16', '10:00:00', 'a_q_sales')],
+               ob: [ob(2, '2026-09-15', '11:00:00', 'Cara', true)] };
+  const week = run(ev, { from: '2026-09-14', to: '2026-09-16' });
+  const days = ['2026-09-14', '2026-09-15', '2026-09-16']
+    .map((d) => run(ev, { from: d, to: d }).length);
+  assert.equal(week.length, 3, 'k1 (one episode, three attempts), k2, k3');
+  assert.deepEqual(days, [1, 1, 1]);
+  assert.equal(days.reduce((a, b) => a + b, 0), week.length);
+});
+
+test('B1/PC-1: an attempt AFTER the window joins an open episode (extending its deadline) but never opens one', function () {
+  const joined = run({ ab: [ab(1, '2026-09-30', '08:00:00', 'a_q_csr'), ab(1, '2026-10-02', '08:00:00', 'a_q_csr')],
+                       ob: [ob(1, '2026-10-04', '09:00:00', 'Cara', true)] });
+  assert.equal(joined.length, 1);
+  assert.equal(joined[0].attempts.length, 2, 'the 10-02 retry joined');
+  assert.equal(joined[0].outcome, 'own', 'the deadline re-anchored on 10-02, so the 10-04 dial is inside it');
+  const alone = run({ ab: [ab(1, '2026-10-02', '08:00:00', 'a_q_csr')] });
+  assert.deepEqual(alone, [], 'an attempt past the window opens nothing');
+});
+
+test('B1/PC-1: the read span widens one window each side, identically for every fetcher', function () {
+  const s = JSON.parse(JSON.stringify(h.ctx.obEpReadSpan_('2026-09-01', '2026-09-30', 0)));
+  assert.deepEqual(s, { abFrom: '2026-08-29', abTo: '2026-10-03', evFrom: '2026-08-29', evTo: '2026-10-06' });
+  assert.equal(h.ctx.obEpReadSpan_('2026-09-01', '2026-09-30', 14).evTo, '2026-10-20', '+ the CE-2 late horizon');
+});
+
+// ── B1/PC-2: pending vs the LOADED calls ───────────────────────────────────
+
+test('B1/PC-2: an episode whose window reaches past the loaded calls stays pending, whatever the date', function () {
+  const ev = { ab: [ab(1, '2026-09-29', '08:00:00', 'a_q_csr')] };   // deadline 10-02
+  assert.equal(run(ev, { todayIso: '2026-10-09' })[0].outcome, 'none', 'data current: past the window');
+  assert.equal(run(ev, { todayIso: '2026-10-09', observedThroughIso: '2026-10-01' })[0].outcome, 'pending',
+    'calls loaded only through 10-01: 10-02’s dials are unknown');
+  assert.equal(run(ev, { todayIso: '2026-10-09', observedThroughIso: '2026-10-02' })[0].outcome, 'none',
+    'loaded through the deadline: decided');
+  assert.equal(run(ev, { todayIso: '2026-10-02', observedThroughIso: '2026-12-31' })[0].outcome, 'pending',
+    'a loaded date past yesterday is capped at yesterday (the old rule)');
+  assert.equal(run(ev, { todayIso: '2026-10-09', observedThroughIso: 'junk' })[0].outcome, 'none',
+    'malformed: falls back to yesterday');
+});
+
+test('B1/PC-2: obEpDataLagging_ is true only when the loaded calls stop before yesterday', function () {
+  assert.equal(h.ctx.obEpDataLagging_('2026-10-08', '2026-10-09'), false);
+  assert.equal(h.ctx.obEpDataLagging_('2026-10-07', '2026-10-09'), true);
+  assert.equal(h.ctx.obEpDataLagging_(null, '2026-10-09'), false, 'unknown is not a lag');
+});

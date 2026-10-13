@@ -117,6 +117,28 @@ function record(name, pass, detail) {
   const tabFocused = await page.evaluate(() =>
     !!document.activeElement && document.activeElement.getAttribute('data-ap-tab') === 'out');
   record('the tab keeps focus after it re-renders', tabFocused);
+  // UI-1 (broad-scan 2026-10-12): the tabs keyboard model -- arrows move
+  // selection AND focus, only the selected tab is in the Tab order.
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(300);
+  const kb = await page.evaluate(() => {
+    const a = document.activeElement;
+    const tabs = Array.from(document.querySelectorAll('#ap-panel .ap-tab'));
+    return { focused: a && a.getAttribute('data-ap-tab'),
+             on: (document.querySelector('#ap-panel .ap-tab.is-on') || { getAttribute: () => null }).getAttribute('data-ap-tab'),
+             tabindex: tabs.map((t) => t.getAttribute('data-ap-tab') + ':' + t.getAttribute('tabindex')).join(','),
+             labelled: (document.querySelector('#ap-panel .ap-list') || { getAttribute: () => null }).getAttribute('aria-labelledby') };
+  });
+  record('UI-1: ArrowLeft from Outbound selects and focuses Inbound (roving tabindex)',
+    kb.focused === 'in' && kb.on === 'in' && /^in:0,out:-1/.test(kb.tabindex) && kb.labelled === 'ap-tab-in', JSON.stringify(kb));
+  await page.keyboard.press('End');
+  await page.waitForTimeout(300);
+  const endTab = await page.evaluate(() => {
+    const tabs = Array.from(document.querySelectorAll('#ap-panel .ap-tab'));
+    const a = document.activeElement;
+    return (a && a.getAttribute('data-ap-tab')) === tabs[tabs.length - 1].getAttribute('data-ap-tab');
+  });
+  record('UI-1: End jumps to the last tab', endTab);
 
   // ---- 3. a re-render keeps it under the same agent ------------------------
   await page.click('#agents-table thead th[data-sort]');
@@ -133,7 +155,16 @@ function record(name, pass, detail) {
     return !!m && getComputedStyle(m).display !== 'none';
   });
   record('"Individual report" opens the Individual Report', irOpen);
-  if (irOpen) { await page.keyboard.press('Escape'); await page.waitForTimeout(700); }
+  if (irOpen) {
+    await page.keyboard.press('Escape'); await page.waitForTimeout(700);
+    // B3/CL-14: focus returns to the panel's button, never the Reports menu's
+    // launcher (hidden for a manager) or <body>.
+    const back = await page.evaluate(() => {
+      const a = document.activeElement;
+      return a ? (a.hasAttribute('data-ap-ir') ? 'ap-ir' : (a.id || a.tagName)) : 'none';
+    });
+    record('closing the Individual Report returns focus to the panel\'s button', back === 'ap-ir', 'focus=' + back);
+  }
 
   // ---- 5. Escape and Collapse close it and hand focus back ---------------
   await page.locator('#ap-panel .ap-day').first().focus();

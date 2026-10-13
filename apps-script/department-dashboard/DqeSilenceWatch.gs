@@ -149,10 +149,27 @@ function runDqeSilenceWatch_() {
                 : ' — ALERT EMAIL NOT SENT (no recipients or send failed); will retry next run'));
     } else {
       props.setProperty('DQE_SILENCE_STREAKS', JSON.stringify(res.streaks));
-      var watching = Object.keys(res.streaks).length;
-      props.setProperty('DQE_SILENCE_WATCH_LAST_RESULT',
-        'ok ' + targetIso + ' (' + read.perDept.length + ' depts checked'
-        + (watching ? ', ' + watching + ' under-threshold streak(s) watched' : '') + ')');
+      // B2/ENG-2 (broad-scan 2026-10-12): an ALERTED streak that is still open
+      // keeps the outcome bad for the whole episode (IngestWatchdog's
+      // "stale (already alerted)" discipline). It used to read `ok` the day
+      // after the one email, while per-agent data kept going missing and the
+      // ~14-day rebuild window shrank -- green on the page CLAUDE.md calls
+      // the trustworthy one -- and counted the dark depts as "under-threshold".
+      var dark = Object.keys(res.streaks).filter(function (d) { return res.streaks[d] && res.streaks[d].alerted; }).sort();
+      var watching = Object.keys(res.streaks).length - dark.length;
+      if (dark.length) {
+        props.setProperty('DQE_SILENCE_WATCH_LAST_RESULT',
+          'SILENT (already alerted) ' + dark.length + ' dept(s) still dark as of ' + targetIso + ' — '
+          + dark.map(function (d) {
+              var s = res.streaks[d];
+              return d + ' (' + s.days + 'd since ' + s.since + ', ' + s.calls + ' queue calls)';
+            }).join(', ')
+          + (watching ? '; ' + watching + ' under-threshold streak(s) watched' : ''));
+      } else {
+        props.setProperty('DQE_SILENCE_WATCH_LAST_RESULT',
+          'ok ' + targetIso + ' (' + read.perDept.length + ' depts checked'
+          + (watching ? ', ' + watching + ' under-threshold streak(s) watched' : '') + ')');
+      }
     }
   } catch (e) {
     try {

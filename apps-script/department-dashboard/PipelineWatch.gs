@@ -247,6 +247,11 @@ function pipelineWatchRecord_(props, watermarkMs, result) {
 // out-of-order append), and the seen-key store that keeps it from re-emailing.
 var PIPELINE_WATCH_LOOKBACK_MS_ = 2 * 3600 * 1000;
 var PIPELINE_WATCH_SEEN_MAX_ = 200;
+// ENG-3 (broad-scan 2026-10-12): the BYTE bound, the LOGIN_NOTIFY_SEEN rule.
+// 200 keys of `<13-digit ms>|<step>` come to ~11-13 KB -- past the ~9 KB
+// per-value limit -- so a failure burst made the write throw and the next run
+// re-emailed the whole burst. Oldest keys go first.
+var PIPELINE_WATCH_SEEN_MAX_BYTES_ = 8000;
 
 /** EN-6: one failure row's identity -- its timestamp and step. */
 function pipelineWatchKey_(r) {
@@ -272,7 +277,13 @@ function pipelineWatchSeenWrite_(props, seen, emailed, watermarkMs) {
     var keys = Object.keys(next).sort(function (a, b) { return next[b] - next[a]; }).slice(0, PIPELINE_WATCH_SEEN_MAX_);
     var out = {};
     keys.forEach(function (k) { out[k] = next[k]; });
-    props.setProperty('PIPELINE_WATCH_SEEN', JSON.stringify(out));
+    var json = JSON.stringify(out);
+    // ENG-3: newest-first `keys`, so dropping from the tail drops the oldest.
+    while (keys.length && encodeURIComponent(json).replace(/%[0-9A-F]{2}/gi, 'x').length > PIPELINE_WATCH_SEEN_MAX_BYTES_) {
+      delete out[keys.pop()];
+      json = JSON.stringify(out);
+    }
+    props.setProperty('PIPELINE_WATCH_SEEN', json);
   } catch (e) {
     Logger.log('pipelineWatchSeenWrite_: not saved (%s) -- the overlap may re-email a row once.', (e && e.message) || e);
   }
@@ -301,6 +312,24 @@ function pipelineWatchTailClipped_(rows, requestedRows, sinceMs) {
  * caller can advance past successes too). `sinceMs === null` yields no failures
  * (first-run baseline) while still computing `maxTsMs`.
  */
+// TOOL-2 (owner 2026-10-12, broad-scan Batch 4): the two daily export steps
+// tag a failure that is just Neon being unreachable (cdr-report's
+// EXPORT_NEON_UNREACHABLE_TAG_ -- cross-file-pins keeps the literals equal).
+// That is the expected outage -- the capture's own rows already report it --
+// so it is not emailed; every OTHER export failure (a SQL error, the cell cap)
+// still is. The Health page shows both.
+var PIPELINE_WATCH_QUIET_TAG_ = 'Neon unreachable (expected; copy kept): ';
+var PIPELINE_WATCH_QUIET_STEPS_ = { inboundExport: true, outboundExport: true };
+// PIPE-2: a paused / stopped bulk run's gap row is shown on the Health page
+// (red until the run completes) but not emailed -- the operator is at the
+// pause alert, and a routine run pauses every ~15 min.
+var PIPELINE_WATCH_QUIET_ALWAYS_ = { 'bulkBackfill:paused': true };
+function pipelineWatchQuietFailure_(r) {
+  if (r && PIPELINE_WATCH_QUIET_ALWAYS_[String(r.step || '')]) return true;
+  return !!(r && PIPELINE_WATCH_QUIET_STEPS_[String(r.step || '')]
+    && String(r.notes || '').indexOf(PIPELINE_WATCH_QUIET_TAG_) === 0);
+}
+
 function pipelineWatchScan_(rows, sinceMs, opts) {
   var maxTsMs = (sinceMs == null) ? 0 : sinceMs;
   var newFailures = [];
@@ -321,6 +350,7 @@ function pipelineWatchScan_(rows, sinceMs, opts) {
     }
     if (ts <= floorMs) continue;
     if (String(r.status || '').toLowerCase() !== 'failure') continue;
+    if (pipelineWatchQuietFailure_(r)) continue;   // TOOL-2: the expected export outage
     if (ts <= sinceMs && seen[pipelineWatchKey_(r)]) continue;   // EN-6: already emailed
     if (ts > sinceMs || !seen[pipelineWatchKey_(r)]) newFailures.push(r);
   }

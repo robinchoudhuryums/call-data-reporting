@@ -491,6 +491,19 @@ function getOutboundCallJourney_(callId, date, dept, user) {
           if (callIdInDeptMissedReport_(dept, date, linkers[i])) entitled = true;
         }
       }
+      // B1/PC-3: the THIRD arm -- the CE-2 called-back list's "↳ callback
+      // path". An ordinary callback dial has no assist link, so the two arms
+      // above refused every manager. Entitled iff the dial went to a caller
+      // (callee_hash = caller_hash) who ABANDONED one of this dept's queues
+      // within the callback window before it -- the episode population
+      // (outboundAbandonWhere_'s clauses), re-derived here, never trusted from
+      // the client. Only once the outbound views are RELEASED (6c): while
+      // OUTBOUND_VETTING_GATE_ stands, callback data is admin-only everywhere.
+      // Neon-only on purpose: the called-back list itself is Neon-only, so the
+      // sheet fallback keeps refusing (fail closed).
+      if (!entitled && typeof OUTBOUND_VETTING_GATE_ !== 'undefined' && !OUTBOUND_VETTING_GATE_) {
+        entitled = outboundJourneyCallbackEntitled_(conn, callId, date, dept, deptQueues2);
+      }
       if (!entitled) {
         Logger.log('getOutboundCallJourney_: refused (no drillable link) call_id=%s date=%s dept=%s',
           callId, date, dept || '(none)');
@@ -516,6 +529,42 @@ function getOutboundCallJourney_(callId, date, dept, user) {
     return outboundCallJourneySheetFallback_(callId, date, dept, user);
   } finally {
     try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * B1/PC-3. The callback arm of the outbound-journey entitlement: true iff
+ * outbound call (`date`, `callId`) dialed a caller who abandoned one of
+ * `dept`'s queues (child-inclusive `deptQueues`; '' = the company view, any
+ * queue) in the work window, on a trackable, external, queue-reached call,
+ * within OUTBOUND_CALLBACK_WINDOW_DAYS before the dial's date -- the
+ * population a CE-1 episode is built from. Bound parameters for the client
+ * values; fails CLOSED (false) on any error.
+ */
+function outboundJourneyCallbackEntitled_(conn, callId, date, dept, deptQueues) {
+  try {
+    const win = (typeof OUTBOUND_CALLBACK_WINDOW_DAYS !== 'undefined') ? OUTBOUND_CALLBACK_WINDOW_DAYS : 3;
+    const sql = 'SELECT 1 AS ok FROM outbound_calls o '
+      + 'WHERE o.call_date = ?::date AND o.call_id = ? AND o.callee_hash IS NOT NULL '
+      + 'AND EXISTS (SELECT 1 FROM inbound_calls c WHERE c.caller_hash = o.callee_hash '
+      +   "AND c.disposition = 'abandoned' AND COALESCE(c.is_internal, FALSE) = FALSE "
+      +   "AND COALESCE(trim(c.entry_queue),'') <> '' "
+      +   'AND c.call_date BETWEEN (?::date - ' + Number(win) + ') AND ?::date '
+      +   'AND ' + inboundWindowClause_(true)
+      +   inboundDeptPredicate_(dept, deptQueues) + ') LIMIT 1';
+    const st = conn.prepareStatement(sql);
+    st.setString(1, date);
+    st.setString(2, callId);
+    st.setString(3, date);
+    st.setString(4, date);
+    const rs = st.executeQuery();
+    const ok = rs.next();
+    rs.close(); st.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(ok ? 1 : 0, 'journey-outbound');
+    return ok;
+  } catch (e) {
+    Logger.log('outboundJourneyCallbackEntitled_ failed (refusing): ' + (e && e.message ? e.message : e));
+    return false;
   }
 }
 

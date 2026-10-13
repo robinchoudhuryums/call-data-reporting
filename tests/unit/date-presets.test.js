@@ -125,3 +125,18 @@ test('tripwire: every preset resolver delegates -- none computes its own dates',
       + 'cannot drift: ' + offenders.join(', '));
   });
 });
+
+// B3/CL-5 (broad-scan 2026-10-12): the month presets step back by calendar
+// month and CLAMP to the target month's last day. setMonth / setFullYear
+// overflowed instead, dropping days off the front of the window.
+test('B3/CL-5: "Last 3 months" / "Last 12 months" clamp at month ends instead of overflowing', function () {
+  // May 31 -> Feb 31 overflowed to Mar 3; the clamp gives Feb 28 (2026 is not a leap year).
+  assert.deepEqual(datePresetRange_('last3Months', new Date(2026, 4, 31)), { from: '2026-02-28', to: '2026-05-30' });
+  // Leap day -> the previous Feb 28, not Mar 1.
+  assert.deepEqual(datePresetRange_('last12Months', new Date(2028, 1, 29)), { from: '2027-02-28', to: '2028-02-28' });
+  // Year boundary: Jan 31 -> Oct 31 of the previous year.
+  assert.deepEqual(datePresetRange_('last3Months', new Date(2026, 0, 31)), { from: '2025-10-31', to: '2026-01-30' });
+  // An ordinary day is unchanged.
+  assert.deepEqual(datePresetRange_('last3Months', WED), { from: '2026-05-12', to: '2026-08-11' });
+  assert.deepEqual(datePresetRange_('last12Months', WED), { from: '2025-08-12', to: '2026-08-11' });
+});

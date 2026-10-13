@@ -374,3 +374,36 @@ test('QO-1: the Neon path re-reads from the latest month\'s 1st when the window 
     });
   } finally { h.ctx.readQcdGrid_ = realGrid; }
 });
+
+// DATA-4 (broad-scan 2026-10-12): on the Neon path an unreachable Neon falls
+// back to the sheet; when that copy is missing or trimmed below the window the
+// snapshot is empty, and the readers used to return it UNflagged -- the
+// payload then cached for 6 h with no Queue panel or chips. Now the execution
+// is flagged (the D-5 skip-put rule), but ONLY when it actually fell back.
+test('DATA-4: an empty snapshot after a Neon fallback flags the execution; the same empty window on the sheet path does not', function () {
+  const reset = function () {
+    h.state.props.SPREADSHEET_ID = 'fake';
+    h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+    h.call('resetExecReadFailureFlags_');
+  };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });   // the fallback sheet is gone
+  // Neon path, Neon unreachable.
+  reset();
+  h.state.props.QCD_READ_SOURCE = 'neon';
+  const realFetch = h.ctx.neonFetchQcdGrid_;
+  h.ctx.neonFetchQcdGrid_ = function () { return null; };
+  try {
+    assert.equal(h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago', {}), null);
+    assert.equal(h.call('qcdSnapshotReadFailed_'), true, 'the per-dept snapshot flags it');
+    reset();
+    h.call('computeQcdSnapshots_', ['CSR'], '2026-10-01', 'America/Chicago');
+    assert.equal(h.call('qcdSnapshotReadFailed_'), true, 'the Overview snapshot flags it');
+  } finally {
+    h.ctx.neonFetchQcdGrid_ = realFetch;
+    delete h.state.props.QCD_READ_SOURCE;
+  }
+  // Sheet path, same missing sheet: a genuinely empty source, not an outage.
+  reset();
+  assert.equal(h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago', {}), null);
+  assert.equal(h.call('qcdSnapshotReadFailed_'), false, 'no fallback, no flag -- caches as before');
+});

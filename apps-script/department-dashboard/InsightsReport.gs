@@ -188,7 +188,13 @@ function getInsightsReport(req) {
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
                  + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey
-                 + ':' + reportFreshnessTag_() + ':' + answerRateCacheTag_();   // DD-2
+                 + ':' + reportFreshnessTag_() + ':' + answerRateCacheTag_()   // DD-2
+                 // DATA-6: + the latest QCD date -- Queue health is embedded.
+                 + ':q' + qcdFreshnessTag_()
+                 // DATA-2: + the dept roster (DL-5). An EXPLICIT pick's agentsKey
+                 // does not move when the roster does, yet the team average and
+                 // the roster-agent count are roster-derived (INV-27).
+                 + ':' + hashAgents_((roster && roster.names) || []);
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

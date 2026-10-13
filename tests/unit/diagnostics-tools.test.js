@@ -14,7 +14,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 const { rosterGrid } = require('../harness/fixtures');
 
 const TOOLS = ['diagnoseDate', 'whyNoMatches', 'diagnoseTimes', 'dumpCell', 'diagnoseAbandoned',
-  'auditQueueSplitAttribution', 'probeAnswerRateFormulas'];
+  'auditQueueSplitAttribution', 'probeAnswerRateFormulas', 'probeBriefThresholds'];
 
 const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'NeonRead.gs', 'Diagnostics.gs'] });
 
@@ -43,4 +43,44 @@ test('CH-1: each tool refuses a non-admin before reading anything', function () 
     // resolveUser_ itself reads Access Control; the tool must not get further.
     assert.ok(opened - before <= 2, n + ' read the workbook past the gate (' + (opened - before) + ' sheet opens)');
   });
+});
+
+// ENG-14 (broad-scan 2026-10-12): diagnoseAbandoned attributes sentinel rows
+// by queue NAME through the report's own helper, so its "== what the report
+// will show" tally matches the Missed report (it still matched by extension).
+test('ENG-14: diagnoseAbandoned matches sentinels by NAME (the report\'s helper), not by col-D extension overlap', function () {
+  const { dqeRow, dqeSheet } = require('../harness/fixtures');
+  const hd = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'MissedCallsReport.gs', 'Diagnostics.gs'] });
+  hd.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
+  hd.state.userEmail = 'admin@x.com';
+  hd.ctx.inboundQueuesForDept_ = function (d) { return d === 'CSR' ? ['A_Q_CSR'] : []; };
+  hd.ctx.getLatestDataDate = function () { return '2026-10-09'; };
+  hd.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'] }),
+    'DQE Historical Data': dqeSheet([
+      // CSR's own queue, sharing NO extension with the roster: the report counts it.
+      dqeRow({ date: '2026-10-09', agent: 'A_Q_CSR', ext: '999', abdIds: '111' }),
+      // Another dept's queue that SHARES the roster's extension: the report does not.
+      dqeRow({ date: '2026-10-09', agent: 'A_Q_Sales', ext: '101', abdIds: '222' }),
+      dqeRow({ date: '2026-10-09', agent: 'Ann', ext: '101', abdIds: '333' }),
+    ]),
+  } });
+  const t = hd.call('diagnoseAbandoned');
+  assert.equal(t.sentinelHits, 1);
+  assert.equal(t.sentinelMiss, 1);
+  assert.equal(t.sentinelParents, 1, 'only A_Q_CSR (pre-fix: A_Q_Sales by its shared extension, A_Q_CSR dropped)');
+  assert.equal(t.union, 2, 'Ann\'s 333 + A_Q_CSR\'s 111');
+  // The report itself, on the same rows, reaches the same union.
+  const r = hd.call('computeMissedCallsReport_', 'CSR', '2026-10-09', '2026-10-09', 'roster');
+  assert.equal(r.meta.abandonedCallCount, t.union);
+});
+
+test('ENG-14 follow-on: with the sheet retired on a Neon-read install, diagnoseAbandoned says it cannot trace (never an empty tally)', function () {
+  const hd = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'MissedCallsReport.gs', 'Diagnostics.gs'] });
+  hd.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com', DQE_READ_SOURCE: 'neon' };
+  hd.state.userEmail = 'admin@x.com';
+  hd.ctx.getLatestDataDate = function () { return '2026-10-09'; };
+  hd.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'] }) } });
+  const r = JSON.parse(JSON.stringify(hd.call('diagnoseAbandoned')));
+  assert.deepEqual(r, { sheetUnavailable: true, neonReads: true });
 });

@@ -205,3 +205,21 @@ test('R25b: no rows in the window returns null WITHOUT a wide read', function ()
   const wide = install.reads.filter(function (x) { return x.nc >= 18 && x.row > 1; });
   assert.equal(wide.length, 0, 'an empty window costs only the narrow date scan');
 });
+
+// DATA-7 (broad-scan 2026-10-12): computeSummary_ asks for the current AND the
+// prior window; with a shared ctx the date column is read once, not twice.
+test('DATA-7: a shared ctx reads the date column once across the current and prior windows', function () {
+  install();
+  const ctx = {};
+  const cur = h.call('computeCsrTransferRange_', 'CSR', '2026-08-01', '2026-08-31', ctx);
+  const prior = h.call('computeCsrTransferRange_', 'CSR', '2026-07-01', '2026-07-31', ctx);
+  const dateReads = install.reads.filter(function (x) { return x.row === 2 && x.nc === 1; });
+  assert.equal(dateReads.length, 1, 'one date-column read for both windows');
+  assert.equal(cur.totalCalls, 150);
+  assert.equal(prior.totalCalls, 999, 'the prior window still finds its own rows');
+  install();
+  h.call('computeCsrTransferRange_', 'CSR', '2026-08-01', '2026-08-31');
+  h.call('computeCsrTransferRange_', 'CSR', '2026-07-01', '2026-07-31');
+  assert.equal(install.reads.filter(function (x) { return x.row === 2 && x.nc === 1; }).length, 2,
+    'without a ctx each call reads its own (no cross-call memo)');
+});

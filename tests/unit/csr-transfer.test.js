@@ -493,3 +493,83 @@ test('PC-10: the hashless note names the missing HMAC_SECRET; a hashed write add
   assert.match(src, /status: inboundRes\.hashless \? 'failure' : 'success'/);
   assert.match(src, /status: outboundRes\.hashless \? 'failure' : 'success'/);
 });
+
+// PIPE-1 (broad-scan 2026-10-12): the bulk archive's CDR + QCD Neon mirrors
+// are AUTHORITATIVE per date. dedupeAlreadyArchived_ drops WHOLE dates, so
+// each date left in the payload is complete, and an upsert-only mirror kept
+// the rows a shrinking bulk force-rebuild had removed.
+test('PIPE-1: processBatchArchive mirrors CDR + QCD authoritatively, and only for dates the dedup kept', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const pend = function (date, type, fill) {
+    const r = new Array(34).fill('');
+    r[0] = date; r[1] = type; r[2] = 'Dept'; r[3] = 'Sep-2026'; r[4] = 'W1';
+    Object.keys(fill || {}).forEach(function (k) { r[+k] = fill[k]; });
+    return r;
+  };
+  const header = function (n) { return [new Array(n).fill('h')]; };
+  const qcdOld = ['Sep-2026', 'W1', '9/1/2026', 'A_Q_X', 'Total Calls', 5, 5, 0, '0:00:10', '0:00:05', 0, ''];
+  h.state.props = { TARGET_SS_ID: 'fake' };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Pending Archive': [new Array(34).fill('h'),
+      pend('2026-09-01', 'QCD', { 5: 'Total Calls', 6: 9, 7: 8, 8: 1 }),          // already archived -> dropped
+      pend('2026-09-02', 'QCD', { 5: 'Total Calls', 6: 7, 7: 7, 8: 0 }),
+      pend('2026-09-02', 'CDR', { 5: 'Ann', 6: 3 })],
+    'CDR Historical Data': header(26),
+    'Q Path Historical Data': header(11),
+    'QCD Historical Data': header(12).concat([qcdOld]),
+    'CSR Transfer Historical Data': header(18),
+  } });
+  const calls = [];
+  const saved = { cdr: h.ctx.writeCDRRowsToNeon, qcd: h.ctx.writeQCDRowsToNeon, audit: h.ctx.appendToAuditLog };
+  h.ctx.writeCDRRowsToNeon = function (rows, opts) { calls.push({ t: 'CDR', dates: rows.map(function (r) { return r.callDate; }), opts: opts }); return { inserted: rows.length }; };
+  h.ctx.writeQCDRowsToNeon = function (rows, opts) { calls.push({ t: 'QCD', n: rows.length, opts: opts }); return { inserted: rows.length }; };
+  h.ctx.appendToAuditLog = function () {};
+  const hadUi = h.ctx.SpreadsheetApp.getUi;
+  h.ctx.SpreadsheetApp.getUi = function () { return { alert: function () {}, ButtonSet: { OK: 1 } }; };
+  try {
+    const res = h.call('processBatchArchive', true, true);
+    assert.equal(res.qcdCount, 1, 'the already-archived 09-01 QCD row was dropped by the date-level dedup');
+    const cdr = calls.filter(function (c) { return c.t === 'CDR'; })[0];
+    const qcd = calls.filter(function (c) { return c.t === 'QCD'; })[0];
+    assert.ok(cdr && cdr.opts && cdr.opts.authoritative === true, 'CDR mirror is authoritative');
+    assert.ok(qcd && qcd.opts && qcd.opts.authoritative === true, 'QCD mirror is authoritative');
+    assert.equal(qcd.n, 1, 'so its per-date replace names ONLY 09-02, never the date the sheet already held');
+    assert.deepEqual(Array.from(cdr.dates), ['2026-09-02']);
+  } finally {
+    h.ctx.writeCDRRowsToNeon = saved.cdr; h.ctx.writeQCDRowsToNeon = saved.qcd; h.ctx.appendToAuditLog = saved.audit;
+    h.ctx.SpreadsheetApp.getUi = hadUi;
+  }
+  // The bulk report names the DQE prune step after the upsert.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /THEN run previewNeonExtraRows\(\) and, if it lists rows, "\s*\+ "pruneNeonExtraRows\(\)/);
+});
+
+// PIPE-3 (broad-scan 2026-10-12): CDR / Q Path / QCD / CSR stamp the TAB's
+// date on their rows; a mislabeled tab now refuses before anything is
+// deleted or written (DQE's F2 and Direct's P-4 already did).
+test('PIPE-3: a tab whose calls are mostly on another day refuses; carry-over legs from the day before do not', function () {
+  const grid = function (dates) {
+    return [['id', 'leg', 'start']].concat(dates.map(function (d, i) { return [String(i), '1', d]; }));
+  };
+  const tab = new Date(2026, 8, 2, 12);   // 2026-09-02, as processNewImport builds it
+  // A real 09-02 file with two 09-01 carry-over legs: accepted.
+  h.call('assertSourceDateMatchesTab_', grid(['9/1/2026 23:58:01', '9/1/2026 23:59:40',
+    '9/2/2026 8:30:00 AM', '9/2/2026 9:01:12', '9/2/2026 14:00:00']), tab, 'Call_Legs_2026-09-02');
+  // The 09-03 file saved under the 09-02 name: refused, naming both days.
+  assert.throws(function () {
+    h.call('assertSourceDateMatchesTab_', grid(['9/2/2026 23:59:00', '9/3/2026 8:30:00',
+      '9/3/2026 9:00:00', '2026-09-03 10:00:00']), tab, 'Call_Legs_2026-09-02');
+  }, /Source date mismatch: Call_Legs_2026-09-02 is dated 2026-09-02 but 3 of its 4 calls are on 2026-09-03 .*Nothing was deleted or written/);
+  // No parseable start time: left to the empty-source handling, not refused here.
+  h.call('assertSourceDateMatchesTab_', grid(['', 'garbage']), tab, 'x');
+  const c = h.call('sourceCallDateCounts_', grid(['9/3/26 1:00', '2026-09-03', '9/2/2026 x']));
+  assert.deepEqual(JSON.parse(JSON.stringify(c.days)), ['2026-09-03', '2026-09-02']);
+
+  // Wired ahead of the Raw Data rewrite and the force-delete.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const iCheck = src.indexOf('assertSourceDateMatchesTab_(cleanData, dateObj, latestName);');
+  assert.ok(iCheck > 0);
+  assert.ok(iCheck < src.indexOf('rawDataSheet.clearContents();'));
+  assert.ok(iCheck < src.indexOf('forceDeleted.qcd = !!existsInQCD;'));
+  assert.ok(iCheck < src.indexOf('const results = calculateMetricsInMemory(cleanData, configSheet);'));
+});

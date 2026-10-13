@@ -361,7 +361,7 @@
         if (saved.length) {
           alRsStatus_('error', 'Partly saved: the ' + saved.join(' and ') + ' subscription for ' + email
             + ' was saved, but the ' + labels[i - 1] + ' save failed: ' + why);
-          alLoadInit_();   // show the half that did save
+          alReloadSubscribers_();   // show the half that did save (B3/CL-11)
         } else {
           alRsStatus_('error', 'Save failed: ' + why);
         }
@@ -372,7 +372,7 @@
         if (btn) btn.disabled = false;
         showToast('Saved subscriber ' + email, 'success');
         alRsClear_();
-        alLoadInit_();   // reload both lists + trigger status
+        alReloadSubscribers_();   // reload both lists + trigger status (B3/CL-11)
         return;
       }
       tasks[i++](run);
@@ -386,7 +386,7 @@
     if (mutationBusy_('alDgRemove')) return;   // C2-6
     alDgStatus_('loading', 'Removing ' + c.email + '…');
     google.script.run
-      .withSuccessHandler(function () { mutationDone_('alDgRemove'); showToast('Removed digest subscriber ' + c.email, 'success'); alLoadInit_(); })
+      .withSuccessHandler(function () { mutationDone_('alDgRemove'); showToast('Removed digest subscriber ' + c.email, 'success'); alReloadSubscribers_(); })
       .withFailureHandler(function (err) { mutationDone_('alDgRemove'); alDgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
       .removeDigestConfigRow({ email: c.email, department: c.department });
   }
@@ -808,6 +808,20 @@
     const installBtn = $('al-install-qr-btn'), uninstallBtn = $('al-uninstall-qr-btn');
     if (installBtn)   installBtn.style.display   = installed ? 'none' : '';
     if (uninstallBtn) uninstallBtn.style.display = installed ? ''     : 'none';
+  }
+  // B3/CL-11 (broad-scan 2026-10-12): a subscriber save / remove re-reads ONLY
+  // the two subscriber lists (digests + the Daily Call Queue Report) -- the
+  // alCfgApplySection_ rule. It used to call alLoadInit_(), which hid the whole
+  // modal behind its spinner and re-rendered every section from the server,
+  // silently wiping unsaved Display-standards edits and a pending alert preview.
+  function alReloadSubscribers_() {
+    google.script.run
+      .withSuccessHandler(function (d) { alRenderDigestInit_(d || { config: [], trigger: {} }); })
+      .withFailureHandler(function (err) {
+        alRenderDigestInit_({ config: [], trigger: {}, loadError: (err && err.message) ? err.message : String(err) });
+      })
+      .getDigestsInit();
+    alQrReload_();
   }
   function alQrReload_() {
     google.script.run
@@ -1326,9 +1340,18 @@
         btn.disabled = true; btn.textContent = prev;
         alRenderResults_(results || [], /*isPreview=*/false);
         const sent = (results || []).filter(function (r) { return r.status === 'sent'; }).length;
-        alSetRunStatus_('success', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's')
-          + ' sent. Refresh the page to see the updated log.');
-        showToast(sent + ' alert' + (sent === 1 ? '' : 's') + ' sent', 'success');
+        // ENG-7 follow-on: rows the server could not write to the Alert Log.
+        const unlogged = (results || []).filter(function (r) { return r.logFailed; }).length;
+        if (unlogged) {
+          alSetRunStatus_('warn', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's') + ' sent, but '
+            + unlogged + ' row' + (unlogged === 1 ? ' was' : 's were') + ' NOT written to the Alert Log '
+            + '(see Notes). The sends stand -- do not send again to rebuild the log.');
+          showToast(sent + ' sent; ' + unlogged + ' not logged', 'error', 8000);
+        } else {
+          alSetRunStatus_('success', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's')
+            + ' sent. Refresh the page to see the updated log.');
+          showToast(sent + ' alert' + (sent === 1 ? '' : 's') + ' sent', 'success');
+        }
         // Re-fetch the log so the new entries appear inline.
         google.script.run
           .withSuccessHandler(function (data) { if (data) alRenderLog_(data.log || []); })
@@ -1985,24 +2008,44 @@
         const renamedRows = res.ok.reduce(function (a, b) { return a + (b.renamed || 0); }, 0);
         const okRenames = res.ok.filter(function (o) { return o.item.kind !== 'roster-add'; }).length;
         const okAdds    = res.ok.filter(function (o) { return o.item.kind === 'roster-add'; }).length;
+        // PC-4 (broad-scan 2026-10-12): a rename SKIPS the days on which the
+        // target agent already has a row (renaming them would double-count);
+        // those days stay under the outlier's name, so it stays listed.
+        const collided = res.ok.filter(function (o) {
+          return o.res && o.res.collisionDates && o.res.collisionDates.length;
+        });
+        const collisionText = collided.length
+          ? ' ⚠ ' + collided.map(function (o) {
+              const d = o.res.collisionDates;
+              return o.item.fromName + ': ' + d.length + ' day' + (d.length === 1 ? '' : 's')
+                + ' left unrenamed because ' + o.item.toName + ' already has a row that day ('
+                + d.slice(0, 5).join(', ') + (d.length > 5 ? ', …' : '') + ')';
+            }).join('; ')
+            + '. Merge those days deliberately with the CDR Report project’s previewDqeDuplicateMerge / '
+            + 'repairDqeDuplicateMerge (Operator State #56); the alias already routes future imports.'
+          : '';
         if (res.failed.length) {
           ofSetStatus_('error', 'Applied ' + res.ok.length + ' of ' + items.length + '. '
             + res.failed.length + ' failed: '
-            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; '));
+            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; ')
+            + collisionText);
         } else {
           const bits = [];
           if (okRenames) bits.push('renamed ' + renamedRows + ' row' + (renamedRows === 1 ? '' : 's')
             + ' across ' + okRenames + ' outlier' + (okRenames === 1 ? '' : 's'));
           if (okAdds) bits.push('added ' + okAdds + ' new assignment' + (okAdds === 1 ? '' : 's'));
-          ofSetStatus_('success', 'Done — ' + bits.join(' and ')
-            + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).');
+          ofSetStatus_(collided.length ? 'warn' : 'success', 'Done — ' + bits.join(' and ')
+            + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).'
+            + collisionText);
         }
         showToast('Applied ' + res.ok.length + ' change' + (res.ok.length === 1 ? '' : 's'),
           res.failed.length ? 'error' : 'success');
         // Seamless refresh (Batch 1): drop applied orphans + merge the freshest
         // aliases / log / rosterNames across the batch (roster-adds return
         // rosterNames+log; renames return aliases+log -- take the latest of each).
-        const applied = res.ok.map(function (o) { return o.item.fromName; });
+        // PC-4: an outlier with colliding days still has rows -- keep it listed.
+        const applied = res.ok.filter(function (o) { return collided.indexOf(o) === -1; })
+          .map(function (o) { return o.item.fromName; });
         const merged = {};
         res.ok.forEach(function (o) {
           const rr = o.res || {};
@@ -2717,7 +2760,26 @@
     });
   }
 
+  // B3/CL-12 (broad-scan 2026-10-12): a save / deactivate in flight locks the
+  // controls that would change WHICH dept is being edited -- the row Edit
+  // buttons, Cancel and Deactivate. Their handlers used to read the global
+  // dcEditDept at RESPONSE time, so an Edit click mid-save announced "Saved B"
+  // for a save of A (and the reload then discarded B's open form), and a
+  // Cancel announced "Saved null". The handlers now name the dept captured at
+  // send time as well.
+  let dcBusy_ = false;
+  function dcSetBusy_(on) {
+    dcBusy_ = !!on;
+    ['dc-cancel-btn', 'dc-deactivate-btn'].forEach(function (id) {
+      const b = $(id); if (b) b.disabled = dcBusy_;
+    });
+    document.querySelectorAll('#dc-effective-tbody .dc-row-edit').forEach(function (b) {
+      b.disabled = dcBusy_;
+    });
+  }
+
   function dcOpenEdit_(eff) {
+    if (dcBusy_) return;
     dcEditDept = eff.dept;
     const nameEl = $('dc-edit-dept-name');
     if (nameEl) nameEl.textContent = eff.dept;
@@ -2738,15 +2800,17 @@
   }
 
   function dcCloseEdit_() {
+    if (dcBusy_) return;
     dcEditDept = null;
     const sec = $('dc-edit-section');
     if (sec) sec.style.display = 'none';
   }
 
   function dcSave_() {
-    if (!dcEditDept) return;
+    if (!dcEditDept || dcBusy_) return;
+    const dept = dcEditDept;   // B3/CL-12: the dept THIS save is for
     const req = {
-      dept:              dcEditDept,
+      dept:              dept,
       qcdQueues:         $('dc-edit-qcd').value,
       overviewParent:    $('dc-edit-parent').value,
       teamAvgExcludes:   $('dc-edit-excludes').value,
@@ -2763,8 +2827,10 @@
     }
     const restoreSaveBtn = function () {
       if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+      dcSetBusy_(false);
     };
-    dcSetStatus_('loading', 'Saving config for ' + dcEditDept + '…');
+    dcSetBusy_(true);
+    dcSetStatus_('loading', 'Saving config for ' + dept + '…');
     google.script.run
       .withSuccessHandler(function (res) {
         restoreSaveBtn();
@@ -2779,17 +2845,17 @@
           // double-mapping guidance only when a double-mapping warning is
           // actually present; the warning text itself carries the rest.
           const doubleMapped = warns.some(function (w) { return /also mapped to/.test(w); });
-          dcSetStatus_('success', 'Saved ' + dcEditDept + '. ⚠ ' + warns.join(' ')
+          dcSetStatus_('success', 'Saved ' + dept + '. ⚠ ' + warns.join(' ')
             + (doubleMapped
                 ? ' Double-mapped queues are tolerated but usually a config mistake — '
                   + 'remove the queue from one dept if unintended.'
                 : ''));
-          showToast('Saved ' + dcEditDept + (doubleMapped
+          showToast('Saved ' + dept + (doubleMapped
             ? ' — queue mapped to 2+ depts' : ' — with a warning'), 'success');
         } else {
-          dcSetStatus_('success', 'Saved ' + dcEditDept
+          dcSetStatus_('success', 'Saved ' + dept
             + '. Changes take effect on the next request (Overview refreshes immediately; report caches within the TTL, up to ~6h).');
-          showToast('Saved config for ' + dcEditDept, 'success');
+          showToast('Saved config for ' + dept, 'success');
         }
         dcLoadInit_(true);   // CL-15
       })
@@ -2802,29 +2868,29 @@
   }
 
   function dcDeactivate_() {
-    if (!dcEditDept) return;
-    if (!window.confirm('Deactivate the override row for "' + dcEditDept
+    if (!dcEditDept || dcBusy_) return;
+    const dept = dcEditDept;   // B3/CL-12
+    if (!window.confirm('Deactivate the override row for "' + dept
         + '"? This reverts the dept to the built-in defaults.')) return;
-    const deact = $('dc-deactivate-btn');
-    if (deact) deact.disabled = true;
-    dcSetStatus_('loading', 'Deactivating override for ' + dcEditDept + '…');
+    dcSetBusy_(true);
+    dcSetStatus_('loading', 'Deactivating override for ' + dept + '…');
     google.script.run
       .withSuccessHandler(function (res) {
-        if (deact) deact.disabled = false;
+        dcSetBusy_(false);
         const n = (res && res.removed) || 0;
         const dWarns = (res && res.warnings) || [];   // S2B-5: sheet-mirror failure
         dcSetStatus_('success', 'Deactivated ' + n + ' override row'
           + (n === 1 ? '' : 's') + '. Reverted to defaults.'
           + (dWarns.length ? ' ⚠ ' + dWarns.join(' ') : ''));
-        showToast('Reverted ' + dcEditDept + ' to defaults', 'success');
+        showToast('Reverted ' + dept + ' to defaults', 'success');
         dcLoadInit_(true);   // CL-15
       })
       .withFailureHandler(function (err) {
-        if (deact) deact.disabled = false;
+        dcSetBusy_(false);
         dcSetStatus_('error', 'Deactivate failed: '
           + (err && err.message ? err.message : String(err)));
       })
-      .removeDeptConfig({ dept: dcEditDept });
+      .removeDeptConfig({ dept: dept });
   }
 
   function dcSetStatus_(kind, msg) {

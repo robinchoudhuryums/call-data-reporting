@@ -144,9 +144,19 @@ function runManualExport() {
   }
 
   let outcome;
+  // PIPE-5 (broad-scan 2026-10-12): a force Manual Export deletes a date's
+  // rows from a date-column READ (deleteHistoricalRowsForDate), the same
+  // window the CR-5 marker protects for the bulk chain -- so it raises the
+  // marker too, and cdr-report's nightly sort and its DQE build's post-write
+  // sort stand down until it ends. The opened workbook is handed to
+  // processNewImport so it is opened once.
+  let markerSS = null;
   try {
-    outcome = processNewImport(true, dateArg, false);
+    try { markerSS = SpreadsheetApp.openById(getTargetSsId_()); bulkMarkerSet_(markerSS); }
+    catch (markerErr) { markerSS = null; }   // best-effort: the import opens the workbook itself
+    outcome = processNewImport(true, dateArg, false, markerSS);
   } finally {
+    bulkMarkerClear_(markerSS);
     lock.releaseLock();
   }
 
@@ -275,6 +285,36 @@ function bulkMarkerSet_(ss) {
   } catch (e) { console.warn('bulkMarkerSet_: ' + (e && e.message ? e.message : e)); }
 }
 
+// PIPE-2 (broad-scan 2026-10-12): a force-processed bulk date is DELETED from
+// the five historical sheets at once, but its QCD / CSR Transfer / CDR / Q
+// Path rows wait in the Pending Archive until the run's FINAL archive. A
+// pause (the time budget) or a stop therefore leaves every processed date
+// absent from sheets the dashboard reads -- silently, until Resume. Each pause
+// / stop now logs a `bulkBackfill:paused` FAILURE row naming those dates and
+// the alert says the same; a completed run logs a SUCCESS row under the same
+// step, which clears the Health page. (DQE and Direct are written per date and
+// are not affected.) The dashboard's failure watchdog does not email this step
+// -- the operator is at the alert -- but the Health page shows it until the
+// run completes.
+function bulkGapNote_(queue, index) {
+  var done = (queue || []).slice(0, Math.max(0, index || 0));
+  if (!done.length) return '';
+  var span = done[0] + (done.length > 1 ? ' .. ' + done[done.length - 1] : '');
+  return done.length + ' processed date(s) (' + span + ') are ABSENT from the QCD, CSR Transfer, '
+    + 'CDR and Q Path Historical sheets until the run is resumed and its final archive writes them';
+}
+function bulkLogGap_(targetSS, queue, index, how) {
+  var note = bulkGapNote_(queue, index);
+  if (!note) return '';
+  try {
+    logPipelineHealthWithFallback_(targetSS, {
+      step: 'bulkBackfill:paused', status: 'failure', rows: Math.max(0, index || 0),
+      notes: how + ': ' + note + '.',
+    });
+  } catch (e) { /* best-effort -- the alert below still says it */ }
+  return note;
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -348,7 +388,10 @@ function processBulkQueue() {
       const remaining = queue.length - index;
       props.setProperty("bulkIndex",  String(index));
       saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
-      ui.alert("⏳ Time Limit", `Paused to avoid timeout.\n${remaining} dates remaining.\n\nClick 'Resume Bulk Processing' to continue.`, ui.ButtonSet.OK);
+      const gap = bulkLogGap_(targetSS, queue, index, 'paused (time limit)');   // PIPE-2
+      ui.alert("⏳ Time Limit", `Paused to avoid timeout.\n${remaining} dates remaining.\n\n`
+        + (gap ? `⚠️ Until then, ${gap}.\n\n` : '')
+        + `Click 'Resume Bulk Processing' to continue.`, ui.ButtonSet.OK);
       return;
     }
 
@@ -376,7 +419,9 @@ function processBulkQueue() {
       } else {
         props.setProperty("bulkIndex",  String(index));
         saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
-        ui.alert("⛔ Stopped", "Bulk processing stopped.", ui.ButtonSet.OK);
+        const gap = bulkLogGap_(targetSS, queue, index, 'stopped after an error on ' + dateStr);   // PIPE-2
+        ui.alert("⛔ Stopped", "Bulk processing stopped."
+          + (gap ? `\n\n⚠️ ${gap}. Click 'Resume Bulk Processing' to finish the run.` : ''), ui.ButtonSet.OK);
         return;
       }
     }
@@ -395,9 +440,15 @@ function processBulkQueue() {
       `Processed ${queue.length} dates`,
       `CDR: +${archiveResult.cdrCount}, QPath: +${archiveResult.qpathCount}, QCD: +${archiveResult.qcdCount}, CSR: +${archiveResult.csrCount}`
     ); 
+    // PIPE-2: the archive wrote the held dates -- clear the Health signal.
+    logPipelineHealthWithFallback_(targetSS, {
+      step: 'bulkBackfill:paused', status: 'success', rows: queue.length,
+      notes: 'bulk run complete: ' + queue.length + ' date(s) archived to the historical sheets.',
+    });
   } catch (e) {
     report.push("---");
     report.push(`⚠️ Archive failed: ${e.message}`);
+    bulkLogGap_(targetSS, queue, queue.length, 'final archive failed (' + e.message + ')');   // PIPE-2
     ui.alert("⚠️ Archive Warning", `Bulk processing complete, but archive failed:\n${e.message}\n\nYou can retry with 'Process Batch Archive' from the menu.`, ui.ButtonSet.OK);
   }
 
@@ -409,15 +460,22 @@ function processBulkQueue() {
   report.push("ℹ️ DQE Neon mirror was deferred (skipNeon). Run "
     + "backfillDQEHistoryUpsert() in the CDR Report project to mirror these "
     + "dates to dqe_history (DO UPDATE).");
+  // PIPE-1: the upsert only adds and overwrites -- a rebuilt date whose agent
+  // set SHRANK (an alias, a rename, a removed row) keeps the old dqe_history
+  // row until the prune runs, and a Neon-reading dashboard counts it twice.
+  report.push("ℹ️ THEN run previewNeonExtraRows() and, if it lists rows, "
+    + "pruneNeonExtraRows() (CDR Report project) to delete Neon rows these "
+    + "rebuilt dates no longer have.");
   report.push("ℹ️ Direct-call Neon mirror was deferred (skipNeon). Run "
     + "backfillDirectCallToNeon() in THIS (CDR Import) project to mirror these "
     + "dates to direct_call_history (DO UPDATE).");
-  // F-18: the bulk path never runs the per-call inbound capture (it rides
+  // F-18: the bulk path never runs the per-call capture (it rides
   // processIntegratedHistory's daily path only), so a force-rebuilt date's
-  // inbound_calls rows are NOT refreshed -- and inbound has no sheet
-  // primary to rebuild from later. Surface that instead of staying silent.
-  report.push("ℹ️ inbound_calls was NOT captured/refreshed for these dates. "
-    + "Run backfillInboundCalls() (THIS project) to fill from surviving "
+  // inbound_calls AND outbound_calls rows are NOT refreshed -- and neither
+  // table has a sheet primary to rebuild from later. Surface that instead of
+  // staying silent. (DOC-7: the outbound table was missing from this note.)
+  report.push("ℹ️ inbound_calls and outbound_calls were NOT captured/refreshed for these dates. "
+    + "Run backfillInboundCalls() and backfillOutboundCalls() (THIS project) to fill from surviving "
     + "Call_Legs_* sheets -- reach is limited by their ~14-day retention.");
 
   ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
@@ -540,6 +598,13 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const sourceData  = sourceSheet.getDataRange().getDisplayValues();
     if (sourceData.length < 2) throw new Error("Source sheet empty.");
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
+    // PIPE-3 (broad-scan 2026-10-12): CDR / Q Path / QCD / CSR stamp their
+    // rows with the TAB's date, never the calls' own -- a mislabeled tab wrote
+    // another day's data under this date, after force-deleting it, plus an
+    // authoritative Neon replace. DQE and Direct already refuse (F2 / P-4);
+    // this is the same check for the other four, from the one grid they all
+    // compute from, and it runs BEFORE the Raw Data rewrite and the delete.
+    assertSourceDateMatchesTab_(cleanData, dateObj, latestName);
 
     // I-6: COMPUTE before the force-delete block too. P-3 moved the source
     // validation ahead of it; the three compute stages still ran AFTER it, so
@@ -1415,11 +1480,14 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
             phonesX:    r[23], phonesY:    r[24], phonesZ:    r[25]
           };
         });
-        // P-6 note: deliberately NOT authoritative -- this bulk payload is
-        // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a
-        // date; an authoritative delete here would nuke legitimate Neon
-        // rows (same reasoning as the bulk QCD mirror below).
-        var neonCdrRes = writeCDRRowsToNeon(neonCdrRows);
+        // PIPE-1 (broad-scan 2026-10-12): AUTHORITATIVE per date. The old
+        // note here said the payload "can be a PARTIAL set for a date" -- it
+        // cannot: dedupeAlreadyArchived_ drops WHOLE dates (any date the sheet
+        // already holds), so every date left in cdrRows is that date's
+        // complete queued set. Upsert-only, a bulk force-rebuild whose new set
+        // was smaller (a queue gone, an agent moved or aliased) left the old
+        // rows in Neon, and a Neon-reading dashboard double-counted them.
+        var neonCdrRes = writeCDRRowsToNeon(neonCdrRows, { authoritative: true });
         if (neonCdrRes && neonCdrRes.skipped) {
           console.log('processBatchArchive: Neon CDR mirror skipped ('
             + neonCdrRes.skipped + ' rows — Neon unreachable).');
@@ -1452,11 +1520,9 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
             violations:    r[11]
           };
         });
-        // IMP-5 note: deliberately NOT authoritative -- this bulk payload is
-        // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a date
-        // (rows already archived earlier are dropped); an authoritative
-        // delete here would nuke legitimate Neon rows.
-        var neonQcdRes = writeQCDRowsToNeon(neonQcdRows);
+        // PIPE-1: authoritative per date, as the CDR mirror above (the
+        // date-level dedup leaves only complete dates in qcdRows).
+        var neonQcdRes = writeQCDRowsToNeon(neonQcdRows, { authoritative: true });
         if (neonQcdRes && neonQcdRes.skipped) {
           console.log('processBatchArchive: Neon QCD mirror skipped ('
             + neonQcdRes.skipped + ' rows — Neon unreachable).');
@@ -2339,7 +2405,8 @@ if (!skipCDR && obcHD) {
     // permanently, with no Pipeline Health failure row and no email -- the tile
     // just rendered a slightly different weighted percentage. Guarded now, on
     // the same terms as QCD (log-only; the already-written sheets stand).
-    // CDR / QPath remain unguarded and genuinely not dashboard-read.
+    // Q Path stays unguarded (it has no reader); CDR is guarded too since
+    // CR-9 (its reader is cdr-report's Custom Report Builder) -- DOC-7.
     guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CSR', dateObj, force && fdel.csr, csrBatch.length);
     if (csrBatch.length > 0) {
       csrHD.getRange(csrHD.getLastRow() + 1, 1, csrBatch.length, 18).setValues(csrBatch);
@@ -2897,6 +2964,56 @@ function parsePendingDate(val) {
  * a Number; whitespace-only is empty (`Number(" ")` used to stage as 0, a
  * phantom zero in a duration or count column); everything else stays text.
  */
+/**
+ * PIPE-3: the calendar days of the source grid's call START times (col C,
+ * the column every engine decodes with simulateSplitCol2), most common first.
+ * Accepts the display shapes the DQE build accepts: "M/D/YYYY ..." and ISO.
+ * Pure -- unit-tested.
+ */
+function sourceCallDateCounts_(grid) {
+  const counts = {};
+  let total = 0;
+  for (let i = 1; i < (grid || []).length; i++) {
+    const v = String((grid[i] || [])[2] == null ? '' : grid[i][2]).trim();
+    if (!v) continue;
+    const datePart = v.split(/\s+/)[0];
+    let iso = null;
+    const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) iso = m[1] + '-' + m[2] + '-' + m[3];
+    else {
+      const p = datePart.split('/');
+      if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
+        const y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
+        iso = y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
+      }
+    }
+    if (!iso) continue;
+    counts[iso] = (counts[iso] || 0) + 1;
+    total++;
+  }
+  const days = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || (a < b ? -1 : 1); });
+  return { counts: counts, total: total, days: days };
+}
+
+/**
+ * PIPE-3: refuse a source tab whose calls are mostly on ANOTHER day. A few
+ * legs from the day before are normal (the P-7 carry-over), so the rule is
+ * "the tab's date must be the most common call date", not "every row". A grid
+ * with no parseable start time is left to the existing empty-source handling.
+ */
+function assertSourceDateMatchesTab_(grid, dateObj, tabName) {
+  const c = sourceCallDateCounts_(grid);
+  if (!c.total || !dateObj || isNaN(dateObj.getTime())) return;
+  const exp = dateObj.getFullYear() + '-' + ('0' + (dateObj.getMonth() + 1)).slice(-2) + '-'
+    + ('0' + dateObj.getDate()).slice(-2);
+  const top = c.days[0];
+  if ((c.counts[exp] || 0) >= c.counts[top]) return;
+  throw new Error('Source date mismatch: ' + (tabName || 'the source tab') + ' is dated ' + exp
+    + ' but ' + c.counts[top] + ' of its ' + c.total + ' calls are on ' + top
+    + ' (only ' + (c.counts[exp] || 0) + ' on ' + exp + '). Nothing was deleted or written -- '
+    + 'rename the tab or re-download the right day, then import again.');
+}
+
 function stageRawDataCell_(cell) {
   if (cell === "" || cell === null || cell === undefined) return "";
   if (typeof cell === 'number') return cell;
@@ -3181,11 +3298,23 @@ function processPendingImports_() {
     const prior = fails[iso] ? (Number(fails[iso].n) || 0) : 0;
     const s0 = Date.now();
     last = processNewImport(false, iso, false, null, null, { noAlert: true, noFailureEmail: prior > 0 });
+    // PIPE-7 (owner 2026-10-13, option A): see pendingImportPerCallCatchUp_.
+    const perCallSettled = (last === 'ALREADY IN HISTORY') ? pendingImportPerCallCatchUp_(iso) : true;
     lastMs = Date.now() - s0;
     done.push(iso + '=' + String(last).split(' ')[0]);
     if (String(last).indexOf('ERROR') === 0) {
       failedThisRun[iso] = true;
       fails[iso] = { n: prior + 1, at: new Date().toISOString(), err: String(last).slice(0, 200) };
+      failsChanged = true;
+      if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
+      continue;
+    }
+    if (!perCallSettled) {
+      // Not remembered: the next catch-up retries it, through the same ledger
+      // (and the same park after PENDING_IMPORT_MAX_ATTEMPTS_) as a failed import.
+      failedThisRun[iso] = true;
+      fails[iso] = { n: prior + 1, at: new Date().toISOString(),
+                     err: 'per-call capture not completed for an already-imported date (PIPE-7): Neon unreachable or a write failed' };
       failsChanged = true;
       if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
       continue;
@@ -3233,6 +3362,43 @@ function pendingImportLogParked_(iso, entry) {
         + 'or delete the tab (Operator State #43)',
     });
   } catch (logErr) { /* best-effort */ }
+}
+
+/**
+ * PIPE-7 (owner 2026-10-13, option A). A daily run killed between the sheet
+ * writes and the per-call capture left the date's five history sheets full,
+ * so the catch-up's retry returned "ALREADY IN HISTORY" and the date was
+ * remembered -- its inbound_calls / outbound_calls rows were never written,
+ * and past the ~14-day Call_Legs window they are gone. So for such a date run
+ * the NON-force per-call backfills for that one date: each skips a date Neon
+ * already holds (icFetchMirroredDates_ / ocFetchMirroredDates_) and writes one
+ * it does not, and each logs its own Pipeline Health row.
+ *
+ * Returns false when either could not finish (Neon unreachable or a write
+ * error), so the caller keeps the date pending instead of remembering it.
+ */
+function pendingImportPerCallCatchUp_(iso) {
+  let settled = true;
+  const run = function (label, fn) {
+    if (typeof fn !== 'function') return;
+    try {
+      const res = fn(iso, iso, false);
+      if (res && (res.unreachable || res.failures)) {
+        settled = false;
+        console.log('pendingImportPerCallCatchUp_: ' + label + ' for ' + iso + ' not completed ('
+          + (res.unreachable ? 'Neon unreachable' : res.failures + ' write failure(s)') + ').');
+      } else if (res && res.inserted) {
+        console.log('pendingImportPerCallCatchUp_: wrote ' + res.inserted + ' ' + label + ' record(s) for ' + iso
+          + ' -- the earlier run had stopped before the per-call capture.');
+      }
+    } catch (e) {
+      settled = false;
+      console.warn('pendingImportPerCallCatchUp_: ' + label + ' for ' + iso + ' threw: ' + (e && e.message ? e.message : e));
+    }
+  };
+  run('inbound', typeof backfillInboundCalls === 'function' ? backfillInboundCalls : null);
+  run('outbound', typeof backfillOutboundCalls === 'function' ? backfillOutboundCalls : null);
+  return settled;
 }
 
 /** Adds a sheet name to the `lastSheets` memo (same cap as processNewImport's F2 write). */

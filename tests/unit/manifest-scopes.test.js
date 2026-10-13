@@ -28,7 +28,12 @@ const RULES = [
   [/\bScriptApp\.(newTrigger|deleteTrigger|getProjectTriggers)\b/, S + 'script.scriptapp'],
   [/\b(Jdbc\.getConnection|UrlFetchApp\.fetch)\b/, S + 'script.external_request'],
   [/\bSession\.get(Active|Effective)User\(\)/, S + 'userinfo.email'],
-  [/\bDriveApp\.\w+/, S + 'drive'],
+  // SEC-7 (broad-scan 2026-10-12): reading Drive needs only drive.readonly;
+  // full `drive` is required only by a Drive WRITE (create / copy / move /
+  // trash / share / overwrite). cdr-import's one Drive use -- the bulk CSV
+  // import -- only lists and reads files, so it declares drive.readonly.
+  [/\bDriveApp\.\w+/, S + 'drive.readonly'],
+  [/\.(createFolder|createFile|setTrashed|makeCopy|moveTo|addFile|removeFile|setSharing|addEditor|addViewer|setContent)\(/, S + 'drive', /\bDriveApp\.\w+/],
 ];
 // A UrlFetch of the sheet's own /export URL with ScriptApp.getOAuthToken()
 // reads the file through Drive: the token must carry drive.readonly.
@@ -44,7 +49,9 @@ function projectSource(dir) {
 function requiredScopes(dir) {
   const src = projectSource(dir);
   const out = new Set();
-  RULES.forEach(function (r) { if (r[0].test(src)) out.add(r[1]); });
+  // A rule's optional third element gates it: the Drive WRITE methods count
+  // only in a project that touches DriveApp at all (they are common names).
+  RULES.forEach(function (r) { if (r[0].test(src) && (!r[2] || r[2].test(src))) out.add(r[1]); });
   if (EXPORT_RULE.needs.every(function (re) { return re.test(src); })) out.add(EXPORT_RULE.scope);
   // DriveApp implies full drive, which subsumes drive.readonly.
   if (out.has(S + 'drive')) out.delete(S + 'drive.readonly');
@@ -76,4 +83,12 @@ test('T-7: the dashboard, a standalone web app, declares no container UI scope',
 
 test('T-7: dqe-report stays on auto-detection (frozen, INV-22)', function () {
   assert.equal(declaredScopes('dqe-report').length, 0);
+});
+
+// SEC-7 (broad-scan 2026-10-12): the narrowing is real -- cdr-import asks for
+// read-only Drive, and a Drive write added there would fail the suite above.
+test('SEC-7: cdr-import declares drive.readonly, not full drive', function () {
+  const have = declaredScopes('cdr-import');
+  assert.ok(have.indexOf(S + 'drive.readonly') !== -1);
+  assert.equal(have.indexOf(S + 'drive'), -1);
 });

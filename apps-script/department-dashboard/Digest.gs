@@ -143,7 +143,9 @@ function sendPreviewDigest(req) {
 
 function installDigestTriggers() {
   assertAdmin_();
-  uninstallDigestTriggers_();
+  // B2/ENG-1: a re-install keeps any pending one-shot readiness retry (see
+  // installAlertTrigger_); only an explicit uninstall removes it.
+  digestDeleteCadenceTriggers_();
   ScriptApp.newTrigger('runDailyDigests_')
     .timeBased().everyDays(1).atHour(DIGEST_DAILY_TRIGGER_HOUR).create();
   ScriptApp.newTrigger('runWeeklyDigests_')
@@ -487,8 +489,13 @@ function sendDigestsForCadence_(cadence, runOpts) {
         (failures.length
           ? 'FAILED-ALL-VALIDATION ' + window.toIso + ': 0 attempted, ' + failures.length
             + ' row(s) failed dept validation (see admin email) -- run marker cleared; '
-          : 'NO-SUBSCRIBERS ' + window.toIso + ': no active ' + cadence
-            + ' rows matched -- run marker NOT claimed; ')
+          // ENG-6 (broad-scan 2026-10-12): IDLE, not NO-SUBSCRIBERS. A cadence
+          // nobody subscribes to (often weekly or monthly) is a normal state,
+          // and the old bad-prefix outcome kept its Health row amber forever.
+          // The queue report keeps NO-SUBSCRIBERS (O-9): there an armed
+          // trigger with no recipient IS the mistake.
+          : 'IDLE ' + window.toIso + ': no active ' + cadence
+            + ' subscriber rows matched -- nothing to send, run marker NOT claimed; ')
         + 'a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next trigger '
         + 'inside the same window) will deliver once rows exist. At ' + new Date());
     } else if (sent === 0) {
@@ -1391,6 +1398,11 @@ function digestWindowFor_(cadence, now) {
 
 function uninstallDigestTriggers_() {
   digestClearRetryTriggers_();   // R31: a pending one-shot retry goes with them
+  digestDeleteCadenceTriggers_();
+}
+
+/** The three cadence triggers only (never a one-shot retry). */
+function digestDeleteCadenceTriggers_() {
   const triggers = ScriptApp.getProjectTriggers();
   for (let i = 0; i < triggers.length; i++) {
     const fn = triggers[i].getHandlerFunction();
@@ -1439,7 +1451,7 @@ function notifyDigestFailure_(cadence, err) {
                   + 'the run-claim marker is not set on a throw, so nothing is sent twice.' }],
         mono: { title: 'Stack', text: (err && err.stack) ? err.stack : '(no stack)' },
         ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Digest Config',
-        footerHtml: 'Sent when a whole digest run aborts (cfg read / window compute). Operator State #12 has the seven checks.',
+        footerHtml: 'Sent when a whole digest run aborts (cfg read / window compute). Operator State #12 has the checklist.',
       },
       body:    fnName
                + ' threw: ' + ((err && err.message) ? err.message : String(err))

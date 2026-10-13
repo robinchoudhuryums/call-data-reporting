@@ -233,3 +233,108 @@ test('EN-5: a manual send marks the date, so the 8 AM trigger does not send the 
   h2.call('sendAlerts', { date: '2026-09-18' });
   assert.equal(h2.state.props.ALERTS_RUN_MARKER, '2026-09-21');
 });
+
+// B2/ENG-1 (broad-scan 2026-10-12): an admin re-installing the triggers
+// mid-morning, after a DEFERRED, deleted the pending one-shot retry with them
+// -- that day's alerts / digests never went out. A re-install now keeps it;
+// an explicit uninstall still removes it.
+function fullTriggers_() {
+  const made = [];
+  h.ctx.ScriptApp = {
+    WeekDay: { MONDAY: 'MONDAY' },
+    getProjectTriggers: function () { return made.slice(); },
+    deleteTrigger: function (t) { made.splice(made.indexOf(t), 1); },
+    newTrigger: function (fn) {
+      const b = {};
+      ['timeBased', 'after', 'everyDays', 'atHour', 'onWeekDay', 'onMonthDay'].forEach(function (k) {
+        b[k] = function () { return b; };
+      });
+      b.create = function () { const t = { getHandlerFunction: function () { return fn; } }; made.push(t); return t; };
+      return b;
+    },
+  };
+  return function () { return made.map(function (t) { return t.getHandlerFunction(); }).sort(); };
+}
+
+test('B2/ENG-1: re-installing the alert trigger KEEPS a pending retry; uninstall removes it', function () {
+  install('2026-09-18');
+  const names = fullTriggers_();
+  h.call('installAlertTrigger_');
+  h.call('alertsScheduleRetry_');                       // a DEFERRED left a one-shot retry
+  h.call('installAlertTrigger_');                       // the admin re-installs mid-morning
+  assert.deepEqual(names(), ['runDailyAlertsRetry_', 'runDailyAlerts_'], 'one daily trigger, the retry survives');
+  h.call('uninstallAlertTrigger_');
+  assert.deepEqual(names(), [], 'turning alerts off takes the retry with it');
+});
+
+test('B2/ENG-1: re-installing the digest triggers KEEPS pending retries; uninstall removes them', function () {
+  install('2026-09-18');
+  const names = fullTriggers_();
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.logStatusReturn_ = function (x) { return x; };
+  h.call('installDigestTriggers');
+  h.ctx.ScriptApp.newTrigger('runDailyDigestRetry_').timeBased().after(1).create();
+  h.call('installDigestTriggers');
+  assert.deepEqual(names(), ['runDailyDigestRetry_', 'runDailyDigests_', 'runMonthlyDigests_', 'runWeeklyDigests_']);
+  h.call('uninstallDigestTriggers');
+  assert.deepEqual(names(), []);
+});
+
+// ENG-7 (broad-scan 2026-10-12): a failed Alert Log append after a send used
+// to abort the run mid-way, and the failure email's "re-send by hand" would
+// re-alert the depts already emailed.
+test('ENG-7: a failing Alert Log append does not stop the run; every dept is assessed, the outcome is FAILED-LOG and admins are told NOT to re-send', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  h2.ctx.appendAlertLog_ = function () { throw new Error('Service Spreadsheets timed out'); };
+  h2.state.sentEmails.length = 0;
+  const res = h2.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger');
+  assert.deepEqual(sent, ['CSR', 'Sales'], 'pre-fix the run died after CSR; Sales was never assessed');
+  assert.equal(res.length, 2);
+  assert.ok(res.every(function (r) { return r.status === 'sent'; }), 'a log failure does not turn a send into an error row');
+  assert.match(res[0].notes, /NOT written to the Alert Log/);
+  assert.equal(res.logFailures.length, 2);
+  assert.deepEqual(Array.from(res.sentDepts), ['CSR', 'Sales']);
+  const outcome = h2.call('alertsOutcomeString_', '2026-09-21', res, null);
+  assert.match(outcome, /^FAILED-LOG 2026-09-21: 2 Alert Log row\(s\) not written/);
+  assert.equal(h2.call('healthOutcomeIsBad_', outcome), true);
+
+  h2.call('alertsNotifyLogFailures_', '2026-09-21', res);
+  const mail = h2.state.sentEmails.filter(function (m) { return /not written/.test(m.subject); })[0];
+  assert.ok(mail, 'the admins get one email');
+  assert.match(mail.body, /Alerts sent: CSR, Sales/);
+  assert.match(mail.body, /Do not re-send/);
+});
+
+test('ENG-7: an error that still escapes the run names the depts already emailed in the trigger failure email', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  h2.ctx.getCompanyHolidayRanges_ = function () { return []; };
+  h2.ctx.digestLatestDqeIso_ = function () { return '2026-09-21'; };
+  // CSR sends, then something outside the per-dept try throws on Sales.
+  h2.ctx.readAlertConfig_ = function () {
+    return [{ department: 'CSR', active: true, threshold: 90, skipDates: '' },
+            { department: 'Sales', threshold: 90, skipDates: '', get active() { throw new Error('boom'); } }];
+  };
+  h2.state.sentEmails.length = 0;
+  h2.call('alertsGatedAttempt_', new Date('2026-09-22T08:05:00-05:00'), 'trigger');
+  assert.deepEqual(sent, ['CSR']);
+  const mail = h2.state.sentEmails.filter(function (m) { return /trigger failed/.test(m.subject); })[0];
+  assert.ok(mail);
+  assert.match(mail.body, /Already emailed before the stop \(a manual Send would repeat them\): CSR/);
+});
+
+test('ENG-7 follow-on: each unlogged row carries logFailed (a serializable field), and the modal warns on it', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  let n = 0;
+  h2.ctx.appendAlertLog_ = function () { if (++n === 2) throw new Error('timed out'); };
+  const res = JSON.parse(JSON.stringify(h2.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger')));
+  assert.deepEqual(res.map(function (r) { return !!r.logFailed; }), [false, true], 'survives JSON (the client sees it)');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-7-admin.html'), 'utf8');
+  assert.match(src, /filter\(function \(r\) \{ return r\.logFailed; \}\)/, 'the send handler counts unlogged rows');
+  assert.match(src, /do not send again to rebuild the log/);
+});

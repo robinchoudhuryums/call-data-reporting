@@ -74,6 +74,7 @@ function backfillConn(log, span, rowsByChunk) {
         log.queries.push(q);
         let v = null;
         if (/json_build_array\(min\(c\.call_date\)/.test(q)) v = JSON.stringify(span);
+        else if (/information_schema\.columns/.test(q)) v = log.colMissing ? '0' : '1';
         else {
           const m = /BETWEEN '(\d{4}-\d{2}-\d{2})'::date AND '(\d{4}-\d{2}-\d{2})'::date/.exec(q);
           v = JSON.stringify((m && rowsByChunk[m[1] + '..' + m[2]]) || []);
@@ -109,7 +110,7 @@ test('BF-1 PREVIEW: reads the direct-line population in date chunks, writes noth
   assert.deepEqual([out.candidates, out.derived, out.undecided, out.misdials, out.written], [4, 3, 1, 1, 0]);
   assert.deepEqual(out.chunks.map((c) => c.from + '..' + c.to), ['2026-06-01..2026-07-01', '2026-07-02..2026-07-10'],
     '31-day chunks, the last one cut at the newest candidate');
-  const q = log.queries[1];
+  const q = log.queries.filter((x) => /BETWEEN '/.test(x))[0];
   // The population: exactly the rows the dashboard's misdial filter reads.
   assert.match(q, /c\.first_ring_seconds IS NULL AND c\.disposition IN \('missed', 'abandoned'\)/);
   assert.match(q, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
@@ -120,8 +121,24 @@ test('BF-1 PREVIEW: reads the direct-line population in date chunks, writes noth
   assert.match(q, /WITH ORDINALITY AS x\(e, ord\)/);
   assert.ok(!/caller_hash/.test(q), 'no caller hash is read');
   assert.ok(log.timeouts.length >= 3 && log.timeouts.every((s) => s === 120), 'every query is bounded');
-  assert.match(log.ddl[0], /ADD COLUMN IF NOT EXISTS first_ring_seconds integer/);
+  // PIPE-14: a preview takes no ACCESS EXCLUSIVE lock -- it asks the catalog instead.
+  assert.equal(log.ddl.length, 0, 'the read-only preview runs no ALTER TABLE');
+  assert.ok(log.queries.some((x) => /information_schema\.columns/.test(x)));
+  assert.equal(out.columnMissing, undefined);
   assert.equal(log.closed, true);
+});
+
+test('PIPE-14: a preview before the column exists counts every row as NULL and still runs no DDL', function () {
+  installRoster();
+  const log = { queries: [], updates: [], ddl: [], timeouts: [], colMissing: true };
+  h.ctx.getReachableNeonConn_ = function () { return backfillConn(log, ['2026-06-01', '2026-07-10'], ROWS_); };
+  const out = JSON.parse(JSON.stringify(h.call('previewFirstRingBackfill')));
+  assert.equal(log.ddl.length, 0);
+  assert.equal(out.columnMissing, true);
+  assert.equal(out.derived, 3, 'the same rows apply would derive once it adds the column');
+  const reads = log.queries.filter((x) => /FROM inbound_calls c WHERE/.test(x));
+  assert.ok(reads.length >= 2 && reads.every((x) => !/first_ring_seconds/.test(x)),
+    'no read names the missing column (it would fail)');
 });
 
 test('BF-1 APPLY: one NULL-only UPDATE per chunk, values escaped, undecided rows left alone', function () {
@@ -130,7 +147,8 @@ test('BF-1 APPLY: one NULL-only UPDATE per chunk, values escaped, undecided rows
   h.ctx.getReachableNeonConn_ = function () { return backfillConn(log, ['2026-06-01', '2026-07-10'], ROWS_); };
   const out = h.call('backfillFirstRingFromJourney');
   assert.equal(log.updates.length, 2);
-  assert.match(log.updates[0], /^UPDATE inbound_calls c SET first_ring_seconds = v\.r FROM \(VALUES /);
+  // TOOL-1: the update bumps updated_at, so the cdr-report export tab re-reads these dates.
+  assert.match(log.updates[0], /^UPDATE inbound_calls c SET first_ring_seconds = v\.r, updated_at = now\(\) FROM \(VALUES /);
   assert.match(log.updates[0], /WHERE c\.call_date = v\.d AND c\.call_id = v\.id AND c\.first_ring_seconds IS NULL$/,
     'a value the capture already wrote is never overwritten');
   assert.ok(log.updates[0].indexOf("('2026-06-02'::date,'c1',4)") !== -1);
@@ -139,6 +157,7 @@ test('BF-1 APPLY: one NULL-only UPDATE per chunk, values escaped, undecided rows
   assert.ok(log.updates[1].indexOf("('2026-07-05'::date,'c''4',9)") !== -1, 'the id is SQL-escaped');
   assert.equal(out.written, 3);
   assert.equal(log.autoCommit, true, 'each chunk stands alone: a cut-short run keeps what it did');
+  assert.match(log.ddl[0], /ADD COLUMN IF NOT EXISTS first_ring_seconds integer/, 'apply adds the column');
 });
 
 test('BF-1: nothing to do is a clean no-op; Neon unreachable throws with the reason', function () {

@@ -219,6 +219,38 @@ test('ESC-D8: both stores are scrubbed -- a run that fell back to Sheets leaves 
   delete h.state.spreadsheetsById.BK;
 });
 
+// B2/ENG-11 (broad-scan 2026-10-12): a closed month left un-final in a store
+// the backup NO LONGER writes was deferred forever -- no run would finalize it
+// -- and because the queue drains all-or-nothing, that one file held every
+// queued id until the cap dropped new deletes.
+test('B2/ENG-11: an un-final month in an INACTIVE store is scrubbed at once; the queue drains', function () {
+  install(); seed();
+  backup('2026-09-26');                                    // Drive: Sept activity last written 09-26 (final on 10-04)
+  const book = makeFakeSpreadsheet({ id: 'BK', sheets: {} });
+  h.state.spreadsheetsById.BK = book;
+  h.state.props.NEON_BACKUP_SS_ID = 'BK';
+  h.state.props.NEON_BACKUP_STORE = 'sheets';              // the backup moves to Sheets
+  lateActivity();
+  backup('2026-10-05');                                    // Sheets only (final there) -- the Drive file stays un-final
+  deleteInNeon('gone');
+  const res = scrub('2026-10-05', ['gone']);
+  assert.equal(res.status, 'ok', 'pre-ENG-11: pending forever, deferred on the Drive file');
+  assert.equal(res.deferred.length, 0);
+  assert.equal(queue(), null, 'the queue drained');
+  assert.deepEqual(ids('escalation_activity-2026-09.jsonl', 'escalation_id'), ['keep'], 'the Drive copy is clean');
+  delete h.state.spreadsheetsById.BK;
+});
+
+test('B2/ENG-11: the ACTIVE store still defers an un-final month (the ENG-1 trap stays guarded)', function () {
+  install(); seed();
+  backup('2026-09-26');
+  lateActivity();
+  deleteInNeon('gone');
+  const res = scrub('2026-10-05', ['gone']);
+  assert.equal(res.status, 'pending');
+  assert.equal(res.deferred.length, 1, 'Drive is the active store here');
+});
+
 test('ESC-D8: no backup store yet -> nothing to scrub, nothing queued, no store created', function () {
   install();
   h.state.props = {};
@@ -266,4 +298,67 @@ test('ESC-D8: deleteEscalation scrubs AFTER the commit and OUTSIDE the lock, wit
   const call = body.indexOf('nbScrubAfterDelete_(goneIds)');
   assert.ok(commit > 0 && release > commit && call > release, 'commit -> release the lock -> scrub');
   assert.match(body, /goneIds = all \? escGroupIds_\(conn, meta\.groupId\) : \[id\];/);
+});
+
+// B2/ENG-12 (broad-scan 2026-10-12): the backup files have ONE writer at a
+// time -- a cache lease claimed under a short script lock. Two scrubs racing
+// on the same file could restore each other's rows after dequeuing.
+test('B2/ENG-12: a scrub that finds the files lease held leaves its id queued and touches nothing', function () {
+  install(); seed();
+  backup('2026-09-26');
+  deleteInNeon('gone');
+  h.state.cache.set('nbBackupFilesLease', 'scrub:other');      // another scrub is mid-flight
+  const before = files['escalations-2026-09-26.jsonl'].content;
+  const res = scrub('2026-09-30', ['gone']);
+  assert.equal(res.status, 'busy');
+  assert.equal(files['escalations-2026-09-26.jsonl'].content, before, 'no second writer');
+  assert.deepEqual(queue().ids, ['gone'], 'the id waits in the queue');
+  h.state.cache.delete('nbBackupFilesLease');
+  const r = backup('2026-10-03');                              // the next run retries it under its own lease
+  assert.match(r, /scrub ok/);
+  assert.equal(queue(), null);
+  assert.equal(h.state.cache.has('nbBackupFilesLease'), false, 'the run released its lease');
+});
+
+test('B2/ENG-12: a backup run HOLDS the files lease while it writes -- a scrub arriving mid-run is busy', function () {
+  install(); seed();
+  backup('2026-09-26');
+  deleteInNeon('gone');
+  const real = h.ctx.nbStore_;
+  let midRun = null;
+  h.ctx.nbStore_ = function () {
+    midRun = h.call('nbScrubPending_');                          // a delete's scrub lands while the run writes
+    return real();
+  };
+  h.call('nbScrubUpdateQueue_', function (q) { q.ids.push('gone'); return q; });
+  try { backup('2026-10-03'); } finally { h.ctx.nbStore_ = real; }
+  assert.ok(midRun, 'the store was opened');
+  assert.equal(midRun.status, 'busy', 'the scrub must not write beside the backup');
+  assert.equal(queue(), null, 'the backup\'s own scrub step drained the id');
+  assert.equal(h.state.cache.has('nbBackupFilesLease'), false, 'the run released its lease');
+});
+
+test('B2/ENG-12: ids queued WHILE a scrub runs are picked up by its next pass', function () {
+  install();
+  escRows = [{ id: 'keep', created_at: '2026-09-02' }, { id: 'gone', created_at: '2026-09-03' }, { id: 'gone2', created_at: '2026-09-04' }];
+  actRows = [];
+  backup('2026-09-26');
+  deleteInNeon('gone'); deleteInNeon('gone2');
+  const real = h.ctx.nbScrubIds_;
+  let calls = 0;
+  h.ctx.nbScrubIds_ = function (ids, today) {
+    if (calls++ === 0) {
+      // A second delete lands mid-scrub: it found the lease held, queued its id, and returned.
+      h.call('nbScrubUpdateQueue_', function (q) { q.ids.push('gone2'); return q; });
+    }
+    return real(ids, today);
+  };
+  try {
+    const res = scrub('2026-09-30', ['gone']);
+    assert.equal(res.status, 'ok');
+    assert.equal(calls, 2, 'a second pass for the late arrival');
+  } finally { h.ctx.nbScrubIds_ = real; }
+  assert.equal(queue(), null);
+  assert.deepEqual(ids('escalations-2026-09-26.jsonl', 'id'), ['keep'], 'both deleted rows are gone');
+  assert.equal(h.state.cache.has('nbBackupFilesLease'), false, 'the scrub released its lease');
 });

@@ -61,6 +61,7 @@ var HEALTH_FAILURE_ONLY_STEPS_ = [
   'bulkBackfill:CDR',               // CR-9: the bulk-path CDR Historical force-loss guard
   'processBatchArchive:CDR:neon',   // ING-3
   'processBatchArchive:QCD:neon',
+  'neonMirror:enqueue',             // PIPE-6: a deferred-mirror date that was never queued
 ];
 
 function healthFailureOnlyStep_(step) {
@@ -144,6 +145,13 @@ var MAIL_QUOTA_WARN_FLOOR_ = 50;
 // Comfortably past the 6-minute execution ceiling so a send in flight while
 // the admin loads the page is not flagged.
 var HEALTH_SEND_INTERRUPTED_MS_ = 30 * 60000;
+// B2/ENG-1 (broad-scan 2026-10-12): a DEFERRED outcome (alerts / digests
+// waiting on the morning import) is a promise that a one-shot retry follows
+// within ALERTS_RETRY_MINUTES_ / DIGEST_DAILY_RETRY_MINUTES (60 min). Past
+// this age the retry chain was lost -- the retry trigger never ran, or was
+// deleted -- and that day's sends will never happen, while the row read green
+// until the 4-day STALE check. Generous: two retry intervals plus slack.
+var HEALTH_DEFERRED_MAX_MS_ = 3 * 3600000;
 // R47: Google's hard per-spreadsheet cell cap and the point this page warns.
 // Kept in step with cdr-report/sheetSpace.js's copies by cross-file-pins.
 var WORKBOOK_CELL_CAP_ = 10000000;
@@ -983,8 +991,22 @@ function healthOutcomeRows_(add, ctx) {
             + 'received it). Check the Executions log for this handler (ENG-5).';
         }
       }
-      add('triggers', outcomes[o][0], outcomes[o][1], (bad || stale || interrupted) ? 'warn' : 'ok',
-        (res || '') + (at ? (' @ ' + at) : '') + stale + interrupted);
+      // B2/ENG-1: a DEFERRED that never resolved -- see HEALTH_DEFERRED_MAX_MS_.
+      var lostRetry = '';
+      if (!bad && /^DEFERRED\b/.test(String(res || '')) && at) {
+        var dAge = healthAgeMs_(at, Date.now());
+        if (dAge != null && dAge > HEALTH_DEFERRED_MAX_MS_) {
+          lostRetry = ' — RETRY LOST: deferred ' + (Math.round(dAge / 360000) / 10) + ' h ago and no later outcome '
+            + 'was recorded, so the one-shot retry never ran (or was deleted). That day\'s sends will not happen '
+            + 'on their own -- send them by hand (Alerts modal / Digests) and check the Executions log (ENG-1).';
+        }
+      }
+      // ENG-6: a digest cadence with no subscribers ('IDLE ...') is
+      // informational -- muted, not amber, unless something else is wrong.
+      var idle = !bad && /^IDLE\b/.test(String(res || ''));
+      add('triggers', outcomes[o][0], outcomes[o][1],
+        (bad || stale || interrupted || lostRetry) ? 'warn' : (idle ? 'muted' : 'ok'),
+        (res || '') + (at ? (' @ ' + at) : '') + stale + interrupted + lostRetry);
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
 }
@@ -1068,7 +1090,9 @@ function healthConfigRows_(add, ctx) {
           holHint = 'The COMPANY_HOLIDAYS Script Property is still set but IGNORED -- the Company Holidays sheet wins. Move any dates the sheet is missing into the sheet, then clear the property (Operator State #27).';
         } else if (holSrc.indexOf('sheet-error') >= 0) {
           holStatus = 'warn';
-          holHint = 'The Company Holidays sheet could not be read this request; serving the COMPANY_HOLIDAYS property (or nothing). Transient unless it repeats.';
+          holHint = holSrc.indexOf('sheet-copy') === 0
+            ? 'The Company Holidays sheet could not be read this request; serving its last-good copy (ENG-8). Transient unless it repeats.'
+            : 'The Company Holidays sheet could not be read this request and no last-good copy exists; serving the COMPANY_HOLIDAYS property (or nothing). Transient unless it repeats.';
         } else if (!holRanges.length) {
           holHint = 'No company holidays configured -- every weekday counts as a working day. Add rows to the Company Holidays sheet (setup() creates it; Operator State #27).';
         }
@@ -1437,20 +1461,37 @@ function computeReportUsageSummary_() {
 // throttle counters + Logger only). Abuse/looping is bounded three ways:
 // the client sends each error signature once per session (max 6 total), the
 // server emails each signature at most once per CLIENT_ISSUE_SIG_TTL_SEC,
-// and a rolling CacheService window caps total emails so a rendering loop
+// and a fixed 6 h CacheService window caps total emails so a rendering loop
 // on 14 managers' machines costs at most CLIENT_ISSUE_WINDOW_CAP_ emails.
 // Throttled reports still Logger.log, so the Executions panel has the tail.
 
 var CLIENT_ISSUE_MSG_CAP_ = 600;
 var CLIENT_ISSUE_STACK_CAP_ = 1800;
 var CLIENT_ISSUE_SIG_TTL_SEC = 1800;    // one email per distinct error / 30 min
-var CLIENT_ISSUE_WINDOW_CAP_ = 15;      // max emails per rolling 6h CacheService window
+var CLIENT_ISSUE_WINDOW_CAP_ = 15;      // max emails per FIXED 6 h window (ENG-5)
 // AC-6 (broad-scan 2026-10-01): ONE signed-in user could spend the whole window
 // -- 15 distinct crafted messages from devtools -- and every real error from
 // everyone else went Logger-only for 6 h. Each user gets at most this many of
 // the window's emails; past it their reports are logged, not emailed, and do
 // not count against the shared window.
 var CLIENT_ISSUE_USER_CAP_ = 5;
+// ENG-5 (broad-scan 2026-10-12): the window is FIXED, stamped at its first
+// email. Every put used to re-arm a full 6 h TTL on the counters, so a steady
+// trickle never let the window close -- "per 6 h" was really "since the last
+// quiet 6 h". Counters now expire with their window (TTL = time left in it),
+// and the per-user key carries the window start so a new window starts every
+// user at zero.
+var CLIENT_ISSUE_WINDOW_SEC_ = 21600;
+function clientIssueWindow_(cache) {
+  var now = Date.now();
+  var start = Number(cache.get('cissue:start') || 0);
+  if (!start || now - start >= CLIENT_ISSUE_WINDOW_SEC_ * 1000 || start > now) {
+    start = now;
+    cache.put('cissue:start', String(start), CLIENT_ISSUE_WINDOW_SEC_);
+    try { cache.remove('cissue:count'); cache.remove('cissue:capat'); } catch (e) { /* expiring anyway */ }
+  }
+  return { start: start, ttl: Math.max(1, Math.ceil((start + CLIENT_ISSUE_WINDOW_SEC_ * 1000 - now) / 1000)) };
+}
 
 function reportClientIssue(payload) {
   var user = resolveUser_(Session.getActiveUser().getEmail());
@@ -1471,9 +1512,11 @@ function reportClientIssue(payload) {
   var userCapped = false;
   try {
     var seen = cache.get(sigKey);
+    var win = clientIssueWindow_(cache);   // ENG-5
     // AC-6: the per-user sub-cap, checked before the shared window.
     var userKey = 'cissue:user:' + Utilities.base64Encode(
-      Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(user.email || '').toLowerCase())).slice(0, 24);
+      Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(user.email || '').toLowerCase())).slice(0, 24)
+      + ':' + win.start;
     var userCount = parseInt(cache.get(userKey) || '0', 10) || 0;
     if (!seen && userCount >= CLIENT_ISSUE_USER_CAP_) { userCapped = true; seen = 'user-capped'; }
     var count = parseInt(cache.get('cissue:count') || '0', 10) || 0;
@@ -1485,7 +1528,7 @@ function reportClientIssue(payload) {
       // note per window (the marker shares the count's TTL), and the Health
       // page's client-beacon row reads the same marker.
       var capAt = new Date().toISOString();
-      cache.put('cissue:capat', capAt, 21600);
+      cache.put('cissue:capat', capAt, win.ttl);   // ENG-5: closes with the window
       try {
         var capTo = getAdminEmails_().join(',');
         if (capTo) {
@@ -1526,7 +1569,7 @@ function reportClientIssue(payload) {
             outro: (ua ? 'Browser: ' + appEsc_(ua) + '<br>' : '')
               + 'Repeats of this error are throttled for 30 minutes; the full tail is in the Apps Script Executions log (reportClientIssue).',
             ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
-            footerHtml: 'Sent by the client-error beacon (R19); at most ' + CLIENT_ISSUE_WINDOW_CAP_ + ' per rolling 6 h.',
+            footerHtml: 'Sent by the client-error beacon (R19); at most ' + CLIENT_ISSUE_WINDOW_CAP_ + ' per 6 h window.',
           },
           body: 'A user\'s browser reported a client-side issue.\n\n'
             + 'User:  ' + user.email + ' (' + user.role + ')\n'
@@ -1541,8 +1584,8 @@ function reportClientIssue(payload) {
         });
         emailed = true;
         cache.put(sigKey, '1', CLIENT_ISSUE_SIG_TTL_SEC);
-        cache.put('cissue:count', String(count + 1), 21600);
-        cache.put(userKey, String(userCount + 1), 21600);   // AC-6
+        cache.put('cissue:count', String(count + 1), win.ttl);   // ENG-5: never re-arms the window
+        cache.put(userKey, String(userCount + 1), win.ttl);       // AC-6
       }
     }
   } catch (e) { /* best-effort -- the beacon must never error back into the client */ }

@@ -75,7 +75,11 @@ Health bullet; per-call table semantics are in
   **`writeCDRRowsToNeon({authoritative:true})` (P-6)** deletes the dates'
   `call_history_phones` CHILDREN first (parent-id subselect; deleted
   parents would strand their children), then the `call_history_dept`
-  parents, same txn; and **`writeInboundCallsToNeon({authoritative:true,
+  parents, same txn -- and, while `CDR_PHONES_MIRROR` is OFF (so nothing
+  re-writes the children), it first copies them into an `ON COMMIT DROP`
+  temp table keyed on `uq_call_hist` and re-attaches them to the
+  re-created parents before the commit (PIPE-4, Operator State #57;
+  FK-agnostic, verified on Postgres 16; `neon-write-mapping.test.js`); and **`writeInboundCallsToNeon({authoritative:true,
   expectedDateIso})` (L2 + P-1)** so a shrinking re-import can't leave a
   phantom in `inbound_calls` (NO sheet primary). **P-1 -- every caller MUST
   pass `expectedDateIso`** (records are dated from their own first leg;
@@ -87,9 +91,14 @@ Health bullet; per-call table semantics are in
   wrong grid, refused with `allStray`/`allUnparsed` + a failure row + email). It reports
   `unreachable` when Neon is down so a deferred-mirror date stays queued.
   Pinned by the inbound-/outbound-calls suites.
-  Partial-set callers -- the bulk archive after `dedupeAlreadyArchived_`,
-  the row-batched backfills (`backfillDQEHistory*`,
-  `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
+  The bulk archive (`processBatchArchive`) passes it too since PIPE-1:
+  `dedupeAlreadyArchived_` drops WHOLE dates, so every date left in its
+  payload is complete (the old "partial set" note was wrong, and the
+  upsert-only mirror kept rows a shrinking bulk force-rebuild had removed).
+  Partial-set callers -- the row-batched backfills (`backfillDQEHistory*`,
+  `backfillDirectCallToNeon`) -- must NOT pass authoritative; after a bulk
+  rebuild's `backfillDQEHistoryUpsert()`, run `previewNeonExtraRows()` /
+  `pruneNeonExtraRows()` (R37) for the dqe_history rows it cannot remove. Duplicate
   conflict-key rows are deduped last-write-wins first (IMP-6; since P10
   `backfillCDRHistory`'s batches too). The
   `call_history_phones` children are per-parent DELETE-then-insert (IMP-4 --

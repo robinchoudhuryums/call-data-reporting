@@ -1238,7 +1238,18 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   }
 
   const newLastRow = dqeSheet.getLastRow();
-  if (newLastRow > 2) {
+  // PIPE-5 (broad-scan 2026-10-12): the STANDALONE build (cdr-report's daily
+  // trigger) runs in another project from cdr-import's bulk chain and Manual
+  // Export, whose force path deletes rows from a date-column read -- a sort
+  // landing between the read and the delete removes OTHER dates' rows. While
+  // their CR-5 marker is fresh the sort is skipped (the nightly sort check
+  // orders the sheet later); the inline build runs inside that same chain and
+  // never passes the opt.
+  const deferSort = !!(opts && opts.deferSortWhileBulk) && dqeBulkMarkerFresh_(dqeSheet.getParent());
+  if (deferSort) {
+    Logger.log('DQE: post-write sort SKIPPED -- a cdr-import bulk run / Manual Export is in progress '
+      + '(CR-5 marker); the nightly sort check orders the sheet later.');
+  } else if (newLastRow > 2) {
     dqeSheet.getRange(2, 1, newLastRow - 1, dqeSheet.getLastColumn())
             .sort({ column: 2, ascending: true });
   }
@@ -1567,6 +1578,24 @@ function testDQEBuild() {
 
 const DQE_DAILY_TRIGGER_HOUR = 7;   // 7 AM script TZ (America/Chicago)
 
+// PIPE-5: cdr-import's CR-5 "bulk in progress" marker (spreadsheet
+// DeveloperMetadata), read here so the standalone build can defer its sort.
+// Same key and the same 45-minute staleness rule as cdr-report's
+// hsBulkInProgress_; historical-sort.test.js holds all three keys equal.
+var DQE_BULK_MARKER_KEY_ = 'cdrImport.bulkInProgress';
+var DQE_BULK_MARKER_MAX_AGE_MIN_ = 45;
+function dqeBulkMarkerFresh_(ss) {
+  try {
+    if (!ss || typeof ss.createDeveloperMetadataFinder !== 'function') return false;
+    var newest = null;
+    ss.createDeveloperMetadataFinder().withKey(DQE_BULK_MARKER_KEY_).find().forEach(function (m) {
+      var t = Date.parse(m.getValue());
+      if (!isNaN(t) && (newest === null || t > newest)) newest = t;
+    });
+    return newest !== null && (Date.now() - newest) / 60000 <= DQE_BULK_MARKER_MAX_AGE_MIN_;
+  } catch (e) { return false; }
+}
+
 function runDailyDQEBuild_() {
   const startMs = Date.now();
   try {
@@ -1582,7 +1611,7 @@ function runDailyDQEBuild_() {
     if (!rawSheet || !dqeSheet) {
       throw new Error('Raw Data or DQE Historical Data sheet missing.');
     }
-    buildDQEHistoricalData(rawSheet, dqeSheet);
+    buildDQEHistoricalData(rawSheet, dqeSheet, { deferSortWhileBulk: true });   // PIPE-5
   } catch (e) {
     Logger.log('runDailyDQEBuild_ failed: %s', e);
     // Pipeline Health entry first (cheap; happens locally) so the

@@ -89,6 +89,17 @@ capture. Rows captured before the deploy are rewritten by the editor-run
 taken from a leg whose caller is an EXTERNAL number (PC-7). A run with
 `HMAC_SECRET` unset writes NULL caller hashes, so the step's Pipeline Health
 row is now a `failure` naming it (PC-10, Operator State #17), not a success.
+A FORCE `backfillInboundCalls` / `backfillOutboundCalls` with the secret unset
+REFUSES every already-mirrored date (a FAILED entry, which also keeps a
+deferred-mirror date queued) instead of replacing its stored hashes with NULL,
+and still writes a date Neon has never seen (PIPE-15, `outbound-calls.test.js`).
+**A daily run killed after the sheet writes still gets its per-call capture
+(PIPE-7, owner option A).** The catch-up's retry of such a date returns
+"already in history"; it now runs the NON-force `backfillInboundCalls` /
+`backfillOutboundCalls` for that one date (each skips a date Neon already
+holds), and keeps the date pending -- through the import-failure ledger and its
+park -- while Neon is unreachable, instead of remembering it with no per-call
+rows. `pending-imports.test.js`.
 
 ### Internal-transfer journey enrichment (R11-N)
 
@@ -172,8 +183,16 @@ only consulted when nothing answered, which makes the fallback safe).
 (3) The requester -- `origin_agent` / `origin_dept` and the ext the
 related-call match keys on -- comes from the **earliest QUEUE leg, not
 `legs[0]`**: a colleague's leg can start first. TIMING fields
-(`call_start` / `call_date` / `wait_seconds`) still key on `legs[0]` by
-design; this changes identity, not the record's clock. **The same root is
+(`call_start` / `call_date`) still key on `legs[0]` by design; this changes
+identity, not the record's clock. **The ANSWER-side fields read the
+requester's legs (P22 + PIPE-13):** `abandoned_on_hold`, `hold_seconds`,
+`final_dept` and the wait's END point (the first answered talk leg) all scope
+to the legs `icLegFromOriginator_` passes, falling back to every leg when none
+matches -- a sibling's earlier answer under a merged root used to supply both
+`final_dept` and the wait's end. **The wait's START is the requester's queue
+leg (WS-1)**, not `legs[0]`: a colleague's leg can begin minutes earlier, and
+its whole conversation used to count as queue wait. `previewInternalWaitStart`
+prints the old and new wait side by side (Operator State #75). **The same root is
 ALSO captured in `outbound_calls`** -- its gate is no-Incoming + an answered
 external Outgoing leg, which a merged tree satisfies -- so one id can name a
 row in both tables and the Outbound report counts that leg as the answering
@@ -285,7 +304,9 @@ past the threshold and give up?". Both are correct; they are several-fold
 apart and must never be shown side by side without saying so -- that caption
 is the prerequisite for un-gating.
 (2) **`wait_seconds` is WHOLE-CALL elapsed time from IVR pickup
-(`abandonLeg.stop - firstLeg.start`), NOT queue wait.** The IVR runs on
+(`abandonLeg.stop - firstLeg.start`), NOT queue wait.** That is for external
+calls; an internal-origin record's wait starts at the requester's queue leg
+(WS-1, above). The IVR runs on
 nearly every call here, so a near-instant queue abandon still stores tens of
 seconds. Never
 compare it to a queue threshold or read it as "time waiting for an agent";
@@ -437,7 +458,9 @@ semantics; **and on the CONNECTED side it cannot distinguish a person from
 voicemail, an IVR or a call-screening service either** -- every disposition
 field reads identically, verified against labelled calls 2026-09-22, so
 `connected` means "something answered", never "reached the caller"; see
-`outbound-callback-dept-plan.md` GROUND TRUTH), talk/ring seconds, attempts, `call_start` (raw PST
+`outbound-callback-dept-plan.md` GROUND TRUTH), talk/ring seconds (ring on
+the attempt that CONNECTED -- its START to its CONNECTED, PIPE-12; an
+unconnected call measures attempt 1's start -> stop), attempts, `call_start` (raw PST
 'HH:MM:SS'; clients shift +2h to CST via `clCstTime_`, the INV-18
 convention), and the masked leg-by-leg journey (a phone-shaped callee
 name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE
@@ -493,8 +516,9 @@ so talk time and connects need the per-call table whatever Batch C's probe
 (Operator State #74) says. Pinned in `outbound-fallback.test.js`.
 
 **Batch E puts the same figures in two more places, both admin-only until 6c.**
-The **Insights Outbound fold** calls `getDeptOutboundSummary` for the region's
-window and for its prior window, so it adds no SQL of its own. The **Overview
+The **Outbound summary** under My Department's outbound table (UX-1 moved it
+out of Insights) calls `getDeptOutboundSummary` for the page's window and its
+INV-28 prior window, so it adds no SQL of its own. The **Overview
 tiles' outbound line** is the one new read. `ovReadOutboundByDept_`
 (CompanyOverview.gs) runs ONE grouped query over the Overview's existing read
 window: per agent, `count(*) FILTER` placed and connected for each of the five
@@ -526,7 +550,7 @@ second time for the summary's own `meta.priorFrom/priorTo`.
 **Outbound report (`OutboundReport.gs`) --
 "did we call back the ones who abandoned?" + per-agent outbound activity.**
 Since G3 (owner 2026-10-08) it has no modal: `getOutboundReport` feeds the My
-Department Insights Callbacks fold and the Overview's Callbacks by department,
+Department Callbacks section (under the outbound table since UX-1) and the Overview's Callbacks by department,
 the per-agent half rides `getDeptOutboundSummary`, and the legacy route
 `#/report/outbound` lands on the Callbacks fold. TEMPORARILY admin-only while
 vetted (the Inbound/Direct resolver model -- latent per-dept manager path,
@@ -553,8 +577,17 @@ closes on an own-team dial (a dialer on the roster of the team's FAMILY -- the
 team, its one-level parent and children) or an answered inbound call from the
 caller on a family queue ("got through"); another team's dial does NOT close
 it. Outcomes, in precedence: `own` > `gotThrough` > `other` > `pending`
-(INCLUSIVE of the last attempt + 3, on the script-TZ date, PCR-3) > `none`,
-partitioning `episodes`; every rate divides by `episodes`. A dial that closes
+(INCLUSIVE of the last attempt + 3, PCR-3 -- judged against the LOADED calls,
+`min(cbThrough, yesterday)`, never the clock alone: an ingest that lags holds
+an episode open for the days not loaded, disclosed as `callback.dataThrough` /
+`dataLagging`, B1/PC-2) > `none`,
+partitioning `episodes`; every rate divides by `episodes`. **The window has
+EDGES and the rules run across them (B1/PC-1):** attempts from `from - 3` are
+swept so an in-window retry of an episode opened before the window JOINS it
+(and is not counted), and attempts up to 3 days past `to` join but never open
+-- so one-day views add up to the week. Every fetcher reads through ONE span
+helper (`obEpReadSpan_`); the trailing read is one window deep, a documented
+bound. A dial that closes
 its own team's episode is CONSUMED and never counts as "another team" for the
 caller's other open episodes. Delay runs from the FIRST attempt. **ONE pure
 engine** (`obCallbackEpisodes_`) serves both sources: the Neon path fetches
@@ -609,12 +642,17 @@ events from ever deciding an outcome. `getOutboundCalledBack` = the episodes
 a dial decided (`own` / `other`): the dialer and their roster team, the delay
 from the first attempt, connected or not, and the deciding dial's call id
 (`ep.dial`) for a "↳ callback path" into the OUTBOUND call
-(`data-journey-kind="outbound"` on the shared `.pid-journey` chip). Rows show
+(`data-journey-kind="outbound"` on the shared `.pid-journey` chip). A manager's
+drill of that dial is entitled by a THIRD server-re-derived arm
+(`outboundJourneyCallbackEntitled_`, B1/PC-3): the dial went to a caller who
+abandoned one of the manager's dept queues within the callback window before
+it. It applies only once `OUTBOUND_VETTING_GATE_` is released, and it is
+Neon-only (the list itself is), so the sheet fallback keeps refusing. Rows show
 the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
 number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
 for -- are a SEPARATE, lazy, separately cached endpoint
-(`getOutboundDirectCallbacks`, `outboundDirect:v2`: dept + window + freshness
+(`getOutboundDirectCallbacks`, `outboundDirect:v3`: dept + window + freshness
 tag + roster hash) so the Callbacks figures never pay for it. Population:
 external calls whose first leg rang a PERSON (no entry queue, `first_agent`
 set) and that nobody answered, `missed` (rang out / that person's voicemail --
@@ -643,7 +681,10 @@ NULL = unknown and stay in, until the one-off `backfillFirstRingFromJourney()`
 through the capture's canonicalizer), which on an unanswered leg equals the
 capture's start -> stop. It writes NULL rows only, leaves an answered or
 length-less leg unknown, and reads just the events' name / kind / secs out of
-Neon (`first-ring-backfill.test.js`). Every reader takes the column through
+Neon (`first-ring-backfill.test.js`). Only APPLY adds the column: the preview
+runs no `ALTER TABLE` (an ACCESS EXCLUSIVE lock on `inbound_calls`), asking
+`information_schema` instead and counting every row NULL when it is missing
+(PIPE-14). Every reader takes the column through
 `to_jsonb(c) ->> 'first_ring_seconds'`, so a dashboard or export deployed
 before cdr-import has added it reads NULL instead of failing (pinned).
 **Sheet fallback (FO-2):** the Inbound Calls export carries First Agent / First
@@ -653,7 +694,7 @@ of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
 disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
 whose rows name the line rung: rows exported before FO-2 are blank there and
 would read as "no direct calls"). Cached
-`outboundReport:v8` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v9` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since

@@ -29,6 +29,15 @@
  * Returns the ISO string ('YYYY-MM-DD') or null if the sheet is
  * empty.
  */
+/**
+ * The getLatestDataDate cache key, in ONE place (ENG-9: the smoke check
+ * removes it to exercise the real read path rather than a 5-min cached value).
+ */
+function latestDateCacheKey_() {
+  const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  return 'latestDate:v1:' + source;
+}
+
 function getLatestDataDate() {
   // CORE-1/DEEP-1: signed-in gate (role 'none' refused). The F-28 commit
   // message claimed this gate but it never landed -- until now these
@@ -44,7 +53,7 @@ function getLatestDataDate() {
   // computed from the other source (Neon can lag the sheet mid-backfill).
   // Default 'sheet' => byte-identical to pre-cutover behavior.
   const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const KEY = 'latestDate:v1:' + source;
+  const KEY = latestDateCacheKey_();
   // Sentinel for the negative case (sheet missing / empty) so we
   // don't reopen the spreadsheet on every page load when the data
   // pipeline is broken or before first ingest.
@@ -257,6 +266,13 @@ function getLatestDataDates() {
   // after the underlying read recovers. On error we return the partial result
   // UNCACHED so the next call retries.
   let computedOk = true;
+  // DATA-5 (broad-scan 2026-10-12): the R8-C2 rule, applied per component. A
+  // component that came back EMPTY after its Neon read failed (and the sheet
+  // fallback had nothing either -- the trimmed-sheet end state) is an outage,
+  // not "no data": serve it, but never cache it, or the pill and the date
+  // clamps stay blank for the TTL after Neon recovers. A positive value from
+  // the sheet fallback still caches, as the singular getLatestDataDate's does.
+  let failedSourceEmpty = false;
   try {
     const ss = openSpreadsheet_();
     const ssTZ = ss.getSpreadsheetTimeZone();
@@ -264,6 +280,7 @@ function getLatestDataDates() {
     // DQE Historical Data -- col B (date). Reuses the cached
     // single-source result so we don't double-scan.
     result.dqe = getLatestDataDate();
+    if (!result.dqe && typeof getDqeReadSource_ === 'function' && getDqeReadSource_() === 'neon') failedSourceEmpty = true;
 
     // QCD Historical Data -- col C. Pipeline writer is
     // autoImport.js's processIntegratedHistory QCD block; the
@@ -274,9 +291,11 @@ function getLatestDataDates() {
     // with it. Neon null/empty/error falls back to the sheet scan.
     let qcdLatest = '';
     let qcdEarliest = '';
+    let qcdNeonMissed = false;
     if (typeof getQcdReadSource_ === 'function' && getQcdReadSource_() === 'neon'
         && typeof neonGetMaxQcdDate_ === 'function') {
       qcdLatest = neonGetMaxQcdDate_() || '';
+      qcdNeonMissed = !qcdLatest;
       if (qcdLatest && typeof neonGetMinQcdDate_ === 'function') {
         qcdEarliest = neonGetMinQcdDate_() || '';
       }
@@ -299,6 +318,7 @@ function getLatestDataDates() {
     }
     if (qcdLatest) result.qcd = qcdLatest;
     if (qcdEarliest) result.qcdEarliest = qcdEarliest;
+    if (qcdNeonMissed && !qcdLatest) failedSourceEmpty = true;
 
     // R12-26: DQE COVERAGE START -- the earliest date each source actually
     // holds, so a report whose requested From predates the data can WARN
@@ -306,9 +326,11 @@ function getLatestDataDates() {
     // = one indexed MIN(call_date); sheet path = its own date-column scan
     // (same cost class as the QCD scan above; the blob is 5-min cached).
     let dqeEarliest = '';
+    let dqeMinNeonMissed = false;
     if (typeof getDqeReadSource_ === 'function' && getDqeReadSource_() === 'neon'
         && typeof neonGetMinDqeDate_ === 'function') {
       dqeEarliest = neonGetMinDqeDate_() || '';
+      dqeMinNeonMissed = !dqeEarliest;
     }
     if (!dqeEarliest) {
       // F9: the SHARED bounds scan -- `result.dqe` above came from
@@ -318,6 +340,7 @@ function getLatestDataDates() {
       if (bounds.min) dqeEarliest = bounds.min;
     }
     if (dqeEarliest) result.dqeEarliest = dqeEarliest;
+    if (dqeMinNeonMissed && !dqeEarliest) failedSourceEmpty = true;
 
     // Overall max -- drives the pill's visible date + age. When
     // both sources agree, the pill matches DQE (normal steady
@@ -334,8 +357,10 @@ function getLatestDataDates() {
     Logger.log('getLatestDataDates failed: %s', e);
     computedOk = false;
   }
-  if (computedOk) {
+  if (computedOk && !failedSourceEmpty) {
     try { cache.put(KEY, JSON.stringify(result), CACHE_TTL_SECONDS); } catch (e) {}
+  } else if (failedSourceEmpty) {
+    Logger.log('getLatestDataDates: a Neon read failed and its sheet fallback was empty -- served UNCACHED (DATA-5).');
   }
   return result;
 }
@@ -770,6 +795,24 @@ function combineSummaries_(primary, parts) {
   const seenRoster = {};
   const seenQueueOnly = {};
   let crossoverAgentCount = 0;
+  // DATA-8 (broad-scan 2026-10-12): the MIXED case the two rules below miss.
+  // One dept narrowed the agent (a scoped row: its own queues' slice) while
+  // another fell open for the WHOLE window under B-1 (an un-scoped row
+  // carrying the agent's ALL-queue figures on every day). The all-queue row
+  // already contains the slice, so summing both counts the slice twice. Only
+  // a B-1 fall-open is safe to treat as a superset: an un-scoped row from a
+  // changeover range is partly narrowed (L7), so it is left summed.
+  const scopedRosterRows = {};
+  const supersetRoster = {};
+  parts.forEach(function (p) {
+    const fellOpen = !!(p && p.meta && p.meta.queueSplitFellOpen);
+    (p.rows || []).forEach(function (r) {
+      const name = String(r.agent || '');
+      if (!name || !r.matchedViaRoster) return;
+      if (r.queueScoped) (scopedRosterRows[name] = scopedRosterRows[name] || []).push(r);
+      else if (fellOpen && !supersetRoster[name]) supersetRoster[name] = r;
+    });
+  });
   parts.forEach(function (p) {
     (p.rows || []).forEach(function (r) {
       const name = String(r.agent || '');
@@ -827,6 +870,25 @@ function combineSummaries_(primary, parts) {
         if (!seenQueueOnly[name]) { seenQueueOnly[name] = true; return; }
         grand.queueOnlyAgentCount -= 1;
       }
+    });
+  });
+  // DATA-8: drop each narrowed slice an all-queue superset row already holds.
+  Object.keys(scopedRosterRows).forEach(function (name) {
+    const sup = supersetRoster[name];
+    if (!sup) return;
+    const supInTeam = !teamAvgExcludeSet_(sup.dept)[name];
+    scopedRosterRows[name].forEach(function (r) {
+      crossoverAgentCount++;
+      if (supInTeam && !teamAvgExcludeSet_(r.dept)[name]) {
+        grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
+        grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+      }
+      grand.totalUnique   -= Number(r.totalUnique) || 0;
+      grand.totalRung     -= Number(r.totalRung) || 0;
+      grand.totalMissed   -= Number(r.totalMissed) || 0;
+      grand.totalAnswered -= Number(r.totalAnswered) || 0;
+      grand.tttSeconds    -= Number(r.tttSeconds) || 0;
+      grand.rosterAgentCount -= 1;
     });
   });
   grand.crossoverAgentCount = crossoverAgentCount;
@@ -1005,7 +1067,9 @@ function getDepartmentSummary(req) {
   const rosterHash = rosterSetHash_(deptSet);
   const cacheKey = 'summary:v23:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
-                 + ':' + reportFreshnessTag_() + ':' + rosterHash;
+                 + ':' + reportFreshnessTag_()
+                 + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
+                 + ':' + rosterHash;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -1021,7 +1085,13 @@ function getDepartmentSummary(req) {
   }
 
   const t0 = Date.now();
-  const parts = deptSet.map(function (d) { return computeSummary_(d, from, to, scope); });
+  // DATA-7 (broad-scan 2026-10-12): only the REQUESTED dept's QCD snapshot and
+  // CSR transfer block ship (combineSummaries_ keeps the primary's), so the
+  // other depts skip computing them -- a read each, and a child's read
+  // failure no longer blocks caching a payload that never contained it.
+  const parts = deptSet.map(function (d) {
+    return computeSummary_(d, from, to, scope, { sections: d === dept });
+  });
   // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
   // 'subs' scope it is not among the parts, so it is computed separately --
   // one extra per-dept compute on a scope the client never sends -- rather
@@ -1108,9 +1178,16 @@ function isIsoDate_(s) {
  *   'queue'  - only rows whose Col D queue extensions overlap this
  *              dept's queue extension union
  *   'both'   - union of the above (an agent matched by either path)
+ *
+ * opts.sections === false (DATA-7): skip the dept's QCD snapshot and CSR
+ * transfer block (qcd/csrTransfer come back null). Only the combined view
+ * passes it, for the non-primary depts -- combineSummaries_ ships the
+ * PRIMARY's sections and discards a child's, so computing them only cost a
+ * read and, on a failure, the whole payload's cache put.
  */
-function computeSummary_(dept, from, to, scope) {
+function computeSummary_(dept, from, to, scope, opts) {
   scope = scope || 'roster';
+  const withSections = !(opts && opts.sections === false);
 
   const roster = getRosterForDepartment_(dept);
   const rosterSet = {};
@@ -1518,17 +1595,19 @@ function computeSummary_(dept, from, to, scope) {
   // QCD mapping OR no recent QCD rows; client renders nothing.
   // R11-C1: the E5 prior window rides along so the QCD range block (and the
   // Avg-answer tile chip it feeds) gets a prior baseline in the same scan.
-  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ,
-    { from: from, to: to, priorFrom: priorFrom, priorTo: priorTo });
+  const qcdSnapshot = withSections ? computeDeptQcdSnapshot_(dept, ssTZ,
+    { from: from, to: to, priorFrom: priorFrom, priorTo: priorTo }) : null;
 
   // R10-5: CSR-only range transfer stats from CSR Transfer Historical Data
   // (the dashboard's first read of that sheet -- INV-52 said "not consumed";
   // read-only, best-effort, null for every other dept / missing sheet).
   // R11-C1: + the prior window's stats for the Transfer % tile's delta chip
   // (attached as .prior; nullable independently of the current block).
-  const csrTransfer = computeCsrTransferRange_(dept, from, to);
+  // DATA-7: the two calls share one read of the sheet's date column.
+  const csrCtx = {};
+  const csrTransfer = withSections ? computeCsrTransferRange_(dept, from, to, csrCtx) : null;
   if (csrTransfer && priorFrom && priorTo) {
-    csrTransfer.prior = computeCsrTransferRange_(dept, priorFrom, priorTo);
+    csrTransfer.prior = computeCsrTransferRange_(dept, priorFrom, priorTo, csrCtx);
   }
 
   return {
@@ -1601,7 +1680,7 @@ function computeSummary_(dept, from, to, scope) {
  * numeric parses. Best-effort: null when the dept isn't CSR, the sheet is
  * missing/empty, or no rows land in range -- the client renders no tile.
  */
-function computeCsrTransferRange_(dept, from, to) {
+function computeCsrTransferRange_(dept, from, to, ctx) {
   try {
     if (String(dept) !== 'CSR' || !from || !to) return null;
     const ss = openSpreadsheet_();
@@ -1636,7 +1715,16 @@ function computeCsrTransferRange_(dept, from, to) {
     // never fall outside it -- and tight in the ordinary appended-in-order
     // case. Same total rows scanned for dates as before; far fewer cells.
     const tz0 = ss.getSpreadsheetTimeZone();
-    const dateCol = sheet.getRange(2, CSR_TRANSFER_DATE_COL_, lastRow - 1, 1).getDisplayValues();
+    // DATA-7: `ctx` (one computeSummary_ call) shares this column between the
+    // current and prior windows -- same sheet, same execution, read once.
+    // Keyed on lastRow so a ctx can never hand back a column of another size.
+    let dateCol;
+    if (ctx && ctx.csrDateCol && ctx.csrLastRow === lastRow) {
+      dateCol = ctx.csrDateCol;
+    } else {
+      dateCol = sheet.getRange(2, CSR_TRANSFER_DATE_COL_, lastRow - 1, 1).getDisplayValues();
+      if (ctx) { ctx.csrDateCol = dateCol; ctx.csrLastRow = lastRow; }
+    }
     let firstIdx = -1, lastIdx = -1;
     for (let d = 0; d < dateCol.length; d++) {
       const dIso = rowDateIso_(dateCol[d][0], tz0);
@@ -1857,13 +1945,13 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     if (_optPrior && _optPrior < _readFrom) _readFrom = _optPrior;
     const _readTo = (_optTo && _optTo > _todayIso) ? _optTo : _todayIso;
     const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
-    if (!grid || grid.missing || grid.empty) return null;
+    if (!grid || grid.missing || grid.empty) { if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeDeptQcdSnapshot_'); return null; }   // DATA-4
     const tz = ssTZ || grid.ssTZ;
     const values = grid.values;
     // R10-5: the H:MM:SS Avg Answer strings live in the parallel `displays`
     // grid (INV-02 discipline; the Neon adapter ships an aligned copy).
     const displays = grid.displays || null;
-    if (!values.length) return null;
+    if (!values.length) { if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeDeptQcdSnapshot_'); return null; }   // DATA-4
 
     let latestDate = '';
     let byQueue = {};   // queue -> { total, answered, abandoned, violations } on latestDate
@@ -1888,7 +1976,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         b.violations += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
       }
     }
-    if (!latestDate) return null;
+    if (!latestDate) { if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeDeptQcdSnapshot_'); return null; }   // DATA-4
 
     // QCD side-panel period slider (Yesterday / MTD). MTD is an ISOLATED second
     // pass over the same in-memory `values`, summing every row in the latest

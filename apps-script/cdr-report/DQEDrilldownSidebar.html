@@ -442,7 +442,7 @@
         if (!result.showAllRejects && result.nearMissCount > 0) {
           html += '<div class="near-miss-note">' +
             result.nearMissCount + ' additional row' + (result.nearMissCount === 1 ? '' : 's') +
-            ' shown dimmed below would have counted but fell outside the time window (8:30 AM-5:00 PM CST).' +
+            ' shown dimmed below would have counted but fell outside the time window (8:30 AM-5:00 PM CST; 8:00 AM for the CSR queue family, R49).' +
             '</div>';
         }
 
@@ -630,7 +630,7 @@
         if (showAllRejects && leg._rejectReason) {
           reasonLine = '<div class="reject-reason">Filtered out: ' + escapeHtml(leg._rejectReason) + '</div>';
         } else if (leg._outsideWindow) {
-          reasonLine = '<div class="outside-reason">Outside window 8:30 AM-5:00 PM CST</div>';
+          reasonLine = '<div class="outside-reason">Outside window 8:30 AM-5:00 PM CST (8:00 AM for the CSR queue family)</div>';
         }
 
         var classNames = ['leg'];

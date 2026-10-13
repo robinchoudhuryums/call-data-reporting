@@ -34,6 +34,8 @@ var CDR_REPORT_PROP_REGISTRY_ = Object.freeze({
     INBOUND_EXPORT_KEEP_DAYS: 'operator', INBOUND_EXPORT_JOURNEY_DAYS: 'operator',     // #49
     OUTBOUND_EXPORT_KEEP_DAYS: 'operator', OUTBOUND_EXPORT_JOURNEY_DAYS: 'operator',   // #50
     // engine -- written by the code
+    INBOUND_EXPORT_WATERMARK: 'engine', INBOUND_EXPORT_PENDING: 'engine',     // TOOL-1: changed-date refresh (#49)
+    OUTBOUND_EXPORT_WATERMARK: 'engine', OUTBOUND_EXPORT_PENDING: 'engine',   // TOOL-1 (#50)
     DQE_BACKFILL_RESUME: 'engine', DQE_UPSERT_RESUME: 'engine',        // T-8 fingerprinted pointers (#56)
     CDR_BACKFILL_RESUME: 'engine', QCD_BACKFILL_RESUME: 'engine',
     CDR_PHONES_BACKFILL_RESUME: 'engine', CDR_MISSING_BACKFILL_RESUME: 'engine',
