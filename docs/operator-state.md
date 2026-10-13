@@ -1238,6 +1238,16 @@ When something looks wrong, before assuming a code bug, check:
     published` before `setup()` has created the sheet. A failed publish
     never fails the save that triggered it (best-effort, logged, and the
     row shows the drift).
+    - **Per-department targets are now expected (UX-2, owner 2026-10-13).**
+      The Insights brief's top line is coloured by this standard, and under
+      the default 80% / 10 most departments read red every month (the first
+      `probeBriefThresholds` run, #76: Power, Resupply, Manual Mobility,
+      Eligibility, Service, Billing and PAP all 12 months). The owner chose to
+      set a `DEPT_ANSWER_TARGETS` entry per department to match each team's
+      routing rather than leave the top line uncoloured. Pick each value from
+      that department's own recent rates (the probe's monthly series), and
+      re-check after a routing change. The My Department table's tint uses
+      the same standard, so it improves too.
 38. **Diagnosing "a queue's inbound calls are missing" (F1/F1b runbook).**
     A queue whose raw name `icIsQueueName_` doesn't recognize gets
     `entry_queue = NULL` and attributes to NO dept. **Do NOT probe with
@@ -3354,3 +3364,10 @@ When something looks wrong, before assuming a code bug, check:
     Nothing it prints changes a number anywhere; bring the log back and the
     thresholds are picked from it. Pinned by
     `tests/unit/brief-thresholds-probe.test.js`.
+    - **FIRST RUN, 2026-10-13 (12 months to 2026-09-30, sheet source, queue
+      split on).** The thresholds it led to are recorded in docs/next-steps.md
+      "UX-2 RULED": share of answered stays uncoloured; queue wait is amber at
+      1.5x its own prior-3-month median (5+ calls a day); the trend is amber at
+      8 and red at 12 points below the prior-3-month average. Re-run it before
+      changing any of them, or if a brief row colours far more or less often
+      than expected.

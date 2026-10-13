@@ -1,6 +1,12 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-13 -- UX-2 BUILT as an admin trial (Insights ranked brief).**
+  - Owner rulings: the recommended thresholds from the first probe run (share grey; queue wait amber at 1.5x own prior-3-month median, 5+ calls/day; trend amber 8 / red 12 pts vs prior-3 avg; shading +-2..15) and option 1 for the top line (per-dept answer targets, operator step, Operator State #37).
+  - Built: `insRenderBrief_` + pure rules (script-8), `--caution` token, Agents fold first/open, one-line fold heads, trend-point shading (admin), `queueHealth.perQueue[].wait` + QCD monthly avgAnswerSec (insights:v25).
+  - Verification: 2423 tests (new insights-brief suite, 7 unit bites), drive-smoke +6 UX-2 checks (2 rendered bites), full ci:ui green, lint clean.
+  **Owner-side:** deploy the dashboard; set per-dept targets in Alerts -> Answer targets; walk S61; after ~2 weeks decide the manager release (next-steps "UX-2 RULED" has the steps).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn (branch restarted from main after #366 merged), no PR.
 - **2026-10-13 -- /sync-docs over 7768d2d..2005240 (broad-scan batches 1-11, WS-1, UX-2, the probe).** 16 drifts fixed across CLAUDE.md + six split docs: PC-4 collisions (#56, S31), PIPE-7 (#56, tests/README), TOOL-6 dbReporting.gs web-editor delete (#29), WS-1 wait exception (CLAUDE.md + per-call-capture), UX-1 leftovers (S46, client-ui-conventions heading, architecture), ENG-6 IDLE (#12), ENG-7 / ENG-8 / PipelineWatch quiet kinds / DATA-6 / DATA-3 in CLAUDE.md, the R49 mirrors, the span-reader callers, the beacon sites, the swept prefs keys, the phone-hash file wording, script.html:: locations -> fragments; Health-row inventory trimmed to Operator State pointers. CLAUDE.md 174.5 KB (25.5 KB headroom).
 - **2026-10-13 -- UX-2 RULED + the brief-threshold probe written (Operator State #76).**
   - Owner: option A on all three UX-2 decisions (docs/next-steps.md). No threshold yet, by owner choice, for Callbacks, outbound connect %, ATT or missed-call counts.

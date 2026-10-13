@@ -56,7 +56,13 @@
        Defined at every site --warn is (light, light-oklch, dark, dark-oklch,
        the export override) so it never resolves only inside one block. */
     --stale:       #a97a12;
+    /* --caution (UX-2, owner 2026-10-13): the AMBER "worth a look" tier of
+       the Insights brief. The same values as --stale, under its own name so
+       amber never means two things; red rows use --warn (the colour their
+       sections already use). Defined at every --stale site. */
+    --caution:     #a97a12;
     --stale-soft:  #f6ecd0;
+    --caution-soft: #f6ecd0;
     /* Call DIRECTION hues (Batch B follow-up). Inbound reuses the accent --
        it already means inbound on Caller Lookup's chip -- and outbound gets
        its own violet, a hue no status token uses, so neither reads as
@@ -105,7 +111,9 @@
       --bad:         oklch(50% 0.16 25);
       --bad-soft:    oklch(91% 0.04 25);
       --stale:       oklch(58% 0.13 80);
+      --caution:     oklch(58% 0.13 80);
       --stale-soft:  oklch(94% 0.04 85);
+      --caution-soft: oklch(94% 0.04 85);
       --dir-out:      oklch(52% 0.13 300);
       --dir-out-soft: oklch(93% 0.04 300);
     }
@@ -148,6 +156,7 @@
     --warn-soft:   #3a1e15;
     --bad-soft:    #3a1410;
     --stale-soft:  #3a2d10;
+    --caution-soft: #3a2d10;
     /* Brand + semantics, lightened for the dark surface (constant hue).
        Contrast vs --paper #0c0f14: accent 7.4:1, good 7.7:1, warn 7.3:1,
        bad 5.8:1 — all clear AA text (light-paper values were 3.2–5.2:1). */
@@ -158,6 +167,7 @@
     --on-warn: #101418;
     --bad:    #e06a56;
     --stale:  #e2b04e;
+    --caution: #e2b04e;
     --dir-out:      #b39be6;
     --dir-out-soft: #2a2140;
   }
@@ -175,6 +185,7 @@
       --warn-soft:   oklch(26% 0.05 30);
       --bad-soft:    oklch(24% 0.05 25);
       --stale-soft:  oklch(27% 0.05 80);
+      --caution-soft: oklch(27% 0.05 80);
       /* Base brand/semantics lightened to clear AA on the dark surface
          (mirrors the hex overrides above, constant hue). */
       --accent: oklch(70% 0.12 250);
@@ -182,6 +193,7 @@
       --warn:   oklch(73% 0.13 45);
       --bad:    oklch(67% 0.16 28);
       --stale:  oklch(78% 0.13 85);
+      --caution: oklch(78% 0.13 85);
       --dir-out:      oklch(74% 0.11 300);
       --dir-out-soft: oklch(27% 0.05 300);
     }
@@ -1003,6 +1015,37 @@
   .ins-fold-summary:hover .ds-zone-label { color: var(--ink); }
   .ins-fold-head { color: var(--muted); font-size: 12.5px; }
   .ins-fold-head .ins-fold-muted { color: var(--muted); font-style: italic; }
+  /* UX-2: the ranked brief (insRenderBrief_). Admin-only while trialled; while
+     it shows, the headline banner it replaces is hidden -- except in View-as,
+     where data-admin-only hides the brief and the headline must come back. */
+  body:not([data-view-as="manager"]) #insights-results.ins-has-brief #ins-headline { display: none !important; }
+  .ins-brief { margin: 0 0 14px; }
+  .ins-brief-top { font-size: 15px; font-weight: 600; margin: 0 0 8px; color: var(--ink); }
+  .ins-brief-top .ins-brief-top-tier { padding: 1px 7px; border-radius: 999px; font-size: 12px; margin-right: 6px; }
+  .ins-brief-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .ins-brief-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: var(--paper-card); border: 1px solid var(--line); border-left-width: 4px;
+    border-radius: var(--r); padding: 7px 10px; font: inherit; color: var(--ink); cursor: pointer; }
+  .ins-brief-row:hover { background: var(--accent-soft); }
+  .ins-brief-sev { flex: 0 0 auto; min-width: 66px; font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; }
+  .ins-brief-text { flex: 1 1 auto; }
+  .ins-brief-go { flex: 0 0 auto; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .ins-brief--red   { border-left-color: var(--warn); }
+  .ins-brief--red   .ins-brief-sev, .ins-brief-top-tier.ins-brief--red { color: var(--warn); }
+  .ins-brief-top-tier.ins-brief--red { background: var(--warn-soft); }
+  .ins-brief--amber { border-left-color: var(--caution); }
+  .ins-brief--amber .ins-brief-sev, .ins-brief-top-tier.ins-brief--amber { color: var(--caution); }
+  .ins-brief-top-tier.ins-brief--amber { background: var(--caution-soft); }
+  .ins-brief--green { border-left-color: var(--good); }
+  .ins-brief--green .ins-brief-sev, .ins-brief-top-tier.ins-brief--green { color: var(--good); }
+  .ins-brief-top-tier.ins-brief--green { background: var(--good-soft); }
+  .ins-brief--grey  { border-left-color: var(--line); }
+  .ins-brief--grey  .ins-brief-sev, .ins-brief-top-tier.ins-brief--grey { color: var(--muted); }
+  @media (max-width: 600px) {
+    .ins-brief-row { flex-wrap: wrap; }
+    .ins-brief-go { width: 100%; }
+  }
   .ins-fold-body { padding-top: 4px; }
   /* Phase 3 motion: the fold body slides/fades in on expand (reduced-motion
      users get the instant swap). */
@@ -5626,7 +5669,9 @@
       --bad:         #b23a2c !important;
       --bad-soft:    #f1d7d2 !important;
       --stale:       #a97a12 !important;
+      --caution:     #a97a12 !important;
       --stale-soft:  #f6ecd0 !important;
+      --caution-soft: #f6ecd0 !important;
       --dir-out:      #7a5bb8 !important;
       --dir-out-soft: #ece4f7 !important;
     }

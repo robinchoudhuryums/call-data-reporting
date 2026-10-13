@@ -566,3 +566,17 @@ S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: De
     - View as a manager: neither block is visible (they sit inside admin-only surfaces until the 6c release).
   Expected: as described. A call to a person's line is never counted as a queue abandon, and the Callbacks tiles above do not change when the block is opened.
   Fails if: the block fetches before it is opened or on a reopen; the two rows' outcomes do not sum to their episodes; a repeat caller is listed whom someone called back inside the window; the Sales voicemail box is listed under no team; a call id or number of a CALLER appears anywhere; a misdial is counted in a rate or listed as a repeat attempt; a spreadsheet-served block carries no note; or the page scrolls sideways at phone width.
+
+S61 | Insights ranked brief and one-line sections (UX-2) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, open My Department for a dept with queues (e.g. CSR) over a recent month. At the top of the Insights region: a top line ("Answer rate N%, up/down X pts vs the prior period. K things need a look.") with a coloured word (Red / Amber / Green / No signal), then one row per section -- Queue health, Agents, Team detail, Trend, and Callbacks while the Outbound view is available to you. The old headline banner is gone for the admin.
+    - Rows run Red, then Amber, then Green, then No signal; within a colour Queue health, Agents, Callbacks, Team detail, Trend. "K things need a look" equals the number of Red + Amber rows.
+    - Queue health: a queue at 4.00% abandoned or more for the window makes the row Red and names it; otherwise a violation day, or a queue answering 1.5x or more slower than its own last-3-month norm (at 5+ calls a day), makes it Amber. Check one figure against the Queue health table below.
+    - Agents: an agent behind the team AND slipping makes it Red; behind, or slipping while on par, makes it Amber. Check a named agent against their card's rail (behind) and trend pill (slipping).
+    - Trend: compare the named month's rate with the 12-month chart. 12+ points below the previous 3 months' average is Red, 8-12 Amber, 8+ above Green. On the chart's % Answered monthly view, points well off their prior-3-month average are shaded toward green or orange, and the tooltip says by how much.
+    - Click each row: its section opens (if closed) and scrolls into view; the Callbacks row switches the page to Outbound first.
+    - Below the brief, Agents comes first and is open; Queue health, Team detail and Trend each read as one line when closed.
+    - Switch View as to a manager of the same dept: no brief, the headline banner is back, no trend-point shading. Exit View as: the brief returns.
+    - Sign in as a MANAGER: the same as View as -- no brief, headline present, sections in the new order with their one-line heads.
+  Expected: as described; every coloured row agrees with the section it opens.
+  Fails if: a manager or View-as sees the brief or the shading; the admin sees both the brief and the headline; a row's colour contradicts its section (e.g. Red queue with every queue under 4%); a row does not open its section; Share of answered, Callbacks or Team detail ever shows a colour other than No signal.

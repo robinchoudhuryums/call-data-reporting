@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v24';  // v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v25';  // v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -797,7 +797,8 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     teamStats:    teamStats,
     agentData:    agentData,
     teamInsights: teamInsights,
-    trendData:    { labels: trendLabels, series: trendSeries },
+    // UX-2: `months` (YYYY-MM per point) lets the brief find the latest WHOLE month.
+    trendData:    { labels: trendLabels, series: trendSeries, months: monthKeys },
     // Daily team series (selected window) for the consolidated trend
     // chart's Monthly/Daily toggle. trendData stays the 12-mo monthly
     // series (parity-pinned); this is additive.
@@ -812,6 +813,48 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     // no mapped queues or the QCD sheet is missing (best-effort).
     queueHealth: insightsQueueHealth_(dept, from, to, priorFrom, priorTo),
   };
+}
+
+// UX-2 queue-wait rule (owner 2026-10-13, from probeBriefThresholds, Operator
+// State #76): a queue's average answer time for the window is flagged when it
+// is 1.5x or more its OWN median over the three whole months before the
+// window starts -- never against the company average, which the probe showed
+// penalises small queues on average answer and big ones on longest wait.
+// Queues averaging under 5 calls a day are too noisy to judge (their daily
+// figure swung 50-140%), and longest wait is never judged at all.
+var INS_QUEUE_WAIT_RATIO_ = 1.5;
+var INS_QUEUE_WAIT_MIN_CALLS_PER_DAY_ = 5;
+
+/**
+ * Pure. `row` is a computeQcdReport_ queueBreakdown row (avgAnswerSec,
+ * totalCalls); `monthly` its trend buckets ({month, avgAnswerSec}); `daily`
+ * its window days ({totalCalls}); `fromIso` the window start. Returns the
+ * figures plus `flagged`, or `insufficient: true` when the three prior months
+ * are not all on hand with answered calls.
+ */
+function insQueueWaitVerdict_(row, monthly, daily, fromIso) {
+  var avg = Number(row && row.avgAnswerSec) || 0;
+  var calls = Number(row && row.totalCalls) || 0;
+  var activeDays = (daily || []).filter(function (d) { return (Number(d.totalCalls) || 0) > 0; }).length;
+  var perDay = activeDays > 0 ? calls / activeDays : 0;
+  var out = {
+    avgAnswerSec: avg,
+    callsPerDay: Math.round(perDay * 10) / 10,
+    eligible: perDay >= INS_QUEUE_WAIT_MIN_CALLS_PER_DAY_,
+    ownMedianSec: null, ratio: null, flagged: false, insufficient: false,
+  };
+  var startMonth = String(fromIso || '').slice(0, 7);
+  var prior = (monthly || []).filter(function (m) { return m && m.month && m.month < startMonth; }).slice(-3);
+  var vals = prior.map(function (m) { return Number(m.avgAnswerSec) || 0; });
+  if (prior.length < 3 || vals.some(function (v) { return v <= 0; }) || avg <= 0) {
+    out.insufficient = true;
+    return out;
+  }
+  vals.sort(function (a, b) { return a - b; });
+  out.ownMedianSec = vals[1];
+  out.ratio = Math.round((avg / vals[1]) * 100) / 100;
+  out.flagged = out.eligible && (avg / vals[1]) >= INS_QUEUE_WAIT_RATIO_;
+  return out;
 }
 
 /**
@@ -979,6 +1022,12 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
           // client falls back to the unscoped jump when absent (a stale
           // <=6 h cached payload).
           daily:            (cur.perQueue && cur.perQueue[q.queue] && cur.perQueue[q.queue].daily) || [],
+          // UX-2: this queue's avg answer against its OWN prior-3-month
+          // median -- the brief's queue-wait rule (owner 2026-10-13).
+          wait: insQueueWaitVerdict_(q,
+                  (td && td.perQueue && td.perQueue[q.queue] && td.perQueue[q.queue].monthly) || [],
+                  (cur.perQueue && cur.perQueue[q.queue] && cur.perQueue[q.queue].daily) || [],
+                  from),
           // 4c: the call source driving the most abandons in this queue
           // (from the 4a bySource breakdown). Null when no sub-source has
           // any abandons -- the client renders nothing in that case.
@@ -1081,7 +1130,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       };
     }),
     teamInsights: [],
-    trendData: { labels: trendLabels, series: trendSeries },
+    trendData: { labels: trendLabels, series: trendSeries, months: monthKeys || [] },
     // F5: mirror the populated computeInsights_ shape so a no-data day returns
     // every top-level field. The client already guards both (insRenderQueueHealth_
     // early-returns on a null `queueHealth`; the trend view checks

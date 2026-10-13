@@ -662,7 +662,7 @@ this is the sequence. IDs are the scan's. Sizes: S < 2 h, M ½–2 days.
 Day outbound for managers -- the open "call ids at 6c" question) · SEC-6
 (accepted) · PIPE-8 (operator: Operator State #8).
 
-**UX-2 RULED (owner 2026-10-13, option A on all three) -- ready to build.** The
+**UX-2 RULED (owner 2026-10-13, option A on all three) -- BUILT 2026-10-13 as an admin trial (thresholds below).** The
 Insights ranked brief + one-line sections (Agents the only section open):
 1. **Urgency rule** -- colour a row ONLY where a standard already exists: the
    top line against the dept answer target + its amber band
@@ -680,6 +680,33 @@ Insights ranked brief + one-line sections (Agents the only section open):
 3. **Colours** -- red = `--warn`; amber = a NEW caution token (the `--stale`
    amber under its own name, defined at all five token sites).
 Options sheet: the "UX-2 Insights Brief: Decisions" doc (owner's artifacts).
+**Thresholds for the three rows that had no standard (owner 2026-10-13, from
+the first `probeBriefThresholds` run, Operator State #76):**
+- **Share of answered** -- stays GREY. One standard deviation flags 1-6 agents
+  every month; two cannot fire in a 5-agent team (the most is 2.0) and fired
+  7 of 12 months in Billing; answered-per-day-worked varies 45-70% within most
+  teams (CSR 24.5%), more roles than effort. Revisit for CSR alone if wanted.
+- **Queue wait** -- AMBER when a queue's window avg answer is 1.5x or more of
+  its OWN median over the 3 whole months before the window, judged only at
+  5+ calls per active day; no red (the 4% abandon rule is the red); longest
+  wait is information only. Never against the company average: volume vs avg
+  answer r = -0.57, vs longest wait r = +0.53. (`insQueueWaitVerdict_`.)
+- **12-month trend** -- the latest WHOLE month vs the average of the 3 before
+  it: RED at 12+ points down, AMBER at 8-12 down, GREEN at 8+ up (8 down =
+  14% of month-changes, 12 = 8%). The trend chart shades each monthly answer-
+  rate point: neutral within 2 points, full colour at 15 (pooled p95).
+- **Top line (option 1)** -- the owner sets PER-DEPARTMENT answer targets in
+  Alerts -> Answer targets (Operator State #37); under the default 80/10 most
+  depts read red every month, likely an artefact of ring-all routing under the
+  `rung` formula. No code change.
+- Callbacks, outbound connect %, ATT and missed-call counts: no threshold for
+  now (owner).
+**Built:** `insRenderBrief_` + the pure rules in script-8-insights.html, the
+`--caution` token, the Agents fold first and open, one-line fold heads,
+`queueHealth.perQueue[].wait` (insights:v25). Release to managers = drop
+`data-admin-only` from `#ins-brief` and the admin check in `insRenderBrief_`
++ the trend shading, then walk S61. Pinned by `insights-brief.test.js` and
+drive-smoke's UX-2 checks.
 
 ## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
 

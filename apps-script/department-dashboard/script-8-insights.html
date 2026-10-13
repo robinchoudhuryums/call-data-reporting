@@ -121,6 +121,8 @@
         if (saved.detail === undefined) saved.detail = true;
         // Batch E1: the Outbound fold is new -- absent means OPEN.
         if (saved.ob === undefined) saved.ob = true;
+        // UX-2: the Agents fold is new and leads the report -- absent means OPEN.
+        if (saved.agents === undefined) saved.agents = true;
         insFolds_ = saved;
         return insFolds_;
       }
@@ -136,7 +138,7 @@
     if (seed === null) {
       seed = (typeof USER !== 'undefined' && USER && USER.role === 'admin');
     }
-    insFolds_ = { qh: !!seed, trend: !!seed, detail: true, ob: true };
+    insFolds_ = { qh: !!seed, trend: !!seed, detail: true, ob: true, agents: true };
     return insFolds_;
   }
   function insFoldOpen_(key) { return !!insFoldsLoad_()[key]; }
@@ -151,7 +153,7 @@
   // .ins-fold class (it predates the fold system and keeps its own chrome).
   function insFoldsApply_() {
     const f = insFoldsLoad_();
-    ['qh', 'trend', 'detail', 'ob', 'cb'].forEach(function (k) {
+    ['qh', 'trend', 'detail', 'ob', 'cb', 'agents'].forEach(function (k) {
       const el = document.querySelector('[data-fold="' + k + '"]');
       if (el && el.open !== !!f[k]) el.open = !!f[k];
     });
@@ -700,6 +702,10 @@
         if (key) insFoldSet_(key, fold.open);
         if (key === 'trend' && fold.open && insLastData) insDrawTrendChart_(insLastData);
         if (key === 'cb' && fold.open) insCbSync_();   // G1: lazy fetch / draw-on-open
+        // UX-2: the Agents fold's Chart view is a canvas (the C3 trap) -- redraw on open.
+        if (key === 'agents' && fold.open && insLastData && insCardsView === 'chart') {
+          insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
+        }
       });
     });
     const introDismiss = $('ins-intro-dismiss');
@@ -1575,11 +1581,306 @@
     headEl.appendChild(row);
   }
 
+  // ── UX-2: the ranked brief (owner 2026-10-13) ─────────────────────────────
+  // One row per section, most urgent first, then each section reads as a
+  // one-line fold head. The colour rules are the owner's (docs/next-steps.md
+  // "UX-2 RULED"; thresholds from probeBriefThresholds, Operator State #76):
+  // colour a row ONLY where a standard exists. The brief is ADMIN-ONLY while
+  // it is trialled (data-admin-only; View-as hides it); the fold heads are
+  // neutral text and render for everyone. The rule functions are PURE and
+  // self-contained (literal thresholds) -- tests/unit/insights-brief.test.js
+  // lifts them out of this fragment.
+
+  // Tier from answerTierCls_'s class (the dept answer target + its amber band).
+  function insBriefTopTier_(tierCls) {
+    var c = String(tierCls || '');
+    if (/bm-target/.test(c)) return 'green';
+    if (/bm-watch/.test(c)) return 'amber';
+    if (/bm-bad/.test(c)) return 'red';
+    return 'grey';
+  }
+
+  // Queue health: red when a queue's window abandon rate breaks the standard
+  // (4.00% or more); amber when none does but a queue had a violation DAY, or
+  // its avg answer ran 1.5x its own prior-3-month median (the server's
+  // perQueue[].wait verdict, judged only at 5+ calls a day); green otherwise.
+  function insBriefQueue_(qh, abandonStd) {
+    var std = Number(abandonStd) || 4;
+    if (!qh) return { tier: 'grey', text: 'No queue data for this department' };
+    if (qh.error) return { tier: 'grey', text: 'Queue data is temporarily unavailable' };
+    if (qh.unmapped) return { tier: 'grey', text: 'No queues mapped for this department' };
+    var rows = (qh.perQueue || []).filter(function (q) { return (Number(q.totalCalls) || 0) > 0; });
+    if (!rows.length) return { tier: 'grey', text: 'No queue calls in this window' };
+    var fmtPct = function (v) { return (Math.round(Number(v) * 10) / 10).toFixed(1) + '%'; };
+    var more = function (n) { return n > 0 ? ' (+' + n + ' more)' : ''; };
+    var breach = rows.filter(function (q) { return Number(q.abandonedPct) >= std; })
+      .sort(function (a, b) { return Number(b.abandonedPct) - Number(a.abandonedPct); });
+    if (breach.length) {
+      return { tier: 'red', text: breach[0].queue + ' abandoned ' + fmtPct(breach[0].abandonedPct)
+        + ' (limit ' + std + '%)' + more(breach.length - 1) };
+    }
+    var parts = [];
+    var viol = rows.filter(function (q) { return (Number(q.violations) || 0) > 0; })
+      .sort(function (a, b) { return Number(b.violations) - Number(a.violations); });
+    if (viol.length) {
+      var v = Number(viol[0].violations);
+      parts.push(viol[0].queue + ' had ' + v + ' violation day' + (v === 1 ? '' : 's') + more(viol.length - 1));
+    }
+    var slow = rows.filter(function (q) { return q.wait && q.wait.flagged; })
+      .sort(function (a, b) { return Number(b.wait.ratio) - Number(a.wait.ratio); });
+    if (slow.length) {
+      parts.push(slow[0].queue + ' answered in ' + slow[0].wait.avgAnswerSec + 's on average, '
+        + slow[0].wait.ratio + 'x its usual ' + slow[0].wait.ownMedianSec + 's' + more(slow.length - 1));
+    }
+    if (parts.length) return { tier: 'amber', text: parts.join('; ') };
+    return { tier: 'green', text: 'Every queue under ' + std + '% abandoned, with no violation days' };
+  }
+
+  // Agents: rows = [{name, standing:'attention'|'steady'|'strong', trend:
+  // 'improved'|'regressed'|'mixed', judged}] (judged = enough rung calls and
+  // not a team-average-excluded manager). Red = behind the team AND slipping;
+  // amber = behind, or slipping while on par; green = nobody behind. On
+  // windows more than 7 days apart in length "slipping" is ignored, so the
+  // row can reach amber but not red.
+  function insBriefAgents_(rows, lengthMismatch) {
+    var judged = (rows || []).filter(function (r) { return r && r.judged; });
+    if (judged.length < 2) return { tier: 'grey', text: 'Too few agents with enough calls to compare', red: [], amber: [] };
+    var slipping = function (r) { return !lengthMismatch && r.trend === 'regressed'; };
+    var red = judged.filter(function (r) { return r.standing === 'attention' && slipping(r); });
+    var amber = judged.filter(function (r) {
+      return (r.standing === 'attention' && !slipping(r)) || (r.standing === 'steady' && slipping(r));
+    });
+    var name = function (r) {
+      return r.name + (r.standing === 'attention' ? (slipping(r) ? ' (behind, slipping)' : ' (behind)') : ' (slipping)');
+    };
+    var list = function (arr) {
+      var shown = arr.slice(0, 3).map(name).join(', ');
+      return shown + (arr.length > 3 ? ' +' + (arr.length - 3) + ' more' : '');
+    };
+    var flagged = red.concat(amber);
+    if (red.length) return { tier: 'red', text: list(flagged), red: red, amber: amber };
+    if (amber.length) return { tier: 'amber', text: list(amber), red: red, amber: amber };
+    return { tier: 'green', text: 'Nobody is behind the team average', red: red, amber: amber };
+  }
+
+  // Trend: the latest WHOLE month's answer rate against the average of the 3
+  // months before it. Red = 12+ points down, amber = 8 to 12 down, green = 8+
+  // up, grey otherwise or with too little history. `months` = [{month:
+  // 'YYYY-MM', pct, rung}]; `trendEnd` the window's last day (a month it
+  // ends part-way through is not whole).
+  function insBriefTrend_(months, trendEnd) {
+    var names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var list = (months || []).slice();
+    var end = String(trendEnd || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      var y = Number(end.slice(0, 4)), m = Number(end.slice(5, 7)), d = Number(end.slice(8, 10));
+      var last = new Date(y, m, 0).getDate();
+      if (d < last) list = list.filter(function (x) { return x.month !== end.slice(0, 7); });
+    }
+    var has = function (x) { return x && (Number(x.rung) || 0) > 0 && isFinite(Number(x.pct)); };
+    if (list.length < 4 || !has(list[list.length - 1])) {
+      return { tier: 'grey', text: 'Not enough whole months to judge the trend', change: null };
+    }
+    var L = list[list.length - 1], prior = list.slice(-4, -1);
+    if (!prior.every(has)) return { tier: 'grey', text: 'Not enough whole months to judge the trend', change: null };
+    var avg = (Number(prior[0].pct) + Number(prior[1].pct) + Number(prior[2].pct)) / 3;
+    var change = Math.round((Number(L.pct) - avg) * 10) / 10;
+    var label = names[Number(String(L.month).slice(5, 7)) - 1] || L.month;
+    var rate = (Math.round(Number(L.pct) * 10) / 10).toFixed(1) + '%';
+    var tier = change <= -12 ? 'red' : (change <= -8 ? 'amber' : (change >= 8 ? 'green' : 'grey'));
+    var how = change < 0 ? Math.abs(change) + ' pts below' : (change > 0 ? change + ' pts above' : 'level with');
+    return { tier: tier, change: change, month: L.month,
+             text: label + ' answer rate ' + rate + ', ' + how + ' its prior 3-month average' };
+  }
+
+  // Trend-point shading: neutral within 2 points of the prior 3-month
+  // average, full colour at 15 (the probe's pooled 95th percentile).
+  function insTrendShade_(change) {
+    var c = Number(change);
+    if (!isFinite(c)) return { dir: 'flat', t: 0 };
+    var a = Math.abs(c);
+    var t = a < 2 ? 0 : (a >= 15 ? 1 : (a - 2) / 13);
+    return { dir: c > 0 ? 'up' : (c < 0 ? 'down' : 'flat'), t: Math.round(t * 100) / 100 };
+  }
+
+  // Most urgent first; within a colour the fixed section order.
+  function insBriefRank_(rows) {
+    var tierOrder = { red: 0, amber: 1, green: 2, grey: 3 };
+    var keyOrder = { queue: 0, agents: 1, callbacks: 2, detail: 3, trend: 4 };
+    return (rows || []).slice().sort(function (a, b) {
+      var t = (tierOrder[a.tier] != null ? tierOrder[a.tier] : 9) - (tierOrder[b.tier] != null ? tierOrder[b.tier] : 9);
+      if (t) return t;
+      return (keyOrder[a.key] != null ? keyOrder[a.key] : 9) - (keyOrder[b.key] != null ? keyOrder[b.key] : 9);
+    });
+  }
+
+  var INS_BRIEF_WORD_ = { red: 'Red', amber: 'Amber', green: 'Green', grey: 'No signal' };
+  var INS_BRIEF_TARGET_ = {
+    queue:     { id: 'ins-qh-fold',      label: 'Queue health' },
+    agents:    { id: 'ins-agents-fold',  label: 'Agents' },
+    callbacks: { id: 'ins-cb-fold',      label: 'Outbound view' },
+    detail:    { id: 'ins-team-detail',  label: 'Team detail' },
+    trend:     { id: 'ins-trend-fold',   label: 'Trend' },
+  };
+
+  function insBriefAgentRows_(data) {
+    var cards = (data && data.agentData) || [];
+    var meta = (data && data.meta) || {};
+    var teamPct = insTeamBenchmarkPct_(data);
+    return cards.map(function (c) {
+      var rung = Number((c.metrics && c.metrics.rung && c.metrics.rung.val) || 0);
+      return {
+        name: c.name,
+        standing: insClassifyAgent_(c, teamPct),
+        trend: deltaClassify_(insPerDayMetrics_(c.metrics, meta)),
+        judged: rung >= INS_MIN_VOL && !insIsExempt_(c),
+      };
+    });
+  }
+
+  function insBriefTrendMonths_(data) {
+    var td = (data && data.trendData) || {};
+    var series = td.series || [], months = td.months || [];
+    return months.map(function (m, i) {
+      var s = series[i] || {};
+      return { month: m, pct: Number(s.pct) || 0, rung: Number(s.rung) || 0 };
+    });
+  }
+
+  // The one-line fold heads (neutral text, every role).
+  function insSyncFoldHeads_(data, agentsV, trendV, agentRows) {
+    var aHead = $('ins-agents-fold-head');
+    if (aHead) {
+      var judged = agentRows.filter(function (r) { return r.judged; });
+      var behind = judged.filter(function (r) { return r.standing === 'attention'; }).length;
+      var slip = judged.filter(function (r) { return r.trend === 'regressed'; }).length;
+      var onTrack = judged.filter(function (r) { return r.standing !== 'attention'; }).length;
+      aHead.textContent = judged.length
+        ? behind + ' behind the team · ' + slip + ' slipping · ' + onTrack + ' on track'
+        : (agentRows.length ? agentRows.length + ' agent' + (agentRows.length === 1 ? '' : 's') + ', too few calls to compare' : '');
+    }
+    var dHead = $('ins-detail-fold-head');
+    if (dHead) {
+      var ts = (data && data.teamStats) || {};
+      var parts = [];
+      if (ts.att && ts.att.formatted && Number(ts.att.val) > 0) parts.push('talk time ' + ts.att.formatted + ' per call');
+      var top = insBriefTopShare_(data);
+      if (top) parts.push(top.name + ' took ' + top.pct + '% of answered calls');
+      dHead.textContent = parts.length ? '· ' + parts.join(' · ') : '';
+    }
+    var tHead = $('ins-trend-fold-head');
+    if (tHead) tHead.textContent = '12-month team trend' + (trendV.change != null ? ' · ' + trendV.text : '');
+  }
+
+  function insBriefTopShare_(data) {
+    var cards = (data && data.agentData) || [];
+    var total = Number(data && data.meta && data.meta.answeredDeptTotal) || 0;
+    if (!total || cards.length < 2) return null;
+    var best = null;
+    cards.forEach(function (c) {
+      var a = Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0);
+      if (!best || a > best.a) best = { name: c.name, a: a };
+    });
+    if (!best || !best.a) return null;
+    return { name: best.name, pct: Math.round((best.a / total) * 100) };
+  }
+
+  function insRenderBrief_(data) {
+    var box = $('ins-brief');
+    var res = $('insights-results');
+    var agentRows = insBriefAgentRows_(data);
+    var meta = (data && data.meta) || {};
+    var mismatch = Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
+    var agentsV = insBriefAgents_(agentRows, mismatch);
+    var trendV = insBriefTrend_(insBriefTrendMonths_(data), meta.trendEnd || meta.to);
+    insSyncFoldHeads_(data, agentsV, trendV, agentRows);
+    if (!box) return;
+    if (USER.role !== 'admin' || !data || !data.teamStats) {
+      box.style.display = 'none'; box.innerHTML = '';
+      if (res) res.classList.remove('ins-has-brief');
+      return;
+    }
+    var ts = data.teamStats || {};
+    var dept = meta.department || null;
+    var pct = Number((ts.pct && ts.pct.val) || 0);
+    var hasCalls = Number((ts.rung && ts.rung.val) || 0) > 0;
+    var topTier = hasCalls ? insBriefTopTier_(answerTierCls_(pct, dept)) : 'grey';
+    var rows = [
+      Object.assign({ key: 'queue' }, insBriefQueue_(data.queueHealth, ABANDON_STANDARD_)),
+      { key: 'agents', tier: agentsV.tier, text: agentsV.text },
+      { key: 'detail', tier: 'grey', text: (function () {
+          var parts = [];
+          if (ts.att && ts.att.formatted && Number(ts.att.val) > 0) parts.push('Talk time ' + ts.att.formatted + ' per call');
+          var top = insBriefTopShare_(data);
+          if (top) parts.push(top.name + ' took ' + top.pct + '% of answered calls');
+          return parts.length ? parts.join('; ') : 'No team detail for this window';
+        })() },
+      { key: 'trend', tier: trendV.tier, text: trendV.text },
+    ];
+    // Callbacks: no standard yet (owner) -- always grey, and only where the
+    // Outbound view exists for this viewer (admin-only until 6c).
+    if (typeof obAllowed_ === 'function' && obAllowed_()) {
+      var cb = (typeof INS_CB_ !== 'undefined' && INS_CB_.data) ? INS_CB_.data.callback : null;
+      rows.push({ key: 'callbacks', tier: 'grey',
+        text: cb ? 'Callbacks: ' + insCbHeadText_(cb) : 'Callbacks for abandoned callers are in the Outbound view' });
+    }
+    var ranked = insBriefRank_(rows);
+    var look = ranked.filter(function (r) { return r.tier === 'red' || r.tier === 'amber'; }).length;
+    var dp = Number((ts.pct && ts.pct.deltaPct) || 0);
+    var top = hasCalls
+      ? 'Answer rate ' + pct.toFixed(1) + '%'
+        + (isFinite(dp) && Math.abs(dp) >= 0.05 ? ', ' + (dp < 0 ? 'down ' : 'up ') + Math.abs(dp).toFixed(1) + ' pts vs the prior period' : '')
+        + '. ' + (look === 0 ? 'Nothing needs a look.' : (look === 1 ? '1 thing needs a look.' : look + ' things need a look.'))
+      : 'No calls in this window.';
+    box.innerHTML = '<p class="ins-brief-top"><span class="ins-brief-top-tier ins-brief--' + topTier + '">'
+      + escapeHtml(INS_BRIEF_WORD_[topTier]) + '</span>' + escapeHtml(top) + '</p>'
+      + '<ul class="ins-brief-list">' + ranked.map(function (r) {
+        var t = INS_BRIEF_TARGET_[r.key] || {};
+        return '<li><button type="button" class="ins-brief-row ins-brief--' + r.tier + '" data-brief-key="' + r.key + '">'
+          + '<span class="ins-brief-sev">' + escapeHtml(INS_BRIEF_WORD_[r.tier] || '') + '</span>'
+          + '<span class="ins-brief-text">' + escapeHtml(r.text) + '</span>'
+          + '<span class="ins-brief-go">' + escapeHtml(t.label || '') + ' &#8250;</span></button></li>';
+      }).join('') + '</ul>';
+    box.style.display = '';
+    if (res) res.classList.add('ins-has-brief');
+    if (!box.__briefWired) {
+      box.__briefWired = true;
+      box.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-brief-key]');
+        if (b) insBriefGo_(b.getAttribute('data-brief-key'));
+      });
+    }
+  }
+
+  // A brief row opens its section and scrolls to it; the Callbacks row first
+  // flips the page to the Outbound view, where that section lives.
+  function insBriefGo_(key) {
+    var t = INS_BRIEF_TARGET_[key];
+    if (!t) return;
+    if (key === 'callbacks') {
+      var out = document.querySelector('#dept-dir-switch [data-dir="out"]');
+      if (out) out.click();
+    }
+    setTimeout(function () {
+      var el = $(t.id);
+      if (!el) return;
+      if (el.tagName === 'DETAILS' && !el.open) {
+        el.open = true;   // the fold's toggle listener persists it + runs any deferred draw
+      }
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (err) {}
+      var sum = el.querySelector && el.querySelector('summary');
+      if (sum) { try { sum.focus({ preventScroll: true }); } catch (err2) {} }
+    }, key === 'callbacks' ? 150 : 0);
+  }
+
   // A1: scroll to + pulse an agent's card by name (the strip chip target).
   // Reuses the .qs-spotlight accent-ring pulse (reduced-motion aware via CSS).
   function insSpotlightAgentCard_(name) {
     var wrap = $('ins-agent-cards');
     if (!wrap || !name) return;
+    // UX-2: the cards live in the Agents fold now -- open it first.
+    var agentsFold = $('ins-agents-fold');
+    if (agentsFold && !agentsFold.open) { agentsFold.open = true; insFoldSet_('agents', true); }
     var el = wrap.querySelector('[data-ins-agent="' + escCssId_(name) + '"]');
     // A regressed agent whose card is in the collapsed quiet group won't be
     // found in the main grid -- expand it so the target exists, then retry.
@@ -1787,6 +2088,7 @@
     }
     insRenderSmallSampleNote_(data);   // D3 (#7): annotation only, both modes
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+    insRenderBrief_(data);      // UX-2: the ranked brief + the one-line fold heads
     insRegionHeadSync_(data);   // M2: the collapsed region summary's headline
     // R17d: land the out-of-window calendar day-click on the Daily breakdown
     // for the date now in the window. Read-and-clear unconditionally so a
@@ -3611,6 +3913,29 @@
         color = IR_VOLUME_COLORS.answered; label = 'Answered';
       }
       canvas.style.display = '';
+      // UX-2 trend shading (admin trial, like the brief): each MONTHLY answer-
+      // rate point shades from the line colour toward --good / --warn by its
+      // change against the average of the 3 months before it -- neutral within
+      // 2 points, full colour at 15 (insTrendShade_).
+      var shadeFill = color, shadeRadius = 3, shadeChange = null;
+      if (metric === 'pct' && !daily && USER.role === 'admin'
+          && document.body.getAttribute('data-view-as') !== 'manager') {
+        shadeChange = series.map(function (s, i) {
+          if (i < 3 || !(Number(s.rung) > 0)) return null;
+          var p3 = series.slice(i - 3, i);
+          if (!p3.every(function (q) { return Number(q.rung) > 0; })) return null;
+          return (Number(s.pct) || 0) - ((Number(p3[0].pct) || 0) + (Number(p3[1].pct) || 0) + (Number(p3[2].pct) || 0)) / 3;
+        });
+        var base = parseColorRgb_(color), up = parseColorRgb_(THEME.good), dn = parseColorRgb_(THEME.warn);
+        shadeFill = shadeChange.map(function (c) {
+          var sh = insTrendShade_(c);
+          if (!sh.t) return color;
+          var to = sh.dir === 'up' ? up : dn;
+          var mix = base.map(function (v, k) { return Math.round(v + (to[k] - v) * sh.t); });
+          return 'rgb(' + mix.join(',') + ')';
+        });
+        shadeRadius = shadeChange.map(function (c) { return insTrendShade_(c).t >= 0.5 ? 4.5 : 3; });
+      }
       chartConfig = {
         type: 'line',
         data: {
@@ -3619,8 +3944,8 @@
             label: label, data: dataPoints, borderColor: color,
             backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
             tension: 0.4, fill: true,
-            pointBackgroundColor: color, pointBorderColor: THEME.paperCard,
-            pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5,
+            pointBackgroundColor: shadeFill, pointBorderColor: THEME.paperCard,
+            pointBorderWidth: 1.5, pointRadius: shadeRadius, pointHoverRadius: 5,
           }],
         },
         options: {
@@ -3634,8 +3959,11 @@
                 if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
                 return label + ': ' + ctx.parsed.y;
               },
-              footer: function () {
-                return 'Click the point to reload for this ' + (daily ? 'day' : 'month');
+              footer: function (items) {
+                var foot = 'Click the point to reload for this ' + (daily ? 'day' : 'month');
+                var c = shadeChange && items && items[0] ? shadeChange[items[0].dataIndex] : null;
+                if (c != null) foot = (c >= 0 ? '+' : '') + c.toFixed(1) + ' pts vs the prior 3-month average\n' + foot;
+                return foot;
               },
             } },
             datalabels: {
