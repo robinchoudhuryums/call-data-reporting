@@ -1,6 +1,19 @@
 # Cycle State — resume note
 
+## Current
+Cycle: 258
+Phase: idle
+Scope: broad
+Test Command: node --test
+Subsystem cycles since last Seams audit: 0
+Updated: 2026-10-13
+(Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
+v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
+numbered by session up to 258, so the next audit opens cycle 259. The Seams
+counter starts at 0 here because no earlier count was kept.)
+
 ## OPEN NOW (read this first)
+- **2026-10-13 -- /sync-commands to claude-workflow-tools v1.43.0.** Ten commands copied from the template (audit, broad-implement, broad-scan, cycle-init, cycle-resume, implement, pr-review, reflect, targeted-audit, targeted-implement); `sync-docs` kept as the local five-check version. New: the audits' CYCLE OPEN step (the `Cycle:` field above), F/G/ST IDs and the scan's EXPANSION PLAN.
 - **2026-10-13 -- UX-2 BUILT as an admin trial (Insights ranked brief).**
   - Owner rulings: the recommended thresholds from the first probe run (share grey; queue wait amber at 1.5x own prior-3-month median, 5+ calls/day; trend amber 8 / red 12 pts vs prior-3 avg; shading +-2..15) and option 1 for the top line (per-dept answer targets, operator step, Operator State #37).
   - Built: `insRenderBrief_` + pure rules (script-8), `--caution` token, Agents fold first/open, one-line fold heads, trend-point shading (admin), `queueHealth.perQueue[].wait` + QCD monthly avgAnswerSec (insights:v25).
