@@ -460,11 +460,11 @@
       return pathBtn ? ' <span class="parent-id">' + pathBtn + '</span>' : '';
     }
     return ' <span class="parent-id">'
-         +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use 📋 to copy)">#' + safe + '</span>'
+         +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use the copy button)">#' + safe + '</span>'
          +   '<button type="button" class="pid-copy" '
          +     'data-pid="' + safe + '" '
          +     'aria-label="Copy parent ID ' + safe + '" '
-         +     'title="Copy">📋</button>'
+         +     'title="Copy">' + uiIcon_('copy') + '</button>'
          +   pathBtn
          + '</span>';
   }
@@ -901,7 +901,7 @@
           : '';
         return '<li>'
              +   '<span class="ring-date">' + escapeHtml(dateLabel) + '</span>'
-             +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨'
+             +   '<span class="ring-time">' + escapeHtml(m.label)   + ' ' + uiIcon_('abandoned', 'ui-icon--bad')
              +     factsHtml
              +     parentIdBadge(m.parentId, m.date)
              +     alsoInBadge(m.alsoIn)
@@ -975,7 +975,7 @@
       };
       const singleLi = function (m) {
         return '<li class="' + (m.abandoned ? 'abandoned' : '') + '">'
-             +   dateLabelOf(m) + timeLabelOf(m) + (m.abandoned ? ' 🚨' : '')
+             +   dateLabelOf(m) + timeLabelOf(m) + (m.abandoned ? ' ' + uiIcon_('abandoned', 'ui-icon--bad') : '')
              +   parentIdBadge(m.parentId, m.date)
              + '</li>';
       };
@@ -996,7 +996,7 @@
               const last = gi === group.length - 1;
               return '<li class="abandoned">'
                 + dateLabelOf(g) + timeLabelOf(g)
-                + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
+                + (last ? ' ' + uiIcon_('abandoned', 'ui-icon--bad') + parentIdBadge(g.parentId, g.date) : '')
                 + '</li>';
             }).join('')
           + '</ul></li>';
@@ -1255,7 +1255,7 @@
       // that DO reach an hour keep the full form rather than lying.
       const mmss = /^0:(\d{2}:\d{2})$/.exec(String(qr.avgAnswer));
       tiles += '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Avg ans time</span></div>'
-        + '<div class="ds-kpi__value">' + escapeHtml(mmss ? mmss[1] : qr.avgAnswer) + '</div>'
+        + '<div class="ds-kpi__value">' + escapeHtml(careOn_() ? careDur_(qr.avgAnswer) : (mmss ? mmss[1] : qr.avgAnswer)) + '</div>'
         + '<div class="ds-kpi__foot">answered-weighted, queue</div></div>';
     }
     const tilesEl = $('trp-tiles');
@@ -2889,7 +2889,7 @@
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
     if (col.type === 'duration') {
-      const dur = fmtDuration(v);
+      const dur = fmtDurationShort_(v);
       return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
     }
     // E5: append a small prior-period delta chip after the number on
@@ -3218,7 +3218,7 @@
     // deploy EVERY range is pre-split, which is exactly when it matters most.
     // It removes itself once the range is fully split.
     return '<span class="subq-split-chip" title="' + escapeHtml(tip) + '">'
-      + '\u26a0 ' + escapeHtml(label) + '</span>';
+      + uiIcon_('warning') + ' ' + escapeHtml(label) + '</span>';
   }
 
   /** Inclusive day count between two ISO dates; 0 if either is unusable. */
@@ -3459,7 +3459,7 @@
       qAvgTile =
           '<div class="dts-tile dts-tile--queue" title="Answered-weighted average time to answer across the department&#39;s mapped queues, this range.">'
         +   '<div class="dts-label">Avg answer <span class="dts-scope">queue</span></div>'
-        +   '<div class="dts-value" data-flash-key="dts:qavg">' + escapeHtml(qr.avgAnswer) + '</div>'
+        +   '<div class="dts-value" data-flash-key="dts:qavg">' + escapeHtml(careDur_(qr.avgAnswer)) + '</div>'
         +   '<div class="dts-sub">' + (qAvgChip ? qAvgChip + ' vs prior' : 'time to answer') + '</div>'
         + '</div>';
     }

@@ -1173,7 +1173,7 @@
     var flatDates = annotated.length > 3 && dateCount > 1
       && (annotated.length / dateCount) < 1.5;
     var rowHtml = function (e) {
-        var siren = e.abandoned ? ' 🚨' : '';
+        var siren = e.abandoned ? ' ' + uiIcon_('abandoned', 'ui-icon--bad') : '';
         var runCls = e._run ? ' hd-run hd-run-' + e._run : '';
         var runTitle = e._run
           ? ' title="Same abandoned call — it rang ' + e._runLen + ' times before the caller gave up"'

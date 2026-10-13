@@ -954,7 +954,7 @@
         strip.style.display = 'none';
         strip.innerHTML = '';
       } else {
-        strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + sOpen + ' open'
+        strip.innerHTML = uiIcon_('warning') + ' <strong>Escalations:</strong> ' + sOpen + ' open'
           + ((allViewer && linked) ? ' <span class="ov-esc-linked" title="Linked copies: one escalation assigned to several departments counts once per department">(' + linked + ' linked)</span>' : '')
           + escDeptCountsHtml_(sByDept)
           + (sOver ? ' \u00b7 <span class="ov-esc-overdue">' + sOver + ' overdue</span>' : '')
@@ -1195,5 +1195,116 @@
       });
     });
   }
+
+
+  // ---- Calm Care preview: the account menu ------------------------------
+  // CARE THEME ONLY. The header's meta row (email + role tag, View as, the
+  // dark-mode / Settings / Help buttons) and the Admin dropdown's items move
+  // into one avatar menu, leaving the freshness pill as the only always-on
+  // item. The ELEMENTS THEMSELVES are moved (ids, listeners and the
+  // data-admin-only / view-as rules travel with them), each behind a comment
+  // placeholder, so leaving the theme puts every one back exactly where it
+  // was and the other themes never see a change.
+  var CARE_ACCT_ = { moved: [], adminWrap: null };
+  function careAcctInitials_() {
+    var local = String((USER && USER.email) || '').split('@')[0];
+    var parts = local.split(/[._\-]+/).filter(Boolean);
+    var s = parts.length > 1 ? parts[0].charAt(0) + parts[1].charAt(0) : local.slice(0, 2);
+    return (s || '?').toUpperCase();
+  }
+  function careAcctMove_(el, host) {
+    if (!el || !host || el.parentNode === host) return;
+    var mark = document.createComment('care-acct');
+    el.parentNode.insertBefore(mark, el);
+    CARE_ACCT_.moved.push({ el: el, mark: mark });
+    host.appendChild(el);
+  }
+  function careAcctRestore_() {
+    CARE_ACCT_.moved.slice().reverse().forEach(function (m) {
+      if (m.mark.parentNode) { m.mark.parentNode.insertBefore(m.el, m.mark); m.mark.parentNode.removeChild(m.mark); }
+    });
+    CARE_ACCT_.moved = [];
+    if (CARE_ACCT_.adminWrap) CARE_ACCT_.adminWrap.classList.remove('care-acct-emptied');
+    var w = $('care-acct'); if (w) w.parentNode.removeChild(w);
+  }
+  function careAcctSetOpen_(open, focusTrigger) {
+    var btn = $('care-acct-btn'), panel = $('care-acct-panel');
+    if (!btn || !panel) return;
+    panel.hidden = !open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      var first = panel.querySelector('select, button, [href]');
+      if (first) first.focus();
+    } else if (focusTrigger) {
+      btn.focus();
+    }
+  }
+  function careInitAccount_() {
+    var on = document.body.dataset.theme === 'care';
+    if (!on) { if ($('care-acct')) careAcctRestore_(); return; }
+    if ($('care-acct')) return;
+    var meta = document.querySelector('.dash-header .header-meta');
+    if (!meta) return;
+    var wrap = document.createElement('div');
+    wrap.id = 'care-acct';
+    wrap.className = 'care-acct';
+    wrap.innerHTML =
+        '<button type="button" class="care-acct-btn" id="care-acct-btn" aria-haspopup="true"'
+      +   ' aria-expanded="false" aria-controls="care-acct-panel" title="Account, settings and admin tools">'
+      +   '<span class="care-acct-avatar" aria-hidden="true">' + escapeHtml(careAcctInitials_()) + '</span>'
+      +   '<span class="care-acct-preview">Manager preview</span>'
+      +   '<span class="sr-only">Account menu</span>'
+      +   '<span class="care-acct-caret" aria-hidden="true">&#9662;</span>'
+      + '</button>'
+      + '<div class="care-acct-panel" id="care-acct-panel" role="group" aria-label="Account menu" hidden>'
+      +   '<div class="care-acct-sec care-acct-who" id="care-acct-who"></div>'
+      +   '<div class="care-acct-sec" id="care-acct-view"></div>'
+      +   '<div class="care-acct-sec care-acct-actions" id="care-acct-actions"></div>'
+      +   '<div class="care-acct-sec care-acct-admin" id="care-acct-admin" data-admin-only>'
+      +     '<div class="care-acct-h">Admin</div>'
+      +   '</div>'
+      + '</div>';
+    meta.appendChild(wrap);
+    // Identity (email + role tag), View as (admins), then the three buttons.
+    var email = $('user-email');
+    careAcctMove_(email && email.parentNode, $('care-acct-who'));
+    careAcctMove_(document.querySelector('.view-as-ctl'), $('care-acct-view'));
+    ['mode-btn', 'settings-btn', 'help-btn'].forEach(function (id) { careAcctMove_($(id), $('care-acct-actions')); });
+    // Admin dropdown items -> the Admin section; the emptied dropdown hides.
+    var adminList = $('admin-menu-list');
+    var adminSec = $('care-acct-admin');
+    if (adminList && USER.role === 'admin') {
+      Array.prototype.slice.call(adminList.querySelectorAll('.header-menu-item')).forEach(function (b) {
+        careAcctMove_(b, adminSec);
+      });
+      CARE_ACCT_.adminWrap = adminList.closest('.header-menu');
+      if (CARE_ACCT_.adminWrap) CARE_ACCT_.adminWrap.classList.add('care-acct-emptied');
+      adminSec.style.display = '';
+    } else {
+      adminSec.style.display = 'none';
+    }
+    $('care-acct-btn').addEventListener('click', function (e) {
+      e.stopPropagation();
+      careAcctSetOpen_($('care-acct-panel').hidden);
+    });
+    $('care-acct-panel').addEventListener('click', function (e) {
+      // A button that opens something (Settings, Help, an admin tool, dark
+      // mode) closes the menu; the View-as select keeps it open.
+      if (e.target.closest('button')) careAcctSetOpen_(false);
+    });
+    $('care-acct-panel').addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.stopPropagation(); careAcctSetOpen_(false, true); }
+    });
+  }
+  document.addEventListener('click', function (e) {
+    var w = $('care-acct');
+    if (w && !w.contains(e.target)) careAcctSetOpen_(false);
+  });
+  (function careAcctBoot_() {
+    function go() { setTimeout(careInitAccount_, 0); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
+    else go();
+    window.addEventListener('dash-mode-change', careInitAccount_);
+  })();
 
 </script>

@@ -269,7 +269,7 @@
       const n = (resp && resp.meta && resp.meta.pendingReviewCount) || 0;
       const viewing = !!(resp && resp.meta && resp.meta.status === 'pending_review');
       if (n > 0 && !viewing) {
-        chip.textContent = '\u26a0 ' + n + ' awaiting review';
+        chip.innerHTML = uiIcon_('warning') + ' ' + Number(n) + ' awaiting review';
         chip.style.display = 'inline-flex';
       } else {
         chip.style.display = 'none';
@@ -323,8 +323,8 @@
     if (!all.length) {
       escSetFilterCount_('');
       const st = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
-      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉 New ones appear here when an admin logs one or an externally submitted one is approved.'
-        : st === 'pending_review' ? 'No submissions awaiting review. 🎉'
+      escShowEmpty_(st === 'pending' ? 'No pending escalations. New ones appear here when an admin logs one or an externally submitted one is approved.'
+        : st === 'pending_review' ? 'No submissions awaiting review.'
         : 'No escalations to show for this filter.');
       return;
     }
@@ -383,7 +383,7 @@
     const e = $('esc-empty');
     if (e) {
       e.style.display = '';
-      e.innerHTML = '<div class="empty-state-icon">📋</div><div class="empty-state-title">Nothing here</div>'
+      e.innerHTML = '<div class="empty-state-icon">' + uiIcon_('inbox') + '</div><div class="empty-state-title">Nothing here</div>'
         + '<div class="empty-state-hint">' + escapeHtml(msg) + '</div>';
     }
   }
@@ -428,7 +428,7 @@
     var label = (d === 0 ? 'today' : d + 'd open');
     return '<span class="esc-age' + (overdue ? ' esc-age-over' : '') + '"'
       + (overdue ? ' title="Open ' + d + ' days — over the ' + ESC_OVERDUE_DAYS + '-day threshold"' : '') + '>'
-      + (overdue ? '⚑ ' : '') + label + '</span>';
+      + (overdue ? uiIcon_('flag') + ' ' : '') + label + '</span>';
   }
 
   // C2: sort a COPY (never mutates escLastResp_.rows -- the filter reads it
@@ -744,17 +744,17 @@
       }
       if (canLink) {
         aa.push('<button class="btn btn-ghost esc-link-toggle" type="button" data-id="' + idAttr
-          + '" title="Admin only: also assign this escalation to another department (a linked copy)">&#128279; Link department&hellip;</button>');
+          + '" title="Admin only: also assign this escalation to another department (a linked copy)">' + uiIcon_('link') + ' Link department&hellip;</button>');
       }
       if (!removed && activeSibs.length) {
-        aa.push('<button class="btn btn-ghost esc-remove-dept" type="button" data-id="' + idAttr
+        aa.push('<button class="btn btn-ghost btn-danger esc-remove-dept" type="button" data-id="' + idAttr
           + '" title="Admin only: take ' + escapeHtml(r.department || '') + ' off this escalation (kept in the thread)">&#8854; Remove ' + escapeHtml(r.department || 'department') + '&hellip;</button>');
       }
-      aa.push('<button class="btn btn-ghost esc-delete" type="button" data-id="' + idAttr
-        + '" title="Admin only: permanently delete this escalation and its activity trail">&#128465; Delete&hellip;</button>');
+      aa.push('<button class="btn btn-ghost btn-danger esc-delete" type="button" data-id="' + idAttr
+        + '" title="Admin only: permanently delete this escalation and its activity trail">' + uiIcon_('trash') + ' Delete&hellip;</button>');
       if (sibs.length) {
-        aa.push('<button class="btn btn-ghost esc-delete-all" type="button" data-id="' + idAttr
-          + '" title="Admin only: permanently delete EVERY linked copy and the whole thread">&#128465; Delete all linked&hellip;</button>');
+        aa.push('<button class="btn btn-ghost btn-danger esc-delete-all" type="button" data-id="' + idAttr
+          + '" title="Admin only: permanently delete EVERY linked copy and the whole thread">' + uiIcon_('trash') + ' Delete all linked&hellip;</button>');
       }
       body += '<div class="esc-admin-actions" data-admin-only>' + aa.join('') + '</div>';
       if (canLink) {
@@ -1320,7 +1320,7 @@
     const label = { pending: 'pending', in_progress: 'in progress', resolved: 'resolved',
       pending_review: 'needs review', rejected: 'rejected', removed: 'removed' };
     return '<div class="esc-linked" title="Linked copies: each department works its own copy of this escalation">'
-      + '<span class="esc-linked-k">&#128279; Also assigned to</span> '
+      + '<span class="esc-linked-k">' + uiIcon_('link') + ' Also assigned to</span> '
       + linked.map(function (l) {
           const st = String((l && l.status) || '');
           return '<span class="esc-linked-dept">' + escapeHtml(String((l && l.department) || ''))
@@ -1375,7 +1375,7 @@
 
   function tourAllSteps_() {
     return [
-      { sel: '#page-title',       title: 'Welcome 👋',              body: 'This is your Overview — a one-glance snapshot of every department’s most recent day, with a 30-day answer-rate trend.' },
+      { sel: '#page-title',       title: 'Welcome',              body: 'This is your Overview — a one-glance snapshot of every department’s most recent day, with a 30-day answer-rate trend.' },
       // (R10-1: the quick-start question row moved into the Help modal, so
       // its step folded into the Help closing step below.)
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },

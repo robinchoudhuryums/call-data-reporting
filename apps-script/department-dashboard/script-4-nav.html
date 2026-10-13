@@ -1527,7 +1527,7 @@
     let lostNote = null;
     if (meta.abandonedDetailLost) {
       const n = (meta.abandonedDetailLostDates || []).length;
-      lostNote = '<span class="missed-lost-note">&#9888; Abandoned-call detail is '
+      lostNote = '<span class="missed-lost-note">' + uiIcon_('warning') + ' Abandoned-call detail is '
         + 'unavailable for <strong>' + fmtNumber(n) + '</strong> day' + (n === 1 ? '' : 's')
         + ' in this range (a formatting bug corrupted those rows — rebuild them from Raw '
         + 'Data). Counts above exclude those days.</span>';

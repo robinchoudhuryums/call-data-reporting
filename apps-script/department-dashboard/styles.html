@@ -773,6 +773,26 @@
     border: 1px solid var(--line);
   }
   .btn-secondary:hover { background: var(--paper-2); color: var(--ink); }
+  /* Ghost + danger buttons. `btn-ghost` was used on ~20 secondary actions
+     (Escalations Edit / Start / Move / Link, Reject, the tour's Skip / Back,
+     admin modals) but never had a rule, so every one rendered as a solid
+     primary and a card's real primary action had nothing to stand out from.
+     `btn-danger` marks destructive actions (Delete, Remove department) as
+     quiet red text so they never look like the thing to click. */
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+  .btn-ghost:hover { background: var(--paper-2); color: var(--ink); opacity: 1; }
+  .btn-danger,
+  .btn-ghost.btn-danger {
+    background: transparent;
+    color: var(--bad);
+    border-color: transparent;
+  }
+  .btn-danger:hover,
+  .btn-ghost.btn-danger:hover { background: var(--bad-soft); color: var(--bad); opacity: 1; }
   /* M4: compact icon-only button (Refresh / Download CSV on My Department).
      Square, glyph-centered; the accessible label lives in title/aria-label. */
   .btn-icon {
@@ -6753,6 +6773,23 @@
     background: var(--paper-2);
     border-radius: var(--r-lg);
   }
+  .empty-state-icon .ui-icon { color: var(--muted); }
+  /* Line icons from uiIcon_ (script-1-core) and the matching inline SVGs in
+     dashboard.html: stroke-drawn in the surrounding text colour at 1em, so
+     they size and tint like the words beside them. */
+  .ui-icon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    flex: none;
+    vertical-align: -0.14em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ui-icon--bad { color: var(--bad); }
   .empty-state-title {
     font-family: var(--display);
     font-size: 15px;
@@ -8235,7 +8272,7 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
    on 16px radii, and a teal accent. It does not move or remove any
    element, so ids, routes, exports and every driver keep working.
    ================================================================== */
-body[data-theme="care"] { font-size: 14.5px; letter-spacing: 0; }
+body[data-theme="care"] { font-size: 14.5px; letter-spacing: 0; font-variant-emoji: text; }
 /* The uppercase + wide-tracked mono label family appears ~120 times with
    per-selector specificity; one blanket reset is the honest way to turn
    it into sentence case for a preview. */
@@ -8273,6 +8310,12 @@ body[data-theme="care"] input[type="search"],
 body[data-theme="care"] textarea { border-radius: 10px; border-color: #d9e3e0; }
 body[data-theme="care"] .btn { border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; padding: 8px 18px; }
 body[data-theme="care"] .btn-secondary { background: var(--paper-card); color: var(--ink); border-color: #d9e3e0; }
+body[data-theme="care"] .btn-ghost { background: transparent; color: var(--ink); border: 1px solid #d9e3e0; }
+body[data-theme="care"] .btn-ghost:hover { background: var(--paper-2); }
+body[data-theme="care"] .btn-danger,
+body[data-theme="care"] .btn-ghost.btn-danger { background: transparent; color: var(--bad); border-color: transparent; }
+body[data-theme="care"] .btn-danger:hover,
+body[data-theme="care"] .btn-ghost.btn-danger:hover { background: var(--bad-soft); }
 body[data-theme="care"] .btn-icon { padding: 7px 10px; }
 
 /* Surfaces: hairline boxes become soft-shadow cards */
@@ -8384,6 +8427,61 @@ body[data-theme="care"] #dept-missed-title { font-size: 17px; font-weight: 700; 
 body[data-theme="care"] .ov-agg-stat-val,
 body[data-theme="care"] .ov-agg-row strong { font-size: 22px; font-weight: 700; }
 
+/* Account menu (care only; built by careInitAccount_ in script-2-chrome). */
+body[data-theme="care"] .header-meta { gap: 10px; flex-wrap: nowrap; }
+body[data-theme="care"] .header-menu.care-acct-emptied { display: none !important; }
+body[data-theme="care"] .care-acct { position: relative; }
+body[data-theme="care"] .care-acct-btn {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 12px 4px 4px;
+  border: 0; border-radius: 999px; background: var(--paper-card); box-shadow: var(--care-shadow);
+  color: var(--ink); font-weight: 600; cursor: pointer;
+}
+body[data-theme="care"] .care-acct-btn:hover { background: var(--paper-2); }
+body[data-theme="care"] .care-acct-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body[data-theme="care"] .care-acct-avatar {
+  width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+}
+body[data-theme="care"] .care-acct-caret { font-size: 12px; color: var(--muted); }
+body[data-theme="care"] .care-acct-preview { display: none; font-size: 13px; color: var(--stale); }
+body[data-theme="care"][data-view-as="manager"] .care-acct-preview { display: inline; }
+body[data-theme="care"][data-view-as="manager"] .care-acct-btn { box-shadow: 0 0 0 2px var(--stale), var(--care-shadow); }
+body[data-theme="care"] .care-acct-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 120; width: 300px; max-width: calc(100vw - 32px);
+  padding: 8px; border-radius: 16px; background: var(--paper-card); box-shadow: var(--shadow-modal);
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+}
+body[data-theme="care"] .care-acct-panel[hidden] { display: none; }
+body[data-theme="care"] .care-acct-sec { display: flex; flex-direction: column; gap: 2px; padding: 6px 4px; }
+body[data-theme="care"] .care-acct-sec + .care-acct-sec { border-top: 1px solid var(--line); }
+body[data-theme="care"] .care-acct-sec:empty { display: none; }
+body[data-theme="care"] .care-acct-who { padding: 8px 10px; color: var(--ink); font-size: 14px; }
+body[data-theme="care"] .care-acct-who .tag { margin-left: 8px; }
+body[data-theme="care"] .care-acct-h { font-size: 12px; font-weight: 700; color: var(--muted); padding: 4px 10px; }
+body[data-theme="care"] .care-acct-panel .view-as-ctl { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px 10px 6px; }
+body[data-theme="care"] .care-acct-panel .view-as-ctl label { font-size: 12px; font-weight: 700; color: var(--muted); }
+body[data-theme="care"] .care-acct-panel .view-as-ctl select { min-height: 40px; font-size: 14px; width: 100%; }
+/* The icon-only header buttons become labelled rows inside the menu. */
+body[data-theme="care"] .care-acct-panel .help-btn,
+body[data-theme="care"] .care-acct-panel .header-menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 40px; padding: 8px 10px;
+  border: 0; border-radius: 10px; background: transparent; color: var(--ink);
+  font-size: 14px; font-weight: 500; text-align: left; justify-content: flex-start; cursor: pointer;
+}
+body[data-theme="care"] .care-acct-panel .help-btn { color: var(--muted); font-size: 15px; }
+body[data-theme="care"] .care-acct-panel .help-btn::after { content: attr(aria-label); color: var(--ink); font-size: 14px; font-weight: 500; }
+body[data-theme="care"] .care-acct-panel :is(.help-btn, .header-menu-item):hover { background: var(--paper-2); }
+body[data-theme="care"] .care-acct-panel :is(.help-btn, .header-menu-item):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 720px) {
+  body[data-theme="care"] .dash-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+  body[data-theme="care"] .dash-header > div:first-child { grid-column: 1; }
+  body[data-theme="care"] .dash-header .header-meta { display: contents; }
+  body[data-theme="care"] .dash-header .care-acct { grid-column: 2; grid-row: 1; }
+  body[data-theme="care"] .dash-header .freshness-pill { grid-column: 1 / -1; grid-row: 2; justify-self: start; font-size: 12px; }
+  body[data-theme="care"] .dash-header .header-nav { grid-column: 1 / -1; grid-row: 3; overflow-x: auto; flex-wrap: nowrap; }
+  body[data-theme="care"] .dash-header .header-nav .header-menu-btn { white-space: nowrap; }
+}
+
 /* Dark mode: care keeps its teal accent (lightened for AA on the dark paper) */
 body[data-theme="care"][data-mode="dark"] {
   --accent: #4fc3ad;
@@ -8393,6 +8491,8 @@ body[data-theme="care"][data-mode="dark"] {
   --care-shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.25);
 }
 body[data-theme="care"][data-mode="dark"] .header-menu-btn { color: var(--muted); }
+body[data-theme="care"][data-mode="dark"] .btn:not(.btn-secondary):not(.btn-ghost):not(.btn-danger) { color: #0c1f1b; }
+body[data-theme="care"][data-mode="dark"] :is(.btn-ghost, .btn-secondary) { border-color: var(--line); }
 body[data-theme="care"][data-mode="dark"] .seg-btn.active,
 body[data-theme="care"][data-mode="dark"] :is(.ov-period-btn, .ov-range-btn, .date-preset-chip, .dept-qcd-period-btn).active { color: var(--accent); }
 body[data-theme="care"][data-mode="dark"] .care-tab { color: var(--muted); }

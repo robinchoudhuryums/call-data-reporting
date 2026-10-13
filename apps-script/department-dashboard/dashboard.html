@@ -195,7 +195,7 @@
              data-admin-only and is visible by default. -->
         <div id="ov-admin-actions" class="ov-admin-actions">
           <button type="button" class="btn btn-secondary" id="ov-qcd-alldept-btn"
-            title="Company-wide daily call queue report across every department">&#128203; Daily Call Queue Report</button>
+            title="Company-wide daily call queue report across every department"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg> Daily Call Queue Report</button>
         </div>
         <!-- CL1-1: data-admin-only so the view-as CSS can hide the hero during a
              manager preview (the server strips the field for real managers;
@@ -508,7 +508,7 @@
       </div>
 
       <div id="dept-empty-state" class="empty-state" style="display:none;">
-        <div class="empty-state-icon">&#128202;</div>
+        <div class="empty-state-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 20h18M6 20v-6M11 20V8M16 20v-9M21 20V5"/></svg></div>
         <div class="empty-state-title" id="dept-empty-title">No agent data found</div>
         <div class="empty-state-hint" id="dept-empty-hint"></div>
       </div>
@@ -650,7 +650,7 @@
       <div id="dept-missed-detail" style="display:none;">
         <div id="dept-missed-queue-only" class="queue-only-section" style="display:none;">
           <div class="queue-only-header">
-            <strong class="gloss" title="Calls that abandoned in the queue before ringing ANY agent — the caller hung up while still waiting, so no individual was ever alerted. These are attributed to the queue itself, not to an agent, and are separate from the per-agent missed rings above.">🚨 Queue-only abandoned</strong>
+            <strong class="gloss" title="Calls that abandoned in the queue before ringing ANY agent — the caller hung up while still waiting, so no individual was ever alerted. These are attributed to the queue itself, not to an agent, and are separate from the per-agent missed rings above."><svg class="ui-icon ui-icon--bad" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 16.4v2.9a2 2 0 0 1-2.2 2 19.6 19.6 0 0 1-8.5-3 19.3 19.3 0 0 1-6-6 19.6 19.6 0 0 1-3-8.6A2 2 0 0 1 3.3 1.5h2.9a2 2 0 0 1 2 1.7c.1 .9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L7.2 9.1a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.6 2.6.7a2 2 0 0 1 1.9 2.3z"/><path d="M16 3l5 5M21 3l-5 5"/></svg> Queue-only abandoned</strong>
             <span class="muted" id="dept-queue-only-subhead"></span>
           </div>
           <div id="dept-queue-only-body"></div>
@@ -1073,7 +1073,7 @@
           <h3 class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span>
             <!-- Drilldown hand-off: the abandoned/violation numbers here roll
                  up the queue; the call-by-call detail (who rang, when, the
-                 abandoned 🚨 timestamps with the "↳ path" journey) lives in the
+                 abandoned (red missed-call icon) timestamps with the "↳ path" journey) lives in the
                  My Department Missed Calls section. This jumps there for the
                  same dept + range (handoffToMyDept_, scrolls to the section). -->
             <button class="ins-handoff-link" id="ins-qh-missed-link" type="button"
@@ -1735,7 +1735,7 @@
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
             <h3>Missed Calls</h3>
-            <p>Lives on the <strong>My Department</strong> page, below the agent table (the standalone report was folded in there). An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp; it follows the page&rsquo;s From/To dates. Calls the caller actually abandoned are flagged in red with a &#128680;. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
+            <p>Lives on the <strong>My Department</strong> page, below the agent table (the standalone report was folded in there). An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp; it follows the page&rsquo;s From/To dates. Calls the caller actually abandoned are flagged in red with a missed-call icon. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
           </section>
           <section class="help-topic" id="help-topic-qcd" hidden>
             <h3>QCD (Queue Call Data)</h3>
@@ -2249,7 +2249,7 @@
         <div id="inbound-results-status" role="status" class="status" style="display:none;"></div>
 
         <div id="inbound-unavailable" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20v-3M9 20v-7M14 20V9M19 20V4"/></svg></div>
           <div class="empty-state-title">Inbound data unavailable</div>
           <div class="empty-state-hint">Couldn&rsquo;t read <code>inbound_calls</code> from Neon. Confirm the import has run since the inbound capture deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, and the <code>script.external_request</code> scope is granted.</div>
         </div>
@@ -2368,13 +2368,13 @@
         </div>
 
         <div id="direct-call-unavailable" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128222;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 16.4v2.9a2 2 0 0 1-2.2 2 19.6 19.6 0 0 1-8.5-3 19.3 19.3 0 0 1-6-6 19.6 19.6 0 0 1-3-8.6A2 2 0 0 1 3.3 1.5h2.9a2 2 0 0 1 2 1.7c.1 .9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L7.2 9.1a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.6 2.6.7a2 2 0 0 1 1.9 2.3z"/></svg></div>
           <div class="empty-state-title">Direct-call data unavailable</div>
           <div class="empty-state-hint">Couldn&rsquo;t read <code>direct_call_history</code> from Neon. Confirm the import has run since the direct-call build deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, and the <code>script.external_request</code> scope is granted.</div>
         </div>
 
         <div id="direct-call-empty" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128277;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.7 3.2A6 6 0 0 1 18 8c0 2.6.4 4.5 1 6M17 17H3s3-2 3-9c0-.6.1-1.2.3-1.8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0M3 3l18 18"/></svg></div>
           <div class="empty-state-title">No direct-call activity</div>
           <div class="empty-state-hint">No direct (individual-extension) calls were recorded for this department and date range. Direct-call capture accrues going forward from its deploy date.</div>
         </div>
@@ -2564,17 +2564,17 @@
         <div id="cl-loading" style="display:none;"></div>
 
         <div id="cl-unconfigured" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128273;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14 9l2 2"/></svg></div>
           <div class="empty-state-title">HMAC_SECRET not set</div>
           <div class="empty-state-hint">The dashboard project needs the <code>HMAC_SECRET</code> Script Property (same value as the CDR Import / CDR Report projects) to hash the number for matching. Set it in Project Settings &rarr; Script Properties.</div>
         </div>
         <div id="cl-unavailable" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20v-3M9 20v-7M14 20V9M19 20V4"/></svg></div>
           <div class="empty-state-title">Call data unavailable</div>
           <div class="empty-state-hint">Couldn&rsquo;t read the call tables from Neon. Confirm the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set and Neon is reachable.</div>
         </div>
         <div id="cl-empty" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128269;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div>
           <div class="empty-state-title">No calls found</div>
           <div class="empty-state-hint" id="cl-empty-hint"></div>
         </div>
@@ -2638,7 +2638,7 @@
         <div id="ad-loading" style="display:none;"></div>
 
         <div id="ad-empty" class="empty-state" style="display:none;">
-          <div class="empty-state-icon" aria-hidden="true">&#128197;</div>
+          <div class="empty-state-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></div>
           <div class="empty-state-title">Nothing recorded for this agent on this day</div>
           <div class="empty-state-hint" id="ad-empty-hint"></div>
         </div>

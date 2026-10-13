@@ -579,7 +579,7 @@
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Rung</span><span class="ov-agg-stat-val">' + fmtNumber(agg.rung) + '</span></div>'
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Answered</span><span class="ov-agg-stat-val">' + fmtNumber(agg.answered) + '</span></div>'
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Missed</span><span class="ov-agg-stat-val">' + fmtNumber(agg.missed) + '</span></div>'
-      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">ATT</span><span class="ov-agg-stat-val">' + escapeHtml(agg.attFormatted) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">' + careCopy_('ATT', 'Avg talk') + '</span><span class="ov-agg-stat-val">' + escapeHtml(careDur_(agg.attFormatted)) + '</span></div>'
       +     '<div class="ov-agg-stat" title="' + escapeHtml(ovActiveTooltip_(agg)) + '"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + (agg.recentlyActiveCount != null ? agg.recentlyActiveCount : agg.rosterSize) + '</span></div>'
       +   '</div>'
       +   (spark ? '<div class="ov-agg-spark" title="30-day company % answered trend">' + spark + '</div>' : '')
@@ -603,10 +603,10 @@
     if (!b) { host.innerHTML = ''; return; }
     const total = b.open + b.review;
     if (total <= 0) {
-      host.innerHTML = '<span class="ov-agg-esc-zero">⚑ Escalations · none pending</span>';
+      host.innerHTML = '<span class="ov-agg-esc-zero">' + uiIcon_('flag') + ' Escalations · none pending</span>';
       return;
     }
-    host.innerHTML = '⚑ <strong>Escalations:</strong> ' + b.open + ' open'
+    host.innerHTML = uiIcon_('flag') + ' <strong>Escalations:</strong> ' + b.open + ' open'
       + (typeof escDeptCountsHtml_ === 'function' ? escDeptCountsHtml_(b.byDept) : '')
       + (b.overdue ? ' · <span class="ov-esc-overdue">' + b.overdue + ' overdue</span>' : '')
       + (b.review ? ' · ' + b.review + ' awaiting review' : '')
@@ -880,12 +880,12 @@
         // One combined abandoned chip ("P% · N aban") instead of two
         // separate chips, to cut the per-row chip count.
         var abndText = escapeHtml(pq.abandonedPctStr || '0.00%')
-          + (qAbnd > 0 ? ' · ' + fmtNumber(qAbnd) + ' aban' : '');
+          + (qAbnd > 0 ? ' · ' + fmtNumber(qAbnd) + ' ' + careCopy_('aban', 'abandoned') : '');
         var chips = '<span class="ov-qcd-flag'
               + (qPct >= ABANDON_STANDARD_ ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
               + abndText + '</span>';
         if (qViol > 0) {
-          chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
+          chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' ' + careCopy_('viol', qViol === 1 ? 'violation' : 'violations') + '</span>';
         }
         html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
              + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
@@ -908,7 +908,7 @@
            + escapeHtml(q.abandonedPctStr || '0.00%') + '</span>';
       if (abandoned > 0) {
         html += '<span class="' + abndCls + '">'
-             + fmtNumber(abandoned) + ' aban</span>';
+             + fmtNumber(abandoned) + ' ' + careCopy_('aban', 'abandoned') + '</span>';
       }
     }
 
@@ -919,7 +919,7 @@
     var mtdCls = mtdViol >= 3 ? 'ov-qcd-viol-high' : (mtdViol > 0 ? 'ov-qcd-viol-low' : 'ov-qcd-viol-none');
     html += '<span class="ov-qcd-flag ' + mtdCls + '" title="'
           + mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
-          + ' month-to-date">' + mtdViol + ' viol MTD</span>';
+          + ' month-to-date">' + mtdViol + ' ' + careCopy_('viol MTD', mtdViol === 1 ? 'violation this month' : 'violations this month') + '</span>';
     return html;
   }
 
@@ -948,7 +948,7 @@
   function ovBuildAlertPill_(dept) {
     if (!dept.alertedOnLatest) return '';
     return '<span class="ov-alert-pill" title="A low-answer-rate alert was sent for this department on the latest data date.">'
-         + '<span aria-hidden="true">🚨</span> Alerted today</span>';
+         + uiIcon_('bell') + ' Alerted today</span>';
   }
 
   // Shared grid tile builder. Used by both the main grid and the
@@ -966,7 +966,7 @@
     var ds = dept && dept.dqeSilence;
     if (!ds) return '';
     return '<div class="ov-dqe-silence" role="note" title="No per-agent (DQE) rows matched this department\u2019s roster for the trailing ' + ds.days + ' chart days while its mapped queues kept reporting QCD volume. The usual cause is upstream: a phone-system queue or caller-ID rename starving the pipeline\u2019s A_Q_* recognizer \u2014 check Raw Data col W for the queue token, then the roster. Queue-level numbers below are the working lens meanwhile.">'
-      +   '<span class="ov-dqe-silence-head">\u26a0 Agent data dark \u00b7 last ' + ds.days + 'd \u2014 queue lens:</span>'
+      +   '<span class="ov-dqe-silence-head">' + uiIcon_('warning') + ' Agent data dark \u00b7 last ' + ds.days + 'd \u2014 queue lens:</span>'
       +   '<span class="ov-dqe-silence-stats">'
       +     fmtNumber(ds.qcdCalls) + ' queue calls \u00b7 '
       +     fmtNumber(ds.qcdAbandoned) + ' abandoned (' + ds.qcdPct + '%)'
@@ -993,7 +993,7 @@
     var body = ob.placed > 0
       ? '<span><span class="ov-dept-stat-label">Placed</span> ' + fmtNumber(ob.placed)
         + (pr ? obPriorChip_(ob.placed - pr.placed, 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '') + '</span>'
-        + '<span><span class="ov-dept-stat-label">Conn</span> ' + fmtNumber(ob.connected)
+        + '<span><span class="ov-dept-stat-label">' + careCopy_('Conn', 'Connected') + '</span> ' + fmtNumber(ob.connected)
         + (ob.pct != null ? ' <span class="ov-dept-ob-pct">' + Number(ob.pct).toFixed(1) + '%</span>' : '')
         + (pr ? obRateChip_(ob.pct, pr.pct, ob.placed, pr.placed, tip) : '') + '</span>'
       : '<span class="ov-dept-ob-none">no outbound calls</span>'
@@ -1053,11 +1053,11 @@
               ? '<div class="ov-dept-nodata-note">No agent call data in this window yet \u2014 queue stats below still count.</div>' : '')
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
-         +     '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
-         +     '<span><span class="ov-dept-stat-label">Miss</span> ' + fmtNumber(st.missed) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">' + careCopy_('Ans', 'Answered') + '</span> ' + fmtNumber(st.answered) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">' + careCopy_('Miss', 'Missed') + '</span> ' + fmtNumber(st.missed) + '</span>'
          +   '</div>'
          +   '<div class="ov-dept-tile-row">'
-         +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">' + careCopy_('ATT', 'Avg talk') + '</span> ' + escapeHtml(careDur_(st.attFormatted)) + '</span>'
          +   '</div>'
          +   ovBuildOutboundLine_(dept)
          +   '<div class="ov-dept-tile-spark">' + spark + '</div>'
@@ -1087,14 +1087,14 @@
     const st = ovPeriodStats_(dept);
     const qcd = dept.qcd || null;
     const alert = dept.alertedOnLatest
-      ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
+      ? '<span class="ov-subq-strip-alert" title="Low-answer-rate alert on the latest date">' + uiIcon_('bell') + '</span>'
       : '';
     const abd = (qcd && typeof qcd.abandonedPct === 'number')
-      ? '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Abd</span> '
+      ? '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">' + careCopy_('Abd', 'Abandoned') + '</span> '
         + '<span class="' + (qcd.abandonedPct >= ABANDON_STANDARD_ ? 'bm-over' : '') + '">' + qcd.abandonedPct.toFixed(1) + '%</span></span>'
       : '';
     const viol = (qcd && qcd.violations > 0)
-      ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
+      ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">' + careCopy_('Viol', 'Violations') + '</span> ' + qcd.violations + '</span>'
       : '';
     // Round-16: goal-gap treatment (see ovBuildGridTile_), same honest band.
     const spark = irSparklineGoal_(dept.trend || [], color,
@@ -1109,10 +1109,10 @@
          +     '<span class="ov-subq-strip-dot" style="background:' + color + '"></span>'
          +     '<span class="ov-subq-strip-name">' + escapeHtml(dept.name) + '</span>'
          +     '<span class="ov-subq-strip-metrics">'
-         +       '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Ans</span> '
+         +       '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">' + careCopy_('Ans', 'Answered') + '</span> '
          +         escapeHtml(st.pctFormatted) + ovSubqArrow_(dept.wow) + '</span>'
          +       abd + viol + alert
-         +       (dept.dqeSilence ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Agent data dark \u2014 expand for the queue lens">\u26a0</span>' : '')
+         +       (dept.dqeSilence ? '<span class="ov-subq-strip-alert" title="Agent data dark \u2014 expand for the queue lens">' + uiIcon_('warning') + '</span>' : '')
          +     '</span>'
          +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
          +   '</button>'
@@ -1121,11 +1121,11 @@
          +       ovBuildDqeSilenceNote_(dept)
          +       '<div class="ov-dept-tile-row">'
          +         '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
-         +         '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
-         +         '<span><span class="ov-dept-stat-label">Miss</span> ' + fmtNumber(st.missed) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">' + careCopy_('Ans', 'Answered') + '</span> ' + fmtNumber(st.answered) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">' + careCopy_('Miss', 'Missed') + '</span> ' + fmtNumber(st.missed) + '</span>'
          +       '</div>'
          +       '<div class="ov-dept-tile-row">'
-         +         '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">' + careCopy_('ATT', 'Avg talk') + '</span> ' + escapeHtml(careDur_(st.attFormatted)) + '</span>'
          +       '</div>'
          +       ovBuildOutboundLine_(dept)
          +       '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'

@@ -2565,7 +2565,7 @@
       '<span class="' + benchValueCls_('abandoned %', t.abandonedPctStr, true).trim() + '">'
       + escapeHtml(t.abandonedPctStr) + ' abandoned</span>'
       + ' · ' + fmtNumber(t.totalCalls) + ' queue calls'
-      + (violMtd > 0 ? ' · <span class="bm-over">' + fmtNumber(violMtd) + ' viol MTD</span>' : ''));
+      + (violMtd > 0 ? ' · <span class="bm-over">' + fmtNumber(violMtd) + ' ' + careCopy_('viol MTD', violMtd === 1 ? 'violation this month' : 'violations this month') + '</span>' : ''));
     // R16e (owner): Queue calls adopts the My Department team-strip FORMAT --
     // "total (answered / abandoned)" plus the per-workday pace -- so the same
     // figure reads the same way on both halves of the page. Same split markup
@@ -3134,7 +3134,7 @@
       + ' days. Volume totals (Rung / Missed / Answered / TTT) aren’t directly comparable — '
       + 'compare the per-day figures on the agent cards instead.';
     return '<span class="ins-length-flag gloss" tabindex="0" title="' + escapeHtml(tip) + '">'
-         + '<span class="ins-length-flag__icon" aria-hidden="true">&#9888;</span> Different window lengths</span>';
+         + '<span class="ins-length-flag__icon" aria-hidden="true">' + uiIcon_('warning') + '</span> Different window lengths</span>';
   }
 
   // F12: custom prior window overlaps the current range. The overlapping days
@@ -3147,7 +3147,7 @@
       + 'count toward the current period only, so the prior baseline excludes them — '
       + 'pick a non-overlapping prior range for a clean comparison.';
     return '<span class="ins-length-flag gloss" tabindex="0" title="' + escapeHtml(tip) + '">'
-         + '<span class="ins-length-flag__icon" aria-hidden="true">&#9888;</span> Windows overlap</span>';
+         + '<span class="ins-length-flag__icon" aria-hidden="true">' + uiIcon_('warning') + '</span> Windows overlap</span>';
   }
 
   // The standalone #ins-length-warning banner is retired -- the caveat now
@@ -4029,7 +4029,7 @@
     const toolbar = $('ins-cards-toolbar');
     const det = $('ins-quiet-details');
     if (!cards.length) {
-      wrap.innerHTML = emptyStateHtml_('&#128100;', 'No agents to compare',
+      wrap.innerHTML = emptyStateHtml_('user', 'No agents to compare',
         'No selected agent had activity (or matched this department) in the range.');
       if (toolbar) toolbar.style.display = 'none';
       if (det) { det.style.display = 'none'; $('ins-quiet-cards').innerHTML = ''; }
