@@ -1281,3 +1281,15 @@ line repeatedly with no callback). The rulings and measurements are in
 | `FO-4` | The outbound agent list tied in a different order from Neon and the sheet fallback (database collation vs JS byte order; a blank name last vs first). The SQL now orders ties `COLLATE "C" NULLS FIRST`, the sheet's order. | `outboundAgentsSel_`; checked against a local Postgres 16 |
 | `BF-1` | FO-1's ring length existed only for calls captured after its deploy, so every older direct-line call read "ring unknown" and no historical misdial left the rates. The one-off `backfillFirstRingFromJourney()` (cdr-import, preview first) derives the ring from the stored journey: the first non-queue leg naming the line owner, whose `secs` on an unanswered leg equals the capture's start -> stop. NULL rows only; an answered or length-less leg stays unknown. Checked end to end on a local Postgres 16. | per-call-capture.md "Outbound report"; Operator State #49; `first-ring-backfill.test.js` |
 | `BF-2` | The outbound agent rows grouped by the RAW `agent_name` in Neon but by the trimmed name in the sheet fallback, so a NULL name, a blank one and a name the capture's length cap cut after a space were separate rows from Neon and one row from the sheet. The SQL now groups `COALESCE(trim(agent_name), '')`, the sheet's key. | `outboundAgentsSel_`; `outbound-report.test.js`; checked against a local Postgres 16 |
+
+## Insights ranked brief (owner round 2026-10-13)
+
+From the 2026-10-12 broad scan's deferred UX-2. The owner chose the colour
+rules from an options sheet, then the thresholds for the three rows with no
+standard from a read-only probe of 12 months of data (`probeBriefThresholds`,
+Operator State #76). The rulings are in `docs/next-steps.md` "UX-2 RULED".
+
+| Change | What was wrong / what changed | Live rule · evidence |
+|---|---|---|
+| `UX-2` | Insights opened on a headline banner and a long run of sections, with nothing saying which part mattered this period. It now opens on a ranked brief (one coloured, worded row per section, most urgent first), Agents leads as an open fold, and the other sections read as one line. A row is coloured only where a standard exists; the queue-wait rule compares a queue with its own last three months, because the probe showed a company-wide comparison penalises small queues on average answer (r = -0.57) and big ones on longest wait (r = +0.53). Admin-only during the trial; `insights:v25`. | client-ui-conventions.md "The Insights ranked brief"; `insights-brief.test.js`; drive-smoke UX-2 checks; S61 |
+

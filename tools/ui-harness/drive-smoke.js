@@ -1038,6 +1038,64 @@ async function visibleErrorTones(page) {
       }
     }
 
+    // UX-2 (owner 2026-10-13): the ranked brief is ADMIN-ONLY while trialled
+    // and replaces the headline banner for the admin; a manager keeps the
+    // headline and never sees the brief. For everyone, Agents leads the report
+    // as an OPEN fold, ahead of Queue health, Team detail and the trend.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(3000);
+      const ux2 = await page.evaluate(function () {
+        const vis = function (el) { return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none'; };
+        const brief = document.getElementById('ins-brief');
+        const head = document.getElementById('ins-headline');
+        const rows = brief ? Array.from(brief.querySelectorAll('.ins-brief-row')) : [];
+        const tierOf = function (b) { return (b.className.match(/ins-brief--(red|amber|green|grey)/) || [])[1] || ''; };
+        const order = { red: 0, amber: 1, green: 2, grey: 3 };
+        const tiers = rows.map(tierOf);
+        let ranked = true;
+        for (let i = 1; i < tiers.length; i++) if (order[tiers[i]] < order[tiers[i - 1]]) ranked = false;
+        const ids = ['ins-agents-fold', 'ins-qh-fold', 'ins-team-detail', 'ins-trend-fold'].map(function (id) { return document.getElementById(id); });
+        let inOrder = ids.every(Boolean);
+        for (let j = 1; inOrder && j < ids.length; j++) {
+          if (!(ids[j - 1].compareDocumentPosition(ids[j]) & Node.DOCUMENT_POSITION_FOLLOWING)) inOrder = false;
+        }
+        return {
+          briefVisible: vis(brief), rows: rows.length, tiers: tiers.join(','), ranked: ranked,
+          words: rows.every(function (b) { return (b.querySelector('.ins-brief-sev') || {}).textContent; }),
+          top: brief ? ((brief.querySelector('.ins-brief-top') || {}).textContent || '') : '',
+          headlineShown: vis(head), headlineHasText: !!(head && head.textContent.trim()),
+          inOrder: inOrder, agentsOpen: !!(ids[0] && ids[0].open),
+          agentsHead: ((document.getElementById('ins-agents-fold-head') || {}).textContent || '').trim(),
+        };
+      });
+      record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
+        ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));
+      if (role === 'admin') {
+        record('admin: UX-2 the ranked brief renders (top line + a worded row per section, most urgent first)',
+          ux2.briefVisible && ux2.rows >= 4 && ux2.ranked && ux2.words && /Answer rate|No calls/.test(ux2.top),
+          JSON.stringify({ rows: ux2.rows, tiers: ux2.tiers, top: ux2.top.slice(0, 90) }));
+        record('admin: UX-2 the brief replaces the headline banner', !ux2.headlineShown,
+          'headlineShown=' + ux2.headlineShown);
+        // A row opens its section: the trend fold starts closed for a fresh
+        // viewer only if the saved folds say so -- close it, click, assert open.
+        await page.evaluate(function () { const f = document.getElementById('ins-trend-fold'); if (f) f.open = false; });
+        const trendRow = page.locator('#ins-brief .ins-brief-row[data-brief-key="trend"]');
+        if (await trendRow.count()) {
+          await trendRow.click();
+          await page.waitForTimeout(800);
+          const opened = await page.evaluate(function () { const f = document.getElementById('ins-trend-fold'); return !!(f && f.open); });
+          record('admin: UX-2 a brief row opens its section', opened, 'trendFoldOpen=' + opened);
+        } else {
+          record('admin: UX-2 a brief row opens its section', false, 'no trend row');
+        }
+      } else {
+        record(role + ': UX-2 no brief for a manager, and the headline banner stays',
+          !ux2.briefVisible && (ux2.headlineShown || !ux2.headlineHasText),
+          JSON.stringify({ brief: ux2.briefVisible, headline: ux2.headlineShown, text: ux2.headlineHasText }));
+      }
+    }
+
     // F10: the escalations nav badge used to be append-only, so every render
     // path that re-ran it could stack a second count onto the tab. Reload the
     // list (each mutation reloads it too) and assert the badge stays singular.
@@ -1096,6 +1154,16 @@ async function visibleErrorTones(page) {
           'data-view-as=' + inPreview.flag);
         record('admin: view-as hides the admin-only surfaces',
           !inPreview.adminTabVisible);
+        const ux2Preview = await page.evaluate(function () {
+          const b = document.getElementById('ins-brief');
+          const h = document.getElementById('ins-headline');
+          // View-as can leave the dept page, so measure the CSS outcome (the
+          // computed display), not on-screen visibility.
+          const shown = function (el) { return !!el && getComputedStyle(el).display !== 'none'; };
+          return { brief: shown(b), headline: shown(h), headlineText: !!(h && h.textContent.trim()) };
+        });
+        record('admin: view-as hides the UX-2 brief and brings the headline back',
+          !ux2Preview.brief && (ux2Preview.headline || !ux2Preview.headlineText), JSON.stringify(ux2Preview));
         await page.selectOption('#view-as-select', '');
         await page.waitForTimeout(1500);
         const exited = await page.evaluate(() => document.body.getAttribute('data-view-as'));

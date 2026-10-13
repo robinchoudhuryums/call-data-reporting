@@ -1102,6 +1102,15 @@
           <button type="button" class="link-btn" id="ins-intro-dismiss">Got it</button>
         </div>
         <div id="ins-results-status" role="status" class="status" style="display:none;"></div>
+        <!-- UX-2 (owner 2026-10-13): the RANKED BRIEF -- one row per section,
+             most urgent first, built by insRenderBrief_ from data the report
+             already holds. ADMIN-ONLY while it is trialled (data-admin-only, so
+             View-as hides it too); while it shows, the headline banner above it
+             is hidden by CSS (#insights-results.ins-has-brief), since the
+             brief's top line and Agents row carry the same story. Colour rules:
+             docs/next-steps.md "UX-2 RULED". -->
+        <div id="ins-brief" class="ins-brief" data-admin-only style="display:none;"
+             role="region" aria-label="This period's findings, most urgent first"></div>
         <!-- A1: needs-attention strip. Renders directly under the injected
              #ins-headline (reportHeadline_ inserts before this element, the
              first non-skipped sibling after #ins-results-status). One chip per
@@ -1119,64 +1128,96 @@
              banner read as noise on every Simple render.) -->
         <div id="ins-team-insights"></div>
 
-        <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +
-             collapsible team detail) and an Agents zone (per-agent cards). -->
-        <div class="ds-zone"><span class="ds-zone-label">Team</span></div>
-        <!-- R17b (owner): the Department-rollup CARD ROW is HIDDEN -- its
-             % Ans (rings) headline moved to the sticky Team Rings Data side
-             panel (which shows for the SAME window, always in view), and the
-             Answered/Missed volumes fold into that card's rings (ans/miss)
-             foot. The section title goes with it (owner: remove entirely).
-             Round-16 removal convention: markup + the insRenderReport_
-             wiring stay inert; un-hiding = drop the display:none pair. The
-             prior-window deltas + sparklines these cards carried live on in
-             the per-agent cards, the emails and the CSV. -->
-        <h3 class="al-section-title" style="display:none;">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></h3>
-        <div id="ins-kpi-row" class="pr-kpi-row" style="display:none;"></div>
-
-        <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
-             and the share-of-answered chart collapse here so the report leads
-             with the answer (headline + strip + KPI tiles). The share
-             Chart.js canvas renders at zero height if built while collapsed,
-             so insRenderReport_ DEFERS it until this <details> is open and the
-             toggle handler (initInsightsReport) renders it on first open.
-             Queue health + heatmap are DOM/CSS-grid (no canvas) so they
-             populate fine while collapsed. The admin gate on the heatmap + the
-             data-presence hides on queue health/share are unchanged -- this
-             only wraps them. (I4: the 12-month trend chart was moved OUT of
-             this section to the bottom of the report -- see #ins-trend-wrap.) -->
-        <details id="ins-team-detail" class="ds-team-detail" data-fold="detail">
-          <summary class="ds-team-detail-summary">Team detail &mdash; abandon heatmap &amp; share of answered</summary>
-
-        <!-- R16c (owner): heatmap + share table sit SIDE BY SIDE on one row
-             (each was half-empty at full width). Flex with wrap: managers
-             never get the heatmap (admin vetting gate), so the share table
-             simply takes the full row when its neighbor is display:none;
-             narrow viewports stack them again. Ids + renderers unchanged. -->
-        <div class="ins-detail-row">
-        <div id="ins-heatmap" class="ds-heatmap-panel" data-heat-detail="ins-heat-detail" style="display:none;"></div>
-
-        <!-- Share of answered calls -- Round-16 (owner): the doughnut became
-             SHARE-TALLY ROWS (one row per agent: blocks at a shared unit +
-             count + share %, "Other agents" folding the unselected rest per
-             R11-E). Built by insRenderShareChart_ (name kept, no canvas). -->
-        <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
-          <div class="ir-chart-header">Share of answered calls</div>
-          <div id="ins-share-tally" class="ins-share-tally"></div>
-          <div id="ins-share-legend" class="ans-tally-legend" style="display:none;"></div>
+        <!-- A3: Agents zone. UX-2 (owner 2026-10-13): a FOLD like the others,
+             FIRST in the report and OPEN by default (insFoldsLoad_'s `agents`
+             default); its collapsed head (#ins-agents-fold-head) carries the
+             behind / slipping / on-track count. -->
+        <details id="ins-agents-fold" class="ins-fold" data-fold="agents" open>
+          <summary class="ins-fold-summary">
+            <span class="ds-zone-label">Agents</span>
+            <span class="ins-fold-head" id="ins-agents-fold-head"></span>
+          </summary>
+          <div class="ins-fold-body">
+        <h3 class="al-section-title">Per-agent comparison (vs prior period)</h3>
+        <div class="ir-cards-toolbar" id="ins-cards-toolbar">
+          <label class="ir-sort-control">
+            <span class="ir-sort-label">Sort agents:</span>
+            <select id="ins-card-sort">
+              <option value="default">Most answered (default)</option>
+              <option value="name">Name (A-Z)</option>
+              <option value="improvers">Biggest improvers</option>
+              <option value="regressors">Biggest regressors</option>
+            </select>
+          </label>
+          <!-- Round-16 (owner): Cards/Chart toggle HIDDEN while the Cards view
+               is under review (undecided whether it stays). Wiring + cards code
+               are intact -- remove the display:none to restore the choice. The
+               admin A/B remote's Cards button still forwards here, so an admin
+               can preview the hidden view. -->
+          <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view" style="display:none;">
+            <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
+            <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
+          </div>
+          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one
+               metric) / Absolute (PR's stacked Answered+Missed volumes + %
+               dots -- the Performance Report's Volume & Efficiency view).
+               The third "vs Prior" basis (Compare Ranges' grouped bars) was
+               RETIRED by owner note (3-way selector read as confusing; the
+               prior values live on in the card delta-badge hover tooltips).
+               seg-rich: two-line labels (title + hint) so the remaining two
+               options read as distinct CHOICES, not a cryptic toggle. The
+               metric selector applies to gap only; Absolute shows all
+               volumes at once. -->
+          <div class="segmented seg-rich" id="ins-cards-chart-mode" role="radiogroup"
+               aria-label="Chart comparison basis" style="display:none;">
+            <button type="button" class="seg-btn active" data-mode="gap" role="radio" aria-checked="true">
+              <span class="seg-title">Gap vs team</span>
+              <span class="seg-hint">who&#8217;s above / below the team average</span>
+            </button>
+            <!-- R16g (owner): the Absolute OPTION is HIDDEN -- since the M1
+                 merge the agent table at the top of the SAME page carries the
+                 per-agent answered/missed volumes, so this view restated it.
+                 The Round-16 removal convention: markup + wiring + renderer
+                 (insRenderCardsChartAbs_) stay inert, the saved-'abs' pref
+                 already self-heals to gap (M3), and the admin A/B remote can
+                 still reach it for live comparison. Un-hiding = drop the
+                 display:none. -->
+            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false" style="display:none;">
+              <span class="seg-title">Absolute</span>
+              <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
+            </button>
+            <button type="button" class="seg-btn" data-mode="trend" role="radio" aria-checked="false">
+              <span class="seg-title">Trend</span>
+              <span class="seg-hint">each agent&#8217;s metric over time (one line each)</span>
+            </button>
+          </div>
+          <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
+            <span class="ir-sort-label">Metric:</span>
+            <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
+                 missed, so its gap/trend lines restated the other two. The
+                 renderers still accept 'rung' if fed; a saved pref self-heals
+                 in insRestorePrefs_.) -->
+            <select id="ins-cards-chart-metric">
+              <option value="answered">Answered</option>
+              <option value="missed">Missed</option>
+              <option value="pct">% Answered</option>
+            </select>
+          </label>
         </div>
-        </div><!-- /.ins-detail-row -->
-        <!-- R16e (owner): the heatmap CELL DRILL renders BELOW the row, not
-             inside the heatmap panel -- growing the left column stranded the
-             share table beside a wall of rows. `data-heat-detail` on the panel
-             (read by heatCellToggleDrill_) opts this host out of the shared
-             renderer's internal panel; the Inbound report has no attribute and
-             keeps its in-panel detail. The two lenses (abandoned inbound calls
-             / DQE missed rings) sit side by side here -- full page width, one
-             lens each. -->
-        <div id="ins-heat-detail" class="ds-heatmap-detail ins-heat-detail" style="display:none;"></div>
+        <div id="ins-agent-cards" class="ins-agent-cards"></div>
+        <!-- Cross-agent grouped-bar view (current vs prior) -- toggled from
+             the toolbar; complements the per-card cards + mini-bars (#3). -->
+        <div class="ir-chart-wrap" id="ins-cards-chart-wrap" style="display:none;">
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-cards-chart"></canvas></div>
+        </div>
+
+        <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
+          <summary class="cr-quiet-summary"></summary>
+          <div id="ins-quiet-cards" class="ins-agent-cards"></div>
         </details>
-        <!-- /A2 Team detail -->
+          </div>
+        </details>
+        <!-- /Agents fold -->
 
         <!-- Round-16: Queue health is a per-section FOLD (the progressive-
              disclosure layer that replaced the Simple/Detailed mode). The
@@ -1284,86 +1325,66 @@
         </details>
         <!-- /Queue health fold -->
 
-        <!-- A3: Agents zone. (Round-16: the D3 Simple-only caption is gone
-             with the density mode.) -->
-        <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>
-        <h3 class="al-section-title">Per-agent comparison (vs prior period)</h3>
-        <div class="ir-cards-toolbar" id="ins-cards-toolbar">
-          <label class="ir-sort-control">
-            <span class="ir-sort-label">Sort agents:</span>
-            <select id="ins-card-sort">
-              <option value="default">Most answered (default)</option>
-              <option value="name">Name (A-Z)</option>
-              <option value="improvers">Biggest improvers</option>
-              <option value="regressors">Biggest regressors</option>
-            </select>
-          </label>
-          <!-- Round-16 (owner): Cards/Chart toggle HIDDEN while the Cards view
-               is under review (undecided whether it stays). Wiring + cards code
-               are intact -- remove the display:none to restore the choice. The
-               admin A/B remote's Cards button still forwards here, so an admin
-               can preview the hidden view. -->
-          <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view" style="display:none;">
-            <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
-            <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
-          </div>
-          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one
-               metric) / Absolute (PR's stacked Answered+Missed volumes + %
-               dots -- the Performance Report's Volume & Efficiency view).
-               The third "vs Prior" basis (Compare Ranges' grouped bars) was
-               RETIRED by owner note (3-way selector read as confusing; the
-               prior values live on in the card delta-badge hover tooltips).
-               seg-rich: two-line labels (title + hint) so the remaining two
-               options read as distinct CHOICES, not a cryptic toggle. The
-               metric selector applies to gap only; Absolute shows all
-               volumes at once. -->
-          <div class="segmented seg-rich" id="ins-cards-chart-mode" role="radiogroup"
-               aria-label="Chart comparison basis" style="display:none;">
-            <button type="button" class="seg-btn active" data-mode="gap" role="radio" aria-checked="true">
-              <span class="seg-title">Gap vs team</span>
-              <span class="seg-hint">who&#8217;s above / below the team average</span>
-            </button>
-            <!-- R16g (owner): the Absolute OPTION is HIDDEN -- since the M1
-                 merge the agent table at the top of the SAME page carries the
-                 per-agent answered/missed volumes, so this view restated it.
-                 The Round-16 removal convention: markup + wiring + renderer
-                 (insRenderCardsChartAbs_) stay inert, the saved-'abs' pref
-                 already self-heals to gap (M3), and the admin A/B remote can
-                 still reach it for live comparison. Un-hiding = drop the
-                 display:none. -->
-            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false" style="display:none;">
-              <span class="seg-title">Absolute</span>
-              <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
-            </button>
-            <button type="button" class="seg-btn" data-mode="trend" role="radio" aria-checked="false">
-              <span class="seg-title">Trend</span>
-              <span class="seg-hint">each agent&#8217;s metric over time (one line each)</span>
-            </button>
-          </div>
-          <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
-            <span class="ir-sort-label">Metric:</span>
-            <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
-                 missed, so its gap/trend lines restated the other two. The
-                 renderers still accept 'rung' if fed; a saved pref self-heals
-                 in insRestorePrefs_.) -->
-            <select id="ins-cards-chart-metric">
-              <option value="answered">Answered</option>
-              <option value="missed">Missed</option>
-              <option value="pct">% Answered</option>
-            </select>
-          </label>
-        </div>
-        <div id="ins-agent-cards" class="ins-agent-cards"></div>
-        <!-- Cross-agent grouped-bar view (current vs prior) -- toggled from
-             the toolbar; complements the per-card cards + mini-bars (#3). -->
-        <div class="ir-chart-wrap" id="ins-cards-chart-wrap" style="display:none;">
-          <div class="ir-chart-canvas-wrap"><canvas id="ins-cards-chart"></canvas></div>
-        </div>
+        <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +
+             collapsible team detail) and an Agents zone (per-agent cards). -->
+        <div class="ds-zone"><span class="ds-zone-label">Team</span></div>
+        <!-- R17b (owner): the Department-rollup CARD ROW is HIDDEN -- its
+             % Ans (rings) headline moved to the sticky Team Rings Data side
+             panel (which shows for the SAME window, always in view), and the
+             Answered/Missed volumes fold into that card's rings (ans/miss)
+             foot. The section title goes with it (owner: remove entirely).
+             Round-16 removal convention: markup + the insRenderReport_
+             wiring stay inert; un-hiding = drop the display:none pair. The
+             prior-window deltas + sparklines these cards carried live on in
+             the per-agent cards, the emails and the CSV. -->
+        <h3 class="al-section-title" style="display:none;">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></h3>
+        <div id="ins-kpi-row" class="pr-kpi-row" style="display:none;"></div>
 
-        <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
-          <summary class="cr-quiet-summary"></summary>
-          <div id="ins-quiet-cards" class="ins-agent-cards"></div>
+        <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
+             and the share-of-answered chart collapse here so the report leads
+             with the answer (headline + strip + KPI tiles). The share
+             Chart.js canvas renders at zero height if built while collapsed,
+             so insRenderReport_ DEFERS it until this <details> is open and the
+             toggle handler (initInsightsReport) renders it on first open.
+             Queue health + heatmap are DOM/CSS-grid (no canvas) so they
+             populate fine while collapsed. The admin gate on the heatmap + the
+             data-presence hides on queue health/share are unchanged -- this
+             only wraps them. (I4: the 12-month trend chart was moved OUT of
+             this section to the bottom of the report -- see #ins-trend-wrap.) -->
+        <details id="ins-team-detail" class="ds-team-detail" data-fold="detail">
+          <summary class="ds-team-detail-summary">Team detail &mdash; abandon heatmap &amp; share of answered <span class="ins-fold-head" id="ins-detail-fold-head"></span></summary>
+
+        <!-- R16c (owner): heatmap + share table sit SIDE BY SIDE on one row
+             (each was half-empty at full width). Flex with wrap: managers
+             never get the heatmap (admin vetting gate), so the share table
+             simply takes the full row when its neighbor is display:none;
+             narrow viewports stack them again. Ids + renderers unchanged. -->
+        <div class="ins-detail-row">
+        <div id="ins-heatmap" class="ds-heatmap-panel" data-heat-detail="ins-heat-detail" style="display:none;"></div>
+
+        <!-- Share of answered calls -- Round-16 (owner): the doughnut became
+             SHARE-TALLY ROWS (one row per agent: blocks at a shared unit +
+             count + share %, "Other agents" folding the unselected rest per
+             R11-E). Built by insRenderShareChart_ (name kept, no canvas). -->
+        <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
+          <div class="ir-chart-header">Share of answered calls</div>
+          <div id="ins-share-tally" class="ins-share-tally"></div>
+          <div id="ins-share-legend" class="ans-tally-legend" style="display:none;"></div>
+        </div>
+        </div><!-- /.ins-detail-row -->
+        <!-- R16e (owner): the heatmap CELL DRILL renders BELOW the row, not
+             inside the heatmap panel -- growing the left column stranded the
+             share table beside a wall of rows. `data-heat-detail` on the panel
+             (read by heatCellToggleDrill_) opts this host out of the shared
+             renderer's internal panel; the Inbound report has no attribute and
+             keeps its in-panel detail. The two lenses (abandoned inbound calls
+             / DQE missed rings) sit side by side here -- full page width, one
+             lens each. -->
+        <div id="ins-heat-detail" class="ds-heatmap-detail ins-heat-detail" style="display:none;"></div>
         </details>
+        <!-- /A2 Team detail -->
+
+
 
         <!-- I4: the 12-month team trend is the ONE view the header window
              controls do NOT govern -- it always spans ~12 months (or the

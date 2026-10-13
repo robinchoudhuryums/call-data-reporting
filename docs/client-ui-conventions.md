@@ -223,7 +223,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v24` already makes a fresh re-generate fast too).
+  `insights:v25` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -540,7 +540,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   (line-only), and genuinely having under two days of data.
   For the TEAM metrics a window that can't fill a calendar
   falls back to `trendYtd` — the server's Jan-1-to-end-date daily series
-  (`insights:v24`), roster-gated and accumulated inside the existing 12-month
+  (`insights:v25`), roster-gated and accumulated inside the existing 12-month
   trend pass, so it costs no extra read. `insCalendarUsesYtd_` is the single
   decision (window fills a calendar → use `trendDaily`; else → YTD if it has
   more than one day), and `insCalendarEligible_` / `insRenderTrendCalendar_`
@@ -2412,6 +2412,26 @@ stay pinned by INV-39, INV-53 and INV-06.
   `html-include-structure.test.js` pins both writers' `csvSafeCell_` routing,
   and `drive-subqueue.js` asserts the real clipboard bytes (tab-separated,
   every row carrying the header's column count, same row set as the CSV).
+- **The Insights ranked brief (UX-2, owner 2026-10-13).** `#ins-brief` sits at
+  the top of the Insights region: a top line and one row per section, most
+  urgent first (`insBriefRank_`: red, amber, green, grey; ties Queue ->
+  Agents -> Callbacks -> Team detail -> Trend). The colour rules are PURE,
+  self-contained functions in script-8 (`insBriefTopTier_` / `insBriefQueue_`
+  / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
+  `insights-brief.test.js` -- keep their thresholds as literals inside them,
+  or the extraction breaks. The queue-wait verdict is server-side
+  (`queueHealth.perQueue[].wait`, InsightsReport.gs). Colour words are always
+  rendered (Red / Amber / Green / No signal); red uses `--warn`, amber the
+  new `--caution` (same values as `--stale`, defined at every `--stale`
+  site). ADMIN-ONLY during the trial: `data-admin-only` on the container,
+  the `USER.role` check in `insRenderBrief_`, and the same check on the trend
+  shading; while the brief shows, `#insights-results.ins-has-brief` hides
+  `#ins-headline` -- guarded by `body:not([data-view-as="manager"])` so the
+  headline returns in View-as. The Agents section is now a fold
+  (`data-fold="agents"`, open by default) and leads the report, followed by
+  Queue health, Team detail and Trend; every fold head is filled by
+  `insSyncFoldHeads_` for every role. drive-smoke asserts the admin brief,
+  the manager and View-as absence, the order and a row opening its section.
 - **Draggable / resizable modals.** All modals can be
   repositioned via header drag and resized via a bottom-right
   corner handle. Position and size reset on close so the next

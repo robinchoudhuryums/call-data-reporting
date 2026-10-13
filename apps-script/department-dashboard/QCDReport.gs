@@ -1111,13 +1111,19 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       const monthKey = dateIso.slice(0, 7);
       let mb = bucket.monthly[monthKey];
       if (!mb) {
-        mb = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+        mb = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0, aaSum: 0, aaN: 0 };
         bucket.monthly[monthKey] = mb;
       }
       mb.totalCalls    += totalCalls;
       mb.totalAnswered += totalAnswered;
       mb.abandoned     += abandoned;
       mb.violations    += violations;
+      // UX-2: the month's answered-weighted avg answer (the RPT-8 weighting),
+      // so Insights can compare a queue's window against its own history.
+      if (avgAnswerSec > 0 && totalAnswered > 0) {
+        mb.aaSum += avgAnswerSec * totalAnswered;
+        mb.aaN   += totalAnswered;
+      }
     }
   }
   const loopMs = Date.now() - tLoop;
@@ -1270,9 +1276,10 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     perQueue[q] = {
       monthly: monthKeys.map(function (m) {
         var b = acc.monthly[m];
-        if (!b) return { totalCalls: 0, totalAnswered: 0, abandoned: 0, abandonedPct: 0, violations: 0 };
+        if (!b) return { month: m, totalCalls: 0, totalAnswered: 0, abandoned: 0, abandonedPct: 0, violations: 0, avgAnswerSec: 0 };
         var pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
-        return { totalCalls: b.totalCalls, totalAnswered: b.totalAnswered, abandoned: b.abandoned, abandonedPct: pct, violations: b.violations };
+        return { month: m, totalCalls: b.totalCalls, totalAnswered: b.totalAnswered, abandoned: b.abandoned, abandonedPct: pct, violations: b.violations,
+                 avgAnswerSec: b.aaN > 0 ? Math.round(b.aaSum / b.aaN) : 0 };
       }),
       daily: allDailyDates.map(function (iso) {
         var d = acc.daily[iso];
