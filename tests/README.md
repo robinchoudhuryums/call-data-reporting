@@ -106,7 +106,7 @@ tests/
     qcd-violation-rule.test.js QO-2: a QCD violation is 4.00% OR MORE -- cdr-import's qcdViolationFlag_ (integers, both writers) and cdr-report's date-gated repairQcdViolationFlags (preview, apply, idempotent Neon re-mirror)
     diagnostics-tools.test.js Diagnostics.gs: CH-1 -- the editor-run tools are public (the Run dropdown hides `_` names) and each refuses a non-admin before reading
     harness-strictness.test.js  the fakes' platform limits themselves (HT-2/3/4/5): setValues shape + display update, cache caps, formatDate tokens, triggers / lock / property limits -- loosening a fake fails here
-    deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (DEP-1), CI on Node 22 (HT-6)
+    deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (an earlier scan's DEP-1), CI on Node 22 (HT-6); broad-scan 2026-10-12: the sanitized build-stamp branch + copy-restoring trap (DEP-2) and the pinned playwright version everywhere (DEP-1)
     workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
@@ -219,6 +219,8 @@ tests/
                               scopes its service calls need -- derived from
                               the source, so a new DriveApp call without a
                               manifest edit fails here, not in production;
+                              SEC-7: Drive READS map to drive.readonly and only
+                              write methods require full drive;
                               dqe-report stays on auto-detection, frozen),
                               queue-split-sample (P-5: the SIXTH mirror of the
                               build's queueLegs gate driven against the REAL
@@ -370,7 +372,7 @@ tests/
                               outbound-home (broad-scan 2026-10-12 Batch 3b, UX-1: the Outbound summary + Callbacks (+ Direct lines) sit under the outbound agent table and outside the Insights results, read the PAGE window via obSectionWindow_ rather than Insights' last result, no duplicate agent table, and the own-group label when the table above holds sub-queues; rendered in drive-outbound-e + drive-callbacks),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
-                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up),
+                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up, PIPE-7: the per-call catch-up for an already-imported date and its pending-while-Neon-is-down ledger),
                               cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
                               cdr-report-neon-timeout (CR-6: getNeonConn()'s statement-timeout wrapper + the forwarded-method sweep; the dashboard twin is in neon-conn-memo, DL-3),
                               neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),

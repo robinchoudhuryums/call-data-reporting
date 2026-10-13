@@ -1,6 +1,7 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-13 -- /sync-docs over 7768d2d..2005240 (broad-scan batches 1-11, WS-1, UX-2, the probe).** 16 drifts fixed across CLAUDE.md + six split docs: PC-4 collisions (#56, S31), PIPE-7 (#56, tests/README), TOOL-6 dbReporting.gs web-editor delete (#29), WS-1 wait exception (CLAUDE.md + per-call-capture), UX-1 leftovers (S46, client-ui-conventions heading, architecture), ENG-6 IDLE (#12), ENG-7 / ENG-8 / PipelineWatch quiet kinds / DATA-6 / DATA-3 in CLAUDE.md, the R49 mirrors, the span-reader callers, the beacon sites, the swept prefs keys, the phone-hash file wording, script.html:: locations -> fragments; Health-row inventory trimmed to Operator State pointers. CLAUDE.md 174.5 KB (25.5 KB headroom).
 - **2026-10-13 -- UX-2 RULED + the brief-threshold probe written (Operator State #76).**
   - Owner: option A on all three UX-2 decisions (docs/next-steps.md). No threshold yet, by owner choice, for Callbacks, outbound connect %, ATT or missed-call counts.
   - `probeBriefThresholds()` (Diagnostics.gs, editor, admin, read-only): share of answered (raw + per day worked, SD / CV / >1 / >2 SD), queue wait (vs company, vs own prior-3-month median, daily jumpiness, volume correlations), monthly answer-rate swings (MoM / vs3, counts at 2/3/5, pooled p50/p90/p95). Window BRIEF_PROBE_FROM/_TO or the 12 whole months ending last month.

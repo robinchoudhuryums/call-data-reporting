@@ -180,6 +180,8 @@ When something looks wrong, before assuming a code bug, check:
     Department matches a `DO NOT EDIT!` header exactly (an unknown dept is
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
+    ENG-6: a cadence with no active subscribers records `IDLE <iso>`, shown
+    muted on the Health page, not as a failure (it was `NO-SUBSCRIBERS`).
     ENG-5: the Health page's `out-digest-<cadence>` row now warns
     **INTERRUPTED** when a send started (`DIGEST_STARTED_<cadence>`) after the
     last recorded outcome (`DIGEST_LAST_<cadence>`) and never finished, which
@@ -804,8 +806,9 @@ When something looks wrong, before assuming a code bug, check:
     `CompareRangesReport.gs` from the Department Dashboard project in the
     web editor -- until then their dead endpoints (`getPerformanceReport`,
     `getCompareRanges`, ...) remain callable (same auth gates as before;
-    harmless but stale). The retired QCD / Missed surfaces were in-file
-    edits, so no other files need manual deletion.
+    harmless but stale). Also delete `dbReporting.gs` from the CDR Report
+    (cdr-report) project (TOOL-6, broad-scan 2026-10-12). The retired QCD /
+    Missed surfaces were in-file edits, so no other files need manual deletion.
     **This is now DETECTED rather than remembered (Batch 4):**
     `scripts/deploy.sh` runs `node scripts/check-remote-orphans.mjs <dir>`
     before every push, which pulls the project into a throwaway temp dir and
@@ -1970,7 +1973,9 @@ When something looks wrong, before assuming a code bug, check:
     `(date, agent)` rows -- which `neonDedupeByKey_` would collapse
     last-write-wins on the Neon side -- are found by `findDqeDuplicateRows`
     (neonbackfill.js) and merged by `repairDqeDuplicateMerge` (sheetRepairs.js,
-    with a `preview` twin); an Orphan Fix rename can create them (X-1, open).
+    with a `preview` twin). Since PC-4 an Orphan Fix rename no longer creates
+    them: it skips each day where the target name already has a row and names
+    those days (`collisionDates`); merge them deliberately with this tool.
     Re-running the merge is the recovery for one cut short after its sheet
     write: an already-merged group re-blanks AI..AK and re-queues the Neon
     NULLs (PIPE-9). The PST shift (`repairDqeOldPstTimestampShift`) likewise
@@ -1982,8 +1987,10 @@ When something looks wrong, before assuming a code bug, check:
     first import still holds the lock. A skipped upload (lock busy) or a run
     that hits the time budget schedules a one-shot `runPendingImportCatchUp_`
     trigger 2 minutes out that finishes the rest; it deletes itself after it
-    runs. A date already in history is left alone (use Manual Export to
-    force a re-import, as above). Seeing a `runPendingImportCatchUp_` trigger
+    runs. A date already in history keeps its history sheets as they are (use
+    Manual Export to force a re-import, as above), but the catch-up still runs
+    the non-force per-call backfills for it, and keeps it pending while Neon
+    is unreachable (PIPE-7). Seeing a `runPendingImportCatchUp_` trigger
     in the cdr-import triggers list for a few minutes is normal.
 
 57. **Neon storage cap — the phones-write gate, the weekly retention prune,

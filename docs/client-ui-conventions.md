@@ -2164,7 +2164,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   scrolls rather than the two overlapping). Rows open the inline agent panel
   (`apTbody_` follows the visible table). The choice persists in
   `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
-- **Outbound on the Overview tiles and in Insights (owner 2026-10, Batch E).**
+- **Outbound on the Overview tiles and under the outbound table (owner 2026-10, Batch E; moved by UX-1).**
   Both admin-only until the 6c release. **Tiles (E2):** `ovBuildOutboundLine_`
   (script-3) adds one violet line (`.ov-dir-pill` "Outbound", Placed, Conn +
   connect %) under ATT on every grid tile and expanded sub-queue card, for the

@@ -304,7 +304,9 @@ past the threshold and give up?". Both are correct; they are several-fold
 apart and must never be shown side by side without saying so -- that caption
 is the prerequisite for un-gating.
 (2) **`wait_seconds` is WHOLE-CALL elapsed time from IVR pickup
-(`abandonLeg.stop - firstLeg.start`), NOT queue wait.** The IVR runs on
+(`abandonLeg.stop - firstLeg.start`), NOT queue wait.** That is for external
+calls; an internal-origin record's wait starts at the requester's queue leg
+(WS-1, above). The IVR runs on
 nearly every call here, so a near-instant queue abandon still stores tens of
 seconds. Never
 compare it to a queue threshold or read it as "time waiting for an agent";

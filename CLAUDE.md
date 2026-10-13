@@ -494,8 +494,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); the
   `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c).
   **The DAL-bypassing readers are span-bounded too (R41), via ONE shared
-  `Data.gs::dqeWindowRowSpan_`** -- now just `computeActiveAgentsInRange_` and
-  Alerts, whose narrow reads (8 cols / their own memo) would get DEARER on the
+  `Data.gs::dqeWindowRowSpan_`** -- now just `computeActiveAgentsInRange_`,
+  Alerts and the OrphanFix orphan scan (DATA-6), whose narrow reads (8 cols / their own memo) would get DEARER on the
   shared full-width one; `computeSummary_`, IndividualReport and
   InsightsReport moved to the memoized `sheetFetchDqeRows_` (DATA-5,
   broad-scan 2026-09-23 Batches 9-10).
@@ -706,8 +706,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the same page carries it; renderer inert, A/B remote still reaches it). `PerformanceReport.gs` was
   DELETED (`deltaBlock_` moved to Util.gs -- Insights consumes it);
   legacy `#/report/performance` deep links land on the Insights region
-  (router repoint); the `performance:` cache prefix and the
-  `cdr.pr.prefs.v1` localStorage key are orphans. The frozen-literal
+  (router repoint); the `performance:` cache prefix is an orphan
+  and the `cdr.pr.prefs.v1` localStorage key is swept on boot
+  (`sweepOrphanPrefs_`, script-2-chrome). The frozen-literal
   test in insights-report.test.js pins the inherited semantics
   (ex-parity gate). NOTE (INV-17): `clasp push -f` does not delete
   remote files -- PerformanceReport.gs must be removed in the Apps
@@ -717,7 +718,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Rung / Missed / Answered values comparing the selected window
   to the INV-28 prior window immediately preceding it (R24:
   same working-day count). Three pieces of behavior worth knowing:
-  (1) **Valence map** lives in `script.html::WOW_PRIOR_KEYS`:
+  (1) **Valence map** lives in `script-5-dept::WOW_PRIOR_KEYS`:
   rung↑ / answered↑ render `wow-chip-good` (sage); missed↑
   renders `wow-chip-warn` (orange); decreases flip the color so
   a missed-call drop is green and an answered-call drop is
@@ -852,8 +853,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a window change); (4) `DQE_EARLY_QUEUES` is NOT `DQE_CSR_QUEUES`, which
   attributes CSR Avg Abd Wait -- merging them moves a stored duration on every
   row, and cross-file-pins fails if the two lists ever match. The floor and its
-  QUEUE LIST are mirrored in `DQEdrilldown.js` and `DASHBOARD_EARLY_WINDOW`
-  (Config.gs); both are pinned, and the drill's is pinned BEHAVIOURALLY
+  QUEUE LIST are mirrored in `DQEdrilldown.js`, `DASHBOARD_EARLY_WINDOW` and
+  `INBOUND_WORK_WINDOW_PST.earlyStart` (Config.gs, PC-9); all are pinned, and the drill's is pinned BEHAVIOURALLY
   (`dqe-drilldown-parity.test.js`) because a constant the drill never consults
   buys nothing. **`qcdDqeDiagnostic.js` is the FIFTH mirror and takes the
   floor from `dqeWindowStartForQueue_` itself** -- it shipped flat and read
@@ -863,8 +864,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the build GAINED). **`queueSplitSample.js` is the SIXTH** (P-5): same
   helper, same R18e ext fallback, same pin, and `queue-split-sample.test.js`
   drives it against the REAL build too. NOT retroactive: a stored row keeps
-  its old numbers until the date is rebuilt (Operator State #67). The work-window pill still shows 8:30
-  for everyone -- a known 30-minute understatement for the CSR family.
+  its old numbers until the date is rebuilt (Operator State #67). The manager dashboard's work-window
+  pill still shows 8:30 for everyone -- a known 30-minute understatement for
+  the CSR family; the agent app states the early floor (CL-8).
 
 - **DQE cols AJ/AK (`After-Hrs Answered` / `After-Hrs TTT (sec)`) capture the
   half hour AFTER the work window -- ADDITIVE, capture-only, on AI's 14-day
@@ -930,8 +932,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   build's per-agent rules is a two-file edit here.** Pinned BEHAVIORALLY by
   `tests/unit/dqe-drilldown-parity.test.js`: one fixture drives the real build
   AND the real drill, and the drill's Found-N must reconcile with the DQE cell.
-- **`hashPhone` (cdr-report) and `cdrHashPhone_` (cdr-import) must agree, and
-  they are in different PROJECTS** -- so the INV-16 guard, which pairs
+- **`hashPhone` (`cdr-report/dbHistorical.js`) and `cdrHashPhone_` (the
+  INV-16-duplicated `neonWrite.js`) must agree, and they are DIFFERENT
+  functions in different files** -- so the INV-16 guard, which pairs
   same-named files, does not cover them. They hash the insurer reference table
   and the mirrored call rows respectively; if they diverge, nothing joins and
   every insurer silently renders "(unlabeled)" -- no error, no count gap, the
@@ -983,7 +986,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   capture is not, so the two are several-fold apart and must never be shown
   side by side without saying so.
   (3) **`wait_seconds` is WHOLE-CALL elapsed time from IVR pickup, NOT queue
-  wait** -- the IVR runs on nearly every call here, so a near-instant queue
+  wait** (external calls; an internal-origin record's wait starts at the
+  requester's queue leg, WS-1) -- the IVR runs on nearly every call here, so a near-instant queue
   abandon still stores tens of seconds. Never compare it to a queue threshold
   or read it as "time waiting for an agent"; the per-leg `secs` inside
   `journey` is where a real queue wait is derivable.
@@ -1114,7 +1118,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   deterministic per key); the only effect is a ≤6 h stale callout on
   mismatched windows right after deploy.
 - **Chart.js CDN-failure fallback (`safeChart_`).** Every chart is created
-  through `safeChart_(target, config)` (script.html), NOT `new Chart(...)`
+  through `safeChart_(target, config)` (script-1-core), NOT `new Chart(...)`
   directly. It's a transparent pass-through when `Chart` is defined (common
   path provably unchanged); only when the global is missing (blocked/failed
   CDN, SRI mismatch) does `chartUnavailable_` hide the canvas and insert an
@@ -1124,7 +1128,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Any new chart callsite must route through `safeChart_` -- ENFORCED (S8):
   `html-include-structure.test.js` pins it as the ONLY `new Chart(` callsite.
 - **App-styled confirm dialog (`dsConfirm_`), not `window.confirm`.**
-  `dsConfirm_(opts)` (script.html) is a Promise-based, token-themed
+  `dsConfirm_(opts)` (script-1-core) is a Promise-based, token-themed
   confirmation dialog that replaces the browser-native `window.confirm`
   (which renders in the Sheets/browser chrome style, incongruent with the
   app). It's layered above every modal + toast (z-index in styles.html),
@@ -1175,7 +1179,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   originate from the external CDR feed and flow into client-side
   CSV downloads, so they're untrusted input to a spreadsheet app
   (Excel / Sheets treat a cell starting with `= + - @` / tab / CR
-  as a formula). `script.html::csvSafeCell_` prefixes a single
+  as a formula). `script-1-core::csvSafeCell_` prefixes a single
   quote on such cells while preserving legitimate signed numbers,
   percentages, `pts`, durations (`H:MM:SS`), and thousands
   separators (so server-computed numerics aren't mangled).
@@ -1192,7 +1196,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   to `display: false` since v1.0.0. Both `Chart.register(ChartDataLabels)`
   AND `Chart.defaults.plugins.datalabels.display = true` must run at
   module load (see the `registerChartDataLabels_` IIFE in
-  script.html). Per-chart `display: false` (Missed Calls radar,
+  script-1-core). Per-chart `display: false` (Missed Calls radar,
   Overview multi-line trend) still wins via the normal options
   override. Use the boolean form for `display`; the function form
   (`display: function (ctx) {...}`) returned false unpredictably on
@@ -1200,8 +1204,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   data labels" toggle** (checkbox `<report>-show-datalabels`, off by
   default, the `datalabels.display` read straight from `.checked`) is
   wired on IR / Insights; each persists it in its prefs blob
-  (the retired QCD modal's standalone `cdr.qcd.datalabels` key is now
-  an orphan).
+  (the retired QCD modal's standalone `cdr.qcd.datalabels` key is swept
+  on boot by `sweepOrphanPrefs_`).
   The Overview multi-dept overlay + the Missed Calls radar intentionally
   have NO toggle (10+ overlaid lines / dense buckets make labels
   unreadable) and keep `display: false`.
@@ -1209,7 +1213,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   resolve `var(--paper)` etc. to `oklch(...)` strings, which
   chartjs-plugin-datalabels can't parse for `fillStyle` — labels
   render with an empty fill (invisible). `refreshChartTheme()` in
-  script.html paints each CSS custom property onto a 1×1 canvas via
+  script-1-core paints each CSS custom property onto a 1×1 canvas via
   `colorToCanvasRgb_()` and reads back the canonical `rgba(...)` form
   so the plugin always receives a parseable color. Don't pass raw
   `getComputedStyle(...).getPropertyValue('--foo')` strings to chart
@@ -1424,7 +1428,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   button) are marked by a `preview:` prefix on the Triggered By
   column and use the `would-send` status (real fires use `sent`).
   Filter on `triggeredBy NOT LIKE 'preview:%'` to scope to real
-  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes. Each run's
+  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes. A failed
+  append marks its rows `logFailed` and the outcome `FAILED-LOG` (ENG-7,
+  INV-34). Each run's
   outcome (a throw included) also lands in `ALERTS_LAST(_RESULT)` for the
   Health page's `out-alerts` row, as each digest cadence's does in
   `out-digest-<cadence>` (O-5).
@@ -1479,7 +1485,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   memo resets the whole family" (R40 in fix-history). A third memo over this
   sheet joins `DQE_EXEC_MEMOS`.
 - **Count badges must be idempotent, not append-only (F10).**
-  `escApplyBadge_(counts)` (script.html) updates the escalations nav badge
+  `escApplyBadge_(counts)` (script-2-chrome) updates the escalations nav badge
   IN PLACE, REMOVES it at zero, and hides + empties the Overview strip;
   `escLoad_` calls `loadEscBadge_()` on every list load (every mutation
   reloads the list, so the badge follows every change) and `applyViewAs_`
@@ -1523,7 +1529,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`parseSkipDateRanges_` / `isDateInSkipRanges_` moved here from
   Alerts.gs, plus `getCompanyHolidayRanges_` / `isCompanyHoliday_` /
   `prevBusinessDayIso_` reading the `Company Holidays` SHEET first
-  and the `COMPANY_HOLIDAYS` Script Property only as the fallback --
+  then its last-good copy on a failed read (ENG-8), and the
+  `COMPANY_HOLIDAYS` Script Property only as the final fallback --
   H1: the sheet WINS once it holds one active range, never a union,
   so the external reader that only sees the sheet (team-tools,
   Operator State #68) cannot be shown a calendar the dashboard is
@@ -1654,7 +1661,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   red). The engine outcome rows (`*_LAST`) also warn STALE when an ARMED engine
   has not recorded past its allowance (O-4) -- a killed run records nothing.
   This page is the PULL view; the **Pipeline-failure watchdog**
-  (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email.
+  (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email
+  (except the two quiet kinds #32 names).
   Four other sections share the page, each with its own operator
   item: **"Report usage (last 30 days)"** (`computeReportUsageSummary_`; a
   bounded tail read, cap 5000); **`SmokeCheck.gs::runLiveSmoke`** (editor-run,
@@ -1678,12 +1686,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   spenders: EVERY dashboard Neon read is metered with a surface label
   (`neonNoteEgress_`; OD-3 sweep `neon-egress-coverage.test.js` + the EA-1
   label pin; unlabeled folds into `other`); `neonStorageVerdict_` names the
-  top 5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
-  bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
-  Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
-  per-call tables are missing; #40/#43), `workbook-cells` (the 10M
-  grid cap, ALLOCATED not used; #62), `esc-schema` (the escalations
-  linked-copy columns + unique index, INV-55) and `backup-scrub` (ESC-D8, #28).
+  top 5 tables (neon-retention.test.js). Every other row is described in its Operator State item
+  (`build-stamp` #2, `retention-risk` #40/#43, `workbook-cells` #62,
+  `backup-scrub` #28, ...).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -1699,8 +1704,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Client-error beacon + usage-telemetry scope (R19).** Uncaught client
   errors (`window` error/unhandledrejection listeners in script-1-core,
   installed for EVERY signed-in user — the dev overlay's capture is
-  admin-only and page-local) and the four top-level load failures
-  (Overview / My Department / Insights / Escalations) report to
+  admin-only and page-local) and the top-level load failures
+  (Overview / My Department / Insights / Escalations init + list, the boot
+  latest-date read) report to
   `SystemHealth.gs::reportClientIssue`, which emails the admins
   immediately. Bounded at BOTH ends — client: once per error signature per
   session, max 6/session, and `reportClientIssue_` must never throw;
@@ -1771,7 +1777,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (the tag, `neonAgentExts:v1` included, or a documented equivalent like
   `agentHist:v1`'s embedded latest date; the B1-B5 late-joiner story is in fix-history), ENFORCED (S3):
   cache-version-sync's ANCHOR_SPECS classifies every prefix and fails when
-  a tag-anchored file stops calling `reportFreshnessTag_()`. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  a tag-anchored file stops calling `reportFreshnessTag_()`. A key that
+  EMBEDS queue data (`summary`, `insights`) also carries
+  `':q' + qcdFreshnessTag_()` (DATA-6). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- keyed on the latest QCD date (`qcdAllFreshnessAnchor_`,
   D-1) and never caching an EMPTY payload, so a pre-ingest request cannot pin
@@ -1803,7 +1811,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
   (Batch 6) the `summary:v23` and `individual_active:v2` keys carry the same
   roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
-  reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:` (and since DATA-1/2/10 `companyOverview`, `insights`, the agent app's blobs and `agentHist:v1`),
+  reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:` (and since DATA-1/2/10 `companyOverview`, `insights`, the agent app's blobs and `agentHist:v1`; DATA-3 `outboundReport`),
   and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /
   `rosterAllDeptsHash_`, Data.gs; pinned by `cache-key.test.js`).
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
@@ -1815,7 +1823,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" it or hardcode that default in a second
   place. `subScope` is a cache-key
-  dimension (`summary:v23`); `cdr.dept.subscope` is now an orphan key.
+  dimension (`summary:v23`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
