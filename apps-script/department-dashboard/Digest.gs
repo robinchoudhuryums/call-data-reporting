@@ -1451,7 +1451,7 @@ function notifyDigestFailure_(cadence, err) {
                   + 'the run-claim marker is not set on a throw, so nothing is sent twice.' }],
         mono: { title: 'Stack', text: (err && err.stack) ? err.stack : '(no stack)' },
         ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Digest Config',
-        footerHtml: 'Sent when a whole digest run aborts (cfg read / window compute). Operator State #12 has the seven checks.',
+        footerHtml: 'Sent when a whole digest run aborts (cfg read / window compute). Operator State #12 has the checklist.',
       },
       body:    fnName
                + ' threw: ' + ((err && err.message) ? err.message : String(err))

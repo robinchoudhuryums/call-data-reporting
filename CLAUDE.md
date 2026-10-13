@@ -22,7 +22,8 @@ spreadsheet is decommissioned.
 ### This file's split-out sections — LIVE TRUTH, not archive
 
 CLAUDE.md reached ~372 KB and is injected into **every** session's context, so
-four reference sections were moved into `docs/` (finding F8). Each still has a
+six reference sections were moved into `docs/` (finding F8 and its
+follow-ons -- the list below). Each still has a
 one-line index here; **the file is authoritative, the index is a finding aid.**
 Open the entry before you rely on it — a summary cannot carry the exceptions.
 `tests/unit/claude-md-split.test.js` fails the build if an index and its file
@@ -217,7 +218,7 @@ scripts/deploy.sh apps-script/cdr-import     # no id -- ditto (triggers/menus ru
 # blank missed-chart, R12-2 gray trend arrows). SEPARATE from `npm run ci`
 # on purpose: that suite is zero-dep, this needs playwright.
 npm run ci:ui                # gen payloads -> build admin+manager -> assert
-# One-time: cd tools/ui-harness && npm init -y && npm i playwright
+# One-time: cd tools/ui-harness && npm init -y && npm i playwright@1.62.1
 # (the Chart.js / datalabels / html2canvas-pro bundles are COMMITTED under
 # tools/ui-harness/vendor/, version-pinned to dashboard.html's CDN tags by
 # tests/unit/ui-harness-vendor.test.js, incl. an F-11 sha256 byte pin).
@@ -621,11 +622,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   it to the canonical roster form. Roster canonical: `Roman (Robin)
   Paulose`. **Two feed variants both canonicalize** (each roster name is
   registered in `strippedMap` under BOTH keys):
-  (1) the **STRIP** key drops the whole parenthetical (`stripParens_`)
+  (1) the **STRIP** key drops the whole parenthetical (`dqeStripParens_`)
   -> `Roman Paulose`, so a nickname-OMITTED incoming `Roman Paulose` (or
   a different parenthetical `Roman (Bob) Paulose`) matches; (2) the
   **FLATTEN** key drops only the parens and keeps the words
-  (`flattenParens_`) -> `Roman Robin Paulose`, so a nickname-
+  (`dqeFlattenParens_`) -> `Roman Robin Paulose`, so a nickname-
   UN-PARENTHESIZED incoming `Roman Robin Paulose` matches too -- **this
   is the ~90% orphan case, and it now canonicalizes** (it previously did
   NOT, because stripping the whole parenthetical left the extra word in
@@ -2202,7 +2203,7 @@ CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js, apps-script/cdr-report/propRegistry.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js, apps-script/cdr-report/propRegistry.js
 
 CDR Import:
   apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/AbandonedFilterDialog.html, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/transferFilter.js, apps-script/cdr-import/TransferShapesDialog.html, apps-script/cdr-import/execCeilingProbe.js, apps-script/cdr-import/propRegistry.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json

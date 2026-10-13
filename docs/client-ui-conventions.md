@@ -291,9 +291,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   chip):** the hand-off buttons carry a window only when you explicitly
   cross over; the plain NAV-TAB path now SILENTLY converges --
   `adoptSharedWindow_(page)` (called from `setPage`'s `dept`/`insights`
-  branches) compares the two pages' last-rendered windows
-  (`pageActiveWindow_`, recorded WITH a timestamp in `refresh()` and
-  `insSyncPeriodBar_`) and, when the OTHER page's window is the more
+  branches) compared the two pages' last-rendered windows
+  (`pageActiveWindow_`, recorded WITH a timestamp) and, when the OTHER page's window was the more
   RECENT one and differs from this page's inputs, rewrites the entered
   page's date inputs and re-runs (dept: the setPage refresh branch;
   Insights: `runInsReport`, or the first-entry pending auto-run just reads
@@ -301,16 +300,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   so the two pages feel like one top-line date strip (owner feedback,
   post-deploy R9). The `.dsync-chip` markup/CSS,
   `maybeShowDateSyncChip_`/`applyDateSync_`, and the dismissal memo are
-  all retired. **#5 Option A hover-prefetch (client-only):** the cross-page
+  all retired. **DOC-6: this whole shared-window store is retired too** --
+  `adoptSharedWindow_` went in M2 and `pageActiveWindow_` in N1, because
+  Insights now renders INLINE on My Department and takes that page's window
+  (`insSyncToDeptWindow_`); there is no second page window to converge. **#5 Option A hover-prefetch (client-only):** the cross-page
   hand-offs that land on My Department -- the Insights **"My Department ->"**
   button + Queue-health **"See missed calls ->"** link (delegated ~300ms
   hover intent on `#insights-page`) -- warm My Department's summary
   for the target window via `prefetchDeptSummary_` (one `getDepartmentSummary`
   call, `req={department,from,to}`, seeded into the D1b store under the
   `'summary'` key so `refresh()`'s SWR paints instantly on click). Guards
-  mirror the IR hover-prefetch: one fetch per signature per session
-  (`deptSummaryPrefetched_`), skipped when the store is already warm,
-  best-effort (a failed prefetch is silent). ONLY the My-Department direction
+  mirrored the IR hover-prefetch: one fetch per signature per session,
+  skipped when the store was already warm, best-effort. **DOC-6: RETIRED in
+  N1 with its last callers** (`prefetchDeptSummary_` and its once-per-
+  signature memo are gone, script-5-dept notes it) -- the Insights region
+  now loads with the dept page, so there is no hop left to pre-warm. ONLY the My-Department direction
   is prefetched -- the Insights direction's request signature (agents +
   compare mode + resolved prior window) isn't reliably known at hover time,
   so it's intentionally left cold (a sig miss would just waste the call).
@@ -706,7 +710,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   values (IR/Insights/Inbound) + inbound abandon-% cells. Default
   is BINARY (highlight only the notable direction -- tables, IR tiles).
   The `symmetric` flag (passed `true` by the ds-kpi tiles -- `dsKpiTile_`,
-  `crTeamTile_`, `inboundKpiTile_`) tints BOTH sides of the SAME 92%/5%
+  `inboundKpiTile_`; the retired Compare Ranges' `crTeamTile_` was the
+  third) tints BOTH sides of the SAME 92%/5%
   standard, so a below-target answer rate reads orange "watch" and a
   healthy abandon rate reads green instead of plain black. Still no
   invented thresholds (only %-formatted answer/abandon values tint;
@@ -1145,11 +1150,12 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   was an intentional `#8` decision; it's safe to retire because the
   tile-hover→line-spotlight link works by **dept-name lookup**
   (`ovSpotlightDept_` matches `ds._deptName`), NOT DOM proximity, so
-  the stack preserves it. Sub-queue **children render as dense chips**
+  the stack preserves it. Sub-queue **children render as compact cards**
   beneath the parent tile inside the `.ov-dept-group` cell
-  (`ovBuildSubqChip_`: name + % answered + alert marker), each
-  **expanding on click to the child's full tile** (`.ov-subq-tile-wrap`,
-  hidden until expanded). The chips sit in the group cell, NOT inside the
+  (`ovBuildSubqCard_`: a strip with name + Ans % + WoW arrow, Abd %,
+  violations and alert markers), each **expanding in place on click into a
+  near-full card** (`.ov-subq-detail`, `ovToggleSubqCard_` -- DOC-6: the
+  older chip + separate full-tile design is gone). The cards sit in the group cell, NOT inside the
   parent card — parent DQE metrics are independent, NOT a roll-up of
   children, so nesting them in would falsely imply aggregation. Chips
   carry `data-dept` so hovering one spotlights the child's chart line

@@ -44,7 +44,7 @@ still LIVE TRUTH, and CLAUDE.md carries a one-line index for each entry** —
 [`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-55`),
 [`docs/operator-state.md`](docs/operator-state.md) (the numbered operator
 checklist), [`docs/regression-scenarios.md`](docs/regression-scenarios.md)
-(`S1`…`S54`),
+(`S1`…`S60`),
 [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) (client /
 presentation layer), [`docs/neon-layer.md`](docs/neon-layer.md) (the Neon
 mirror + read-back layer) and
@@ -79,8 +79,11 @@ call-data-reporting/
 └── .gitignore
 ```
 
-Each subdirectory under `apps-script/` has its own gitignored
-`.clasp.json` so per-project deploys are independent. The legacy DQE
+Each SIBLING project under `apps-script/` (`cdr-report`, `cdr-import`,
+`dqe-report`) has its own gitignored `.clasp.json`, so per-project deploys are
+independent. The dashboard is the exception: its `.clasp.json` lives at the
+REPO ROOT (with `rootDir` pointing at `apps-script/department-dashboard/`), so
+`scripts/deploy.sh .` -- not `apps-script/department-dashboard` -- deploys it. The legacy DQE
 Report project (`apps-script/dqe-report/`) is frozen while its spreadsheet
 is retired: cleanup deploys only.
 
@@ -165,7 +168,7 @@ with `CI=1` before it pushes anything: `npm run ci` (the zero-dep suite + the
 INV-16 duplication guard + the module-deps check), `npm run lint:gas` and
 `npm run ci:ui` (the rendered-UI gate). `CI=1` is deliberate — it makes a
 MISSING tool fail the gate rather than skip it, so a fresh clone needs
-`npm ci` and a playwright install (`cd tools/ui-harness && npm i playwright`)
+`npm ci` and a playwright install (`cd tools/ui-harness && npm i playwright@1.62.1`)
 before it can deploy. `DEPLOY_SKIP_CI=1 scripts/deploy.sh …` skips all three,
 for emergencies only.
 
@@ -585,11 +588,18 @@ the deployed web-app URL to land on that view:
 - `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
 - `#/report/direct` — Direct Call Report (admin-only while the busy
   carve-out numbers are vetted; Neon-backed)
+- `#/report/outbound` — legacy (the Outbound report modal is retired, G3 —
+  lands on My Department with the direction on Outbound and Callbacks open;
+  admin-only until the 6c release, a plain My Department landing for anyone else)
+- `#/report/agent-day` — Agent Day (one agent's calls on one day; admins and
+  the manager of that agent's roster department)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)
 - `#/admin/access-control` — manager Access editor (admin-only)
 - `#/admin/health` — System Health status page (admin-only)
+- `#/admin/coaching` — the Coaching worklist (admin-only until released; the
+  weekly coaching email links here)
 - `#/admin/caller-lookup` — Caller Lookup (admin-only): trace every
   inbound call from one phone number — outcome, wait/hold, and the
   leg-by-leg journey for calls captured since the journey extension.

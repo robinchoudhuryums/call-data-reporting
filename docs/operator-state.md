@@ -137,7 +137,12 @@ When something looks wrong, before assuming a code bug, check:
    `manifest-scopes.test.js` derives the required set from the service calls
    in each project and fails when a manifest omits or over-declares one, so a
    new `DriveApp` / `UrlFetchApp` / `MailApp` call needs its manifest edit in
-   the same commit.
+   the same commit. **SEC-7 (broad-scan 2026-10-12): cdr-import now asks for
+   `drive.readonly`, not full `drive`** -- its one Drive use, the bulk CSV
+   import, only lists and reads files. The first push after it changes the
+   consent set: open the cdr-import editor, run any function once, and accept.
+   The suite now maps a Drive READ to `drive.readonly` and only a Drive WRITE
+   (create / copy / move / trash / share / overwrite) to full `drive`.
 10. After adding a sub-queue to `OVERVIEW_PARENT_OF`, verify the
     key matches the `DO NOT EDIT!` column header byte-for-byte
     (case, spaces, and any ` Q` suffix). Mismatches show up as a
@@ -1763,8 +1768,9 @@ When something looks wrong, before assuming a code bug, check:
     Journey / Origin Agent / Origin Dept / Related Call Id / Related Call
     Kind)** — `getCallJourney`'s inbound arm degrades to it through
     `inboundCallJourneySheetFallback_`, same two-arm auth (the F-4 gate
-    reads the DQE sheet, so it survives the outage); the outbound arm has
-    NO fallback (no sheet primary). The Journey column is the tab's only
+    reads the DQE sheet, so it survives the outage); the outbound arm degrades
+    to the Outbound Calls tab the same way (`outboundCallJourneySheetFallback_`,
+    #50 -- DOC-7: this item used to say it had none). The Journey column is the tab's only
     HEAVY one (0.2–6 KB/cell), so it is populated only within
     `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property, default 90) — older
     rows keep a blank cell and the drill serves the entry→final summary,

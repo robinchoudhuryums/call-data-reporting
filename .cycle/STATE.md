@@ -1,6 +1,23 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-13 — Broad scan Batch 11 IMPLEMENTED (block 258): docs, deploy, code health + PIPE-7. The 2026-10-12 batch plan is COMPLETE.**
+  - Fixes:
+    - PIPE-7 (option A): the catch-up fills per-call capture for an already-imported date, and keeps it pending while Neon is down.
+    - DEP-2: stamp branch sanitized; the trap restores from a copy.
+    - DEP-1: playwright pinned everywhere.
+    - SEC-7: cdr-import uses drive.readonly; the scope suite now tells Drive reads from writes.
+    - TOOL-6: dbReporting.js deleted.
+    - DATA-9: comment.
+    - DOC-1..7.
+  - Verification: 2407 tests; ci:ui green; lint clean; 9 bites.
+
+  **Owner-side:**
+  - Deploy cdr-import, cdr-report and the dashboard.
+  - RE-CONSENT cdr-import right after its push (run any function, accept), Operator State #9.
+  - Delete dbReporting.gs in the cdr-report web editor (INV-17).
+  **Next:** the deferred owner rulings (SEC-1 floaters, SEC-2 Agent Day outbound, UX-2 Insights brief, PIPE-8 operator), or the recorded follow-ons -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-13 — Broad scan Batch 10 IMPLEMENTED (block 257): cache anchors + combined-view perf.**
   - Fixes:
     - DATA-6: `summary` / `insights` keys carry the latest QCD date (qcdFreshnessTag_).

@@ -93,6 +93,13 @@ A FORCE `backfillInboundCalls` / `backfillOutboundCalls` with the secret unset
 REFUSES every already-mirrored date (a FAILED entry, which also keeps a
 deferred-mirror date queued) instead of replacing its stored hashes with NULL,
 and still writes a date Neon has never seen (PIPE-15, `outbound-calls.test.js`).
+**A daily run killed after the sheet writes still gets its per-call capture
+(PIPE-7, owner option A).** The catch-up's retry of such a date returns
+"already in history"; it now runs the NON-force `backfillInboundCalls` /
+`backfillOutboundCalls` for that one date (each skips a date Neon already
+holds), and keeps the date pending -- through the import-failure ledger and its
+park -- while Neon is unreachable, instead of remembering it with no per-call
+rows. `pending-imports.test.js`.
 
 ### Internal-transfer journey enrichment (R11-N)
 

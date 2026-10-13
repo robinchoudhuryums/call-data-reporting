@@ -1,7 +1,8 @@
 // ── Credentials ─────────────────────────────────────────────────────────────
 // Shared Neon connection + HMAC-secret accessors (and the hashPhone helper) for
-// the cdr-report project. Used by inboundCallsExport.js, insuranceNumbers.js,
-// and dbReporting.js.
+// the cdr-report project. Used by inboundCallsExport.js, outboundCallsExport.js
+// and insuranceNumbers.js. (TOOL-6: dbReporting.js's pullReportData -- dead,
+// and broken: it bound its dates with setString and no ::date cast -- is gone.)
 // (The old manual `archiveCallHistoryDept` backfill that also lived here -- plus
 // its private parsers parseDate/timeToSeconds/toInt/looksLikePhone/
 // parseNameField/parsePhoneField and the testParsers/testSingleRow scaffolding --
@@ -29,7 +30,8 @@ function getNeonConn() {
 // run, and that kill SKIPS catch blocks, so the 9 AM Inbound / Outbound exports
 // and the insurer sync logged nothing at all. Bounded here, a hang becomes an
 // ordinary thrown error their catch blocks already report. 240 s leaves the
-// run time to report it inside the 6-minute ceiling. The wrapper forwards only
+// run time to report it inside the execution ceiling (measured per account,
+// Operator State #70 -- not a fixed 6 minutes; DOC-7). The wrapper forwards only
 // the six Connection methods this project's getNeonConn() callers use;
 // cdr-report-neon-timeout.test.js sweeps them and fails on a seventh.
 // (The dashboard twin is NeonRead.gs::neonTimedConn_, DL-3 -- another project.)

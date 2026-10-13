@@ -40,7 +40,8 @@ test('CR-6: the wrapper forwards every Connection method a getNeonConn() caller 
   const callers = fs.readdirSync(dir).filter(function (f) {
     return /\.js$/.test(f) && /\bgetNeonConn\(\)/.test(fs.readFileSync(path.join(dir, f), 'utf8'));
   });
-  ['dbHistorical.js', 'dbReporting.js', 'inboundCallsExport.js', 'outboundCallsExport.js', 'insuranceNumbers.js']
+  // TOOL-6 (broad-scan 2026-10-12): dbReporting.js (the dead pullReportData) is deleted.
+  ['dbHistorical.js', 'inboundCallsExport.js', 'outboundCallsExport.js', 'insuranceNumbers.js']
     .forEach(function (f) { assert.ok(callers.indexOf(f) !== -1, f + ' should still be a getNeonConn() caller'); });
   const used = {};
   callers.forEach(function (f) {

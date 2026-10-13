@@ -469,12 +469,13 @@ function processBulkQueue() {
   report.push("ℹ️ Direct-call Neon mirror was deferred (skipNeon). Run "
     + "backfillDirectCallToNeon() in THIS (CDR Import) project to mirror these "
     + "dates to direct_call_history (DO UPDATE).");
-  // F-18: the bulk path never runs the per-call inbound capture (it rides
+  // F-18: the bulk path never runs the per-call capture (it rides
   // processIntegratedHistory's daily path only), so a force-rebuilt date's
-  // inbound_calls rows are NOT refreshed -- and inbound has no sheet
-  // primary to rebuild from later. Surface that instead of staying silent.
-  report.push("ℹ️ inbound_calls was NOT captured/refreshed for these dates. "
-    + "Run backfillInboundCalls() (THIS project) to fill from surviving "
+  // inbound_calls AND outbound_calls rows are NOT refreshed -- and neither
+  // table has a sheet primary to rebuild from later. Surface that instead of
+  // staying silent. (DOC-7: the outbound table was missing from this note.)
+  report.push("ℹ️ inbound_calls and outbound_calls were NOT captured/refreshed for these dates. "
+    + "Run backfillInboundCalls() and backfillOutboundCalls() (THIS project) to fill from surviving "
     + "Call_Legs_* sheets -- reach is limited by their ~14-day retention.");
 
   ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
@@ -2404,7 +2405,8 @@ if (!skipCDR && obcHD) {
     // permanently, with no Pipeline Health failure row and no email -- the tile
     // just rendered a slightly different weighted percentage. Guarded now, on
     // the same terms as QCD (log-only; the already-written sheets stand).
-    // CDR / QPath remain unguarded and genuinely not dashboard-read.
+    // Q Path stays unguarded (it has no reader); CDR is guarded too since
+    // CR-9 (its reader is cdr-report's Custom Report Builder) -- DOC-7.
     guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CSR', dateObj, force && fdel.csr, csrBatch.length);
     if (csrBatch.length > 0) {
       csrHD.getRange(csrHD.getLastRow() + 1, 1, csrBatch.length, 18).setValues(csrBatch);
@@ -3296,11 +3298,23 @@ function processPendingImports_() {
     const prior = fails[iso] ? (Number(fails[iso].n) || 0) : 0;
     const s0 = Date.now();
     last = processNewImport(false, iso, false, null, null, { noAlert: true, noFailureEmail: prior > 0 });
+    // PIPE-7 (owner 2026-10-13, option A): see pendingImportPerCallCatchUp_.
+    const perCallSettled = (last === 'ALREADY IN HISTORY') ? pendingImportPerCallCatchUp_(iso) : true;
     lastMs = Date.now() - s0;
     done.push(iso + '=' + String(last).split(' ')[0]);
     if (String(last).indexOf('ERROR') === 0) {
       failedThisRun[iso] = true;
       fails[iso] = { n: prior + 1, at: new Date().toISOString(), err: String(last).slice(0, 200) };
+      failsChanged = true;
+      if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
+      continue;
+    }
+    if (!perCallSettled) {
+      // Not remembered: the next catch-up retries it, through the same ledger
+      // (and the same park after PENDING_IMPORT_MAX_ATTEMPTS_) as a failed import.
+      failedThisRun[iso] = true;
+      fails[iso] = { n: prior + 1, at: new Date().toISOString(),
+                     err: 'per-call capture not completed for an already-imported date (PIPE-7): Neon unreachable or a write failed' };
       failsChanged = true;
       if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
       continue;
@@ -3348,6 +3362,43 @@ function pendingImportLogParked_(iso, entry) {
         + 'or delete the tab (Operator State #43)',
     });
   } catch (logErr) { /* best-effort */ }
+}
+
+/**
+ * PIPE-7 (owner 2026-10-13, option A). A daily run killed between the sheet
+ * writes and the per-call capture left the date's five history sheets full,
+ * so the catch-up's retry returned "ALREADY IN HISTORY" and the date was
+ * remembered -- its inbound_calls / outbound_calls rows were never written,
+ * and past the ~14-day Call_Legs window they are gone. So for such a date run
+ * the NON-force per-call backfills for that one date: each skips a date Neon
+ * already holds (icFetchMirroredDates_ / ocFetchMirroredDates_) and writes one
+ * it does not, and each logs its own Pipeline Health row.
+ *
+ * Returns false when either could not finish (Neon unreachable or a write
+ * error), so the caller keeps the date pending instead of remembering it.
+ */
+function pendingImportPerCallCatchUp_(iso) {
+  let settled = true;
+  const run = function (label, fn) {
+    if (typeof fn !== 'function') return;
+    try {
+      const res = fn(iso, iso, false);
+      if (res && (res.unreachable || res.failures)) {
+        settled = false;
+        console.log('pendingImportPerCallCatchUp_: ' + label + ' for ' + iso + ' not completed ('
+          + (res.unreachable ? 'Neon unreachable' : res.failures + ' write failure(s)') + ').');
+      } else if (res && res.inserted) {
+        console.log('pendingImportPerCallCatchUp_: wrote ' + res.inserted + ' ' + label + ' record(s) for ' + iso
+          + ' -- the earlier run had stopped before the per-call capture.');
+      }
+    } catch (e) {
+      settled = false;
+      console.warn('pendingImportPerCallCatchUp_: ' + label + ' for ' + iso + ' threw: ' + (e && e.message ? e.message : e));
+    }
+  };
+  run('inbound', typeof backfillInboundCalls === 'function' ? backfillInboundCalls : null);
+  run('outbound', typeof backfillOutboundCalls === 'function' ? backfillOutboundCalls : null);
+  return settled;
 }
 
 /** Adds a sheet name to the `lastSheets` memo (same cap as processNewImport's F2 write). */

@@ -1,7 +1,9 @@
 // NOTE: simulateSplitCol2 and parseDurationDecimal below are duplicates of the
-// identically named functions in the main pipeline script (CDR Pipeline v31).
-// If those functions are ever updated there, this file must be updated to match,
-// or extraction results may silently diverge from dashboard values.
+// identically named functions in cdr-import/autoImport.js (DOC-7: this header
+// used to name a "CDR Pipeline v31" that no longer exists).
+// scripts/check-duplicated-files.sh compares the two copies on CODE and fails
+// on drift. The ~50 per-row QCD rules here are a hand mirror that cannot be
+// diffed -- qcd-sidebar-parity.test.js pins them behaviourally. Change both.
 
 function showSidebar() {
   const htmlString = `

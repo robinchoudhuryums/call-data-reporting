@@ -116,3 +116,50 @@ test('HT-6: every CI job runs on Node 22', function () {
   assert.ok(versions.length >= 3, 'all three jobs pin a version');
   versions.forEach(function (v) { assert.match(v, /'?22$/, v); });
 });
+
+// DEP-2 (broad-scan 2026-10-12): the build stamp is written into a
+// single-quoted JS string, and the EXIT trap used `git checkout`. Both halves
+// run here from the script's OWN lines (extracted, not re-typed), so a change
+// to either is what gets tested.
+test('DEP-2: a hostile branch name still yields a parseable stamp, and the trap restores the pre-deploy file', { skip: process.platform === 'win32' }, function () {
+  const sh = read('scripts/deploy.sh');
+  const branchLine = (sh.match(/^\s*STAMP_BRANCH=.*$/m) || [''])[0].trim();
+  assert.ok(branchLine, 'the sanitizer line exists');
+  const r = spawnSync('bash', ['-c', branchLine + '; printf %s "$STAMP_BRANCH"'],
+    { encoding: 'utf8', env: Object.assign({}, process.env, { GIT_BRANCH: "fix/it's-a\\\\b`c" }) });
+  const branch = r.stdout;
+  assert.match(branch, /^fix\/it_s-a__b_c$/, 'quote, backslash and backtick become _: ' + branch);
+  // The emitted line parses as JS.
+  assert.doesNotThrow(function () { new Function("var X = 'deploy.sh t | git abc | " + branch + "';"); });
+
+  // The trap: an UNCOMMITTED edit to the stamp file survives the deploy.
+  const start = sh.indexOf('STAMP_BAK="$(mktemp)"');
+  const end = sh.indexOf(' EXIT\n', start);
+  assert.ok(start > 0 && end > start, 'the backup + trap block exists');
+  const block = sh.slice(start, end + ' EXIT'.length);
+  const dir = tmp();
+  const file = path.join(dir, 'BuildStamp.gs');
+  fs.writeFileSync(file, "var BUILD_STAMP_ = 'a developer edit, not committed';\n");
+  const script = 'STAMP_FILE="' + file + '"\n' + block + '\necho "var BUILD_STAMP_ = \'stamped\';" > "$STAMP_FILE"\nexit 3\n';
+  const t = spawnSync('bash', ['-c', script], { encoding: 'utf8' });
+  assert.equal(t.status, 3, 'the script exited (non-zero, like a failed push)');
+  assert.equal(fs.readFileSync(file, 'utf8'), "var BUILD_STAMP_ = 'a developer edit, not committed';\n",
+    'restored to exactly what was there before -- git checkout would have dropped the edit');
+  assert.ok(!/git checkout --quiet -- "\$STAMP_FILE"/.test(sh), 'the stamp trap no longer uses git checkout');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// DEP-1 (broad-scan 2026-10-12): CI pins playwright (S7); every place that
+// tells a developer how to install it names the SAME version, so the local
+// deploy gate renders with what CI renders with.
+test('DEP-1: every playwright install instruction pins the version ci.yml installs', function () {
+  const ci = (read('.github/workflows/ci.yml').match(/npm i [^\n]*playwright@(\d+\.\d+\.\d+)/) || [])[1];
+  assert.ok(ci, 'ci.yml pins a playwright version');
+  ['README.md', 'CLAUDE.md', 'scripts/deploy.sh', 'tools/ui-harness/ci.mjs', 'tools/ui-harness/README.md'].forEach(function (f) {
+    const src = read(f);
+    assert.ok(!/npm i playwright(?!@)/.test(src), f + ' installs an unpinned playwright');
+    (src.match(/npm i playwright@[\d.]+/g) || []).forEach(function (m) {
+      assert.equal(m, 'npm i playwright@' + ci, f + ': ' + m);
+    });
+  });
+});

@@ -7,9 +7,9 @@
 //
 // Stages: generate payloads from the REAL server code -> build the admin +
 // manager sites from the REAL client -> run the ASSERTING drivers listed in
-// STAGES below (the single source of truth for what gates -- currently the
-// eleven CLAUDE.md's "Rendered-UI gate" block names, incl. the agent-app
-// pair). The exploratory drivers (drive.js / drive-insights.js /
+// STAGES below (the single source of truth for what gates -- the asserting
+// drivers CLAUDE.md's "Rendered-UI gate" block names, incl. the agent-app
+// pair; DOC-7: no count here, it drifted every time a driver was added). The exploratory drivers (drive.js / drive-insights.js /
 // drive-phase3.js) are NOT run here: they emit screenshots + reports for a human
 // to read, which is not a pass/fail signal.
 import { spawnSync } from 'node:child_process';
@@ -31,7 +31,7 @@ if (!existsSync(path.join(HERE, 'node_modules', 'playwright'))) {
     process.exit(1);
   }
   console.log('ui-harness: playwright not installed -- SKIPPING the rendered-UI gate.');
-  console.log('  Install it with:  cd tools/ui-harness && npm i playwright');
+  console.log('  Install it with:  cd tools/ui-harness && npm i playwright@1.62.1');
   console.log('  (Vendor bundles are committed, so playwright is the only dependency.)');
   process.exit(0);
 }

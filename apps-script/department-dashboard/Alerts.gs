@@ -327,14 +327,15 @@ function uninstallAlertTrigger() {
  * by name, which is allowed by Apps Script even for underscore-
  * suffixed functions.
  *
- * Skips Saturday + Sunday: weekend call activity is essentially
- * zero, so a fired alert would just be noise. Holiday handling
- * is via the Alert Config `Skip Dates` column (E8): admins enter
- * comma-separated ISO dates / ranges per dept; the trigger path
- * checks `entry.skipDates` against today and logs `skipped` with
- * a "Skip date match" note when it hits. Manual sends from the UI
- * bypass this gate intentionally so admins can force-send after
- * a holiday review.
+ * INV-33 (DOC-7: this docstring predated the holiday layer). The gate
+ * is alertsGatedAttempt_: a RUN on a weekend or a company holiday
+ * (the `Company Holidays` sheet, the COMPANY_HOLIDAYS property its
+ * fallback) is skipped, and a run that goes ahead assesses the
+ * previous BUSINESS day -- Monday's run assesses Friday. Per-dept
+ * Alert Config `Skip Dates` (E8) are checked on top, logging
+ * `skipped` with a "Skip date match" note. All of it is TRIGGER-ONLY:
+ * manual sends and previews from the UI bypass it, so an admin can
+ * still force a post-holiday catch-up.
  */
 function runDailyAlerts_() { alertsGatedAttempt_(new Date(), 'trigger'); }
 

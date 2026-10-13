@@ -8,7 +8,7 @@ gray-arrow bugs that unit tests structurally cannot see.
 
 ## Run the CI gate (one command, from the repo root)
 ```bash
-cd tools/ui-harness && npm init -y >/dev/null && npm i playwright && cd -
+cd tools/ui-harness && npm init -y >/dev/null && npm i playwright@1.62.1 && cd -
 npm run ci:ui
 ```
 `ci:ui` (→ `ci.mjs`) generates payloads → builds the admin + manager sites →

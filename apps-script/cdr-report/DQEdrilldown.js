@@ -18,7 +18,8 @@
 
 
 // -- Window constants (PST seconds since midnight) ---------------------------
-// 6:30 AM-3:00 PM PST = 8:30 AM-5:00 PM CST
+// 6:30 AM-3:00 PM PST = 8:30 AM-5:00 PM CST (6:00 PST / 8:00 CST for the CSR
+// queue family's legs, R49 -- the per-queue floor below)
 var DQE_DD_WINDOW_START = (6 * 60 + 30) * 60;
 var DQE_DD_WINDOW_END   = 15 * 60 * 60;
 // R49: the CSR queue family floors at 6:00 instead (owner ruling 2026-09-16).
