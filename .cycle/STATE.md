@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-13 -- UX-2 RULED + the brief-threshold probe written (Operator State #76).**
+  - Owner: option A on all three UX-2 decisions (docs/next-steps.md). No threshold yet, by owner choice, for Callbacks, outbound connect %, ATT or missed-call counts.
+  - `probeBriefThresholds()` (Diagnostics.gs, editor, admin, read-only): share of answered (raw + per day worked, SD / CV / >1 / >2 SD), queue wait (vs company, vs own prior-3-month median, daily jumpiness, volume correlations), monthly answer-rate swings (MoM / vs3, counts at 2/3/5, pooled p50/p90/p95). Window BRIEF_PROBE_FROM/_TO or the 12 whole months ending last month.
+  - Verification: 2413 tests (new brief-thresholds-probe suite, 6 bites), lint clean, module map regenerated. No client change, so ci:ui was not re-run.
+  **Owner-side:** deploy the dashboard, run `probeBriefThresholds` from the editor, bring back the log.
+  **Next:** pick the share / queue-wait / trend thresholds from that log, then build UX-2.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
 - **2026-10-13 — Broad scan Batch 11 IMPLEMENTED (block 258): docs, deploy, code health + PIPE-7. The 2026-10-12 batch plan is COMPLETE.**
   - Fixes:
     - PIPE-7 (option A): the catch-up fills per-call capture for an already-imported date, and keeps it pending while Neon is down.

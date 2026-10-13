@@ -964,6 +964,7 @@ var PROP_REGISTRY_ = Object.freeze({
     ALERTS_RUN_CLAIM: 'engine',    // ENG-4: the in-flight run claim (two admins' triggers)
     ANSWER_RATE_FORMULA: 'config',                          // DD-2: 'rung' (default) | 'answerable' (H2)
     ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
+    BRIEF_PROBE_FROM: 'tool', BRIEF_PROBE_TO: 'tool',   // UX-2: probeBriefThresholds window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
     COACHING_NOTIFY_PENDING: 'engine',
     COMPANY_HOLIDAYS_SHEET_COPY: 'engine',   // ENG-8: last-good Company Holidays ranges (sheet-read failure fallback)

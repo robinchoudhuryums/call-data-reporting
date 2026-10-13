@@ -3313,3 +3313,37 @@ When something looks wrong, before assuming a code bug, check:
     - Customers are never named in the log: an external party prints as
       `(external party)` / `(external number)`. Times are PST, as `call_start`
       stores them. Pinned by `tests/unit/inbound-calls.test.js` (WS-1).
+
+76. **Brief-threshold probe (UX-2, 2026-10-13; dashboard).** The UX-2 ruling
+    colours an Insights brief row only where a standard exists. Three rows
+    have none yet -- share of answered, queue wait, and the 12-month answer
+    rate -- and the owner asked to see what NORMAL looks like before picking
+    one. `probeBriefThresholds()` (Diagnostics.gs) is that check: editor-run,
+    admin-gated, READ-ONLY. Window: `BRIEF_PROBE_FROM` / `_TO` (ISO), else the
+    12 whole months ending last month; the params are never cleared. DQE rows
+    come through the DAL (Neon when `DQE_READ_SOURCE=neon`, else the sheet;
+    `QUEUE_SPLIT_SCOPE=dept` is honoured), queue rows through `readQcdGrid_`.
+    It logs three tables (the return value carries the same data as JSON):
+    - **1. Share of answered**, per dept, the MEDIAN month: qualifying agents
+      (5+ days worked, 5+ rung; managers in `getTeamAvgExcludes_` left out,
+      INV-26; months with fewer than 5 such agents skipped), the equal share,
+      the share's standard deviation in points, the widest gap, and the
+      per-day-worked view (answered per day the agent took calls) as a
+      coefficient of variation, with how many agents sit beyond 1 and 2
+      standard deviations and the most extreme agent-month. Read the per-day
+      columns, not the raw share: raw share punishes part-timers and leave.
+    - **2. Queue wait**, per mapped queue ("Total Calls" rows, INV-50): calls,
+      median calls/day, volume-weighted avg answer and its ratio to the
+      company average, longest wait, how often a month runs 1.25x / 1.5x its
+      OWN prior-3-month median, and how jumpy its daily avg answer is. Then
+      three Spearman rank correlations of volume against those -- the
+      evidence for whether a company-wide comparison penalises small or big
+      queues (|r| under ~0.3 = little relationship).
+    - **3. Monthly answer rate**, per dept (every roster agent, the active
+      `ANSWER_RATE_FORMULA`): the monthly series, the change vs the month
+      before and vs the average of the 3 before, how often each reaches
+      2 / 3 / 5 points, the dept's amber band for scale, and pooled p50 / p90
+      / p95 across depts -- where a colour scale could saturate.
+    Nothing it prints changes a number anywhere; bring the log back and the
+    thresholds are picked from it. Pinned by
+    `tests/unit/brief-thresholds-probe.test.js`.

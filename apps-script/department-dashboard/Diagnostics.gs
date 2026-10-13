@@ -842,3 +842,426 @@ function probeAnswerRateFormulas() {
     out.maxDeltaPts, out.verdictChanges.length ? out.verdictChanges.join(', ') : 'none');
   return logStatusReturn_(out);
 }
+
+
+// ── UX-2 follow-on: the brief-threshold probe ────────────────────────────────
+//
+// Editor-run, admin-gated, READ-ONLY. UX-2's ruling (docs/next-steps.md) colours
+// an Insights brief row only where a standard exists; three rows still have
+// none, and the owner wanted to see what NORMAL looks like before picking one.
+// Per department, over a window of whole months, this logs:
+//   1. SHARE OF ANSWERED -- per month, each roster agent's share of the team's
+//      answered calls (managers excluded, INV-26), its spread in points, and
+//      the fairer per-day-worked view (answered per day the agent took calls):
+//      mean, standard deviation, coefficient of variation, and how many agents
+//      sit beyond 1 and 2 standard deviations. Months with fewer than
+//      BRIEF_PROBE_MIN_AGENTS_ qualifying agents are skipped (too few to judge).
+//   2. QUEUE WAIT -- per mapped queue ("Total Calls" rows only, INV-50): calls,
+//      volume-weighted avg answer, longest wait, the queue against the company
+//      average, against its OWN trailing 3-month median, and how jumpy its
+//      daily avg answer is -- plus rank correlations of volume against those,
+//      which is the "does a company-wide comparison penalise small queues"
+//      question answered from the data.
+//   3. MONTHLY ANSWER RATE -- per dept per month (every roster agent, the
+//      answerRatePct_ formula), the change vs the month before and vs the
+//      average of the 3 months before, and how often each reaches 2 / 3 / 5
+//      points; pooled percentiles suggest where a colour scale would saturate.
+// Window: BRIEF_PROBE_FROM / _TO (ISO), else the 12 whole months ending last
+// month. DQE rows come through the DAL (Neon when DQE_READ_SOURCE=neon, sheet
+// otherwise); queue rows through readQcdGrid_. Writes nothing; params kept.
+
+var BRIEF_PROBE_MIN_DAYS_ = 5;     // days worked in the month to count in the share stats
+var BRIEF_PROBE_MIN_RUNG_ = 5;     // the Insights INS_MIN_VOL gate
+var BRIEF_PROBE_MIN_AGENTS_ = 5;   // fewer qualifying agents -> month not assessed
+
+/** Pure: population mean / standard deviation / coefficient of variation. */
+function briefStats_(xs) {
+  var n = xs.length;
+  if (!n) return { n: 0, mean: 0, sd: 0, cv: 0 };
+  var sum = 0;
+  for (var i = 0; i < n; i++) sum += xs[i];
+  var mean = sum / n, ss = 0;
+  for (var j = 0; j < n; j++) ss += (xs[j] - mean) * (xs[j] - mean);
+  var sd = Math.sqrt(ss / n);
+  return { n: n, mean: mean, sd: sd, cv: mean > 0 ? sd / mean : 0 };
+}
+
+/** Pure: nearest-rank percentile (p in 0..1) of a numeric array; null when empty. */
+function briefPercentile_(xs, p) {
+  if (!xs.length) return null;
+  var s = xs.slice().sort(function (a, b) { return a - b; });
+  var k = Math.max(0, Math.min(s.length - 1, Math.ceil(p * s.length) - 1));
+  return s[k];
+}
+
+function briefR1_(x) { return x == null || !isFinite(x) ? null : Math.round(x * 10) / 10; }
+
+/** Pure: Spearman rank correlation (ties share their average rank); null under 4 pairs. */
+function briefSpearman_(xs, ys) {
+  var n = Math.min(xs.length, ys.length);
+  if (n < 4) return null;
+  var rank = function (arr) {
+    var idx = arr.map(function (v, i) { return { v: v, i: i }; }).sort(function (a, b) { return a.v - b.v; });
+    var r = new Array(arr.length);
+    for (var i = 0; i < idx.length;) {
+      var j = i;
+      while (j + 1 < idx.length && idx[j + 1].v === idx[i].v) j++;
+      for (var k = i; k <= j; k++) r[idx[k].i] = (i + j) / 2 + 1;
+      i = j + 1;
+    }
+    return r;
+  };
+  var rx = rank(xs.slice(0, n)), ry = rank(ys.slice(0, n));
+  var sx = briefStats_(rx), sy = briefStats_(ry);
+  if (!sx.sd || !sy.sd) return null;
+  var cov = 0;
+  for (var i = 0; i < n; i++) cov += (rx[i] - sx.mean) * (ry[i] - sy.mean);
+  return Math.round((cov / n) / (sx.sd * sy.sd) * 100) / 100;
+}
+
+/**
+ * Pure: one dept-month of the share view. `agents` = [{agent, answered, rung,
+ * days}] for the roster minus the team-average excludes. Returns null when too
+ * few agents qualify.
+ */
+function briefShareMonth_(agents) {
+  var q = (agents || []).filter(function (a) {
+    return (Number(a.days) || 0) >= BRIEF_PROBE_MIN_DAYS_ && (Number(a.rung) || 0) >= BRIEF_PROBE_MIN_RUNG_;
+  });
+  if (q.length < BRIEF_PROBE_MIN_AGENTS_) return null;
+  var total = 0;
+  q.forEach(function (a) { total += Number(a.answered) || 0; });
+  if (total <= 0) return null;
+  var shares = q.map(function (a) { return (Number(a.answered) || 0) / total * 100; });
+  var perDay = q.map(function (a) { return (Number(a.answered) || 0) / Number(a.days); });
+  var sS = briefStats_(shares), sD = briefStats_(perDay);
+  var maxGap = 0, maxZ = 0, maxZAgent = null, b1 = 0, b2 = 0;
+  for (var i = 0; i < q.length; i++) {
+    var gap = Math.abs(shares[i] - sS.mean);
+    if (gap > maxGap) maxGap = gap;
+    var z = sD.sd > 0 ? (perDay[i] - sD.mean) / sD.sd : 0;
+    if (Math.abs(z) > 1) b1++;
+    if (Math.abs(z) > 2) b2++;
+    if (Math.abs(z) > Math.abs(maxZ)) { maxZ = z; maxZAgent = q[i].agent; }
+  }
+  return {
+    agents: q.length,
+    equalSharePts: briefR1_(100 / q.length),
+    shareSdPts: briefR1_(sS.sd),
+    maxShareGapPts: briefR1_(maxGap),
+    perDayMean: briefR1_(sD.mean),
+    perDaySd: briefR1_(sD.sd),
+    perDayCvPct: briefR1_(sD.cv * 100),
+    beyond1Sd: b1,
+    beyond2Sd: b2,
+    maxZ: briefR1_(maxZ),
+    maxZAgent: maxZAgent,
+  };
+}
+
+/**
+ * Pure: monthly answer-rate swings. `months` = [{month, rate}] in order (rate
+ * null for a month with no calls). Each month gets momPts (vs the month before)
+ * and vs3Pts (vs the mean of the 3 months before, needing all 3).
+ */
+function briefRateSwings_(months) {
+  var rows = (months || []).map(function (m, i) {
+    var prev = i > 0 ? months[i - 1].rate : null;
+    var p3 = (i >= 3) ? [months[i - 1].rate, months[i - 2].rate, months[i - 3].rate] : null;
+    var p3ok = p3 && p3.every(function (v) { return v != null; });
+    return {
+      month: m.month,
+      rate: m.rate == null ? null : briefR1_(m.rate),
+      momPts: (m.rate != null && prev != null) ? briefR1_(m.rate - prev) : null,
+      vs3Pts: (m.rate != null && p3ok) ? briefR1_(m.rate - (p3[0] + p3[1] + p3[2]) / 3) : null,
+    };
+  });
+  var summarize = function (key) {
+    var abs = rows.filter(function (r) { return r[key] != null; }).map(function (r) { return Math.abs(r[key]); });
+    var count = function (t) { return abs.filter(function (v) { return v >= t; }).length; };
+    var worst = null;
+    rows.forEach(function (r) { if (r[key] != null && (!worst || Math.abs(r[key]) > Math.abs(worst.pts))) worst = { month: r.month, pts: r[key] }; });
+    return { n: abs.length, medianAbs: briefPercentile_(abs, 0.5), p90Abs: briefPercentile_(abs, 0.9),
+             atLeast2: count(2), atLeast3: count(3), atLeast5: count(5), worst: worst };
+  };
+  return { rows: rows, mom: summarize('momPts'), vs3: summarize('vs3Pts') };
+}
+
+/**
+ * Pure: one queue's wait view from its per-day rows [{iso, calls, answered,
+ * longestSec, avgAnswerSec}]. `months` = the window's month keys in order.
+ */
+function briefQueueWait_(days, months) {
+  var byMonth = {};
+  months.forEach(function (m) { byMonth[m] = { calls: 0, wsum: 0, wn: 0, longest: 0 }; });
+  var calls = 0, wsum = 0, wn = 0, longest = 0, dailyAvg = [], dailyCalls = [];
+  (days || []).forEach(function (d) {
+    var b = byMonth[d.iso.slice(0, 7)];
+    if (!b) return;
+    var c = Number(d.calls) || 0, a = Number(d.answered) || 0;
+    var avg = Number(d.avgAnswerSec) || 0, lw = Number(d.longestSec) || 0;
+    calls += c; b.calls += c;
+    dailyCalls.push(c);
+    if (avg > 0 && a > 0) { wsum += avg * a; wn += a; b.wsum += avg * a; b.wn += a; dailyAvg.push(avg); }
+    if (lw > longest) longest = lw;
+    if (lw > b.longest) b.longest = lw;
+  });
+  var mAvg = months.map(function (m) { return byMonth[m].wn ? byMonth[m].wsum / byMonth[m].wn : null; });
+  var mLong = months.map(function (m) { return byMonth[m].longest || null; });
+  // Own history: each month against the median of the 3 months before it.
+  var ownRatios = function (series) {
+    var out = [];
+    for (var i = 3; i < series.length; i++) {
+      var prior = [series[i - 1], series[i - 2], series[i - 3]].filter(function (v) { return v != null; });
+      if (series[i] == null || prior.length < 3) continue;
+      var med = briefPercentile_(prior, 0.5);
+      if (med > 0) out.push(series[i] / med);
+    }
+    return out;
+  };
+  var ra = ownRatios(mAvg), rl = ownRatios(mLong);
+  var cnt = function (arr, t) { return arr.filter(function (v) { return v >= t; }).length; };
+  return {
+    calls: calls,
+    medianDailyCalls: briefPercentile_(dailyCalls, 0.5),
+    avgAnswerSec: wn ? Math.round(wsum / wn) : null,
+    longestSec: longest || null,
+    medianMonthlyLongestSec: briefPercentile_(mLong.filter(function (v) { return v != null; }), 0.5),
+    dailyAvgCvPct: dailyAvg.length >= 5 ? briefR1_(briefStats_(dailyAvg).cv * 100) : null,
+    ownAvg: { months: ra.length, maxRatio: briefR1_(ra.length ? Math.max.apply(null, ra) : null), atLeast125: cnt(ra, 1.25), atLeast150: cnt(ra, 1.5) },
+    ownLongest: { months: rl.length, maxRatio: briefR1_(rl.length ? Math.max.apply(null, rl) : null), atLeast125: cnt(rl, 1.25), atLeast150: cnt(rl, 1.5) },
+    answeredForWeight: wn,
+    wsum: wsum,
+  };
+}
+
+/** Window helper: BRIEF_PROBE_FROM/_TO or the 12 whole months ending last month. */
+function briefProbeWindow_(props, todayIso) {
+  var to = String(props.getProperty('BRIEF_PROBE_TO') || '').trim();
+  var from = String(props.getProperty('BRIEF_PROBE_FROM') || '').trim();
+  var t = todayIso.split('-').map(Number);
+  if (!isIsoDate_(to)) {
+    var lastOfPrev = new Date(t[0], t[1] - 1, 0, 12);   // day 0 = last day of the previous month
+    to = Utilities.formatDate(lastOfPrev, TZ, 'yyyy-MM-dd');
+  }
+  if (!isIsoDate_(from) || from > to) {
+    var e = to.split('-').map(Number);
+    from = Utilities.formatDate(new Date(e[0], e[1] - 12, 1, 12), TZ, 'yyyy-MM-dd');
+  }
+  var months = [];
+  var f = from.split('-').map(Number), cur = new Date(f[0], f[1] - 1, 1, 12);
+  while (true) {
+    var key = Utilities.formatDate(cur, TZ, 'yyyy-MM');
+    if (key > to.slice(0, 7)) break;
+    months.push(key);
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1, 12);
+  }
+  return { from: from, to: to, months: months };
+}
+
+function probeBriefThresholds() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var w = briefProbeWindow_(props, todayIso);
+  var out = { from: w.from, to: w.to, months: w.months, source: 'sheet',
+              queueSplit: getQueueSplitScope_(), share: [], queues: [], rates: [], notes: [] };
+  if (w.from.slice(8) !== '01' || w.months.length < 4) {
+    out.notes.push('Window is not whole months or under 4 months -- the 3-month comparisons need at least 4.');
+  }
+
+  // DQE rows, once, through the DAL (Neon when flagged on, sheet otherwise).
+  var rows;
+  if (getDqeReadSource_() === 'neon') {
+    rows = neonFetchDqeRows_(w.from, w.to, { withQueueSplit: out.queueSplit === 'dept' });
+    if (neonDqeRowsUsable_(rows)) out.source = 'neon';
+    else rows = null;
+  }
+  if (!rows) rows = sheetFetchDqeRows_(w.from, w.to);
+
+  var depts = getAllDepartments_();
+  depts.forEach(function (dept) {
+    try {
+      var roster = getRosterForDepartment_(dept);
+      var inRoster = {};
+      roster.names.forEach(function (n) { inRoster[n] = true; });
+      var mine = rows.filter(function (r) { return inRoster[r.agent]; });
+      if (out.queueSplit === 'dept') {
+        mine = dqeRowsShallowCopy_(mine);
+        applyQueueSplitToRows_(mine, dept, { assessAgents: roster.names });
+      }
+      var excl = {};
+      (getTeamAvgExcludes_(dept) || []).forEach(function (n) { excl[n] = true; });
+      var perMonth = {};   // month -> { a, m, r, agents: {name: {answered, rung, days: {iso:1}}} }
+      w.months.forEach(function (k) { perMonth[k] = { a: 0, m: 0, r: 0, agents: {} }; });
+      mine.forEach(function (r) {
+        var pm = perMonth[r.dateIso.slice(0, 7)];
+        if (!pm) return;
+        var a = Number(r.totalAnswered) || 0, m = Number(r.totalMissed) || 0, g = Number(r.totalRung) || 0;
+        pm.a += a; pm.m += m; pm.r += g;
+        if (excl[r.agent]) return;
+        var ag = pm.agents[r.agent] || (pm.agents[r.agent] = { agent: r.agent, answered: 0, rung: 0, dayset: {} });
+        ag.answered += a; ag.rung += g;
+        if (a + m + g > 0) ag.dayset[r.dateIso] = true;
+      });
+      // 1. share
+      var shareMonths = [];
+      w.months.forEach(function (k) {
+        var list = Object.keys(perMonth[k].agents).map(function (n) {
+          var x = perMonth[k].agents[n];
+          return { agent: x.agent, answered: x.answered, rung: x.rung, days: Object.keys(x.dayset).length };
+        });
+        var s = briefShareMonth_(list);
+        if (s) { s.month = k; shareMonths.push(s); }
+      });
+      var pick = function (key) { return shareMonths.map(function (s) { return s[key]; }); };
+      var worstZ = null;
+      shareMonths.forEach(function (s) { if (!worstZ || Math.abs(s.maxZ) > Math.abs(worstZ.z)) worstZ = { z: s.maxZ, agent: s.maxZAgent, month: s.month }; });
+      out.share.push({
+        dept: dept, monthsAssessed: shareMonths.length,
+        typicalAgents: briefPercentile_(pick('agents'), 0.5),
+        equalSharePts: briefPercentile_(pick('equalSharePts'), 0.5),
+        shareSdPts: briefPercentile_(pick('shareSdPts'), 0.5),
+        maxShareGapPts: briefPercentile_(pick('maxShareGapPts'), 0.5),
+        perDayCvPct: briefPercentile_(pick('perDayCvPct'), 0.5),
+        beyond1SdPerMonth: briefPercentile_(pick('beyond1Sd'), 0.5),
+        beyond2SdPerMonth: briefPercentile_(pick('beyond2Sd'), 0.5),
+        monthsWithAnyBeyond2Sd: shareMonths.filter(function (s) { return s.beyond2Sd > 0; }).length,
+        worstZ: worstZ,
+      });
+      // 3. monthly answer rate
+      var sw = briefRateSwings_(w.months.map(function (k) {
+        var pm = perMonth[k];
+        return { month: k, rate: pm.r > 0 || (pm.a + pm.m) > 0 ? answerRatePct_(pm.a, pm.m, pm.r) : null };
+      }));
+      var band = null;
+      try { band = getAnswerStandardFor_(dept).band; } catch (e) { band = null; }
+      out.rates.push({ dept: dept, band: band, monthly: sw.rows.map(function (r) { return r.rate; }),
+                       mom: sw.mom, vs3: sw.vs3 });
+    } catch (e) {
+      out.share.push({ dept: dept, error: String(e && e.message || e) });
+    }
+  });
+
+  // 2. queue wait
+  try {
+    var grid = readQcdGrid_(w.from, w.to);
+    var queueDept = {};
+    depts.forEach(function (d) {
+      (getDeptQcdQueues_(d) || []).forEach(function (q) { (queueDept[q] = queueDept[q] || []).push(d); });
+    });
+    var byQueue = {}, unmapped = {};
+    if (grid && grid.values) {
+      for (var i = 0; i < grid.values.length; i++) {
+        var v = grid.values[i], dsp = grid.displays[i];
+        if (String(v[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== QCD_TOTAL_CALLS_SOURCE) continue;
+        var iso = (grid.dates && grid.dates[i]) || rowDateIso_(v[QCD_HISTORICAL_COLS.DATE - 1], grid.ssTZ);
+        if (!iso || iso < w.from || iso > w.to) continue;
+        var q = String(v[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+        if (!queueDept[q]) { unmapped[q] = true; continue; }
+        (byQueue[q] = byQueue[q] || []).push({
+          iso: iso,
+          calls: Number(v[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0,
+          answered: Number(v[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+          longestSec: parseHmsDisplay_(dsp[QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]),
+          avgAnswerSec: parseHmsDisplay_(dsp[QCD_HISTORICAL_COLS.AVG_ANSWER - 1]),
+        });
+      }
+    }
+    var compW = 0, compN = 0;
+    Object.keys(byQueue).sort().forEach(function (q) {
+      var r = briefQueueWait_(byQueue[q], w.months);
+      r.queue = q; r.depts = queueDept[q];
+      compW += r.wsum; compN += r.answeredForWeight;
+      out.queues.push(r);
+    });
+    var compAvg = compN ? compW / compN : null;
+    out.companyAvgAnswerSec = compAvg == null ? null : Math.round(compAvg);
+    out.queues.forEach(function (r) {
+      r.vsCompany = (compAvg && r.avgAnswerSec != null) ? briefR1_(r.avgAnswerSec / compAvg) : null;
+      delete r.wsum; delete r.answeredForWeight;
+    });
+    var withAvg = out.queues.filter(function (r) { return r.avgAnswerSec != null; });
+    var withCv = out.queues.filter(function (r) { return r.dailyAvgCvPct != null; });
+    out.volumeCorrelation = {
+      callsVsAvgAnswer: briefSpearman_(withAvg.map(function (r) { return r.calls; }), withAvg.map(function (r) { return r.avgAnswerSec; })),
+      callsVsLongest: briefSpearman_(out.queues.map(function (r) { return r.calls; }), out.queues.map(function (r) { return r.longestSec || 0; })),
+      dailyCallsVsDailyJumpiness: briefSpearman_(withCv.map(function (r) { return r.medianDailyCalls; }), withCv.map(function (r) { return r.dailyAvgCvPct; })),
+    };
+    out.unmappedQueuesSkipped = Object.keys(unmapped).length;
+  } catch (e) {
+    out.notes.push('Queue section failed: ' + String(e && e.message || e));
+  }
+
+  // Pooled rate-swing percentiles (where a colour scale could saturate).
+  var pooledMom = [], pooledVs3 = [];
+  out.rates.forEach(function (r) {
+    // re-derive from the monthly series so the pool holds every month, not the summaries
+    var sw = briefRateSwings_(w.months.map(function (k, i) { return { month: k, rate: r.monthly[i] }; }));
+    sw.rows.forEach(function (x) {
+      if (x.momPts != null) pooledMom.push(Math.abs(x.momPts));
+      if (x.vs3Pts != null) pooledVs3.push(Math.abs(x.vs3Pts));
+    });
+  });
+  out.pooledRateSwings = {
+    mom: { p50: briefPercentile_(pooledMom, 0.5), p90: briefPercentile_(pooledMom, 0.9), p95: briefPercentile_(pooledMom, 0.95), n: pooledMom.length },
+    vs3: { p50: briefPercentile_(pooledVs3, 0.5), p90: briefPercentile_(pooledVs3, 0.9), p95: briefPercentile_(pooledVs3, 0.95), n: pooledVs3.length },
+  };
+
+  briefProbeLog_(out);
+  return logStatusReturn_(out);
+}
+
+/** Prints the readable tables (the return value carries the same data as JSON). */
+function briefProbeLog_(out) {
+  var hms = function (s) { return s == null ? '-' : formatSecondsHms_(s); };
+  var d = function (v) { return v == null ? '-' : v; };
+  Logger.log('probeBriefThresholds %s..%s (%s months, DQE source %s, queue split %s)',
+    out.from, out.to, out.months.length, out.source, out.queueSplit);
+  out.notes.forEach(function (n) { Logger.log('NOTE: ' + n); });
+
+  Logger.log('== 1. SHARE OF ANSWERED (per month, managers excluded; agents with %s+ days and %s+ rung; months with %s+ such agents). Values are the MEDIAN month.',
+    BRIEF_PROBE_MIN_DAYS_, BRIEF_PROBE_MIN_RUNG_, BRIEF_PROBE_MIN_AGENTS_);
+  Logger.log('dept | months | agents | equal share % | share SD pts | widest gap pts | per-day CV % | agents >1 SD | agents >2 SD | months with any >2 SD | most extreme (z, agent, month)');
+  out.share.forEach(function (s) {
+    if (s.error) { Logger.log('%s | ERROR %s', s.dept, s.error); return; }
+    if (!s.monthsAssessed) { Logger.log('%s | 0 | too few qualifying agents in every month', s.dept); return; }
+    Logger.log('%s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s',
+      s.dept, s.monthsAssessed, d(s.typicalAgents), d(s.equalSharePts), d(s.shareSdPts), d(s.maxShareGapPts),
+      d(s.perDayCvPct), d(s.beyond1SdPerMonth), d(s.beyond2SdPerMonth), s.monthsWithAnyBeyond2Sd,
+      s.worstZ ? (s.worstZ.z + ', ' + s.worstZ.agent + ', ' + s.worstZ.month) : '-');
+  });
+
+  Logger.log('== 2. QUEUE WAIT ("Total Calls" rows; company avg answer %s). Own-history = each month vs the median of its 3 prior months.',
+    hms(out.companyAvgAnswerSec));
+  Logger.log('queue | dept(s) | calls | median calls/day | avg answer | x company | longest | median monthly longest | daily avg-answer CV % | avg: months >=1.25x own / >=1.5x own / max x | longest: >=1.25x / >=1.5x / max x');
+  out.queues.forEach(function (q) {
+    Logger.log('%s | %s | %s | %s | %s | %s | %s | %s | %s | %s / %s / %s | %s / %s / %s',
+      q.queue, q.depts.join(','), q.calls, d(q.medianDailyCalls), hms(q.avgAnswerSec), d(q.vsCompany),
+      hms(q.longestSec), hms(q.medianMonthlyLongestSec), d(q.dailyAvgCvPct),
+      q.ownAvg.atLeast125, q.ownAvg.atLeast150, d(q.ownAvg.maxRatio),
+      q.ownLongest.atLeast125, q.ownLongest.atLeast150, d(q.ownLongest.maxRatio));
+  });
+  if (out.volumeCorrelation) {
+    Logger.log('Volume vs wait (Spearman, -1..1; |r| under ~0.3 = little relationship): calls vs avg answer %s; calls vs longest wait %s; daily calls vs daily jumpiness %s. '
+      + 'A strong positive calls-vs-longest means big queues look worse on longest wait; a strong negative daily-calls-vs-jumpiness means small queues are noisier.',
+      d(out.volumeCorrelation.callsVsAvgAnswer), d(out.volumeCorrelation.callsVsLongest), d(out.volumeCorrelation.dailyCallsVsDailyJumpiness));
+  }
+  if (out.unmappedQueuesSkipped) Logger.log('%s queue name(s) not mapped to any dept were skipped.', out.unmappedQueuesSkipped);
+
+  Logger.log('== 3. MONTHLY ANSWER RATE (every roster agent; formula %s). MoM = vs the month before; vs3 = vs the average of the 3 months before.',
+    getAnswerRateFormula_());
+  Logger.log('dept | amber band | monthly rates | MoM median / p90 / >=2 / >=3 / >=5 / worst | vs3 median / p90 / >=2 / >=3 / >=5 / worst');
+  out.rates.forEach(function (r) {
+    var f = function (s) {
+      return d(s.medianAbs) + ' / ' + d(s.p90Abs) + ' / ' + s.atLeast2 + ' / ' + s.atLeast3 + ' / ' + s.atLeast5 + ' of ' + s.n
+        + ' / ' + (s.worst ? (s.worst.pts + ' ' + s.worst.month) : '-');
+    };
+    Logger.log('%s | %s | %s | %s | %s', r.dept, d(r.band),
+      r.monthly.map(function (v) { return v == null ? '-' : v; }).join(' '), f(r.mom), f(r.vs3));
+  });
+  var p = out.pooledRateSwings;
+  Logger.log('All depts pooled |change| in points -- MoM p50 %s, p90 %s, p95 %s (n %s); vs3 p50 %s, p90 %s, p95 %s (n %s). '
+    + 'A colour scale that saturates near p90-p95 keeps full colour for the rare months.',
+    d(p.mom.p50), d(p.mom.p90), d(p.mom.p95), p.mom.n, d(p.vs3.p50), d(p.vs3.p90), d(p.vs3.p95), p.vs3.n);
+}

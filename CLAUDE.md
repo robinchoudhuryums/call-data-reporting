@@ -2178,6 +2178,7 @@ items for anything it flags or doesn't cover.)
 73. QCD violation-flag repair (QO-2) -- a violation is 4.00% or more; run `previewQcdViolationFlags` then `repairQcdViolationFlags` (cdr-report) once after deploy; dated from 2026-08-01, re-run if Neon was unreachable
 74. Outbound source probe (Batch C) -- `probeOutboundSourceAgreement` (dashboard) compares the CDR Historical sheet's placed counts with Neon `outbound_calls`; its verdict picks Batch D's source, never on INCONCLUSIVE/FAILED
 75. Internal-call wait, before vs after (WS-1) -- `previewInternalWaitStart` (cdr-import, read-only) logs each internal call's old and new wait; expect SUSPECT 0 and 0 external changes, then re-import to make it stick
+76. Brief-threshold probe (UX-2) -- `probeBriefThresholds` (dashboard, read-only) logs what normal looks like for share of answered, queue wait and the monthly answer-rate swing, before any of those brief rows gets a colour
 
 ## Cycle Workflow Config
 

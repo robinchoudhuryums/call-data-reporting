@@ -14,7 +14,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 const { rosterGrid } = require('../harness/fixtures');
 
 const TOOLS = ['diagnoseDate', 'whyNoMatches', 'diagnoseTimes', 'dumpCell', 'diagnoseAbandoned',
-  'auditQueueSplitAttribution', 'probeAnswerRateFormulas'];
+  'auditQueueSplitAttribution', 'probeAnswerRateFormulas', 'probeBriefThresholds'];
 
 const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'NeonRead.gs', 'Diagnostics.gs'] });
 
