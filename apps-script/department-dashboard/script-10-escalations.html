@@ -485,7 +485,9 @@
     // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
     tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
     tiles.push(escBandOldestTile_(meta.oldestOpenAt));
-    tiles.push(escBandTile_('Resolved · MTD', Number(meta.resolvedMTD || 0), 'good', null));   // R11-H: 7d -> month-to-date
+    // F45: null = unknown (the outage snapshot holds no resolved rows) -- a dash, never a 0.
+    tiles.push(escBandTile_('Resolved · MTD', meta.resolvedMTD == null ? '—' : Number(meta.resolvedMTD || 0),
+      meta.resolvedMTD == null ? 'muted' : 'good', null));   // R11-H: 7d -> month-to-date
     band.innerHTML = tiles.join('');
     band.style.display = '';
   }

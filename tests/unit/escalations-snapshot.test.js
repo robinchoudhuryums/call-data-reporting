@@ -121,6 +121,29 @@ test('E2: the serve path re-applies the viewer scope — a single-dept manager s
   assert.equal(out.available, true);
 });
 
+// F45 (broad-scan 2026-10-14): the snapshot shipped overdueCount 0 and
+// resolvedMTD 0 while the cards it served were flagged overdue. Overdue is
+// computable from the open rows (the date-only rule); MTD is not, so null.
+test('F45: the snapshot counts OVERDUE open rows (date-only rule) and ships resolvedMTD as null, never 0', function () {
+  seedSnapshot_();
+  const RealDate = h.ctx.Date;
+  const fixed = new RealDate('2026-08-20T17:00:00Z').getTime();   // Aug 20, noon Central
+  class FakeDate extends RealDate {
+    constructor() { if (arguments.length) super(...arguments); else super(fixed); }
+    static now() { return fixed; }
+  }
+  h.ctx.Date = FakeDate;
+  let all, csr;
+  try {
+    all = JSON.parse(JSON.stringify(h.call('escSnapshotServe_', true, null, null, 'all', 'ALL')));
+    csr = JSON.parse(JSON.stringify(h.call('escSnapshotServe_', false, null, 'CSR', 'pending', 'CSR')));
+  } finally { h.ctx.Date = RealDate; }
+  // Open rows: c1 (08-18, 2d), c2 (08-17, 3d), s1 (08-16, 4d); s2 is pending_review (not counted).
+  assert.equal(all.meta.overdueCount, 2, 'c2 + s1 are >= 3 calendar days open');
+  assert.equal(csr.meta.overdueCount, 1, 'viewer-scoped like every other band count');
+  assert.equal(all.meta.resolvedMTD, null, 'unknowable from a snapshot of open rows');
+});
+
 test('E2: scopeAll and a multi-dept list scope correctly; status=all returns every open row in scope', function () {
   seedSnapshot_();
   const all = JSON.parse(JSON.stringify(

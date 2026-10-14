@@ -2449,7 +2449,11 @@
           ? ' This address also has manager access, which takes precedence -- the agent row stays dormant until that is removed.' : '';
         // S2B-6: an EMAIL_ALIASES alias is stored under its canonical address.
         const stored = (res && res.storedAs) ? ' Stored as ' + res.storedAs + ' (the canonical address for this alias).' : '';
-        acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + '). Takes effect within ~60 s.' + stored + coexist);
+        // F1: staged while agent sign-in is off -- no welcome email went out.
+        const deferred = (res && res.welcomeDeferred)
+          ? ' Agent sign-in is OFF (AGENT_ROLE_ENABLED), so this row is staged and no welcome email was sent -- it takes effect once agent sign-in is turned on.' : '';
+        acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + ').'
+          + (deferred || ' Takes effect within ~60 s.') + stored + coexist);
         showToast('Saved agent access for ' + email, 'success');
         if ($('ac-agent-email')) $('ac-agent-email').value = '';
         acLoadInit_(true);   // CL-15

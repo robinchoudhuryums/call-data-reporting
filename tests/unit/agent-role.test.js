@@ -229,3 +229,31 @@ test('loginNotifyOutcomeKey_: agent key carries the dept, so an agent dept move 
   assert.equal(h.call('loginNotifyOutcomeKey_', { role: 'agent', agentDept: 'CSR' }), 'agent:CSR');
   assert.equal(h.call('loginNotifyOutcomeKey_', { role: 'agent' }), 'agent:?');
 });
+
+// F1 (broad-scan 2026-10-14): the documented go-live order stages agent rows
+// BEFORE AGENT_ROLE_ENABLED is set (Operator State #46). A brand-new staged
+// row used to get the welcome email ("Access: Live now") -- the agent then
+// signed in to access-denied, and the admins got a DENIED notice.
+test('F1: a brand-new AGENT row saved while agent sign-in is OFF sends no welcome and says so', function () {
+  const real = h.ctx.acSendWelcomeEmail_;
+  const sent = [];
+  h.ctx.acSendWelcomeEmail_ = function (email) { sent.push(email); return true; };
+  try {
+    install([]);
+    const off = h.call('saveAccessControlRow', { email: 'a@x.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+    assert.equal(off.welcomed, false);
+    assert.equal(off.welcomeDeferred, true);
+    assert.deepEqual(sent, [], 'no "Live now" email while the role cannot sign in');
+
+    install([], { AGENT_ROLE_ENABLED: 'true' });
+    const on = h.call('saveAccessControlRow', { email: 'b@x.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+    assert.equal(on.welcomeDeferred, false);
+    assert.equal(on.welcomed, true, 'with agent sign-in on, a new agent is welcomed as before');
+    assert.deepEqual(sent, ['b@x.com']);
+
+    install([]);
+    const mgr = h.call('saveAccessControlRow', { email: 'c@x.com', department: 'CSR' });
+    assert.equal(mgr.welcomeDeferred, false, 'a manager grant is never deferred by the agent flag');
+    assert.deepEqual(sent, ['b@x.com', 'c@x.com']);
+  } finally { h.ctx.acSendWelcomeEmail_ = real; }
+});

@@ -1677,7 +1677,11 @@ When something looks wrong, before assuming a code bug, check:
     CSR pilot:** deploy → add the CSR agent rows in the Access modal's
     Agents section (email + dept + roster-name picker) → set
     `AGENT_ROLE_ENABLED=true`. Sign-in notifications (#45) will confirm each
-    agent's first visit; `agentHome` rows land in Report Usage.
+    agent's first visit; `agentHome` rows land in Report Usage. **Staged rows
+    get NO welcome email** (F1, 2026-10-14): an agent row saved while the flag
+    is off is staged silently and the modal says so; the welcome email
+    (#58) goes only to a new grant that can actually sign in, so tell the
+    pilot agents yourself once you set the flag.
     Prereqs for a working agent row: the
     Access Control row needs Department + Role=`agent` + Agent Name matching
     that dept's `DO NOT EDIT!` roster entry EXACTLY (the editor validates

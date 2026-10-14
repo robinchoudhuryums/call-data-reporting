@@ -220,10 +220,15 @@ function logReportUsage_(report, dept, user, cacheHit) {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.REPORT_USAGE);
     if (!sheet) return;   // setup() not re-run yet -- silently skip
+    // F2 (broad-scan 2026-10-14): the dept column is DATA at some call sites
+    // -- a roster agent name (individual:to-agent), escalation departments read
+    // back from Neon (escalations:delete) -- so it goes through the same
+    // formula guard as every other admin-opened sheet writer (CORE-7 / S2B-7),
+    // here at the one chokepoint for all of them.
     sheet.appendRow([
       new Date(),
-      String(report || ''),
-      String(dept || ''),
+      sheetSafeCell_(String(report || '')),
+      sheetSafeCell_(String(dept || '')),
       (user && user.role)  ? String(user.role)  : '',
       (user && user.email) ? String(user.email) : '',
       cacheHit ? 'TRUE' : 'FALSE',

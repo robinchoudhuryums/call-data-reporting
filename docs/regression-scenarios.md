@@ -323,7 +323,7 @@ S40 | Escalation overdue count agrees with the flagged cards (F3) | Subsystem: D
     - Open the Escalations page with the Pending filter.
     - Compare the sidebar "Overdue >3d" tile number against the count of cards showing the red ⚑ age badge.
     - Also check the Escalations nav-tab badge tooltip ("N open (M overdue)") against the same cards.
-  Expected: the tile, the nav badge, and the ⚑ cards all agree. A card flagged ⚑ that the tile doesn't count (or vice versa) means the server's `ESC_OVERDUE_SQL_` and the client's `escDaysOpen_` have drifted apart again -- they must BOTH be calendar-day comparisons. Note the counts are viewer-scoped and status-independent, so compare against ALL open cards (Pending + In progress), not just the active filter.
+  Expected: the tile, the nav badge, and the ⚑ cards all agree. A card flagged ⚑ that the tile doesn't count (or vice versa) means the server's `escOverdueSql_` and the client's `escDaysOpen_` have drifted apart again -- they must BOTH be calendar-day comparisons. Note the counts are viewer-scoped and status-independent, so compare against ALL open cards (Pending + In progress), not just the active filter.
 
 S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
   Steps:

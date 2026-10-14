@@ -623,8 +623,16 @@ function saveAccessControlRow(req) {
   // Skipped for re-grants/edits, when ACCESS_WELCOME_EMAIL=false, or when
   // there is no DASHBOARD_URL to send. Best-effort: a send failure never
   // fails the save (the row is already written).
-  const welcomed = !hadRows && acSendWelcomeEmail_(email, toStore, role);
-  return { saved: true, departments: toStore, role: role, welcomed: welcomed, coexistsWith: coexistsWith,
+  // F1 (broad-scan 2026-10-14): an AGENT row saved while agent sign-in is OFF
+  // (AGENT_ROLE_ENABLED, Operator State #46 -- the documented go-live order
+  // stages the rows first) must not be told "Access: Live now": the agent
+  // clicks through, resolves to role 'none', sees access-denied, and the
+  // admins get a DENIED sign-in notice. No welcome is sent; the response says
+  // so and the modal tells the admin.
+  const welcomeDeferred = !hadRows && role === 'agent' && !agentRoleEnabled_();
+  const welcomed = !hadRows && !welcomeDeferred && acSendWelcomeEmail_(email, toStore, role);
+  return { saved: true, departments: toStore, role: role, welcomed: welcomed, welcomeDeferred: welcomeDeferred,
+           coexistsWith: coexistsWith,
            // S2B-6: set when the typed address was an EMAIL_ALIASES alias.
            storedAs: (normalized !== typedNormalized) ? normalized : '' };
 }

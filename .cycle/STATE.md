@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-14 -- Broad scan cycle 259 Batch 3 IMPLEMENTED (block 259): escalations + access.** F44 escalation times as script-zone wall clock + overdue on the script-zone date; F45 snapshot Overdue computed, MTD a dash; F1 no welcome email for a staged agent row; F3 coaching close connects before the lock; F2 Report Usage formula guard. 2449 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; optionally `SHOW TimeZone;` in Neon to confirm F44 was live. Follow-ons: escalation MTD month boundary + Coaching timestamps are the same UTC class.
+  **Next:** Batch 4 (cache anchors + DAL: F4, F5, F29, F33, F61), then Batches 5-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- Broad scan cycle 259 Batch 2 IMPLEMENTED (block 259): false-clean gates + backup.** F42 config compare gates fail a duplicated key + report `compared`; F43 outbound vetting INCONCLUSIVE with 0 called-back pairs; F15 the backup keeps its Sheets store (NEON_BACKUP_STORE=drive to move), restore never creates one; F18 DQE-silence INCONCLUSIVE on a zero-agent day; F19 Alerts EMPTY over assessed depts; F46 audit verdict names double-claimed queues; F17 ingest watchdog records its installer. 2443 tests, 9/9 bites, lint + INV-16 + module-deps clean.
   **Owner-side:** deploy the dashboard. No operator steps.
   **Next:** Batch 3 (escalations + access: F44 first -- run `SHOW TimeZone` on Neon), then Batches 4-10 per the list in the cycle-259 entry below.
