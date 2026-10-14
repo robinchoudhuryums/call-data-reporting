@@ -429,19 +429,28 @@
         return d ? { dept: d } : null;
       },
       apply: function (p) {
-        var want = String((p && p.dept) || '').trim();
-        if (!want) return;
-        var allowed = (typeof USER !== 'undefined' && USER && USER.departments) || [];
-        if (allowed.indexOf(want) === -1) return;   // not theirs -- keep their own
-        var sel = $('dept-selector');
-        if (sel && sel.value !== want) {
-          sel.value = want;
-          if (sel.value !== want) return;           // option absent -- leave as-is
-        }
-        refresh();
+        if (shareApplyDeptParam_(p && p.dept)) refresh();
       },
     },
   };
+
+  // The '/dept' link's dept rule, shared with the Insights link (F16, the
+  // digest's "See the full breakdown"). Points the header selector at the
+  // linked dept when the viewer may see it, and returns whether the link
+  // applied -- false leaves the viewer on their own dept (see the comment
+  // above: graceful, never a security boundary).
+  function shareApplyDeptParam_(raw) {
+    var want = String(raw || '').trim();
+    if (!want) return false;
+    var allowed = (typeof USER !== 'undefined' && USER && USER.departments) || [];
+    if (allowed.indexOf(want) === -1) return false;   // not theirs -- keep their own
+    var sel = $('dept-selector');
+    if (sel && sel.value !== want) {
+      sel.value = want;
+      if (sel.value !== want) return false;          // option absent -- leave as-is
+    }
+    return true;
+  }
 
   // Phase 2 #8 carried the Simple/Detailed mode in a `view` param here.
   // Round-16: the density mode is RETIRED for the per-section folds, so the
@@ -453,6 +462,10 @@
     SHARE_STATE_['/report/insights'] = {
       collect: function () { return base.collect(); },
       apply: function (params, opts) {
+        // F16: the linked dept first, so the agent pick below lands on THAT
+        // dept's roster and the run below is for it.
+        const deptBefore = getRequestedDept();
+        const deptApplied = shareApplyDeptParam_(params && params.dept);
         base.apply(params || {});
         // CL-17: the dept controls are the page's ONE date authority (M2/M4),
         // so a share / digest link that set only ins-from/ins-to was undone:
@@ -461,7 +474,17 @@
         // link's window into the dept controls and mark it user-chosen (the
         // C1-10 / ovRouteToDept_ pattern). A saved view applied from inside
         // the open region passes keepDeptWindow -- it runs the report itself.
-        if (!(opts && opts.keepDeptWindow)) insCarryLinkWindowToDept_(params);
+        let windowMoved = false;
+        if (!(opts && opts.keepDeptWindow)) windowMoved = insCarryLinkWindowToDept_(params);
+        // The router dispatched the summary for the OLD dept; when only the
+        // dept moved, nothing else re-fetches it.
+        const deptMoved = deptApplied && getRequestedDept() !== deptBefore;
+        if (deptMoved && !windowMoved
+            && document.body.getAttribute('data-page') === 'dept' && typeof refresh === 'function') refresh();
+        // The page entry already asked for the OLD dept's roster; a new fetch
+        // supersedes it (its token drops the old reply), so the link's agent
+        // pick applies to the linked dept's picker.
+        if (deptMoved && insPageInited_ && typeof insEnsureRoster === 'function') insEnsureRoster();
         if (params && (params.view === 'simple' || params.view === 'detailed')) {
           const open = params.view === 'detailed';
           if (typeof insFoldSet_ === 'function') {
@@ -477,9 +500,9 @@
   function insCarryLinkWindowToDept_(params) {
     var lf = String((params && params.from) || ''), lt = String((params && params.to) || '');
     var iso = /^\d{4}-\d{2}-\d{2}$/;
-    if (!iso.test(lf) || !iso.test(lt) || lf > lt) return;
+    if (!iso.test(lf) || !iso.test(lt) || lf > lt) return false;
     var df = $('from-date'), dt = $('to-date');
-    if (!df || !dt) return;
+    if (!df || !dt) return false;
     var moved = df.value !== lf || dt.value !== lt;
     df.value = lf;
     dt.value = lt;
@@ -488,6 +511,7 @@
     // The router already dispatched the dept summary for the OLD window;
     // re-fetch for the linked one (refresh's token drops the stale reply).
     if (moved && document.body.getAttribute('data-page') === 'dept' && typeof refresh === 'function') refresh();
+    return moved && document.body.getAttribute('data-page') === 'dept';   // F16: whether it re-fetched
   }
 
   // Open-in-new-tab buttons on each report modal. Builds the target

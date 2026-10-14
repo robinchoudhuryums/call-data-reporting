@@ -567,6 +567,12 @@
   // A re-read updates the clamps, the coverage starts and the pill; it never
   // moves dates the user is looking at (the boot-only snap below).
   var LATEST_DATES_REFRESH_MS = 5 * 60 * 1000;
+  // F25 (broad-scan 2026-10-14): the age gate is stamped when the reply
+  // LANDS, so at the next 5-minute tick the answer is a few seconds short of
+  // 5 minutes old -- the gate skipped every other tick and the real cadence
+  // was ~10 minutes. The gate only has to stop a visibilitychange burst, so
+  // it allows 30 s of slack.
+  var LATEST_DATES_MIN_AGE_MS = LATEST_DATES_REFRESH_MS - 30 * 1000;
   var latestDatesFetchedAt_ = 0;
   var latestDatesInFlight_ = false;
   var latestDatesLast_ = null;
@@ -603,7 +609,7 @@
   }
   function refreshLatestDates_(force) {
     if (document.hidden || latestDatesInFlight_) return;
-    if (!force && Date.now() - latestDatesFetchedAt_ < LATEST_DATES_REFRESH_MS) {
+    if (!force && Date.now() - latestDatesFetchedAt_ < LATEST_DATES_MIN_AGE_MS) {
       setFreshnessPill_(latestDatesLast_);   // still ages the "Nh ago" label
       return;
     }

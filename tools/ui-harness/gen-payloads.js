@@ -279,9 +279,12 @@ function withOverviewOutboundConn(fn) {
 install('admin@ums.com');
 dump('latestDates', h.call('getLatestDataDates'));
 dump('ov-admin', withOverviewOutboundConn(function () { return h.call('getCompanyOverview', {}); }));
+// F47: the Overview chart's YTD range (fetched on demand, viewer-shaped).
+dump('ovytd-admin', h.call('getOverviewChartTrend', {}));
 
 install('manager@ums.com');
 dump('ov-manager', withOverviewOutboundConn(function () { return h.call('getCompanyOverview', {}); }));
+dump('ovytd-manager', h.call('getOverviewChartTrend', {}));
 
 // Dept summaries (CSR): single latest day (page default, INV-43), last-30, YTD.
 install('admin@ums.com');

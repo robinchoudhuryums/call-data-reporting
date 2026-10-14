@@ -888,7 +888,11 @@ function digestDeepLink_(dept, fromIso, toIso, cadence) {
     .getProperty('DASHBOARD_URL') || '').trim();
   if (!base) return '';
   const roster = getRosterForDepartment_(dept);
-  const parts = ['from=' + fromIso, 'to=' + toIso];
+  // F16 (broad-scan 2026-10-14): the link names its dept. Without it a
+  // multi-dept (or ALL) recipient landed on Insights for whatever dept the
+  // page defaulted to, with THIS dept's roster as the agent pick. The client
+  // honours it only for a dept the viewer may see (SHARE_STATE_ '/report/insights').
+  const parts = ['dept=' + encodeURIComponent(dept), 'from=' + fromIso, 'to=' + toIso];
   if (roster.names.length) {
     parts.push('agents=' + encodeURIComponent(roster.names.join('|')));
   }

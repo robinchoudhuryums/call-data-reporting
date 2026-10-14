@@ -637,6 +637,24 @@
     el.style.display = '';
   }
 
+  // F52 (broad-scan 2026-10-14): show a roster loader in its LOADING state.
+  // A failed fetch writes its error + Retry into the loader, and the next
+  // fetch only un-hid it -- so the old error was shown as the new loading
+  // state. The original skeleton is captured on first use (it is still in
+  // the markup then); a loader already overwritten before that falls back to
+  // plain loading text. Shared by the IR and Insights pickers.
+  var ROSTER_LOADER_SKELETON_ = {};
+  function rosterLoaderShowLoading_(id) {
+    var el = $(id);
+    if (!el) return;
+    if (!ROSTER_LOADER_SKELETON_[id] && el.querySelector && el.querySelector('.ir-skeleton-grid')) {
+      ROSTER_LOADER_SKELETON_[id] = el.innerHTML;
+    }
+    el.innerHTML = ROSTER_LOADER_SKELETON_[id]
+      || '<div class="ir-skeleton-label">Loading agent roster&hellip;</div>';
+    el.style.display = '';
+  }
+
   // Fetches the dept roster (agent picker source) the first time the
   // modal opens for a given dept; subsequent opens reuse the cached
   // list as long as the dashboard's dept hasn't changed. Also asks
@@ -658,7 +676,7 @@
       renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
       return;
     }
-    $('ir-agent-loader').style.display = '';
+    rosterLoaderShowLoading_('ir-agent-loader');   // F52
     $('ir-agent-list').style.display = 'none';
     $('ir-generate-btn').disabled = true;
 
@@ -1031,9 +1049,9 @@
   function runIrReport() {
     irSetFormError('');
     const dept = getRequestedDept();
-    // R30: the IR run chokepoint -- the typed form, the edit popover, the
-    // presets and the Insights drill-through all write ir-from/ir-to and land
-    // here. IR is DQE-backed, so it clamps to latestDqeIso_. Announced on the
+    // R30: the IR run chokepoint -- the typed form, the presets and the
+    // Insights drill-through all write ir-from/ir-to and land here (the edit
+    // popover's Apply does NOT, and clamps its own inputs -- F49). IR is DQE-backed, so it clamps to latestDqeIso_. Announced on the
     // form's own error line (as a correction, not a refusal: the report still
     // runs, over the corrected window).
     const irClampNote = clampInputsToLatest_('ir-from', 'ir-to', latestDqeIso_);
@@ -1370,6 +1388,12 @@
     if (!newAgents.length) return;
 
     // #1: dates + compare mode now come from the popover too.
+    // F49 (broad-scan 2026-10-14): Apply calls the server directly rather
+    // than through runIrReport, so it takes the R30 clamp itself -- before the
+    // prior window is derived, or a To past the latest data date shifts the
+    // comparison window by the empty days and biases every delta.
+    const irEditClampNote = $('ir-edit-from')
+      ? clampInputsToLatest_('ir-edit-from', 'ir-edit-to', latestDqeIso_) : '';
     const from = $('ir-edit-from') ? $('ir-edit-from').value : $('ir-from').value;
     const to   = $('ir-edit-to')   ? $('ir-edit-to').value   : $('ir-to').value;
     if (!from || !to) { irSetResultsStatus('error', 'Pick a start and end date.'); return; }
@@ -1433,6 +1457,7 @@
         if (__rtok !== reportReqSeq_.ir) return;
         reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
+        if (irEditClampNote) irSetResultsStatus('warn', irEditClampNote);   // F49: say the window moved
       })
       .withFailureHandler(function (err) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }

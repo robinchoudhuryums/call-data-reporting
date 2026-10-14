@@ -322,8 +322,8 @@ test('UI-3: getOverviewChartTrend strips the company line for an admin previewin
 
 test('UI-3: the client keys the cached YTD payload by view-as scope and re-fetches on a scope change', function () {
   const ov = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard/script-3-overview.html'), 'utf8');
-  assert.match(ov, /function ovYtdFresh_\(\) \{\s*return !!\(ovYtdData && ovYtdData\.available && ovYtdScope === \(viewAsDept_ \|\| ''\)\);/,
-    'a cached payload is fresh only for the view-as scope it was fetched under');
+  assert.match(ov, /function ovYtdFresh_\(\) \{\s*return !!\(ovYtdData && ovYtdData\.available && ovYtdScope === \(viewAsDept_ \|\| ''\)\s*&& ovYtdForLatest === /,
+    'a cached payload is fresh only for the view-as scope (and, F48, the latest date) it was fetched under');
   assert.ok(!/ovYtdData && ovYtdData\.available\)/.test(ov.replace(/function ovYtdFresh_[\s\S]*?\n  \}/, '')),
     'every YTD freshness check must go through ovYtdFresh_');
   const apply = ov.slice(ov.indexOf('function applyViewAs_('), ov.indexOf('function applyViewAs_(') + 4000);

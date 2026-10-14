@@ -136,7 +136,7 @@ test('CL-17: a share / digest Insights link carries its window into the dept con
   });
 
   const wrap = between(nav, /const base = SHARE_STATE_\['\/report\/insights'\];/, /\}\)\(\);/);
-  assert.match(wrap, /if \(!\(opts && opts\.keepDeptWindow\)\) insCarryLinkWindowToDept_\(params\);/);
+  assert.match(wrap, /if \(!\(opts && opts\.keepDeptWindow\)\) windowMoved = insCarryLinkWindowToDept_\(params\);/);
   assert.match(src('script-8-insights.html'),
     /SHARE_STATE_\['\/report\/insights'\]\.apply\(state, \{ keepDeptWindow: true \}\)/,
     'a saved view applied in place runs the report itself');

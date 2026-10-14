@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-14 -- Broad scan cycle 259 Batch 6 IMPLEMENTED (block 259): client state + consent.** F47 a saved YTD chart range is fetched at boot; F48 the YTD cache follows the Overview latest date; F49 the IR edit popover takes the R30 clamp; F50 a config save/remove drops the alert preview (and an in-flight one); F16 the digest link carries dept= and the Insights link applies it (shareApplyDeptParam_, shared with #/dept); F51 the silent refresh keeps the Overview agent rows; F52 roster loaders reset to the skeleton; F25 latest dates re-read every 5 min. 2467 tests, 12/12 unit bites + 1 rendered, lint + INV-16 + module-deps clean, ci:ui all stages green (new drive-smoke YTD-boot stage).
+  **Owner-side:** deploy the dashboard. No operator steps. Next digest send carries the dept param.
+  **Next:** Batch 7 (a11y: F26, F27, F54-F58), then Batches 8-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- Broad scan cycle 259 Batch 5 IMPLEMENTED (block 259): UX-2 brief coherence.** F20 the Callbacks row quotes only the on-screen window's payload (and repaints on load); F21 View-as redraws the trend shading; F22 the headline's "behind" count uses the R18 benchmark; F23 the "need a look" count includes the top line; F24 a Callbacks jump switches direction only from Inbound (Both is never overwritten); F28 no Queue health row while its fold is hidden. 2460 tests, 8/8 bites + lint + INV-16 + module-deps clean, ci:ui all stages green.
   **Owner-side:** deploy the dashboard; re-walk S61. No operator steps.
   **Next:** Batch 6 (client state: F47, F50, F49, F16, F48, F51, F52, F25), then Batches 7-10 per the cycle-259 list below.

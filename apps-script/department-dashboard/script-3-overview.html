@@ -1372,6 +1372,12 @@
   var ovUserMeta_ = null;
   var wowChipMetaOverride_ = null;
   var ovUserSortWired_ = false;
+  // F51 (broad-scan 2026-10-14): the dept|from|to the rows on screen belong
+  // to. The silent 5-minute refresh re-renders this table for the SAME
+  // window, and blanking it to "Loading…" each time flashed an empty table
+  // -- and a failed refresh left it empty, discarding good rows. Same window:
+  // repaint in place, keep the rows on failure. New window: blank as before.
+  var ovUserTableKey_ = null;
   function ovRenderUserTable_(data) {
     const wrap = $('ov-user-table-wrap');
     const tbody = $('ov-user-tbody');
@@ -1400,16 +1406,22 @@
       ? ovFormatDateLabel_(range.to)
       : (ovFormatDateLabel_(range.from) + ' – ' + ovFormatDateLabel_(range.to));
 
-    status.style.display = '';
-    status.className = 'status status-loading';
-    status.textContent = 'Loading agent detail…';
-    tbody.innerHTML = '';
-    tfoot.innerHTML = '';
+    const tableKey = viewerDept + '|' + range.from + '|' + range.to;
+    const keepRows = tableKey === ovUserTableKey_ && ovUserRows_.length > 0;   // F51
+    if (!keepRows) {
+      ovUserTableKey_ = null;
+      status.style.display = '';
+      status.className = 'status status-loading';
+      status.textContent = 'Loading agent detail…';
+      tbody.innerHTML = '';
+      tfoot.innerHTML = '';
+    }
 
     google.script.run
       .withSuccessHandler(function (resp) {
         if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
         status.style.display = 'none';
+        ovUserTableKey_ = tableKey;
         if (!resp || !resp.rows || !resp.rows.length) {
           ovUserRows_ = []; ovUserTotals_ = null; ovUserMeta_ = null;
           tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept in '
@@ -1427,6 +1439,12 @@
       })
       .withFailureHandler(function (err) {
         if (myToken !== ovUserTableSeq) return;   // F-40
+        status.style.display = '';
+        if (keepRows) {   // F51: the rows on screen are still this window's
+          status.className = 'status status-warn';
+          status.textContent = 'Could not refresh agent detail -- showing the rows loaded earlier.';
+          return;
+        }
         status.className = 'status status-error';
         status.textContent = 'Error loading detail: '
           + (err && err.message ? err.message : String(err));
@@ -1586,8 +1604,16 @@
   // belongs to the view-as scope it was fetched under. A cached admin payload
   // served into a manager preview drew the admin-only line in the preview.
   let ovYtdScope = null;
+  // F48 (broad-scan 2026-10-14): ...and to the Overview's latest date it was
+  // fetched alongside. The session cache was never refreshed, so a tab open
+  // across the morning ingest drew YTD a day short while every other surface
+  // had moved on. When the Overview's latest date moves, the next render
+  // refetches (once -- the stamp is the date the fetch was REQUESTED for, so
+  // a reply carrying a different date cannot loop).
+  let ovYtdForLatest = null;
   function ovYtdFresh_() {
-    return !!(ovYtdData && ovYtdData.available && ovYtdScope === (viewAsDept_ || ''));
+    return !!(ovYtdData && ovYtdData.available && ovYtdScope === (viewAsDept_ || '')
+      && ovYtdForLatest === ((ovLastData && ovLastData.latestDate) || null));
   }
 
   // 'YYYY-MM-DD' minus N calendar days, UTC-stable (parse + reformat via UTC
@@ -1724,6 +1750,15 @@
     destroyOrphanedChartOnCanvas_('ov-trend-chart');
     refreshChartTheme();
 
+    // F47 (broad-scan 2026-10-14): a YTD range restored from localStorage at
+    // boot was never fetched -- the chart drew 90 days under a lit YTD
+    // button, and clicking YTD did nothing (ovApplyChartRange_ ignores a
+    // click on the range already selected). A render that finds YTD selected
+    // but not loaded starts the fetch; F48 makes a stale one count as not
+    // loaded. The 90-day view below fills in meanwhile.
+    if (ovChartRange === 'ytd' && !ovYtdLoading && !ovYtdFresh_()) {
+      setTimeout(function () { if (ovChartRange === 'ytd') ovLoadYtdChart_(); }, 0);
+    }
     // Resolve the active range (30/60/90 client-slice, or the on-demand YTD
     // payload) to a single normalized shape before building datasets.
     const view = ovCurrentChartView_(data);
@@ -2011,6 +2046,7 @@
     if (ovYtdFresh_()) { if (ovLastData) ovRenderChart_(ovLastData); return; }
     ovYtdLoading = true;
     const reqScope = viewAsDept_ || '';
+    const reqLatest = (ovLastData && ovLastData.latestDate) || null;   // F48
     ovWireChartRange_();              // paint the YTD… loading label
     const revertTo90_ = function (msg) {
       ovYtdLoading = false;
@@ -2038,6 +2074,7 @@
           ovYtdLoading = false;
           ovYtdData = res;
           ovYtdScope = reqScope;
+          ovYtdForLatest = reqLatest;
           if (ovLastData) ovRenderChart_(ovLastData);
         } else {
           revertTo90_('Year-to-date trend is unavailable right now.');

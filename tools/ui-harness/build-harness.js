@@ -105,6 +105,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getCompanyOverview: function (req) {
       return P[(${JSON.stringify(role)} === 'admin' && !(req && req.viewAsDept)) ? 'ov-admin' : 'ov-manager'];
     },
+    // F47: the YTD chart range, served the REAL getOverviewChartTrend payload
+    // per viewer (the Company line is admin-only, and View-as is a manager).
+    getOverviewChartTrend: function (req) {
+      return P[(${JSON.stringify(role)} === 'admin' && !(req && req.viewAsDept)) ? 'ovytd-admin' : 'ovytd-manager'];
+    },
     getDepartmentSummary: function (req) {
       var d = spanDays(req);
       // A dept with NO sub-queues, so the single-dept render + CSV stay covered.

@@ -6,6 +6,19 @@
   // date, and install or uninstall the daily 8AM trigger.
 
   let alLastPreview = null;     // last preview result, used to gate Send
+  // F50 (broad-scan 2026-10-14): a preview is only consent for the config it
+  // was run against. Saving or removing a config row now drops it, like a
+  // date change always did; the token stops a preview still in flight from
+  // re-arming Send with the old config's results.
+  let alPreviewSeq_ = 0;
+  function alInvalidatePreview_(reason) {
+    alPreviewSeq_++;
+    alLastPreview = null;
+    const sendBtn = $('al-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    alClearResults_();
+    if (reason) alSetRunStatus_('warn', reason);
+  }
 
   // C2-6 (broad-scan 2026-09-17): one in-flight guard for the mutation
   // verbs that are invoked from a rendered row (no button element to
@@ -147,6 +160,7 @@
         restore();
         showToast('Saved alert config for ' + department, 'success');
         alCfgClear_();
+        alInvalidatePreview_(alLastPreview ? 'Alert config changed -- run Preview again before sending.' : '');   // F50
         alCfgApplySection_(res);
       })
       .withFailureHandler(function (err) { restore(); alCfgStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
@@ -165,6 +179,7 @@
         alCfgBusy_(false);
         showToast('Removed alert config for ' + c.department, 'success');
         alCfgStatus_(null);
+        alInvalidatePreview_(alLastPreview ? 'Alert config changed -- run Preview again before sending.' : '');   // F50
         alCfgApplySection_(res);
       })
       .withFailureHandler(function (err) { mutationDone_('alCfgRemove'); alCfgBusy_(false); alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
@@ -478,9 +493,7 @@
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
       // re-confirm against the new date.
-      alLastPreview = null;
-      $('al-send-btn').disabled = true;
-      alClearResults_();
+      alInvalidatePreview_('');
     });
 
     // Answer-rate standards (ANSWER_TARGETS) save.
@@ -928,9 +941,7 @@
     alRenderNeonMirror_(data.neonMirror || null);
     alRenderNeonRead_(data.neonRead || null);
     alRenderPipelineHealth_(data.pipelineHealth || []);
-    alClearResults_();
-    alLastPreview = null;
-    $('al-send-btn').disabled = true;
+    alInvalidatePreview_('');   // clears the results too (F50: and orphans an in-flight preview)
   }
 
   // F2 divergence detector: render the sheet-vs-Neon DQE max-date status.
@@ -1295,9 +1306,11 @@
     btn.disabled = true;
     const prev = btn.textContent; btn.textContent = 'Loading…';
     alSetRunStatus_('loading', 'Running preview for ' + date + '…');
+    const tok = ++alPreviewSeq_;   // F50
     google.script.run
       .withSuccessHandler(function (results) {
         btn.disabled = false; btn.textContent = prev;
+        if (tok !== alPreviewSeq_) return;   // the config or date changed while this ran
         alLastPreview = { date: date, results: results || [] };
         alRenderResults_(results || [], /*isPreview=*/true);
         const wouldFire = (results || []).filter(function (r) { return r.status === 'would-send'; }).length;
@@ -1309,6 +1322,7 @@
       })
       .withFailureHandler(function (err) {
         btn.disabled = false; btn.textContent = prev;
+        if (tok !== alPreviewSeq_) return;
         alSetRunStatus_('error', 'Preview failed: ' + (err && err.message ? err.message : String(err)));
       })
       .previewAlerts({ date: date });

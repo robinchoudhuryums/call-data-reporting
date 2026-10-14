@@ -177,6 +177,39 @@ async function phonePass(browser, role) {
   await page.close();
 }
 
+// F47 (broad-scan 2026-10-14): a YTD chart range saved from an earlier visit
+// is FETCHED at boot -- it used to draw 90 days under a lit YTD button, and a
+// click on YTD did nothing because the range was already "selected".
+async function ytdBootPass(browser, role) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + String(e && e.message ? e.message : e)));
+  await page.addInitScript(() => {
+    localStorage.setItem('cdr.tour.done', '1');
+    localStorage.setItem('cdr.ins.intro.v1', '1');
+    localStorage.setItem('cdr.ov.chartrange', 'ytd');
+  });
+  await page.goto('file://' + path.join(__dirname, 'site', 'index-' + role + '.html'));
+  await page.waitForTimeout(3500);
+  const tag = role + ': YTD range restored at boot';
+  const s = await page.evaluate(() => {
+    const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getOverviewChartTrend').length;
+    const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ov-trend-chart') : null;
+    const btn = document.querySelector('#ov-chart-range .ov-range-btn[data-range="ytd"]');
+    return { calls: calls, labels: ch ? ch.data.labels.length : -1,
+             active: !!btn && btn.classList.contains('active') };
+  });
+  const want = await page.evaluate((r) => {
+    const p = window.__HARNESS_PAYLOADS__ ? window.__HARNESS_PAYLOADS__[r] : null;
+    return p ? (p.trendLabels || []).length : null;
+  }, role === 'admin' ? 'ovytd-admin' : 'ovytd-manager');
+  record(tag + ': the YTD series is fetched once', s.calls === 1, JSON.stringify(s));
+  record(tag + ': the chart draws the YTD labels, not the 90-day fallback, under the lit button',
+    s.active && s.labels > 0 && s.labels === want, JSON.stringify(s) + ' want=' + want);
+  record(tag + ': no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await page.close();
+}
+
 // CL-23: browser Back / Forward through google.script.history. A FRESH boot
 // (clean history stack), the recording mock in build-harness.js, and the
 // app's own change handler -- the mock calls it exactly as a popstate would.
@@ -1187,6 +1220,7 @@ async function visibleErrorTones(page) {
 
     await phonePass(browser, role);   // CL-9
     await historyPass(browser, role); // CL-23
+    await ytdBootPass(browser, role); // F47
   }
 
   await browser.close();

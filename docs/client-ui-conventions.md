@@ -1929,8 +1929,10 @@ behind the removed button.
   `#/report/missed` (which carries `scrollTo: 'dept-missed-section'` and arms
   the one-shot `deptMissedScrollPending_`). **The page branch ALSO applies the
   route's `SHARE_STATE_` query after `setPage`** — that is what keeps the
-  Digest.gs email deep links (`#/report/insights?from=...&agents=...`) working
-  when no header tab carries the route. Unknown / malformed hashes quietly no-op
+  Digest.gs email deep links (`#/report/insights?dept=...&from=...&agents=...`)
+  working when no header tab carries the route. The `dept` param (F16) goes
+  through `shareApplyDeptParam_`, the `#/dept` link's rule: applied only for a
+  dept in the viewer's own list, otherwise the viewer stays on their own dept. Unknown / malformed hashes quietly no-op
   onto Overview, and so does a non-admin's deep link to a `data-admin-only`
   route — `initRouter` skips the trigger rather than opening a modal that would
   only surface an "admin-only" server error (F11).

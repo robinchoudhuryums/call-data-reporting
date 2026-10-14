@@ -1029,7 +1029,8 @@
     if (insLastRoster.dept === dept && insLastRoster.agents.length && insLastRoster.rangeKey === rangeKey) {
       insRenderAgentList(); return;
     }
-    $('ins-agent-loader').style.display = ''; $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
+    rosterLoaderShowLoading_('ins-agent-loader');   // F52
+    $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
     const __rk = ++insRosterReqSeq_;
     google.script.run
       .withSuccessHandler(function (data) {
