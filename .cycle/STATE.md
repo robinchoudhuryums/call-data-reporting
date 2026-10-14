@@ -2,7 +2,7 @@
 
 ## Current
 Cycle: 259
-Phase: audit
+Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
@@ -13,6 +13,22 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-14 -- Broad scan cycle 259 (64 findings F1-F64, G1-G5, ST1-ST5) + Batch 1 IMPLEMENTED (block 259).**
+  - Batch 1 (pipeline loss + silent green): F7 the catch-up also rebuilds Direct + re-mirrors CDR/QCD/DQE (deferred: queues) for an already-imported date; F8 hashless per-call writes fail every backfill-driven path; F9 the retention prune keeps tabs whose capture is still owed; F10 COALESCE comment/doc truth.
+  - Verification: 2434 tests (+11), 8/8 bites, INV-16 + module-deps + lint:gas clean.
+  **Owner-side:** deploy cdr-import (cdr-report: comment-only INV-16 pair, push to keep it identical). No operator steps; HMAC_SECRET missing in cdr-import now shows red (Operator State #17).
+  **Next (the scan's plan; full report in the session record):**
+    - Batch 2 false-clean gates + backup: F42 config-source compares (duplicates/compared/empty), F43 outbound vetting with 0 called-back pairs, F15 NeonBackup Sheets->Drive switch, F18 DqeSilence readiness gate, F19 Alerts EMPTY with skipped rows, F46 auditQueueSplitAttribution verdict, F17 IngestWatchdog installer record.
+    - Batch 3 escalations + access: F44 server timestamps shown in UTC (check `SHOW TimeZone` first) + CURRENT_DATE overdue, F45 snapshot overdue/MTD zeros, F1 welcome email for staged agent rows, F3 Coaching close lock-before-connect, F2 logReportUsage_ sheetSafeCell_.
+    - Batch 4 cache anchors + DAL: F4 Overview/YTD keys lack qcdFreshnessTag_ (+INV-30 text), F5 computeQcdReport_ outage flag, F29 AgentDay/strip queue-split narrowing, F33 AgentDay agent filter, F61 empty final-dept union double-count.
+    - Batch 5 UX-2 brief: F20 stale callbacks row, F21 view-as shading, F22 insHeadline_ R18 basis, F23 top line, F24 Both overwrite, F28 hidden queue row.
+    - Batch 6 client state: F47 YTD at boot, F50 alert preview after config edit, F49 IR popover clamp, F16 digest link dept, F48 YTD refresh, F51 silent-refresh table blank, F52 IR roster stale error, F25 latest-dates cadence.
+    - Batch 7 a11y: F26 --ink-muted dark, F27 agent-table tr, F54-F58.
+    - Batch 8 per-call edges: F30 trailing attempts, F31 outbound email flags, F32 PC-3 order, F34 Caller Lookup inbound availability.
+    - Batch 9 mirrors: F11 drill col E/AD-AF, F12 sentinel rows, F13 overlap audit, F59 queueSplitSample strays, F60 qdd row-2 date, F63 CSR N1:X1 header check, F64 stray legs in daily engines.
+    - Batch 10 deploy/docs/tooling: F35 INV-17 premise (operator check first), F41 deploy.sh dirty scope, F40 INV-16 deploy skew, F38 lint allowlist, F39 harness memo reset, F36/F37/F6/F14/F53 docs + dead code.
+    - Deferred: F62 PC-1 retroactive rewrite (owner ruling). Expansion E1-E5 (G1-G5, ST1-ST5) optional.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-13 -- /sync-commands to claude-workflow-tools v1.43.0.** Ten commands copied from the template (audit, broad-implement, broad-scan, cycle-init, cycle-resume, implement, pr-review, reflect, targeted-audit, targeted-implement); `sync-docs` kept as the local five-check version. New: the audits' CYCLE OPEN step (the `Cycle:` field above), F/G/ST IDs and the scan's EXPANSION PLAN.
 - **2026-10-13 -- UX-2 BUILT as an admin trial (Insights ranked brief).**
   - Owner rulings: the recommended thresholds from the first probe run (share grey; queue wait amber at 1.5x own prior-3-month median, 5+ calls/day; trend amber 8 / red 12 pts vs prior-3 avg; shading +-2..15) and option 1 for the top line (per-dept answer targets, operator step, Operator State #37).

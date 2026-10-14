@@ -358,3 +358,47 @@ test('PIPE-15: force backfills without HMAC_SECRET refuse already-mirrored dates
     h.ctx.writeInboundCallsToNeon = saved.iw; h.ctx.writeOutboundCallsToNeon = saved.ow;
   }
 });
+
+// F8 (broad-scan 2026-10-14): PC-10 made a capture written WITHOUT phone
+// hashes (no HMAC_SECRET) a failure on the inline daily path only. The
+// backfills -- which the deferred mirror, the PIPE-7 catch-up and editor runs
+// all drain through -- logged a plain success while callbacks and insurer
+// labels went blind. They now count such dates, fail their summary row and
+// return the count.
+test('F8: a backfill whose writes were hashless FAILS its summary row and returns the count', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const saved = { im: h.ctx.icFetchMirroredDates_, om: h.ctx.ocFetchMirroredDates_,
+                  iw: h.ctx.writeInboundCallsToNeon, ow: h.ctx.writeOutboundCallsToNeon,
+                  log: h.ctx.logPipelineHealthWithFallback_ };
+  const rows = [];
+  let hashless = true;
+  h.ctx.icFetchMirroredDates_ = function () { return {}; };
+  h.ctx.ocFetchMirroredDates_ = function () { return {}; };
+  h.ctx.writeInboundCallsToNeon = function () { return { inserted: 3, hashless: hashless }; };
+  h.ctx.writeOutboundCallsToNeon = function () { return { inserted: 3, hashless: hashless }; };
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, ev) { rows.push(ev); };
+  const sheets = () => makeFakeSpreadsheet({ sheets: { 'Call_Legs_2026-09-01': [['CALL ID'], ['1']] } });
+  try {
+    for (const [fn, step] of [['backfillInboundCalls', 'inboundBackfill'], ['backfillOutboundCalls', 'outboundBackfill']]) {
+      rows.length = 0; hashless = true;
+      h.state.spreadsheet = sheets();
+      const res = h.call(fn, null, null, false);
+      assert.equal(res.hashless, 1, fn + ': the hashless date is counted');
+      assert.equal(res.failures, 0, fn + ': written, so not a write failure (a retry cannot add hashes)');
+      const row = rows.filter(function (r) { return r.step === step; })[0];
+      assert.equal(row.status, 'failure', fn + ': the summary row is a FAILURE');
+      assert.match(row.notes, /WRITTEN WITHOUT phone hashes: 2026-09-01/);
+      assert.match(row.notes, /HMAC_SECRET/);
+
+      rows.length = 0; hashless = false;
+      h.state.spreadsheet = sheets();
+      const ok = h.call(fn, null, null, false);
+      assert.equal(ok.hashless, 0);
+      assert.equal(rows.filter(function (r) { return r.step === step; })[0].status, 'success', fn + ': a hashed run stays green');
+    }
+  } finally {
+    h.ctx.icFetchMirroredDates_ = saved.im; h.ctx.ocFetchMirroredDates_ = saved.om;
+    h.ctx.writeInboundCallsToNeon = saved.iw; h.ctx.writeOutboundCallsToNeon = saved.ow;
+    h.ctx.logPipelineHealthWithFallback_ = saved.log;
+  }
+});

@@ -829,10 +829,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   does NOT auto-expand columns, so the writer WIDENS a narrower sheet first
   (`DQE_WRITE_WIDTH`, 37 since Batch 3; a getRange past `getMaxColumns` throws
   -- REP-10). Mirrored
-  to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
-  COALESCEs so a sheet-sourced NULL can't erase a stored split -- which is
-  why the duplicate merge, which BLANKS AI..AK on purpose, NULLs the Neon
-  twin itself (CRT-2, `sheet-repairs-merge.test.js`).
+  to `dqe_history.queue_split` via an idempotent ADD COLUMN. Only the
+  NON-authoritative upsert (`backfillDQEHistoryUpsert`) COALESCEs, so a
+  sheet-sourced NULL can't erase a stored split there -- which is why the
+  duplicate merge, which BLANKS AI..AK on purpose, NULLs the Neon twin itself
+  (CRT-2, `sheet-repairs-merge.test.js`); every authoritative per-date writer
+  deletes the date first, so Neon simply matches the sheet (F10).
   **The pipeline always WRITES this column; whether any dashboard surface USES
   it is a separate switch** -- `QUEUE_SPLIT_SCOPE`, default `off` (Operator
   State #42). So keep deploying and backfilling the split on its own urgency
@@ -879,8 +881,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the INV-02 duration trap. (2) NULL and 0 are DIFFERENT facts: an agent or
   sentinel row with nothing after hours writes numeric `0`/`0`; a blank (a
   pre-Batch-3 row, or a duplicate-merge, which clears AI..AK together) mirrors
-  as NULL to the nullable-int `dqe_history` pair (idempotent ADD COLUMN, every
-  upsert COALESCEs, binds via `NULLIF(?, '')::int`) -- a future reader must
+  as NULL to the nullable-int `dqe_history` pair (idempotent ADD COLUMN, the
+  non-authoritative upsert COALESCEs, binds via `NULLIF(?, '')::int`) -- a future reader must
   keep them apart. (3) `DQE_WRITE_WIDTH`=37: the writer widens first (REP-10),
   labels the two headers ONCE (only while AJ's header is blank), and every
   full-width reader clamps to `getMaxColumns()` with a 37 ceiling -- a ceiling

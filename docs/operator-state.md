@@ -1586,6 +1586,15 @@ When something looks wrong, before assuming a code bug, check:
     itself once the tab is processed or deleted, and a `success` row on the same
     step says no parked date remains. The pending window now ends at TODAY, so a
     future-dated tab can no longer hide the real ones.
+
+    **Imported but still OWED is kept too (F9, broad-scan 2026-10-14).** A date
+    in history whose per-call capture is still owed -- queued in the `Neon
+    Mirror Queue` tab (deferred mode, an outage outlasting the window) or held
+    in the `PENDING_IMPORT_FAILURES` catch-up ledger -- keeps its tab, named in
+    the row ("KEPT N still owed a per-call capture"). It clears on its own once
+    the drain or the catch-up finishes the date; a PARKED ledger date stays
+    until you fix it (above) or delete the tab. A failed read of either list
+    keeps the tab and fails the row, like the history check.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -2000,7 +2009,12 @@ When something looks wrong, before assuming a code bug, check:
     runs. A date already in history keeps its history sheets as they are (use
     Manual Export to force a re-import, as above), but the catch-up still runs
     the non-force per-call backfills for it, and keeps it pending while Neon
-    is unreachable (PIPE-7). Seeing a `runPendingImportCatchUp_` trigger
+    is unreachable (PIPE-7). Since F7 (broad-scan 2026-10-14) it also rebuilds
+    Direct Call History when that sheet lacks the date (from the Call_Legs tab;
+    Raw Data is untouched) and re-mirrors CDR / QCD / DQE to Neon (deferred
+    mode: queues the date instead) -- the other steps a run killed after the
+    sheet writes never reached. A step that cannot finish keeps the date pending
+    under the same ledger and park. Seeing a `runPendingImportCatchUp_` trigger
     in the cdr-import triggers list for a few minutes is normal.
 
 57. **Neon storage cap — the phones-write gate, the weekly retention prune,

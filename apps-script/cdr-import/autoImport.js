@@ -3299,7 +3299,14 @@ function processPendingImports_() {
     const s0 = Date.now();
     last = processNewImport(false, iso, false, null, null, { noAlert: true, noFailureEmail: prior > 0 });
     // PIPE-7 (owner 2026-10-13, option A): see pendingImportPerCallCatchUp_.
-    const perCallSettled = (last === 'ALREADY IN HISTORY') ? pendingImportPerCallCatchUp_(iso) : true;
+    // F7: + the steps that run AFTER the sheet writes (Direct, the CDR/QCD/DQE
+    // Neon mirrors) -- see pendingImportDerivedCatchUp_. Both always run.
+    let perCallSettled = true;
+    if (last === 'ALREADY IN HISTORY') {
+      const perCallOk = pendingImportPerCallCatchUp_(iso);
+      const derivedOk = pendingImportDerivedCatchUp_(iso);
+      perCallSettled = perCallOk && derivedOk;
+    }
     lastMs = Date.now() - s0;
     done.push(iso + '=' + String(last).split(' ')[0]);
     if (String(last).indexOf('ERROR') === 0) {
@@ -3314,7 +3321,8 @@ function processPendingImports_() {
       // (and the same park after PENDING_IMPORT_MAX_ATTEMPTS_) as a failed import.
       failedThisRun[iso] = true;
       fails[iso] = { n: prior + 1, at: new Date().toISOString(),
-                     err: 'per-call capture not completed for an already-imported date (PIPE-7): Neon unreachable or a write failed' };
+                     err: 'catch-up not completed for an already-imported date (PIPE-7 / F7): per-call capture, '
+                       + 'Direct Call History or a Neon mirror -- Neon unreachable or a write failed' };
       failsChanged = true;
       if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
       continue;
@@ -3398,6 +3406,130 @@ function pendingImportPerCallCatchUp_(iso) {
   };
   run('inbound', typeof backfillInboundCalls === 'function' ? backfillInboundCalls : null);
   run('outbound', typeof backfillOutboundCalls === 'function' ? backfillOutboundCalls : null);
+  return settled;
+}
+
+/**
+ * F7 (broad-scan 2026-10-14): PIPE-7's sibling. A daily run killed after the
+ * five history-sheet writes (the hanging-connect kill skips every catch and
+ * finally) also never ran the steps that FOLLOW them: Direct Call History
+ * (block 6, which ALREADY IN HISTORY does not check) and the CDR / QCD / DQE
+ * Neon mirrors (or, in deferred mode, the Neon Mirror Queue row). The catch-up
+ * then remembered the date, so with DQE_READ_SOURCE=neon a reachable-but-empty
+ * read served a real-looking zero day, and Direct lost the date for good once
+ * its Call_Legs tab aged out. For an already-imported date this now:
+ *   - rebuilds Direct Call History from the Call_Legs tab when that sheet has
+ *     no rows for the date (a refresh-in-window write; Raw Data is untouched,
+ *     so the cdr-report safety-net build cannot see a re-staged old date);
+ *   - deferred mode: queues the date (the drain mirrors all five types);
+ *     inline mode: re-mirrors CDR / QCD / DQE from their sheets -- each an
+ *     authoritative per-date replace, so a date Neon already holds is rewritten
+ *     with identical rows. Skipped when NEON_HOST is unset (nothing to mirror to).
+ * Returns false when any step could not finish, so the caller keeps the date
+ * pending (the PIPE-7 ledger, which parks it after PENDING_IMPORT_MAX_ATTEMPTS_).
+ */
+function pendingImportDerivedCatchUp_(iso) {
+  let targetSS;
+  try {
+    targetSS = SpreadsheetApp.openById(getTargetSsId_());
+  } catch (e) {
+    console.warn('pendingImportDerivedCatchUp_: target workbook unavailable for ' + iso + ': ' + (e && e.message ? e.message : e));
+    return false;
+  }
+  const p = String(iso).split('-');
+  const dateObj = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);   // processNewImport's own shape
+  const directOk = pendingImportDirectCatchUp_(targetSS, iso, dateObj);
+  const mirrorOk = pendingImportMirrorCatchUp_(targetSS, iso, dateObj);
+  return directOk && mirrorOk;
+}
+
+/** F7: rebuild Direct Call History for `iso` when the sheet has no rows for it. */
+function pendingImportDirectCatchUp_(targetSS, iso, dateObj) {
+  if (typeof buildDirectCallFromRaw_ !== 'function') return true;
+  if (checkHistoryForDate(targetSS, 'Direct Call History', dateObj, 2)) return true;
+  const configSheet = targetSS.getSheetByName('DO NOT EDIT!');
+  const legsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Call_Legs_' + iso);
+  if (!configSheet || !legsSheet) return true;   // the daily block skips on the same terms
+  const t0 = Date.now();
+  try {
+    // The tab's DISPLAY grid is what Raw Data holds after staging (header row
+    // included), read as display strings exactly as block 6 reads Raw Data.
+    const grid = legsSheet.getDataRange().getDisplayValues().map(function (r) { return r.slice(0, MAX_COLS); });
+    if (grid.length < 2) return true;
+    const dres = buildDirectCallFromRaw_(targetSS, grid, configSheet, { expectedDate: dateObj });
+    const neon = dres.neon || {};
+    const neonStr = neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok');
+    logPipelineHealthWithFallback_(targetSS, {
+      step: 'processIntegratedHistory:Direct', status: 'success', rows: dres.wrote,
+      durationMs: Date.now() - t0,
+      notes: dateObj.toDateString() + ' | catch-up (F7): the import that wrote this date stopped before Direct'
+        + ' | neon=' + neonStr,
+    });
+    if (neonStr !== 'ok') {
+      let configured = false;
+      try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { /* unconfigured */ }
+      if (neonStr === 'error' || configured) {
+        logPipelineHealthWithFallback_(targetSS, {
+          step: 'processIntegratedHistory:Direct:neon', status: 'failure', rows: null,
+          durationMs: Date.now() - t0,
+          notes: dateObj.toDateString() + ' | catch-up (F7): direct_call_history mirror ' + neonStr
+            + (neon.error ? (': ' + neon.error) : '') + ' -- sheet wrote ' + dres.wrote
+            + ' rows; run backfillDirectCallToNeon once fixed.',
+        });
+      }
+    }
+    return true;
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    console.warn('pendingImportDirectCatchUp_: Direct for ' + iso + ' failed: ' + msg);
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'processIntegratedHistory:Direct', status: 'failure', rows: null,
+        durationMs: Date.now() - t0, notes: dateObj.toDateString() + ' | catch-up (F7): ' + msg,
+      });
+    } catch (logErr) { /* best-effort */ }
+    return false;
+  }
+}
+
+/** F7: the CDR / QCD / DQE Neon mirrors for `iso` (deferred: queue the date). */
+function pendingImportMirrorCatchUp_(targetSS, iso, dateObj) {
+  if (typeof getNeonMirrorMode_ !== 'function') return true;
+  if (getNeonMirrorMode_() === 'deferred') {
+    return (typeof enqueueNeonMirror_ === 'function') ? enqueueNeonMirror_(targetSS, dateObj) !== false : true;
+  }
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { /* unconfigured */ }
+  if (!configured) return true;
+  // Failure rows reuse the inline path's FAILURE-ONLY names (L7 / F4), so the
+  // Health page and PipelineWatch read them exactly as a failed daily mirror.
+  const steps = [
+    ['processIntegratedHistory:CDR:neon', typeof mirrorCdrForDate_ === 'function' ? mirrorCdrForDate_ : null],
+    ['processIntegratedHistory:QCD:neon', typeof mirrorQcdForDate_ === 'function' ? mirrorQcdForDate_ : null],
+    ['buildDQE:neon',                     typeof mirrorDqeForDate_ === 'function' ? mirrorDqeForDate_ : null],
+  ];
+  let settled = true;
+  steps.forEach(function (st) {
+    if (!st[1]) return;
+    const t0 = Date.now();
+    let why = '';
+    try {
+      const res = st[1](targetSS, iso);
+      if (res && res.unreachable) why = 'Neon unreachable';
+      else console.log('pendingImportMirrorCatchUp_: ' + st[0] + ' ' + iso + ' mirrored ' + ((res && res.rows) || 0) + ' row(s).');
+    } catch (e) {
+      why = (e && e.message) ? e.message : String(e);
+    }
+    if (!why) return;
+    settled = false;
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: st[0], status: 'failure', rows: null, durationMs: Date.now() - t0,
+        notes: dateObj.toDateString() + ' | catch-up (F7): ' + why
+          + ' -- the date stays pending and the catch-up retries it',
+      });
+    } catch (logErr) { /* best-effort */ }
+  });
   return settled;
 }
 
