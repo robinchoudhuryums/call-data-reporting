@@ -485,7 +485,11 @@ function getFinalDeptLabels_(dept) {
  *    neither claims falls back to its entry queue, and nothing double-counts.
  *  - A ROSTER read that throws lands in the catch and returns the EMPTY union:
  *    every label looks unmapped and the on-hold arm takes its entry-queue
- *    fallback -- attribution degrades rather than a dept losing calls.
+ *    fallback -- attribution degrades rather than a dept losing calls. That
+ *    is single-counted only because the consumers (inboundDeptPredicate_ /
+ *    ihRowInDept_) turn their LABEL arm off on an empty union (F61,
+ *    broad-scan 2026-10-14): with this dept's full label list still live, the
+ *    call matched both its label's dept and its entry queue's.
  * The unsafe shape is a union PARTIAL against FULL per-dept lists, which would
  * double-count; neither path produces it.
  */

@@ -943,6 +943,13 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     throw new Error('Sheet "QCD Historical Data" not found. Verify the pipeline has run at least once for this dept.');
   }
   if (sheetData.empty) {
+    // F5 (broad-scan 2026-10-14): DATA-4's outage flag, which the snapshot
+    // readers raise and this report did not. On a Neon miss with an empty
+    // sheet fallback the zero shape read as "0 calls / 0.00%" in Insights
+    // Queue health (and the UX-2 brief), and getInsightsReport cached it for
+    // 6 h. The flag fires only when THIS execution fell back, so a genuinely
+    // empty window on a reachable source stays cacheable.
+    qcdFlagEmptyIfOutage_('computeQcdReport_');
     return emptyQcdReport_(dept, from, to, includeSubQueues, separate);
   }
   const ssTZ = sheetData.ssTZ;
@@ -992,6 +999,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   const dailyAcc = {};
   const dailyDateSet = {};   // F-15: union of ALL queues' active dates (axis)   // iso -> { totalCalls, answered, abandoned, violations }
 
+  let rangeRows = 0;   // F5: Total-Calls rows for this dept in the selected range
   const tLoop = Date.now();
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -1045,6 +1053,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     if (source !== QCD_TOTAL_CALLS_SOURCE) continue;   // dept totals/trend/daily are Total-Calls only
 
     if (inUserRange) {
+      rangeRows++;
       bucket.totalCalls    += totalCalls;
       bucket.totalAnswered += totalAnswered;
       bucket.abandoned     += abandoned;
@@ -1127,6 +1136,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     }
   }
   const loopMs = Date.now() - tLoop;
+  if (!rangeRows) qcdFlagEmptyIfOutage_('computeQcdReport_');   // F5: a trimmed fallback sheet
 
   // Per-queue rows in DEPT_QCD_QUEUES order.
   const queueBreakdown = queues.map(function (q) {

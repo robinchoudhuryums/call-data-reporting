@@ -1466,8 +1466,11 @@ When something looks wrong, before assuming a code bug, check:
     YTD trends — the company HERO stays all-queue on purpose: company-wide,
     every call counts exactly once), the low-answer-rate Alerts engine (the
     threshold now fires on the number the dashboard displays), the manager
-    digests (via computeSummary_), and the agent app (KPIs, trend, missed
-    list, history). Deliberately NOT narrowed: `computeActiveAgentsInRange_`
+    digests (via computeSummary_), the agent app (KPIs, trend, missed
+    list, history), and -- since F29 (2026-10-14; it shipped after this list)
+    -- the Agent Day view's header + missed rings and the My Department
+    inline panel's day strip, narrowed to the row's own dept (its combined-view
+    group, else the page's dept, when the viewer owns it). Deliberately NOT narrowed: `computeActiveAgentsInRange_`
     (the IR/Insights agent-picker grouping — inclusion, not figures) and the
     DQE-silence watchdog's day read (#44 — with narrowing on, "my roster
     rang zero times on MY OWN queues while they took calls" is exactly the

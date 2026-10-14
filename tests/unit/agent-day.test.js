@@ -496,3 +496,61 @@ test('the strip’s Neon read is bound, grouped by day, and LABELLED', function 
   assert.ok(body.indexOf('logReportUsage_') === -1,
     'not usage-logged: the newest day’s getAgentDay call already logs the open');
 });
+
+// ── F29 / F33 (broad-scan 2026-10-14) ───────────────────────────────────────
+// F29: the day header + strip skipped the queue-split narrowing My Department
+// applies to the row the panel hangs from. F33: the DQE read pulled every
+// agent's rows (with missed detail, for the strip too) to show one agent.
+function freshAgentDay_() {
+  const f = loadGas({ files: ['Config.gs', 'Util.gs', 'OutboundReport.gs', 'AgentDay.gs'] });
+  // Reuse the suite's stubs on a FRESH context (earlier tests overwrite
+  // agentDayFetchDalRows_ on `h` for good).
+  ['isIsoDate_', 'getAllDepartments_', 'buildDeptsByAgent_'].forEach(function (k) { f.ctx[k] = h.ctx[k]; });
+  f.ctx.resolveUser_ = function () { return f.state.testUser; };
+  f.ctx.assertAdmin_ = function () { if (!f.state.testUser || f.state.testUser.role !== 'admin') throw new Error('Admin only.'); };
+  f.ctx.getDashboardNeonConn_ = function () { return null; };
+  return f;
+}
+
+test('F33: the DQE read asks Neon for ONE agent (and the strip skips missed detail) -- unless narrowing needs the roster', function () {
+  const f = freshAgentDay_();
+  const seen = [];
+  f.ctx.getDqeReadSource_ = function () { return 'neon'; };
+  f.ctx.neonFetchDqeRows_ = function (a, b, opts) { seen.push(JSON.parse(JSON.stringify(opts))); return [{ agent: 'x' }]; };
+  f.ctx.neonDqeRowsUsable_ = function () { return true; };
+  let scope = 'off';
+  f.ctx.getQueueSplitScope_ = function () { return scope; };
+  f.call('agentDayFetchDalRows_', '2026-09-01', '2026-09-01', { agentName: 'Ann Agent' });
+  f.call('agentDayFetchDalRows_', '2026-08-01', '2026-09-01', { agentName: 'Ann Agent', missedDetail: false });
+  scope = 'dept';
+  f.call('agentDayFetchDalRows_', '2026-09-01', '2026-09-01', { agentName: 'Ann Agent' });
+  assert.deepEqual(seen, [
+    { includeMissedDetail: true, agents: ['Ann Agent'] },
+    { includeMissedDetail: false, agents: ['Ann Agent'] },
+    { includeMissedDetail: true },
+  ], 'narrowing judges a window from the dept ROSTER rows (B-1), so the filter is dropped while it is on');
+});
+
+test('F29: the strip and the day view narrow to the row\'s dept when the viewer owns it, else the entitled home', function () {
+  const f = freshAgentDay_();
+  const narrowed = [];
+  f.ctx.agentDayFetchDalRows_ = function () { return [dq('2026-09-01', 'Cross Over', 4, 3, 1)]; };
+  f.ctx.applyQueueSplitToRows_ = function (rows, dept, opts) { narrowed.push([dept, !!(opts && opts.narrowSlots)]); return {}; };
+  // A manager of both homes, opening the agent from the Sales group.
+  f.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR', 'Sales'] };
+  f.call('getAgentDayStrip', { agentName: 'Cross Over', from: '2026-08-01', to: '2026-09-01', department: 'Sales' });
+  f.call('getAgentDay', { agentName: 'Cross Over', date: '2026-09-01', department: 'Sales' });
+  // A dept that is not a roster home of the agent -> the entitled home.
+  f.call('getAgentDayStrip', { agentName: 'Cross Over', from: '2026-08-01', to: '2026-09-01', department: 'Power' });
+  // A CSR-only manager asking for Sales cannot redirect the narrowing.
+  f.state.testUser = { email: 'c@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  f.call('getAgentDayStrip', { agentName: 'Cross Over', from: '2026-08-01', to: '2026-09-01', department: 'Sales' });
+  assert.deepEqual(narrowed, [['Sales', false], ['Sales', true], ['CSR', false], ['CSR', false]],
+    'strip: counts only; day view: + the missed-ring timeline (narrowSlots)');
+  // Unrostered (admin-only): nothing to narrow to.
+  f.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales', 'Power'] };
+  narrowed.length = 0;
+  f.ctx.agentDayFetchDalRows_ = function () { return [dq('2026-09-01', 'Nobody Rostered', 4, 3, 1)]; };
+  f.call('getAgentDayStrip', { agentName: 'Nobody Rostered', from: '2026-08-01', to: '2026-09-01' });
+  assert.deepEqual(narrowed, []);
+});

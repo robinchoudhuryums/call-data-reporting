@@ -285,8 +285,17 @@ function inboundDeptPredicate_(dept, deptQueues) {
     ? ("lower(trim(coalesce(c.final_dept,''))) NOT IN ("
        + allLabels.map(inboundSqlLit_).join(',') + ')')
     : 'true';
+  // F61 (broad-scan 2026-10-14): an EMPTY union (getAllFinalDeptLabels_'s
+  // fail-open on a roster read error) makes every label "unmapped", so the
+  // entry-queue arm claims every on-hold call -- while THIS dept's label arm
+  // still matched its FULL list, and one call landed in two depts (its label's
+  // and its entry queue's). With no union, attribute by entry queue ONLY: the
+  // label arm is off for every dept alike, so each call still lands once.
+  const labelArm = allLabels.length
+    ? 'lower(trim(c.final_dept)) IN (' + labelList + ')'
+    : 'false';
   return ' AND ((' + isOnHoldAnswered
-       + ' AND lower(trim(c.final_dept)) IN (' + labelList + '))'
+       + ' AND ' + labelArm + ')'
        + ' OR ((NOT ' + isOnHoldAnswered + ' OR ' + unmappedLabel + ')'
        + " AND lower(trim(coalesce(c.entry_queue,''))) IN (" + queueList + ')))';
 }
@@ -2595,7 +2604,9 @@ function ihRowInDept_(row, qSet, labels, allLabels) {
   var isOHA = disposition === 'answered' && onHold;
   var fd = String(row[12] == null ? '' : row[12]).trim().toLowerCase();
   var eq = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
-  var labelMatch = isOHA && labels.indexOf(fd) !== -1;
+  // F61: the SQL predicate's twin -- an empty union turns the label arm OFF
+  // (entry queue only), so one on-hold call never lands in two depts.
+  var labelMatch = isOHA && allLabels.length > 0 && labels.indexOf(fd) !== -1;
   var unmappedLabel = allLabels.length ? allLabels.indexOf(fd) === -1 : true;
   var entryMatch = (!isOHA || unmappedLabel) && qSet[eq] === true;
   return labelMatch || entryMatch;

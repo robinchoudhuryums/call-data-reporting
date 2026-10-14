@@ -1780,8 +1780,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `agentHist:v1`'s embedded latest date; the B1-B5 late-joiner story is in fix-history), ENFORCED (S3):
   cache-version-sync's ANCHOR_SPECS classifies every prefix and fails when
   a tag-anchored file stops calling `reportFreshnessTag_()`. A key that
-  EMBEDS queue data (`summary`, `insights`) also carries
-  `':q' + qcdFreshnessTag_()` (DATA-6). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  EMBEDS queue data (`summary`, `insights`, `companyOverview`,
+  `overviewChartYtd`) also carries `':q' + qcdFreshnessTag_()` (DATA-6, F4). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- keyed on the latest QCD date (`qcdAllFreshnessAnchor_`,
   D-1) and never caching an EMPTY payload, so a pre-ingest request cannot pin

@@ -2545,7 +2545,7 @@
   //     never disagree about what a day means.
 
   var AP_ = { agent: null, idx: 0, from: '', to: '', seq: 0, strip: null,
-              date: null, tab: 'in', days: {}, node: null };
+              date: null, tab: 'in', days: {}, node: null, dept: '' };
 
   function apWindow_() {
     const m = (state && state.meta) || {};
@@ -2625,6 +2625,10 @@
     if (!tr) return;
     const win = apWindow_();
     AP_.agent = agent; AP_.idx = idx; AP_.from = win.from; AP_.to = win.to;
+    // F29: the department whose figures this row shows (a combined view's group,
+    // else the page's dept) -- the server narrows the panel's DQE figures to it
+    // under QUEUE_SPLIT_SCOPE=dept, so the panel agrees with the row.
+    AP_.dept = tr.getAttribute('data-dept') || (typeof getRequestedDept === 'function' ? getRequestedDept() : '') || '';
     AP_.strip = null; AP_.date = null; AP_.tab = 'in'; AP_.days = {};
     const row = document.createElement('tr');
     row.className = 'ap-row';
@@ -2686,7 +2690,7 @@
         apSetHtml_('[data-ap-strip]', '<div class="ds-note">Could not load this agent’s days: '
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
       })
-      .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to });
+      .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to, department: AP_.dept });
   }
 
   // Owner (2026-10): the day's INBOUND answer rate in the box's top-right
@@ -2781,7 +2785,7 @@
         apSetHtml_('[data-ap-day]', '<div class="ds-note">Could not load ' + escapeHtml(date) + ': '
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
       })
-      .getAgentDay({ agentName: AP_.agent, date: date });
+      .getAgentDay({ agentName: AP_.agent, date: date, department: AP_.dept });
   }
 
   function apInboundTableHtml_(rows) {

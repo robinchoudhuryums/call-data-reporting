@@ -3309,7 +3309,10 @@
 
   function subqAgentRowHtml_(row, tallyUnit) {
     var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+    // F29: data-dept = the group this row belongs to, so the inline agent
+    // panel narrows to the same queues the row's figures were narrowed to.
     return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+      + (row.dept ? ' data-dept="' + escapeHtml(row.dept) + '"' : '')
       + (rowClass ? ' class="' + rowClass + '"' : '')
       + ' title="Show ' + escapeHtml(row.agent) + '\u2019s days (the Individual Report is inside)">'
       + COLUMNS.map(function (col, i) {
@@ -3564,6 +3567,7 @@
       // keydown on #agents-tbody activates it); no role override -- see
       // makeActivatable_'s note on preserving table row semantics.
       return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+           + (row.dept ? ' data-dept="' + escapeHtml(row.dept) + '"' : '')   // F29
            + (rowClass ? ' class="' + rowClass + '"' : '')
            + ' title="Show ' + escapeHtml(row.agent) + '’s days (the Individual Report is inside)">'
            + COLUMNS.map(function (col, i) {
@@ -4377,7 +4381,8 @@
           + '<td class="num">' + (o && o.obAttSec ? fmtDuration(o.obAttSec) : zeroCell_('–')) + '</td>'
           + '<td class="num">' + fmtNumber((o && o.attempts) || 0) + '</td>';
       }
-      return '<tr data-agent="' + escapeHtml(e.agent) + '" tabindex="0" title="Show '
+      return '<tr data-agent="' + escapeHtml(e.agent) + '" tabindex="0"'
+        + (e.dept ? ' data-dept="' + escapeHtml(e.dept) + '"' : '') + ' title="Show '
         + escapeHtml(e.agent) + '’s days (the Individual Report is inside)">' + cells + '</tr>';
     };
     var totalRow = function (label, t, inT, cls) {

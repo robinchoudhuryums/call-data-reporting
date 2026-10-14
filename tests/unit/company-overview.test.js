@@ -206,7 +206,7 @@ test('DD-2: ovDeptChartSeries_ rates follow the formula switch; an empty denomin
     h.state.props.ANSWER_RATE_FORMULA = 'answerable';
     h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
     assert.deepEqual(h.call('ovDeptChartSeries_', labels, daily, {}).trend, [75, null]);
-    assert.match(h.call('overviewCacheKey_'), /:rf-answerable:[^:]+$/, 'the blob key carries the formula (then the DATA-1 roster hash)');
+    assert.match(h.call('overviewCacheKey_'), /:rf-answerable:[^:]+:q[^:]+$/, 'the blob key carries the formula (then the DATA-1 roster hash, then the F4 QCD tag)');
   } finally {
     delete h.state.props.ANSWER_RATE_FORMULA;
     h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;

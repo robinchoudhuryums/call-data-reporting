@@ -99,7 +99,7 @@ test('DATA-1: the Overview key moves on ANY dept\'s roster edit (behavioural, th
   ho.ctx.reportFreshnessTag_ = function () { return '2026-10-09'; };   // hold every other dimension still
   ho.ctx.ROSTER_BLOCK_MEMO_ = null;
   const a = ho.call('overviewCacheKey_');
-  assert.match(a, /:[0-9a-f]{32}$/, 'ends in the all-dept roster hash');
+  assert.match(a, /:[0-9a-f]{32}:q[^:]+$/, 'the all-dept roster hash, then (F4) the QCD freshness tag');
   ho.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'], Sales: ['Bob, 102', 'Cat, 103'] }) } });
   ho.ctx.ROSTER_BLOCK_MEMO_ = null;   // per-execution memo: a new request
   assert.notEqual(ho.call('overviewCacheKey_'), a, 'a Sales hire mints a new Overview key');
@@ -132,4 +132,26 @@ test('DATA-6: summary and Insights keys carry the QCD freshness tag; the tag fol
   assert.equal(hu.call('qcdFreshnessTag_'), 'na', 'a failure degrades to the unanchored key, never a throw');
   delete hu.ctx.qcdAllFreshnessAnchor_;
   assert.equal(hu.call('qcdFreshnessTag_'), 'na', 'QCDReport.gs absent (selective load) -> na');
+});
+
+// F4 (broad-scan 2026-10-14): DATA-6 anchored summary + insights and missed
+// the two OVERVIEW keys, whose payloads embed queue data too (the tiles' QCD
+// chips; the YTD abandoned series). A QCD-only landing or force re-import
+// served the old queue figures for the 6 h TTL.
+test('F4: both Overview keys carry the QCD freshness tag, so a QCD landing mints a new key', function () {
+  const ho = loadGas({ files: ['Config.gs', 'Util.gs', 'CompanyOverview.gs'] });
+  ho.ctx.readSourceCacheTag_ = function () { return 'sheet-sheet'; };
+  ho.ctx.reportFreshnessTag_ = function () { return '2026-10-09'; };
+  ho.ctx.rosterAllDeptsHash_ = function () { return 'h1'; };
+  let qcd = '2026-10-08';
+  ho.ctx.qcdFreshnessTag_ = function () { return qcd; };
+  const k1 = ho.call('overviewCacheKey_');
+  qcd = '2026-10-09';
+  const k2 = ho.call('overviewCacheKey_');
+  assert.notEqual(k1, k2, 'the Overview key moves with the latest QCD date alone');
+  assert.match(k2, /:q2026-10-09$/);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..',
+    'apps-script', 'department-dashboard', 'CompanyOverview.gs'), 'utf8');
+  assert.match(src, /const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX[^;]+\+ ':q' \+ \(\(typeof qcdFreshnessTag_ === 'function'\) \? qcdFreshnessTag_\(\) : 'na'\);/,
+    'the YTD chart key carries it too');
 });

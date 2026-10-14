@@ -924,7 +924,12 @@ another's puts someone else's call on this page; without the `first_agent` arm
 every journey-pruned day renders EMPTY instead of as a disclosed subset.
 (2) The day header comes from the **DQE agent-day row via the DAL**, never from
 counting the per-call list -- that is what lets the list be a subset without the
-header lying, and it makes the figures the SAME ones My Department shows.
+header lying, and it makes the figures the SAME ones My Department shows --
+including under `QUEUE_SPLIT_SCOPE=dept`, since F29 narrows the DAL rows to the
+row's dept the way `computeSummary_` does (the client sends the row's
+`data-dept`; the server honours it only for one of the agent's roster homes the
+viewer owns). F33: the DQE read asks for that one agent (and the strip skips
+missed detail), except while narrowing is on, which needs the roster's rows.
 `agentDayReconcile_` states the gap rather than reconciling it away, and never
 claims `exact` on a degraded day even when the numbers coincide.
 
