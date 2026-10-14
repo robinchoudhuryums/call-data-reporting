@@ -8545,6 +8545,56 @@ body[data-theme="care"] .care-rate-bar b { position: absolute; top: -3px; width:
 body[data-theme="care"] .ans-rate.bm-watch { color: var(--stale); }
 body[data-theme="care"] .ans-rate { font-size: 15px; font-weight: 700; }
 
+/* Needs attention strip (care only; careAttentionRender_ in script-3). */
+body[data-theme="care"] #ov-esc-strip { display: none !important; }
+body[data-theme="care"] .care-att { margin: 4px 0 20px; }
+body[data-theme="care"] .care-att-h { margin: 0 0 10px; font-size: 17px; font-weight: 700; }
+body[data-theme="care"] .care-att-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+body[data-theme="care"] .care-att-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; text-align: left;
+  border: 0; border-radius: 16px; background: var(--paper-card); box-shadow: var(--care-shadow); color: var(--ink); font: inherit; }
+body[data-theme="care"] button.care-att-card { cursor: pointer; }
+body[data-theme="care"] button.care-att-card:hover { box-shadow: 0 0 0 2px var(--accent-soft), var(--care-shadow); }
+body[data-theme="care"] button.care-att-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body[data-theme="care"] .care-att-icon { flex: none; width: 36px; height: 36px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; }
+body[data-theme="care"] .care-att--bad   .care-att-icon { background: var(--bad-soft);   color: var(--bad); }
+body[data-theme="care"] .care-att--watch .care-att-icon { background: var(--stale-soft); color: var(--stale); }
+body[data-theme="care"] .care-att--good  .care-att-icon { background: var(--good-soft);  color: var(--good); }
+body[data-theme="care"] .care-att-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+body[data-theme="care"] .care-att-text strong { font-size: 15px; font-weight: 700; }
+body[data-theme="care"] .care-att-text span { font-size: 13px; line-height: 1.45; color: var(--muted); }
+
+/* Team Rings "Check in with" list (care only; careTrpCheckin_ in script-5). */
+body[data-theme="care"] #trp-table-wrap,
+body[data-theme="care"] #trp-legend { display: none !important; }
+body[data-theme="care"] .care-checkin { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+body[data-theme="care"] .care-checkin-h { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+body[data-theme="care"] .care-checkin-table { width: 100%; border-collapse: collapse; }
+body[data-theme="care"] .care-checkin-table td { padding: 9px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+body[data-theme="care"] .care-checkin-table tr:last-child td { border-bottom: 0; }
+body[data-theme="care"] .care-checkin-table tr.trp-row { cursor: pointer; }
+body[data-theme="care"] .care-checkin-table tr.trp-row:hover td { background: var(--paper-2); }
+body[data-theme="care"] .care-checkin-table tr.trp-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+body[data-theme="care"] .care-checkin-name { display: block; font-size: 14px; font-weight: 600; }
+body[data-theme="care"] .care-checkin-sub { display: block; font-size: 12.5px; color: var(--muted); }
+body[data-theme="care"] .care-checkin-rate { text-align: right; white-space: nowrap; }
+body[data-theme="care"] .care-checkin-pct { display: block; font-size: 15px; font-weight: 700; color: var(--bad); }
+body[data-theme="care"] .care-checkin-gap { display: block; font-size: 12px; color: var(--muted); }
+body[data-theme="care"] .care-checkin-none { margin: 0; font-size: 13.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+body[data-theme="care"] .care-checkin-none .ui-icon { color: var(--good); }
+
+/* Queue Call Data list (care only; renderDeptQcdSnapshot_ care branch). */
+body[data-theme="care"] .care-qcd-list { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 4px; }
+body[data-theme="care"] .care-qcd-list th, body[data-theme="care"] .care-qcd-list td { padding: 8px 4px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+body[data-theme="care"] .care-qcd-list thead th { font-size: 12px; font-weight: 600; color: var(--muted); }
+body[data-theme="care"] .care-qcd-list th[scope="row"], body[data-theme="care"] .care-qcd-list thead th:first-child { text-align: left; font-weight: 500; }
+body[data-theme="care"] .care-qcd-q { display: block; overflow-wrap: break-word; }
+body[data-theme="care"] .care-qcd-list td, body[data-theme="care"] .care-qcd-list thead th:not(:first-child) { width: 1%; white-space: nowrap; padding-left: 10px; }
+body[data-theme="care"] .care-qcd-sub { display: block; font-size: 11.5px; color: var(--muted); }
+body[data-theme="care"] .care-qcd-list tr.care-qcd-total th, body[data-theme="care"] .care-qcd-list tr.care-qcd-total td { font-weight: 700; border-bottom: 0; }
+body[data-theme="care"] .care-qcd-list tr.care-qcd-total + tr.care-qcd-total th,
+body[data-theme="care"] .care-qcd-list tr.care-qcd-total + tr.care-qcd-total td { padding-top: 2px; }
+body[data-theme="care"] .care-qcd-list .dept-qcd-warn { color: var(--bad); font-weight: 700; }
+
 /* Dark mode: care keeps its teal accent (lightened for AA on the dark paper) */
 body[data-theme="care"][data-mode="dark"] {
   --accent: #4fc3ad;

@@ -1003,6 +1003,128 @@
       + '</div>';
   }
 
+  // ---- Calm Care preview: the Needs attention strip --------------------
+  // CARE THEME ONLY. One row of cards above the company snapshot that
+  // gathers what used to be four separate signals: escalations (the
+  // ov-esc-strip banner, hidden in care), departments below their own goal,
+  // queue violations this month, and departments whose agent data went dark.
+  // Scope matches the escalation banner (R24): admins / all-department
+  // managers see every department, a manager sees their own, and View-as
+  // narrows to the previewed department. Re-rendered from the tile render
+  // and from every escalation-badge update; reads no new data.
+  function careAttentionScope_() {
+    var depts = (ovLastData && ovLastData.depts) || [];
+    if (viewAsDept_) return depts.filter(function (d) { return d.name === viewAsDept_ || d.parent === viewAsDept_; });
+    if (isAllDeptViewer_()) return depts;
+    var mine = (USER.departments && USER.departments.length) ? USER.departments : [USER.department];
+    return depts.filter(function (d) { return mine.indexOf(d.name) >= 0; });
+  }
+  function careAttentionCard_(tone, icon, title, sub, act, depts) {
+    var attrs = act ? ' data-act="' + act + '"' + (depts ? ' data-depts="' + escapeHtml(depts.join('|')) + '"' : '') : '';
+    var tag = act ? 'button type="button"' : 'div';
+    var end = act ? 'button' : 'div';
+    return '<' + tag + ' class="care-att-card care-att--' + tone + '"' + attrs + '>'
+      + '<span class="care-att-icon" aria-hidden="true">' + uiIcon_(icon) + '</span>'
+      + '<span class="care-att-text"><strong>' + title + '</strong><span>' + sub + '</span></span>'
+      + '</' + end + '>';
+  }
+  function careAttentionRender_() {
+    var host = $('care-attention');
+    if (!careOn_()) { if (host && host.parentNode) host.parentNode.removeChild(host); return; }
+    if (!ovLastData) return;
+    if (!host) {
+      var anchor = $('ov-esc-strip');
+      if (!anchor || !anchor.parentNode) return;
+      host = document.createElement('section');
+      host.id = 'care-attention';
+      host.className = 'care-att';
+      host.setAttribute('aria-labelledby', 'care-att-h');
+      anchor.parentNode.insertBefore(host, anchor);
+      host.addEventListener('click', careAttentionClick_);
+    }
+    var cards = [];
+    // 1. Escalations -- same numbers and scoping as the banner it replaces.
+    var b = escBadgeLast_;
+    if (b) {
+      var open = b.open, over = b.overdue, review = b.review;
+      if (viewAsDept_) {
+        var bd = (b.byDept || []).filter(function (d) { return d.dept === viewAsDept_; });
+        open = bd.reduce(function (n, d) { return n + (Number(d.open) || 0); }, 0);
+        over = bd.reduce(function (n, d) { return n + (Number(d.overdue) || 0); }, 0);
+        review = 0;
+      }
+      if (over > 0) {
+        cards.push(careAttentionCard_('bad', 'flag', over + (over === 1 ? ' escalation is' : ' escalations are') + ' overdue',
+          open + ' open' + (review ? ' · ' + review + ' awaiting review' : ''), 'esc'));
+      } else if (open > 0 || review > 0) {
+        cards.push(careAttentionCard_('watch', 'flag', open + ' open escalation' + (open === 1 ? '' : 's'),
+          review ? review + ' awaiting your review' : 'None overdue', 'esc'));
+      }
+    }
+    var scope = careAttentionScope_();
+    // 2. Below goal in the selected window (the cards' own status rule).
+    var below = scope.filter(function (d) { return ovCareStatus_(d, ovPeriodStats_(d)).key === 'bad'; });
+    if (below.length) {
+      var d0 = below[0], s0 = ovCareStatus_(d0, ovPeriodStats_(d0));
+      cards.push(careAttentionCard_('bad', 'chart',
+        below.length === 1 ? escapeHtml(d0.name) + ' is below goal' : below.length + ' departments are below goal',
+        below.length === 1
+          ? escapeHtml(ovPeriodStats_(d0).pctFormatted) + ' ' + escapeHtml(ovPeriodCap_()) + ', goal ' + s0.std.target + '%'
+          : escapeHtml(below.map(function (d) { return d.name; }).join(', ')) + ' · shown on the chart',
+        'pin', below.map(function (d) { return d.name; })));
+    }
+    // 3. Queue violations month to date.
+    var viol = scope.filter(function (d) { return d.qcd && (Number(d.qcd.violationsMtd) || 0) > 0; });
+    if (viol.length) {
+      var v0 = viol[0], n0 = Number(v0.qcd.violationsMtd) || 0;
+      cards.push(careAttentionCard_('watch', 'warning',
+        viol.length === 1 ? escapeHtml(v0.name) + ' has ' + n0 + ' queue violation' + (n0 === 1 ? '' : 's')
+                          : viol.length + ' departments have queue violations',
+        viol.length === 1 ? 'This month · abandoned 4% or more on a day'
+                          : escapeHtml(viol.map(function (d) { return d.name + ' (' + d.qcd.violationsMtd + ')'; }).join(', ')),
+        'dept', viol.map(function (d) { return d.name; })));
+    }
+    // 4. Agent data dark while the queue keeps taking calls.
+    scope.filter(function (d) { return !!d.dqeSilence; }).forEach(function (d) {
+      var ds = d.dqeSilence;
+      cards.push(careAttentionCard_('watch', 'warning', escapeHtml(d.name) + ' has no agent data',
+        ds.days + ' days dark while its queue took ' + fmtNumber(ds.qcdCalls) + ' calls',
+        USER.role === 'admin' && !viewAsDept_ ? 'health' : null));
+    });
+    if (!cards.length) {
+      cards.push(careAttentionCard_('good', 'check-circle', 'Nothing needs attention',
+        'Every department is at or near its goal and no escalations are open.', null));
+    }
+    host.innerHTML = '<h2 class="care-att-h" id="care-att-h">Needs attention</h2>'
+      + '<div class="care-att-grid">' + cards.join('') + '</div>';
+  }
+  // A theme switch from Settings re-renders the cards (care <-> shipped tile)
+  // and adds/removes the strip without waiting for the next refresh.
+  window.addEventListener('dash-mode-change', function () {
+    if (ovLastData) { try { ovRenderTiles_(ovLastData); } catch (e) { /* best-effort */ } }
+  });
+  function careAttentionClick_(e) {
+    var card = e.target.closest('.care-att-card[data-act]');
+    if (!card) return;
+    var act = card.getAttribute('data-act');
+    var depts = (card.getAttribute('data-depts') || '').split('|').filter(Boolean);
+    if (act === 'esc') { setPage('escalations'); return; }
+    if (act === 'health') { var hb = $('system-health-btn'); if (hb) hb.click(); return; }
+    if (act === 'pin' && ovChartInstance) {
+      // Light the departments on the trend chart (solo the first, add the rest)
+      // and bring the chart into view.
+      depts.forEach(function (name, i) { chartSpotlightTogglePin_(ovChartInstance, name, i > 0); });
+      var wrap = $('ov-chart-wrap') || $('ov-trend-chart');
+      if (wrap) scrollFullyIntoView_(wrap);
+      return;
+    }
+    if (act === 'dept' && depts.length) {
+      // Open the department on its Insights tab (queue health lives there).
+      if (canPickDept_()) ovRouteToDept_(depts[0]); else setPage('dept');
+      if (typeof careSelectTab_ === 'function') careSelectTab_('insights');
+    }
+  }
+
   // ---- Calm Care preview: the department card -------------------------
   // CARE THEME ONLY (ovBuildGridTile_ hands off here). One question per card:
   // how did this department answer against ITS OWN goal (answerStdFor_, so
@@ -1329,6 +1451,7 @@
     // tile lost its `.ov-tile-soloed` until the next chart click. Re-sync from
     // the chart's pin set on every render.
     if (ovChartInstance) ovSyncTilePins_(ovChartInstance);
+    careAttentionRender_();   // Calm Care: Needs attention follows the cards' window
 
     // Sub-queue mini-card strip: the strip button expands/collapses the
     // card's detail IN PLACE with a smooth height transition (the strip
@@ -1850,18 +1973,30 @@
     const chartDepts = (view.depts || []).filter(function (d) {
       return ovShowSubQueues_ || !d.parent;
     });
+    // Calm Care: only the company line and the viewer's / selected department
+    // (with its sub-queues) draw in colour; every other department RESTS as a
+    // faint grey line and lights up in its own colour on hover or pin. The
+    // resting style is just a different _origBorder/_origWidth, and _hiBorder
+    // carries the real hue for the spotlight helpers, so solo, compare,
+    // Alt-hide and the tile hover all work unchanged.
+    const careFocus = careOn_() ? ovViewerDept_(data) : null;
     const datasets = chartDepts.map(function (dept) {
       const color = colorByDept[dept.name];
       const isChild = !!dept.parent;
+      const careRest = careOn_() && dept.name !== careFocus && dept.parent !== careFocus;
+      const restColor = careRest ? OV_CARE_REST_COLOR_ : color;
+      const restWidth = careRest ? 1.3 : (isChild ? 1.4 : 2.2);
       return {
         label: dept.name + (isChild ? ' (sub-queue)' : ''),
         data: (dept[mcfg.field] || []),
-        borderColor: color,
+        borderColor: restColor,
         // Stash the resting style so the legend hover-dim can restore it
         // (see chartSpotlight* helpers). _deptName lets the tile-hover and
         // point-click handlers map a dept back to its dataset index.
-        _origBorder: color,
-        _origWidth: isChild ? 1.4 : 2.2,
+        _origBorder: restColor,
+        _hiBorder: color,
+        _careRest: careRest,
+        _origWidth: restWidth,
         _deptName: dept.name,
         // No fill on the overlaid multi-dept chart -- 10+ stacked
         // gradients muddle the view. The soft-area treatment (25%
@@ -1872,7 +2007,7 @@
         backgroundColor: 'rgba(0,0,0,0)',
         fill: false,
         tension: 0.4,
-        borderWidth: isChild ? 1.4 : 2.2,
+        borderWidth: restWidth,
         borderDash: isChild ? [4, 3] : [],
         pointRadius: 0,
         pointHoverRadius: 4,
@@ -2142,6 +2277,7 @@
   // stashed via chartSpotlightStash_ first. A `skipLabel` dataset (e.g. a
   // reference baseline / dept-total line) is never dimmed.
   const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
+  const OV_CARE_REST_COLOR_ = 'rgba(120,136,140,0.42)';   // Calm Care's resting dept line
 
   // Stable key for a dataset in the spotlight model: the Overview dept name
   // when present (survives re-render), else the series label (e.g. QCD queues).
@@ -2244,8 +2380,8 @@
     chart.data.datasets.forEach(function (ds, i) {
       if (chartSpotSkipped_(chart, ds)) return;
       if (i === activeIndex) {
-        ds.borderColor = ds._origBorder;
-        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+        ds.borderColor = ds._hiBorder || ds._origBorder;
+        ds.borderWidth = (ds._careRest ? 2.2 : (ds._origWidth || 2)) + 0.8;
       } else {
         ds.borderColor = CHART_DIM_COLOR;
         ds.borderWidth = ds._origWidth || 1.4;
@@ -2286,8 +2422,8 @@
       if (chartSpotSkipped_(chart, ds)) return;
       const k = chartSpotKey_(ds);
       if (k && pins[k]) {
-        ds.borderColor = ds._origBorder;
-        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+        ds.borderColor = ds._hiBorder || ds._origBorder;
+        ds.borderWidth = (ds._careRest ? 2.2 : (ds._origWidth || 2)) + 0.8;
       } else {
         ds.borderColor = CHART_DIM_COLOR;
         ds.borderWidth = ds._origWidth || 1.4;

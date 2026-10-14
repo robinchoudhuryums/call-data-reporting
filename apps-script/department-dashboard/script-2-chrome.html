@@ -909,6 +909,7 @@
     // lives in script-3-overview (function hoisting spans fragments).
     escBadgeLast_ = { open: open, review: review, overdue: over, byDept: byDept };
     try { ovAggEscRender_(); } catch (e) { /* card not rendered yet */ }
+    try { careAttentionRender_(); } catch (e) { /* Overview not rendered yet */ }
 
     var tab = $('escalations-btn');
     if (tab) {

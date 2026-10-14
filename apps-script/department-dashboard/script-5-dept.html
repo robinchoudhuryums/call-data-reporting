@@ -1241,7 +1241,10 @@
         + ((state.meta && state.meta.priorTo) || '') + ': ' + pRate + '%';
       chip = deptStripDelta_(pct - pRate, 'good', 1, ' pts', tip);
     }
-    const pctCls = rings ? (pct >= answerTarget_('global') ? ' bm-target' : ' bm-over') : '';
+    // R23: judged against THIS department's own standard (three-tier, like the
+    // agent table and the team strip) -- the global target here let CSR's 91%
+    // read green against 80 while every other CSR surface read it against 92.
+    const pctCls = rings ? benchValueCls_('% answered', pct + '%', true, null, getRequestedDept()) : '';
     let tiles =
         '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">% Ans (rings)</span>'
       +   (chip || '') + '</div>'
@@ -1288,6 +1291,7 @@
     }
     const tbody = $('trp-tbody');
     if (tbody) tbody.innerHTML = body;
+    careTrpCheckin_(panel, rows, state);   // Calm Care: the ring table becomes a short list
     const legEl = $('trp-legend');
     if (legEl) {
       legEl.innerHTML = unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls' : '';
@@ -1318,6 +1322,52 @@
         if (tr) { e.preventDefault(); jump(tr); }
       });
     }
+  }
+
+  // Calm Care preview: "Check in with". The ring table repeats the agent
+  // table beside it, so in the care theme the panel keeps its period switch
+  // and two tiles but lists only the agents furthest below their
+  // department's goal (at least CARE_CHECKIN_MIN_RINGS_ rings, so one missed
+  // call on a two-ring day is not a coaching topic), worst first, at most
+  // three. Rows reuse the panel's tr.trp-row / data-trp-agent wiring, so a
+  // click still jumps to the agent's full row. Other themes: no-op.
+  var CARE_CHECKIN_MIN_RINGS_ = 5;
+  function careTrpCheckin_(panel, rows, state) {
+    var host = $('care-trp-checkin');
+    if (!careOn_()) { if (host && host.parentNode) host.parentNode.removeChild(host); return; }
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'care-trp-checkin';
+      host.className = 'care-checkin';
+      var wrap = $('trp-table-wrap');
+      if (!wrap || !wrap.parentNode) return;
+      wrap.parentNode.insertBefore(host, wrap);
+    }
+    var deptNow = getRequestedDept();
+    var list = rows.map(function (r) {
+      var a = Number(r.totalAnswered) || 0, m = Number(r.totalMissed) || 0, t = a + m;
+      var goal = answerStdFor_(r.dept || deptNow).target;
+      var rate = t ? Math.round(a / t * 100) : null;
+      return { r: r, a: a, m: m, t: t, rate: rate, goal: goal, gap: rate == null ? 0 : goal - rate };
+    }).filter(function (x) { return x.t >= CARE_CHECKIN_MIN_RINGS_ && x.gap > 0; })
+      .sort(function (x, y) { return y.gap - x.gap || y.m - x.m; })
+      .slice(0, 3);
+    var html = '<div class="care-checkin-h">Check in with</div>';
+    if (!list.length) {
+      html += '<p class="care-checkin-none">' + uiIcon_('check-circle') + ' Everyone with ' + CARE_CHECKIN_MIN_RINGS_
+        + '+ rings is at or above goal.</p>';
+    } else {
+      html += '<table class="care-checkin-table"><tbody>' + list.map(function (x) {
+        var name = String(x.r.agent || '');
+        return '<tr class="trp-row" tabindex="0" data-trp-agent="' + escapeHtml(name) + '" aria-describedby="trp-row-action-desc">'
+          + '<td><span class="care-checkin-name">' + escapeHtml(name) + '</span>'
+          +   '<span class="care-checkin-sub">' + x.m + ' missed of ' + x.t + ' rings</span></td>'
+          + '<td class="care-checkin-rate"><span class="care-checkin-pct">' + x.rate + '%</span>'
+          +   '<span class="care-checkin-gap">' + x.gap + ' pts below goal</span></td>'
+          + '</tr>';
+      }).join('') + '</tbody></table>';
+    }
+    host.innerHTML = html;
   }
 
   function setStatus(kind, msg) {
@@ -2573,6 +2623,34 @@
     // "All queues" total page -- instead of stacking every queue vertically.
     // Single-queue depts keep the flat tile row (no redundant total).
     const perQueue = block.perQueue || [];
+    // Calm Care: every queue on screen at once -- a compact list (calls,
+    // abandoned %, violations per queue, then the same gated totals the
+    // carousel pages carry) instead of one page at a time behind dots.
+    if (perQueue.length > 1 && careOn_()) {
+      const cRow = function (name, q, cls) {
+        const abdBad = (Number(q.abandonedPct) || 0) >= ABANDON_STANDARD_;
+        const v = Number(q.violations) || 0;
+        return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><th scope="row">' + name + '</th>'
+          + '<td>' + escapeHtml(fmtNumber(q.totalCalls || 0)) + '</td>'
+          + '<td' + (abdBad ? ' class="dept-qcd-warn"' : '') + '>' + escapeHtml(String(q.abandonedPctStr || '0.00%')) + '</td>'
+          + '<td' + (v > 0 ? ' class="dept-qcd-warn"' : '') + '>' + escapeHtml(fmtNumber(v)) + '</td></tr>';
+      };
+      const hasSubQ = (block.subQueueCount || 0) > 0;
+      let rowsHtml = perQueue.map(function (q) {
+        const tag = q.subDept ? '<span class="care-qcd-sub">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
+        // Readable name ("A_Q_CustomerSuccess" -> "Customer Success"); the raw
+        // phone-system name stays in the tooltip for anyone matching it up.
+        const nice = String(q.queue || '').replace(/^A_Q_/, '').replace(/_/g, ' ')
+          .replace(/([a-z])([A-Z])/g, '$1 $2').trim() || String(q.queue || '');
+        return cRow('<span class="care-qcd-q" title="' + escapeHtml(q.queue) + '">' + escapeHtml(nice) + '</span>' + tag, q);
+      }).join('');
+      rowsHtml += cRow(hasSubQ ? 'Main queues' : 'Department total', block, 'care-qcd-total');
+      if (hasSubQ && block.allTotals) rowsHtml += cRow('All queues', block.allTotals, 'care-qcd-total');
+      tiles.innerHTML = '<table class="care-qcd-list"><thead><tr><th scope="col">Queue</th><th scope="col">Calls</th>'
+        + '<th scope="col">Abandoned</th><th scope="col">Violations</th></tr></thead><tbody>' + rowsHtml + '</tbody></table>';
+      wrap.style.display = '';
+      return;
+    }
     if (perQueue.length > 1) {
       const pages = perQueue.map(function (q) {
         const tag = q.subDept
