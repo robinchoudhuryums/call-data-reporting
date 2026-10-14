@@ -1572,7 +1572,10 @@ behind the removed button.
   fold, and since R17e **Team detail (the heatmap + call-share row) is in the
   store too** (`data-fold="detail"`, no `.ins-fold` class — `insFoldsApply_`
   matches on the bare attribute) — it used to keep bare element state, closed
-  and forgotten. Open state persists per
+  and forgotten. **Since UX-2 the Agents section is a fold too**
+  (`data-fold="agents"`, open by default for everyone, and first in the
+  report); every fold head is filled by `insSyncFoldHeads_`, Queue health's
+  still through `insQhFoldSync_`. Open state persists per
   user per section (`cdr.ins.folds.v1:<email>`); role seeds the qh/trend
   defaults (admins open, managers collapsed), **`detail` defaults OPEN for
   everyone** (owner R17e; absent in a pre-R17e blob ⇒ treated as open), and
