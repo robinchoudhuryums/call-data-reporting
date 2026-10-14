@@ -1,12 +1,12 @@
 # Cycle State — resume note
 
 ## Current
-Cycle: 258
-Phase: idle
+Cycle: 259
+Phase: audit
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-13
+Updated: 2026-10-14
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
