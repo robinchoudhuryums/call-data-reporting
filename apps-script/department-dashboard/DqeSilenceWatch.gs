@@ -275,7 +275,22 @@ function dqeSilenceReadDay_(dateIso) {
   } catch (e) { return { inconclusive: true, reason: 'DQE read failed: ' + (e && e.message ? e.message : e) }; }
   if (!rows) return { inconclusive: true, reason: 'DQE read returned nothing' };
   var dqeAgents = {};
-  rows.forEach(function (row) { if (row && row.agent) dqeAgents[row.agent] = true; });
+  var agentCount = 0;
+  rows.forEach(function (row) {
+    if (!row || !row.agent || dqeAgents[row.agent]) return;
+    dqeAgents[row.agent] = true;
+    if (!/^(A_Q_[\w&]+|Backup CSR)$/.test(String(row.agent))) agentCount++;   // INV-23 sentinels are not agents
+  });
+  // F18 (broad-scan 2026-10-14): ZERO agent rows for the whole day is a DQE
+  // build that has not landed (or failed, or a reachable-but-empty Neon read,
+  // LM2) -- not a per-dept silence. Read as data it marked EVERY mapped dept
+  // with queue volume "dark", and two such days emailed admins that the whole
+  // company went silent, diagnosed as a caller-ID label change. Operator
+  // State #44: an unreadable source is INCONCLUSIVE, never a false alarm.
+  if (!agentCount) {
+    return { inconclusive: true, reason: 'no DQE agent rows at all for ' + dateIso
+      + ' -- the DQE build has not landed (or failed); a whole-day absence is not a per-dept silence' };
+  }
 
   var perDept = [];
   getAllDepartments_().forEach(function (dept) {

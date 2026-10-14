@@ -669,6 +669,24 @@ test('vetting: zero abandons is INCONCLUSIVE (the Batch-6 gate contract) — par
   assert.ok(!/^ok/.test(out.result));
 });
 
+// F43 (broad-scan 2026-10-14): Leg B certifies the callback join only
+// through a called-back pair. With none -- a quiet window, or a hash-format
+// drift that makes the join match nothing -- every not-called-back re-check
+// passes the same equality, and the old verdict green-lit the 6c release of a
+// report that would show a 0% callback rate.
+test('F43: zero called-back pairs is INCONCLUSIVE, never ok -- the join was never verified', function () {
+  const noPairs = JSON.stringify([
+    { a_id: 'ab2', a_date: '2026-08-18', a_start: '09:00:00', o_id: null, o_date: null, o_start: null },
+    { a_id: 'ab3', a_date: '2026-08-17', a_start: '10:00:00', o_id: null, o_date: null, o_start: null },
+  ]);
+  installVetStubs_(25, 25, makeVetConn_(noPairs));
+  const out = JSON.parse(JSON.stringify(h.call('runOutboundVettingCheck')));
+  assert.match(out.result, /^INCONCLUSIVE \(0 called-back pairs among the 2 most recent abandons/);
+  assert.match(out.result, /HMAC_SECRET/);
+  assert.equal(out.sampledCalledBack, 0);
+  assert.equal(h.state.props.OUTBOUND_VETTING_FROM, '2026-08-06', 'INCONCLUSIVE keeps the window for the re-run');
+});
+
 test('vetting: a failed sample re-verification is a MISMATCH naming the call', function () {
   const conn = makeVetConn_(VET_PAIRS_, { pairVerifyCount: 0 });   // pair no longer verifies
   installVetStubs_(25, 25, conn);

@@ -215,3 +215,37 @@ test('B2/ENG-2: once the dept recovers the outcome returns to ok', function () {
     [{ dept: 'Field Ops Power', qcdCalls: 20, dqeRows: 14 }]);
   assert.match(r, /^ok 2026-09-02 \(1 depts checked\)$/);
 });
+
+// F18 (broad-scan 2026-10-14): a day whose DQE build has not landed (or a
+// reachable-but-empty Neon read) has queue volume and ZERO agent rows -- read
+// as data it marked EVERY mapped dept dark. It is INCONCLUSIVE.
+test('F18: zero agent rows for the whole day is INCONCLUSIVE, not every dept silent', function () {
+  // A fresh load: earlier tests DELETE dqeSilenceReadDay_ from `h`'s context.
+  const f = loadGas({ files: ['Config.gs', 'Util.gs', 'DqeSilenceWatch.gs'], capture: ['QCD_HISTORICAL_COLS'] });
+  const QC = f.consts.QCD_HISTORICAL_COLS;
+  const qrow = function (queue, calls) {
+    const r = [];
+    r[QC.DATE - 1] = '2026-09-02'; r[QC.CALL_QUEUE - 1] = queue;
+    r[QC.CALL_SOURCE - 1] = 'Total Calls'; r[QC.TOTAL_CALLS - 1] = calls;
+    return r;
+  };
+  const stub = function (k, v) { f.ctx[k] = v; };
+  let dqe = [];
+  stub('readQcdGrid_', function () { return { values: [qrow('A_Q_CSR', 40), qrow('A_Q_Sales', 30)] }; });
+  stub('rowDateIso_', function (v) { return String(v); });
+  stub('getDqeReadSource_', function () { return 'sheet'; });
+  stub('sheetFetchDqeRows_', function () { return dqe; });
+  stub('getAllDepartments_', function () { return ['CSR', 'Sales']; });
+  stub('getDeptQcdQueues_', function (d) { return d === 'CSR' ? ['A_Q_CSR'] : ['A_Q_Sales']; });
+  stub('getRosterForDepartment_', function (d) { return { names: d === 'CSR' ? ['Ann'] : ['Bo'] }; });
+  // Only a queue SENTINEL row (INV-23) -- still no agent data for the day.
+  dqe = [{ agent: 'A_Q_CSR' }];
+  const none = f.call('dqeSilenceReadDay_', '2026-09-02');
+  assert.equal(none.inconclusive, true);
+  assert.match(none.reason, /no DQE agent rows at all for 2026-09-02/);
+  // One agent present: a real per-dept read -- Sales is genuinely dark.
+  dqe = [{ agent: 'Ann' }, { agent: 'A_Q_CSR' }];
+  const real = JSON.parse(JSON.stringify(f.call('dqeSilenceReadDay_', '2026-09-02')));
+  assert.equal(real.inconclusive, undefined);
+  assert.deepEqual(real.perDept, [{ dept: 'CSR', qcdCalls: 40, dqeRows: 1 }, { dept: 'Sales', qcdCalls: 30, dqeRows: 0 }]);
+});

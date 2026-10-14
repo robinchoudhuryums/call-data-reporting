@@ -1690,11 +1690,12 @@ test('EN-1: a trigger recorded as installed by ANOTHER account is named, not rep
   assert.match(rowByKey(out, 'trg-dqesilence').value, /NO trigger installed/);
 });
 
-test('EN-1: the four editor-run installers record (and clear) who installed them', function () {
+test('EN-1: the five editor-run installers record (and clear) who installed them', function () {
   const fs = require('fs'), path = require('path');
   const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
   [['PipelineWatch.gs', 'runPipelineWatch_'], ['DqeSilenceWatch.gs', 'runDqeSilenceWatch_'],
-   ['SheetCoverage.gs', 'runSheetCoverageWeekly_'], ['NeonRetention.gs', 'runNeonRetentionWeekly_']].forEach(function (x) {
+   ['SheetCoverage.gs', 'runSheetCoverageWeekly_'], ['NeonRetention.gs', 'runNeonRetentionWeekly_'],
+   ['IngestWatchdog.gs', 'runIngestWatchdog_']].forEach(function (x) {   // F17: EN-1 missed this one
     const src = fs.readFileSync(path.join(dash, x[0]), 'utf8');
     assert.ok(src.indexOf("recordTriggerInstaller_('" + x[1] + "', true)") !== -1, x[0] + ' install records');
     assert.ok(src.indexOf("recordTriggerInstaller_('" + x[1] + "', false)") !== -1, x[0] + ' uninstall clears');

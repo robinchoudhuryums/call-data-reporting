@@ -2387,6 +2387,22 @@ function runOutboundVettingCheck() {
         parityAbandoned: obAbandoned, failures: failures,
       });
     }
+    // F43 (broad-scan 2026-10-14): Leg B certifies the callback JOIN only
+    // through a called-back pair. With none sampled -- a quiet window, or a
+    // caller_hash / callee_hash format drift that makes the join match
+    // NOTHING -- every not-called-back re-check runs the same equality and
+    // passes, and the old verdict said "release is a one-line gate removal"
+    // for a report that would show a 0% callback rate. Parity over nothing
+    // certifies nothing (the Batch-6 contract above).
+    if (!calledBack.length) {
+      return logStatusReturn_({
+        result: 'INCONCLUSIVE (0 called-back pairs among the ' + rows.length + ' most recent abandons, so the '
+          + 'callback join was never verified — widen OUTBOUND_VETTING_FROM/_TO; if a wide window still finds none, '
+          + 'check that HMAC_SECRET matches across cdr-import and the dashboard, Operator State #17; never un-gate on this) '
+          + label,
+        parityAbandoned: obAbandoned, sampledCalledBack: 0, sampledUncalled: uncalled.length,
+      });
+    }
     // Self-cleaning tool params: only the PASS verdict clears them —
     // MISMATCH / INCONCLUSIVE / FAILED keep the window for the re-run
     // (the OPS-8 gate contract forbids un-gating on those anyway).

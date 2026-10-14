@@ -412,3 +412,37 @@ test('BU-3: a run cut at its budget records PARTIAL, writes the NEWEST months fi
     assert.ok(files['inbound_calls-2026-05.jsonl'], 'the resumed run reached the oldest month');
   } finally { h.ctx.NB_RUN_BUDGET_MS_ = realBudget; }
 });
+
+// F15 (broad-scan 2026-10-14): a Sheets store that holds the history used to
+// lose it silently the first run Drive worked -- nbStore_ tried Drive first,
+// created a fresh EMPTY folder and switched to it (`ok | store drive`), and a
+// restore read only that new folder.
+test('F15: once the Sheets workbook holds the history, a working Drive never starts a new empty store', function () {
+  installSheets();
+  inbound = days('2026-09-01', '2026-09-25');
+  assert.match(runAt('2026-09-26'), /^ok \| store sheets \(Drive unavailable/);   // the first run lands in Sheets
+  // Drive starts working (the owner consented to the scope).
+  let created = 0;
+  h.ctx.DriveApp = { getFolderById: function () { return folder; }, createFolder: function () { created++; return folder; } };
+  const r = runAt('2026-10-03');
+  assert.match(r, /^ok \| store sheets \|/, 'still the Sheets store');
+  assert.equal(created, 0, 'no new Drive folder');
+  assert.ok(!h.state.props.NEON_BACKUP_FOLDER_ID, 'the store was not repointed');
+  // A deliberate move is still one property.
+  h.state.props.NEON_BACKUP_STORE = 'drive';
+  assert.match(runAt('2026-10-10'), /^ok \| store drive/);
+  assert.equal(created, 1);
+});
+
+test('F15: a restore never CREATES a store -- with none set it refuses instead of repointing the backup', function () {
+  install();
+  h.state.props = { NEON_RESTORE_FILE: 'inbound_calls-2026-09' };
+  let created = 0;
+  h.ctx.DriveApp = { getFolderById: function () { return folder; }, createFolder: function () { created++; return folder; } };
+  h.ctx.assertAdmin_ = function () {};
+  const books = h.state.createdSpreadsheets.length;
+  assert.throws(function () { h.call('restoreNeonBackupFile'); }, /no backup store exists yet \(NEON_BACKUP_FOLDER_ID is unset\)/);
+  assert.equal(created, 0);
+  assert.equal(h.state.createdSpreadsheets.length, books, 'no workbook either');
+  assert.ok(!h.state.props.NEON_BACKUP_FOLDER_ID);
+});

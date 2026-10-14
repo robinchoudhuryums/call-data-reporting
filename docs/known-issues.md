@@ -948,11 +948,19 @@ non-null EMPTY grid for an empty range, and the in-source default range is a
 hardcoded week that ages out of the data -- so an operator running the gate
 without setting `QCD_PARITY_FROM`/`_TO` was the likely first victim.
 
-The rule, now applied to all five gates: **a verdict must count what it
-compared, and an empty comparison is INCONCLUSIVE, never CLEAN.** Each gate
-returns a structured `{from, to, clean, compared, ...}` from every exit, and
-the operator contract (Operator State #19) is `clean:true` AND `compared > 0`
--- an `error` or `compared: 0` is a STOP.
+The rule: **a verdict must count what it compared, and an empty comparison
+is INCONCLUSIVE, never CLEAN** -- for the two READ-SOURCE gates. Each returns
+a structured `{from, to, clean, compared, ...}` from every exit, and the
+operator contract (Operator State #19) is `clean:true` AND `compared > 0` --
+an `error` or `compared: 0` is a STOP. **The three CONFIG gates differ on
+purpose** (F42, 2026-10-14; `configSourceCompare_`, Util.gs): they return
+`compared` and `duplicates` too, but a REACHABLE empty-vs-empty pair stays
+clean, because both stores then serve the same seed constants and the flip
+changes nothing (pinned in `dept-config-neon.test.js`). What F42 closed there
+is the duplicate hole: the gates kept the LAST row of a duplicated key while
+the live readers serve the FIRST, so two sheet rows for one dept compared
+last-vs-last and printed PARITY CLEAN; a key repeated on either side now
+fails the gate by name (`config-neon-c3.test.js`, `dept-config-neon.test.js`).
 
 Note `compareDqeSources_` was NOT broken, but only incidentally: its
 `extraInNeon` check catches a sheet-empty range because every Neon row reads

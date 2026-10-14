@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-14 -- Broad scan cycle 259 Batch 2 IMPLEMENTED (block 259): false-clean gates + backup.** F42 config compare gates fail a duplicated key + report `compared`; F43 outbound vetting INCONCLUSIVE with 0 called-back pairs; F15 the backup keeps its Sheets store (NEON_BACKUP_STORE=drive to move), restore never creates one; F18 DQE-silence INCONCLUSIVE on a zero-agent day; F19 Alerts EMPTY over assessed depts; F46 audit verdict names double-claimed queues; F17 ingest watchdog records its installer. 2443 tests, 9/9 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 3 (escalations + access: F44 first -- run `SHOW TimeZone` on Neon), then Batches 4-10 per the list in the cycle-259 entry below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- Broad scan cycle 259 (64 findings F1-F64, G1-G5, ST1-ST5) + Batch 1 IMPLEMENTED (block 259).**
   - Batch 1 (pipeline loss + silent green): F7 the catch-up also rebuilds Direct + re-mirrors CDR/QCD/DQE (deferred: queues) for an already-imported date; F8 hashless per-call writes fail every backfill-driven path; F9 the retention prune keeps tabs whose capture is still owed; F10 COALESCE comment/doc truth.
   - Verification: 2434 tests (+11), 8/8 bites, INV-16 + module-deps + lint:gas clean.

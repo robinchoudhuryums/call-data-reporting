@@ -1193,12 +1193,12 @@ function backfillDigestConfigToNeon() {
 
 function compareDigestConfigSources() {
   assertAdmin_();
+  // F42: an ORDERED [key, fingerprint] list -- the old key->value map kept the
+  // LAST row of a duplicated key while the live run loop honours the first.
   const norm = function (rows) {
-    const m = {};
-    rows.forEach(function (e) {
-      m[e.email.toLowerCase() + '|' + e.department] = JSON.stringify([e.cadence, e.active, e.notes, e.format]);
+    return rows.map(function (e) {
+      return [e.email.toLowerCase() + '|' + e.department, JSON.stringify([e.cadence, e.active, e.notes, e.format])];
     });
-    return m;
   };
   // Read each source DIRECTLY -- never through the flag-aware reader, and
   // never by flipping the live CONFIG_SOURCE property (F-5). The old
@@ -1213,18 +1213,11 @@ function compareDigestConfigSources() {
   if (neonRaw === null) {
     Logger.log('compareDigestConfigSources: NEON UNREACHABLE -- no comparison performed. '
       + 'Do NOT flip CONFIG_SOURCE on this result.');
-    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
-             missingInNeon: [], missingInSheet: [], mismatched: [] };
+    return { clean: false, compared: 0, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [], duplicates: [] };
   }
   const neonRows = parseDigestConfigValues_(neonRaw);
-  const s = norm(sheetRows), nn = norm(neonRows);
-  const missingInNeon = [], missingInSheet = [], mismatched = [];
-  Object.keys(s).forEach(function (k) { if (!(k in nn)) missingInNeon.push(k); else if (s[k] !== nn[k]) mismatched.push(k); });
-  Object.keys(nn).forEach(function (k) { if (!(k in s)) missingInSheet.push(k); });
-  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
-  Logger.log('compareDigestConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
-    clean ? 'PARITY CLEAN' : 'DIFFERENCES', JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
-  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
+  return configSourceCompare_('compareDigestConfigSources', norm(sheetRows), norm(neonRows));
 }
 
 // -- C3 Digest Config WRITE path (admin editor RPCs) ----------------------

@@ -1223,28 +1223,17 @@ function compareDeptConfigSources() {
   if (neon === null) {
     Logger.log('compareDeptConfigSources: NEON UNREACHABLE -- no comparison performed. '
       + 'Do NOT flip CONFIG_SOURCE on this result.');
-    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
-             missingInNeon: [], missingInSheet: [], mismatched: [] };
+    return { clean: false, compared: 0, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [], duplicates: [] };
   }
   const key = function (r) {
     return JSON.stringify([r.qcdQueues, r.overviewParent, r.teamAvgExcludes,
       r.queueExtOverrides, r.active, r.notes, r.inboundAliases,
       r.finalDeptLabels]);
   };
-  const sMap = {}, nMap = {};
-  sheet.forEach(function (r) { sMap[r.dept] = r; });
-  neon.forEach(function (r) { nMap[r.dept] = r; });
-  const missingInNeon = [], missingInSheet = [], mismatched = [];
-  sheet.forEach(function (r) {
-    if (!nMap[r.dept]) missingInNeon.push(r.dept);
-    else if (key(r) !== key(nMap[r.dept])) mismatched.push(r.dept);
-  });
-  neon.forEach(function (r) { if (!sMap[r.dept]) missingInSheet.push(r.dept); });
-  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
-  Logger.log('compareDeptConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
-    clean ? 'PARITY CLEAN' : 'DIFFERENCES FOUND',
-    JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
-  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
+  // F42: duplicates fail the gate; the verdict counts what it compared.
+  const entries = function (rows) { return rows.map(function (r) { return [r.dept, key(r)]; }); };
+  return configSourceCompare_('compareDeptConfigSources', entries(sheet), entries(neon));
 }
 
 /**

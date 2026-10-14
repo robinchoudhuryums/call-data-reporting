@@ -49,6 +49,7 @@ function installIngestWatchdogTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('INGEST_WATCHDOG_ENABLED', 'true');
   installIngestWatchdogTrigger_();
+  recordTriggerInstaller_('runIngestWatchdog_', true);   // F17 / EN-1: editor-run, like the other four
   return logStatusReturn_(getIngestWatchdogStatus_());
 }
 
@@ -56,6 +57,7 @@ function installIngestWatchdogTrigger() {
 function uninstallIngestWatchdogTrigger() {
   assertAdmin_();
   uninstallIngestWatchdogTrigger_();
+  recordTriggerInstaller_('runIngestWatchdog_', false);   // F17 / EN-1
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('INGEST_WATCHDOG_ENABLED');
   return logStatusReturn_(getIngestWatchdogStatus_());

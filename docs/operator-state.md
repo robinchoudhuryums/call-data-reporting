@@ -115,9 +115,10 @@ When something looks wrong, before assuming a code bug, check:
      account that installed it, and `ScriptApp.getProjectTriggers()` lists
      only the CURRENT account's -- so a trigger another admin installed
      reads "NO trigger installed" on the Health page while it keeps firing.
-     The four editor-run installers (`installPipelineWatchTrigger`,
+     The five editor-run installers (`installPipelineWatchTrigger`,
      `installDqeSilenceWatchTrigger`, `installSheetCoverageTrigger`,
-     `installNeonRetentionTrigger`) now record their installer in
+     `installNeonRetentionTrigger`, and since F17 `installIngestWatchdogTrigger`)
+     now record their installer in
      `TRIGGER_INSTALLERS`, and the Health row for one installed by another
      account reads warn and names them: have that person run the matching
      uninstall, then reinstall as the deploying account.
@@ -639,7 +640,7 @@ When something looks wrong, before assuming a code bug, check:
     is now flippable: backfill (`backfillAlertConfigToNeon` /
     `backfillDigestConfigToNeon`) -> compare (`compareAlertConfigSources` /
     `compareDigestConfigSources`) clean -> set `CONFIG_SOURCE=neon`. (One flag
-    governs Dept + Alert + Digest config sources together.) All three compare gates (Alert, Digest, and -- since CORE-5 -- Dept Config) read Neon DIRECTLY and return `clean:false` + an `error` when Neon is unreachable, so a Neon outage (even against an empty sheet) can never print a false "PARITY CLEAN" (F-5/CORE-5); never flip the flag on a result that carries `error`. Access Control is
+    governs Dept + Alert + Digest config sources together.) All three compare gates (Alert, Digest, and -- since CORE-5 -- Dept Config) read Neon DIRECTLY and return `clean:false` + an `error` when Neon is unreachable, so a Neon outage (even against an empty sheet) can never print a false "PARITY CLEAN" (F-5/CORE-5); never flip the flag on a result that carries `error`. Since F42 (2026-10-14) a key that appears twice on either side (a hand-edited duplicate sheet row) fails the gate and is named in `duplicates` -- delete the extra row (the live readers use the FIRST), re-run the backfill, then compare again. Access Control is
     deliberately NOT in this flag -- it stays sheet-backed (auth availability),
     managed by the C1 editor.
 26. Direct-call history backfill (cdr-import; only relevant if you want Direct
@@ -749,7 +750,13 @@ When something looks wrong, before assuming a code bug, check:
     a run warns once the workbook passes 80% of the cap. The outcome says
     which store was used (`| store sheets (Drive unavailable: ...)`), and
     the Health section links the workbook. Set `NEON_BACKUP_STORE=sheets`
-    to skip the Drive attempt entirely. **The workbook holds the same PHI
+    to skip the Drive attempt entirely. **Once the workbook exists it STAYS
+    the store** while no folder id is set (F15, 2026-10-14): a later run on
+    which Drive works no longer creates an empty folder and switches to it
+    (which re-fetched every closed month from Neon, lost the journeys
+    retention had already nulled, and hid the workbook from restore). To
+    move the backup to Drive on purpose, set `NEON_BACKUP_STORE=drive`.
+    A restore never creates a store: with none set it refuses. **The workbook holds the same PHI
     as the Drive files** (caller hashes, journeys) -- keep it unshared,
     exactly like the CDR Report workbook. **RESTORE** (either store):
     set `NEON_RESTORE_FILE` to a file name (e.g.

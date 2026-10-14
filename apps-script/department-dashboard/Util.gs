@@ -153,8 +153,9 @@ function assertReportSpanCap_(from, to, priorFrom, priorTo) {
 // EN-1 (broad-scan 2026-10-01): an installable trigger belongs to the account
 // that ran the installer, and getProjectTriggers() lists only the CALLER's
 // triggers. The UI-wired installers run as the deployer (executeAs:
-// USER_DEPLOYING), but four are EDITOR-run (pipeline watch, DQE silence,
-// sheet coverage, Neon retention): a second admin running one from the editor
+// USER_DEPLOYING), but five are EDITOR-run (pipeline watch, DQE silence,
+// sheet coverage, Neon retention, and -- F17 -- the ingest watchdog, which
+// EN-1 missed): a second admin running one from the editor
 // created a trigger the Health page -- which runs as the deployer -- cannot
 // see ("NO trigger installed but flag=true") and the deployer's uninstall
 // cannot remove (a duplicate on reinstall). Those installers record WHO
@@ -618,6 +619,54 @@ function qcdFreshnessTag_() {
   try {
     return (typeof qcdAllFreshnessAnchor_ === 'function') ? String(qcdAllFreshnessAnchor_() || 'na') : 'na';
   } catch (e) { return 'na'; }
+}
+
+/**
+ * F42 (broad-scan 2026-10-14): the shared verdict for the three CONFIG_SOURCE
+ * compare gates (compareDeptConfigSources / compareAlertConfigSources /
+ * compareDigestConfigSources). Each built a key->row map with `m[key] = row`,
+ * which keeps the LAST row of a duplicated key -- while the live readers serve
+ * the FIRST (A-3 / OPS-9) -- so a hand-edited sheet holding two rows for one
+ * key compared Neon's last-upserted row with the sheet's last row and printed
+ * PARITY CLEAN, and the flip silently changed the served config. A key that
+ * appears more than once on EITHER side now fails the gate by name.
+ *
+ * `sheetEntries` / `neonEntries` are [[key, fingerprint], ...] in source order.
+ * Returns { clean, compared, missingInNeon, missingInSheet, mismatched,
+ * duplicates }. `compared` counts the keys present on BOTH sides. A reachable
+ * EMPTY-vs-EMPTY pair stays clean (compared 0): both stores then serve the
+ * same seed constants, so the flip changes nothing -- unlike the DQE / QCD
+ * read-source gates, where an empty comparison is INCONCLUSIVE.
+ */
+function configSourceCompare_(label, sheetEntries, neonEntries) {
+  const tally = function (entries) {
+    const first = {}, count = {}, order = [];
+    (entries || []).forEach(function (e) {
+      const k = String(e[0]);
+      if (!(k in count)) { count[k] = 0; first[k] = e[1]; order.push(k); }
+      count[k]++;
+    });
+    return { first: first, count: count, order: order };
+  };
+  const s = tally(sheetEntries), n = tally(neonEntries);
+  const missingInNeon = [], missingInSheet = [], mismatched = [], duplicates = [];
+  let compared = 0;
+  s.order.forEach(function (k) {
+    if (s.count[k] > 1) duplicates.push(k + ' (sheet x' + s.count[k] + ')');
+    if (!(k in n.count)) missingInNeon.push(k);
+    else { compared++; if (s.first[k] !== n.first[k]) mismatched.push(k); }
+  });
+  n.order.forEach(function (k) {
+    if (n.count[k] > 1) duplicates.push(k + ' (neon x' + n.count[k] + ')');
+    if (!(k in s.count)) missingInSheet.push(k);
+  });
+  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length && !duplicates.length;
+  Logger.log('%s: %s. compared=%s; missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s; duplicates=%s',
+    label, clean ? 'PARITY CLEAN' : 'DIFFERENCES FOUND', compared,
+    JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched),
+    JSON.stringify(duplicates));
+  return { clean: clean, compared: compared, missingInNeon: missingInNeon, missingInSheet: missingInSheet,
+           mismatched: mismatched, duplicates: duplicates };
 }
 
 /**
