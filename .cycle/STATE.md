@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-14 -- Broad scan cycle 259 Batch 5 IMPLEMENTED (block 259): UX-2 brief coherence.** F20 the Callbacks row quotes only the on-screen window's payload (and repaints on load); F21 View-as redraws the trend shading; F22 the headline's "behind" count uses the R18 benchmark; F23 the "need a look" count includes the top line; F24 a Callbacks jump switches direction only from Inbound (Both is never overwritten); F28 no Queue health row while its fold is hidden. 2460 tests, 8/8 bites + lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; re-walk S61. No operator steps.
+  **Next:** Batch 6 (client state: F47, F50, F49, F16, F48, F51, F52, F25), then Batches 7-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- Broad scan cycle 259 Batch 4 IMPLEMENTED (block 259): cache anchors + DAL.** F4 Overview + YTD keys carry the QCD freshness tag; F5 computeQcdReport_ raises the outage flag (Insights never caches a Neon-miss zero); F29 Agent Day + the inline panel strip narrow to the row's dept (rows carry data-dept); F33 the Agent Day DQE read is one agent (strip without missed detail) unless narrowing is on; F61 an empty label union turns the on-hold label arm off. 2454 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
   **Owner-side:** deploy the dashboard. No operator steps.
   **Next:** Batch 5 (UX-2 brief coherence: F20, F21, F22, F23, F24, F28), then Batches 6-10 per the cycle-259 list below.

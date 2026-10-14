@@ -1452,7 +1452,10 @@
       // (peer-relative standing), so the headline number matches the orange
       // edges below exactly (was a direction-of-change "regressed" count, which
       // disagreed with the standing-based rails).
-      const teamPctH = Number((t.pct || {}).val) || 0;
+      // F22 (broad-scan 2026-10-14): the R18 benchmark (TEAM_AVG_EXCLUDES out),
+      // the one the chips beside this sentence and the card rails read -- the
+      // dept rate counted a different set ("1 behind" next to 2 chips).
+      const teamPctH = insTeamBenchmarkPct_(data);
       const behind = cards.filter(function (c) {
         return insClassifyAgent_(c, teamPctH) === 'attention';
       }).length;

@@ -160,6 +160,14 @@
         vaCol.style.display = (escAllDept || (escInit_.departments || []).length > 1) ? '' : 'none';
       }
     }
+    // F21 (broad-scan 2026-10-14): the Insights trend's admin-only point
+    // shading is decided at DRAW time, and a preview of the dept already on
+    // screen re-renders nothing (insSyncToDeptWindow_ sees the same dept and
+    // window) -- so redraw it now from the held payload. A closed fold is not
+    // measurable and is drawn on open, reading the current view-as then.
+    if (typeof insLastData !== 'undefined' && insLastData && typeof insDrawTrendChart_ === 'function') {
+      try { insDrawTrendChart_(insLastData); } catch (eT) { /* best-effort repaint */ }
+    }
     // (The Reports dropdown (data-admin-only) is hidden in view-as by the
     // existing CSS; the top-level Insights tab carries no data-admin-only so
     // it stays visible in the preview -- the old #10 solo-button surfacing
