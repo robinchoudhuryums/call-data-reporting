@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- Broad scan cycle 259 Batch 9 IMPLEMENTED (block 259): verification mirrors.** F11 the DQE drill reconciles with the build on col E and AD/AE/AF (parity suite now drives them); F12 a queue-sentinel drill explains itself; F13 the overlap audit reads only the build's date (P-7) and canonicalizes names via the build; F59 queueSplitSample dates like the build so one stray no longer disables its self-check; F60 the QCD-vs-DQE diagnostic dates Raw Data by majority; F63 a reordered CSR history header is refused (daily / bulk / repair) instead of mislabeling counts; F64 the daily CSR engine reads the same day-only grid as the repair. 2489 tests, 11/11 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** push cdr-report and cdr-import. No operator steps.
+  **Next:** Batch 10 (deploy / docs / tooling: F35 operator check first, F41, F40, F38, F39, F36/F37/F6/F14/F53). F62 stays deferred (owner ruling).
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-15 -- Broad scan cycle 259 Batch 8 IMPLEMENTED (block 259): per-call edges before 6c.** F30 a trailing attempt opens a hidden episode, so per-day callback OUTCOMES add up to the week; F31 the Outbound email leads with the unmapped / sheet-fallback / lagging caveats (obMarkUnmapped_ now on both paths); F32 the PC-3 callback entitlement requires the abandon before the dial to the second; F34 Caller Lookup says inbound is unavailable when the Inbound Calls tab is missing. 2480 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
   **Owner-side:** deploy the dashboard. No operator steps. Expect small shifts in one-day / prior-window callback outcomes (F30, intended).
   **Next:** Batch 9 (mirrors: F11, F12, F13, F59, F60, F63, F64), then Batch 10 per the cycle-259 list below.

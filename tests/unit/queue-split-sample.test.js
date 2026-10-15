@@ -66,11 +66,11 @@ function grid() {
   ]);
 }
 
-function installAndBuild() {
+function installAndBuild(extraRows) {
   h.state.props = {};
   h.state.spreadsheet = makeFakeSpreadsheet({
     sheets: {
-      'Raw Data': grid(),
+      'Raw Data': grid().concat(extraRows || []),
       'DQE Historical Data': [new Array(34).fill('')],
       'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'], Sales: ['Bob, 105'], Power: ['Carl, 344'] }),
     },
@@ -137,4 +137,24 @@ test('P-5: the sample tool writes nothing', function () {
   runSample();
   const after = JSON.stringify(ss._sheet('DQE Historical Data')._data) + JSON.stringify(ss._sheet('Raw Data')._data);
   assert.equal(after, before);
+});
+
+// F59 (broad-scan 2026-10-14): one stray carry-over leg (another date) used
+// to make two dates "present", switching the col-AI self-check OFF for the
+// whole day, and the closing message then named the stray date. The tool now
+// dates the run like the build (first valid START_TIME) and drops strays (P-7).
+test('F59: a stray leg on another date neither disables the self-check nor becomes the date', function () {
+  installAndBuild([
+    // A next-day carry-over leg for Anna on a parent the build never sees.
+    rawRow({ callId: 'S1', legId: 0, start: '03/10/2026 0:05:00', caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'PS', callerId: 'A_Q_CSR', missed: true }),
+  ]);
+  const lines = runSample();
+  ['Anna', 'Bob', 'Carl'].forEach(function (a) {
+    assert.equal(verdictOf(lines, a), 'OK (matches col AI)', a + ' is still self-checked: '
+      + JSON.stringify(lines.filter(function (l) { return l.indexOf(a) !== -1; })));
+  });
+  assert.ok(lines.some(function (l) { return /^Date: 2026-03-09 \(the build's/.test(l); }), 'the build\'s date, not the stray');
+  assert.ok(lines.some(function (l) { return /Skipped 1 stray queue leg\(s\) on other dates \(2026-03-10=1\)/.test(l); }));
+  assert.ok(lines.some(function (l) { return /A_Q_CSR\s+rung=2 missed=1 answered=1/.test(l); }), 'the stray is in no total');
 });

@@ -104,6 +104,18 @@ function sampleQueueSplitCallIds() {
     queueNameByExt[qCalleeExt] = qCalleeName;
   }
 
+  // F59 (broad-scan 2026-10-14): date the run the way the build does -- the
+  // FIRST valid START_TIME -- and drop legs on any other date, as the build
+  // has since P-7. One stray carry-over leg used to make two dates "present",
+  // which switched the col-AI self-check OFF for the whole day (and the
+  // closing message then named whichever date sorted first, often the stray).
+  var buildDate = '';
+  for (var bd = 0; bd < body.length && !buildDate; bd++) {
+    var bdIso = dateIso(body[bd][DQE_C.START_TIME]);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(bdIso)) buildDate = bdIso;
+  }
+  var strays = {};
+
   var legsByAgent = {};
   var dateSeen = {};
   var skippedNoQueue = 0, skippedExcluded = 0, recoveredByExt = 0;
@@ -129,6 +141,7 @@ function sampleQueueSplitCallIds() {
 
     var startRaw = row[DQE_C.START_TIME];
     var d = dateIso(startRaw);
+    if (d && buildDate && d !== buildDate) { strays[d] = (strays[d] || 0) + 1; continue; }   // F59 / P-7
     if (d) dateSeen[d] = (dateSeen[d] || 0) + 1;
 
     (legsByAgent[agent] = legsByAgent[agent] || []).push({
@@ -143,16 +156,19 @@ function sampleQueueSplitCallIds() {
     });
   }
 
-  var dates = Object.keys(dateSeen).sort();
+  var dates = buildDate ? [buildDate] : Object.keys(dateSeen).sort();
+  var strayDates = Object.keys(strays).sort();
   Logger.log('=== Queue-split call-id sample ===');
   Logger.log('Raw Data rows: %s   queue legs: %s   (skipped: no queue in caller-id %s, '
     + 'pseudo-agent %s; recovered via the R18e CallQueue-ext fallback %s)', body.length,
     Object.keys(legsByAgent).reduce(function (n, k) { return n + legsByAgent[k].length; }, 0),
     skippedNoQueue, skippedExcluded, recoveredByExt);
-  Logger.log('Date(s) present in Raw Data: %s', dates.join(', ') || '(none)');
-  if (dates.length > 1) {
-    Logger.log('!! More than one date in Raw Data -- the build stamps ONE date per run, '
-      + 'so these totals will not line up with a single DQE row set.');
+  Logger.log('Date: %s (the build\'s -- its first valid START_TIME)', dates.join(', ') || '(none)');
+  if (strayDates.length) {
+    Logger.log('Skipped %s stray queue leg(s) on other dates (%s) -- the build drops them too (P-7), '
+      + 'so they are not part of any total below.',
+      String(strayDates.reduce(function (n, k) { return n + strays[k]; }, 0)),
+      strayDates.map(function (k) { return k + '=' + strays[k]; }).join(', '));
   }
   // R49: the FLOOR is per queue (the CSR family starts half an hour earlier),
   // and it comes from the build's own helper -- never a restated constant.

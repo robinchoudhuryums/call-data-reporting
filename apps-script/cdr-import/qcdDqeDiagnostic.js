@@ -590,8 +590,14 @@ function qddResolveLegsSheet_(sourceSS, targetSS, dateIso) {
 
   const raw = targetSS.getSheetByName('Raw Data');
   if (raw && raw.getLastRow() > 1) {
-    // Raw Data holds ONE date's legs (col C is the leg start).
-    const rawIso = qddNormalizeDateStr_(raw.getRange(2, 3).getDisplayValue());
+    // Raw Data holds ONE date's legs plus a few carry-over strays (col C is the
+    // leg start). F60 (broad-scan 2026-10-14): the date came from ROW 2 -- the
+    // ING-7 shape, where a D-1 carry-over leg sorts first and the diagnostic
+    // then refused (or answered for) the wrong day. Take the MAJORITY date
+    // through the same helper the CSR repair uses (csrRepairDayRows_).
+    const colC = raw.getRange(1, 3, raw.getLastRow(), 1).getDisplayValues();
+    const day = csrRepairDayRows_(colC.map(function (r) { return ['', '', r[0]]; }));
+    const rawIso = qddNormalizeDateStr_(day.dateIso || '');
     if (!dateIso) return { sheet: raw, dateIso: rawIso, source: 'Raw Data' };
     if (rawIso === qddNormalizeDateStr_(dateIso)) {
       return { sheet: raw, dateIso: dateIso, source: 'Raw Data' };

@@ -40,7 +40,7 @@ const BUILD_SRC = fs.readFileSync(path.join(IMPORT_DIR, 'buildDQEHistoricalData.
 
 const h = loadGas({
   project: 'cdr-import',
-  files: ['autoImport.js', 'buildDQEHistoricalData.js', 'qcdDqeDiagnostic.js'],
+  files: ['neonWrite.js', 'autoImport.js', 'buildDQEHistoricalData.js', 'qcdDqeDiagnostic.js'],
 });
 
 // ── Shared fixture ──────────────────────────────────────────────────────────
@@ -654,13 +654,23 @@ function fakeBook_(id, sheets) {
 }
 function fakeTab_(name, opts) {
   opts = opts || {};
+  // Raw Data's date must be read from the leg START column (col C) -- F60: the
+  // whole column, for its MAJORITY date. A fake that answered any column would
+  // let a wrong-column read pass, so only col C carries the starts.
+  const starts = opts.starts || (opts.firstStart ? [opts.firstStart] : []);
+  const lastRow = opts.lastRow === undefined ? starts.length + 1 : opts.lastRow;
   return {
     getName: () => name,
-    getLastRow: () => (opts.lastRow === undefined ? 10 : opts.lastRow),
-    // Raw Data's date must be read from the leg START column (row 2, col C).
-    // A fake that answers any cell would let a wrong-column read pass.
-    getRange: (r, c) => ({
-      getDisplayValue: () => (r === 2 && c === 3 ? (opts.firstStart || '') : ''),
+    getLastRow: () => lastRow,
+    getRange: (r, c, nr) => ({
+      getDisplayValues: () => {
+        const out = [];
+        for (let i = 0; i < (nr || 1); i++) {
+          const row = r + i;
+          out.push([c === 3 && row >= 2 ? (starts[row - 2] || '') : 'header']);
+        }
+        return out;
+      },
     }),
   };
 }
@@ -688,6 +698,19 @@ test('Raw Data is the fallback, but only for the date it actually holds', () => 
   // The wrong date must REFUSE. Silently analysing whichever day happens to be
   // loaded would answer a question nobody asked, with numbers that look real.
   assert.throws(() => resolve(src, tgt, '2026-09-10'), /Raw Data" currently holds 2026-09-14/);
+});
+
+test('F60: Raw Data is dated by its MAJORITY day, not row 2 (a carry-over leg sorts first)', () => {
+  const resolve = h.fn('qddResolveLegsSheet_');
+  // The ING-7 shape: one D-1 carry-over leg in row 2, then the real day.
+  const raw = fakeTab_('Raw Data', { starts: ['09/13/2026 23:58:00', '09/14/2026 08:01:00',
+    '09/14/2026 08:05:00', '09/14/2026 09:00:00'] });
+  const tgt = fakeBook_('B', { 'Raw Data': raw });
+  const got = resolve(fakeBook_('A', {}), tgt, '2026-09-14');
+  assert.equal(got.source, 'Raw Data', 'the day Raw Data actually holds is accepted');
+  assert.equal(resolve(fakeBook_('A', {}), tgt, '').dateIso, '2026-09-14', 'and named when no date is asked for');
+  assert.throws(() => resolve(fakeBook_('A', {}), tgt, '2026-09-13'), /currently holds 2026-09-14/,
+    'the stray\'s date is refused, not answered from one leg');
 });
 
 test('with no date given, the newest Call_Legs tab wins over Raw Data', () => {

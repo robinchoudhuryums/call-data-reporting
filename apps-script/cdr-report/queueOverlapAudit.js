@@ -23,27 +23,36 @@
 //
 // Writes nothing. Reads 'Raw Data' + 'DO NOT EDIT!' from THIS spreadsheet.
 //
-// DATE SEMANTICS -- build parity, and the trap that broke the first version.
-// 'Raw Data' holds ONE day's legs, and the build does not date-filter at all:
-// it takes the date from the FIRST valid START_TIME and processes every row
-// (buildDQEHistoricalData's "Detect call date" block). It cannot, because a
-// day's legs include STRAY CARRY-OVER rows -- calls that crossed midnight --
-// which the build's own F2 comment calls out by name.
+// DATE SEMANTICS -- build parity, and the two traps behind it.
+// 'Raw Data' holds ONE day's legs plus a few STRAY CARRY-OVER rows (calls that
+// crossed midnight). The build takes its date from the FIRST valid START_TIME
+// ("Detect call date") and, since P-7 (broad-scan 2026-09-17), DROPS every
+// leg on another calendar day before any pass sees it. This audit does the
+// same (F13, broad-scan 2026-10-14): until then it still counted the strays,
+// on a premise ("the build does not date-filter at all") that P-7 had made
+// false -- so its "build parity" label promised a reconciliation it no longer
+// delivered. Strays are counted and named, never analysed.
 //
-// The first version of this diagnostic instead picked the MAXIMUM date in the
-// sheet and analysed only rows matching it. On a real day that selected the
-// handful of carry-over stragglers: 19 legs out of ~1000, and it then reported
-// a confident "no queue overlap" from 2% of the data. Analysing all rows is
-// both correct AND what makes these numbers reconcile with the build.
+// The first version of this diagnostic made the opposite mistake: it picked
+// the MAXIMUM date in the sheet and analysed only rows matching it. On a real
+// day that selected the handful of carry-over stragglers -- 19 legs out of
+// ~1000 -- and reported a confident "no queue overlap" from 2% of the data.
+// The FIRST valid date is the build's, and the majority day.
 //
-// The date DISTRIBUTION is now printed first, so a sheet holding something
-// other than one clean day is visible immediately rather than silently
-// halving the answer.
+// AGENT NAMES are canonicalized with the build's own INV-24 rule
+// (canonicalizeAgentNameWith_ over loadRosterCanonicalNames_, F13) before they
+// meet the roster -- a feed spelling the build rewrites to its roster name
+// used to fall out of sections 3 and 4 here.
 //
-// Run:  queueOverlapAudit()          -- all of Raw Data (build parity)
+// The date DISTRIBUTION is printed first, so a sheet holding something other
+// than one clean day is visible immediately rather than silently halving the
+// answer.
+//
+// Run:  queueOverlapAudit()          -- the build's date (build parity)
 //       QUEUE_OVERLAP_DATE (Script Property, 'M/D/YYYY' as Raw Data renders
-//       it) restricts to one date -- a DEPARTURE from build parity, useful
-//       only to isolate carry-over legs.
+//       it) restricts to one date -- the build's own is the same set; any
+//       other is a DEPARTURE from build parity, useful only to isolate
+//       carry-over legs.
 //
 // Sections:
 //   1. CROSS-QUEUE CALL OVERLAP -- calls whose legs span two queues, ranked.
@@ -148,6 +157,13 @@ function qoaDeptConfig_(ss) {
   return out;
 }
 
+/** F13. A 'M/D/YYYY' date as a padding-free day key ('3/9/2026' == '03/09/2026'); '' if malformed. */
+function qoaDayKey_(s) {
+  var p = String(s || '').trim().split('/');
+  if (p.length !== 3 || !/^\d+$/.test(p[0]) || !/^\d+$/.test(p[1]) || !/^\d+$/.test(p[2])) return '';
+  return Number(p[2]) + '-' + Number(p[0]) + '-' + Number(p[1]);
+}
+
 function qoaPad_(s, n) {
   s = String(s);
   while (s.length < n) s += ' ';
@@ -188,6 +204,14 @@ function queueOverlapAudit() {
   var wanted = pinned || buildDate;
 
   var queueNameByExt = qoaQueueNameByExt_(data);
+  // F13: the build's INV-24 canonicalizer (same project), not a copy of it.
+  var rosterCanon = (typeof loadRosterCanonicalNames_ === 'function') ? loadRosterCanonicalNames_(ss) : null;
+  var canon = function (name) {
+    return (rosterCanon && typeof canonicalizeAgentNameWith_ === 'function')
+      ? canonicalizeAgentNameWith_(rosterCanon, name) : name;
+  };
+  var buildKey = qoaDayKey_(buildDate);
+  var strays = 0;
 
   // ---- Walk the day's legs once -------------------------------------------
   var callQueues = {};        // parentCallId -> { queueName: legCount }
@@ -197,8 +221,14 @@ function queueOverlapAudit() {
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
-    // Unpinned = every row, exactly as the build does. Pinned = one date.
-    if (pinned && dateOf(row) !== pinned) continue;
+    // Unpinned = the build's date, exactly as the build reads it since P-7
+    // (a row with no START_TIME is kept, as the build keeps it). Pinned = one date.
+    if (pinned) {
+      if (dateOf(row) !== pinned) continue;
+    } else if (dateOf(row) && qoaDayKey_(dateOf(row)) !== buildKey) {
+      strays++;
+      continue;
+    }
     var q = qoaQueueForRow_(row, queueNameByExt);
     if (!q) continue;
     legs++;
@@ -218,7 +248,7 @@ function queueOverlapAudit() {
     // dropping it changes no output today. Kept for a future consumer that
     // iterates the map directly -- and deliberately not unit-pinned, since a
     // test for it would pass with it deleted.
-    var agent = String(row[DQE_C.CALLEE_NAME]).trim();
+    var agent = canon(String(row[DQE_C.CALLEE_NAME]).trim());   // F13: INV-24, as the build
     if (agent && agent !== 'N/A' && !/^(A_Q_[\w&]+|Backup CSR)$/.test(agent)) {
       var al = agent.toLowerCase();
       if (!agentQueue[al]) agentQueue[al] = {};
@@ -228,9 +258,12 @@ function queueOverlapAudit() {
 
   var out = [];
   out.push('=== Queue-overlap audit -- ' + wanted
-           + (pinned ? '  (PINNED to one date)' : '  (all of Raw Data -- build parity)') + ' ===');
+           + (pinned ? '  (PINNED to one date)' : '  (the build\'s date -- build parity)') + ' ===');
   out.push('Queue legs: ' + legs + '   distinct calls: ' + Object.keys(callQueues).length
            + '   queues seen: ' + Object.keys(queueLegs).length);
+  if (!pinned && strays) {
+    out.push('Skipped ' + strays + ' stray leg(s) on other dates -- the build drops them too (P-7).');
+  }
   out.push('');
   out.push('Raw Data rows by date (the sheet should hold ONE day plus a few');
   out.push('carry-over legs; anything else makes every number below suspect):');
@@ -241,8 +274,10 @@ function queueOverlapAudit() {
   if (histKeys.length > 8) out.push('  ... and ' + (histKeys.length - 8) + ' more date(s)');
   if (pinned) {
     var pinnedRows = dateHist[pinned] || 0;
-    out.push('  PINNED to ' + pinned + ' (' + pinnedRows + ' of ' + data.length
-             + ' rows). This is NOT build parity -- the build reads every row.');
+    out.push('  PINNED to ' + pinned + ' (' + pinnedRows + ' of ' + data.length + ' rows). '
+             + (qoaDayKey_(pinned) === buildKey
+                 ? 'That is the build\'s date -- the same rows the build reads.'
+                 : 'This is NOT build parity -- the build reads only ' + buildDate + '\'s rows (P-7).'));
     if (pinnedRows * 5 < data.length) {
       out.push('  !! That is under a fifth of the sheet. If you meant the whole');
       out.push('     day, clear QUEUE_OVERLAP_DATE -- a pin this narrow usually');

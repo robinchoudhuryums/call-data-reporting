@@ -618,7 +618,13 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
 
     if (!silent) sourceSS.toast("Calculating Extra Reports...", "Step 3/7", -1);
     results.qcdData = calcQcdReport(cleanData, targetSS);
-    results.csrData = calcCsrReport(cleanData, targetSS);
+    // F64 (broad-scan 2026-10-14): the CSR engine gets the DAY's legs only --
+    // the same grid repairCsrTransfer recomputes from (csrRepairDayRows_, ING-7).
+    // It used to see the carry-over strays too, so a repair of a clean import
+    // could move the numbers it was meant to reproduce. (PIPE-3 above already
+    // proved the majority day is this tab's.)
+    const csrDay = csrRepairDayRows_(cleanData);
+    results.csrData = calcCsrReport(csrDay.rows, targetSS);
 
     // P26: capture what the force-delete below ACTUALLY removes, per sheet.
     // The loss guards (guardForceRebuildLoss_ / buildDQE's refuseIfForce_)
@@ -1224,7 +1230,20 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
   markProduced("QCD");
 
   // 4. Add CSR_TRANSFER
-  if (!skipCSR && results.csrData) {
+  // F63: the bulk path writes these rows positionally too (processBatchArchive),
+  // so refuse to QUEUE them against a reordered history header -- this is the
+  // last point that knows QCDR Output's order.
+  const csrBulkHeaderProblem = (!skipCSR && results.csrData)
+    ? csrHistoryHeaderProblem_(targetSS.getSheetByName("CSR Transfer Historical Data"), results.csrData.headers) : '';
+  if (csrBulkHeaderProblem) {
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'bulkBackfill:CSR', status: 'failure', rows: 0, durationMs: null,
+        notes: dateObj.toDateString() + ': ' + csrBulkHeaderProblem,
+      });
+    } catch (eH) { /* best-effort */ }
+  }
+  if (!skipCSR && results.csrData && !csrBulkHeaderProblem) {
     const ag = results.csrData.agents;
     const tc = results.csrData.totalCalls;
     const qu = results.csrData.queues;
@@ -2382,7 +2401,20 @@ if (!skipCDR && obcHD) {
   }
 
   // 4. CSR Transfer History
-  if (!skipCSR && csrHD && results.csrData) {
+  // F63: refuse a positional write into a REORDERED history header -- it would
+  // file every count under the wrong queue with no error anywhere.
+  const csrHeaderProblem = (!skipCSR && csrHD && results.csrData)
+    ? csrHistoryHeaderProblem_(csrHD, results.csrData.headers) : '';
+  if (csrHeaderProblem) {
+    summaryLog.push('- CSR Transfer HD: NOT WRITTEN -- ' + csrHeaderProblem);
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'processIntegratedHistory:CSR', status: 'failure', rows: 0, durationMs: null,
+        notes: dateObj.toDateString() + ': ' + csrHeaderProblem,
+      });
+    } catch (eH) { /* best-effort */ }
+  }
+  if (!skipCSR && csrHD && results.csrData && !csrHeaderProblem) {
     const csrBatch = [];
     results.csrData.agents.forEach((row, i) => {
       const agent = String(row[0]).trim();
@@ -4333,8 +4365,47 @@ csrNames.forEach(agentName => {
     transPct: colK_Values,
     totalCalls: colL_Values,
     totalTransferred: colM_Values,
-    queues: colN_X_Values
+    queues: colN_X_Values,
+    // F63: the order the queue counts were computed in (QCDR Output N1:X1),
+    // so the writers can check it against the history sheet's own header.
+    headers: queueHeadersRaw.map(h => String(h == null ? '' : h).trim())
   };
+}
+
+/**
+ * F63 (broad-scan 2026-10-14). PURE. The per-queue counts are computed in
+ * QCDR Output N1:X1 order and written positionally into CSR Transfer
+ * Historical Data H..R, whose OWN header row labels them on the dashboard
+ * (Data.gs reads the labels from the sheet). A reorder on either side
+ * silently files every count under the wrong queue. The two headers need not
+ * be spelled alike -- the history row may carry friendlier labels -- so the
+ * check fires only on a PROVABLE reorder: a source queue name that appears in
+ * the history header at a DIFFERENT position. Returns the displaced names
+ * ('' when none).
+ */
+function csrQueueHeaderReorder_(sourceHeaders, historyHeaders) {
+  var norm = function (v) { return String(v == null ? '' : v).trim().toLowerCase(); };
+  var hist = (historyHeaders || []).map(norm);
+  var bad = [];
+  (sourceHeaders || []).forEach(function (h, i) {
+    var n = norm(h);
+    if (!n) return;
+    var j = hist.indexOf(n);
+    if (j !== -1 && j !== i) bad.push('"' + String(h).trim() + '" is column ' + (i + 1) + ' in QCDR Output N1:X1 but column '
+      + (j + 1) + ' in the history header');
+  });
+  return bad.join('; ');
+}
+
+/** F63. The reorder check against the live sheet's H1:R1; '' when it cannot be read. */
+function csrHistoryHeaderProblem_(csrHD, sourceHeaders) {
+  try {
+    if (!csrHD || !sourceHeaders || !sourceHeaders.length || csrHD.getMaxColumns() < 18) return '';
+    var hist = csrHD.getRange(1, 8, 1, 11).getDisplayValues()[0];
+    var bad = csrQueueHeaderReorder_(sourceHeaders, hist);
+    return bad ? ('CSR Transfer per-queue columns are out of order -- ' + bad
+      + '. Not written: re-align the two headers, then re-import the date.') : '';
+  } catch (e) { return ''; }
 }
 
 /**
@@ -4462,6 +4533,9 @@ function csrRepairDayRows_(rawDisp) {
 function csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, strays) {
   // Recompute with the FIXED engine (calcCsrReport reads the display grid).
   var csrData = calcCsrReport(rawDisp, ss);
+  // F63: H..R are overwritten positionally here too -- same refusal.
+  var headerProblem = csrHistoryHeaderProblem_(csrHD, csrData.headers);
+  if (headerProblem) throw new Error('repairCsrTransfer: ' + headerProblem);
   var byAgent = {};
   csrData.agents.forEach(function (a, idx) {
     byAgent[String(a[0]).trim().toLowerCase()] = {
