@@ -627,51 +627,97 @@ function qcdFreshnessTag_() {
 }
 
 /**
- * F42 (broad-scan 2026-10-14): the shared verdict for the three CONFIG_SOURCE
- * compare gates (compareDeptConfigSources / compareAlertConfigSources /
- * compareDigestConfigSources). Each built a key->row map with `m[key] = row`,
- * which keeps the LAST row of a duplicated key -- while the live readers serve
- * the FIRST (A-3 / OPS-9) -- so a hand-edited sheet holding two rows for one
- * key compared Neon's last-upserted row with the sheet's last row and printed
- * PARITY CLEAN, and the flip silently changed the served config. A key that
- * appears more than once on EITHER side now fails the gate by name.
+ * ST3 (broad-scan 259, E2): THE compare gate. Every flip gate that certifies
+ * one store against another key by key -- the DQE and QCD read-source gates
+ * (compareDqeSources_ / compareQcdSources_) and the three CONFIG_SOURCE
+ * compares (via configSourceCompare_ below) -- reaches its verdict here, so
+ * the three rules the `known-issues` standard requires are written once:
+ *   1. DUPLICATES fail. A key seen more than once on EITHER side is named in
+ *      `duplicates` and the gate is not clean: a key->row map keeps one row,
+ *      and the sheet readers SUM (DQE/QCD, DL-1/QO-3) or serve the FIRST
+ *      (config, A-3/OPS-9) -- so a collapsed duplicate printed PARITY CLEAN
+ *      while the flip changed the served numbers. The FIRST occurrence is the
+ *      one compared, on both sides.
+ *   2. `compared` counts the keys present on BOTH sides -- one meaning for
+ *      every gate, so "compared: N" always says how much evidence a pass rests
+ *      on.
+ *   3. EMPTY means INCONCLUSIVE. A sheet side with no keys proved nothing
+ *      (`inconclusive: true`, never clean), the Batch-6 rule. The one
+ *      exception is opt-in -- `emptyMeans: 'clean'` -- for the config gates,
+ *      where a reachable EMPTY-vs-EMPTY pair serves the same seed constants
+ *      either way, so the flip changes nothing.
  *
- * `sheetEntries` / `neonEntries` are [[key, fingerprint], ...] in source order.
- * Returns { clean, compared, missingInNeon, missingInSheet, mismatched,
- * duplicates }. `compared` counts the keys present on BOTH sides. A reachable
- * EMPTY-vs-EMPTY pair stays clean (compared 0): both stores then serve the
- * same seed constants, so the flip changes nothing -- unlike the DQE / QCD
- * read-source gates, where an empty comparison is INCONCLUSIVE.
+ * Entries are [[key, value], ...] in source order. `opts.diff(sheetVal,
+ * neonVal)` returns { diffs: [string, ...], rounding: bool } (default: the
+ * values compared as strings, one 'value' diff). PURE. Returns { clean,
+ * inconclusive, compared, missingInNeon: [key], extraInNeon: [key],
+ * mismatched: ['key :: diff, ...'], mismatchedKeys: [key], duplicates:
+ * ['key (sheet xN)'], roundingOnly }.
  */
-function configSourceCompare_(label, sheetEntries, neonEntries) {
+function parityGate_(sheetEntries, neonEntries, opts) {
+  opts = opts || {};
+  const diff = opts.diff || function (a, b) {
+    return { diffs: String(a) === String(b) ? [] : ['value'], rounding: false };
+  };
   const tally = function (entries) {
     const first = {}, count = {}, order = [];
     (entries || []).forEach(function (e) {
       const k = String(e[0]);
-      if (!(k in count)) { count[k] = 0; first[k] = e[1]; order.push(k); }
+      if (!Object.prototype.hasOwnProperty.call(count, k)) { count[k] = 0; first[k] = e[1]; order.push(k); }
       count[k]++;
     });
     return { first: first, count: count, order: order };
   };
+  const has = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
   const s = tally(sheetEntries), n = tally(neonEntries);
-  const missingInNeon = [], missingInSheet = [], mismatched = [], duplicates = [];
-  let compared = 0;
+  const out = { clean: false, inconclusive: false, compared: 0, missingInNeon: [], extraInNeon: [],
+                mismatched: [], mismatchedKeys: [], duplicates: [], roundingOnly: 0 };
   s.order.forEach(function (k) {
-    if (s.count[k] > 1) duplicates.push(k + ' (sheet x' + s.count[k] + ')');
-    if (!(k in n.count)) missingInNeon.push(k);
-    else { compared++; if (s.first[k] !== n.first[k]) mismatched.push(k); }
+    if (s.count[k] > 1) out.duplicates.push(k + ' (sheet x' + s.count[k] + ')');
+    if (!has(n.count, k)) { out.missingInNeon.push(k); return; }
+    out.compared++;
+    const d = diff(s.first[k], n.first[k]) || {};
+    const diffs = d.diffs || [];
+    if (diffs.length) { out.mismatched.push(k + ' :: ' + diffs.join(', ')); out.mismatchedKeys.push(k); }
+    else if (d.rounding) out.roundingOnly++;
   });
   n.order.forEach(function (k) {
-    if (n.count[k] > 1) duplicates.push(k + ' (neon x' + n.count[k] + ')');
-    if (!(k in s.count)) missingInSheet.push(k);
+    if (n.count[k] > 1) out.duplicates.push(k + ' (neon x' + n.count[k] + ')');
+    if (!has(s.count, k)) out.extraInNeon.push(k);
   });
-  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length && !duplicates.length;
+  const differences = out.missingInNeon.length + out.extraInNeon.length
+    + out.mismatched.length + out.duplicates.length;
+  if (!s.order.length && opts.emptyMeans !== 'clean') {
+    out.inconclusive = true;
+    return out;
+  }
+  out.clean = differences === 0;
+  return out;
+}
+
+/**
+ * F42 (broad-scan 2026-10-14): the three CONFIG_SOURCE compare gates
+ * (compareDeptConfigSources / compareAlertConfigSources /
+ * compareDigestConfigSources). Since ST3 a thin shim over parityGate_ -- the
+ * duplicate rule F42 introduced lives there now, for every gate. A reachable
+ * EMPTY-vs-EMPTY pair stays clean (compared 0; `emptyMeans: 'clean'`): both
+ * stores then serve the same seed constants, so the flip changes nothing --
+ * unlike the DQE / QCD read-source gates, where an empty comparison is
+ * INCONCLUSIVE.
+ *
+ * `sheetEntries` / `neonEntries` are [[key, fingerprint], ...] in source order.
+ * Returns { clean, compared, missingInNeon, missingInSheet, mismatched,
+ * duplicates } (mismatched = the keys).
+ */
+function configSourceCompare_(label, sheetEntries, neonEntries) {
+  const g = parityGate_(sheetEntries, neonEntries, { emptyMeans: 'clean' });
+  const res = { clean: g.clean, compared: g.compared, missingInNeon: g.missingInNeon,
+                missingInSheet: g.extraInNeon, mismatched: g.mismatchedKeys, duplicates: g.duplicates };
   Logger.log('%s: %s. compared=%s; missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s; duplicates=%s',
-    label, clean ? 'PARITY CLEAN' : 'DIFFERENCES FOUND', compared,
-    JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched),
-    JSON.stringify(duplicates));
-  return { clean: clean, compared: compared, missingInNeon: missingInNeon, missingInSheet: missingInSheet,
-           mismatched: mismatched, duplicates: duplicates };
+    label, res.clean ? 'PARITY CLEAN' : 'DIFFERENCES FOUND', res.compared,
+    JSON.stringify(res.missingInNeon), JSON.stringify(res.missingInSheet), JSON.stringify(res.mismatched),
+    JSON.stringify(res.duplicates));
+  return res;
 }
 
 /**

@@ -1783,7 +1783,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   cache-version-sync's ANCHOR_SPECS classifies every prefix and fails when
   a tag-anchored file stops calling `reportFreshnessTag_()`. A key that
   EMBEDS queue data (`summary`, `insights`, `companyOverview`,
-  `overviewChartYtd`) also carries `':q' + qcdFreshnessTag_()` (DATA-6, F4). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  `overviewChartYtd`) also carries `':q' + qcdFreshnessTag_()` (DATA-6, F4)
+  and skips its put on `qcdSnapshotReadFailed_()` (ST1: cache-version-sync). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- keyed on the latest QCD date (`qcdAllFreshnessAnchor_`,
   D-1) and never caching an EMPTY payload, so a pre-ingest request cannot pin

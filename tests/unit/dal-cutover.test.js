@@ -458,6 +458,31 @@ test('Batch 6: DQE gate — a real matching range reports clean + the compared c
   h.ctx.sheetFetchDqeRows_ = realSheetFetch2; h.ctx.neonFetchDqeRows_ = realNeonFetch2;
 });
 
+// ST3 (broad-scan 259, E2): the gate's per-field diff moved into parityGate_'s
+// diff callback -- one differing field must still fail it, by name.
+test('ST3: DQE gate — one differing field is a MISMATCH that names the field', function () {
+  install('sheet');
+  h.state.props.DQE_PARITY_FROM = '2026-03-09';
+  h.state.props.DQE_PARITY_TO = '2026-03-09';
+  const row = { dateIso: '2026-03-09', agent: 'Sonia', totalUnique: 1, totalRung: 2,
+                totalMissed: 0, totalAnswered: 2, tttSec: 903, attSec: 181,
+                avgAbdWaitSec: 0, csrAvgAbdWaitSec: 0, queueExt: '103',
+                slots: new Array(19).fill(''), abandonedParentIds: '', abandonedMissedTimes: '' };
+  const neonRow = Object.assign({}, row, { tttSec: 900 });
+  const realSheetFetch = h.ctx.sheetFetchDqeRows_;
+  const realNeonFetch  = h.ctx.neonFetchDqeRows_;
+  h.ctx.sheetFetchDqeRows_ = function () { return [row]; };
+  h.ctx.neonFetchDqeRows_ = function () { return [neonRow]; };
+  try {
+    const r = dqeParityRun_();
+    assert.match(r.log, /PARITY MISMATCH/);
+    assert.match(r.log, /tttSec sheet=903 neon=900/);
+    assert.equal(r.verdict.clean, false);
+    assert.equal(r.verdict.mismatches, 1);
+    assert.equal(r.verdict.compared, 1);
+  } finally { h.ctx.sheetFetchDqeRows_ = realSheetFetch; h.ctx.neonFetchDqeRows_ = realNeonFetch; }
+});
+
 // DL-1 / DL-2 (broad-scan 2026-10-01): the gate counts ROWS per key and diffs
 // the queue split. A sheet that holds the same agent-day twice collapsed to one
 // map entry and read CLEAN while the sheet path summed both rows; a stale Neon

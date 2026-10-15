@@ -969,6 +969,21 @@ the same false CLEAN the moment the verdict stopped counting extras. It now
 has the explicit guard too. Pinned by `qcd-report.test.js` /
 `dal-cutover.test.js`.
 
+**Since ST3 (broad-scan 259, E2) the rules live in ONE function,
+`parityGate_` (Util.gs)**, and all five gates reach their verdict through it
+(the config gates via the `configSourceCompare_` shim, which opts into
+`emptyMeans: 'clean'`). Each gate kept only what is its own -- how it reads
+each side, which fields it diffs (QCD's ±1 s duration tolerance is its
+`diff` callback's `rounding` flag), and its log text. `compared` now means
+the same thing everywhere: keys present on BOTH sides. The DQE / QCD gates
+used to report the sheet-side key count; a range whose rows are all missing
+in Neon still fails as MISMATCH, it just no longer claims those rows were
+compared. Every gate also compares the FIRST occurrence of a duplicated
+key, which the DQE / QCD gates used to take as the last; either way a
+duplicate fails the gate. A NEW `compare*Sources` gate that skips the helper
+fails `parity-gate.test.js`'s sweep, which is how each earlier hole got in:
+one gate at a time re-learning the same rule.
+
 ### CLAUDE.md's split reference files can drift from their index
 
 CLAUDE.md reached ~372 KB -- it is injected into every session's context, so

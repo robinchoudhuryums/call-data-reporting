@@ -279,7 +279,11 @@ tests/
                               phones-only refill, the R34 missing-parents
                               pass, the R35 inline parent upsert, the R37
                               stale-phantom prune), dept-config-neon /
-                              config-neon-c3, caller-lookup, answer-targets
+                              config-neon-c3, parity-gate (ST3: parityGate_,
+                              the one verdict every key-by-key flip gate
+                              reaches -- duplicates, `compared`, empty =
+                              INCONCLUSIVE -- plus the compare*Sources sweep),
+                              caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
                               digest-freshness-gate (R31/R32: every cadence

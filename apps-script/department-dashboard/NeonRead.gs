@@ -716,31 +716,25 @@ function compareDqeSources_() {
                 'tttSec', 'attSec', 'avgAbdWaitSec', 'csrAvgAbdWaitSec', 'queueExt',
                 'slots', 'abandonedParentIds', 'abandonedMissedTimes', 'queueSplit'];
 
-  // DL-1 (broad-scan 2026-10-01): count ROWS per key, not just keys. The maps
-  // below keep one row per date|agent, so a sheet holding the same agent-day
-  // TWICE collapsed to one and read CLEAN -- while every sheet-path reader SUMS
-  // both rows, so the flip would silently halve that agent's figures. Neon
-  // cannot hold a duplicate (uq_dqe_history), so any key seen more than once
-  // on either side is a NOT-clean result of its own.
-  var sMap = {}, nMap = {}, sCount = {}, nCount = {};
-  sheetRows.forEach(function (r) { var k = keyOf(r); sMap[k] = r; sCount[k] = (sCount[k] || 0) + 1; });
-  neonRows.forEach(function (r)  { var k = keyOf(r); nMap[k] = r; nCount[k] = (nCount[k] || 0) + 1; });
-  var duplicates = [];
-  Object.keys(sCount).forEach(function (k) { if (sCount[k] > 1) duplicates.push(k + ' (sheet x' + sCount[k] + ')'); });
-  Object.keys(nCount).forEach(function (k) { if (nCount[k] > 1) duplicates.push(k + ' (neon x' + nCount[k] + ')'); });
-
-  var missingInNeon = [], extraInNeon = [], mismatches = [];
-  Object.keys(sMap).forEach(function (k) {
-    if (!nMap[k]) { missingInNeon.push(k); return; }
-    var s = sMap[k], n = nMap[k], diffs = [];
-    FIELDS.forEach(function (f) {
-      if (String(s[f]) !== String(n[f])) {
-        diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
-      }
-    });
-    if (diffs.length) mismatches.push(k + ' :: ' + diffs.join(', '));
+  // DL-1 (broad-scan 2026-10-01): count ROWS per key, not just keys -- a sheet
+  // holding the same agent-day TWICE used to collapse to one and read CLEAN
+  // while every sheet-path reader SUMS both rows. Neon cannot hold a duplicate
+  // (uq_dqe_history), so any key seen more than once on either side is a
+  // NOT-clean result of its own. ST3 (broad-scan 259, E2): that rule, the
+  // `compared` count and the empty -> INCONCLUSIVE rule all live in the one
+  // shared gate, parityGate_ (Util.gs).
+  var entries = function (rows) { return rows.map(function (r) { return [keyOf(r), r]; }); };
+  var gate = parityGate_(entries(sheetRows), entries(neonRows), {
+    diff: function (s, n) {
+      var diffs = [];
+      FIELDS.forEach(function (f) {
+        if (String(s[f]) !== String(n[f])) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
+      });
+      return { diffs: diffs, rounding: false };
+    },
   });
-  Object.keys(nMap).forEach(function (k) { if (!sMap[k]) extraInNeon.push(k); });
+  var missingInNeon = gate.missingInNeon, extraInNeon = gate.extraInNeon;
+  var mismatches = gate.mismatched, duplicates = gate.duplicates;
 
   Logger.log('--- missing in Neon (sheet rows not mirrored): %s', missingInNeon.length);
   missingInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
@@ -753,14 +747,11 @@ function compareDqeSources_() {
 
   // EXTRA-in-Neon rows count as NOT clean: with reads on neon they are the
   // phantom-row hazard (split agent / double-counted totals) IMP-5 exists
-  // to prevent -- the old verdict ignored them entirely.
-  // Batch 6: an EMPTY comparison must never read as a pass. Today the
-  // extraInNeon check happens to catch the sheet-empty case (every Neon row is
-  // "extra"), but that is incidental -- it would silently become a false CLEAN
-  // if the verdict ever stopped counting extras, which is exactly what the QCD
-  // gate did. Make the requirement explicit rather than emergent.
-  var compared = Object.keys(sMap).length;
-  if (!compared) {
+  // to prevent. Batch 6: an EMPTY comparison must never read as a pass --
+  // since ST3 that is parityGate_'s `inconclusive`, not an emergent property
+  // of counting every Neon row as "extra".
+  var compared = gate.compared;
+  if (gate.inconclusive) {
     Logger.log('=== PARITY INCONCLUSIVE -- ZERO sheet rows in %s..%s, so nothing was '
       + 'compared. NOT a pass. Point DQE_PARITY_FROM / DQE_PARITY_TO at a range the '
       + 'DQE sheet actually covers (the in-source default is a fixed week and ages '
@@ -770,8 +761,7 @@ function compareDqeSources_() {
                      extraInNeon: extraInNeon.length });
   }
 
-  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0
-               && duplicates.length === 0);
+  var clean = gate.clean;
   Logger.log('=== PARITY %s ===', clean
     ? 'CLEAN -- dqe_history matches the sheet for this range (' + compared
       + ' rows compared); read-back gate PASSED'

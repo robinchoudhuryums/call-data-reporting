@@ -242,3 +242,124 @@ test('S3: every SPECS prefix has an anchor classification, and tag-anchored file
   const orphans = Object.keys(ANCHOR_SPECS).filter(function (p) { return !specNames[p]; });
   assert.deepEqual(orphans, [], 'ANCHOR_SPECS entries with no SPECS row: ' + orphans.join(', '));
 });
+
+// ---- ST1 (broad-scan 259, E2): the queue-data contract ---------------------
+//
+// A cache whose payload EMBEDS queue (QCD) data needs two things the DQE
+// freshness tag cannot give it, and the F4 / F5 findings were each one of them
+// missing on one surface:
+//   (a) the key carries the QCD anchor -- ':q' + qcdFreshnessTag_() (DATA-6,
+//       F4) -- so a QCD import or force re-import mints a new key even when the
+//       latest DQE date did not move;
+//   (b) the put is SKIPPED when the execution's QCD read degraded --
+//       qcdSnapshotReadFailed_() (D-5) -- and every QCD reader a cached surface
+//       calls RAISES that flag on its degraded exits (a throw, or an empty
+//       grid after a Neon fallback, F5), or the skip never fires.
+// Detection is mechanical: a SPECS prefix whose file calls a QCD reader must
+// be classified here, so a new cache in such a file cannot ship unclassified.
+// File-level, like S3 above (two prefixes sharing a file share its tokens).
+
+const QCD_READER_CALL = /\b(computeDeptQcdSnapshot_|computeQcdSnapshots_|computeQcdReport_|readQcdGrid_|readQcdSheetData_|neonFetchQcdGrid_)\(/;
+const QUEUE_SPECS = {
+  summary:          'embeds',   // My Department's QCD snapshot (computeDeptQcdSnapshot_)
+  insights:         'embeds',   // Insights Queue health (computeQcdReport_)
+  companyOverview:  'embeds',   // the Overview tiles' QCD chips (computeQcdSnapshots_)
+  overviewChartYtd: 'embeds',   // the YTD chart's company abandon-% series
+  qcdAll:           'exception: QCD-ONLY report keyed on qcdAllFreshnessAnchor_ (the latest QCD date qcdFreshnessTag_ itself reads, D-1) with an empty-payload put guard',
+  latestDate:       'none: the latest DQE date, 5-min tier',
+  latestDates:      'none: a latest-date lookup on the 5-min tier -- it IS a freshness anchor, not a payload',
+  deptExts:         'none: the derived DQE queue-ext set (Data.gs only shares the file with the QCD snapshot)',
+  inbound:          'none: inbound_calls only -- the QCD read in InboundReport.gs is the editor-run, uncached parity tool',
+  inboundHeatmap:   'none: inbound_calls only (see inbound)',
+};
+// The QCD readers a cached surface calls, and the functions allowed to read
+// the QCD grid WITHOUT raising the flag (tools whose result is never cached).
+const QCD_FLAGGING_READERS = ['computeDeptQcdSnapshot_', 'computeQcdSnapshots_', 'computeQcdReport_'];
+const QCD_GRID_READ_EXEMPT = {
+  compareQcdSources_: 'the QCD read-source flip gate (ST3) -- its result is a verdict, never cached',
+  compareInboundVsQcdAbandons_: 'editor-run reconciliation tool, uncached',
+  probeBriefThresholds: 'editor-run research probe (Operator State #76), uncached',
+  dqeSilenceReadDay_: 'the DQE-silence watchdog cross-check -- an engine outcome, not a cached payload',
+};
+
+function stripComments(src) { return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''); }
+function fnBody(src, name) {
+  const start = src.indexOf('function ' + name + '(');
+  if (start === -1) return null;
+  const open = src.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  return null;
+}
+
+test('ST1: every cache in a file that reads queue data is classified, and an embedding one carries the anchor AND the degraded-put skip', function () {
+  SPECS.forEach(function (sp) {
+    const prefix = sp[0], file = sp[1];
+    const src = stripComments(read(file, DASH));
+    if (!QCD_READER_CALL.test(src)) return;
+    const spec = QUEUE_SPECS[prefix];
+    assert.ok(spec, prefix + ' (' + file + ') sits in a file that reads queue data but has no QUEUE_SPECS entry -- '
+      + 'classify it: "embeds" (the payload carries QCD data) or "none: <why>" / "exception: <why>"');
+    if (spec !== 'embeds') return;
+    assert.ok(src.indexOf("':q' + qcdFreshnessTag_()") !== -1 || /\+\s*':q'\s*\+\s*\(?\s*\(?typeof qcdFreshnessTag_/.test(src),
+      prefix + ' embeds queue data but ' + file + ' never suffixes a key with \':q\' + qcdFreshnessTag_() -- '
+      + 'a QCD import that does not move the DQE date would serve the stale queue section for 6 h (F4)');
+    assert.ok(/qcdSnapshotReadFailed_\(\)/.test(src),
+      prefix + ' embeds queue data but ' + file + ' never checks qcdSnapshotReadFailed_() before its put -- '
+      + 'a degraded QCD read would be pinned for the TTL (D-5)');
+  });
+  const specNames = {};
+  SPECS.forEach(function (sp) { specNames[sp[0]] = true; });
+  assert.deepEqual(Object.keys(QUEUE_SPECS).filter(function (p) { return !specNames[p]; }), [],
+    'QUEUE_SPECS entries with no SPECS row');
+});
+
+test('ST1: every QCD reader a cached surface calls raises the outage flag on each degraded exit', function () {
+  const files = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
+  const all = files.map(function (f) { return read(f, DASH); }).join('\n');
+  QCD_FLAGGING_READERS.forEach(function (name) {
+    const body = fnBody(all, name);
+    assert.ok(body, name + ' is gone -- update QCD_FLAGGING_READERS');
+    // (1) every catch block notes the failure (or rethrows to a caller that does).
+    const re = /catch\s*\(\s*\w+\s*\)\s*\{/g;
+    let m;
+    while ((m = re.exec(body)) !== null) {
+      const block = fnBody('function x() ' + body.slice(m.index + m[0].length - 1), 'x') || '';
+      assert.ok(/noteQcdSnapshotReadFailed_\(|\bthrow\b/.test(block),
+        name + ' has a catch that swallows a QCD read failure without noteQcdSnapshotReadFailed_ -- '
+        + 'the caller would cache the degraded payload: ' + block.replace(/\s+/g, ' ').slice(0, 120));
+    }
+    // (2) every branch taken on an EMPTY grid flags a Neon-fallback empty (F5).
+    stripComments(body).split('\n').forEach(function (line, i, lines) {
+      if (!/\bif\s*\(/.test(line) || !/(^|[^!\w.])\w+\.empty\b/.test(line)) return;
+      const branch = lines.slice(i, i + 10).join('\n');
+      assert.ok(/qcdFlagEmptyIfOutage_\(/.test(branch),
+        name + ' takes an empty-grid branch without qcdFlagEmptyIfOutage_ -- a Neon miss with an empty '
+        + 'sheet fallback would read as a real zero and be cached (F5): ' + line.trim());
+    });
+  });
+  // Inventory: every function that reads the QCD GRID is a flagging reader or
+  // a documented exemption -- a new reader must decide which.
+  const readers = [];
+  files.forEach(function (f) {
+    const src = read(f, DASH);
+    const re = /^function (\w+)\(/gm;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      if (/^(readQcdGrid_|readQcdSheetData_|neonFetchQcdGrid_)$/.test(m[1])) continue;
+      const b = stripComments(fnBody(src, m[1]) || '');
+      if (/\b(readQcdGrid_|readQcdSheetData_|neonFetchQcdGrid_)\(/.test(b)) readers.push(m[1]);
+    }
+  });
+  const unclassified = readers.filter(function (n) {
+    return QCD_FLAGGING_READERS.indexOf(n) === -1 && !QCD_GRID_READ_EXEMPT[n];
+  });
+  assert.deepEqual(unclassified, [], 'functions reading the QCD grid that are neither a flagging reader nor '
+    + 'a documented exemption: ' + unclassified.join(', '));
+  Object.keys(QCD_GRID_READ_EXEMPT).forEach(function (n) {
+    assert.ok(readers.indexOf(n) !== -1, 'QCD_GRID_READ_EXEMPT lists ' + n + ', which no longer reads the grid');
+  });
+});
