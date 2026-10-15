@@ -104,16 +104,15 @@ function sampleQueueSplitCallIds() {
     queueNameByExt[qCalleeExt] = qCalleeName;
   }
 
-  // F59 (broad-scan 2026-10-14): date the run the way the build does -- the
-  // FIRST valid START_TIME -- and drop legs on any other date, as the build
-  // has since P-7. One stray carry-over leg used to make two dates "present",
-  // which switched the col-AI self-check OFF for the whole day (and the
-  // closing message then named whichever date sorted first, often the stray).
-  var buildDate = '';
-  for (var bd = 0; bd < body.length && !buildDate; bd++) {
-    var bdIso = dateIso(body[bd][DQE_C.START_TIME]);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(bdIso)) buildDate = bdIso;
-  }
+  // F59 (broad-scan 2026-10-14): drop legs on any date but the run's, as the
+  // build has since P-7 -- one stray carry-over leg used to make two dates
+  // "present", which switched the col-AI self-check OFF for the whole day.
+  // ST2 (broad-scan 259, E4): the run's date is the grid's MAJORITY day through
+  // the one shared rule (rawGridDay_), not the first valid row -- the ING-7
+  // shape, where a carry-over leg sorts first, used to date the run by the
+  // stray. In the daily path that is also the build's date (PIPE-3 proves the
+  // tab's date is the majority, and the build is pinned to the tab's date).
+  var buildDate = rawGridDay_([[]].concat(body.map(function (r) { return ['', '', r[DQE_C.START_TIME]]; }))).dateIso || '';
   var strays = {};
 
   var legsByAgent = {};
@@ -140,7 +139,7 @@ function sampleQueueSplitCallIds() {
     if (DQE_EXCLUDED_AGENTS.indexOf(agent) !== -1) { skippedExcluded++; continue; }
 
     var startRaw = row[DQE_C.START_TIME];
-    var d = dateIso(startRaw);
+    var d = rawGridDayIso_(startRaw) || dateIso(startRaw);   // ST2: the shared parse; unrecognized compares as-is
     if (d && buildDate && d !== buildDate) { strays[d] = (strays[d] || 0) + 1; continue; }   // F59 / P-7
     if (d) dateSeen[d] = (dateSeen[d] || 0) + 1;
 

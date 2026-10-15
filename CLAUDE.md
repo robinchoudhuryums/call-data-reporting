@@ -113,7 +113,8 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # it as abandoned-only, R8-E6), plus simulateSplitCol2 /
 # parseDurationDecimal across dataFilters.js / autoImport.js (compared
 # on CODE -- one copy is nested, so indentation/blank lines are
-# normalized away). Non-zero exit on drift.
+# normalized away), plus ST2's rawGridDay_ / rawGridDayIso_ day rule
+# across queueOverlapAudit.js / autoImport.js. Non-zero exit on drift.
 # Also runs automatically as a non-blocking SessionStart hook
 # (.claude/settings.json).
 bash scripts/check-duplicated-files.sh

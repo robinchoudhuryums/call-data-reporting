@@ -281,6 +281,16 @@ tests/
                               phones-only refill, the R34 missing-parents
                               pass, the R35 inline parent upsert, the R37
                               stale-phantom prune), dept-config-neon /
+                              raw-grid-day (ST2: rawGridDay_, the ONE
+                              majority-date / stray rule -- ING-7 shape, ties,
+                              undated rows -- and the sweep that every
+                              stray-aware reader uses it),
+                              parity-day (ST5: the shared day in
+                              tests/harness/parityDay.js drives the build,
+                              the drill, the split sample and the overlap
+                              audit, which must all agree -- abandoned
+                              columns, sentinel, two-queue call, a stray
+                              sorted first),
                               config-neon-c3, parity-gate (ST3: parityGate_,
                               the one verdict every key-by-key flip gate
                               reaches -- duplicates, `compared`, empty =

@@ -3001,34 +3001,73 @@ function parsePendingDate(val) {
  * phantom zero in a duration or count column); everything else stays text.
  */
 /**
+ * ST2 (broad-scan 259, E4): THE calendar day of one leg's START_TIME display
+ * cell (col C) -- "M/D/YYYY ...", "M/D/YY ..." or ISO -- as 'YYYY-MM-DD';
+ * null when the cell is empty or unrecognized (such a row is UNDATED, never a
+ * stray). PURE. Duplicated byte-for-byte in cdr-report/queueOverlapAudit.js;
+ * scripts/check-duplicated-files.sh fails on drift.
+ */
+function rawGridDayIso_(cell) {
+  var v = String(cell == null ? '' : cell).trim();
+  if (!v) return null;
+  var datePart = v.split(/\s+/)[0];
+  var m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  var p = datePart.split('/');
+  if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
+    var y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
+    return y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
+  }
+  return null;
+}
+
+/**
+ * ST2 (broad-scan 259, E4): THE day of a Raw Data / Call_Legs display grid
+ * (header row first; col C = leg START_TIME). A source tab holds one day's
+ * legs plus a few carry-over legs from the day before (P-7), which may sort
+ * FIRST (the ING-7 shape) -- so the grid's day is the MAJORITY date, never
+ * the first row's. Ties go to the later date. Returns { dateIso, rows (the
+ * header, every row on dateIso and every undated row), strays, strayByDay
+ * {iso: n}, counts {iso: n}, total (dated rows) }. PURE.
+ *
+ * One rule for every reader that asks "which day is this grid, and which legs
+ * are strays": PIPE-3's tab-date check (sourceCallDateCounts_), the CSR daily
+ * engine and its repair (csrRepairDayRows_), and the read-only diagnostics --
+ * diagnoseQcdVsDqe, queueSplitSample and (its cdr-report copy) the overlap
+ * audit. Deliberately NOT here (owner ruling 2026-10-15, E4): CDR Output, QCD
+ * and Q Path still COUNT carry-over legs, and the builders that drop them
+ * (DQE, Direct, the per-call writers) keep their own per-record date checks,
+ * so no stored figure changes. Duplicated in cdr-report/queueOverlapAudit.js.
+ */
+function rawGridDay_(grid) {
+  var counts = {}, rowIso = [], total = 0;
+  for (var i = 1; i < (grid || []).length; i++) {
+    var iso = rawGridDayIso_((grid[i] || [])[2]);
+    rowIso.push(iso);
+    if (iso) { counts[iso] = (counts[iso] || 0) + 1; total++; }
+  }
+  var best = null;
+  Object.keys(counts).forEach(function (k) {
+    if (best === null || counts[k] > counts[best] || (counts[k] === counts[best] && k > best)) best = k;
+  });
+  var rows = (grid && grid.length) ? [grid[0]] : [], strays = 0, strayByDay = {};
+  for (var j = 1; j < (grid || []).length; j++) {
+    var ri = rowIso[j - 1];
+    if (!ri || ri === best) rows.push(grid[j]);
+    else { strays++; strayByDay[ri] = (strayByDay[ri] || 0) + 1; }
+  }
+  return { dateIso: best, rows: rows, strays: strays, strayByDay: strayByDay, counts: counts, total: total };
+}
+
+/**
  * PIPE-3: the calendar days of the source grid's call START times (col C,
  * the column every engine decodes with simulateSplitCol2), most common first.
- * Accepts the display shapes the DQE build accepts: "M/D/YYYY ..." and ISO.
- * Pure -- unit-tested.
+ * Since ST2 a view over rawGridDay_ (one date rule). Pure -- unit-tested.
  */
 function sourceCallDateCounts_(grid) {
-  const counts = {};
-  let total = 0;
-  for (let i = 1; i < (grid || []).length; i++) {
-    const v = String((grid[i] || [])[2] == null ? '' : grid[i][2]).trim();
-    if (!v) continue;
-    const datePart = v.split(/\s+/)[0];
-    let iso = null;
-    const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) iso = m[1] + '-' + m[2] + '-' + m[3];
-    else {
-      const p = datePart.split('/');
-      if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
-        const y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
-        iso = y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
-      }
-    }
-    if (!iso) continue;
-    counts[iso] = (counts[iso] || 0) + 1;
-    total++;
-  }
-  const days = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || (a < b ? -1 : 1); });
-  return { counts: counts, total: total, days: days };
+  var d = rawGridDay_(grid);
+  var days = Object.keys(d.counts).sort(function (a, b) { return d.counts[b] - d.counts[a] || (a < b ? -1 : 1); });
+  return { counts: d.counts, total: d.total, days: days };
 }
 
 /**
@@ -4699,28 +4738,11 @@ function repairCsrTransferForRawDataDate() {
 /**
  * ING-7. Pure: the majority date of a Raw Data display grid and the grid with
  * only that date's legs kept (header + undated rows kept). Returns
- * { dateIso, rows, strays }.
+ * { dateIso, rows, strays }. Since ST2 a view over rawGridDay_.
  */
 function csrRepairDayRows_(rawDisp) {
-  var counts = {}, isoMemo = {};
-  var rowIso = [];
-  for (var i = 1; i < rawDisp.length; i++) {
-    var ds = String((rawDisp[i] && rawDisp[i][2]) || '').split(' ')[0];
-    if (!(ds in isoMemo)) isoMemo[ds] = ds ? parseDateForNeon(ds) : null;
-    var iso = isoMemo[ds];
-    rowIso.push(iso);
-    if (iso) counts[iso] = (counts[iso] || 0) + 1;
-  }
-  var best = null;
-  Object.keys(counts).forEach(function (k) {
-    if (best === null || counts[k] > counts[best] || (counts[k] === counts[best] && k > best)) best = k;
-  });
-  var rows = [rawDisp[0]], strays = 0;
-  for (var j = 1; j < rawDisp.length; j++) {
-    var ri = rowIso[j - 1];
-    if (!ri || ri === best) rows.push(rawDisp[j]); else strays++;
-  }
-  return { dateIso: best, rows: rows, strays: strays };
+  var d = rawGridDay_(rawDisp);
+  return { dateIso: d.dateIso, rows: d.rows, strays: d.strays };
 }
 
 /** ING-7: the repair body, under the caller's lock. */

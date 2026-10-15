@@ -44,23 +44,9 @@ const h = loadGas({
 h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
 h.ctx.notifyNeonWriteFailure = function () {};
 
-// Raw Data columns both implementations read (0-indexed display grid).
-function rawRow(o) {
-  const r = new Array(26).fill('');
-  r[0]  = o.callId || '';
-  r[1]  = o.legId != null ? String(o.legId) : '';
-  r[2]  = o.start || '';
-  r[6]  = o.talk || '';
-  r[7]  = o.callTime || '';
-  r[8]  = o.caller || '';
-  r[11] = o.calleeName || '';
-  r[14] = o.parentCall || '';
-  r[22] = o.callerId || '';
-  r[23] = o.missed ? 'Missed' : '';
-  r[24] = o.abandoned ? 'Abandoned' : '';
-  r[25] = o.answered ? 'Answered' : '';
-  return r;
-}
+// Raw Data columns both implementations read -- ONE builder for every mirror
+// suite (ST5, tests/harness/parityDay.js).
+const { rawRow } = require('../harness/parityDay');
 
 const DATE = '03/09/2026';
 const IN   = DATE + ' 7:00:00';    // 25200s PST -- inside [6:30, 15:00)

@@ -20,28 +20,13 @@ const { rosterGrid } = require('../harness/fixtures');
 // The last test proves the self-check BITES: with the tool's floor forced flat
 // after the build ran, the CSR-family agent reads MISMATCH.
 
-const h = loadGas({ project: 'cdr-import', files: ['buildDQEHistoricalData.js', 'queueSplitSample.js'] });
+// ST2: the sample dates its run through rawGridDay_ (autoImport.js, the same project scope).
+const h = loadGas({ project: 'cdr-import', files: ['buildDQEHistoricalData.js', 'queueSplitSample.js', 'autoImport.js'] });
 h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
 h.ctx.notifyNeonWriteFailure = function () {};
 h.ctx.getTargetSsId_ = function () { return 'fake'; };
 
-function rawRow(o) {
-  const r = new Array(26).fill('');
-  r[0]  = o.callId || '';
-  r[1]  = o.legId != null ? String(o.legId) : '';
-  r[2]  = o.start || '';
-  r[6]  = o.talk || '';
-  r[7]  = o.callTime || '';
-  r[8]  = o.caller || '';
-  r[10] = o.callee || '';
-  r[11] = o.calleeName || '';
-  r[14] = o.parentCall || '';
-  r[22] = o.callerId || '';
-  r[23] = o.missed ? 'Missed' : '';
-  r[24] = o.abandoned ? 'Abandoned' : '';
-  r[25] = o.answered ? 'Answered' : '';
-  return r;
-}
+const { rawRow } = require('../harness/parityDay');   // ST5: the one Raw Data row builder
 
 const EARLY = '03/09/2026 6:10:00';   // 6:10 PST: inside the CSR family's floor, outside INV-06's
 const IN    = '03/09/2026 7:00:00';
@@ -142,7 +127,8 @@ test('P-5: the sample tool writes nothing', function () {
 // F59 (broad-scan 2026-10-14): one stray carry-over leg (another date) used
 // to make two dates "present", switching the col-AI self-check OFF for the
 // whole day, and the closing message then named the stray date. The tool now
-// dates the run like the build (first valid START_TIME) and drops strays (P-7).
+// dates the run by the grid's MAJORITY day (rawGridDay_, ST2) and drops strays
+// (P-7); tests/unit/parity-day.test.js covers a stray sorted FIRST.
 test('F59: a stray leg on another date neither disables the self-check nor becomes the date', function () {
   installAndBuild([
     // A next-day carry-over leg for Anna on a parent the build never sees.

@@ -30,20 +30,10 @@ h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
 h.ctx.notifyNeonWriteFailure = function () {};
 
 const DATE = '03/09/2026';
-function raw(o) {
-  const r = new Array(26).fill('');
-  r[0]  = o.callId || '';
-  r[1]  = o.legId != null ? String(o.legId) : '';
-  r[2]  = o.start || (DATE + ' 7:00:00');
-  r[8]  = o.caller || '';
-  r[10] = o.callee || '';
-  r[11] = o.calleeName || '';
-  r[14] = o.parentCall || '';
-  r[22] = o.callerId || '';
-  r[23] = o.missed ? 'Missed' : '';
-  r[25] = o.answered ? 'Answered' : '';
-  return r;
-}
+// ST5: the one Raw Data row builder (tests/harness/parityDay.js), with this
+// suite's default in-window start.
+const { rawRow } = require('../harness/parityDay');
+function raw(o) { return rawRow(Object.assign({ start: DATE + ' 7:00:00' }, o)); }
 
 // Roster columns start at F (INV-11); "Name, ext" cells (INV-03).
 function rosterGridWith(deptToNames) {
@@ -278,18 +268,21 @@ test('F13: agent names are canonicalized with the build\'s INV-24 rule before th
 test('the date DISTRIBUTION is printed, so a mixed sheet is visible', function () {
   // The silent failure mode was invisible because nothing showed how much of
   // the sheet was being read.
+  // ST2: the day is the MAJORITY date (rawGridDay_), so 03/09 holds two rows.
   const out = run([
     raw({ callId: 'Q1', legId: 0, start: '03/09/2026 8:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q3', legId: 0, start: '03/09/2026 9:00:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
     raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:02:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ]);
   assert.match(out, /Raw Data rows by date/);
-  assert.match(out, /03\/09\/2026\s+1 row\(s\).*<- the build dates this sheet here/);
+  assert.match(out, /03\/09\/2026\s+2 row\(s\).*<- the build dates this sheet here/);
   assert.match(out, /03\/10\/2026\s+1 row\(s\)/);
 });
 
 test('QUEUE_OVERLAP_DATE pins one date and says it is NOT build parity', function () {
   const rows = [
     raw({ callId: 'Q1', legId: 0, start: '03/09/2026 7:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q3', legId: 0, start: '03/09/2026 8:00:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),   // ST2: 03/09 is the majority
     raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:05:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ];
   h.state.spreadsheet = makeFakeSpreadsheet({

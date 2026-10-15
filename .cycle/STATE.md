@@ -13,6 +13,11 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- Broad scan cycle 259 Expansion E4 IMPLEMENTED (block 259): mirror discipline (new capability).** ST2, NARROW by owner ruling (no stored figure changes): rawGridDay_ / rawGridDayIso_ is the one "which day is this grid, which legs are strays" rule (majority date) -- PIPE-3, the CSR engine + repair, diagnoseQcdVsDqe, queueSplitSample and (a guarded cdr-report copy) the overlap audit all use it; CDR / QCD / Q Path keep counting carry-over legs. ST5: tests/harness/parityDay.js is one shared day that drives the build (both copies), the drill, the split sample and the overlap audit, which must agree. 2527 tests, 10/10 bites + the guard bitten by hand, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy cdr-import and cdr-report. No operator steps.
+  **Decision recorded:** ST2 "Full" (filter carry-over legs at the import, changing stored CDR / QCD / Q Path) was declined -- revisit only on purpose.
+  **Next:** E5 (ST4 cross-state drivers) -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-15 -- Broad scan cycle 259 Expansion E3 IMPLEMENTED (block 259): recovery + deploy visibility (new capability).** G1 CDR Tools -> Make a date whole… (cdr-import): a per-date ledger (Call_Legs tab, six history sheets, six Neon tables), only what is owed via the existing paths (non-force import with the new ignoreLastSheets opt-in for missing core sheets; the PIPE-7 / F7 catch-ups), before/after report, un-parks a date that ends whole; never deletes. G4 every deploy.sh stamp carries `trees d=.. i=.. r=..`; the Health page's deploy-currency row treats the newest deploy as HEAD and warns for a project running older code. 2518 tests, 12/12 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
   **Owner-side:** deploy all three projects with scripts/deploy.sh once (the row stays muted until each has a G4 stamp). Use Make a date whole for a date missing something (Operator State #56).
   **Next:** E4 (ST2 stray-leg filter + ST5 shared parity fixture), E5 (ST4 cross-state drivers) -- optional; F35 waits on the operator clasp check; F62 deferred.
