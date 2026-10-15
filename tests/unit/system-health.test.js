@@ -1766,3 +1766,72 @@ test('F40: deploy.sh stamps the sibling projects with their INV-16 hash and warn
     assert.equal(hash('b'), '', 'an unreadable pair reports nothing');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// G4 (broad-scan 259, E3): every deploy.sh stamp carries all three projects'
+// code hashes (`trees d=.. i=.. r=..`) as that checkout held them. The newest
+// deploy stands in for HEAD; a project whose own deployed hash differs from
+// that record is running older code. An untouched project hashes the same,
+// so it never reads as behind for a change it did not need.
+test('G4: deploy-currency parses each project\'s stamp and warns only for a project behind the newest deploy', function () {
+  const J = function (x) { return JSON.parse(JSON.stringify(x)); };
+  const stamp = function (ts, git, d, i, r, proj) {
+    return 'deploy.sh ' + ts + ' | git ' + git + ' | main' + (proj ? ' | ' + proj + ' inv16 aaaaaaaa' : '')
+      + ' | trees d=' + d + ' i=' + i + ' r=' + r;
+  };
+  assert.equal(h.call('healthParseDeployStamp_', 'unstamped — last push bypassed scripts/deploy.sh'), null);
+  assert.equal(h.call('healthParseDeployStamp_', 'deploy.sh 2026-10-13T06:00:00Z | git abc | main'), null, 'a pre-G4 stamp has no trees');
+  assert.deepEqual(J(h.call('healthParseDeployStamp_', stamp('2026-10-13T06:00:00Z', 'abc1234', '11111111', '22222222', '33333333'))),
+    { ts: '2026-10-13T06:00:00Z', git: 'abc1234', trees: { d: '11111111', i: '22222222', r: '33333333' } });
+
+  const D = '11111111', I = '22222222', R = '33333333', I2 = '44444444';
+  const rows = [
+    { notes: 'Call_Legs_2026-10-14 | build: ' + stamp('2026-10-14T06:00:00Z', 'bbb', D, I, R, 'cdr-import') },
+    { notes: 'Call_Legs_2026-10-13 | build: ' + stamp('2026-10-10T06:00:00Z', 'old', D, I2, R, 'cdr-import') },
+    { notes: 'DQE | build: ' + stamp('2026-10-12T06:00:00Z', 'ccc', D, I2, R, 'cdr-report') },
+  ];
+  const stamps = J(h.call('healthDeployStamps_', rows, stamp('2026-10-11T06:00:00Z', 'aaa', D, I2, R)));
+  assert.equal(stamps['cdr-import'].git, 'bbb', 'the NEWEST row per project wins');
+  assert.equal(stamps['cdr-report'].git, 'ccc');
+  assert.equal(stamps.dashboard.git, 'aaa');
+
+  // Newest deploy = cdr-import (10-14), which saw cdr-import at I. Everyone's
+  // own hash matches what it saw: d=D (dashboard ran D), r=R (report ran R).
+  const ok = J(h.call('healthDeployCurrency_', stamps));
+  assert.equal(ok.status, 'ok', JSON.stringify(ok));
+  assert.match(ok.value, /cdr-import deployed 2026-10-14T06:00:00Z from git bbb/);
+
+  // Now cdr-report's deployed code (r) is older than what the newest deploy saw.
+  stamps['cdr-report'].trees.r = '99999999';
+  const warn = J(h.call('healthDeployCurrency_', stamps));
+  assert.equal(warn.status, 'warn');
+  assert.match(warn.value, /^cdr-report behind the newest deploy/);
+  assert.doesNotMatch(warn.value, /dashboard/, 'an untouched project is not behind');
+
+  const muted = J(h.call('healthDeployCurrency_', { dashboard: stamps.dashboard }));
+  assert.equal(muted.status, 'muted');
+  assert.match(muted.value, /not reported yet by cdr-import, cdr-report/);
+});
+
+test('G4: deploy.sh stamps every project\'s tree hash, and the hash skips the stamp file and moves on any code edit', { skip: process.platform === 'win32' }, function () {
+  const fs = require('fs'), path = require('path'), os = require('os');
+  const { spawnSync } = require('child_process');
+  const sh = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'deploy.sh'), 'utf8');
+  assert.match(sh, /STAMP="\$\{STAMP\} \| trees d=\$\{TREES_D\} i=\$\{TREES_I\} r=\$\{TREES_R\}"/, 'the token the Health row parses');
+  const start = sh.indexOf('project_tree_hash_() {');
+  const fn = sh.slice(start, sh.indexOf('\n}\n', start) + 2);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-'));
+  try {
+    const hash = function () { return spawnSync('bash', ['-c', fn + '\nproject_tree_hash_ "$1"', '_', dir], { encoding: 'utf8' }).stdout.trim(); };
+    fs.writeFileSync(path.join(dir, 'Code.gs'), 'function a() {}\n');
+    fs.writeFileSync(path.join(dir, 'page.html'), '<p>x</p>\n');
+    fs.writeFileSync(path.join(dir, 'BuildStamp.gs'), "var BUILD_STAMP_ = 'one';\n");
+    const h1 = hash();
+    assert.match(h1, /^[0-9a-f]{8}$/);
+    fs.writeFileSync(path.join(dir, 'BuildStamp.gs'), "var BUILD_STAMP_ = 'two';\n");
+    fs.writeFileSync(path.join(dir, 'notes.md'), 'not pushed code\n');
+    assert.equal(hash(), h1, 'the stamp file and non-code files do not move the hash');
+    fs.writeFileSync(path.join(dir, 'page.html'), '<p>y</p>\n');
+    assert.notEqual(hash(), h1, 'a code edit moves it');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  assert.equal(spawnSync('bash', ['-c', fn + '\nproject_tree_hash_ /no/such/dir'], { encoding: 'utf8' }).stdout, '');
+});

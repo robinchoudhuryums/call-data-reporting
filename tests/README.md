@@ -156,7 +156,9 @@ tests/
                               -> no row; PROPS-1: the Script Properties
                               500 KB store row -- UTF-8 bytes, chunk families,
                               80% warn, value-free; ESC-DDL: the esc-schema
-                              row on the shared conn) + smoke-check, queue-report,
+                              row on the shared conn; G4: deploy-currency --
+                              the stamp parser, newest-deploy-as-HEAD verdict,
+                              deploy.sh's project_tree_hash_) + smoke-check, queue-report,
                               pipeline-watch, missed-slice,
                               inbound-qcd-parity, journey-fallback (the
                               call-path drill's sheet fallback: source
@@ -376,7 +378,7 @@ tests/
                               outbound-home (broad-scan 2026-10-12 Batch 3b, UX-1: the Outbound summary + Callbacks (+ Direct lines) sit under the outbound agent table and outside the Insights results, read the PAGE window via obSectionWindow_ rather than Insights' last result, no duplicate agent table, and the own-group label when the table above holds sub-queues; rendered in drive-outbound-e + drive-callbacks),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
-                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up, PIPE-7: the per-call catch-up for an already-imported date and its pending-while-Neon-is-down ledger),
+                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up, PIPE-7: the per-call catch-up for an already-imported date and its pending-while-Neon-is-down ledger; G1: makeDateWhole's per-date ledger, what it owes, the non-force ignoreLastSheets import, the un-park on whole, the tab-gone report),
                               cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
                               cdr-report-neon-timeout (CR-6: getNeonConn()'s statement-timeout wrapper + the forwarded-method sweep; the dashboard twin is in neon-conn-memo, DL-3),
                               neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),

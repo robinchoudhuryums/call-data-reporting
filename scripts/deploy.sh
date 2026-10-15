@@ -218,6 +218,20 @@ inv16_hash_() {
   fi
   [ -f "$d/neonWrite.js" ] && [ -f "$d/buildDQEHistoricalData.js" ] && printf '%s' "$h"
 }
+# G4 (broad-scan 259, E3): the content hash (8 hex) of one project's PUSHED
+# code -- every .gs / .js / .html / appsscript.json in its (flat) folder,
+# sorted, name + bytes, EXCLUDING its build-stamp file (rewritten per push).
+# '' if the folder is missing. Every stamp carries all three projects' hashes
+# as this checkout has them, so the Health page's deploy-currency row can tell
+# a project whose deployed code differs from what the NEWEST deploy saw.
+project_tree_hash_() {
+  local d="$1"
+  [ -d "$d" ] || return 0
+  ( cd "$d" && find . -maxdepth 1 -type f \( -name '*.gs' -o -name '*.js' -o -name '*.html' -o -name 'appsscript.json' \) \
+      ! -name 'BuildStamp.gs' ! -name 'buildStamp.js' | LC_ALL=C sort | while IFS= read -r f; do
+        printf '%s\n' "$f"; cat "$f"; done ) \
+    | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } | cut -c1-8
+}
 # F40: deploying ONE sibling while the other's last deploy shipped a
 # different copy of the INV-16 pair leaves that project's DQE build on the
 # old rules. Say so before the push (the Health page's inv16-skew row shows
@@ -269,6 +283,13 @@ if [ -n "$STAMP_FILE" ] && [ -f "$STAMP_FILE" ]; then
       [ -n "$INV16_HASH" ] && STAMP="${STAMP} | ${DIR#apps-script/} inv16 ${INV16_HASH}"
       ;;
   esac
+  # G4: every project's tree hash, as THIS checkout holds it (see project_tree_hash_).
+  TREES_D="$(project_tree_hash_ "$ROOT_ABS/apps-script/department-dashboard")"
+  TREES_I="$(project_tree_hash_ "$ROOT_ABS/apps-script/cdr-import")"
+  TREES_R="$(project_tree_hash_ "$ROOT_ABS/apps-script/cdr-report")"
+  if [ -n "$TREES_D" ] && [ -n "$TREES_I" ] && [ -n "$TREES_R" ]; then
+    STAMP="${STAMP} | trees d=${TREES_D} i=${TREES_I} r=${TREES_R}"
+  fi
   # Restore the file no matter how this script exits. DEP-2: from a COPY taken
   # just before the write, not `git checkout` -- that dropped an uncommitted
   # edit to the stamp file and could not restore an untracked one. If even the

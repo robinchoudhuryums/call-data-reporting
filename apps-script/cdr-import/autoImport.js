@@ -553,7 +553,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const { name: latestName, dateObj } = targetSheetInfo;
     const props     = PropertiesService.getScriptProperties();
     const lastKnown = JSON.parse(props.getProperty("lastSheets") || "[]");
-    const shouldRun = force || !lastKnown.includes(latestName);
+    // G1 (broad-scan 259, E3): makeDateWhole re-imports a date it KNOWS is
+    // incomplete without forcing -- the per-sheet exists checks below then
+    // write only the sheets that lack the date. `lastSheets` would otherwise
+    // stop it at "ALREADY PROCESSED" for any date the trigger already saw.
+    const shouldRun = force || !!(opts && opts.ignoreLastSheets) || !lastKnown.includes(latestName);
 
     if (!shouldRun) { return "ALREADY PROCESSED"; }
     if (!silent) sourceSS.toast(`Processing: ${latestName}`, "Step 1/7", -1);
@@ -3563,6 +3567,196 @@ function pendingImportMirrorCatchUp_(targetSS, iso, dateObj) {
     } catch (logErr) { /* best-effort */ }
   });
   return settled;
+}
+
+// ── G1 (broad-scan 259, E3): make one date whole ───────────────────────────
+//
+// Getting one date complete used to take four or five tools (Operator State
+// #56): Manual Export, the per-call backfills, backfillDirectCallToNeon, the
+// mirror re-runs -- each with its own idea of what was already there.
+// makeDateWhole (CDR Tools -> Make a date whole…) does it in one action,
+// against a per-date LEDGER of what exists:
+//   - the Call_Legs_<date> source tab;
+//   - the date's rows in the six history sheets (CDR, Q Path, QCD, CSR
+//     Transfer, DQE, Direct Call History);
+//   - the date's row count in the six Neon tables (call_history_dept,
+//     qcd_history, dqe_history, direct_call_history, inbound_calls,
+//     outbound_calls).
+// It then runs only what is owed, through the paths that already exist:
+//   1. any of the five core sheets lacks the date -> a NON-force import of
+//      that date (processNewImport with ignoreLastSheets): its per-sheet exists
+//      checks write only the missing sheets, and nothing is deleted. Like
+//      Manual Export it re-stages Raw Data with that date. Without the
+//      Call_Legs tab those sheets cannot be rebuilt -- the report says so;
+//   2. always: the PIPE-7 per-call catch-up (each backfill skips a date Neon
+//      already holds) and the F7 derived catch-up (Direct when the sheet still
+//      lacks the date; the CDR / QCD / DQE mirrors, an authoritative per-date
+//      replace, or the deferred queue).
+// The ledger is read again afterwards and both are reported. A date that ends
+// whole leaves the PIPE-1 failure ledger (un-parking it) and is remembered.
+// Never forces, so it can never delete a sheet's rows; a date whose existing
+// rows are WRONG still needs Manual Export (force).
+
+var DATE_WHOLE_SHEETS_ = [
+  ['CDR Historical Data', 3], ['Q Path Historical Data', 3], ['QCD Historical Data', 3],
+  ['CSR Transfer Historical Data', 3], ['DQE Historical Data', 2], ['Direct Call History', 2],
+];
+var DATE_WHOLE_CORE_SHEETS_ = 5;   // the first five: what processNewImport's "already in history" checks
+var DATE_WHOLE_NEON_TABLES_ = ['call_history_dept', 'qcd_history', 'dqe_history',
+  'direct_call_history', 'inbound_calls', 'outbound_calls'];
+
+/**
+ * G1: the per-date ledger. { iso, source, sheets: {name: bool}, neon: {table:
+ * count|null} | null, neonNote }. `neon` is null with a note when Neon is not
+ * configured or unreachable; a table that cannot be counted reads null.
+ */
+function dateWholeLedger_(targetSS, iso) {
+  const p = String(iso).split('-');
+  const dateObj = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+  const out = { iso: iso, source: false, sheets: {}, neon: null, neonNote: '' };
+  try { out.source = !!SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Call_Legs_' + iso); }
+  catch (e) { out.source = false; }
+  DATE_WHOLE_SHEETS_.forEach(function (s) { out.sheets[s[0]] = checkHistoryForDate(targetSS, s[0], dateObj, s[1]); });
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { /* unconfigured */ }
+  if (!configured) { out.neonNote = 'not configured (NEON_HOST unset)'; return out; }
+  const conn = (typeof getReachableNeonConn_ === 'function') ? getReachableNeonConn_() : null;
+  if (!conn) { out.neonNote = 'unreachable'; return out; }
+  out.neon = {};
+  try {
+    DATE_WHOLE_NEON_TABLES_.forEach(function (t) {
+      try {
+        const st = conn.prepareStatement('SELECT count(*) AS n FROM ' + t + ' WHERE call_date = ?::date');
+        st.setQueryTimeout(30);
+        st.setString(1, iso);
+        const rs = st.executeQuery();
+        out.neon[t] = rs.next() ? Number(rs.getString('n')) || 0 : 0;
+        rs.close(); st.close();
+      } catch (te) {
+        out.neon[t] = null;
+        console.warn('dateWholeLedger_: could not count ' + t + ' for ' + iso + ': ' + (te && te.message ? te.message : te));
+      }
+    });
+  } finally {
+    try { conn.close(); } catch (ce) { /* closed */ }
+  }
+  return out;
+}
+
+/**
+ * G1: PURE. What a ledger still owes: sheets lacking the date, and Neon tables
+ * with no rows for a date whose sheet (or, for per-call, Call_Legs tab) has
+ * them. `opts.perCallChecked`: the per-call backfill just ran clean, so a zero
+ * there is a quiet day, not a gap (before it ran, it reads "or a quiet day").
+ * `opts.deferred`: the sheet-sourced mirrors were QUEUED, so their zeros are
+ * not owed by this run (the drain fills them).
+ */
+function dateWholeOwed_(ledger, opts) {
+  opts = opts || {};
+  const owed = [];
+  DATE_WHOLE_SHEETS_.forEach(function (s) { if (!ledger.sheets[s[0]]) owed.push('sheet: ' + s[0]); });
+  if (ledger.neon) {
+    const fromSheet = { call_history_dept: 'CDR Historical Data', qcd_history: 'QCD Historical Data',
+                        dqe_history: 'DQE Historical Data', direct_call_history: 'Direct Call History' };
+    DATE_WHOLE_NEON_TABLES_.forEach(function (t) {
+      const n = ledger.neon[t];
+      if (n === null || n === undefined) { owed.push('neon: ' + t + ' (could not count)'); return; }
+      if (n > 0) return;
+      if (fromSheet[t]) { if (ledger.sheets[fromSheet[t]] && !opts.deferred) owed.push('neon: ' + t); }
+      else if (ledger.source && !opts.perCallChecked) owed.push('neon: ' + t + ' (or a quiet day)');
+    });
+  }
+  return owed;
+}
+
+/** G1: PURE. The before/after report, one line per ledger item. */
+function dateWholeReport_(before, after, actions, owedOpts) {
+  const yes = function (b) { return b ? 'yes' : 'NO'; };
+  const lines = ['Make ' + before.iso + ' whole', '',
+    'Call_Legs_' + before.iso + ' tab: ' + yes(before.source)
+      + (before.source ? '' : ' (sheets cannot be rebuilt without it -- recreate it, Operator State #43 / #56)'), ''];
+  lines.push('Sheet                           before -> after');
+  DATE_WHOLE_SHEETS_.forEach(function (s) {
+    lines.push('  ' + (s[0] + '                              ').slice(0, 30) + yes(before.sheets[s[0]]) + ' -> ' + yes(after.sheets[s[0]]));
+  });
+  lines.push('');
+  if (!after.neon) {
+    lines.push('Neon: ' + (after.neonNote || 'not checked'));
+  } else {
+    lines.push('Neon rows for the date           before -> after');
+    DATE_WHOLE_NEON_TABLES_.forEach(function (t) {
+      const b = before.neon ? before.neon[t] : null, a = after.neon[t];
+      const fmt = function (n) { return (n === null || n === undefined) ? '?' : String(n); };
+      lines.push('  ' + (t + '                              ').slice(0, 30) + fmt(b) + ' -> ' + fmt(a));
+    });
+  }
+  lines.push('', 'Done: ' + (actions.length ? actions.join('; ') : 'nothing was owed'));
+  if (owedOpts && owedOpts.deferred) lines.push('Deferred mirror mode: the Neon mirrors were QUEUED; the drain fills them (Operator State #22).');
+  const owed = dateWholeOwed_(after, owedOpts);
+  lines.push(owed.length ? 'Still owed: ' + owed.join(', ') : 'The date is whole.');
+  return lines.join('\n');
+}
+
+/**
+ * G1: the action. Caller holds the script lock. Returns { before, after,
+ * actions, whole, report }.
+ */
+function makeDateWhole_(iso, targetSS) {
+  targetSS = targetSS || SpreadsheetApp.openById(getTargetSsId_());
+  const before = dateWholeLedger_(targetSS, iso);
+  const actions = [];
+  let settled = true;
+  const coreMissing = DATE_WHOLE_SHEETS_.slice(0, DATE_WHOLE_CORE_SHEETS_)
+    .filter(function (s) { return !before.sheets[s[0]]; }).map(function (s) { return s[0]; });
+  if (coreMissing.length) {
+    if (!before.source) {
+      actions.push('could NOT rebuild ' + coreMissing.join(', ') + ' (no Call_Legs tab)');
+      settled = false;
+    } else {
+      const outcome = processNewImport(false, iso, true, targetSS, null,
+        { noAlert: true, ignoreLastSheets: true });
+      actions.push('imported the missing sheets (' + coreMissing.join(', ') + '): ' + outcome);
+      if (String(outcome).indexOf('ERROR') === 0) settled = false;
+    }
+  }
+  const perCallOk = pendingImportPerCallCatchUp_(iso);
+  if (perCallOk) actions.push('per-call capture checked');
+  else { actions.push('per-call capture NOT completed (see its Pipeline Health row)'); settled = false; }
+  if (pendingImportDerivedCatchUp_(iso)) actions.push('Direct checked and CDR / QCD / DQE re-mirrored');
+  else { actions.push('Direct or a mirror NOT completed (see its Pipeline Health row)'); settled = false; }
+  const after = dateWholeLedger_(targetSS, iso);
+  const owedOpts = { perCallChecked: perCallOk && before.source,
+                     deferred: typeof getNeonMirrorMode_ === 'function' && getNeonMirrorMode_() === 'deferred' };
+  const whole = settled && dateWholeOwed_(after, owedOpts).length === 0;
+  if (whole) {
+    const fails = pendingImportFailsRead_();
+    if (fails[iso]) { delete fails[iso]; pendingImportFailsWrite_(fails); actions.push('cleared from the failed-import ledger'); }
+    if (after.source) rememberProcessedSheet_('Call_Legs_' + iso);
+  }
+  const report = dateWholeReport_(before, after, actions, owedOpts);
+  console.log(report);
+  return { before: before, after: after, actions: actions, whole: whole, report: report };
+}
+
+/** G1: CDR Tools -> "Make a date whole…" (also editor-runnable). */
+function makeDateWhole() {
+  const ui = SpreadsheetApp.getUi();
+  const res = ui.prompt('Make a date whole',
+    'Enter the date (YYYY-MM-DD). Runs only what that date is missing -- sheets, Direct, per-call, '
+    + 'Neon mirrors -- and never deletes rows.', ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  const iso = res.getResponseText().trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { ui.alert('Invalid format. Use YYYY-MM-DD.'); return; }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    ui.alert('⚠️ Busy', 'Another import is running. Please wait a moment and try again.', ui.ButtonSet.OK);
+    return;
+  }
+  let out;
+  try { out = makeDateWhole_(iso); }
+  catch (e) { ui.alert('❌ Make a date whole failed', String(e && e.message ? e.message : e), ui.ButtonSet.OK); return; }
+  finally { lock.releaseLock(); }
+  ui.alert(out.whole ? '✅ ' + iso + ' is whole' : '⚠️ ' + iso + ' is not whole yet', out.report, ui.ButtonSet.OK);
 }
 
 /** Adds a sheet name to the `lastSheets` memo (same cap as processNewImport's F2 write). */

@@ -230,6 +230,7 @@ function getSystemHealth(req) {
     healthPipelineRows_(add, ctx);
     healthHistoricalSortRow_(add, ctx);
     healthInv16SkewRow_(add, ctx);
+    healthDeployCurrencyRow_(add, ctx);   // G4
     healthNeonConfigRows_(add, ctx);
   }
   if (part !== 'fast') healthNeonLiveRows_(add, ctx);
@@ -432,6 +433,78 @@ function healthInv16SkewRow_(add, ctx) {
         'both run ' + imp.hash, '');
     }
   } catch (eS) { /* best-effort -- never costs the page */ }
+}
+
+/**
+ * G4 (broad-scan 259, E3): PURE. Parses one deploy.sh build stamp -- the
+ * dashboard's BUILD_STAMP_, or a sibling's `build: <stamp>` riding a Pipeline
+ * Health note -- into { ts, git, trees: {d, i, r} } (null when the stamp is
+ * the placeholder or predates the G4 `trees` token).
+ */
+function healthParseDeployStamp_(text) {
+  var str = String(text || '');
+  var ts = /deploy\.sh (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)/.exec(str);
+  var trees = /\btrees d=([0-9a-f]{8}) i=([0-9a-f]{8}) r=([0-9a-f]{8})\b/.exec(str);
+  if (!ts || !trees) return null;
+  var git = /\| git ([^\s|]+)/.exec(str);
+  return { ts: ts[1], git: git ? git[1] : '?', trees: { d: trees[1], i: trees[2], r: trees[3] } };
+}
+
+/**
+ * G4: PURE. The newest parsed stamp per project: the dashboard's from its own
+ * BUILD_STAMP_, each sibling's from the newest Pipeline Health note naming it
+ * (the F40 `<project> inv16` token; rows newest first).
+ */
+function healthDeployStamps_(phRows, dashStamp) {
+  var out = { dashboard: healthParseDeployStamp_(dashStamp) };
+  (phRows || []).forEach(function (r) {
+    var note = String((r && r.notes) || '');
+    var m = /\b(cdr-import|cdr-report) inv16 [0-9a-f]{8}\b/.exec(note);
+    if (!m || out[m[1]]) return;
+    var p = healthParseDeployStamp_(note);
+    if (p) out[m[1]] = p;
+  });
+  return out;
+}
+
+/**
+ * G4: PURE verdict. The newest deploy (by stamp time) stands in for HEAD: its
+ * `trees` token records every project's code as that checkout held it. A
+ * project whose OWN deployed hash differs from that record is running older
+ * (or different) code. A project untouched since its last deploy hashes the
+ * same, so it never reads as behind for a change it did not need.
+ * Returns { status: 'ok'|'warn'|'muted', value, hint }.
+ */
+function healthDeployCurrency_(stamps) {
+  var KEY = { dashboard: 'd', 'cdr-import': 'i', 'cdr-report': 'r' };
+  var names = ['dashboard', 'cdr-import', 'cdr-report'];
+  var missing = names.filter(function (n) { return !stamps[n]; });
+  if (missing.length) {
+    return { status: 'muted', value: 'not reported yet by ' + missing.join(', '),
+      hint: 'Each project reports the code it runs once it has been pushed with scripts/deploy.sh '
+        + '(the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). '
+        + 'A bare `clasp push -f` reports nothing.' };
+  }
+  var ref = names.reduce(function (best, n) { return (!best || stamps[n].ts > stamps[best].ts) ? n : best; }, null);
+  var behind = names.filter(function (n) { return stamps[n].trees[KEY[n]] !== stamps[ref].trees[KEY[n]]; });
+  var refLabel = ref + ' deployed ' + stamps[ref].ts + ' from git ' + stamps[ref].git;
+  if (!behind.length) {
+    return { status: 'ok', value: 'all three run the code the newest deploy saw (' + refLabel + ')', hint: '' };
+  }
+  return { status: 'warn', value: behind.join(', ') + ' behind the newest deploy (' + refLabel + ')',
+    hint: 'Each project\'s deployed code differs from what the newest deploy\'s checkout held for it, so it '
+      + 'is running older (or different) code. Deploy ' + behind.join(' and ') + ' with scripts/deploy.sh '
+      + '(Operator State #2). Commits that were never deployed anywhere are invisible here -- the newest '
+      + 'deploy stands in for HEAD.' };
+}
+
+/** G4: Health section -- are all three projects running the code of the newest deploy? */
+function healthDeployCurrencyRow_(add, ctx) {
+  try {
+    var dash = (typeof BUILD_STAMP_ === 'string') ? BUILD_STAMP_ : '';
+    var v = healthDeployCurrency_(healthDeployStamps_(ctx.phRows || [], dash));
+    add('pipeline', 'deploy-currency', 'Deployed code: all projects current', v.status, v.value, v.hint);
+  } catch (eD) { /* best-effort -- never costs the page */ }
 }
 
 /** CH-4: Health section -- the nightly historical sort check (reads ctx.phRows). */

@@ -85,6 +85,7 @@ function onOpen() {
 
   ui.createMenu("CDR Tools")
     .addItem("Manual Export", "runManualExport")
+    .addItem("Make a date whole…", "makeDateWhole")   // G1: only what the date is missing, never deletes
     .addSubMenu(bulkSubMenu)
     .addSubMenu(filterSubMenu)
     .addSeparator()

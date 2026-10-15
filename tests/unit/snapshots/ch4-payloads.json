@@ -51,6 +51,14 @@
     "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
    },
    {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
     "section": "neon",
     "key": "neon-conf",
     "label": "Neon connection (NEON_* properties)",
@@ -568,6 +576,14 @@
     "status": "muted",
     "value": "not reported yet",
     "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",
@@ -1145,6 +1161,14 @@
     "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
    },
    {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
     "section": "neon",
     "key": "neon-conf",
     "label": "Neon connection (NEON_* properties)",
@@ -1670,6 +1694,14 @@
     "status": "muted",
     "value": "not reported yet",
     "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",
@@ -2261,6 +2293,14 @@
     "status": "muted",
     "value": "not reported yet",
     "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",
@@ -2859,6 +2899,14 @@
     "status": "muted",
     "value": "not reported yet",
     "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",

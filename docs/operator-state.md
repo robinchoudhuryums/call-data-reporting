@@ -33,6 +33,17 @@ When something looks wrong, before assuming a code bug, check:
     shipped a different copy, and each sibling stamp carries
     `| <project> inv16 <hash>`; the Health page's `inv16-skew` row compares
     the newest hash each project reported -- `warn` means deploy the other one.
+    **All three projects (G4, 2026-10-15):** every deploy.sh stamp also carries
+    `| trees d=<hash> i=<hash> r=<hash>` -- a hash of each project's pushed
+    code as that checkout held it. The Health page's `deploy-currency` row
+    takes the NEWEST deploy (by stamp time) as the stand-in for HEAD and warns
+    for any project whose own deployed hash differs from what that deploy saw:
+    it is running older code, so deploy it. A project with no code change
+    since its last deploy hashes the same, so it never reads as behind for a
+    change it did not need. Muted until all three have been pushed with
+    deploy.sh and have run once (cdr-import reports on its next import,
+    cdr-report on its next DQE build). Commits deployed NOWHERE are invisible
+    here -- Manage deployments is still the check for that.
 
 3. Did the user actually have access? The `Access Control` email match is
    case-INsensitive after trim (`resolveUser_`), so check the Department cell
@@ -2000,7 +2011,19 @@ When something looks wrong, before assuming a code bug, check:
     column and the insurance block; nothing reads column U or any hyperlink on
     the sheet. (Verified across all four projects 2026-09-03 when `Sales MWC`
     took column U -- see docs/known-issues.md "Sales MWC".)
-56. **Reprocessing historical dates.** Prefer CDR Tools -> Manual Export, one
+56. **Reprocessing historical dates.** **Start with CDR Tools -> Make a date
+    whole… (G1, 2026-10-15)** when a date is MISSING something rather than
+    WRONG: it reads a per-date ledger (the Call_Legs tab, the date's rows in
+    the six history sheets, its row count in the six Neon tables), runs only
+    what is owed -- a NON-force import for missing core sheets (it never
+    deletes; like Manual Export it re-stages Raw Data with that date), then
+    the per-call and Direct / mirror catch-ups -- and shows the ledger before
+    and after. A date that ends whole leaves the failed-import ledger (so it
+    un-parks a parked date) and is remembered. Without the Call_Legs tab it
+    can still re-mirror from the sheets but says which sheets it could not
+    rebuild. In deferred mirror mode it queues the mirrors and says so. For
+    rows that EXIST but are wrong, use Manual Export (force) as below.
+    Otherwise prefer CDR Tools -> Manual Export, one
     date at a time: it force-rebuilds from `Call_Legs_<date>` and mirrors to
     Neon INLINE from the same build (or via the deferred queue), returning a
     toast with counts + the Neon status per date. The bulk path (`bulkHistoricalUpdate`)
