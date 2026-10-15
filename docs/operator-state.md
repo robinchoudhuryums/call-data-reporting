@@ -3407,6 +3407,15 @@ When something looks wrong, before assuming a code bug, check:
     - Customers are never named in the log: an external party prints as
       `(external party)` / `(external number)`. Times are PST, as `call_start`
       stores them. Pinned by `tests/unit/inbound-calls.test.js` (WS-1).
+    - **FIRST RUN, 2026-10-14 (all dates: the 9 surviving `Call_Legs_*` tabs,
+      2026-09-30..2026-10-12): CLEAN, nothing to re-import.** 1,516 internal
+      records, UNCHANGED 1,516 / CHANGED 0 / SUSPECT 0; 9,110 external records,
+      0 changed. On every one the requester's queue leg was also the earliest
+      leg (to the second), so every stored internal wait in the window is
+      already right and no Manual Export is needed. The shape WS-1 fixes (a
+      colleague's leg starting earlier under the same id) was last seen in
+      the 2026-08-21 sample; new imports apply the rule automatically. Re-run
+      only if an internal call's wait looks wrong.
 
 76. **Brief-threshold probe (UX-2, 2026-10-13; dashboard).** The UX-2 ruling
     colours an Insights brief row only where a standard exists. Three rows
