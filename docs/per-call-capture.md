@@ -593,7 +593,9 @@ partitioning `episodes`; every rate divides by `episodes`. **The window has
 EDGES and the rules run across them (B1/PC-1):** attempts from `from - 3` are
 swept so an in-window retry of an episode opened before the window JOINS it
 (and is not counted), and attempts up to 3 days past `to` join but never open
--- so one-day views add up to the week. Every fetcher reads through ONE span
+a COUNTED episode (with none to join they open a hidden one that only consumes
+its own team's dial, F30) -- so one-day views add up to the week, outcomes
+included. Every fetcher reads through ONE span
 helper (`obEpReadSpan_`); the trailing read is one window deep, a documented
 bound. A dial that closes
 its own team's episode is CONSUMED and never counts as "another team" for the
@@ -654,7 +656,7 @@ from the first attempt, connected or not, and the deciding dial's call id
 drill of that dial is entitled by a THIRD server-re-derived arm
 (`outboundJourneyCallbackEntitled_`, B1/PC-3): the dial went to a caller who
 abandoned one of the manager's dept queues within the callback window before
-it. It applies only once `OUTBOUND_VETTING_GATE_` is released, and it is
+it -- before it to the second, not just on or before its date (F32). It applies only once `OUTBOUND_VETTING_GATE_` is released, and it is
 Neon-only (the list itself is), so the sheet fallback keeps refusing. Rows show
 the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the

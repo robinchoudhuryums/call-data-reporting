@@ -978,6 +978,36 @@ test('(5) the email RECOMPUTES through the shared resolver — it cannot drift f
     'a send is a usage event (INV-01 append-only carve-out)');
 });
 
+test('F31: the email carries the caveats the web report shows -- unmapped, sheet fallback, lagging data', function () {
+  assert.deepEqual(Array.from(h.ctx.obEmailCaveats_({ meta: {}, callback: {} })), [], 'a clean report emails no caveat');
+  const all = Array.from(h.ctx.obEmailCaveats_({
+    meta: { unmapped: true, department: 'Billing', fallbackSource: 'sheet', fallbackThrough: '2026-10-12' },
+    callback: { dataLagging: true, dataThrough: '2026-10-11' } }));
+  assert.equal(all.length, 3);
+  assert.match(all[0], /No queues are mapped for Billing/);
+  assert.match(all[1], /Outbound Calls tab \(through 2026-10-12\)/);
+  assert.match(all[2], /loaded through 2026-10-11/);
+  assert.equal(h.ctx.obEmailCaveats_({ meta: {}, callback: { dataLagging: true } }).length, 0,
+    'lagging with no date to name says nothing (the client rule)');
+  // The flag: one helper, applied on BOTH paths -- the email calls the
+  // uncached compute directly, which never set it.
+  const saved = h.ctx.inboundQueuesForDept_;
+  try {
+    h.ctx.inboundQueuesForDept_ = function () { return []; };
+    assert.equal(h.ctx.obMarkUnmapped_({ dept: 'Billing', companyView: false }, { meta: {} }).meta.unmapped, true);
+    assert.equal(h.ctx.obMarkUnmapped_({ dept: '', companyView: true }, { meta: {} }).meta.unmapped, undefined,
+      'the company view is never unmapped');
+    h.ctx.inboundQueuesForDept_ = function () { return ['A_Q_X']; };
+    assert.equal(h.ctx.obMarkUnmapped_({ dept: 'CSR', companyView: false }, { meta: {} }).meta.unmapped, undefined);
+  } finally { h.ctx.inboundQueuesForDept_ = saved; }
+  const send = OB_SRC.slice(OB_SRC.indexOf('function sendOutboundReportEmail('));
+  assert.match(send, /obMarkUnmapped_\(scope, data\);[\s\S]{0,120}const caveats = obEmailCaveats_\(data\);/);
+  assert.match(send, /ekCalloutHtml_\('Read this first', caveats\.map\(ekEsc_\)\.join\('<br>'\), 'warn'\)/,
+    'rendered first, escaped, in the warn callout');
+  assert.match(OB_SRC, /const data = computeOutboundReport_\(scope\);\s*data\.meta\.computeMs[\s\S]{0,200}obMarkUnmapped_\(scope, data\);/,
+    'the web path keeps the flag');
+});
+
 test('(5) the delay table stays QUIET when there is nothing to distribute', function () {
   assert.equal(h.ctx.outboundEmailDelayTable_(null, 0), '');
   assert.equal(h.ctx.outboundEmailDelayTable_({ m15: 0 }, 0), '',

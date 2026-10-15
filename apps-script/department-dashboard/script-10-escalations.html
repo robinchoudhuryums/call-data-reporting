@@ -1631,9 +1631,17 @@
     const history = ((data && data.outboundHistory) || []).filter(function (e) {
       return e.callDate && !outDates[e.callDate];
     });
+    // F34: on the sheet fallback the Inbound Calls tab can be missing -- then
+    // "no inbound calls" is not known, and must not be said.
+    const inboundUnknown = meta.inboundAvailable === false;
+    const inboundUnknownNote = 'Inbound calls could not be read (Neon is unreachable and the Inbound Calls '
+      + 'tab is missing), so this is not the caller’s full history.';
     if (!calls.length && !outCalls.length && !history.length) {
       const hint = $('cl-empty-hint');
-      if (hint) hint.textContent = 'No calls to or from this number between '
+      if (hint) hint.textContent = inboundUnknown
+        ? 'No outbound calls to this number between ' + (meta.from || '?') + ' and ' + (meta.to || '?')
+          + '. ' + inboundUnknownNote
+        : 'No calls to or from this number between '
         + (meta.from || '?') + ' and ' + (meta.to || '?')
         + '. Inbound capture starts the day the inbound mirror first ran; per-call outbound starts '
         + 'with the outbound capture (day-level outbound reaches back through the CDR mirror).';
@@ -1643,7 +1651,8 @@
     const title = $('cl-results-title');
     if (title) {
       const parts = [];
-      parts.push(calls.length + ' inbound' + (meta.truncated ? ' (truncated)' : ''));
+      parts.push(inboundUnknown ? 'inbound unavailable'
+        : calls.length + ' inbound' + (meta.truncated ? ' (truncated)' : ''));   // F34
       parts.push(outCalls.length + ' outbound' + (meta.outboundTruncated ? ' (truncated)' : '')
         + (history.length ? ' (+' + history.length + ' earlier day-summar' + (history.length === 1 ? 'y' : 'ies') + ')' : ''));
       title.textContent = parts.join(' · ')
@@ -1661,6 +1670,7 @@
       return ka < kb ? 1 : (ka > kb ? -1 : 0);
     });
     let html = merged.length ? clGroupByDayHtml_(merged) : '';
+    if (inboundUnknown) html += '<div class="ds-note">' + escapeHtml(inboundUnknownNote) + '</div>';   // F34
     if (meta.outboundAvailable === false) {
       html += '<div class="ds-note">Per-call outbound capture isn’t live yet '
         + '(deploy cdr-import and run <code>backfillOutboundCalls</code>) — showing inbound calls'

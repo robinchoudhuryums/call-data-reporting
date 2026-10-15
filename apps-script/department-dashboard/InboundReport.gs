@@ -549,6 +549,12 @@ function getOutboundCallJourney_(callId, date, dept, user) {
  * within OUTBOUND_CALLBACK_WINDOW_DAYS before the dial's date -- the
  * population a CE-1 episode is built from. Bound parameters for the client
  * values; fails CLOSED (false) on any error.
+ *
+ * F32 (broad-scan 2026-10-14): the abandon must come BEFORE the dial, to the
+ * second (the engine's rule: a dial stamped the same second as the abandon
+ * counts as after it). The date-only range also admitted an abandon later on
+ * the dial's own day -- a dial that cannot have been a callback of it. Same
+ * timestamp form as the uncalled-list SQL in OutboundReport.gs.
  */
 function outboundJourneyCallbackEntitled_(conn, callId, date, dept, deptQueues) {
   try {
@@ -559,6 +565,8 @@ function outboundJourneyCallbackEntitled_(conn, callId, date, dept, deptQueues) 
       +   "AND c.disposition = 'abandoned' AND COALESCE(c.is_internal, FALSE) = FALSE "
       +   "AND COALESCE(trim(c.entry_queue),'') <> '' "
       +   'AND c.call_date BETWEEN (?::date - ' + Number(win) + ') AND ?::date '
+      +   "AND (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval) "
+      +   "<= (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval) "
       +   'AND ' + inboundWindowClause_(true)
       +   inboundDeptPredicate_(dept, deptQueues) + ') LIMIT 1';
     const st = conn.prepareStatement(sql);

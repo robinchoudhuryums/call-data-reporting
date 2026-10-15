@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- Broad scan cycle 259 Batch 8 IMPLEMENTED (block 259): per-call edges before 6c.** F30 a trailing attempt opens a hidden episode, so per-day callback OUTCOMES add up to the week; F31 the Outbound email leads with the unmapped / sheet-fallback / lagging caveats (obMarkUnmapped_ now on both paths); F32 the PC-3 callback entitlement requires the abandon before the dial to the second; F34 Caller Lookup says inbound is unavailable when the Inbound Calls tab is missing. 2480 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard. No operator steps. Expect small shifts in one-day / prior-window callback outcomes (F30, intended).
+  **Next:** Batch 9 (mirrors: F11, F12, F13, F59, F60, F63, F64), then Batch 10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-15 -- Broad scan cycle 259 Batch 7 IMPLEMENTED (block 259): interface / a11y, + F65/F66 (owner moved Batch 6's two follow-ons here).** F26 dark-mode --ink-muted re-declared; F27 the agent row's control is a name-cell button owning aria-expanded (row loses tabindex, false never removed); F54 Window buttons sync aria-pressed; F55 closed sub-queue details are inert; F56 open sub-queue cards survive re-renders; F57 Health folds survive the Neon repaint; F58 per-agent Copy data names; F65 Insights share links / Open in new tab carry dept (saved views stay dept-free); F66 a sort click mid-load no longer repaints the old window. 2476 tests, 10/10 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
   **Owner-side:** deploy the dashboard; walk S39 (its keyboard step now Tabs to the agent NAME). No operator steps.
   **Next:** Batch 8 (per-call edges: F30, F31, F32, F34), then Batches 9-10 per the cycle-259 list below.

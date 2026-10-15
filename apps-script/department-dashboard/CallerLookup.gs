@@ -26,7 +26,7 @@
  *
  * Public entry (callable via google.script.run):
  *   getCallerLookup({ phone, from, to })
- *     -> { meta: { from, to, available, configured, matches,
+ *     -> { meta: { from, to, available, configured, matches, inboundAvailable,
  *                  outboundAvailable, outboundMatches, historyAvailable },
  *          calls: [...], outboundCalls: [...], outboundHistory: [...] }
  *
@@ -139,6 +139,7 @@ function getCallerLookup(req) {
     }
     out.calls = rows.map(callerLookupShapeCall_);
     out.meta.matches = out.calls.length;
+    out.meta.inboundAvailable = true;   // F34: the inbound read answered
 
     // ── Outbound (Option B): per-call records from `outbound_calls` -- the
     // SAME hash space (canonical "+<digits>" + HMAC_SECRET), so the candidate
@@ -283,7 +284,11 @@ function callerLookupSheetFallback_(hashes, from, to, out, user) {
     if (!ib && !ob) { out.meta.available = false; return out; }
 
     // ── Inbound section ──
+    // F34 (broad-scan 2026-10-14): the outbound half always said when its tab
+    // was missing (outboundAvailable); the inbound half did not, so a missing
+    // Inbound Calls tab read as "this caller never called". Say it.
     out.calls = [];
+    out.meta.inboundAvailable = !!ib;
     if (ib) {
       var inRows = [];
       for (var i = 0; i < ib.grid.length; i++) {

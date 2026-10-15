@@ -196,3 +196,28 @@ test('PC-5: a link reachable only through the manager\'s Missed report (arm 2) a
   }), function () { return h.call('getCallJourney', { callId: 'C1', date: '2026-06-22', department: 'Billing' }); });
   assert.equal(res.found, true);
 });
+
+// F32 (broad-scan 2026-10-14): the callback arm (B1/PC-3) of the outbound
+// journey entitlement compared DATES only, so on the dial's own day an
+// abandon LATER than the dial also entitled it. The abandon must precede the
+// dial to the second (same-second ties count the dial as after, the engine's
+// rule). Pinned on the SQL it sends: a fake connection records it.
+test('F32: the callback entitlement requires the abandon BEFORE the dial, not just on or before its date', function () {
+  const hh = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'InboundReport.gs'] });
+  let sent = null; const params = [];
+  const conn = { prepareStatement: function (sql) {
+    sent = sql;
+    return { setString: function (i, v) { params[i] = v; },
+             executeQuery: function () { return { next: function () { return true; }, close: function () {} }; },
+             close: function () {} };
+  } };
+  hh.ctx.inboundDeptPredicate_ = function () { return ''; };
+  assert.equal(hh.ctx.outboundJourneyCallbackEntitled_(conn, 'OB1', '2026-10-13', '', []), true);
+  assert.match(sent, /AND \(c\.call_date::timestamp \+ COALESCE\(c\.call_start,'00:00:00'\)::interval\) <= \(o\.call_date::timestamp \+ COALESCE\(o\.call_start,'00:00:00'\)::interval\)/,
+    'the abandon is no later than the dial, to the second');
+  assert.match(sent, /c\.call_date BETWEEN \(\?::date - 3\) AND \?::date/, 'the date range still bounds the scan');
+  assert.deepEqual(params.slice(1), ['2026-10-13', 'OB1', '2026-10-13', '2026-10-13'], 'client values stay BOUND, never spliced');
+  // Fails CLOSED.
+  const bad = { prepareStatement: function () { throw new Error('boom'); } };
+  assert.equal(hh.ctx.outboundJourneyCallbackEntitled_(bad, 'OB1', '2026-10-13', '', []), false);
+});

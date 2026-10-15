@@ -299,6 +299,32 @@ test('caller lookup fallback: a missing Outbound tab degrades only that section'
   assert.equal(res.meta.outboundAvailable, false, 'the outbound section says so');
 });
 
+test('F34: a missing Inbound tab says inbound is UNAVAILABLE, never "no inbound calls"', function () {
+  const hash = dash.call('callerLookupHashPhone_', '+12145550123', 'test-secret');
+  const ob = new Array(12).fill('');
+  ob[0] = '2026-08-11'; ob[1] = 'o1'; ob[2] = hash; ob[3] = 'Ann'; ob[6] = 'TRUE'; ob[9] = '1'; ob[10] = '09:00:00';
+  clInstallFallback({ noIb: true, obRows: [ob] });
+  const res = dash.call('getCallerLookup',
+    { phone: '2145550123', from: '2026-08-01', to: '2026-08-31' });
+  assert.equal(res.meta.available, true, 'the outbound half still answers');
+  assert.equal(res.meta.inboundAvailable, false, 'the inbound half says it could not be read');
+  assert.equal(res.meta.outboundMatches, 1);
+  // ...and with the tab present the flag is true even when nothing matched.
+  const other = new Array(22).fill('');
+  other[0] = '2026-08-10'; other[1] = 'i9'; other[3] = 'someone-else-hash'; other[5] = 'answered';
+  clInstallFallback({ ibRows: [other], obRows: [ob] });
+  assert.equal(dash.call('getCallerLookup', { phone: '2145550123', from: '2026-08-01', to: '2026-08-31' })
+    .meta.inboundAvailable, true);
+  // The client words both states (script-10): empty-state hint, results title, note.
+  const cl = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script',
+    'department-dashboard', 'script-10-escalations.html'), 'utf8');
+  const render = cl.slice(cl.indexOf('function clRenderResults_('), cl.indexOf('function clHistoryHtml_('));
+  assert.match(render, /const inboundUnknown = meta\.inboundAvailable === false;/);
+  assert.match(render, /hint\.textContent = inboundUnknown\s*\? 'No outbound calls to this number/);
+  assert.match(render, /parts\.push\(inboundUnknown \? 'inbound unavailable'/);
+  assert.match(render, /if \(inboundUnknown\) html \+= '<div class="ds-note">' \+ escapeHtml\(inboundUnknownNote\)/);
+});
+
 test('caller lookup fallback: no export tabs at all stays honestly unavailable', function () {
   clInstallFallback({ noIb: true, noOb: true });
   const res = dash.call('getCallerLookup',
