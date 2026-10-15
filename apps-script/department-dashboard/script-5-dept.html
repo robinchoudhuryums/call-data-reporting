@@ -4573,7 +4573,11 @@
     if (el.closest('.dept-main')) return 'agents';
     return null;
   }
-  function careSelectTab_(id, focus) {
+  // quiet: restore a remembered tab WITHOUT the reveal side effects. The
+  // first call runs while the client IIFE is still evaluating, before the
+  // later fragments' let/const bindings exist (insLastData & co. are in the
+  // TDZ, where even typeof throws), so it may only touch the DOM.
+  function careSelectTab_(id, focus, quiet) {
     var pg = $('dept-page');
     var bar = $('care-dept-tabs');
     if (!pg || !bar) return;
@@ -4587,6 +4591,7 @@
       if (on && focus) b.focus();
     });
     try { sessionStorage.setItem('cdr.care.depttab', id); } catch (e) { /* best-effort */ }
+    if (quiet) return;
     if (id === 'insights' && typeof deptInsightsOpen_ === 'function') deptInsightsOpen_();
     // The missed chart defers creation while its container is unmeasurable
     // (MC2) and gives up after ~30 frames; a hidden tab outlasts that, so the
@@ -4651,7 +4656,7 @@
     try { saved = sessionStorage.getItem('cdr.care.depttab'); } catch (e) { /* best-effort */ }
     var ok = CARE_TABS_.some(function (t) { return t.id === saved; });
     pg.removeAttribute('data-care-tab');
-    careSelectTab_(ok ? saved : 'agents');
+    careSelectTab_(ok ? saved : 'agents', false, true);
   }
   careInitTabs_();
   window.addEventListener('dash-mode-change', careInitTabs_);

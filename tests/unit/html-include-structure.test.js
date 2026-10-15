@@ -599,3 +599,21 @@ test('UI-4 follow-on: Escalations init runs ONE request at a time and retries wi
   assert.equal((fn.match(/escInitInFlight_ = false;/g) || []).length, 2, 'both handlers clear the in-flight flag');
   assert.match(fn, /escEnsureInit_\(pendingCb\)/, 'Retry re-runs with the continuation that was pending');
 });
+
+test('Care tabs: the load-time tab restore is QUIET (no reveal side effects while later fragments are in the TDZ)', function () {
+  // careInitTabs_() runs at TOP LEVEL of script-5, while the assembled IIFE is
+  // still evaluating: script-8's `let insLastData` & co. do not exist yet, and
+  // even `typeof` on them throws. Restoring a remembered Insights tab through
+  // the full careSelectTab_ threw there and killed the whole client (stuck on
+  // the Overview loader). The restore must pass quiet=true, and the quiet
+  // return must come before any reveal side effect.
+  const s5 = fs.readFileSync(path.join(DIR, 'script-5-dept.html'), 'utf8');
+  const sel = s5.slice(s5.indexOf('function careSelectTab_('), s5.indexOf('function careRevealFor_('));
+  const q = sel.indexOf('if (quiet) return;');
+  assert.ok(q > 0, 'careSelectTab_ has a quiet early return');
+  ['deptInsightsOpen_', 'insLastData', 'deptMissedLastData'].forEach(function (name) {
+    assert.ok(sel.indexOf(name) > q, name + ' is only touched after the quiet return');
+  });
+  const init = s5.slice(s5.indexOf('function careInitTabs_('), s5.indexOf('careInitTabs_();', s5.indexOf('function careInitTabs_(')));
+  assert.match(init, /careSelectTab_\(ok \? saved : 'agents', false, true\)/, 'the restore passes quiet=true');
+});
