@@ -1694,7 +1694,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`neonNoteEgress_`; OD-3 sweep `neon-egress-coverage.test.js` + the EA-1
   label pin; unlabeled folds into `other`); `neonStorageVerdict_` names the
   top 5 tables (neon-retention.test.js). Every other row is described in its Operator State item
-  (`build-stamp` #2, `retention-risk` #40/#43, `workbook-cells` #62,
+  (`build-stamp` / `deploy-currency` #2, `retention-risk` #40/#43, `workbook-cells` #62,
   `backup-scrub` #28, ...).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
@@ -2120,7 +2120,7 @@ status table with remediation hints; fall through to the numbered
 items for anything it flags or doesn't cover.)
 
 1. Did the daily ingest run? (+ `probeOverviewChartDates()` when a date gap shows despite parity-clean data)
-2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp)
+2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp; the Health `deploy-currency` row flags a project left on older code, G4)
 3. Did the user actually have access? (the email match is case-INsensitive -- check the Department cell + Role, and `EMAIL_ALIASES`)
 4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
@@ -2174,7 +2174,7 @@ items for anything it flags or doesn't cover.)
 53. Script Properties past the settings page's 50-row cap -- set or clear one from a TEMPORARY editor-run function; the Health inventory is the complete read view
 54. Caller Lookup's one-time Neon index (`idx_inbound_calls_caller_hash`) -- create it in the Neon console; nothing auto-creates it
 55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants, a push and a re-sync
-56. Reprocessing historical dates -- Manual Export per date over the bulk path, the `DQE_UPSERT_RESUME` reset, the zero-talk post-rebuild scan and the duplicate-merge repair
+56. Reprocessing historical dates -- CDR Tools -> Make a date whole for a date MISSING something (G1), Manual Export per date over the bulk path, the `DQE_UPSERT_RESUME` reset, the zero-talk post-rebuild scan and the duplicate-merge repair
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` write gate, the weekly `NEON_RETENTION_ENABLED` prune, `NEON_STORAGE_CAP_MB`, and the one-time reclaim runbook
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` / `ALL_DEPT_NOTIFY_OPT_IN` -- the admin-copy rule on every dashboard email, the welcome email a brand-new Access Control grant sends, and which ALL managers get dept-manager email
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every bulk `repair*` apply snapshots into first, and the restore procedure
