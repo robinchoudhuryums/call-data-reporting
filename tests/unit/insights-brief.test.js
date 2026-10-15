@@ -358,3 +358,20 @@ test('G3: the Access modal\'s pending-welcome bar wording follows the flag', fun
   assert.match(txt(1, false), /^1 staged agent has no welcome email yet\. Once agent sign-in is on/);
   assert.match(txt(3, true), /^3 staged agents have not been sent a welcome email yet\. Agent sign-in is on/);
 });
+
+// E5 / ST4 (broad-scan 259): the brief's Callbacks row exists only while the
+// Outbound view is available, which View-as decides. Entering a preview
+// re-renders the brief WITHOUT the row; leaving it on the same dept and window
+// re-rendered nothing, so the admin's brief stayed without it (found by
+// tools/ui-harness/drive-crossstate.js). applyViewAs_ now re-renders the brief
+// from the held payload, after the data-view-as attribute is set -- the order
+// matters, since obAllowed_ reads the switch's computed display.
+test('E5: applyViewAs_ re-renders the brief from the held payload, after the view-as attribute changes', function () {
+  const src = fs.readFileSync(path.join(DIR, 'script-3-overview.html'), 'utf8');
+  const start = src.indexOf('function applyViewAs_(');
+  const body = src.slice(start, src.indexOf('\n  }\n', start));
+  const attr = body.lastIndexOf("document.body.removeAttribute('data-view-as')");
+  const render = body.indexOf('insRenderBrief_(insLastData)');
+  assert.ok(render !== -1, 'applyViewAs_ no longer re-renders the brief');
+  assert.ok(attr !== -1 && render > attr, 'the brief must re-render AFTER the view-as attribute is set or removed');
+});

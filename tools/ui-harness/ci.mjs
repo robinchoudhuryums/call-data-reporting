@@ -59,6 +59,11 @@ const STAGES = [
   // a browser shows (the wrong table, the inbound panel painting back, the
   // switch leaking to a manager or surviving view-as).
   ['node', ['drive-deptoutbound.js'], 'My Department outbound view (Batch D)'],
+  // E5 / ST4 (broad-scan 259): the SEQUENCES before the UX-2 / 6c gates open --
+  // dept switch with the brief open, dept switch in the Outbound view, view-as
+  // in and out, the Callbacks jump. Every other stage checks one state; the
+  // bugs Batches 5-6 fixed were all moves between two (it found one more).
+  ['node', ['drive-crossstate.js'], 'cross-state: dept switch, view-as, direction (E5)'],
   ['node', ['drive-outbound-e.js'], 'Overview tile outbound line + Outbound summary (Batch E, UX-1)'],
   // Batch G1: the Callbacks fold (the Outbound report moving onto My
   // Department) -- lazy fetch, the shared renderers painting into it, the

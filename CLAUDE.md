@@ -228,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# THIRTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# FOURTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -252,7 +252,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # return, one at a time, CSV untouched, 360 px -- Batch B), drive-deptoutbound.js
 # (the Inbound | Outbound | Both switch + Team Outbound panel: payload totals,
 # manager/view-as fall back to Inbound, panels never overlap, prior-period
-# chips on agent rows only -- Batches D/F),
+# chips on agent rows only -- Batches D/F), drive-crossstate.js (the
+# SEQUENCES before the UX-2 / 6c gates open: dept switch, view-as in/out,
+# direction -- E5),
 # drive-outbound-e.js (the Overview tiles' outbound line per card window +
 # the Outbound summary's two-window deltas under the outbound table, UX-1;
 # neither reaches a manager or View-as -- Batch E), drive-callbacks.js (the

@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- Broad scan cycle 259 Expansion E5 IMPLEMENTED (block 259): manager-release readiness. The cycle-259 plan is now complete except F35 (operator check) and F62 (owner ruling).** ST4 tools/ui-harness/drive-crossstate.js is a new BLOCKING ci:ui stage walking the sequences before the UX-2 / 6c gates open (dept switch with the brief, dept switch in Outbound, the Callbacks row, View-as in/out, the Callbacks jump); the Insights mock now routes by dept with real CSR + Sales captures. It found one bug, fixed with owner approval: leaving View-as on the same dept left the admin's brief without its Callbacks row (applyViewAs_ now re-renders the brief, the F21 pattern). 2528 tests, ci:ui all stages green (18/18 new), rendered + unit bites land.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** F35 after the operator clasp check; F62 deferred; when UX-2 / 6c release to managers, extend drive-crossstate with the manager walk.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-15 -- Broad scan cycle 259 Expansion E4 IMPLEMENTED (block 259): mirror discipline (new capability).** ST2, NARROW by owner ruling (no stored figure changes): rawGridDay_ / rawGridDayIso_ is the one "which day is this grid, which legs are strays" rule (majority date) -- PIPE-3, the CSR engine + repair, diagnoseQcdVsDqe, queueSplitSample and (a guarded cdr-report copy) the overlap audit all use it; CDR / QCD / Q Path keep counting carry-over legs. ST5: tests/harness/parityDay.js is one shared day that drives the build (both copies), the drill, the split sample and the overlap audit, which must agree. 2527 tests, 10/10 bites + the guard bitten by hand, lint + INV-16 + module-deps clean.
   **Owner-side:** deploy cdr-import and cdr-report. No operator steps.
   **Decision recorded:** ST2 "Full" (filter carry-over legs at the import, changing stored CDR / QCD / Q Path) was declined -- revisit only on purpose.

@@ -164,7 +164,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     // calendar's year-to-date fallback -- one fixture for every span pinned
     // the region to a 30-day shape it rarely renders in practice.
     getInsightsReport: function (req) {
-      return spanDays(req) <= 2 ? P['insights-day'] : P['insights'];
+      // E5 / ST4: route by department -- the cross-state driver switches CSR -> Sales.
+      var sales = req && req.department === 'Sales';
+      if (spanDays(req) <= 2) return P[sales ? 'insights-day-sales' : 'insights-day'];
+      return P[sales ? 'insights-sales' : 'insights'];
     },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },

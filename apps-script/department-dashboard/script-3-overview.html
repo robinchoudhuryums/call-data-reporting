@@ -168,6 +168,15 @@
     if (typeof insLastData !== 'undefined' && insLastData && typeof insDrawTrendChart_ === 'function') {
       try { insDrawTrendChart_(insLastData); } catch (eT) { /* best-effort repaint */ }
     }
+    // E5 / ST4 (broad-scan 259): the UX-2 brief has the same blind spot. Its
+    // Callbacks row exists only while the Outbound view is available
+    // (obAllowed_, which the data-view-as attribute set above decides), so a
+    // brief rendered DURING a preview has no Callbacks row -- and leaving the
+    // preview on the same dept and window re-rendered nothing, so the admin's
+    // brief stayed without it. Re-render it from the held payload now.
+    if (typeof insLastData !== 'undefined' && insLastData && typeof insRenderBrief_ === 'function') {
+      try { insRenderBrief_(insLastData); } catch (eB) { /* best-effort repaint */ }
+    }
     // (The Reports dropdown (data-admin-only) is hidden in view-as by the
     // existing CSS; the top-level Insights tab carries no data-admin-only so
     // it stays visible in the preview -- the old #10 solo-button surfacing

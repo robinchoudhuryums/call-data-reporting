@@ -65,6 +65,15 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   View-as fall back to Inbound, panels never overlap, prior-period chips on
   agent rows only, and one request per window (a Refresh never re-sends one
   in flight; the table and the Outbound summary share one store, FO-3).
+- `drive-crossstate.js` — **cross-state sequences** on My Department (E5 /
+  ST4), the manager-release readiness check for UX-2 and 6c: a dept switch
+  with the brief open (it follows the new dept's payload, tier and default-
+  target label), a dept switch in the Outbound view (the direction holds, no
+  previous-dept row survives), the brief's Callbacks row never quoting another
+  dept, View-as in and out (brief + switch hide, the direction falls back to
+  Inbound and returns, the brief comes back WITH its Callbacks row), and the
+  Callbacks jump changing direction only from Inbound (F24). The Insights mock
+  routes by dept and serves real CSR and Sales captures.
 - `drive-outbound-e.js` — the Overview tiles' outbound line per card window
   and the **Outbound summary** under the outbound table on My Department
   (Batch E; moved out of Insights by UX-1): two-window deltas, shown only on

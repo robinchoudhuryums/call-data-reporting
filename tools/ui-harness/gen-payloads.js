@@ -401,6 +401,16 @@ dump('insights', h.call('getInsightsReport', {
 dump('insights-day', h.call('getInsightsReport', {
   department: 'CSR', from: LATEST, to: LATEST, agents: [],
 }));
+// E5 / ST4: a SECOND department's Insights, from the real server code, so a
+// dept switch is observable in the rendered brief -- with one CSR payload for
+// every request, a brief left showing the previous dept's numbers would read
+// as correct. Sales has no answer target of its own (the G2 default label).
+dump('insights-sales', h.call('getInsightsReport', {
+  department: 'Sales', from: s30.from, to: s30.to, agents: [],
+}));
+dump('insights-day-sales', h.call('getInsightsReport', {
+  department: 'Sales', from: LATEST, to: LATEST, agents: [],
+}));
 dump('insights-init', h.call('getInsightsReportInit', { department: 'CSR' }));
 try {
   dump('missed-slice', h.call('getMissedCallsSlice', {
