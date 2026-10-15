@@ -452,9 +452,11 @@
     };
     if (agentsTbody) {
       agentsTbody.addEventListener('click', agentRowDrill_);
-      // F13: the same toggle on Enter/Space (Escape closes an open panel). Delegated on the persistent tbody
-      // (rows are re-rendered every refresh and carry tabindex in their
-      // markup), so it is wired exactly once like the click handler above.
+      // Escape closes an open panel; Enter/Space on a group header toggle it.
+      // Delegated on the persistent tbody, so it is wired exactly once like
+      // the click handler above. An AGENT row needs no Enter/Space path (F27):
+      // its name cell's native button turns them into the click above, and a
+      // second path here would toggle twice per keypress.
       agentsTbody.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && e.target.closest('tr.ap-open')) {
           e.preventDefault();
@@ -467,10 +469,7 @@
         // (script-5) toggles it -- so Enter/Space announced a button that
         // did nothing. Re-dispatch as a click so the one toggle path runs.
         const ghead = e.target.closest('tr.subq-group-head');
-        if (ghead) { e.preventDefault(); ghead.click(); return; }
-        if (!e.target.closest('tr[data-agent]')) return;
-        e.preventDefault();
-        agentRowDrill_(e);
+        if (ghead) { e.preventDefault(); ghead.click(); }
       });
     }
 

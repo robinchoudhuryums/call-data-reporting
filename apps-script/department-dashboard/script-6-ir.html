@@ -1598,7 +1598,12 @@
            +     ' <span class="ir-vs">vs Team Avg'
            +       (priorStatsAvailable ? ' &middot; vs Prior period' : '')
            +     '</span>'
-           +     ' <button type="button" class="ir-copy-tsv" data-agent="' + safeName + '">Copy data</button>'
+           // F58 (broad-scan 2026-10-14): one per agent card, so each says
+           // whose data it copies -- a list of identical "Copy data" names
+           // gives a screen-reader user nothing to choose between. The name
+           // starts with the visible text (WCAG 2.5.3, label in name).
+           +     ' <button type="button" class="ir-copy-tsv" data-agent="' + safeName + '"'
+           +       ' aria-label="Copy data for ' + safeName + '">Copy data</button>'
            +   '</div>'
            +   irInsightsBlock_(agent.insights || [])
            +   '<div class="ir-kpi-grid">'

@@ -2596,18 +2596,29 @@
     if (AP_.node && AP_.node.parentNode) AP_.node.parentNode.removeChild(AP_.node);
     AP_.node = null; AP_.agent = null; AP_.strip = null; AP_.date = null; AP_.days = {};
     apRowsFor_(agent).forEach(function (tr) {
-      tr.classList.remove('ap-open'); tr.removeAttribute('aria-expanded'); tr.removeAttribute('aria-controls');
+      tr.classList.remove('ap-open');
+      const b = apRowToggle_(tr);
+      if (b) { b.setAttribute('aria-expanded', 'false'); b.removeAttribute('aria-controls'); }
     });
     if (focusRow && agent) {
       const tr = apRowsFor_(agent)[idx] || apRowsFor_(agent)[0];
-      if (tr) tr.focus();
+      const b = tr && apRowToggle_(tr);
+      if (b) b.focus();
     }
   }
 
+  // F27 (broad-scan 2026-10-14, the E-8 / Batch 9 rule): the row is not the
+  // control. Its agent-name cell holds a real <button> (apRowToggleHtml_,
+  // script-5) that owns aria-expanded -- "false" when closed, never removed --
+  // and the native Enter/Space; the whole row stays the click target by
+  // bubbling. The row keeps only the visual .ap-open state.
+  function apRowToggle_(tr) {
+    return (tr && tr.querySelector) ? tr.querySelector('button.ap-row-toggle') : null;
+  }
   function apMarkRow_(tr) {
     tr.classList.add('ap-open');
-    tr.setAttribute('aria-expanded', 'true');
-    tr.setAttribute('aria-controls', 'ap-panel');
+    const b = apRowToggle_(tr);
+    if (b) { b.setAttribute('aria-expanded', 'true'); b.setAttribute('aria-controls', 'ap-panel'); }
   }
 
   /** Row click / Enter / Space. Toggles; a second agent replaces the first. */
@@ -2618,6 +2629,13 @@
     if (AP_.agent === agent && AP_.idx === idx) { apClose_(true); return; }
     if (AP_.agent) apClose_(false);
     apOpen_(agent, idx);
+    // F27: a click on any cell used to focus the (tabindex) row, so Escape
+    // and Tab then worked from there. The row is no longer focusable: put
+    // focus on its button instead, the same place a keyboard open leaves it.
+    const b = apRowToggle_(apRowsFor_(agent)[idx]);
+    if (b && document.activeElement !== b) {
+      try { b.focus({ preventScroll: true }); } catch (eF) { /* best-effort */ }
+    }
   }
 
   function apOpen_(agent, idx) {

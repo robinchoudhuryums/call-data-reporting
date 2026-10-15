@@ -781,7 +781,10 @@
     bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
       const on = b.getAttribute('data-period') === ovCardPeriod;
       b.classList.toggle('active', on);
-      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      // F54 (broad-scan 2026-10-14): the markup is a toggle-button group
+      // (aria-pressed); writing aria-checked left aria-pressed on the boot
+      // default, so a screen reader heard "Yesterday, pressed" whatever was on.
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     if (ovPeriodBarWired) return;
     ovPeriodBarWired = true;
@@ -1102,8 +1105,14 @@
   // -- one element, so the strip morphs into the card rather than a second
   // card appearing beside it. In the parent's group cell, NOT inside the
   // parent card (no false roll-up). Hover spotlights the child's chart line.
+  // F56 (broad-scan 2026-10-14): which sub-queue cards are open, by dept
+  // name, for the session. Every tile re-render (the 5-minute refresh, a
+  // Window change, a dept switch) rebuilds the grid, and the cards used to
+  // snap shut each time.
+  var ovSubqOpen_ = {};
   function ovBuildSubqCard_(dept, color) {
     const st = ovPeriodStats_(dept);
+    const open = !!ovSubqOpen_[dept.name];
     const qcd = dept.qcd || null;
     const alert = dept.alertedOnLatest
       ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
@@ -1122,8 +1131,8 @@
     const routeBtn = routable
       ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'
       : '';
-    return '<div class="ov-subq-card" data-dept="' + escapeHtml(dept.name) + '" data-subq="' + escapeHtml(dept.name) + '">'
-         +   '<button type="button" class="ov-subq-strip" aria-expanded="false" '
+    return '<div class="ov-subq-card' + (open ? ' is-open' : '') + '" data-dept="' + escapeHtml(dept.name) + '" data-subq="' + escapeHtml(dept.name) + '">'
+         +   '<button type="button" class="ov-subq-strip" aria-expanded="' + (open ? 'true' : 'false') + '" '
          +     'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click to expand.">'
          +     '<span class="ov-subq-strip-dot" style="background:' + color + '"></span>'
          +     '<span class="ov-subq-strip-name">' + escapeHtml(dept.name) + '</span>'
@@ -1135,7 +1144,9 @@
          +     '</span>'
          +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
          +   '</button>'
-         +   '<div class="ov-subq-detail">'
+         // F55: a collapsed detail is only height 0, so its "Open" button
+         // stayed in the tab order -- `inert` takes it out until it opens.
+         +   '<div class="ov-subq-detail"' + (open ? ' style="height:auto"' : ' inert') + '>'
          +     '<div class="ov-subq-detail-inner">'
          +       ovBuildDqeSilenceNote_(dept)
          +       '<div class="ov-dept-tile-row">'
@@ -1163,6 +1174,9 @@
     const opening = !card.classList.contains('is-open');
     strip.setAttribute('aria-expanded', opening ? 'true' : 'false');
     card.classList.toggle('is-open', opening);
+    const name = card.getAttribute('data-subq');
+    if (name) ovSubqOpen_[name] = opening;   // F56: survives the next re-render
+    if (opening) detail.removeAttribute('inert'); else detail.setAttribute('inert', '');   // F55
     if (typeof requestAnimationFrame !== 'function' || !inner) {
       detail.style.height = opening ? 'auto' : '0';   // no-animation fallback
       return;
@@ -1537,7 +1551,11 @@
       var col = COLUMNS.find(function (c) { return c.key === key; });
       ovUserSort_.dir = (col && col.type === 'text') ? 'asc' : 'desc';
     }
-    ovRenderUserRows_();
+    // F66 (broad-scan 2026-10-14): repaint only rows that belong to the window
+    // on screen. While a NEW window loads, ovUserRows_ still holds the old
+    // window's rows -- a header click painted them back under the new title.
+    // The choice is kept either way; the landing reply renders with it.
+    if (ovUserTableKey_ && ovUserRows_.length) ovRenderUserRows_();
   }
 
   // Overview trend-chart metric views. `field` = the per-dept data array on the

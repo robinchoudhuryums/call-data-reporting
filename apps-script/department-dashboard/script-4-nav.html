@@ -497,6 +497,23 @@
     };
   })();
 
+  // F65 (broad-scan 2026-10-14): the state an outgoing LINK carries -- the
+  // route's collect(), plus, for Insights, the department on screen. Without
+  // it an admin's (or multi-dept manager's) link for a non-default dept opened
+  // on the recipient's default dept with this dept's agents (the F16 class).
+  // Saved views do NOT go through here: they stay dept-free on purpose (see
+  // insViewsKey_), so collect() itself is unchanged. The dept is applied on
+  // the way in by shareApplyDeptParam_, only for a dept the viewer may see.
+  function shareLinkStateFor_(route) {
+    const provider = SHARE_STATE_[route];
+    const state = provider ? provider.collect() : null;
+    if (state && route === '/report/insights') {
+      const d = getRequestedDept();
+      if (d) state.dept = d;
+    }
+    return state;
+  }
+
   function insCarryLinkWindowToDept_(params) {
     var lf = String((params && params.from) || ''), lt = String((params && params.to) || '');
     var iso = /^\d{4}-\d{2}-\d{2}$/;
@@ -539,8 +556,7 @@
         // to the bare route.
         let suffix = '';
         try {
-          const provider = SHARE_STATE_[route];
-          const state = provider ? provider.collect() : null;
+          const state = shareLinkStateFor_(route);
           const encoded = state ? encodeShareParams_(state) : '';
           if (encoded) suffix = '?' + encoded;
         } catch (e) { /* bare route */ }

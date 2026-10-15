@@ -13,9 +13,13 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- Broad scan cycle 259 Batch 7 IMPLEMENTED (block 259): interface / a11y, + F65/F66 (owner moved Batch 6's two follow-ons here).** F26 dark-mode --ink-muted re-declared; F27 the agent row's control is a name-cell button owning aria-expanded (row loses tabindex, false never removed); F54 Window buttons sync aria-pressed; F55 closed sub-queue details are inert; F56 open sub-queue cards survive re-renders; F57 Health folds survive the Neon repaint; F58 per-agent Copy data names; F65 Insights share links / Open in new tab carry dept (saved views stay dept-free); F66 a sort click mid-load no longer repaints the old window. 2476 tests, 10/10 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; walk S39 (its keyboard step now Tabs to the agent NAME). No operator steps.
+  **Next:** Batch 8 (per-call edges: F30, F31, F32, F34), then Batches 9-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- Broad scan cycle 259 Batch 6 IMPLEMENTED (block 259): client state + consent.** F47 a saved YTD chart range is fetched at boot; F48 the YTD cache follows the Overview latest date; F49 the IR edit popover takes the R30 clamp; F50 a config save/remove drops the alert preview (and an in-flight one); F16 the digest link carries dept= and the Insights link applies it (shareApplyDeptParam_, shared with #/dept); F51 the silent refresh keeps the Overview agent rows; F52 roster loaders reset to the skeleton; F25 latest dates re-read every 5 min. 2467 tests, 12/12 unit bites + 1 rendered, lint + INV-16 + module-deps clean, ci:ui all stages green (new drive-smoke YTD-boot stage).
   **Owner-side:** deploy the dashboard. No operator steps. Next digest send carries the dept param.
-  **Next:** Batch 7 (a11y: F26, F27, F54-F58), then Batches 8-10 per the cycle-259 list below.
+  **Next:** Batch 7 (a11y: F26, F27, F54-F58, + F65/F66 added from the Batch 6 follow-ons), then Batches 8-10 per the cycle-259 list below.
   **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- Broad scan cycle 259 Batch 5 IMPLEMENTED (block 259): UX-2 brief coherence.** F20 the Callbacks row quotes only the on-screen window's payload (and repaints on load); F21 View-as redraws the trend shading; F22 the headline's "behind" count uses the R18 benchmark; F23 the "need a look" count includes the top line; F24 a Callbacks jump switches direction only from Inbound (Both is never overwritten); F28 no Queue health row while its fold is hidden. 2460 tests, 8/8 bites + lint + INV-16 + module-deps clean, ci:ui all stages green.
   **Owner-side:** deploy the dashboard; re-walk S61. No operator steps.
@@ -44,6 +48,8 @@ counter starts at 0 here because no earlier count was kept.)
     - Batch 5 UX-2 brief: F20 stale callbacks row, F21 view-as shading, F22 insHeadline_ R18 basis, F23 top line, F24 Both overwrite, F28 hidden queue row.
     - Batch 6 client state: F47 YTD at boot, F50 alert preview after config edit, F49 IR popover clamp, F16 digest link dept, F48 YTD refresh, F51 silent-refresh table blank, F52 IR roster stale error, F25 latest-dates cadence.
     - Batch 7 a11y: F26 --ink-muted dark, F27 agent-table tr, F54-F58.
+      + F65 (added 2026-10-15 from Batch 6's follow-ons, owner): the Insights SHARE_STATE_ collect() omits dept, so "Open in new tab" / saved views of a non-default dept land on the viewer's default dept (the F16 class; script-4-nav.html).
+      + F66 (added 2026-10-15 from Batch 6's follow-ons, owner): a header click on the Overview mini-table while a NEW window loads re-sorts the previous window's rows (ovUserRows_ kept until the reply lands; script-3-overview.html).
     - Batch 8 per-call edges: F30 trailing attempts, F31 outbound email flags, F32 PC-3 order, F34 Caller Lookup inbound availability.
     - Batch 9 mirrors: F11 drill col E/AD-AF, F12 sentinel rows, F13 overlap audit, F59 queueSplitSample strays, F60 qdd row-2 date, F63 CSR N1:X1 header check, F64 stray legs in daily engines.
     - Batch 10 deploy/docs/tooling: F35 INV-17 premise (operator check first), F41 deploy.sh dirty scope, F40 INV-16 deploy skew, F38 lint allowlist, F39 harness memo reset, F36/F37/F6/F14/F53 docs + dead code.

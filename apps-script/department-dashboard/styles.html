@@ -30,8 +30,11 @@
        fallback computes to `inherit`, so .sh-hint/.sh-muted/.esc-pill-* text
        rendered at full inherited ink instead of muted (both themes), and the
        View-as <select> inherited the control's MONO face instead of the sans
-       reset it declared. Aliases resolve at use time, so the dark palette's
-       --muted override carries through automatically. */
+       reset it declared. F26 (broad-scan 2026-10-14): an alias does NOT
+       resolve at use time -- a custom property's var() is substituted where
+       it is DECLARED, so this one is fixed to the light --muted and inherited
+       as that colour. Any palette that overrides --muted must re-declare
+       --ink-muted beside it (the dark overlay below does). */
     --ink-muted:   var(--muted);
     --sans:        var(--ui);
     --line:        #d6d1c2;
@@ -150,6 +153,7 @@
     --paper-card:  #13171e;
     --ink:         #ecf0f6;
     --muted:       #7d8694;
+    --ink-muted:   var(--muted);   /* F26: re-declared, or it keeps the light grey */
     --line:        #242a34;
     --accent-soft: #1d2945;
     --good-soft:   #1a2f24;
@@ -8007,8 +8011,14 @@
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
-  #agents-tbody tr[data-agent]:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: -2px;
+  /* F27: the agent row's control is the name-cell button (apRowToggleHtml_),
+     styled as the plain name it replaces; the row itself is no tab stop. */
+  .agents tbody button.ap-row-toggle {
+    appearance: none; background: none; border: 0; padding: 0; margin: 0;
+    font: inherit; color: inherit; text-align: left; cursor: pointer;
+  }
+  .agents tbody button.ap-row-toggle:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r, 2px);
   }
   .ov-dept-tile:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px;

@@ -5246,6 +5246,8 @@
   // snapshot the SHARE_STATE_ provider's state: dates, compare mode, custom
   // prior, agents ('' = whole department), Simple/Detailed. Deliberately NOT
   // the department -- the header selector owns that, and managers are pinned.
+  // (A share LINK does carry it -- shareLinkStateFor_, F65 -- because the
+  // link is opened by someone else, on a page whose selector starts elsewhere.)
   // Applying a view (or opening a shared link) runs the NORMAL fetch +
   // permission path; nothing is rendered from storage.
   var INS_VIEWS_MAX_ = 12;
@@ -5293,7 +5295,7 @@
     }
     let suffix = '';
     try {
-      const state = insCurrentViewState_();
+      const state = shareLinkStateFor_('/report/insights');   // F65: the link names its dept
       const encoded = state ? encodeShareParams_(state) : '';
       if (encoded) suffix = '?' + encoded;
     } catch (e) { /* bare route */ }

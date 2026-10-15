@@ -2864,6 +2864,7 @@
     var tok = ++healthLoadSeq_;
     healthFastData_ = null;
     healthNeonData_ = null;
+    healthFoldsOpen_ = {};   // F57: a refresh re-collapses; the Neon repaint does not
     reportSetStatus_('health-status', 'loading', 'Checking…');
     if ($('health-table')) $('health-table').style.display = 'none';
     healthLoadUiFlags_();   // R7 (G-3): the toggle editor loads alongside
@@ -2908,9 +2909,13 @@
   };
   // R19: sections rendered COLLAPSED behind a clickable header ('users' -- one
   // row per user gets long with real adoption -- and 'props', the full
-  // property inventory, a drill-in view by nature). State is per-render (a
+  // property inventory, a drill-in view by nature). State is per-LOAD (a
   // refresh re-collapses), which is the right default for a drill-in section.
+  // F57 (broad-scan 2026-10-14): per load, not per render -- one load paints
+  // twice (the fast pass, then the Neon pass ~seconds later), and the second
+  // paint used to snap shut a fold the admin had just opened.
   const HEALTH_FOLDED_SECTIONS_ = { users: true, props: true };
+  var healthFoldsOpen_ = {};
 
   function healthRender_(data) {
     const tbody = $('health-tbody');
@@ -2924,6 +2929,7 @@
     let html = '', lastSection = null;
     rows.forEach(function (r) {
       const folded = !!HEALTH_FOLDED_SECTIONS_[r.section];
+      const foldOpen = folded && !!healthFoldsOpen_[r.section];   // F57
       if (r.section !== lastSection) {
         lastSection = r.section;
         if (folded) {
@@ -2933,8 +2939,8 @@
           // implicit row role and the table stops being a grid for screen
           // readers. The row stays the click target via bubbling.
           html += '<tr class="sh-section sh-fold-head" data-fold="' + escapeHtml(r.section) + '">'
-            + '<td colspan="3"><button type="button" class="sh-fold-btn" aria-expanded="false">'
-            + '<span class="sh-fold-arrow" aria-hidden="true">▸</span> '
+            + '<td colspan="3"><button type="button" class="sh-fold-btn" aria-expanded="' + (foldOpen ? 'true' : 'false') + '">'
+            + '<span class="sh-fold-arrow" aria-hidden="true">' + (foldOpen ? '▾' : '▸') + '</span> '
             + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section)
             + ' <span class="sh-fold-count">(' + n + ' — click to expand)</span></button></td></tr>';
         } else {
@@ -2942,7 +2948,7 @@
             + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section) + '</td></tr>';
         }
       }
-      html += '<tr' + (folded ? ' class="sh-fold-row" data-fold-of="' + escapeHtml(r.section) + '" style="display:none"' : '') + '>'
+      html += '<tr' + (folded ? ' class="sh-fold-row" data-fold-of="' + escapeHtml(r.section) + '"' + (foldOpen ? '' : ' style="display:none"') : '') + '>'
         + '<td>' + escapeHtml(r.label) + '</td>'
         + '<td>' + chip(r.status) + '</td>'
         + '<td>' + escapeHtml(r.value || '')
@@ -2957,6 +2963,7 @@
         const key = head.getAttribute('data-fold');
         const open = btn.getAttribute('aria-expanded') === 'true';
         btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+        healthFoldsOpen_[key] = !open;   // F57: survives this load's second paint
         const arrow = head.querySelector('.sh-fold-arrow');
         if (arrow) arrow.textContent = open ? '▸' : '▾';
         Array.prototype.forEach.call(

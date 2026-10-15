@@ -614,3 +614,132 @@ test('F16: a linked dept is applied only when the viewer may see it, and the Ins
   assert.match(nav, /'\/dept': \{[\s\S]{0,200}if \(shareApplyDeptParam_\(p && p\.dept\)\) refresh\(\);/,
     'the /dept link keeps its behaviour through the shared helper');
 });
+
+// ===========================================================================
+// Broad-scan 2026-10-14, Batch 7 (interface / a11y): the behavioural halves.
+// ===========================================================================
+
+function btnEl(attrs) {
+  const b = el('btn', { attrs: Object.assign({}, attrs || {}) });
+  b.removeAttribute = function (k) { delete this.attrs[k]; };
+  return b;
+}
+function rowEl(agent, btn) {
+  const cls = {};
+  return Object.assign(el('tr'), {
+    attrs: { 'data-agent': agent },
+    classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; }, contains: function (c) { return !!cls[c]; } },
+    querySelector: function (sel) { return sel === 'button.ap-row-toggle' ? btn : null; },
+    removeAttribute: function (k) { delete this.attrs[k]; },
+  });
+}
+
+test('F27: opening and closing the agent panel moves aria-expanded on the name BUTTON (false, never removed) and focus to it', function () {
+  const ap = src('script-10-escalations.html');
+  const btn = btnEl({ 'aria-expanded': 'false' });
+  const tr = rowEl('Ann', btn);
+  const sb = { AP_: { agent: 'Ann', idx: 0, seq: 0, node: null }, apRowsFor_: function () { return [tr]; } };
+  vm.runInNewContext(extractFn(ap, 'apRowToggle_') + extractFn(ap, 'apMarkRow_') + extractFn(ap, 'apClose_'), sb);
+  sb.apMarkRow_(tr);
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+  assert.equal(btn.getAttribute('aria-controls'), 'ap-panel');
+  assert.equal(tr.getAttribute('aria-expanded'), null, 'the row never carries it');
+  assert.ok(tr.classList.contains('ap-open'));
+  sb.apClose_(true);
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'closed is "false", not a removed attribute');
+  assert.equal(btn.getAttribute('aria-controls'), null);
+  assert.equal(btn.focused, 1, 'focus returns to the button');
+  assert.ok(!tr.classList.contains('ap-open'));
+  // A mouse open (a click on any cell) leaves focus on the button too, so
+  // Escape and Tab work from there as they did from the old focusable row.
+  assert.match(extractFn(ap, 'apToggleFromRow_'), /apOpen_\(agent, idx\);[\s\S]*?b\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test('F55 / F56: a sub-queue card keeps its open state across re-renders, and a closed one is inert', function () {
+  const ov = src('script-3-overview.html');
+  const sb = {
+    ovPeriodStats_: function () { return { pctFormatted: '90%', rung: 1, answered: 1, missed: 0, attFormatted: '1:00' }; },
+    irSparklineGoal_: function () { return ''; }, answerStdFor_: function () { return { target: 80 }; },
+    isAllDeptViewer_: function () { return true; }, ovSubqArrow_: function () { return ''; },
+    ovBuildDqeSilenceNote_: function () { return ''; }, ovBuildOutboundLine_: function () { return ''; },
+    fmtNumber: String, escapeHtml: function (x) { return String(x); }, ABANDON_STANDARD_: 4,
+    requestAnimationFrame: undefined,
+  };
+  vm.runInNewContext('var ovSubqOpen_ = {};' + extractFn(ov, 'ovBuildSubqCard_') + extractFn(ov, 'ovToggleSubqCard_'), sb);
+  const dept = { name: 'PAP', parent: 'Sales' };
+  let html = sb.ovBuildSubqCard_(dept, '#000');
+  assert.match(html, /<div class="ov-subq-detail" inert>/, 'F55: a closed detail is inert, so its Open button is out of the tab order');
+  assert.match(html, /aria-expanded="false"/);
+  // Open it the way the strip click does.
+  const detailAttrs = { inert: '' };
+  const detail = { style: {}, querySelector: function () { return null; },
+    setAttribute: function (k, v) { detailAttrs[k] = v; }, removeAttribute: function (k) { delete detailAttrs[k]; } };
+  const cls = {};
+  const card = { getAttribute: function (k) { return k === 'data-subq' ? 'PAP' : null; },
+    classList: { contains: function (c) { return !!cls[c]; }, toggle: function (c, on) { if (on) cls[c] = true; else delete cls[c]; } } };
+  const strip = btnEl({ 'aria-expanded': 'false' });
+  sb.ovToggleSubqCard_(card, strip, detail);
+  assert.equal(strip.getAttribute('aria-expanded'), 'true');
+  assert.ok(!('inert' in detailAttrs), 'opening drops inert');
+  html = sb.ovBuildSubqCard_(dept, '#000');
+  assert.match(html, /class="ov-subq-card is-open"/, 'F56: the next re-render keeps it open');
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /<div class="ov-subq-detail" style="height:auto">/);
+  sb.ovToggleSubqCard_(card, strip, detail);
+  assert.equal(detailAttrs.inert, '', 'closing makes it inert again');
+  assert.match(sb.ovBuildSubqCard_(dept, '#000'), /<div class="ov-subq-detail" inert>/);
+});
+
+test('F57: a Health fold opened before the Neon pass lands stays open; a refresh re-collapses it', function () {
+  const h9 = src('script-9-inbound-direct.html');
+  const tbody = el('health-tbody');
+  tbody.querySelectorAll = function () { return []; };
+  const sb = { $: function (id) { return id === 'health-tbody' ? tbody : null; }, escapeHtml: function (x) { return String(x); } };
+  const consts = h9.match(/const HEALTH_SECTIONS_ = \{[\s\S]*?\};/)[0] + h9.match(/const HEALTH_FOLDED_SECTIONS_ = [^;]+;/)[0];
+  vm.runInNewContext(consts + ' var healthFoldsOpen_ = {};' + extractFn(h9, 'healthRender_'), sb);
+  const rows = [{ section: 'users', label: 'a@x', status: 'ok', value: '1' }, { section: 'users', label: 'b@x', status: 'ok', value: '2' }];
+  sb.healthRender_({ rows: rows });
+  assert.match(tbody.innerHTML, /class="sh-fold-btn" aria-expanded="false"/);
+  assert.equal((tbody.innerHTML.match(/data-fold-of="users" style="display:none"/g) || []).length, 2);
+  vm.runInContext('healthFoldsOpen_.users = true;', vm.createContext(sb));   // what the toggle records
+  sb.healthRender_({ rows: rows });   // the Neon pass repaints
+  assert.match(tbody.innerHTML, /class="sh-fold-btn" aria-expanded="true"/, 'the second paint keeps it open');
+  assert.equal((tbody.innerHTML.match(/display:none/g) || []).length, 0, 'with its rows shown');
+  assert.match(extractFn(h9, 'healthRender_'), /healthFoldsOpen_\[key\] = !open;/, 'the toggle records it');
+  assert.match(extractFn(h9, 'healthLoad_'), /healthFoldsOpen_ = \{\};/, 'a refresh starts collapsed again');
+});
+
+test('F65: a share link (and Open in new tab) for Insights names the dept on screen; saved views stay dept-free', function () {
+  const nav = src('script-4-nav.html');
+  const sb = { SHARE_STATE_: { '/report/insights': { collect: function () { return { from: '2026-10-01', to: '2026-10-10' }; } },
+                              '/report/individual': { collect: function () { return { from: '2026-10-01' }; } } },
+               getRequestedDept: function () { return 'Sales'; } };
+  vm.runInNewContext(extractFn(nav, 'shareLinkStateFor_'), sb);
+  assert.equal(sb.shareLinkStateFor_('/report/insights').dept, 'Sales');
+  assert.equal(sb.shareLinkStateFor_('/report/individual').dept, undefined, 'only the route whose provider applies it');
+  sb.SHARE_STATE_['/report/insights'].collect = function () { return null; };
+  assert.equal(sb.shareLinkStateFor_('/report/insights'), null, 'nothing to share stays nothing');
+  assert.match(extractFn(src('script-8-insights.html'), 'insCopyShareLink_'), /const state = shareLinkStateFor_\('\/report\/insights'\);/);
+  assert.match(extractFn(nav, 'initOpenInNewTabButtons_'), /const state = shareLinkStateFor_\(route\);/);
+  assert.match(extractFn(src('script-8-insights.html'), 'insCurrentViewState_'), /provider\.collect\(\)/,
+    'saved views still snapshot collect() alone');
+});
+
+test('F66: a header click while a NEW window loads keeps the sort but does not repaint the old rows', function () {
+  const ov = src('script-3-overview.html');
+  let painted = 0;
+  const sb = { COLUMNS: [{ key: 'agent', type: 'text' }, { key: 'totalAnswered', type: 'number' }],
+    ovRenderUserRows_: function () { painted++; } };
+  vm.runInNewContext("var ovUserSort_ = { key: 'answerRate', dir: 'asc' }; var ovUserTableKey_ = null; var ovUserRows_ = [{ agent: 'Old' }];"
+    + extractFn(ov, 'ovOnUserSort_'), sb);
+  const ctx = vm.createContext(sb);
+  sb.ovOnUserSort_('agent');
+  assert.equal(painted, 0, 'the previous window\'s rows are not painted back');
+  assert.equal(vm.runInContext('ovUserSort_.key', ctx), 'agent', 'the choice is kept for the landing reply');
+  vm.runInContext("ovUserTableKey_ = 'CSR|a|b';", ctx);
+  sb.ovOnUserSort_('agent');
+  assert.equal(painted, 1, 'rows for the window on screen re-sort in place');
+  vm.runInContext('ovUserRows_ = [];', ctx);
+  sb.ovOnUserSort_('agent');
+  assert.equal(painted, 1, 'an empty result keeps its "No agent rows" message');
+});

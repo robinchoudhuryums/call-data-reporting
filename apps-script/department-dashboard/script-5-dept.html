@@ -3307,17 +3307,27 @@
     } catch (e) { /* a full/blocked store just means collapse won't persist */ }
   }
 
+  // F27: the agent-name cell's disclosure control for the inline agent panel
+  // (apToggleFromRow_, script-10). A real button, so the row needs no tabindex
+  // and no keydown of its own; its click bubbles to the tbody's one handler.
+  function apRowToggleHtml_(agent) {
+    return '<button type="button" class="ap-row-toggle" aria-expanded="false"'
+      + ' title="Show ' + escapeHtml(agent) + '\u2019s days (the Individual Report is inside)">'
+      + escapeHtml(agent) + '</button>';
+  }
+
   function subqAgentRowHtml_(row, tallyUnit) {
     var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
     // F29: data-dept = the group this row belongs to, so the inline agent
     // panel narrows to the same queues the row's figures were narrowed to.
-    return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+    return '<tr data-agent="' + escapeHtml(row.agent) + '"'
       + (row.dept ? ' data-dept="' + escapeHtml(row.dept) + '"' : '')
       + (rowClass ? ' class="' + rowClass + '"' : '')
       + ' title="Show ' + escapeHtml(row.agent) + '\u2019s days (the Individual Report is inside)">'
       + COLUMNS.map(function (col, i) {
           var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
-          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
+          var cell = (col.key === 'agent') ? apRowToggleHtml_(row.agent) : fmtCell(col, row, { tallyUnit: tallyUnit });   // F27
+          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + cell + '</td>';
         }).join('') + '</tr>';
   }
 
@@ -3563,10 +3573,10 @@
       // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
       // data-agent powers the row's inline agent panel (Batch B, apToggleFromRow_).
-      // F13: tabindex makes the drill keyboard-reachable (the delegated
-      // keydown on #agents-tbody activates it); no role override -- see
-      // makeActivatable_'s note on preserving table row semantics.
-      return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+      // F27: the keyboard reaches it through the name cell's button
+      // (apRowToggleHtml_), not a focusable row -- the row keeps its row
+      // semantics and the button owns aria-expanded.
+      return '<tr data-agent="' + escapeHtml(row.agent) + '"'
            + (row.dept ? ' data-dept="' + escapeHtml(row.dept) + '"' : '')   // F29
            + (rowClass ? ' class="' + rowClass + '"' : '')
            + ' title="Show ' + escapeHtml(row.agent) + '’s days (the Individual Report is inside)">'
@@ -3574,7 +3584,8 @@
         // B1: tag the Answered/Missed bar cell so a date-range refresh flashes
         // the agents whose volume actually changed (key by agent name, stable).
         var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
-        return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
+        var cell = (col.key === 'agent') ? apRowToggleHtml_(row.agent) : fmtCell(col, row, { tallyUnit: tallyUnit });   // F27
+        return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + cell + '</td>';
       }).join('') + '</tr>';
     }).join('');
     }
@@ -4035,16 +4046,14 @@
     };
     if (tb) {
       tb.addEventListener('click', open);
+      // Escape closes an open panel. Enter/Space need no handler here (F27):
+      // the name cell's native button turns them into the click above, and a
+      // second keydown path would toggle twice per keypress.
       tb.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && e.target.closest('tr.ap-open')) {
           e.preventDefault();
           if (typeof apClose_ === 'function') apClose_(true);
-          return;
         }
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        if (!e.target.closest('tr[data-agent]')) return;
-        e.preventDefault();
-        open(e);
       });
     }
     var panel = $('dept-team-outbound');
@@ -4367,7 +4376,7 @@
       // E5's rule: an agent with no row in the prior window gets no chip.
       var po = (priorOk && o) ? (priorBy[obKey(e.dept, e.agent)] || null) : null;
       var ptip = priorTipFor(po);
-      var cells = '<td class="agent-name">' + escapeHtml(e.agent) + '</td>';
+      var cells = '<td class="agent-name">' + apRowToggleHtml_(e.agent) + '</td>';   // F27
       if (both) {
         cells += '<td class="ans-bar-cell ob-dir-in">' + (e.inb ? fmtCell(barCol, e.inb, { tallyUnit: inUnit }) : zeroCell_('–')) + '</td>'
           + '<td class="num ob-dir-in">' + (e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–')) + '</td>'
@@ -4381,7 +4390,7 @@
           + '<td class="num">' + (o && o.obAttSec ? fmtDuration(o.obAttSec) : zeroCell_('–')) + '</td>'
           + '<td class="num">' + fmtNumber((o && o.attempts) || 0) + '</td>';
       }
-      return '<tr data-agent="' + escapeHtml(e.agent) + '" tabindex="0"'
+      return '<tr data-agent="' + escapeHtml(e.agent) + '"'
         + (e.dept ? ' data-dept="' + escapeHtml(e.dept) + '"' : '') + ' title="Show '
         + escapeHtml(e.agent) + '’s days (the Individual Report is inside)">' + cells + '</tr>';
     };

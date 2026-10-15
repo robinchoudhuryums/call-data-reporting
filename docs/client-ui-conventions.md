@@ -1954,7 +1954,10 @@ block) unless noted, and the two behavioural ones are also driven in
   (`tr.qcd-expandable` with its own `tabindex` + `aria-expanded`, Insights
   Queue health + the all-dept report) was moved onto a cell
   `button.qcd-expand-toggle` in broad-scan Batch 8 (`drive-f13.js` presses
-  Enter and Space on both), so the pin is a SWEEP over every
+  Enter and Space on both), and the My Department agent rows' inline-panel
+  toggle onto the name cell's `button.ap-row-toggle` (F27, 2026-10-14 -- the
+  row has no `tabindex`, and closing sets `aria-expanded="false"` rather than
+  removing it), so the pin is a SWEEP over every
   `script-*.html` fragment, not a per-site assertion. **The corollary bites
   on the way in:** once the button is native, a row-level keydown handler
   toggles the same thing twice per keypress — delete it.
