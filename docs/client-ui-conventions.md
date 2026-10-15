@@ -1877,8 +1877,8 @@ behind the removed button.
 
 - **Top-tab router (Phase C).** (Moved here from CLAUDE.md in the F8b trim
   pass -- LIVE TRUTH, unchanged.) The header nav is a row of tab buttons plus two
-  `.header-menu` dropdown groups — **Reports** (Individual + the admin-vetted
-  Inbound / Direct / Outbound) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
+  `.header-menu` dropdown groups — **Reports** (Individual, Agent day + the
+  admin-vetted Inbound / Direct; the Outbound modal is retired, G3) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
   Config, Access, Health; Caller Lookup stays a top-level admin tab).
   **Every tab AND every menu item carries a `data-route` plus a stable button
   `id`** — that pair is what the per-modal init functions, the deep links, the

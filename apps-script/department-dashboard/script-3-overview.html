@@ -745,31 +745,6 @@
     };
     return { from: iso(start), to: latestIso };
   }
-  let ovTablePeriodWired = false;
-  function ovWireTablePeriodBar_() {
-    const bar = $('ov-user-table-period');
-    if (!bar) return;
-    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
-      const on = b.getAttribute('data-period') === ovTablePeriod;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-    if (ovTablePeriodWired) return;
-    ovTablePeriodWired = true;
-    bar.addEventListener('click', function (e) {
-      const b = e.target.closest('.ov-period-btn');
-      if (!b) return;
-      const p = b.getAttribute('data-period');
-      if (!OV_CARD_PERIODS_[p] || p === ovTablePeriod) return;
-      ovTablePeriod = p;
-      try { localStorage.setItem(OV_TABLE_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
-      if (ovLastData) ovRenderUserTable_(ovLastData);
-      // R11-F: fade the table on the range swap (reduced-motion no-ops via CSS).
-      var wrap = $('ov-user-table-wrap');
-      if (wrap) { wrap.classList.remove('ov-tbl-fade'); void wrap.offsetWidth; wrap.classList.add('ov-tbl-fade'); }
-    });
-  }
-
   // Period bar above the dept grid (static markup). Syncs the active button on
   // every render; wires the click once. Switching re-renders only the cards
   // (hero + grid) from ovLastData -- no re-fetch; the chart/sparklines
@@ -1413,8 +1388,8 @@
     // for a genuine all-dept viewer driving the selector.
     const title = ((isAllDeptViewer_() && !viewAsDept_) ? 'Selected dept: ' : 'My dept: ') + viewerDept;
     $('ov-user-table-title').textContent = title;
-    // O4: the table follows its own period slider (re-fetches the range).
-    ovWireTablePeriodBar_();
+    // O4: the table re-fetches the range of the shared window (R12-19: the
+    // card period bar sets ovTablePeriod; the table's own bar is gone, F53).
     const range = ovTableRange_(data.latestDate);
     $('ov-user-table-date').textContent = (range.from === range.to)
       ? ovFormatDateLabel_(range.to)

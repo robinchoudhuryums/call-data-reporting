@@ -743,9 +743,14 @@ test('timing: the all-departments payload carries per-phase timings, and the she
     assert.equal(grid.dates[i], h.call('rowDateIso_', grid.values[i][2], grid.ssTZ));
   }
   // And a consumer handed a grid WITHOUT dates (the Neon path) still works.
-  h.ctx.QCD_SHEET_DATA_MEMO_ = { values: grid.values, displays: grid.displays, ssTZ: grid.ssTZ };
-  const rep2 = h.call('computeQcdReport_', 'Alpha', '2026-06-10', '2026-06-10', false, false, true);
-  assert.equal(rep2.queueBreakdown[0].totalCalls, 80);
+  // F39: the seed must be set INSIDE the execution -- each h.call starts a
+  // fresh one, which would wipe it and leave this check vacuous.
+  h.inExecution(function () {
+    h.ctx.QCD_SHEET_DATA_MEMO_ = { values: grid.values, displays: grid.displays, ssTZ: grid.ssTZ };
+    const rep2 = h.call('computeQcdReport_', 'Alpha', '2026-06-10', '2026-06-10', false, false, true);
+    assert.equal(rep2.queueBreakdown[0].totalCalls, 80);
+    assert.ok(!h.ctx.QCD_SHEET_DATA_MEMO_.dates, 'the dates-less grid was really the one served');
+  });
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;
 });
 

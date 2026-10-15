@@ -41,6 +41,7 @@ test('rowDateIso_ handles Date objects honoring the passed TZ (INV-02 root cause
 });
 
 test('rowDateIso_ memoizes the Date branch per execution (R27: one formatDate per distinct (ms, tz))', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   const U = h.ctx.Utilities;
   const real = U.formatDate;
   let calls = 0;
@@ -76,6 +77,7 @@ test('rowDateIso_ memoizes the Date branch per execution (R27: one formatDate pe
     h.ctx.ROW_DATE_ISO_MEMO_CAP_ = 20000;
     h.ctx.ROW_DATE_ISO_MEMO_ = {}; h.ctx.ROW_DATE_ISO_MEMO_SIZE_ = 0;
   }
+  });
 });
 
 test('rowDateIso_ converts Sheets serial dates (F-8: right calendar day in ANY tz)', function () {

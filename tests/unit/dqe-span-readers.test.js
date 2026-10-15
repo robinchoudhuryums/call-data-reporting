@@ -264,6 +264,7 @@ function r44CountReads() {
 }
 
 test('R44: N departments cost ONE date-column read and ONE ext-grid read, not N', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install(outOfOrderRows());
   const c = r44CountReads();
   try {
@@ -278,9 +279,11 @@ test('R44: N departments cost ONE date-column read and ONE ext-grid read, not N'
     // sheetFetchDqeRows_, so a second dept for the same window is a memo hit.
     assert.equal(c.n.wide, 1, 'the windowed span is read ONCE, shared by both depts');
   } finally { c.restore(); }
+  });
 });
 
 test('R44: the bounds scan and the span share that ONE date-column read', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install(outOfOrderRows());
   const c = r44CountReads();
   try {
@@ -291,6 +294,7 @@ test('R44: the bounds scan and the span share that ONE date-column read', functi
     h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');
     assert.equal(c.n.dateCol, 1, 'bounds + span = one read, not two');
   } finally { c.restore(); }
+  });
 });
 
 test('R44: memoizing does not change any answer (payload identical either way)', function () {
@@ -309,6 +313,7 @@ test('R44: memoizing does not change any answer (payload identical either way)',
 });
 
 test('R44: a sheet that GREW within one execution is re-read, never served stale', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install(outOfOrderRows());
   h.call('sheetScanDqeDateBounds_');
   const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
@@ -320,6 +325,7 @@ test('R44: a sheet that GREW within one execution is re-read, never served stale
   const iso = h.call('dqeDateColumnIso_', sheet, before + 1, 'America/Chicago');
   assert.equal(iso.length, before, 'a row-count mismatch forces a fresh read');
   assert.notEqual(iso[0], 'nonsense', 'and the stale array is discarded');
+  });
 });
 
 // ── R45: the derived ext set is cached ACROSS requests ────────────────────
@@ -477,6 +483,7 @@ test('DATA-5: two depts over one window share ONE read and neither sees the othe
 // memoized sheetFetchDqeRows_ too -- CacheWarm and the Insights-format digests
 // run them once per DEPT over one window in a single execution.
 test('DATA-5 follow-on: Insights for two depts over one window costs ONE wide read', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install(outOfOrderRows());
   const c = r44CountReads();
   try {
@@ -489,6 +496,7 @@ test('DATA-5 follow-on: Insights for two depts over one window costs ONE wide re
     const src = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard', f), 'utf8');
     assert.match(src, /srcRows = sheetFetchDqeRows_\(fetchFrom, fetchTo\);/, f + ' reads through the DAL primitive');
     assert.ok(!/dqeWindowRowSpan_\(/.test(src), f + ' keeps no private span read');
+  });
   });
 });
 

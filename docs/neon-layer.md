@@ -38,7 +38,7 @@ Health bullet; per-call table semantics are in
   connection properties are unsupported: …"), so instead of bounding a hang
   they make EVERY connection fail instantly, in every project at once
   (incident: docs/known-issues.md). `cross-file-pins.test.js` pins their ABSENCE across
-  all six builders and sweeps for unlisted `Jdbc.getConnection` callsites.
+  all five builders and sweeps for unlisted `Jdbc.getConnection` callsites.
   Bound STATEMENTS with `stmt.setQueryTimeout(seconds)` (what
   `getReachableNeonConn_`'s 5 s probe already does) — the platform supports
   that. Dashboard-side, `getDashboardNeonConn_` memoizes a hard connect

@@ -18,7 +18,7 @@ fails pins for the wrong reason. Measured across the offset range 2026-09-14:
 | Host TZ | Result |
 | --- | --- |
 | `America/Chicago`, `UTC`, `Europe/London` | green |
-| `America/Los_Angeles` | 2 failures |
+| `America/Los_Angeles` | 3 failures (re-measured 2026-10-15) |
 | `Asia/Tokyo`, `Pacific/Kiritimati` | 13-19 failures |
 
 Every one of those failures is a fixture building `new Date(y, m-1, d)` and
@@ -759,6 +759,16 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
    call `bustRosterMemo_()` after it, or a read later in the same execution
    serves the pre-write roster (`workbook-memo.test.js` pins the one writer,
    `appendRosterEntry_`).
+   **Since F39 (broad-scan 2026-10-14) the boundary resets EVERY per-execution
+   memo, not just those two:** the harness finds each top-level `var` whose
+   name carries `MEMO` (minus the `*_MAX_` / `*_CAP_` tuning constants) and
+   restores its load-time value on every `h.call` / `h.fn` entry -- so a new
+   memo needs no hand-written reset in any suite (declare it with `var`; a
+   top-level `let` is invisible to the vm context). A test that asserts what a
+   memo does WITHIN one execution ("read once", "a failed connect is not
+   retried", a seeded memo being served) wraps those calls in
+   `h.inExecution(function () { ... })`: one reset at the start, none between
+   the calls inside.
 
 ## Limitations (and the roadmap this Phase-1 harness leaves open)
 

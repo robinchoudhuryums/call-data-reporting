@@ -90,9 +90,9 @@ test('DEP-2/DEP-3: the stamp switch matches only canonical spellings and shares 
   // count, and clasp DOES push an untracked .gs) -- not a second `git diff` check.
   assert.doesNotMatch(sh, /git diff --quiet/);
   assert.match(sh, /\[ -n "\$TREE_DIRTY" \] && GIT_DESC="\$\{GIT_DESC\}\+dirty"/);
-  assert.match(sh, /TREE_DIRTY=""\n\[ -n "\$\(git status --porcelain/);
+  assert.match(sh, /TREE_DIRTY=""\n\[ -n "\$\(git status --porcelain -- "\$PUSH_SCOPE"/);
   // Dirty / non-main deploys warn, and STRICT_DEPLOY=1 refuses them.
-  assert.match(sh, /warn: the working tree is DIRTY/);
+  assert.match(sh, /warn: the working tree is DIRTY under \$PUSH_SCOPE/);
   assert.match(sh, /warn: deploying from branch '\$GIT_BRANCH', not main/);
   assert.match(sh, /"\$\{STRICT_DEPLOY:-\}" = "1"[\s\S]{0,120}exit 1/);
 });
@@ -162,4 +162,29 @@ test('DEP-1: every playwright install instruction pins the version ci.yml instal
       assert.equal(m, 'npm i playwright@' + ci, f + ': ' + m);
     });
   });
+});
+
+// F41 (broad-scan 2026-10-14): "dirty" is scoped to what the push ships -- the
+// project's clasp rootDir -- so a .cycle/ or docs edit no longer stamps +dirty,
+// defeats the redundant-deploy guard or trips STRICT_DEPLOY.
+test('F41: the dirtiness scope is the project\'s clasp rootDir, resolved from its .clasp.json', { skip: process.platform === 'win32' }, function () {
+  const sh = read('scripts/deploy.sh');
+  const a = sh.indexOf('# PUSH_SCOPE-BEGIN'), b = sh.indexOf('# PUSH_SCOPE-END');
+  assert.ok(a > 0 && b > a, 'the scope block exists');
+  const block = sh.slice(a, b);
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'apps-script', 'cdr-import'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.clasp.json'), JSON.stringify({ scriptId: 'x', rootDir: './apps-script/department-dashboard' }));
+  fs.writeFileSync(path.join(root, 'apps-script', 'cdr-import', '.clasp.json'), JSON.stringify({ scriptId: 'y' }));
+  const scope = function (dir) {
+    const r = spawnSync('bash', ['-c', 'ROOT_ABS="$1"; DIR="$2"\n' + block + '\nprintf %s "$PUSH_SCOPE"', '_', root, dir], { encoding: 'utf8' });
+    return r.stdout;
+  };
+  try {
+    assert.equal(scope('.'), 'apps-script/department-dashboard', 'the dashboard ships its rootDir, not the repo');
+    assert.equal(scope('apps-script/cdr-import'), 'apps-script/cdr-import', 'no rootDir = the project dir');
+    assert.equal(scope('apps-script/cdr-report'), 'apps-script/cdr-report', 'an unreadable .clasp.json falls back to the dir');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  // And the warn lists only that scope's changes.
+  assert.match(sh, /git status --short -- "\$PUSH_SCOPE"/);
 });

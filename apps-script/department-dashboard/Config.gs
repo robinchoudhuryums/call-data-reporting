@@ -544,10 +544,14 @@ const REPORT_CACHE_TTL_SECONDS = 6 * 3600;
 const AUTH_CACHE_TTL_SECONDS = 60;
 
 // Override: which queue extensions count as belonging to a given dept,
-// for the Missed Calls Report's queue-only (no-agent-rang) sentinel
-// matching. Use when a dept's agents ring across queues that belong to
-// OTHER depts -- without an override, the data-derived fallback would
-// pull those other queues' abandons into this dept's chart.
+// for the queue-overlap agent match -- which off-roster agents are
+// recognized as this dept's queue-only FLOATERS (INV-53: computeSummary_'s
+// floater rows, the IR / Insights floater pickers). Use when a dept's
+// agents ring across queues that belong to OTHER depts -- without an
+// override, the data-derived fallback would count those other queues'
+// agents as this dept's floaters. (It no longer feeds the Missed report's
+// queue-only abandoned section: since R6 / R8-1 a sentinel row is
+// attributed by queue NAME -- missedSentinelQueueNameSet_ -- not by ext.)
 //
 // Most depts have a single queue, so the data-derived fallback (queue
 // extensions observed on this dept's roster agents' col D) is fine and

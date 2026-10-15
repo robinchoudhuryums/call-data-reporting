@@ -1223,7 +1223,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   READBACK alone does NOT canonicalize non-legacy colors** — modern
   browsers serialize an oklch/oklab/color() fillStyle back VERBATIM,
   which silently defeated the whole mechanism for the oklch tokens
-  (accent/good/warn/bad + softs) and rendered every R11-L trend arrow
+  (accent/good/warn + softs) and rendered every R11-L trend arrow
   gray via `parseColorRgb_`'s fallback. `colorToCanvasRgb_` now detects
   a non-`#hex`/`rgb()` readback and resolves it via a painted-pixel
   `getImageData` (which always yields a real RGB triple). Any future
@@ -1485,7 +1485,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   their scope is identical, so no suite legitimately resets only half.
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
   memo resets the whole family" (R40 in fix-history). A third memo over this
-  sheet joins `DQE_EXEC_MEMOS`.
+  sheet joins `DQE_EXEC_MEMOS`. Since F39 the harness itself restores every
+  `var *MEMO*` global on each `h.call` (`h.inExecution` scopes a multi-call
+  memo test -- tests/README.md rule 3).
 - **Count badges must be idempotent, not append-only (F10).**
   `escApplyBadge_(counts)` (script-2-chrome) updates the escalations nav badge
   IN PLACE, REMOVES it at zero, and hides + empties the Overview strip;
@@ -1596,7 +1598,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   they make EVERY connection fail instantly, in every project at once
   (incident: docs/known-issues.md). Bound STATEMENTS with
   `stmt.setQueryTimeout(seconds)` instead -- the platform supports that.
-  `cross-file-pins.test.js` pins their ABSENCE across all six builders and
+  `cross-file-pins.test.js` pins their ABSENCE across all five builders and
   sweeps for unlisted `Jdbc.getConnection` callsites. **The hanging-connect
   problem is therefore still OPEN**: a connect that hangs can burn the
   execution ceiling (#70), whose kill SKIPS catch blocks, so none of the

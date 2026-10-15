@@ -901,7 +901,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
 // small per-date subset by its roster. ~14 configured depts previously
 // re-read the whole multi-year sheet 14x per run -- linear-in-history
 // waste that lengthened exactly the lock-hold window OPS-2 cares about.
-let ALERT_DATE_ROWS_MEMO_ = { dateIso: null, rows: null };
+var ALERT_DATE_ROWS_MEMO_ = { dateIso: null, rows: null };   // var, not let: per-execution, and the test harness resets it (F39)
 function alertRowsForDate_(dateIso) {
   if (ALERT_DATE_ROWS_MEMO_.dateIso === dateIso && ALERT_DATE_ROWS_MEMO_.rows) {
     return ALERT_DATE_ROWS_MEMO_.rows;

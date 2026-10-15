@@ -31,9 +31,12 @@ test('DD-2: the switch defaults to rung, accepts answerable case-insensitively, 
   assert.equal(h.call('getAnswerRateFormula_'), 'rung');
   // Memoized per execution: a property change without a memo reset is not seen.
   setFormula('answerable');
-  assert.equal(h.call('getAnswerRateFormula_'), 'answerable');   // memoizes
-  h.state.props.ANSWER_RATE_FORMULA = 'rung';
-  assert.equal(h.call('getAnswerRateFormula_'), 'answerable', 'the memo holds until reset');
+  h.inExecution(function () {   // F39: the memo holds WITHIN one execution...
+    assert.equal(h.call('getAnswerRateFormula_'), 'answerable');   // memoizes
+    h.state.props.ANSWER_RATE_FORMULA = 'rung';
+    assert.equal(h.call('getAnswerRateFormula_'), 'answerable', 'the memo holds until reset');
+  });
+  assert.equal(h.call('getAnswerRateFormula_'), 'rung', '...and the next execution reads the property afresh');
   setFormula(null);
 });
 

@@ -26,6 +26,13 @@ When something looks wrong, before assuming a code bug, check:
     row renders what scripts/deploy.sh stamped into BuildStamp.gs at push time
     (UTC + git short SHA + branch); "unstamped" means the last push bypassed
     the deploy helper, so no CI gate ran against exactly what went live.
+    **The two sibling projects share the INV-16 pair** (neonWrite.js +
+    buildDQEHistoricalData.js), so deploying only ONE of them after an INV-16
+    edit leaves the other's DQE build on the old rules (F40). deploy.sh warns
+    at push time when the other project's last deploy from this checkout
+    shipped a different copy, and each sibling stamp carries
+    `| <project> inv16 <hash>`; the Health page's `inv16-skew` row compares
+    the newest hash each project reported -- `warn` means deploy the other one.
 
 3. Did the user actually have access? The `Access Control` email match is
    case-INsensitive after trim (`resolveUser_`), so check the Department cell

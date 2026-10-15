@@ -340,6 +340,7 @@ test('DATA-5: getLatestDataDates does NOT cache a blob whose component came back
 // scan, memoized per execution.
 
 test('F9: sheetScanDqeDateBounds_ returns both bounds from ONE column read', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install('sheet');
   let reads = 0;
   const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
@@ -358,9 +359,11 @@ test('F9: sheetScanDqeDateBounds_ returns both bounds from ONE column read', fun
   h.call('sheetScanDqeDateBounds_');
   assert.equal(reads, afterFirst, 'second call served from the per-execution memo');
   sheet.getRange = realGetRange;
+  });
 });
 
 test('F9: a COLD cache serves getLatestDataDate + getLatestDataDates from one scan', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install('sheet');
   const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
   let dateColReads = 0;
@@ -379,6 +382,7 @@ test('F9: a COLD cache serves getLatestDataDate + getLatestDataDates from one sc
   assert.equal(dateColReads, 1,
     'ONE date-column scan for both readers (was 2 before F9)');
   sheet.getRange = realGetRange;
+  });
 });
 
 test('F9: a missing DQE sheet yields empty bounds and still caches the negative', function () {
@@ -735,6 +739,7 @@ test('R26c: a THROWING Logger cannot break the bounds scan', function () {
 });
 
 test('R26c: the timing line is emitted ONCE per execution, not per caller', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install('sheet');
   const cap = r26cCaptureLogger();
   try {
@@ -748,6 +753,7 @@ test('R26c: the timing line is emitted ONCE per execution, not per caller', func
     // read nor a log line -- a per-call line would misreport the real cost.
     assert.equal(hits.length, 1, 'memoized calls do not re-log');
   } finally { cap.restore(); }
+  });
 });
 
 // ── R40: the per-execution sheet DAL memo ─────────────────────────────────
@@ -778,6 +784,7 @@ function r40CountDqeReads() {
 }
 
 test('R40: a repeated (window, shape) is served from the memo, not re-read', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install('sheet');
   const c = r40CountDqeReads();
   try {
@@ -787,6 +794,7 @@ test('R40: a repeated (window, shape) is served from the memo, not re-read', fun
     h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
     assert.equal(c.count, 1, 'the 2nd and 3rd callers cost no read at all');
   } finally { c.restore(); }
+  });
 });
 
 test('R40: a memo hit is value-identical to a fresh read', function () {
@@ -837,6 +845,7 @@ test('R40: the memo is keyed on the window AND the detail shape', function () {
 });
 
 test('R40: retention is bounded -- the memo cannot grow without limit', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install('sheet');
   const max = h.ctx.DQE_SHEET_ROWS_MEMO_MAX_;
   assert.ok(max > 0 && max < 100, 'the cap is a small positive number');
@@ -846,11 +855,13 @@ test('R40: retention is bounded -- the memo cannot grow without limit', function
   assert.equal(h.ctx.DQE_SHEET_ROWS_MEMO_.order.length, max, 'FIFO evicts past the cap');
   assert.equal(Object.keys(h.ctx.DQE_SHEET_ROWS_MEMO_.byKey).length, max,
     'and the evicted rows are released, not just unlisted');
+  });
 });
 
 // ---- D-4 (broad-scan 2026-09-17): the Neon DAL fetch is memoized per execution --
 
 test('D-4: a repeat Neon fetch of the same window is served from the per-execution memo (one json_agg, cloned per caller)', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install('neon');
   let opens = 0;
   const realConn = h.ctx.getDashboardNeonConn_;
@@ -868,6 +879,7 @@ test('D-4: a repeat Neon fetch of the same window is served from the per-executi
   assert.equal(opens, 2, 'a different shape is a different key');
   assert.ok(Array.isArray(c[0].slots));
   h.ctx.getDashboardNeonConn_ = realConn;
+  });
 });
 
 test('D-4: an unreachable / failed read is NOT memoized -- the next caller retries', function () {

@@ -1320,3 +1320,42 @@ test('json_agg(X) over a subquery aliased X never selects a COLUMN named X', fun
   assert.ok(seen >= 20, 'the sweep found the json_agg readers (saw ' + seen + ')');
   assert.deepEqual(hits, []);
 });
+
+// F38 (broad-scan 2026-10-14): lint-gas allowed every ADVANCED service name
+// (Drive, Sheets, Docs, Gmail, ...) and the non-globals Blob / Ui in every
+// project, so `Drive.Files.get(...)` passed the net and threw in production --
+// no manifest enables Drive. They are now allowed only where a project's
+// appsscript.json enables them. Driven against a throwaway repo copy so the
+// real projects are untouched.
+test('F38: lint-gas rejects an advanced service the project\'s manifest does not enable', { skip: !fs.existsSync(path.join(ROOT, 'node_modules', 'eslint')) || process.platform === 'win32' }, function () {
+  const os = require('os');
+  const { spawnSync } = require('child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lintgas-'));
+  try {
+    fs.mkdirSync(path.join(tmp, 'scripts'));
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'lint-gas.mjs'), path.join(tmp, 'scripts', 'lint-gas.mjs'));
+    fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmp, 'node_modules'), 'dir');
+    ['apps-script/department-dashboard', 'apps-script/cdr-report', 'apps-script/cdr-import'].forEach(function (d) {
+      fs.mkdirSync(path.join(tmp, d), { recursive: true });
+      fs.writeFileSync(path.join(tmp, d, 'appsscript.json'), JSON.stringify({ dependencies: { enabledAdvancedServices: [] } }));
+    });
+    fs.writeFileSync(path.join(tmp, 'apps-script/cdr-report/a.js'), 'function f() { return SpreadsheetApp.getActive(); }\n');
+    fs.writeFileSync(path.join(tmp, 'apps-script/cdr-import/a.js'), 'function g() { return 1; }\n');
+    const dash = path.join(tmp, 'apps-script/department-dashboard');
+    fs.writeFileSync(path.join(dash, 'a.gs'), 'function h() { return Drive.Files.get("x"); }\nfunction k(b) { return b instanceof Blob; }\n');
+    const run = function () {
+      const r = spawnSync(process.execPath, [path.join(tmp, 'scripts', 'lint-gas.mjs')], { encoding: 'utf8', env: Object.assign({}, process.env, { CI: '' }) });
+      return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
+    };
+    let r = run();
+    assert.equal(r.code, 1, 'an un-enabled advanced service fails the net: ' + r.out);
+    assert.match(r.out, /'Drive' is not defined/);
+    assert.match(r.out, /'Blob' is not defined/, 'Blob is a class name, never a global');
+    // Enable Drive in THAT project's manifest: Drive passes, Blob still does not.
+    fs.writeFileSync(path.join(dash, 'appsscript.json'), JSON.stringify({ dependencies: { enabledAdvancedServices: [
+      { userSymbol: 'Drive', serviceId: 'drive', version: 'v3' }] } }));
+    r = run();
+    assert.doesNotMatch(r.out, /'Drive' is not defined/);
+    assert.match(r.out, /'Blob' is not defined/);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});

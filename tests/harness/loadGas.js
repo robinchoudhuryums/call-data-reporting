@@ -67,10 +67,39 @@ function loadGas(opts) {
     throw new Error('loadGas failed for [' + files.join(', ') + ']: ' + e.message);
   }
 
+  // F39 (broad-scan 2026-10-14): EVERY per-execution memo resets between
+  // executions, not just the two workbook memos -- Apps Script starts each
+  // request with fresh globals, and a memo that survives here serves one
+  // test's fixture to the next (the R40 hole: a suite had to reset four DQE
+  // memos by hand, and a fifth memo would have needed a fifth reset). The
+  // memo globals are FOUND, not listed: every top-level `var` whose name
+  // carries MEMO, minus the tuning constants (*_MAX_ / *_CAP_), snapshotted at
+  // load and restored (deep-copied, so a `{}` start is never shared) on each
+  // h.fn / h.call entry. A `let` is invisible to the context, which is why the
+  // codebase declares its memos with `var`.
+  const memoInitial = {};
+  Object.keys(ctx).forEach(function (k) {
+    if (/MEMO/.test(k) && !/_(MAX|CAP)_$/.test(k)) {
+      try { memoInitial[k] = JSON.stringify(ctx[k] === undefined ? null : ctx[k]); } catch (e) { /* not plain data: skip */ }
+    }
+  });
+  function resetExecutionMemos_() {
+    Object.keys(memoInitial).forEach(function (k) { ctx[k] = JSON.parse(memoInitial[k]); });
+  }
+  // A test that asserts a memo's WITHIN-execution behaviour ("read once per
+  // execution", "a failed connect is not retried") runs its calls inside
+  // h.inExecution(body): one reset at the start, none between the calls.
+  let execDepth = 0;
+  function freshExecution_() {
+    resetExecutionMemos_();
+    if (typeof ctx.resetWorkbookMemos_ === 'function') ctx.resetWorkbookMemos_();
+  }
+
   return {
     shim: shim,
     state: shim.state,
     ctx: ctx,
+    memoNames: Object.keys(memoInitial),
     consts: ctx.__consts__ || {},
     fn: function (name) {
       const f = ctx[name];
@@ -86,9 +115,16 @@ function loadGas(opts) {
       // Within one call the memo behaves as in production. A test reaching
       // into ctx directly (h.ctx.someFn) bypasses this boundary on purpose.
       return function () {
-        if (typeof ctx.resetWorkbookMemos_ === 'function') ctx.resetWorkbookMemos_();
+        if (!execDepth) freshExecution_();   // F39: every memo, as a new execution
         return f.apply(this, arguments);
       };
+    },
+    /** F39: run `body` as ONE Apps Script execution -- memos reset once, then
+     *  every h.call / h.fn inside it shares them, as calls within one request do. */
+    inExecution: function (body) {
+      if (!execDepth) freshExecution_();
+      execDepth++;
+      try { return body(); } finally { execDepth--; }
     },
     call: function (name) {
       const args = Array.prototype.slice.call(arguments, 1);

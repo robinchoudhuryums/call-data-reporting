@@ -518,7 +518,7 @@ test('F51: the silent refresh repaints the agent table in place and keeps good r
     google: f.google, $: function (id) { return els[id]; },
     uiFlagOn_: function () { return false; }, ovViewerDept_: function () { return 'CSR'; },
     isAllDeptViewer_: function () { return false; }, viewAsDept_: null,
-    ovWireTablePeriodBar_: function () {}, ovTableRange_: function () { return range; },
+    ovTableRange_: function () { return range; },
     ovFormatDateLabel_: function (x) { return x; }, COLUMNS: [1, 2], escapeHtml: function (x) { return x; },
     ovWireUserSort_: function () {},
     ovRenderUserRows_: function () { els['ov-user-tbody'].innerHTML = 'ROWS'; },

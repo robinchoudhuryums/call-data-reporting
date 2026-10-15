@@ -6,13 +6,18 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-14
+Updated: 2026-10-15
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- Broad scan cycle 259 Batch 10 IMPLEMENTED (block 259): deploy / docs / tooling. The cycle-259 batch plan is now complete except F35 and F62.** F41 deploy.sh "dirty" is scoped to the project's clasp rootDir; F40 the INV-16 pair's hash rides the sibling build stamps (deploy-time warning + Health `inv16-skew` row); F38 lint:gas allows an advanced service only when the manifest enables it; F39 the harness resets every *MEMO* per h.call (h.inExecution shares one); F36/F37/F6/F14/F53 doc drift + dead code (ovWireTablePeriodBar_, two numCols). 2494 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard (cdr-report push optional, comment-only). Use scripts/deploy.sh for cdr-import + cdr-report so the inv16-skew row fills in.
+  **BLOCKED:** F35 needs the operator check (throwaway file: push, delete locally, push, run check-remote-orphans, look in the web editor) before the INV-17 text is rewritten.
+  **Next:** F35 after that check; F62 deferred (owner ruling); Expansion E1-E5 optional.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-15 -- Broad scan cycle 259 Batch 9 IMPLEMENTED (block 259): verification mirrors.** F11 the DQE drill reconciles with the build on col E and AD/AE/AF (parity suite now drives them); F12 a queue-sentinel drill explains itself; F13 the overlap audit reads only the build's date (P-7) and canonicalizes names via the build; F59 queueSplitSample dates like the build so one stray no longer disables its self-check; F60 the QCD-vs-DQE diagnostic dates Raw Data by majority; F63 a reordered CSR history header is refused (daily / bulk / repair) instead of mislabeling counts; F64 the daily CSR engine reads the same day-only grid as the repair. 2489 tests, 11/11 bites, lint + INV-16 + module-deps clean.
   **Owner-side:** push cdr-report and cdr-import. No operator steps.
   **Next:** Batch 10 (deploy / docs / tooling: F35 operator check first, F41, F40, F38, F39, F36/F37/F6/F14/F53). F62 stays deferred (owner ruling).

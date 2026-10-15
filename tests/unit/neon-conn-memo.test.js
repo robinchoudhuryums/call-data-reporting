@@ -40,11 +40,13 @@ function install(opts) {
 }
 
 test('memo: one failed connect per execution -- later calls skip the attempt', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install({ fail: true });
   assert.equal(h.call('getDashboardNeonConn_'), null);
   assert.equal(h.call('getDashboardNeonConn_'), null);
   assert.equal(h.call('getDashboardNeonConn_'), null);
   assert.equal(install.attempts, 1, 'exactly one real connect attempt');
+  });
 });
 
 test('memo: a fresh execution probes again (recovery never masked)', function () {
@@ -60,6 +62,7 @@ test('memo: a fresh execution probes again (recovery never masked)', function ()
 });
 
 test('memo: a memoized skip still records read health when asked (NEO-3)', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   install({ fail: true });
   h.call('getDashboardNeonConn_');                              // trips the memo, no flag
   assert.equal(install.recorded.length, 0);
@@ -67,6 +70,7 @@ test('memo: a memoized skip still records read health when asked (NEO-3)', funct
   assert.equal(install.recorded.length, 1);
   assert.match(install.recorded[0], /memoized this execution/);
   assert.match(install.recorded[0], /Failed to establish/);
+  });
 });
 
 test('memo: success never trips it; unset NEON_HOST never trips it', function () {

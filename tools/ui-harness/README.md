@@ -64,11 +64,13 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   switch and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
   agent rows only, and one request per window (a Refresh never re-sends one
-  in flight; the table and the Insights fold share one store, FO-3).
+  in flight; the table and the Outbound summary share one store, FO-3).
 - `drive-outbound-e.js` — the Overview tiles' outbound line per card window
-  and the Insights **Outbound** fold (Batch E): two-window deltas, shown only
-  on Outbound / Both, never for a manager or View-as.
-- `drive-callbacks.js` — the Insights **Callbacks** fold (G1): lazy (one
+  and the **Outbound summary** under the outbound table on My Department
+  (Batch E; moved out of Insights by UX-1): two-window deltas, shown only on
+  Outbound / Both, never for a manager or View-as.
+- `drive-callbacks.js` — the **Callbacks** section under the outbound table on
+  My Department (G1; moved out of Insights by UX-1): lazy (one
   fetch, on open), the shared renderers incl. a drawn chart after a reopen,
   the not-called-back drill's call path, CSV / email, 360 px, and the retired
   modal's `#/report/outbound` deep link (G3) for an admin and a manager; since

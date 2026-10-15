@@ -229,6 +229,7 @@ function getSystemHealth(req) {
     healthFreshnessRow_(add);
     healthPipelineRows_(add, ctx);
     healthHistoricalSortRow_(add, ctx);
+    healthInv16SkewRow_(add, ctx);
     healthNeonConfigRows_(add, ctx);
   }
   if (part !== 'fast') healthNeonLiveRows_(add, ctx);
@@ -392,6 +393,45 @@ function healthPipelineRows_(add, ctx) {
       }
     }
   } catch (e) { add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn', 'probe failed', String(e && e.message || e)); }
+}
+
+/**
+ * F40 (broad-scan 2026-10-14). PURE. The newest INV-16 hash each sibling
+ * project reported on Pipeline Health, from the `| <project> inv16 <hex>`
+ * token deploy.sh appends to their build stamps (rows newest first).
+ * Returns { 'cdr-import': {hash, timestamp}|undefined, 'cdr-report': ... }.
+ */
+function healthInv16Latest_(phRows) {
+  var out = {};
+  (phRows || []).forEach(function (r) {
+    var m = /\b(cdr-import|cdr-report) inv16 ([0-9a-f]{8})\b/.exec(String((r && r.notes) || ''));
+    if (m && !out[m[1]]) out[m[1]] = { hash: m[2], timestamp: String(r.timestamp || '') };
+  });
+  return out;
+}
+
+/** F40: Health section -- do the two projects that share the INV-16 pair run the same copy? */
+function healthInv16SkewRow_(add, ctx) {
+  try {
+    var latest = healthInv16Latest_(ctx.phRows || []);
+    var imp = latest['cdr-import'], rep = latest['cdr-report'];
+    if (!imp || !rep) {
+      add('pipeline', 'inv16-skew', 'INV-16 pair: same rules in both projects', 'muted',
+        'not reported yet' + (imp || rep ? ' by ' + (imp ? 'cdr-report' : 'cdr-import') : ''),
+        'Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs '
+        + 'once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; '
+        + 'cdr-report: its DQE build). A bare `clasp push -f` reports nothing.');
+    } else if (imp.hash !== rep.hash) {
+      add('pipeline', 'inv16-skew', 'INV-16 pair: same rules in both projects', 'warn',
+        'cdr-import runs ' + imp.hash + ', cdr-report runs ' + rep.hash,
+        'The two projects run DIFFERENT copies of the shared DQE rules -- one of them was deployed '
+        + 'after an INV-16 edit and the other was not, so its DQE build still uses the old rules. '
+        + 'Deploy the other with scripts/deploy.sh (Operator State #2).');
+    } else {
+      add('pipeline', 'inv16-skew', 'INV-16 pair: same rules in both projects', 'ok',
+        'both run ' + imp.hash, '');
+    }
+  } catch (eS) { /* best-effort -- never costs the page */ }
 }
 
 /** CH-4: Health section -- the nightly historical sort check (reads ctx.phRows). */

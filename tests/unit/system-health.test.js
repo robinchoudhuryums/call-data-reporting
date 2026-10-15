@@ -1706,3 +1706,63 @@ test('EN-1: the five editor-run installers record (and clear) who installed them
   h.call('recordTriggerInstaller_', 'runPipelineWatch_', false);
   assert.deepEqual(JSON.parse(h.state.props.TRIGGER_INSTALLERS), {});
 });
+
+// F40 (broad-scan 2026-10-14): the two projects that share the INV-16 pair
+// each report a hash of the copy they run (deploy.sh's stamp token), and the
+// inv16-skew row warns when they differ -- a one-sided deploy after an INV-16
+// edit used to leave the other project's DQE build on the old rules unseen.
+test('F40: inv16-skew reads the newest hash per project and warns only when the two differ', function () {
+  const imp = function (hash, ts) {
+    return hsRow('autoImport', 'success', 'Call_Legs_2026-10-13 | build: deploy.sh 2026-10-13T06:00:00Z | git abc1234 | main | cdr-import inv16 ' + hash, ts);
+  };
+  const rep = function (hash, ts) {
+    return hsRow('buildDQE', 'success', 'callDate=10/13/2026 | build: deploy.sh 2026-10-13T06:00:00Z | git abc1234 | main | cdr-report inv16 ' + hash, ts);
+  };
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () { return [imp('1a2b3c4d')]; };
+  let row = rowByKey(h.call('getSystemHealth'), 'inv16-skew');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /not reported yet by cdr-report/);
+
+  // Newest first: today's cdr-import hash moved; cdr-report still runs the old copy.
+  h.ctx.readPipelineHealth_ = function () {
+    return [imp('9f9f9f9f', '2026-10-14 06:00'), rep('1a2b3c4d', '2026-10-14 05:00'), imp('1a2b3c4d', '2026-10-13 06:00')];
+  };
+  row = rowByKey(h.call('getSystemHealth'), 'inv16-skew');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /cdr-import runs 9f9f9f9f, cdr-report runs 1a2b3c4d/);
+  assert.match(row.hint, /Deploy the other with scripts\/deploy\.sh/);
+
+  h.ctx.readPipelineHealth_ = function () { return [imp('9f9f9f9f'), rep('9f9f9f9f')]; };
+  row = rowByKey(h.call('getSystemHealth'), 'inv16-skew');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /both run 9f9f9f9f/);
+  // A bare push (no token) reports nothing, rather than a false match.
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('healthInv16Latest_', [hsRow('autoImport', 'success', 'build: unstamped')]))), {});
+});
+
+test('F40: deploy.sh stamps the sibling projects with their INV-16 hash and warns on a one-sided deploy', { skip: process.platform === 'win32' }, function () {
+  const fs = require('fs'), path = require('path'), os = require('os');
+  const { spawnSync } = require('child_process');
+  const sh = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'deploy.sh'), 'utf8');
+  assert.match(sh, /STAMP="\$\{STAMP\} \| \$\{DIR#apps-script\/\} inv16 \$\{INV16_HASH\}"/, 'the token the Health row parses');
+  assert.match(sh, /warn: \$OTHER_DIR was last deployed \(from this checkout\) at/);
+  // The hash function: same pair -> same hash, either project; missing file -> ''.
+  const fnStart = sh.indexOf('inv16_hash_() {');
+  const fn = sh.slice(fnStart, sh.indexOf('\n}\n', fnStart) + 2);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inv16-'));
+  try {
+    ['a', 'b'].forEach(function (d) {
+      fs.mkdirSync(path.join(dir, d));
+      fs.writeFileSync(path.join(dir, d, 'neonWrite.js'), 'var x = 1;\n');
+      fs.writeFileSync(path.join(dir, d, 'buildDQEHistoricalData.js'), 'var y = 2;\n');
+    });
+    const hash = function (d) { return spawnSync('bash', ['-c', fn + '\ninv16_hash_ "$1"', '_', path.join(dir, d)], { encoding: 'utf8' }).stdout; };
+    assert.match(hash('a'), /^[0-9a-f]{8}$/);
+    assert.equal(hash('a'), hash('b'), 'byte-identical pairs hash alike across projects');
+    fs.writeFileSync(path.join(dir, 'b', 'neonWrite.js'), 'var x = 3;\n');
+    assert.notEqual(hash('a'), hash('b'), 'an INV-16 edit moves the hash');
+    fs.rmSync(path.join(dir, 'b', 'neonWrite.js'));
+    assert.equal(hash('b'), '', 'an unreadable pair reports nothing');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
