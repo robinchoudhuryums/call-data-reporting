@@ -1880,8 +1880,8 @@ behind the removed button.
 
 - **Top-tab router (Phase C).** (Moved here from CLAUDE.md in the F8b trim
   pass -- LIVE TRUTH, unchanged.) The header nav is a row of tab buttons plus two
-  `.header-menu` dropdown groups — **Reports** (Individual + the admin-vetted
-  Inbound / Direct / Outbound) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
+  `.header-menu` dropdown groups — **Reports** (Individual, Agent day + the
+  admin-vetted Inbound / Direct; the Outbound modal is retired, G3) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
   Config, Access, Health; Caller Lookup stays a top-level admin tab).
   **Every tab AND every menu item carries a `data-route` plus a stable button
   `id`** — that pair is what the per-modal init functions, the deep links, the
@@ -1932,8 +1932,10 @@ behind the removed button.
   `#/report/missed` (which carries `scrollTo: 'dept-missed-section'` and arms
   the one-shot `deptMissedScrollPending_`). **The page branch ALSO applies the
   route's `SHARE_STATE_` query after `setPage`** — that is what keeps the
-  Digest.gs email deep links (`#/report/insights?from=...&agents=...`) working
-  when no header tab carries the route. Unknown / malformed hashes quietly no-op
+  Digest.gs email deep links (`#/report/insights?dept=...&from=...&agents=...`)
+  working when no header tab carries the route. The `dept` param (F16) goes
+  through `shareApplyDeptParam_`, the `#/dept` link's rule: applied only for a
+  dept in the viewer's own list, otherwise the viewer stays on their own dept. Unknown / malformed hashes quietly no-op
   onto Overview, and so does a non-admin's deep link to a `data-admin-only`
   route — `initRouter` skips the trigger rather than opening a modal that would
   only surface an "admin-only" server error (F11).
@@ -1955,7 +1957,10 @@ block) unless noted, and the two behavioural ones are also driven in
   (`tr.qcd-expandable` with its own `tabindex` + `aria-expanded`, Insights
   Queue health + the all-dept report) was moved onto a cell
   `button.qcd-expand-toggle` in broad-scan Batch 8 (`drive-f13.js` presses
-  Enter and Space on both), so the pin is a SWEEP over every
+  Enter and Space on both), and the My Department agent rows' inline-panel
+  toggle onto the name cell's `button.ap-row-toggle` (F27, 2026-10-14 -- the
+  row has no `tabindex`, and closing sets `aria-expanded="false"` rather than
+  removing it), so the pin is a SWEEP over every
   `script-*.html` fragment, not a per-site assertion. **The corollary bites
   on the way in:** once the button is native, a row-level keydown handler
   toggles the same thing twice per keypress — delete it.

@@ -284,8 +284,8 @@ function escSnapshotMaybeRefresh_(conn, force) {
     }
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + 'SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, '
-            + 'status, resolution, comments, created_by, created_at::text AS created_at, '
-            + 'resolved_by, resolved_at::text AS resolved_at, source, group_id, '
+            + 'status, resolution, comments, created_by, ' + escLocalTsSql_('created_at') + ' AS created_at, '
+            + 'resolved_by, ' + escLocalTsSql_('resolved_at') + ' AS resolved_at, source, group_id, '
             + ESC_LINKED_SQL_ + ' AS linked FROM escalations e '
             + "WHERE status IN ('pending','in_progress','pending_review') "
             + 'ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_SNAPSHOT_MAX_ROWS
@@ -327,7 +327,7 @@ function escSnapshotActRefresh_(conn, rows) {
     if (ids.length) where.push('(e.group_id IS NULL AND a.escalation_id IN (' + ids.map(function () { return '?'; }).join(',') + '))');
     if (groups.length) where.push('e.group_id IN (' + groups.map(function () { return '?'; }).join(',') + ')');
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
-      + 'SELECT a.escalation_id AS e, e.group_id AS g, a.action, a.actor, a.at::text AS at, '
+      + 'SELECT a.escalation_id AS e, e.group_id AS g, a.action, a.actor, ' + escLocalTsSql_('a.at') + ' AS at, '
       + 'left(a.detail, ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS detail, '
       + '(length(a.detail) > ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS cut, '
       + "COALESCE(a.department, e.department) AS department, (e.status = 'removed') AS removed "   // ESC-D1
@@ -473,11 +473,25 @@ function escSnapshotServe_(scopeAll, deptList, department, status, metaDept) {
   });
   var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0, removed: 0 };
   var oldestOpen = null;
+  // F45 (broad-scan 2026-10-14): the snapshot holds every OPEN row with its
+  // occurred_at, so "overdue" is exactly computable here -- the same date-only
+  // rule as escOverdueSql_ / the client's escDaysOpen_. It used to ship 0
+  // ("unknowable from a snapshot"), so the band read "Overdue >3d: 0" beside
+  // cards flagged ⚑. Resolved·MTD genuinely IS unknowable (the snapshot holds
+  // no resolved rows), so it ships null and the client shows a dash, never a
+  // zero rendered as a figure.
+  var todayUtc = (function () {
+    var t = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd').split('-');
+    return Date.UTC(+t[0], +t[1] - 1, +t[2]);
+  })();
+  var overdue = 0;
   inScope.forEach(function (r) {
     var st = String((r && r.status) || '');
     if (counts.hasOwnProperty(st)) counts[st]++;
     var occ = (r && (r.occurred_at || r.created_at)) || null;
     if (occ && (!oldestOpen || occ < oldestOpen)) oldestOpen = occ;
+    var m = (st === 'pending' || st === 'in_progress') ? /^(\d{4})-(\d{2})-(\d{2})/.exec(String((r && r.occurred_at) || '')) : null;
+    if (m && Math.floor((todayUtc - Date.UTC(+m[1], +m[2] - 1, +m[3])) / 86400000) >= ESC_OVERDUE_DAYS) overdue++;
   });
   var rows = (status === 'all') ? inScope
     : inScope.filter(function (r) { return String((r && r.status) || '') === status; });
@@ -485,7 +499,7 @@ function escSnapshotServe_(scopeAll, deptList, department, status, metaDept) {
            meta: { department: metaDept, status: status, count: rows.length,
                    pendingReviewCount: counts.pending_review,
                    statusCounts: counts,
-                   resolvedMTD: 0, overdueCount: 0, oldestOpenAt: oldestOpen,
+                   resolvedMTD: null, overdueCount: overdue, oldestOpenAt: oldestOpen,
                    truncated: false,
                    snapshotAsOf: snap.at, snapshotTruncated: snap.truncated } };
 }
@@ -516,14 +530,39 @@ var ESC_STATUS_REMOVED = 'removed';
 // `occurred_at < now() - interval '3 days'`, a 72-HOUR comparison, so an
 // escalation 71 hours old on its 3rd calendar day was flagged ⚑ on its card but
 // NOT counted by the band tile / nav badge. Both now compare calendar dates
-// (`CURRENT_DATE - occurred_at::date >= N`) so the count always matches the
-// flags. NULL occurred_at yields NULL -> not counted, matching the client
-// (escDaysOpen_ returns null -> no badge). Residual: CURRENT_DATE is the DB's
-// date and the client's is the browser's, so they can differ for a few hours
-// around midnight across timezones -- bounded and self-correcting, versus the
-// old always-on 1-day skew.
+// (`today - occurred_at::date >= N`, escOverdueSql_) so the count always
+// matches the flags. NULL occurred_at yields NULL -> not counted, matching the
+// client (escDaysOpen_ returns null -> no badge). Residual: "today" is the
+// script zone's date and the client's is the browser's -- the same day for
+// every Central-time viewer.
 var ESC_OVERDUE_DAYS = 3;
-var ESC_OVERDUE_SQL_ = "(CURRENT_DATE - occurred_at::date) >= " + ESC_OVERDUE_DAYS;
+// F44 (broad-scan 2026-10-14): "today" is the SCRIPT time zone's date, bound
+// as a literal, not the DB's CURRENT_DATE. The Neon session runs in UTC
+// (PCR-3 recorded the same class in outbound), so CURRENT_DATE rolled to
+// tomorrow at ~7 PM Central and the badge + band counted a row overdue five to
+// six hours before its card's ⚑ (the browser's date) -- every evening, not
+// "a few hours around midnight". occurred_at::date stays session-relative on
+// purpose: occurred_at is the typed wall clock, written and read back in the
+// same session zone, so its ::date is the date the manager typed.
+function escOverdueSql_() {
+  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) throw new Error('escOverdueSql_: bad script date ' + today);
+  return "(DATE '" + today + "' - occurred_at::date) >= " + ESC_OVERDUE_DAYS;
+}
+
+// F44: SERVER-stamped instants (created_at, resolved_at, removed_at, an
+// activity entry's `at` -- all now()) were selected as `x::text`, which
+// renders in the SESSION zone (UTC), and escFmtWhen_ prints the digits as
+// they come: a resolve at 10:30 AM Central read "15:30", every Activity entry
+// 5-6 hours ahead of the card's typed "When". Render them as script-zone wall
+// clock instead -- correct whatever the session zone is. (occurred_at is NOT
+// converted: it is a typed wall clock that round-trips through the session
+// zone unchanged.)
+function escLocalTsSql_(col) {
+  var tz = String(Session.getScriptTimeZone() || 'America/Chicago');
+  if (!/^[A-Za-z0-9_\/+-]+$/.test(tz)) tz = 'America/Chicago';
+  return "to_char(" + col + " AT TIME ZONE '" + tz + "', 'YYYY-MM-DD HH24:MI:SS.US')";
+}
 
 // ── Phase 2: the external-app INSERT contract (SPEC -- no writer yet, H3) ──
 //
@@ -630,7 +669,7 @@ function getEscalationsBadge() {
         + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
         + (withLinked ? "count(*) FILTER (WHERE status IN ('pending','in_progress') AND group_id IS NOT NULL) AS n_linked, " : '')
         + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
-          + ESC_OVERDUE_SQL_ + ') AS n_overdue '
+          + escOverdueSql_() + ') AS n_overdue '
         + 'FROM escalations' + clause + ' GROUP BY department';
     };
     var stmt = null, rs = null, withLinked = true;
@@ -731,9 +770,9 @@ function getEscalations(req) {
     if (status !== 'all') { where.push('status = ?'); params.push(status); }
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + "SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, "
-            + "status, resolution, comments, created_by, created_at::text AS created_at, "
-            + "resolved_by, resolved_at::text AS resolved_at, source, group_id, "
-            + "removed_by, removed_at::text AS removed_at, removed_reason, "   // ESC-L2
+            + "status, resolution, comments, created_by, " + escLocalTsSql_('created_at') + " AS created_at, "
+            + "resolved_by, " + escLocalTsSql_('resolved_at') + " AS resolved_at, source, group_id, "
+            + "removed_by, " + escLocalTsSql_('removed_at') + " AS removed_at, removed_reason, "   // ESC-L2
             + ESC_LINKED_SQL_ + " AS linked "
             + "FROM escalations e"
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
@@ -765,7 +804,7 @@ function getEscalations(req) {
     var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0, removed: 0 };
     var pendingReview = 0, resolvedMTD = 0, oldestOpen = null, overdue = 0;
     try {
-      // F3: ESC_OVERDUE_SQL_ is the SINGLE definition of "overdue" (calendar
+      // F3: escOverdueSql_ is the SINGLE definition of "overdue" (calendar
       // days, matching the client's escDaysOpen_) -- this used to be an inline
       // 72-hour interval that disagreed with the ⚑ badges it was counting.
       var asql = 'SELECT '
@@ -777,7 +816,7 @@ function getEscalations(req) {
         + "count(*) FILTER (WHERE status = 'removed') AS n_removed, "   // ESC-L2
         + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= date_trunc('month', now())) AS n_resolved_mtd, "
         + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
-          + ESC_OVERDUE_SQL_ + ') AS n_overdue, '
+          + escOverdueSql_() + ') AS n_overdue, '
         + "min(occurred_at) FILTER (WHERE status IN ('pending','in_progress'))::text AS oldest_open "
         + 'FROM escalations' + (dw.clause ? (' WHERE ' + dw.clause) : '');
       var astmt = conn.prepareStatement(asql);
@@ -858,13 +897,13 @@ function getEscalationActivity(req) {
     // single-row query (no department tag).
     var sql = meta.groupId
       ? "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
-        + "SELECT a.action, a.actor, a.at::text AS at, a.detail, "
+        + "SELECT a.action, a.actor, " + escLocalTsSql_('a.at') + " AS at, a.detail, "
         + "COALESCE(a.department, e.department) AS department, "
         + "(e.status = 'removed') AS removed, (a.escalation_id = ?) AS own "
         + "FROM escalation_activity a JOIN escalations e ON e.id = a.escalation_id "
         + "WHERE e.group_id = ?) t"
       : "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
-        + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
+        + "SELECT action, actor, " + escLocalTsSql_('at') + " AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, id);
     if (meta.groupId) stmt.setString(2, meta.groupId);

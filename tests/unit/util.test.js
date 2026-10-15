@@ -288,18 +288,20 @@ test('ENG-8: a failed read serves the LAST-GOOD sheet copy (the property is clea
     const real = ss.getSheetByName;
     let calls = 0;
     ss.getSheetByName = function () { calls++; throw new Error('Service Spreadsheets timed out'); };
-    h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
-    deepEqual(h.call('getCompanyHolidayRanges_'), [{ from: '2026-12-25', to: '2026-12-25' }]);
-    assert.equal(h.call('companyHolidaySource_'), 'sheet-copy+sheet-error');
-    assert.equal(h.call('isCompanyHoliday_', '2026-12-25'), true);
+    h.inExecution(function () {   // F39: ONE execution -- the copy is memoized across these calls
+      deepEqual(h.call('getCompanyHolidayRanges_'), [{ from: '2026-12-25', to: '2026-12-25' }]);
+      assert.equal(h.call('companyHolidaySource_'), 'sheet-copy+sheet-error');
+      assert.equal(h.call('isCompanyHoliday_', '2026-12-25'), true);
+    });
     assert.equal(calls, 2, 'one retry, then the copy (memoized for the execution)');
 
     // A transient failure that clears on the retry reads the sheet itself.
     let n = 0;
     ss.getSheetByName = function (name) { n++; if (n === 1) throw new Error('timed out'); return real.call(ss, name); };
-    h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
-    h.call('getCompanyHolidayRanges_');
-    assert.equal(h.call('companyHolidaySource_'), 'sheet');
+    h.inExecution(function () {
+      h.call('getCompanyHolidayRanges_');
+      assert.equal(h.call('companyHolidaySource_'), 'sheet');
+    });
 
     // The operator EMPTIES the sheet: the copy is retired, so a later failure
     // cannot resurrect the cleared dates.
@@ -324,6 +326,7 @@ test('H1: a Dates cell Sheets coerced to a Date is keyed in the SPREADSHEET tz (
 });
 
 test('H1: the holiday list is memoized per execution (one sheet read per request)', function () {
+  h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
   try {
     installHolidaySheet([['2026-07-06', '', '', '']]);
     setHolidays(null);
@@ -336,6 +339,7 @@ test('H1: the holiday list is memoized per execution (one sheet read per request
     h.call('countWorkingDays_', '2026-07-06', '2026-07-10');
     assert.equal(reads, 1, 'consumers share the one memoized read');
   } finally { uninstallHolidaySheet(); }
+  });
 });
 
 test('CORE-7: sheetSafeCell_ neutralizes formula-leading cells, passes everything else through', function () {

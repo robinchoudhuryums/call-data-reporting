@@ -30,7 +30,8 @@ function load(project, menuFile) {
 }
 
 const MENUS = [
-  { project: 'cdr-import', file: 'CDR Tools.js', minItems: 20, topItems: 1 },
+  // G1: Manual Export + its non-destructive sibling, Make a date whole.
+  { project: 'cdr-import', file: 'CDR Tools.js', minItems: 20, topItems: 2 },
   { project: 'cdr-report', file: 'CDR Tools menu.js', minItems: 25, topItems: 0 },
 ];
 

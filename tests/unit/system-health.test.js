@@ -1690,11 +1690,12 @@ test('EN-1: a trigger recorded as installed by ANOTHER account is named, not rep
   assert.match(rowByKey(out, 'trg-dqesilence').value, /NO trigger installed/);
 });
 
-test('EN-1: the four editor-run installers record (and clear) who installed them', function () {
+test('EN-1: the five editor-run installers record (and clear) who installed them', function () {
   const fs = require('fs'), path = require('path');
   const dash = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
   [['PipelineWatch.gs', 'runPipelineWatch_'], ['DqeSilenceWatch.gs', 'runDqeSilenceWatch_'],
-   ['SheetCoverage.gs', 'runSheetCoverageWeekly_'], ['NeonRetention.gs', 'runNeonRetentionWeekly_']].forEach(function (x) {
+   ['SheetCoverage.gs', 'runSheetCoverageWeekly_'], ['NeonRetention.gs', 'runNeonRetentionWeekly_'],
+   ['IngestWatchdog.gs', 'runIngestWatchdog_']].forEach(function (x) {   // F17: EN-1 missed this one
     const src = fs.readFileSync(path.join(dash, x[0]), 'utf8');
     assert.ok(src.indexOf("recordTriggerInstaller_('" + x[1] + "', true)") !== -1, x[0] + ' install records');
     assert.ok(src.indexOf("recordTriggerInstaller_('" + x[1] + "', false)") !== -1, x[0] + ' uninstall clears');
@@ -1704,4 +1705,133 @@ test('EN-1: the four editor-run installers record (and clear) who installed them
   assert.deepEqual(JSON.parse(h.state.props.TRIGGER_INSTALLERS), { runPipelineWatch_: 'admin@x.com' });
   h.call('recordTriggerInstaller_', 'runPipelineWatch_', false);
   assert.deepEqual(JSON.parse(h.state.props.TRIGGER_INSTALLERS), {});
+});
+
+// F40 (broad-scan 2026-10-14): the two projects that share the INV-16 pair
+// each report a hash of the copy they run (deploy.sh's stamp token), and the
+// inv16-skew row warns when they differ -- a one-sided deploy after an INV-16
+// edit used to leave the other project's DQE build on the old rules unseen.
+test('F40: inv16-skew reads the newest hash per project and warns only when the two differ', function () {
+  const imp = function (hash, ts) {
+    return hsRow('autoImport', 'success', 'Call_Legs_2026-10-13 | build: deploy.sh 2026-10-13T06:00:00Z | git abc1234 | main | cdr-import inv16 ' + hash, ts);
+  };
+  const rep = function (hash, ts) {
+    return hsRow('buildDQE', 'success', 'callDate=10/13/2026 | build: deploy.sh 2026-10-13T06:00:00Z | git abc1234 | main | cdr-report inv16 ' + hash, ts);
+  };
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () { return [imp('1a2b3c4d')]; };
+  let row = rowByKey(h.call('getSystemHealth'), 'inv16-skew');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /not reported yet by cdr-report/);
+
+  // Newest first: today's cdr-import hash moved; cdr-report still runs the old copy.
+  h.ctx.readPipelineHealth_ = function () {
+    return [imp('9f9f9f9f', '2026-10-14 06:00'), rep('1a2b3c4d', '2026-10-14 05:00'), imp('1a2b3c4d', '2026-10-13 06:00')];
+  };
+  row = rowByKey(h.call('getSystemHealth'), 'inv16-skew');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /cdr-import runs 9f9f9f9f, cdr-report runs 1a2b3c4d/);
+  assert.match(row.hint, /Deploy the other with scripts\/deploy\.sh/);
+
+  h.ctx.readPipelineHealth_ = function () { return [imp('9f9f9f9f'), rep('9f9f9f9f')]; };
+  row = rowByKey(h.call('getSystemHealth'), 'inv16-skew');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /both run 9f9f9f9f/);
+  // A bare push (no token) reports nothing, rather than a false match.
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('healthInv16Latest_', [hsRow('autoImport', 'success', 'build: unstamped')]))), {});
+});
+
+test('F40: deploy.sh stamps the sibling projects with their INV-16 hash and warns on a one-sided deploy', { skip: process.platform === 'win32' }, function () {
+  const fs = require('fs'), path = require('path'), os = require('os');
+  const { spawnSync } = require('child_process');
+  const sh = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'deploy.sh'), 'utf8');
+  assert.match(sh, /STAMP="\$\{STAMP\} \| \$\{DIR#apps-script\/\} inv16 \$\{INV16_HASH\}"/, 'the token the Health row parses');
+  assert.match(sh, /warn: \$OTHER_DIR was last deployed \(from this checkout\) at/);
+  // The hash function: same pair -> same hash, either project; missing file -> ''.
+  const fnStart = sh.indexOf('inv16_hash_() {');
+  const fn = sh.slice(fnStart, sh.indexOf('\n}\n', fnStart) + 2);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inv16-'));
+  try {
+    ['a', 'b'].forEach(function (d) {
+      fs.mkdirSync(path.join(dir, d));
+      fs.writeFileSync(path.join(dir, d, 'neonWrite.js'), 'var x = 1;\n');
+      fs.writeFileSync(path.join(dir, d, 'buildDQEHistoricalData.js'), 'var y = 2;\n');
+    });
+    const hash = function (d) { return spawnSync('bash', ['-c', fn + '\ninv16_hash_ "$1"', '_', path.join(dir, d)], { encoding: 'utf8' }).stdout; };
+    assert.match(hash('a'), /^[0-9a-f]{8}$/);
+    assert.equal(hash('a'), hash('b'), 'byte-identical pairs hash alike across projects');
+    fs.writeFileSync(path.join(dir, 'b', 'neonWrite.js'), 'var x = 3;\n');
+    assert.notEqual(hash('a'), hash('b'), 'an INV-16 edit moves the hash');
+    fs.rmSync(path.join(dir, 'b', 'neonWrite.js'));
+    assert.equal(hash('b'), '', 'an unreadable pair reports nothing');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// G4 (broad-scan 259, E3): every deploy.sh stamp carries all three projects'
+// code hashes (`trees d=.. i=.. r=..`) as that checkout held them. The newest
+// deploy stands in for HEAD; a project whose own deployed hash differs from
+// that record is running older code. An untouched project hashes the same,
+// so it never reads as behind for a change it did not need.
+test('G4: deploy-currency parses each project\'s stamp and warns only for a project behind the newest deploy', function () {
+  const J = function (x) { return JSON.parse(JSON.stringify(x)); };
+  const stamp = function (ts, git, d, i, r, proj) {
+    return 'deploy.sh ' + ts + ' | git ' + git + ' | main' + (proj ? ' | ' + proj + ' inv16 aaaaaaaa' : '')
+      + ' | trees d=' + d + ' i=' + i + ' r=' + r;
+  };
+  assert.equal(h.call('healthParseDeployStamp_', 'unstamped — last push bypassed scripts/deploy.sh'), null);
+  assert.equal(h.call('healthParseDeployStamp_', 'deploy.sh 2026-10-13T06:00:00Z | git abc | main'), null, 'a pre-G4 stamp has no trees');
+  assert.deepEqual(J(h.call('healthParseDeployStamp_', stamp('2026-10-13T06:00:00Z', 'abc1234', '11111111', '22222222', '33333333'))),
+    { ts: '2026-10-13T06:00:00Z', git: 'abc1234', trees: { d: '11111111', i: '22222222', r: '33333333' } });
+
+  const D = '11111111', I = '22222222', R = '33333333', I2 = '44444444';
+  const rows = [
+    { notes: 'Call_Legs_2026-10-14 | build: ' + stamp('2026-10-14T06:00:00Z', 'bbb', D, I, R, 'cdr-import') },
+    { notes: 'Call_Legs_2026-10-13 | build: ' + stamp('2026-10-10T06:00:00Z', 'old', D, I2, R, 'cdr-import') },
+    { notes: 'DQE | build: ' + stamp('2026-10-12T06:00:00Z', 'ccc', D, I2, R, 'cdr-report') },
+  ];
+  const stamps = J(h.call('healthDeployStamps_', rows, stamp('2026-10-11T06:00:00Z', 'aaa', D, I2, R)));
+  assert.equal(stamps['cdr-import'].git, 'bbb', 'the NEWEST row per project wins');
+  assert.equal(stamps['cdr-report'].git, 'ccc');
+  assert.equal(stamps.dashboard.git, 'aaa');
+
+  // Newest deploy = cdr-import (10-14), which saw cdr-import at I. Everyone's
+  // own hash matches what it saw: d=D (dashboard ran D), r=R (report ran R).
+  const ok = J(h.call('healthDeployCurrency_', stamps));
+  assert.equal(ok.status, 'ok', JSON.stringify(ok));
+  assert.match(ok.value, /cdr-import deployed 2026-10-14T06:00:00Z from git bbb/);
+
+  // Now cdr-report's deployed code (r) is older than what the newest deploy saw.
+  stamps['cdr-report'].trees.r = '99999999';
+  const warn = J(h.call('healthDeployCurrency_', stamps));
+  assert.equal(warn.status, 'warn');
+  assert.match(warn.value, /^cdr-report behind the newest deploy/);
+  assert.doesNotMatch(warn.value, /dashboard/, 'an untouched project is not behind');
+
+  const muted = J(h.call('healthDeployCurrency_', { dashboard: stamps.dashboard }));
+  assert.equal(muted.status, 'muted');
+  assert.match(muted.value, /not reported yet by cdr-import, cdr-report/);
+});
+
+test('G4: deploy.sh stamps every project\'s tree hash, and the hash skips the stamp file and moves on any code edit', { skip: process.platform === 'win32' }, function () {
+  const fs = require('fs'), path = require('path'), os = require('os');
+  const { spawnSync } = require('child_process');
+  const sh = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'deploy.sh'), 'utf8');
+  assert.match(sh, /STAMP="\$\{STAMP\} \| trees d=\$\{TREES_D\} i=\$\{TREES_I\} r=\$\{TREES_R\}"/, 'the token the Health row parses');
+  const start = sh.indexOf('project_tree_hash_() {');
+  const fn = sh.slice(start, sh.indexOf('\n}\n', start) + 2);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-'));
+  try {
+    const hash = function () { return spawnSync('bash', ['-c', fn + '\nproject_tree_hash_ "$1"', '_', dir], { encoding: 'utf8' }).stdout.trim(); };
+    fs.writeFileSync(path.join(dir, 'Code.gs'), 'function a() {}\n');
+    fs.writeFileSync(path.join(dir, 'page.html'), '<p>x</p>\n');
+    fs.writeFileSync(path.join(dir, 'BuildStamp.gs'), "var BUILD_STAMP_ = 'one';\n");
+    const h1 = hash();
+    assert.match(h1, /^[0-9a-f]{8}$/);
+    fs.writeFileSync(path.join(dir, 'BuildStamp.gs'), "var BUILD_STAMP_ = 'two';\n");
+    fs.writeFileSync(path.join(dir, 'notes.md'), 'not pushed code\n');
+    assert.equal(hash(), h1, 'the stamp file and non-code files do not move the hash');
+    fs.writeFileSync(path.join(dir, 'page.html'), '<p>y</p>\n');
+    assert.notEqual(hash(), h1, 'a code edit moves it');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  assert.equal(spawnSync('bash', ['-c', fn + '\nproject_tree_hash_ /no/such/dir'], { encoding: 'utf8' }).stdout, '');
 });

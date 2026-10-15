@@ -146,9 +146,14 @@ check_fn_pair apps-script/cdr-report/neonbackfill.js apps-script/cdr-import/Neon
 # it until now.
 check_fn_pair_normalized apps-script/cdr-report/dataFilters.js apps-script/cdr-import/autoImport.js simulateSplitCol2
 check_fn_pair_normalized apps-script/cdr-report/dataFilters.js apps-script/cdr-import/autoImport.js parseDurationDecimal
+# ST2 (broad-scan 259, E4): the ONE "which day is this grid, which legs are
+# strays" rule (majority date). cdr-import's readers (PIPE-3, the CSR engine +
+# repair, the two diagnostics) and cdr-report's overlap audit share it.
+check_fn_pair apps-script/cdr-report/queueOverlapAudit.js apps-script/cdr-import/autoImport.js rawGridDayIso_
+check_fn_pair apps-script/cdr-report/queueOverlapAudit.js apps-script/cdr-import/autoImport.js rawGridDay_
 
 if [ "$status" -eq 0 ]; then
-  echo "INV-16 check: duplicated files (neonWrite.js, buildDQEHistoricalData.js), the sanitize*ForNeon_ copies, and the dataFilters/autoImport time-decode copies are in sync."
+  echo "INV-16 check: duplicated files (neonWrite.js, buildDQEHistoricalData.js), the sanitize*ForNeon_ copies, the dataFilters/autoImport time-decode copies and the rawGridDay_ day rule are in sync."
 fi
 
 exit "$status"

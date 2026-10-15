@@ -497,3 +497,41 @@ test('BU-4: every dept errored -> FAILED, nothing read, written or emailed', fun
   assert.equal(connOpened, false);
   assert.equal(h.state.sentEmails.length, 0);
 });
+
+// F3 (broad-scan 2026-10-14): the close verb took the PROJECT-WIDE script
+// lock before connecting to Neon and running the CREATE TABLE, so a cold start
+// held it and every other admin write failed its tryLock (ESC-D2's rule).
+test('F3: coaching close connects + checks the schema BEFORE taking the script lock', function () {
+  installAdmin_();
+  const seen = [];
+  const conn = makeConn_('[]');
+  const ddl = conn.createStatement;
+  conn.createStatement = function () {
+    const st = ddl();
+    const ex = st.execute;
+    st.execute = function (s) { seen.push(['ddl', h.state.locks]); return ex(s); };
+    return st;
+  };
+  const before = h.state.locks;
+  h.ctx.getDashboardNeonConn_ = function () { seen.push(['connect', h.state.locks]); return conn; };
+  h.call('updateCoachingFlagStatus', { id: 'id-1', action: 'resolved' });
+  assert.ok(seen.length >= 2, 'connected and ran the schema DDL');
+  assert.ok(seen.every(function (x) { return x[1] === before; }), 'no lock held while connecting or running DDL');
+  assert.equal(h.state.locks, before + 1, 'the lock is still taken for the UPDATE');
+
+  // Neon down: refused WITHOUT ever taking the lock.
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  const b2 = h.state.locks;
+  assert.throws(function () { h.call('updateCoachingFlagStatus', { id: 'id-1', action: 'resolved' }); }, /not configured\/reachable/);
+  assert.equal(h.state.locks, b2);
+
+  // Lock busy: no UPDATE, the connection is closed, the error is clear.
+  const c3 = makeConn_('[]');
+  h.ctx.getDashboardNeonConn_ = function () { return c3; };
+  h.state.lockBusy = true;
+  try {
+    assert.throws(function () { h.call('updateCoachingFlagStatus', { id: 'id-1', action: 'resolved' }); }, /in progress/);
+  } finally { h.state.lockBusy = false; }
+  assert.equal(c3.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); }).length, 0);
+  assert.equal(c3.closed, true);
+});

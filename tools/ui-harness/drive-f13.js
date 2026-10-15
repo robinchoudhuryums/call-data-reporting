@@ -79,19 +79,28 @@ function record(name, pass, detail) {
   //         whose first button opens the Individual Report (Batch B)
   await page.click('#my-dept-btn');
   await page.waitForTimeout(2500);
-  const row = page.locator('#agents-tbody tr[data-agent]').first();
-  await row.waitFor({ state: 'visible', timeout: 10000 });
-  const rowAttrs = await row.evaluate((el) => ({
-    tabindex: el.getAttribute('tabindex'), role: el.getAttribute('role'),
-  }));
-  record('agent row is focusable and keeps its row semantics',
-    rowAttrs.tabindex === '0' && rowAttrs.role === null, JSON.stringify(rowAttrs));
+  // F27 (broad-scan 2026-10-14): the control is the name cell's BUTTON, which
+  // owns aria-expanded; the row keeps its row semantics and is no tab stop.
+  const rowEl = page.locator('#agents-tbody tr[data-agent]').first();
+  await rowEl.waitFor({ state: 'visible', timeout: 10000 });
+  const rowAttrs = await rowEl.evaluate((el) => {
+    const b = el.querySelector('button.ap-row-toggle');
+    return { tabindex: el.getAttribute('tabindex'), role: el.getAttribute('role'),
+             rowExpanded: el.getAttribute('aria-expanded'), button: !!b,
+             expanded: b ? b.getAttribute('aria-expanded') : null };
+  });
+  record('agent row keeps its row semantics; its name-cell button is the control',
+    rowAttrs.tabindex === null && rowAttrs.role === null && rowAttrs.rowExpanded === null
+      && rowAttrs.button && rowAttrs.expanded === 'false', JSON.stringify(rowAttrs));
+  const row = rowEl.locator('button.ap-row-toggle');
 
   await row.focus();
   await page.keyboard.press('Enter');
   await page.waitForTimeout(900);
   const panelOpen = await page.evaluate(() => !!document.getElementById('ap-panel'));
   record('agent row Enter opens the inline agent panel', panelOpen);
+  const expandedNow = await row.getAttribute('aria-expanded');
+  record('the name button says the panel is expanded', expandedNow === 'true', 'aria-expanded=' + expandedNow);
   // Keyboard path from the row to the report: Tab reaches the panel's
   // "Individual report" button first (it leads the panel's header).
   await page.keyboard.press('Tab');
@@ -150,10 +159,11 @@ function record(name, pass, detail) {
   await page.waitForTimeout(300);
   const closedToRow = await page.evaluate(() => ({
     open: !!document.getElementById('ap-panel'),
-    onRow: !!document.activeElement && document.activeElement.hasAttribute('data-agent'),
+    onRow: !!document.activeElement && document.activeElement.classList.contains('ap-row-toggle'),
+    expanded: document.activeElement ? document.activeElement.getAttribute('aria-expanded') : null,
   }));
-  record('Escape in the panel closes it and returns focus to the row',
-    !closedToRow.open && closedToRow.onRow, JSON.stringify(closedToRow));
+  record('Escape in the panel closes it and returns focus to the row\'s button (aria-expanded=false, not removed)',
+    !closedToRow.open && closedToRow.onRow && closedToRow.expanded === 'false', JSON.stringify(closedToRow));
 
   // ---- 3. Space must not scroll the page while a row is focused ------------
   await row.focus();

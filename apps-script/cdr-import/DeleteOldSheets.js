@@ -97,6 +97,37 @@ function retentionHistoryIsos_() {
   return { has: function (iso) { return dqe.has(iso) || qcd.has(iso); } };
 }
 
+// F9 (broad-scan 2026-10-14): "imported" is not "done". A date in DQE/QCD
+// history can still OWE its per-call capture -- queued in the Neon Mirror Queue
+// (deferred mode, a Neon outage outlasting the window) or held in the PIPE-7 /
+// F7 catch-up ledger (PENDING_IMPORT_FAILURES) -- and both re-derive from the
+// Call_Legs tab. Deleting it on day 15 lost inbound_calls / outbound_calls for
+// good, and the drain only said so afterwards (SOURCE PRUNED, P-2). Such a tab
+// is now KEPT and named until the debt clears.
+/** The ISO dates whose Call_Legs tab is still owed a capture: { iso: true }. Throws on a failed read. */
+function retentionOwedIsos_() {
+  var owed = {};
+  var ledgerProp = (typeof PENDING_IMPORT_FAILS_PROP_ !== 'undefined') ? PENDING_IMPORT_FAILS_PROP_ : 'PENDING_IMPORT_FAILURES';
+  var raw = PropertiesService.getScriptProperties().getProperty(ledgerProp);
+  if (raw) {
+    var ledger = JSON.parse(raw);
+    if (ledger && typeof ledger === 'object') Object.keys(ledger).forEach(function (iso) { owed[iso] = true; });
+  }
+  if (typeof getTargetSsId_ === 'function') {
+    var queueName = (typeof NEON_MIRROR_QUEUE_SHEET !== 'undefined') ? NEON_MIRROR_QUEUE_SHEET : 'Neon Mirror Queue';
+    var sh = SpreadsheetApp.openById(getTargetSsId_()).getSheetByName(queueName);
+    if (sh && sh.getLastRow() >= 2) {
+      var tz = Session.getScriptTimeZone();
+      sh.getRange(2, 2, sh.getLastRow() - 1, 1).getValues().forEach(function (r) {
+        var v = r[0];
+        var iso = (v instanceof Date) ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : String(v || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) owed[iso] = true;
+      });
+    }
+  }
+  return owed;
+}
+
 function deleteOldCDRSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
@@ -132,6 +163,7 @@ function deleteOldCDRSheets() {
 
   var deleted = 0, kept = 0, held = 0;
   var unimported = [], historyError = null;   // PIPE-2
+  var owedTabs = [], owedIsos = null;         // F9
   var lastSheets = {};
   try {
     JSON.parse(PropertiesService.getScriptProperties().getProperty('lastSheets') || '[]')
@@ -145,6 +177,15 @@ function deleteOldCDRSheets() {
       catch (e) { historyError = (e && e.message) ? e.message : String(e); }
     }
     return historyError === null && historyIsos.has(iso);
+  };
+  // F9: read once, and only when a tab is about to be deleted. A failed read
+  // keeps the tab (the PIPE-2 posture: no proof, no delete) and fails the row.
+  var stillOwed = function (iso) {
+    if (owedIsos === null && historyError === null) {
+      try { owedIsos = retentionOwedIsos_(); }
+      catch (e) { historyError = 'owed-capture check: ' + ((e && e.message) ? e.message : String(e)); }
+    }
+    return historyError !== null || !!owedIsos[iso];
   };
   // ING-5: recovery holds. Expired holds are dropped on the way.
   var holds = retentionHoldRead_(), holdsChanged = false, nowMs = Date.now();
@@ -189,6 +230,10 @@ function deleteOldCDRSheets() {
                && !provenImported(name, dateMatch[1] + '-' + dateMatch[2] + '-' + dateMatch[3])) {
       unimported.push(name);   // PIPE-2: never imported (or unverifiable) -- kept
       Logger.log('Kept over-age sheet that is not proven imported: ' + name);
+    } else if (dayDiff > RETENTION_CUTOFF_DAYS
+               && stillOwed(dateMatch[1] + '-' + dateMatch[2] + '-' + dateMatch[3])) {
+      owedTabs.push(name);     // F9: imported, but its per-call capture is still owed -- kept
+      Logger.log('Kept over-age sheet whose capture is still owed: ' + name);
     } else if (dayDiff > RETENTION_CUTOFF_DAYS) {
       ss.deleteSheet(sheet);
       deleted++;
@@ -199,12 +244,14 @@ function deleteOldCDRSheets() {
   }
   if (holdsChanged) retentionHoldWrite_(holds);
   unimported.sort();
+  owedTabs.sort();
   Logger.log('deleteOldCDRSheets: deleted ' + deleted + ', kept ' + kept
     + (held ? ', held for recovery ' + held : '')
     + (unimported.length ? ', kept NOT-imported ' + unimported.length + ' (' + unimported.join(', ') + ')' : '')
+    + (owedTabs.length ? ', kept capture-OWED ' + owedTabs.length + ' (' + owedTabs.join(', ') + ')' : '')
     + (historyError ? ' -- history check FAILED: ' + historyError : '')
     + ' (cutoff ' + RETENTION_CUTOFF_DAYS + 'd).');
-  return { deleted: deleted, kept: kept, held: held, unimported: unimported, historyError: historyError };
+  return { deleted: deleted, kept: kept, held: held, unimported: unimported, owed: owedTabs, historyError: historyError };
 }
 
 /** Time-trigger handler: prune + a Pipeline Health row per run (C-3). */
@@ -230,6 +277,10 @@ function runRetentionPrune_() {
             + (res.unimported && res.unimported.length
               ? ', KEPT ' + res.unimported.length + ' never-imported (PIPE-2): '
                 + res.unimported.join(', ') + ' -- import (Manual Processing) or delete by hand'
+              : '')
+            + (res.owed && res.owed.length
+              ? ', KEPT ' + res.owed.length + ' still owed a per-call capture (F9: Neon Mirror Queue or the '
+                + 'catch-up ledger): ' + res.owed.join(', ')
               : '')
             + (res.historyError ? ' | history check failed, nothing unproven deleted: ' + res.historyError : ''),
         });

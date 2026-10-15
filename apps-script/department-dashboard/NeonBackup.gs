@@ -561,14 +561,39 @@ function nbWriteFile_(folder, name, content) {
  * first and ANY failure to reach it (the Workspace Drive-permission block, a
  * trashed folder that cannot be recreated) falls back to Sheets for the whole
  * run -- a backup in a workbook beats no backup.
+ *
+ * F15 (broad-scan 2026-10-14): once the Sheets workbook HOLDS the history
+ * (NEON_BACKUP_SS_ID set) and no Drive folder was ever set, it stays the store.
+ * Trying Drive first used to CREATE a fresh, empty folder the first run Drive
+ * worked (the owner consented to the scope, a transient error cleared) and
+ * switch to it silently: every closed month re-fetched from Neon, the journeys
+ * NeonRetention had already nulled gone from the new copy, and restore reading
+ * only the new folder -- all recorded as `ok | store drive`. Moving to Drive is
+ * now a deliberate `NEON_BACKUP_STORE=drive` (nbScrubStores_ already treated a
+ * folderless install as Sheets-active).
+ *
+ * `opts.noCreate` (restore): never CREATE a store -- an unset id means there is
+ * no backup to read, and creating one would also repoint the backup itself.
  */
-function nbStore_() {
+function nbStore_(opts) {
+  opts = opts || {};
+  var props = PropertiesService.getScriptProperties();
   var mode = '';
   try {
-    mode = String(PropertiesService.getScriptProperties().getProperty('NEON_BACKUP_STORE') || '')
-      .trim().toLowerCase();
+    mode = String(props.getProperty('NEON_BACKUP_STORE') || '').trim().toLowerCase();
   } catch (e) { mode = ''; }
-  if (mode === 'sheets') return { folder: nbSheetsFolder_(), label: 'sheets' };
+  var fid = props.getProperty('NEON_BACKUP_FOLDER_ID');
+  var sid = props.getProperty('NEON_BACKUP_SS_ID');
+  var noStore = function (prop) {
+    throw new Error('no backup store exists yet (' + prop + ' is unset), so there is nothing to read -- '
+      + 'NOT creating one. Run the backup first, or set ' + prop + ' to the existing store.');
+  };
+  if (mode === 'sheets') {
+    if (opts.noCreate && !sid) noStore('NEON_BACKUP_SS_ID');
+    return { folder: nbSheetsFolder_(), label: 'sheets' };
+  }
+  if (mode !== 'drive' && !fid && sid) return { folder: nbSheetsFolder_(), label: 'sheets' };   // F15
+  if (opts.noCreate && !fid) noStore('NEON_BACKUP_FOLDER_ID');
   try {
     return { folder: nbFolder_(), label: 'drive' };
   } catch (e) {
@@ -1086,7 +1111,7 @@ function restoreNeonBackupFile() {
       + NB_RESTORE_TABLES_.join(', ') + ').');
     return { ok: false, reason: 'unknown table' };
   }
-  var folder = nbStore_().folder;
+  var folder = nbStore_({ noCreate: true }).folder;   // F15: a restore never creates (or repoints) a store
   var files = nbRestoreFileList_(folder, want);
   if (!files.length) {
     Logger.log('restoreNeonBackupFile: no backup file matches "' + want + '".');

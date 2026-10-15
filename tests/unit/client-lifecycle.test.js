@@ -70,6 +70,14 @@ function el(id, opts) {
   return e;
 }
 
+// The refresh constants as the source declares them (F25 added the age gate).
+function latestDatesConsts(chrome) {
+  const a = chrome.match(/var LATEST_DATES_REFRESH_MS = [^;]+;/);
+  const b = chrome.match(/var LATEST_DATES_MIN_AGE_MS = [^;]+;/);
+  assert.ok(a && b, 'both refresh constants are declared');
+  return a[0] + ' ' + b[0];
+}
+
 // ---------------------------------------------------------------------------
 test('B3/CL-1: the latest data dates are re-read while visible, never moving the dates on screen', function () {
   const chrome = src('script-2-chrome.html');
@@ -85,7 +93,7 @@ test('B3/CL-1: the latest data dates are re-read while visible, never moving the
     datesTouched_: false, latestDqeIso_: '2026-10-09', latestQcdIso_: '2026-10-09', dataCoverage_: null,
   };
   vm.runInNewContext(
-    'var LATEST_DATES_REFRESH_MS = 5 * 60 * 1000; var latestDatesFetchedAt_ = 9 * 60 * 1000;'
+    latestDatesConsts(chrome) + ' var latestDatesFetchedAt_ = 9 * 60 * 1000;'
     + ' var latestDatesInFlight_ = false; var latestDatesLast_ = null;'
     + extractFn(chrome, 'applyLatestDates_') + extractFn(chrome, 'refreshLatestDates_'), sb);
 
@@ -413,4 +421,325 @@ test('B3/CL-15: the Health UI toggles keep unsaved ticks, ignore stale loads and
   assert.match(s9, /healthUiFlagsDirty_ = false;   \/\/ B3\/CL-15: the list now matches the server/,
     'a successful save clears the dirty flag');
   assert.match(s9, /uiList\.addEventListener\('change'/, 'a tick marks the list dirty');
+});
+
+// ===========================================================================
+// Broad-scan 2026-10-14, Batch 6 (client state + consent): F25, F47/F48, F49,
+// F50, F51, F52, F16's client half.
+// ===========================================================================
+
+test('F25: the latest dates are re-read on EVERY 5-minute tick, not every other one', function () {
+  const chrome = src('script-2-chrome.html');
+  const f = fakeRun();
+  let now = 100 * 60 * 1000;
+  const sb = {
+    google: f.google, document: { hidden: false }, Date: { now: function () { return now; } },
+    $: function () { return null; }, setFreshnessPill_: function () {},
+    datesTouched_: false, latestDqeIso_: null, latestQcdIso_: null, dataCoverage_: null,
+  };
+  vm.runInNewContext(latestDatesConsts(chrome)
+    + ' var latestDatesFetchedAt_ = 0; var latestDatesInFlight_ = false; var latestDatesLast_ = null;'
+    + extractFn(chrome, 'applyLatestDates_') + extractFn(chrome, 'refreshLatestDates_'), sb);
+  // The previous reply landed 2 s after its tick; this tick is 5 min after THAT tick.
+  vm.runInContext('latestDatesFetchedAt_ = ' + (now - (5 * 60 * 1000 - 2000)) + ';', vm.createContext(sb));
+  sb.refreshLatestDates_(false);
+  assert.equal(f.calls.length, 1, 'a reply a few seconds late no longer skips the next tick');
+  f.calls[0].ok({ dqe: '2026-10-13' });
+  now += 60 * 1000;
+  sb.refreshLatestDates_(false);
+  assert.equal(f.calls.length, 1, 'a visibilitychange a minute later is still throttled');
+});
+
+test('F52: a roster loader shows its skeleton for a new fetch, never the previous fetch\'s error', function () {
+  const ir = src('script-6-ir.html');
+  const SKEL = '<div class="ir-skeleton-grid"></div><div class="ir-skeleton-label">Loading agent roster&hellip;</div>';
+  const loader = el('ir-agent-loader', { innerHTML: SKEL });
+  loader.querySelector = function (sel) { return (sel === '.ir-skeleton-grid' && this.innerHTML.indexOf('ir-skeleton-grid') !== -1) ? {} : null; };
+  const cold = el('ins-agent-loader', { innerHTML: 'No department selected.' });
+  cold.querySelector = function () { return null; };
+  const els = { 'ir-agent-loader': loader, 'ins-agent-loader': cold };
+  const sb = { $: function (id) { return els[id]; } };
+  vm.runInNewContext('var ROSTER_LOADER_SKELETON_ = {};' + extractFn(ir, 'rosterLoaderShowLoading_'), sb);
+  sb.rosterLoaderShowLoading_('ir-agent-loader');
+  assert.equal(loader.innerHTML, SKEL);
+  loader.innerHTML = 'Error loading roster: quota <button id="ir-roster-retry">Retry</button>';
+  loader.style.display = 'none';
+  sb.rosterLoaderShowLoading_('ir-agent-loader');
+  assert.equal(loader.innerHTML, SKEL, 'the retry shows the skeleton again');
+  assert.equal(loader.style.display, '');
+  sb.rosterLoaderShowLoading_('ins-agent-loader');
+  assert.match(cold.innerHTML, /Loading agent roster/, 'an already-overwritten loader falls back to loading text');
+  // Both pickers route through it.
+  assert.match(extractFn(ir, 'ensureIrRoster'), /rosterLoaderShowLoading_\('ir-agent-loader'\);/);
+  assert.match(extractFn(src('script-8-insights.html'), 'insEnsureRoster'), /rosterLoaderShowLoading_\('ins-agent-loader'\);/);
+});
+
+test('F50: saving or removing an alert config drops the preview, and a preview in flight cannot re-arm Send', function () {
+  const admin = src('script-7-admin.html');
+  const f = fakeRun();
+  const els = { 'al-date': el('al-date', { value: '2026-10-13' }), 'al-preview-btn': el('al-preview-btn'),
+    'al-send-btn': el('al-send-btn', { disabled: true }) };
+  const statuses = [];
+  const sb = {
+    google: f.google, $: function (id) { return els[id]; },
+    alSetRunStatus_: function (k, m) { statuses.push([k, m]); },
+    alRenderResults_: function () {}, alClearResults_: function () {},
+  };
+  vm.runInNewContext('var alLastPreview = null; var alPreviewSeq_ = 0;'
+    + extractFn(admin, 'alInvalidatePreview_') + extractFn(admin, 'alRunPreview_'), sb);
+  const ctx = vm.createContext(sb);
+  sb.alRunPreview_();
+  f.calls[0].ok([{ dept: 'CSR', status: 'would-send' }]);
+  assert.equal(els['al-send-btn'].disabled, false, 'a landed preview arms Send');
+  sb.alInvalidatePreview_('Alert config changed -- run Preview again before sending.');
+  assert.equal(vm.runInContext('alLastPreview', ctx), null);
+  assert.equal(els['al-send-btn'].disabled, true, 'a config change disarms it');
+  assert.equal(statuses[statuses.length - 1][0], 'warn', 'and says why');
+  // A preview started BEFORE the change lands AFTER it.
+  sb.alRunPreview_();
+  sb.alInvalidatePreview_('');
+  f.calls[1].ok([{ dept: 'CSR', status: 'would-send' }]);
+  assert.equal(vm.runInContext('alLastPreview', ctx), null, 'the stale preview is dropped');
+  assert.equal(els['al-send-btn'].disabled, true);
+  // Wiring: both config writes and the date change invalidate.
+  assert.match(extractFn(admin, 'alCfgSave_'), /alCfgClear_\(\);\s*alInvalidatePreview_\(/);
+  assert.match(extractFn(admin, 'alCfgRemove_'), /alCfgStatus_\(null\);\s*alInvalidatePreview_\(/);
+  assert.match(admin, /addEventListener\('change', function \(\) \{[\s\S]{0,200}alInvalidatePreview_\(''\);/);
+});
+
+test('F51: the silent refresh repaints the agent table in place and keeps good rows on failure', function () {
+  const ov = src('script-3-overview.html');
+  const f = fakeRun();
+  const els = {};
+  ['ov-user-table-wrap', 'ov-user-tbody', 'ov-user-tfoot', 'ov-user-table-status', 'ov-user-table-title',
+   'ov-user-table-date'].forEach(function (id) { els[id] = el(id); });
+  let range = { from: '2026-10-13', to: '2026-10-13' };
+  const sb = {
+    google: f.google, $: function (id) { return els[id]; },
+    uiFlagOn_: function () { return false; }, ovViewerDept_: function () { return 'CSR'; },
+    isAllDeptViewer_: function () { return false; }, viewAsDept_: null,
+    ovTableRange_: function () { return range; },
+    ovFormatDateLabel_: function (x) { return x; }, COLUMNS: [1, 2], escapeHtml: function (x) { return x; },
+    ovWireUserSort_: function () {},
+    ovRenderUserRows_: function () { els['ov-user-tbody'].innerHTML = 'ROWS'; },
+  };
+  vm.runInNewContext('var ovUserTableSeq = 0; var ovUserRows_ = [], ovUserTotals_ = null, ovUserMeta_ = null;'
+    + ' var ovUserTableKey_ = null;' + extractFn(ov, 'ovRenderUserTable_'), sb);
+  const data = { latestDate: '2026-10-13' };
+  sb.ovRenderUserTable_(data);
+  assert.equal(els['ov-user-table-status'].textContent, 'Loading agent detail…', 'a first load shows loading');
+  f.calls[0].ok({ rows: [{ agent: 'Ann' }], totals: {} });
+  assert.equal(els['ov-user-tbody'].innerHTML, 'ROWS');
+  // The 5-minute refresh, same window.
+  sb.ovRenderUserTable_(data);
+  assert.equal(els['ov-user-tbody'].innerHTML, 'ROWS', 'the rows stay on screen while it refreshes');
+  assert.equal(els['ov-user-table-status'].style.display, 'none', 'no loading flash');
+  f.calls[1].fail(new Error('quota'));
+  assert.equal(els['ov-user-tbody'].innerHTML, 'ROWS', 'a failed refresh keeps the good rows');
+  assert.match(els['ov-user-table-status'].className, /status-warn/);
+  assert.match(els['ov-user-table-status'].textContent, /showing the rows loaded earlier/);
+  // A NEW window blanks as before (the old rows are another window's).
+  range = { from: '2026-10-14', to: '2026-10-14' };
+  sb.ovRenderUserTable_(data);
+  assert.equal(els['ov-user-tbody'].innerHTML, '', 'a different window never shows the old rows');
+  f.calls[2].fail(new Error('quota'));
+  assert.match(els['ov-user-table-status'].className, /status-error/, 'and its failure is an error');
+});
+
+test('F47 / F48: a restored YTD range fetches at render, and the cache follows the Overview\'s latest date', function () {
+  const ov = src('script-3-overview.html');
+  const f = fakeRun();
+  const sb = {
+    google: f.google, viewAsDept_: null, ovLastData: { latestDate: '2026-10-12' },
+    ovChartRange: 'ytd', ovWireChartRange_: function () {}, showToast: function () {},
+    localStorage: { setItem: function () {} }, OV_CHART_RANGE_KEY_: 'k',
+    renders: 0,
+  };
+  sb.ovRenderChart_ = function () { sb.renders++; };
+  vm.runInNewContext('var ovYtdData = null, ovYtdLoading = false, ovYtdScope = null, ovYtdForLatest = null;'
+    + extractFn(ov, 'ovYtdFresh_') + extractFn(ov, 'ovLoadYtdChart_'), sb);
+  sb.ovLoadYtdChart_();
+  assert.equal(f.calls.length, 1);
+  f.calls[0].ok({ available: true, latestDate: '2026-10-12' });
+  assert.equal(sb.ovYtdFresh_(), true);
+  // The morning ingest: the Overview refresh brings a new latest date.
+  sb.ovLastData = { latestDate: '2026-10-13' };
+  assert.equal(sb.ovYtdFresh_(), false, 'F48: a YTD series for yesterday\'s latest date is stale');
+  sb.ovLoadYtdChart_();
+  assert.equal(f.calls.length, 2, 'so the next render refetches');
+  // A reply carrying another date is still fresh for the date it was REQUESTED
+  // for -- no fetch loop if the two dates ever disagree.
+  f.calls[1].ok({ available: true, latestDate: '2026-10-14' });
+  assert.equal(sb.ovYtdFresh_(), true);
+  // F47: the render kicks the fetch when YTD is selected but not loaded.
+  assert.match(extractFn(ov, 'ovRenderChart_'),
+    /if \(ovChartRange === 'ytd' && !ovYtdLoading && !ovYtdFresh_\(\)\) \{\s*setTimeout\(function \(\) \{ if \(ovChartRange === 'ytd'\) ovLoadYtdChart_\(\); \}, 0\);/);
+});
+
+test('F49: the IR edit popover clamps its window to the latest date BEFORE deriving the prior', function () {
+  const apply = extractFn(src('script-6-ir.html'), 'irApplyEditPopover_');
+  const clampAt = apply.indexOf("clampInputsToLatest_('ir-edit-from', 'ir-edit-to', latestDqeIso_)");
+  assert.ok(clampAt !== -1, 'the popover clamps its own inputs');
+  assert.ok(clampAt < apply.indexOf("const from = $('ir-edit-from')"), 'before it reads them');
+  assert.ok(clampAt < apply.indexOf('resolveComparisonWindow_('), 'and before the prior window is derived');
+  assert.match(apply, /irRenderReport\(data\);\s*if \(irEditClampNote\) irSetResultsStatus\('warn', irEditClampNote\);/,
+    'and says the window moved, after the render clears the status line');
+});
+
+test('F16: a linked dept is applied only when the viewer may see it, and the Insights link uses it', function () {
+  const nav = src('script-4-nav.html');
+  const sel = el('dept-selector', { value: 'CSR' });
+  const options = ['CSR', 'Sales'];
+  Object.defineProperty(sel, 'value', {
+    get: function () { return this._v; },
+    set: function (v) { if (options.indexOf(v) !== -1) this._v = v; },
+  });
+  sel._v = 'CSR';
+  const sb = { $: function (id) { return id === 'dept-selector' ? sel : null; },
+    USER: { departments: ['CSR', 'Sales', 'Billing'] } };
+  vm.runInNewContext(extractFn(nav, 'shareApplyDeptParam_'), sb);
+  assert.equal(sb.shareApplyDeptParam_('Sales'), true);
+  assert.equal(sel.value, 'Sales');
+  assert.equal(sb.shareApplyDeptParam_('PAP'), false, 'not the viewer\'s dept: ignored');
+  assert.equal(sel.value, 'Sales');
+  assert.equal(sb.shareApplyDeptParam_('Billing'), false, 'no option for it: left as is');
+  assert.equal(sel.value, 'Sales');
+  assert.equal(sb.shareApplyDeptParam_(''), false);
+  sb.USER = { departments: [] };   // a single-dept manager ships no list
+  assert.equal(sb.shareApplyDeptParam_('CSR'), false);
+  // The Insights provider applies it FIRST and re-ensures the roster when it moved.
+  const ins = nav.slice(nav.indexOf("const base = SHARE_STATE_['/report/insights'];"));
+  assert.match(ins, /const deptApplied = shareApplyDeptParam_\(params && params\.dept\);\s*base\.apply\(params \|\| \{\}\);/);
+  assert.match(ins, /if \(deptMoved && insPageInited_ && typeof insEnsureRoster === 'function'\) insEnsureRoster\(\);/);
+  assert.match(nav, /'\/dept': \{[\s\S]{0,200}if \(shareApplyDeptParam_\(p && p\.dept\)\) refresh\(\);/,
+    'the /dept link keeps its behaviour through the shared helper');
+});
+
+// ===========================================================================
+// Broad-scan 2026-10-14, Batch 7 (interface / a11y): the behavioural halves.
+// ===========================================================================
+
+function btnEl(attrs) {
+  const b = el('btn', { attrs: Object.assign({}, attrs || {}) });
+  b.removeAttribute = function (k) { delete this.attrs[k]; };
+  return b;
+}
+function rowEl(agent, btn) {
+  const cls = {};
+  return Object.assign(el('tr'), {
+    attrs: { 'data-agent': agent },
+    classList: { add: function (c) { cls[c] = true; }, remove: function (c) { delete cls[c]; }, contains: function (c) { return !!cls[c]; } },
+    querySelector: function (sel) { return sel === 'button.ap-row-toggle' ? btn : null; },
+    removeAttribute: function (k) { delete this.attrs[k]; },
+  });
+}
+
+test('F27: opening and closing the agent panel moves aria-expanded on the name BUTTON (false, never removed) and focus to it', function () {
+  const ap = src('script-10-escalations.html');
+  const btn = btnEl({ 'aria-expanded': 'false' });
+  const tr = rowEl('Ann', btn);
+  const sb = { AP_: { agent: 'Ann', idx: 0, seq: 0, node: null }, apRowsFor_: function () { return [tr]; } };
+  vm.runInNewContext(extractFn(ap, 'apRowToggle_') + extractFn(ap, 'apMarkRow_') + extractFn(ap, 'apClose_'), sb);
+  sb.apMarkRow_(tr);
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+  assert.equal(btn.getAttribute('aria-controls'), 'ap-panel');
+  assert.equal(tr.getAttribute('aria-expanded'), null, 'the row never carries it');
+  assert.ok(tr.classList.contains('ap-open'));
+  sb.apClose_(true);
+  assert.equal(btn.getAttribute('aria-expanded'), 'false', 'closed is "false", not a removed attribute');
+  assert.equal(btn.getAttribute('aria-controls'), null);
+  assert.equal(btn.focused, 1, 'focus returns to the button');
+  assert.ok(!tr.classList.contains('ap-open'));
+  // A mouse open (a click on any cell) leaves focus on the button too, so
+  // Escape and Tab work from there as they did from the old focusable row.
+  assert.match(extractFn(ap, 'apToggleFromRow_'), /apOpen_\(agent, idx\);[\s\S]*?b\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test('F55 / F56: a sub-queue card keeps its open state across re-renders, and a closed one is inert', function () {
+  const ov = src('script-3-overview.html');
+  const sb = {
+    ovPeriodStats_: function () { return { pctFormatted: '90%', rung: 1, answered: 1, missed: 0, attFormatted: '1:00' }; },
+    irSparklineGoal_: function () { return ''; }, answerStdFor_: function () { return { target: 80 }; },
+    isAllDeptViewer_: function () { return true; }, ovSubqArrow_: function () { return ''; },
+    ovBuildDqeSilenceNote_: function () { return ''; }, ovBuildOutboundLine_: function () { return ''; },
+    fmtNumber: String, escapeHtml: function (x) { return String(x); }, ABANDON_STANDARD_: 4,
+    requestAnimationFrame: undefined,
+  };
+  vm.runInNewContext('var ovSubqOpen_ = {};' + extractFn(ov, 'ovBuildSubqCard_') + extractFn(ov, 'ovToggleSubqCard_'), sb);
+  const dept = { name: 'PAP', parent: 'Sales' };
+  let html = sb.ovBuildSubqCard_(dept, '#000');
+  assert.match(html, /<div class="ov-subq-detail" inert>/, 'F55: a closed detail is inert, so its Open button is out of the tab order');
+  assert.match(html, /aria-expanded="false"/);
+  // Open it the way the strip click does.
+  const detailAttrs = { inert: '' };
+  const detail = { style: {}, querySelector: function () { return null; },
+    setAttribute: function (k, v) { detailAttrs[k] = v; }, removeAttribute: function (k) { delete detailAttrs[k]; } };
+  const cls = {};
+  const card = { getAttribute: function (k) { return k === 'data-subq' ? 'PAP' : null; },
+    classList: { contains: function (c) { return !!cls[c]; }, toggle: function (c, on) { if (on) cls[c] = true; else delete cls[c]; } } };
+  const strip = btnEl({ 'aria-expanded': 'false' });
+  sb.ovToggleSubqCard_(card, strip, detail);
+  assert.equal(strip.getAttribute('aria-expanded'), 'true');
+  assert.ok(!('inert' in detailAttrs), 'opening drops inert');
+  html = sb.ovBuildSubqCard_(dept, '#000');
+  assert.match(html, /class="ov-subq-card is-open"/, 'F56: the next re-render keeps it open');
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /<div class="ov-subq-detail" style="height:auto">/);
+  sb.ovToggleSubqCard_(card, strip, detail);
+  assert.equal(detailAttrs.inert, '', 'closing makes it inert again');
+  assert.match(sb.ovBuildSubqCard_(dept, '#000'), /<div class="ov-subq-detail" inert>/);
+});
+
+test('F57: a Health fold opened before the Neon pass lands stays open; a refresh re-collapses it', function () {
+  const h9 = src('script-9-inbound-direct.html');
+  const tbody = el('health-tbody');
+  tbody.querySelectorAll = function () { return []; };
+  const sb = { $: function (id) { return id === 'health-tbody' ? tbody : null; }, escapeHtml: function (x) { return String(x); } };
+  const consts = h9.match(/const HEALTH_SECTIONS_ = \{[\s\S]*?\};/)[0] + h9.match(/const HEALTH_FOLDED_SECTIONS_ = [^;]+;/)[0];
+  vm.runInNewContext(consts + ' var healthFoldsOpen_ = {};' + extractFn(h9, 'healthRender_'), sb);
+  const rows = [{ section: 'users', label: 'a@x', status: 'ok', value: '1' }, { section: 'users', label: 'b@x', status: 'ok', value: '2' }];
+  sb.healthRender_({ rows: rows });
+  assert.match(tbody.innerHTML, /class="sh-fold-btn" aria-expanded="false"/);
+  assert.equal((tbody.innerHTML.match(/data-fold-of="users" style="display:none"/g) || []).length, 2);
+  vm.runInContext('healthFoldsOpen_.users = true;', vm.createContext(sb));   // what the toggle records
+  sb.healthRender_({ rows: rows });   // the Neon pass repaints
+  assert.match(tbody.innerHTML, /class="sh-fold-btn" aria-expanded="true"/, 'the second paint keeps it open');
+  assert.equal((tbody.innerHTML.match(/display:none/g) || []).length, 0, 'with its rows shown');
+  assert.match(extractFn(h9, 'healthRender_'), /healthFoldsOpen_\[key\] = !open;/, 'the toggle records it');
+  assert.match(extractFn(h9, 'healthLoad_'), /healthFoldsOpen_ = \{\};/, 'a refresh starts collapsed again');
+});
+
+test('F65: a share link (and Open in new tab) for Insights names the dept on screen; saved views stay dept-free', function () {
+  const nav = src('script-4-nav.html');
+  const sb = { SHARE_STATE_: { '/report/insights': { collect: function () { return { from: '2026-10-01', to: '2026-10-10' }; } },
+                              '/report/individual': { collect: function () { return { from: '2026-10-01' }; } } },
+               getRequestedDept: function () { return 'Sales'; } };
+  vm.runInNewContext(extractFn(nav, 'shareLinkStateFor_'), sb);
+  assert.equal(sb.shareLinkStateFor_('/report/insights').dept, 'Sales');
+  assert.equal(sb.shareLinkStateFor_('/report/individual').dept, undefined, 'only the route whose provider applies it');
+  sb.SHARE_STATE_['/report/insights'].collect = function () { return null; };
+  assert.equal(sb.shareLinkStateFor_('/report/insights'), null, 'nothing to share stays nothing');
+  assert.match(extractFn(src('script-8-insights.html'), 'insCopyShareLink_'), /const state = shareLinkStateFor_\('\/report\/insights'\);/);
+  assert.match(extractFn(nav, 'initOpenInNewTabButtons_'), /const state = shareLinkStateFor_\(route\);/);
+  assert.match(extractFn(src('script-8-insights.html'), 'insCurrentViewState_'), /provider\.collect\(\)/,
+    'saved views still snapshot collect() alone');
+});
+
+test('F66: a header click while a NEW window loads keeps the sort but does not repaint the old rows', function () {
+  const ov = src('script-3-overview.html');
+  let painted = 0;
+  const sb = { COLUMNS: [{ key: 'agent', type: 'text' }, { key: 'totalAnswered', type: 'number' }],
+    ovRenderUserRows_: function () { painted++; } };
+  vm.runInNewContext("var ovUserSort_ = { key: 'answerRate', dir: 'asc' }; var ovUserTableKey_ = null; var ovUserRows_ = [{ agent: 'Old' }];"
+    + extractFn(ov, 'ovOnUserSort_'), sb);
+  const ctx = vm.createContext(sb);
+  sb.ovOnUserSort_('agent');
+  assert.equal(painted, 0, 'the previous window\'s rows are not painted back');
+  assert.equal(vm.runInContext('ovUserSort_.key', ctx), 'agent', 'the choice is kept for the landing reply');
+  vm.runInContext("ovUserTableKey_ = 'CSR|a|b';", ctx);
+  sb.ovOnUserSort_('agent');
+  assert.equal(painted, 1, 'rows for the window on screen re-sort in place');
+  vm.runInContext('ovUserRows_ = [];', ctx);
+  sb.ovOnUserSort_('agent');
+  assert.equal(painted, 1, 'an empty result keeps its "No agent rows" message');
 });

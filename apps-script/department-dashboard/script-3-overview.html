@@ -160,6 +160,23 @@
         vaCol.style.display = (escAllDept || (escInit_.departments || []).length > 1) ? '' : 'none';
       }
     }
+    // F21 (broad-scan 2026-10-14): the Insights trend's admin-only point
+    // shading is decided at DRAW time, and a preview of the dept already on
+    // screen re-renders nothing (insSyncToDeptWindow_ sees the same dept and
+    // window) -- so redraw it now from the held payload. A closed fold is not
+    // measurable and is drawn on open, reading the current view-as then.
+    if (typeof insLastData !== 'undefined' && insLastData && typeof insDrawTrendChart_ === 'function') {
+      try { insDrawTrendChart_(insLastData); } catch (eT) { /* best-effort repaint */ }
+    }
+    // E5 / ST4 (broad-scan 259): the UX-2 brief has the same blind spot. Its
+    // Callbacks row exists only while the Outbound view is available
+    // (obAllowed_, which the data-view-as attribute set above decides), so a
+    // brief rendered DURING a preview has no Callbacks row -- and leaving the
+    // preview on the same dept and window re-rendered nothing, so the admin's
+    // brief stayed without it. Re-render it from the held payload now.
+    if (typeof insLastData !== 'undefined' && insLastData && typeof insRenderBrief_ === 'function') {
+      try { insRenderBrief_(insLastData); } catch (eB) { /* best-effort repaint */ }
+    }
     // (The Reports dropdown (data-admin-only) is hidden in view-as by the
     // existing CSS; the top-level Insights tab carries no data-admin-only so
     // it stays visible in the preview -- the old #10 solo-button surfacing
@@ -737,31 +754,6 @@
     };
     return { from: iso(start), to: latestIso };
   }
-  let ovTablePeriodWired = false;
-  function ovWireTablePeriodBar_() {
-    const bar = $('ov-user-table-period');
-    if (!bar) return;
-    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
-      const on = b.getAttribute('data-period') === ovTablePeriod;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-    if (ovTablePeriodWired) return;
-    ovTablePeriodWired = true;
-    bar.addEventListener('click', function (e) {
-      const b = e.target.closest('.ov-period-btn');
-      if (!b) return;
-      const p = b.getAttribute('data-period');
-      if (!OV_CARD_PERIODS_[p] || p === ovTablePeriod) return;
-      ovTablePeriod = p;
-      try { localStorage.setItem(OV_TABLE_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
-      if (ovLastData) ovRenderUserTable_(ovLastData);
-      // R11-F: fade the table on the range swap (reduced-motion no-ops via CSS).
-      var wrap = $('ov-user-table-wrap');
-      if (wrap) { wrap.classList.remove('ov-tbl-fade'); void wrap.offsetWidth; wrap.classList.add('ov-tbl-fade'); }
-    });
-  }
-
   // Period bar above the dept grid (static markup). Syncs the active button on
   // every render; wires the click once. Switching re-renders only the cards
   // (hero + grid) from ovLastData -- no re-fetch; the chart/sparklines
@@ -773,7 +765,10 @@
     bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
       const on = b.getAttribute('data-period') === ovCardPeriod;
       b.classList.toggle('active', on);
-      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      // F54 (broad-scan 2026-10-14): the markup is a toggle-button group
+      // (aria-pressed); writing aria-checked left aria-pressed on the boot
+      // default, so a screen reader heard "Yesterday, pressed" whatever was on.
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     if (ovPeriodBarWired) return;
     ovPeriodBarWired = true;
@@ -1094,8 +1089,14 @@
   // -- one element, so the strip morphs into the card rather than a second
   // card appearing beside it. In the parent's group cell, NOT inside the
   // parent card (no false roll-up). Hover spotlights the child's chart line.
+  // F56 (broad-scan 2026-10-14): which sub-queue cards are open, by dept
+  // name, for the session. Every tile re-render (the 5-minute refresh, a
+  // Window change, a dept switch) rebuilds the grid, and the cards used to
+  // snap shut each time.
+  var ovSubqOpen_ = {};
   function ovBuildSubqCard_(dept, color) {
     const st = ovPeriodStats_(dept);
+    const open = !!ovSubqOpen_[dept.name];
     const qcd = dept.qcd || null;
     const alert = dept.alertedOnLatest
       ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
@@ -1114,8 +1115,8 @@
     const routeBtn = routable
       ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'
       : '';
-    return '<div class="ov-subq-card" data-dept="' + escapeHtml(dept.name) + '" data-subq="' + escapeHtml(dept.name) + '">'
-         +   '<button type="button" class="ov-subq-strip" aria-expanded="false" '
+    return '<div class="ov-subq-card' + (open ? ' is-open' : '') + '" data-dept="' + escapeHtml(dept.name) + '" data-subq="' + escapeHtml(dept.name) + '">'
+         +   '<button type="button" class="ov-subq-strip" aria-expanded="' + (open ? 'true' : 'false') + '" '
          +     'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click to expand.">'
          +     '<span class="ov-subq-strip-dot" style="background:' + color + '"></span>'
          +     '<span class="ov-subq-strip-name">' + escapeHtml(dept.name) + '</span>'
@@ -1127,7 +1128,9 @@
          +     '</span>'
          +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
          +   '</button>'
-         +   '<div class="ov-subq-detail">'
+         // F55: a collapsed detail is only height 0, so its "Open" button
+         // stayed in the tab order -- `inert` takes it out until it opens.
+         +   '<div class="ov-subq-detail"' + (open ? ' style="height:auto"' : ' inert') + '>'
          +     '<div class="ov-subq-detail-inner">'
          +       ovBuildDqeSilenceNote_(dept)
          +       '<div class="ov-dept-tile-row">'
@@ -1155,6 +1158,9 @@
     const opening = !card.classList.contains('is-open');
     strip.setAttribute('aria-expanded', opening ? 'true' : 'false');
     card.classList.toggle('is-open', opening);
+    const name = card.getAttribute('data-subq');
+    if (name) ovSubqOpen_[name] = opening;   // F56: survives the next re-render
+    if (opening) detail.removeAttribute('inert'); else detail.setAttribute('inert', '');   // F55
     if (typeof requestAnimationFrame !== 'function' || !inner) {
       detail.style.height = opening ? 'auto' : '0';   // no-animation fallback
       return;
@@ -1364,6 +1370,12 @@
   var ovUserMeta_ = null;
   var wowChipMetaOverride_ = null;
   var ovUserSortWired_ = false;
+  // F51 (broad-scan 2026-10-14): the dept|from|to the rows on screen belong
+  // to. The silent 5-minute refresh re-renders this table for the SAME
+  // window, and blanking it to "Loading…" each time flashed an empty table
+  // -- and a failed refresh left it empty, discarding good rows. Same window:
+  // repaint in place, keep the rows on failure. New window: blank as before.
+  var ovUserTableKey_ = null;
   function ovRenderUserTable_(data) {
     const wrap = $('ov-user-table-wrap');
     const tbody = $('ov-user-tbody');
@@ -1385,23 +1397,29 @@
     // for a genuine all-dept viewer driving the selector.
     const title = ((isAllDeptViewer_() && !viewAsDept_) ? 'Selected dept: ' : 'My dept: ') + viewerDept;
     $('ov-user-table-title').textContent = title;
-    // O4: the table follows its own period slider (re-fetches the range).
-    ovWireTablePeriodBar_();
+    // O4: the table re-fetches the range of the shared window (R12-19: the
+    // card period bar sets ovTablePeriod; the table's own bar is gone, F53).
     const range = ovTableRange_(data.latestDate);
     $('ov-user-table-date').textContent = (range.from === range.to)
       ? ovFormatDateLabel_(range.to)
       : (ovFormatDateLabel_(range.from) + ' – ' + ovFormatDateLabel_(range.to));
 
-    status.style.display = '';
-    status.className = 'status status-loading';
-    status.textContent = 'Loading agent detail…';
-    tbody.innerHTML = '';
-    tfoot.innerHTML = '';
+    const tableKey = viewerDept + '|' + range.from + '|' + range.to;
+    const keepRows = tableKey === ovUserTableKey_ && ovUserRows_.length > 0;   // F51
+    if (!keepRows) {
+      ovUserTableKey_ = null;
+      status.style.display = '';
+      status.className = 'status status-loading';
+      status.textContent = 'Loading agent detail…';
+      tbody.innerHTML = '';
+      tfoot.innerHTML = '';
+    }
 
     google.script.run
       .withSuccessHandler(function (resp) {
         if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
         status.style.display = 'none';
+        ovUserTableKey_ = tableKey;
         if (!resp || !resp.rows || !resp.rows.length) {
           ovUserRows_ = []; ovUserTotals_ = null; ovUserMeta_ = null;
           tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept in '
@@ -1419,6 +1437,12 @@
       })
       .withFailureHandler(function (err) {
         if (myToken !== ovUserTableSeq) return;   // F-40
+        status.style.display = '';
+        if (keepRows) {   // F51: the rows on screen are still this window's
+          status.className = 'status status-warn';
+          status.textContent = 'Could not refresh agent detail -- showing the rows loaded earlier.';
+          return;
+        }
         status.className = 'status status-error';
         status.textContent = 'Error loading detail: '
           + (err && err.message ? err.message : String(err));
@@ -1511,7 +1535,11 @@
       var col = COLUMNS.find(function (c) { return c.key === key; });
       ovUserSort_.dir = (col && col.type === 'text') ? 'asc' : 'desc';
     }
-    ovRenderUserRows_();
+    // F66 (broad-scan 2026-10-14): repaint only rows that belong to the window
+    // on screen. While a NEW window loads, ovUserRows_ still holds the old
+    // window's rows -- a header click painted them back under the new title.
+    // The choice is kept either way; the landing reply renders with it.
+    if (ovUserTableKey_ && ovUserRows_.length) ovRenderUserRows_();
   }
 
   // Overview trend-chart metric views. `field` = the per-dept data array on the
@@ -1578,8 +1606,16 @@
   // belongs to the view-as scope it was fetched under. A cached admin payload
   // served into a manager preview drew the admin-only line in the preview.
   let ovYtdScope = null;
+  // F48 (broad-scan 2026-10-14): ...and to the Overview's latest date it was
+  // fetched alongside. The session cache was never refreshed, so a tab open
+  // across the morning ingest drew YTD a day short while every other surface
+  // had moved on. When the Overview's latest date moves, the next render
+  // refetches (once -- the stamp is the date the fetch was REQUESTED for, so
+  // a reply carrying a different date cannot loop).
+  let ovYtdForLatest = null;
   function ovYtdFresh_() {
-    return !!(ovYtdData && ovYtdData.available && ovYtdScope === (viewAsDept_ || ''));
+    return !!(ovYtdData && ovYtdData.available && ovYtdScope === (viewAsDept_ || '')
+      && ovYtdForLatest === ((ovLastData && ovLastData.latestDate) || null));
   }
 
   // 'YYYY-MM-DD' minus N calendar days, UTC-stable (parse + reformat via UTC
@@ -1716,6 +1752,15 @@
     destroyOrphanedChartOnCanvas_('ov-trend-chart');
     refreshChartTheme();
 
+    // F47 (broad-scan 2026-10-14): a YTD range restored from localStorage at
+    // boot was never fetched -- the chart drew 90 days under a lit YTD
+    // button, and clicking YTD did nothing (ovApplyChartRange_ ignores a
+    // click on the range already selected). A render that finds YTD selected
+    // but not loaded starts the fetch; F48 makes a stale one count as not
+    // loaded. The 90-day view below fills in meanwhile.
+    if (ovChartRange === 'ytd' && !ovYtdLoading && !ovYtdFresh_()) {
+      setTimeout(function () { if (ovChartRange === 'ytd') ovLoadYtdChart_(); }, 0);
+    }
     // Resolve the active range (30/60/90 client-slice, or the on-demand YTD
     // payload) to a single normalized shape before building datasets.
     const view = ovCurrentChartView_(data);
@@ -2003,6 +2048,7 @@
     if (ovYtdFresh_()) { if (ovLastData) ovRenderChart_(ovLastData); return; }
     ovYtdLoading = true;
     const reqScope = viewAsDept_ || '';
+    const reqLatest = (ovLastData && ovLastData.latestDate) || null;   // F48
     ovWireChartRange_();              // paint the YTD… loading label
     const revertTo90_ = function (msg) {
       ovYtdLoading = false;
@@ -2030,6 +2076,7 @@
           ovYtdLoading = false;
           ovYtdData = res;
           ovYtdScope = reqScope;
+          ovYtdForLatest = reqLatest;
           if (ovLastData) ovRenderChart_(ovLastData);
         } else {
           revertTo90_('Year-to-date trend is unavailable right now.');

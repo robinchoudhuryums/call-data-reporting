@@ -328,16 +328,20 @@ var DQE_INSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET 
       'abandoned_missed_times = EXCLUDED.abandoned_missed_times, ' +
       'avg_abd_wait = EXCLUDED.avg_abd_wait, ' +
       'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait, ' +
-      // COALESCE, not a plain overwrite. remirrorExistingDqeDate_ re-reads the
-      // SHEET, so a date whose rows predate Phase 1 sends NULL here and would
-      // otherwise erase a queue_split a later build had already mirrored.
-      // A build that genuinely has no split emits '{}', never NULL, so the
-      // only thing COALESCE can preserve is a value nothing intended to clear.
+      // COALESCE, not a plain overwrite: a NON-authoritative upsert of a
+      // sheet row that predates Phase 1 sends NULL here and must not erase a
+      // queue_split a later build mirrored. A build that genuinely has no
+      // split emits '{}', never NULL. F10 (broad-scan 2026-10-14): every
+      // CURRENT caller of this writer passes `authoritative` -- the date is
+      // DELETED first, so there is no stored row to keep and the sheet's
+      // blank lands as NULL (the sheet is the source of truth). The live
+      // keep-the-stored-value path is cdr-report's row-batched
+      // backfillDQEHistoryUpsert, which carries its own COALESCE.
       'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split), ' +
-      // Batch 3: the same COALESCE rule for the after-hours pair -- a sheet
-      // narrower than 37 (a pre-Batch-3 row re-mirrored or backfilled) sends
-      // NULL and must not erase a value a later build wrote. A build always
-      // emits numbers (0 when nothing happened), never NULL.
+      // Batch 3: the same COALESCE rule for the after-hours pair -- on a
+      // non-authoritative upsert a sheet narrower than 37 sends NULL and must
+      // not erase a value a later build wrote (moot under `authoritative`,
+      // F10 above). A build always emits numbers (0 when nothing happened).
       'after_hours_answered = COALESCE(EXCLUDED.after_hours_answered, dqe_history.after_hours_answered), ' +
       'after_hours_ttt = COALESCE(EXCLUDED.after_hours_ttt, dqe_history.after_hours_ttt)';
 

@@ -553,7 +553,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const { name: latestName, dateObj } = targetSheetInfo;
     const props     = PropertiesService.getScriptProperties();
     const lastKnown = JSON.parse(props.getProperty("lastSheets") || "[]");
-    const shouldRun = force || !lastKnown.includes(latestName);
+    // G1 (broad-scan 259, E3): makeDateWhole re-imports a date it KNOWS is
+    // incomplete without forcing -- the per-sheet exists checks below then
+    // write only the sheets that lack the date. `lastSheets` would otherwise
+    // stop it at "ALREADY PROCESSED" for any date the trigger already saw.
+    const shouldRun = force || !!(opts && opts.ignoreLastSheets) || !lastKnown.includes(latestName);
 
     if (!shouldRun) { return "ALREADY PROCESSED"; }
     if (!silent) sourceSS.toast(`Processing: ${latestName}`, "Step 1/7", -1);
@@ -618,7 +622,13 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
 
     if (!silent) sourceSS.toast("Calculating Extra Reports...", "Step 3/7", -1);
     results.qcdData = calcQcdReport(cleanData, targetSS);
-    results.csrData = calcCsrReport(cleanData, targetSS);
+    // F64 (broad-scan 2026-10-14): the CSR engine gets the DAY's legs only --
+    // the same grid repairCsrTransfer recomputes from (csrRepairDayRows_, ING-7).
+    // It used to see the carry-over strays too, so a repair of a clean import
+    // could move the numbers it was meant to reproduce. (PIPE-3 above already
+    // proved the majority day is this tab's.)
+    const csrDay = csrRepairDayRows_(cleanData);
+    results.csrData = calcCsrReport(csrDay.rows, targetSS);
 
     // P26: capture what the force-delete below ACTUALLY removes, per sheet.
     // The loss guards (guardForceRebuildLoss_ / buildDQE's refuseIfForce_)
@@ -1224,7 +1234,20 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
   markProduced("QCD");
 
   // 4. Add CSR_TRANSFER
-  if (!skipCSR && results.csrData) {
+  // F63: the bulk path writes these rows positionally too (processBatchArchive),
+  // so refuse to QUEUE them against a reordered history header -- this is the
+  // last point that knows QCDR Output's order.
+  const csrBulkHeaderProblem = (!skipCSR && results.csrData)
+    ? csrHistoryHeaderProblem_(targetSS.getSheetByName("CSR Transfer Historical Data"), results.csrData.headers) : '';
+  if (csrBulkHeaderProblem) {
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'bulkBackfill:CSR', status: 'failure', rows: 0, durationMs: null,
+        notes: dateObj.toDateString() + ': ' + csrBulkHeaderProblem,
+      });
+    } catch (eH) { /* best-effort */ }
+  }
+  if (!skipCSR && results.csrData && !csrBulkHeaderProblem) {
     const ag = results.csrData.agents;
     const tc = results.csrData.totalCalls;
     const qu = results.csrData.queues;
@@ -2382,7 +2405,20 @@ if (!skipCDR && obcHD) {
   }
 
   // 4. CSR Transfer History
-  if (!skipCSR && csrHD && results.csrData) {
+  // F63: refuse a positional write into a REORDERED history header -- it would
+  // file every count under the wrong queue with no error anywhere.
+  const csrHeaderProblem = (!skipCSR && csrHD && results.csrData)
+    ? csrHistoryHeaderProblem_(csrHD, results.csrData.headers) : '';
+  if (csrHeaderProblem) {
+    summaryLog.push('- CSR Transfer HD: NOT WRITTEN -- ' + csrHeaderProblem);
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'processIntegratedHistory:CSR', status: 'failure', rows: 0, durationMs: null,
+        notes: dateObj.toDateString() + ': ' + csrHeaderProblem,
+      });
+    } catch (eH) { /* best-effort */ }
+  }
+  if (!skipCSR && csrHD && results.csrData && !csrHeaderProblem) {
     const csrBatch = [];
     results.csrData.agents.forEach((row, i) => {
       const agent = String(row[0]).trim();
@@ -2965,34 +3001,73 @@ function parsePendingDate(val) {
  * phantom zero in a duration or count column); everything else stays text.
  */
 /**
+ * ST2 (broad-scan 259, E4): THE calendar day of one leg's START_TIME display
+ * cell (col C) -- "M/D/YYYY ...", "M/D/YY ..." or ISO -- as 'YYYY-MM-DD';
+ * null when the cell is empty or unrecognized (such a row is UNDATED, never a
+ * stray). PURE. Duplicated byte-for-byte in cdr-report/queueOverlapAudit.js;
+ * scripts/check-duplicated-files.sh fails on drift.
+ */
+function rawGridDayIso_(cell) {
+  var v = String(cell == null ? '' : cell).trim();
+  if (!v) return null;
+  var datePart = v.split(/\s+/)[0];
+  var m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  var p = datePart.split('/');
+  if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
+    var y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
+    return y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
+  }
+  return null;
+}
+
+/**
+ * ST2 (broad-scan 259, E4): THE day of a Raw Data / Call_Legs display grid
+ * (header row first; col C = leg START_TIME). A source tab holds one day's
+ * legs plus a few carry-over legs from the day before (P-7), which may sort
+ * FIRST (the ING-7 shape) -- so the grid's day is the MAJORITY date, never
+ * the first row's. Ties go to the later date. Returns { dateIso, rows (the
+ * header, every row on dateIso and every undated row), strays, strayByDay
+ * {iso: n}, counts {iso: n}, total (dated rows) }. PURE.
+ *
+ * One rule for every reader that asks "which day is this grid, and which legs
+ * are strays": PIPE-3's tab-date check (sourceCallDateCounts_), the CSR daily
+ * engine and its repair (csrRepairDayRows_), and the read-only diagnostics --
+ * diagnoseQcdVsDqe, queueSplitSample and (its cdr-report copy) the overlap
+ * audit. Deliberately NOT here (owner ruling 2026-10-15, E4): CDR Output, QCD
+ * and Q Path still COUNT carry-over legs, and the builders that drop them
+ * (DQE, Direct, the per-call writers) keep their own per-record date checks,
+ * so no stored figure changes. Duplicated in cdr-report/queueOverlapAudit.js.
+ */
+function rawGridDay_(grid) {
+  var counts = {}, rowIso = [], total = 0;
+  for (var i = 1; i < (grid || []).length; i++) {
+    var iso = rawGridDayIso_((grid[i] || [])[2]);
+    rowIso.push(iso);
+    if (iso) { counts[iso] = (counts[iso] || 0) + 1; total++; }
+  }
+  var best = null;
+  Object.keys(counts).forEach(function (k) {
+    if (best === null || counts[k] > counts[best] || (counts[k] === counts[best] && k > best)) best = k;
+  });
+  var rows = (grid && grid.length) ? [grid[0]] : [], strays = 0, strayByDay = {};
+  for (var j = 1; j < (grid || []).length; j++) {
+    var ri = rowIso[j - 1];
+    if (!ri || ri === best) rows.push(grid[j]);
+    else { strays++; strayByDay[ri] = (strayByDay[ri] || 0) + 1; }
+  }
+  return { dateIso: best, rows: rows, strays: strays, strayByDay: strayByDay, counts: counts, total: total };
+}
+
+/**
  * PIPE-3: the calendar days of the source grid's call START times (col C,
  * the column every engine decodes with simulateSplitCol2), most common first.
- * Accepts the display shapes the DQE build accepts: "M/D/YYYY ..." and ISO.
- * Pure -- unit-tested.
+ * Since ST2 a view over rawGridDay_ (one date rule). Pure -- unit-tested.
  */
 function sourceCallDateCounts_(grid) {
-  const counts = {};
-  let total = 0;
-  for (let i = 1; i < (grid || []).length; i++) {
-    const v = String((grid[i] || [])[2] == null ? '' : grid[i][2]).trim();
-    if (!v) continue;
-    const datePart = v.split(/\s+/)[0];
-    let iso = null;
-    const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) iso = m[1] + '-' + m[2] + '-' + m[3];
-    else {
-      const p = datePart.split('/');
-      if (p.length === 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) && /^\d+$/.test(p[2])) {
-        const y = p[2].length === 2 ? 2000 + Number(p[2]) : Number(p[2]);
-        iso = y + '-' + ('0' + Number(p[0])).slice(-2) + '-' + ('0' + Number(p[1])).slice(-2);
-      }
-    }
-    if (!iso) continue;
-    counts[iso] = (counts[iso] || 0) + 1;
-    total++;
-  }
-  const days = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || (a < b ? -1 : 1); });
-  return { counts: counts, total: total, days: days };
+  var d = rawGridDay_(grid);
+  var days = Object.keys(d.counts).sort(function (a, b) { return d.counts[b] - d.counts[a] || (a < b ? -1 : 1); });
+  return { counts: d.counts, total: d.total, days: days };
 }
 
 /**
@@ -3299,7 +3374,14 @@ function processPendingImports_() {
     const s0 = Date.now();
     last = processNewImport(false, iso, false, null, null, { noAlert: true, noFailureEmail: prior > 0 });
     // PIPE-7 (owner 2026-10-13, option A): see pendingImportPerCallCatchUp_.
-    const perCallSettled = (last === 'ALREADY IN HISTORY') ? pendingImportPerCallCatchUp_(iso) : true;
+    // F7: + the steps that run AFTER the sheet writes (Direct, the CDR/QCD/DQE
+    // Neon mirrors) -- see pendingImportDerivedCatchUp_. Both always run.
+    let perCallSettled = true;
+    if (last === 'ALREADY IN HISTORY') {
+      const perCallOk = pendingImportPerCallCatchUp_(iso);
+      const derivedOk = pendingImportDerivedCatchUp_(iso);
+      perCallSettled = perCallOk && derivedOk;
+    }
     lastMs = Date.now() - s0;
     done.push(iso + '=' + String(last).split(' ')[0]);
     if (String(last).indexOf('ERROR') === 0) {
@@ -3314,7 +3396,8 @@ function processPendingImports_() {
       // (and the same park after PENDING_IMPORT_MAX_ATTEMPTS_) as a failed import.
       failedThisRun[iso] = true;
       fails[iso] = { n: prior + 1, at: new Date().toISOString(),
-                     err: 'per-call capture not completed for an already-imported date (PIPE-7): Neon unreachable or a write failed' };
+                     err: 'catch-up not completed for an already-imported date (PIPE-7 / F7): per-call capture, '
+                       + 'Direct Call History or a Neon mirror -- Neon unreachable or a write failed' };
       failsChanged = true;
       if (fails[iso].n >= PENDING_IMPORT_MAX_ATTEMPTS_) pendingImportLogParked_(iso, fails[iso]);
       continue;
@@ -3399,6 +3482,320 @@ function pendingImportPerCallCatchUp_(iso) {
   run('inbound', typeof backfillInboundCalls === 'function' ? backfillInboundCalls : null);
   run('outbound', typeof backfillOutboundCalls === 'function' ? backfillOutboundCalls : null);
   return settled;
+}
+
+/**
+ * F7 (broad-scan 2026-10-14): PIPE-7's sibling. A daily run killed after the
+ * five history-sheet writes (the hanging-connect kill skips every catch and
+ * finally) also never ran the steps that FOLLOW them: Direct Call History
+ * (block 6, which ALREADY IN HISTORY does not check) and the CDR / QCD / DQE
+ * Neon mirrors (or, in deferred mode, the Neon Mirror Queue row). The catch-up
+ * then remembered the date, so with DQE_READ_SOURCE=neon a reachable-but-empty
+ * read served a real-looking zero day, and Direct lost the date for good once
+ * its Call_Legs tab aged out. For an already-imported date this now:
+ *   - rebuilds Direct Call History from the Call_Legs tab when that sheet has
+ *     no rows for the date (a refresh-in-window write; Raw Data is untouched,
+ *     so the cdr-report safety-net build cannot see a re-staged old date);
+ *   - deferred mode: queues the date (the drain mirrors all five types);
+ *     inline mode: re-mirrors CDR / QCD / DQE from their sheets -- each an
+ *     authoritative per-date replace, so a date Neon already holds is rewritten
+ *     with identical rows. Skipped when NEON_HOST is unset (nothing to mirror to).
+ * Returns false when any step could not finish, so the caller keeps the date
+ * pending (the PIPE-7 ledger, which parks it after PENDING_IMPORT_MAX_ATTEMPTS_).
+ */
+function pendingImportDerivedCatchUp_(iso) {
+  let targetSS;
+  try {
+    targetSS = SpreadsheetApp.openById(getTargetSsId_());
+  } catch (e) {
+    console.warn('pendingImportDerivedCatchUp_: target workbook unavailable for ' + iso + ': ' + (e && e.message ? e.message : e));
+    return false;
+  }
+  const p = String(iso).split('-');
+  const dateObj = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);   // processNewImport's own shape
+  const directOk = pendingImportDirectCatchUp_(targetSS, iso, dateObj);
+  const mirrorOk = pendingImportMirrorCatchUp_(targetSS, iso, dateObj);
+  return directOk && mirrorOk;
+}
+
+/** F7: rebuild Direct Call History for `iso` when the sheet has no rows for it. */
+function pendingImportDirectCatchUp_(targetSS, iso, dateObj) {
+  if (typeof buildDirectCallFromRaw_ !== 'function') return true;
+  if (checkHistoryForDate(targetSS, 'Direct Call History', dateObj, 2)) return true;
+  const configSheet = targetSS.getSheetByName('DO NOT EDIT!');
+  const legsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Call_Legs_' + iso);
+  if (!configSheet || !legsSheet) return true;   // the daily block skips on the same terms
+  const t0 = Date.now();
+  try {
+    // The tab's DISPLAY grid is what Raw Data holds after staging (header row
+    // included), read as display strings exactly as block 6 reads Raw Data.
+    const grid = legsSheet.getDataRange().getDisplayValues().map(function (r) { return r.slice(0, MAX_COLS); });
+    if (grid.length < 2) return true;
+    const dres = buildDirectCallFromRaw_(targetSS, grid, configSheet, { expectedDate: dateObj });
+    const neon = dres.neon || {};
+    const neonStr = neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok');
+    logPipelineHealthWithFallback_(targetSS, {
+      step: 'processIntegratedHistory:Direct', status: 'success', rows: dres.wrote,
+      durationMs: Date.now() - t0,
+      notes: dateObj.toDateString() + ' | catch-up (F7): the import that wrote this date stopped before Direct'
+        + ' | neon=' + neonStr,
+    });
+    if (neonStr !== 'ok') {
+      let configured = false;
+      try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { /* unconfigured */ }
+      if (neonStr === 'error' || configured) {
+        logPipelineHealthWithFallback_(targetSS, {
+          step: 'processIntegratedHistory:Direct:neon', status: 'failure', rows: null,
+          durationMs: Date.now() - t0,
+          notes: dateObj.toDateString() + ' | catch-up (F7): direct_call_history mirror ' + neonStr
+            + (neon.error ? (': ' + neon.error) : '') + ' -- sheet wrote ' + dres.wrote
+            + ' rows; run backfillDirectCallToNeon once fixed.',
+        });
+      }
+    }
+    return true;
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    console.warn('pendingImportDirectCatchUp_: Direct for ' + iso + ' failed: ' + msg);
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'processIntegratedHistory:Direct', status: 'failure', rows: null,
+        durationMs: Date.now() - t0, notes: dateObj.toDateString() + ' | catch-up (F7): ' + msg,
+      });
+    } catch (logErr) { /* best-effort */ }
+    return false;
+  }
+}
+
+/** F7: the CDR / QCD / DQE Neon mirrors for `iso` (deferred: queue the date). */
+function pendingImportMirrorCatchUp_(targetSS, iso, dateObj) {
+  if (typeof getNeonMirrorMode_ !== 'function') return true;
+  if (getNeonMirrorMode_() === 'deferred') {
+    return (typeof enqueueNeonMirror_ === 'function') ? enqueueNeonMirror_(targetSS, dateObj) !== false : true;
+  }
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { /* unconfigured */ }
+  if (!configured) return true;
+  // Failure rows reuse the inline path's FAILURE-ONLY names (L7 / F4), so the
+  // Health page and PipelineWatch read them exactly as a failed daily mirror.
+  const steps = [
+    ['processIntegratedHistory:CDR:neon', typeof mirrorCdrForDate_ === 'function' ? mirrorCdrForDate_ : null],
+    ['processIntegratedHistory:QCD:neon', typeof mirrorQcdForDate_ === 'function' ? mirrorQcdForDate_ : null],
+    ['buildDQE:neon',                     typeof mirrorDqeForDate_ === 'function' ? mirrorDqeForDate_ : null],
+  ];
+  let settled = true;
+  steps.forEach(function (st) {
+    if (!st[1]) return;
+    const t0 = Date.now();
+    let why = '';
+    try {
+      const res = st[1](targetSS, iso);
+      if (res && res.unreachable) why = 'Neon unreachable';
+      else console.log('pendingImportMirrorCatchUp_: ' + st[0] + ' ' + iso + ' mirrored ' + ((res && res.rows) || 0) + ' row(s).');
+    } catch (e) {
+      why = (e && e.message) ? e.message : String(e);
+    }
+    if (!why) return;
+    settled = false;
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: st[0], status: 'failure', rows: null, durationMs: Date.now() - t0,
+        notes: dateObj.toDateString() + ' | catch-up (F7): ' + why
+          + ' -- the date stays pending and the catch-up retries it',
+      });
+    } catch (logErr) { /* best-effort */ }
+  });
+  return settled;
+}
+
+// ── G1 (broad-scan 259, E3): make one date whole ───────────────────────────
+//
+// Getting one date complete used to take four or five tools (Operator State
+// #56): Manual Export, the per-call backfills, backfillDirectCallToNeon, the
+// mirror re-runs -- each with its own idea of what was already there.
+// makeDateWhole (CDR Tools -> Make a date whole…) does it in one action,
+// against a per-date LEDGER of what exists:
+//   - the Call_Legs_<date> source tab;
+//   - the date's rows in the six history sheets (CDR, Q Path, QCD, CSR
+//     Transfer, DQE, Direct Call History);
+//   - the date's row count in the six Neon tables (call_history_dept,
+//     qcd_history, dqe_history, direct_call_history, inbound_calls,
+//     outbound_calls).
+// It then runs only what is owed, through the paths that already exist:
+//   1. any of the five core sheets lacks the date -> a NON-force import of
+//      that date (processNewImport with ignoreLastSheets): its per-sheet exists
+//      checks write only the missing sheets, and nothing is deleted. Like
+//      Manual Export it re-stages Raw Data with that date. Without the
+//      Call_Legs tab those sheets cannot be rebuilt -- the report says so;
+//   2. always: the PIPE-7 per-call catch-up (each backfill skips a date Neon
+//      already holds) and the F7 derived catch-up (Direct when the sheet still
+//      lacks the date; the CDR / QCD / DQE mirrors, an authoritative per-date
+//      replace, or the deferred queue).
+// The ledger is read again afterwards and both are reported. A date that ends
+// whole leaves the PIPE-1 failure ledger (un-parking it) and is remembered.
+// Never forces, so it can never delete a sheet's rows; a date whose existing
+// rows are WRONG still needs Manual Export (force).
+
+var DATE_WHOLE_SHEETS_ = [
+  ['CDR Historical Data', 3], ['Q Path Historical Data', 3], ['QCD Historical Data', 3],
+  ['CSR Transfer Historical Data', 3], ['DQE Historical Data', 2], ['Direct Call History', 2],
+];
+var DATE_WHOLE_CORE_SHEETS_ = 5;   // the first five: what processNewImport's "already in history" checks
+var DATE_WHOLE_NEON_TABLES_ = ['call_history_dept', 'qcd_history', 'dqe_history',
+  'direct_call_history', 'inbound_calls', 'outbound_calls'];
+
+/**
+ * G1: the per-date ledger. { iso, source, sheets: {name: bool}, neon: {table:
+ * count|null} | null, neonNote }. `neon` is null with a note when Neon is not
+ * configured or unreachable; a table that cannot be counted reads null.
+ */
+function dateWholeLedger_(targetSS, iso) {
+  const p = String(iso).split('-');
+  const dateObj = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+  const out = { iso: iso, source: false, sheets: {}, neon: null, neonNote: '' };
+  try { out.source = !!SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Call_Legs_' + iso); }
+  catch (e) { out.source = false; }
+  DATE_WHOLE_SHEETS_.forEach(function (s) { out.sheets[s[0]] = checkHistoryForDate(targetSS, s[0], dateObj, s[1]); });
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { /* unconfigured */ }
+  if (!configured) { out.neonNote = 'not configured (NEON_HOST unset)'; return out; }
+  const conn = (typeof getReachableNeonConn_ === 'function') ? getReachableNeonConn_() : null;
+  if (!conn) { out.neonNote = 'unreachable'; return out; }
+  out.neon = {};
+  try {
+    DATE_WHOLE_NEON_TABLES_.forEach(function (t) {
+      try {
+        const st = conn.prepareStatement('SELECT count(*) AS n FROM ' + t + ' WHERE call_date = ?::date');
+        st.setQueryTimeout(30);
+        st.setString(1, iso);
+        const rs = st.executeQuery();
+        out.neon[t] = rs.next() ? Number(rs.getString('n')) || 0 : 0;
+        rs.close(); st.close();
+      } catch (te) {
+        out.neon[t] = null;
+        console.warn('dateWholeLedger_: could not count ' + t + ' for ' + iso + ': ' + (te && te.message ? te.message : te));
+      }
+    });
+  } finally {
+    try { conn.close(); } catch (ce) { /* closed */ }
+  }
+  return out;
+}
+
+/**
+ * G1: PURE. What a ledger still owes: sheets lacking the date, and Neon tables
+ * with no rows for a date whose sheet (or, for per-call, Call_Legs tab) has
+ * them. `opts.perCallChecked`: the per-call backfill just ran clean, so a zero
+ * there is a quiet day, not a gap (before it ran, it reads "or a quiet day").
+ * `opts.deferred`: the sheet-sourced mirrors were QUEUED, so their zeros are
+ * not owed by this run (the drain fills them).
+ */
+function dateWholeOwed_(ledger, opts) {
+  opts = opts || {};
+  const owed = [];
+  DATE_WHOLE_SHEETS_.forEach(function (s) { if (!ledger.sheets[s[0]]) owed.push('sheet: ' + s[0]); });
+  if (ledger.neon) {
+    const fromSheet = { call_history_dept: 'CDR Historical Data', qcd_history: 'QCD Historical Data',
+                        dqe_history: 'DQE Historical Data', direct_call_history: 'Direct Call History' };
+    DATE_WHOLE_NEON_TABLES_.forEach(function (t) {
+      const n = ledger.neon[t];
+      if (n === null || n === undefined) { owed.push('neon: ' + t + ' (could not count)'); return; }
+      if (n > 0) return;
+      if (fromSheet[t]) { if (ledger.sheets[fromSheet[t]] && !opts.deferred) owed.push('neon: ' + t); }
+      else if (ledger.source && !opts.perCallChecked) owed.push('neon: ' + t + ' (or a quiet day)');
+    });
+  }
+  return owed;
+}
+
+/** G1: PURE. The before/after report, one line per ledger item. */
+function dateWholeReport_(before, after, actions, owedOpts) {
+  const yes = function (b) { return b ? 'yes' : 'NO'; };
+  const lines = ['Make ' + before.iso + ' whole', '',
+    'Call_Legs_' + before.iso + ' tab: ' + yes(before.source)
+      + (before.source ? '' : ' (sheets cannot be rebuilt without it -- recreate it, Operator State #43 / #56)'), ''];
+  lines.push('Sheet                           before -> after');
+  DATE_WHOLE_SHEETS_.forEach(function (s) {
+    lines.push('  ' + (s[0] + '                              ').slice(0, 30) + yes(before.sheets[s[0]]) + ' -> ' + yes(after.sheets[s[0]]));
+  });
+  lines.push('');
+  if (!after.neon) {
+    lines.push('Neon: ' + (after.neonNote || 'not checked'));
+  } else {
+    lines.push('Neon rows for the date           before -> after');
+    DATE_WHOLE_NEON_TABLES_.forEach(function (t) {
+      const b = before.neon ? before.neon[t] : null, a = after.neon[t];
+      const fmt = function (n) { return (n === null || n === undefined) ? '?' : String(n); };
+      lines.push('  ' + (t + '                              ').slice(0, 30) + fmt(b) + ' -> ' + fmt(a));
+    });
+  }
+  lines.push('', 'Done: ' + (actions.length ? actions.join('; ') : 'nothing was owed'));
+  if (owedOpts && owedOpts.deferred) lines.push('Deferred mirror mode: the Neon mirrors were QUEUED; the drain fills them (Operator State #22).');
+  const owed = dateWholeOwed_(after, owedOpts);
+  lines.push(owed.length ? 'Still owed: ' + owed.join(', ') : 'The date is whole.');
+  return lines.join('\n');
+}
+
+/**
+ * G1: the action. Caller holds the script lock. Returns { before, after,
+ * actions, whole, report }.
+ */
+function makeDateWhole_(iso, targetSS) {
+  targetSS = targetSS || SpreadsheetApp.openById(getTargetSsId_());
+  const before = dateWholeLedger_(targetSS, iso);
+  const actions = [];
+  let settled = true;
+  const coreMissing = DATE_WHOLE_SHEETS_.slice(0, DATE_WHOLE_CORE_SHEETS_)
+    .filter(function (s) { return !before.sheets[s[0]]; }).map(function (s) { return s[0]; });
+  if (coreMissing.length) {
+    if (!before.source) {
+      actions.push('could NOT rebuild ' + coreMissing.join(', ') + ' (no Call_Legs tab)');
+      settled = false;
+    } else {
+      const outcome = processNewImport(false, iso, true, targetSS, null,
+        { noAlert: true, ignoreLastSheets: true });
+      actions.push('imported the missing sheets (' + coreMissing.join(', ') + '): ' + outcome);
+      if (String(outcome).indexOf('ERROR') === 0) settled = false;
+    }
+  }
+  const perCallOk = pendingImportPerCallCatchUp_(iso);
+  if (perCallOk) actions.push('per-call capture checked');
+  else { actions.push('per-call capture NOT completed (see its Pipeline Health row)'); settled = false; }
+  if (pendingImportDerivedCatchUp_(iso)) actions.push('Direct checked and CDR / QCD / DQE re-mirrored');
+  else { actions.push('Direct or a mirror NOT completed (see its Pipeline Health row)'); settled = false; }
+  const after = dateWholeLedger_(targetSS, iso);
+  const owedOpts = { perCallChecked: perCallOk && before.source,
+                     deferred: typeof getNeonMirrorMode_ === 'function' && getNeonMirrorMode_() === 'deferred' };
+  const whole = settled && dateWholeOwed_(after, owedOpts).length === 0;
+  if (whole) {
+    const fails = pendingImportFailsRead_();
+    if (fails[iso]) { delete fails[iso]; pendingImportFailsWrite_(fails); actions.push('cleared from the failed-import ledger'); }
+    if (after.source) rememberProcessedSheet_('Call_Legs_' + iso);
+  }
+  const report = dateWholeReport_(before, after, actions, owedOpts);
+  console.log(report);
+  return { before: before, after: after, actions: actions, whole: whole, report: report };
+}
+
+/** G1: CDR Tools -> "Make a date whole…" (also editor-runnable). */
+function makeDateWhole() {
+  const ui = SpreadsheetApp.getUi();
+  const res = ui.prompt('Make a date whole',
+    'Enter the date (YYYY-MM-DD). Runs only what that date is missing -- sheets, Direct, per-call, '
+    + 'Neon mirrors -- and never deletes rows.', ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  const iso = res.getResponseText().trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { ui.alert('Invalid format. Use YYYY-MM-DD.'); return; }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    ui.alert('⚠️ Busy', 'Another import is running. Please wait a moment and try again.', ui.ButtonSet.OK);
+    return;
+  }
+  let out;
+  try { out = makeDateWhole_(iso); }
+  catch (e) { ui.alert('❌ Make a date whole failed', String(e && e.message ? e.message : e), ui.ButtonSet.OK); return; }
+  finally { lock.releaseLock(); }
+  ui.alert(out.whole ? '✅ ' + iso + ' is whole' : '⚠️ ' + iso + ' is not whole yet', out.report, ui.ButtonSet.OK);
 }
 
 /** Adds a sheet name to the `lastSheets` memo (same cap as processNewImport's F2 write). */
@@ -4201,8 +4598,47 @@ csrNames.forEach(agentName => {
     transPct: colK_Values,
     totalCalls: colL_Values,
     totalTransferred: colM_Values,
-    queues: colN_X_Values
+    queues: colN_X_Values,
+    // F63: the order the queue counts were computed in (QCDR Output N1:X1),
+    // so the writers can check it against the history sheet's own header.
+    headers: queueHeadersRaw.map(h => String(h == null ? '' : h).trim())
   };
+}
+
+/**
+ * F63 (broad-scan 2026-10-14). PURE. The per-queue counts are computed in
+ * QCDR Output N1:X1 order and written positionally into CSR Transfer
+ * Historical Data H..R, whose OWN header row labels them on the dashboard
+ * (Data.gs reads the labels from the sheet). A reorder on either side
+ * silently files every count under the wrong queue. The two headers need not
+ * be spelled alike -- the history row may carry friendlier labels -- so the
+ * check fires only on a PROVABLE reorder: a source queue name that appears in
+ * the history header at a DIFFERENT position. Returns the displaced names
+ * ('' when none).
+ */
+function csrQueueHeaderReorder_(sourceHeaders, historyHeaders) {
+  var norm = function (v) { return String(v == null ? '' : v).trim().toLowerCase(); };
+  var hist = (historyHeaders || []).map(norm);
+  var bad = [];
+  (sourceHeaders || []).forEach(function (h, i) {
+    var n = norm(h);
+    if (!n) return;
+    var j = hist.indexOf(n);
+    if (j !== -1 && j !== i) bad.push('"' + String(h).trim() + '" is column ' + (i + 1) + ' in QCDR Output N1:X1 but column '
+      + (j + 1) + ' in the history header');
+  });
+  return bad.join('; ');
+}
+
+/** F63. The reorder check against the live sheet's H1:R1; '' when it cannot be read. */
+function csrHistoryHeaderProblem_(csrHD, sourceHeaders) {
+  try {
+    if (!csrHD || !sourceHeaders || !sourceHeaders.length || csrHD.getMaxColumns() < 18) return '';
+    var hist = csrHD.getRange(1, 8, 1, 11).getDisplayValues()[0];
+    var bad = csrQueueHeaderReorder_(sourceHeaders, hist);
+    return bad ? ('CSR Transfer per-queue columns are out of order -- ' + bad
+      + '. Not written: re-align the two headers, then re-import the date.') : '';
+  } catch (e) { return ''; }
 }
 
 /**
@@ -4302,34 +4738,20 @@ function repairCsrTransferForRawDataDate() {
 /**
  * ING-7. Pure: the majority date of a Raw Data display grid and the grid with
  * only that date's legs kept (header + undated rows kept). Returns
- * { dateIso, rows, strays }.
+ * { dateIso, rows, strays }. Since ST2 a view over rawGridDay_.
  */
 function csrRepairDayRows_(rawDisp) {
-  var counts = {}, isoMemo = {};
-  var rowIso = [];
-  for (var i = 1; i < rawDisp.length; i++) {
-    var ds = String((rawDisp[i] && rawDisp[i][2]) || '').split(' ')[0];
-    if (!(ds in isoMemo)) isoMemo[ds] = ds ? parseDateForNeon(ds) : null;
-    var iso = isoMemo[ds];
-    rowIso.push(iso);
-    if (iso) counts[iso] = (counts[iso] || 0) + 1;
-  }
-  var best = null;
-  Object.keys(counts).forEach(function (k) {
-    if (best === null || counts[k] > counts[best] || (counts[k] === counts[best] && k > best)) best = k;
-  });
-  var rows = [rawDisp[0]], strays = 0;
-  for (var j = 1; j < rawDisp.length; j++) {
-    var ri = rowIso[j - 1];
-    if (!ri || ri === best) rows.push(rawDisp[j]); else strays++;
-  }
-  return { dateIso: best, rows: rows, strays: strays };
+  var d = rawGridDay_(rawDisp);
+  return { dateIso: d.dateIso, rows: d.rows, strays: d.strays };
 }
 
 /** ING-7: the repair body, under the caller's lock. */
 function csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, strays) {
   // Recompute with the FIXED engine (calcCsrReport reads the display grid).
   var csrData = calcCsrReport(rawDisp, ss);
+  // F63: H..R are overwritten positionally here too -- same refusal.
+  var headerProblem = csrHistoryHeaderProblem_(csrHD, csrData.headers);
+  if (headerProblem) throw new Error('repairCsrTransfer: ' + headerProblem);
   var byAgent = {};
   csrData.agents.forEach(function (a, idx) {
     byAgent[String(a[0]).trim().toLowerCase()] = {

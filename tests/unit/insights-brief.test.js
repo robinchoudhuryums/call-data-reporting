@@ -237,3 +237,141 @@ test('queue health carries each queue\'s wait verdict from the real QCD monthly 
   assert.equal(by.A_Q_Tiny.ratio, 2);
   assert.equal(by.A_Q_Tiny.flagged, false, '3 calls a day is too few to judge');
 });
+
+// Broad-scan 2026-10-14, Batch 5 (F20-F24, F28): the brief's honesty fixes.
+const cbFor = extractFn(F, 'insBriefCallbackFor_');
+const lookCount = extractFn(F, 'insBriefLookCount_');
+const queueVisible = extractFn(F, 'insBriefQueueVisible_');
+function srcOf(file) { return fs.readFileSync(path.join(DIR, file), 'utf8'); }
+function bodyOf(file, name) {
+  const text = srcOf(file);
+  const start = text.indexOf('function ' + name + '(');
+  assert.notEqual(start, -1, name + ' is missing from ' + file);
+  const open = text.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') { depth--; if (depth === 0) return text.slice(start, i + 1); }
+  }
+  return text.slice(start);
+}
+
+test('F20: the brief quotes callbacks ONLY for the window on screen', function () {
+  const store = { key: 'CSR|2026-10-01|2026-10-10', data: { callback: { rate: 0.5 } } };
+  assert.deepEqual(cbFor(store, 'CSR|2026-10-01|2026-10-10'), { rate: 0.5 });
+  assert.equal(cbFor(store, 'Sales|2026-10-01|2026-10-10'), null, 'another dept\'s payload is never quoted');
+  assert.equal(cbFor(store, 'CSR|2026-10-02|2026-10-10'), null, 'nor another window\'s');
+  assert.equal(cbFor(store, null), null, 'no current window -> nothing');
+  assert.equal(cbFor({ key: 'k', data: null }, 'k'), null);
+  const brief = bodyOf(F, 'insRenderBrief_');
+  assert.match(brief, /insBriefCallbackFor_\(INS_CB_, cbw \? \[cbw\.department, cbw\.from, cbw\.to\]\.join\('\|'\) : null\)/,
+    'the key is built exactly as insCbSync_ builds INS_CB_.key');
+  assert.match(bodyOf(F, 'insCbSync_'), /var key = \[w\.department, w\.from, w\.to\]\.join\('\|'\);/);
+  assert.match(bodyOf(F, 'insCbRender_'), /insRenderBrief_\(insLastData\)/, 'a callbacks load repaints the brief');
+});
+
+test('F23: the "need a look" count includes the top line\'s own tier', function () {
+  assert.equal(lookCount([{ tier: 'green' }, { tier: 'grey' }], 'red'), 1, 'a red pill is never "Nothing needs a look"');
+  assert.equal(lookCount([{ tier: 'amber' }], 'amber'), 2);
+  assert.equal(lookCount([{ tier: 'red' }, { tier: 'green' }], 'green'), 1);
+  assert.equal(lookCount([], 'grey'), 0);
+  assert.match(bodyOf(F, 'insRenderBrief_'), /var look = insBriefLookCount_\(ranked, hasCalls \? topTier : 'grey'\);/);
+});
+
+test('F28: no Queue health row while the Queue health fold is hidden', function () {
+  assert.equal(queueVisible(null), false);
+  assert.equal(queueVisible({}), false, 'a payload with no totals, error or unmapped flag hides the fold');
+  assert.equal(queueVisible({ totals: {} }), true);
+  assert.equal(queueVisible({ error: 'x' }), true);
+  assert.equal(queueVisible({ unmapped: true }), true);
+  const brief = bodyOf(F, 'insRenderBrief_');
+  assert.match(brief, /if \(insBriefQueueVisible_\(data\.queueHealth\)\) \{[\s\S]{0,80}rows\.unshift\(Object\.assign\(\{ key: 'queue' \}/);
+  assert.doesNotMatch(brief, /var rows = \[\s*Object\.assign\(\{ key: 'queue' \}/, 'the queue row is never unconditional again');
+  // The rule mirrors the render's own hide test: error and unmapped show a
+  // note, otherwise no totals hides the fold.
+  assert.match(bodyOf(F, 'insRenderQueueHealth_'), /if \(!qh \|\| !qh\.totals\) \{ wrap\.style\.display = 'none'; insQhFoldSync_\(''\); return; \}/);
+});
+
+test('F24: a brief jump to Callbacks switches direction only FROM Inbound', function () {
+  const go = bodyOf(F, 'insBriefGo_');
+  assert.match(go, /var fromInbound = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) === 'in' : true;/);
+  assert.match(go, /if \(key === 'callbacks' && fromInbound\) \{\s*var out = document\.querySelector\('#dept-dir-switch \[data-dir="out"\]'\);/);
+  assert.match(go, /\(key === 'callbacks' && fromInbound\) \? 150 : 0/);
+});
+
+test('F22: the headline\'s "behind" count uses the R18 benchmark the chips use', function () {
+  const head = bodyOf('script-4-nav.html', 'insHeadline_');
+  assert.match(head, /const teamPctH = insTeamBenchmarkPct_\(data\);/);
+  assert.doesNotMatch(head, /const teamPctH = Number\(\(t\.pct \|\| \{\}\)\.val\)/);
+});
+
+test('F21: entering or leaving View-as redraws the Insights trend (its shading is admin-only)', function () {
+  assert.match(bodyOf('script-3-overview.html', 'applyViewAs_'),
+    /if \(typeof insLastData !== 'undefined' && insLastData && typeof insDrawTrendChart_ === 'function'\) \{\s*try \{ insDrawTrendChart_\(insLastData\); \}/);
+});
+
+// G2 (broad-scan 259, E1): the brief labels a top line judged against the
+// company DEFAULT answer target, and the Alerts -> Answer targets editor lists
+// which depts ride that default -- under 80/10 a red pill is the default's
+// verdict, not one an admin chose for the dept.
+test('G2: answerStdFor_ marks a dept with no own target as isDefault; the brief labels it', function () {
+  const nav = fs.readFileSync(path.join(DIR, 'script-4-nav.html'), 'utf8');
+  const src = function (name) {
+    const start = nav.indexOf('function ' + name + '(');
+    const open = nav.indexOf('{', start);
+    let depth = 0;
+    for (let i = open; i < nav.length; i++) {
+      if (nav[i] === '{') depth++;
+      else if (nav[i] === '}' && --depth === 0) return nav.slice(start, i + 1);
+    }
+    return '';
+  };
+  const win = { __ANSWER_TARGETS__: { global: 80 }, __STANDARDS__: { answer: { band: 10, depts: { CSR: { target: 92, band: 2 } } } } };
+  // eslint-disable-next-line no-new-func
+  const stdFor = new Function('window', src('answerTarget_') + '\n' + src('answerStdFor_') + '\nreturn answerStdFor_;')(win);
+  assert.deepEqual(stdFor('CSR'), { target: 92, band: 2, isDefault: false });
+  assert.deepEqual(stdFor('Sales'), { target: 80, band: 10, isDefault: true });
+  assert.equal(stdFor(null).isDefault, true);
+
+  const note = extractFn(F, 'insBriefTargetNote_');
+  assert.equal(note(stdFor('Sales'), true), 'Default 80% target');
+  assert.equal(note(stdFor('CSR'), true), '', 'a dept with its own target gets no label');
+  assert.equal(note(stdFor('Sales'), false), '', 'no calls, no tier to qualify');
+  const brief = fs.readFileSync(path.join(DIR, F), 'utf8');
+  assert.match(brief, /insBriefTargetNote_\(answerStdFor_\(dept\), hasCalls\)/, 'the top line asks the same standard its tier used');
+});
+
+test('G2: the Answer targets editor splits the depts into own-target and company-default', function () {
+  const cov = extractFn('script-7-admin.html', 'alAnswerTargetCoverage_');
+  const c = cov(['CSR', 'Sales', 'PAP', 'Power'], { CSR: { target: 92, band: 2 }, Power: { target: 85 }, Ghost: { target: 70 } });
+  assert.deepEqual(c.own, ['CSR 92% (amber 2)', 'Power 85%']);
+  assert.deepEqual(c.defaults, ['Sales', 'PAP'], 'an override for a dept not on the roster is not counted');
+  assert.deepEqual(cov([], null), { own: [], defaults: [] });
+  const admin = fs.readFileSync(path.join(DIR, 'script-7-admin.html'), 'utf8');
+  assert.match(admin, /alRenderAnswerTargets_\(data && data\.answerTargets, data && data\.departments\)/,
+    'the init render hands the editor the roster dept list');
+});
+
+test('G3: the Access modal\'s pending-welcome bar wording follows the flag', function () {
+  const txt = extractFn('script-7-admin.html', 'acPendingWelcomeText_');
+  assert.equal(txt(0, true), '');
+  assert.match(txt(1, false), /^1 staged agent has no welcome email yet\. Once agent sign-in is on/);
+  assert.match(txt(3, true), /^3 staged agents have not been sent a welcome email yet\. Agent sign-in is on/);
+});
+
+// E5 / ST4 (broad-scan 259): the brief's Callbacks row exists only while the
+// Outbound view is available, which View-as decides. Entering a preview
+// re-renders the brief WITHOUT the row; leaving it on the same dept and window
+// re-rendered nothing, so the admin's brief stayed without it (found by
+// tools/ui-harness/drive-crossstate.js). applyViewAs_ now re-renders the brief
+// from the held payload, after the data-view-as attribute is set -- the order
+// matters, since obAllowed_ reads the switch's computed display.
+test('E5: applyViewAs_ re-renders the brief from the held payload, after the view-as attribute changes', function () {
+  const src = fs.readFileSync(path.join(DIR, 'script-3-overview.html'), 'utf8');
+  const start = src.indexOf('function applyViewAs_(');
+  const body = src.slice(start, src.indexOf('\n  }\n', start));
+  const attr = body.lastIndexOf("document.body.removeAttribute('data-view-as')");
+  const render = body.indexOf('insRenderBrief_(insLastData)');
+  assert.ok(render !== -1, 'applyViewAs_ no longer re-renders the brief');
+  assert.ok(attr !== -1 && render > attr, 'the brief must re-render AFTER the view-as attribute is set or removed');
+});

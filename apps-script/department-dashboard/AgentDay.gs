@@ -487,6 +487,29 @@ function agentDayFetchCapture_(agentName, dateIso) {
 }
 
 /**
+ * F29 (broad-scan 2026-10-14): narrow the DQE rows to ONE department's queues
+ * the way My Department narrows the row the panel hangs from
+ * (applyQueueSplitToRows_, a no-op unless QUEUE_SPLIT_SCOPE=dept). Without it
+ * the day header and the strip showed whole-day, all-queue figures under a row
+ * narrowed to the dept's queues -- the panel contradicting its own row.
+ * `reqDept` (the row's group / the page's dept) is honoured only when it is
+ * one of the agent's roster homes AND passes the viewer's own dept gate;
+ * otherwise the entitled home agentDayAuthorize_ chose. An unrostered agent
+ * (admin-only) has no dept to narrow to.
+ */
+function agentDayNarrow_(rows, scope, reqDept, narrowSlots) {
+  if (!rows || !rows.length || !scope || scope.unrostered || !scope.dept) return rows;
+  if (typeof applyQueueSplitToRows_ !== 'function') return rows;
+  var dept = scope.dept;
+  var want = String(reqDept || '').trim();
+  if (want && want !== dept && (scope.homes || []).indexOf(want) !== -1) {
+    try { assertDeptAccess_(scope.user, want); dept = want; } catch (e) { /* keep the entitled home */ }
+  }
+  applyQueueSplitToRows_(rows, dept, { narrowSlots: !!narrowSlots });
+  return rows;
+}
+
+/**
  * Public: one agent's day.
  *
  * NOT cached (see the PHI note in the header). The two Neon queries are
@@ -514,8 +537,9 @@ function getAgentDay(req) {
   // list is then free to be a subset without the header lying.
   try {
     var rows = (typeof agentDayFetchDalRows_ === 'function')
-      ? agentDayFetchDalRows_(scope.date, scope.date)
+      ? agentDayFetchDalRows_(scope.date, scope.date, { agentName: scope.agentName })
       : [];
+    agentDayNarrow_(rows, scope, req && req.department, true);   // F29: + the missed-ring timeline
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].agent !== scope.agentName) continue;   // INV-04 exact
       out.day = {
@@ -598,9 +622,23 @@ function agentDayDegradedReason_(meta, neonAvailable) {
   return 'not-captured';
 }
 
-/** DAL fetch honoring DQE_READ_SOURCE with the documented fallback (B-2/LM2). */
-function agentDayFetchDalRows_(fromIso, toIso) {
-  var opts = { includeMissedDetail: true };
+/**
+ * DAL fetch honoring DQE_READ_SOURCE with the documented fallback (B-2/LM2).
+ *
+ * F33 (broad-scan 2026-10-14): `fopts.agentName` asks the Neon read for that
+ * one agent's rows (the IR / Insights `agents` filter) instead of every
+ * agent's, and `fopts.missedDetail` is false for the strip, which uses only
+ * the totals -- each panel open used to pull every agent's slots + abandoned
+ * detail for the whole window. The agent filter is DROPPED while queue-split
+ * narrowing is on: applyQueueSplitToRows_ judges a window's fail-open (B-1)
+ * from the dept's ROSTER rows, so narrowing one agent's rows alone could fall
+ * open where My Department narrows, and the panel would disagree with its row.
+ */
+function agentDayFetchDalRows_(fromIso, toIso, fopts) {
+  fopts = fopts || {};
+  var opts = { includeMissedDetail: fopts.missedDetail !== false };
+  var narrowing = (typeof getQueueSplitScope_ === 'function') && getQueueSplitScope_() === 'dept';
+  if (fopts.agentName && !narrowing) opts.agents = [fopts.agentName];
   var src = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   if (src === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     var rows = neonFetchDqeRows_(fromIso, toIso, opts);
@@ -721,7 +759,7 @@ function agentDayFetchOutboundByDay_(agentName, fromIso, toIso) {
 
 /**
  * Public: the agent's active days in a window, newest first, capped at 31.
- *   getAgentDayStrip({ agentName, from, to })
+ *   getAgentDayStrip({ agentName, from, to, department? })   (department: F29)
  *     -> { meta: {...}, days: [{ date, rung, answered, missed, outbound,
  *                                outboundConnected, outboundCaptured }] }
  */
@@ -736,7 +774,8 @@ function getAgentDayStrip(req) {
   assertReportRangeCap_(from, to);   // SEC-1
   var scope = agentDayAuthorize_(agentName);
 
-  var dqe = agentDayFetchDalRows_(from, to);
+  var dqe = agentDayFetchDalRows_(from, to, { agentName: scope.agentName, missedDetail: false });   // F33
+  agentDayNarrow_(dqe, scope, req && req.department, false);   // F29
   var ob = agentDayFetchOutboundByDay_(scope.agentName, from, to);
   var folded = agentDayStripDays_(dqe, scope.agentName, ob.rows, {
     outboundAvailable: ob.available, captureStart: AGENT_DAY_OUTBOUND_CAPTURE_START_,

@@ -1675,6 +1675,12 @@ function backfillInboundCalls(fromIso, toIso, force) {
 
   var processed = 0, skippedDone = 0, skippedEmpty = 0, totalRecords = 0;
   var failures = [];
+  // F8 (broad-scan 2026-10-14): dates WRITTEN without phone hashes (no
+  // HMAC_SECRET). PC-10 made that a failure on the inline daily path only, so
+  // every path that drains through here -- the deferred mirror, the PIPE-7
+  // catch-up, an editor run -- logged a plain success while callbacks and
+  // insurer labels went blind for those dates.
+  var hashlessDates = [];
   var stoppedEarly = null;
   var unreachable = false;   // F1: set when a per-date write reports Neon unreachable
 
@@ -1724,6 +1730,7 @@ function backfillInboundCalls(fromIso, toIso, force) {
       } else {
         processed++;
         totalRecords += (res && res.inserted) || 0;
+        if (res && res.hashless) hashlessDates.push(c.iso);   // F8
       }
     } catch (e) {
       failures.push(c.iso + ' (' + ((e && e.message) ? e.message : e) + ')');
@@ -1733,6 +1740,8 @@ function backfillInboundCalls(fromIso, toIso, force) {
   var summary = 'backfillInboundCalls: ' + processed + ' date(s) written ('
     + totalRecords + ' records), ' + skippedDone + ' already mirrored, '
     + skippedEmpty + ' empty'
+    + (hashlessDates.length ? ', WRITTEN WITHOUT phone hashes: ' + hashlessDates.join(', ')
+       + ' (HMAC_SECRET is not set in cdr-import -- callbacks and insurer labels are blind; set it, Operator State #17, then re-run with force)' : '')
     + (failures.length ? ', FAILED: ' + failures.join(', ') : '')
     + (stoppedEarly ? ' | STOPPED: ' + stoppedEarly : ' | complete')
     + ' | ' + Math.round((Date.now() - startMs) / 1000) + 's';
@@ -1743,7 +1752,7 @@ function backfillInboundCalls(fromIso, toIso, force) {
     if (typeof logPipelineHealthWithFallback_ === 'function') {
       logPipelineHealthWithFallback_(null, {
         step:       'inboundBackfill',
-        status:     failures.length ? 'failure' : 'success',
+        status:     (failures.length || hashlessDates.length) ? 'failure' : 'success',   // F8
         rows:       totalRecords,
         durationMs: Date.now() - startMs,
         notes:      summary.slice('backfillInboundCalls: '.length, 500),
@@ -1764,6 +1773,7 @@ function backfillInboundCalls(fromIso, toIso, force) {
     unreachable: unreachable,
     stoppedEarly: stoppedEarly,
     sheetsFound: candidates.length,   // IMP-11
+    hashless:    hashlessDates.length,   // F8: dates written without phone hashes
   };
 }
 

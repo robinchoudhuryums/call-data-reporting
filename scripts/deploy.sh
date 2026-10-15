@@ -96,8 +96,18 @@ fi
 # dirties BuildStamp.gs on purpose.
 LAST_FILE="$(cd "$DIR" && pwd)/.last-deployed"   # absolute: the script cd's later
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+# F41 (broad-scan 2026-10-14): "dirty" means dirty WHERE THE PUSH READS -- the
+# project's clasp rootDir (`.clasp.json`, relative to its own dir; the
+# dashboard's is apps-script/department-dashboard). It was repo-wide, so a
+# `.cycle/STATE.md` or docs edit stamped +dirty, defeated the redundant-deploy
+# guard and made STRICT_DEPLOY refuse a push that shipped only committed code.
+# An unreadable .clasp.json falls back to the project dir.
+# PUSH_SCOPE-BEGIN
+PUSH_SCOPE="$(node -e 'const p=require("path"),f=require("fs");const[r,d]=process.argv.slice(1);let rd=".";try{rd=JSON.parse(f.readFileSync(p.join(r,d,".clasp.json"),"utf8")).rootDir||"."}catch(e){}process.stdout.write(p.relative(r,p.resolve(r,d,rd))||".")' "$ROOT_ABS" "$DIR" 2>/dev/null || true)"
+[ -n "$PUSH_SCOPE" ] || PUSH_SCOPE="$DIR"
+# PUSH_SCOPE-END
 TREE_DIRTY=""
-[ -n "$(git status --porcelain 2>/dev/null)" ] && TREE_DIRTY="1"
+[ -n "$(git status --porcelain -- "$PUSH_SCOPE" 2>/dev/null)" ] && TREE_DIRTY="1"
 GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 
 # DEP-3 (broad-scan 2026-10-01): say so, loudly, when this deploy ships code
@@ -111,8 +121,8 @@ GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 # -- which `clasp push` DOES ship -- was "+dirty" here and clean in the stamp.
 DEPLOY_WARN=""
 if [ -n "$TREE_DIRTY" ]; then
-  echo "warn: the working tree is DIRTY -- this deploy ships uncommitted edits (stamp: +dirty):" >&2
-  git status --short 2>/dev/null | head -n 10 >&2
+  echo "warn: the working tree is DIRTY under $PUSH_SCOPE -- this deploy ships uncommitted edits (stamp: +dirty):" >&2
+  git status --short -- "$PUSH_SCOPE" 2>/dev/null | head -n 10 >&2
   DEPLOY_WARN="1"
 fi
 if [ "$GIT_BRANCH" != "main" ]; then
@@ -198,6 +208,50 @@ node "$ROOT_ABS/scripts/check-remote-orphans.mjs" "$DIR" || exit 1
 # never stays dirty and the stamp exists only in the pushed project. The
 # Health page's 'build-stamp' row renders whatever got pushed, which makes a
 # bare `clasp push -f` self-reporting: it ships the placeholder.
+# F40: the INV-16 pair's content hash (8 hex) for one project dir; '' if unreadable.
+inv16_hash_() {
+  local d="$1" h
+  if command -v sha256sum >/dev/null 2>&1; then
+    h="$(cat "$d/neonWrite.js" "$d/buildDQEHistoricalData.js" 2>/dev/null | sha256sum | cut -c1-8)"
+  else
+    h="$(cat "$d/neonWrite.js" "$d/buildDQEHistoricalData.js" 2>/dev/null | shasum -a 256 | cut -c1-8)"
+  fi
+  [ -f "$d/neonWrite.js" ] && [ -f "$d/buildDQEHistoricalData.js" ] && printf '%s' "$h"
+}
+# G4 (broad-scan 259, E3): the content hash (8 hex) of one project's PUSHED
+# code -- every .gs / .js / .html / appsscript.json in its (flat) folder,
+# sorted, name + bytes, EXCLUDING its build-stamp file (rewritten per push).
+# '' if the folder is missing. Every stamp carries all three projects' hashes
+# as this checkout has them, so the Health page's deploy-currency row can tell
+# a project whose deployed code differs from what the NEWEST deploy saw.
+project_tree_hash_() {
+  local d="$1"
+  [ -d "$d" ] || return 0
+  ( cd "$d" && find . -maxdepth 1 -type f \( -name '*.gs' -o -name '*.js' -o -name '*.html' -o -name 'appsscript.json' \) \
+      ! -name 'BuildStamp.gs' ! -name 'buildStamp.js' | LC_ALL=C sort | while IFS= read -r f; do
+        printf '%s\n' "$f"; cat "$f"; done ) \
+    | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } | cut -c1-8
+}
+# F40: deploying ONE sibling while the other's last deploy shipped a
+# different copy of the INV-16 pair leaves that project's DQE build on the
+# old rules. Say so before the push (the Health page's inv16-skew row shows
+# it after). Only the other project's .last-deployed from THIS checkout is
+# known; without one, there is nothing to compare.
+case "$DIR" in
+  apps-script/cdr-import|apps-script/cdr-report)
+    if [ "$DIR" = "apps-script/cdr-import" ]; then OTHER_DIR="apps-script/cdr-report"; else OTHER_DIR="apps-script/cdr-import"; fi
+    OTHER_LAST="$(head -n 1 "$OTHER_DIR/.last-deployed" 2>/dev/null | cut -d+ -f1)"
+    if [ -n "$OTHER_LAST" ]; then
+      OTHER_PAIR="$(git show "$OTHER_LAST:$OTHER_DIR/neonWrite.js" 2>/dev/null; git show "$OTHER_LAST:$OTHER_DIR/buildDQEHistoricalData.js" 2>/dev/null)"
+      THIS_PAIR="$(cat "$DIR/neonWrite.js" "$DIR/buildDQEHistoricalData.js" 2>/dev/null)"
+      if [ -n "$OTHER_PAIR" ] && [ "$OTHER_PAIR" != "$THIS_PAIR" ]; then
+        echo "warn: $OTHER_DIR was last deployed (from this checkout) at ${OTHER_LAST:0:7} with a DIFFERENT copy of the INV-16 pair" >&2
+        echo "      (neonWrite.js / buildDQEHistoricalData.js) -- deploy it too, or its DQE build keeps the old rules." >&2
+      fi
+    fi
+    ;;
+esac
+
 # S6: the stamp now covers the SIBLING projects too -- they hold half the
 # INV-16 duplicated files and a bare `clasp push -f` from their directories
 # previously left no trace of having bypassed the CI gates. Per-project
@@ -217,6 +271,25 @@ if [ -n "$STAMP_FILE" ] && [ -f "$STAMP_FILE" ]; then
   # AFTER every gate had passed. Keep the branch to a safe character set.
   STAMP_BRANCH="$(printf '%s' "$GIT_BRANCH" | tr -c 'A-Za-z0-9._/@+-' '_')"
   STAMP="deploy.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) | git ${GIT_DESC} | ${STAMP_BRANCH}"
+  # F40 (broad-scan 2026-10-14): a SIBLING stamp also names its project and a
+  # short hash of the INV-16 pair it ships (its own neonWrite.js +
+  # buildDQEHistoricalData.js, as pushed). Both projects log their stamp on
+  # Pipeline Health, so the Health page's inv16-skew row can see the two
+  # running different copies of the shared DQE rules -- which a deploy of
+  # only one of them after an INV-16 edit leaves behind with no other trace.
+  case "$DIR" in
+    apps-script/cdr-import|apps-script/cdr-report)
+      INV16_HASH="$(inv16_hash_ "$DIR")"
+      [ -n "$INV16_HASH" ] && STAMP="${STAMP} | ${DIR#apps-script/} inv16 ${INV16_HASH}"
+      ;;
+  esac
+  # G4: every project's tree hash, as THIS checkout holds it (see project_tree_hash_).
+  TREES_D="$(project_tree_hash_ "$ROOT_ABS/apps-script/department-dashboard")"
+  TREES_I="$(project_tree_hash_ "$ROOT_ABS/apps-script/cdr-import")"
+  TREES_R="$(project_tree_hash_ "$ROOT_ABS/apps-script/cdr-report")"
+  if [ -n "$TREES_D" ] && [ -n "$TREES_I" ] && [ -n "$TREES_R" ]; then
+    STAMP="${STAMP} | trees d=${TREES_D} i=${TREES_I} r=${TREES_R}"
+  fi
   # Restore the file no matter how this script exits. DEP-2: from a COPY taken
   # just before the write, not `git checkout` -- that dropped an uncommitted
   # edit to the stamp file and could not restore an untracked one. If even the

@@ -669,6 +669,24 @@ test('vetting: zero abandons is INCONCLUSIVE (the Batch-6 gate contract) — par
   assert.ok(!/^ok/.test(out.result));
 });
 
+// F43 (broad-scan 2026-10-14): Leg B certifies the callback join only
+// through a called-back pair. With none -- a quiet window, or a hash-format
+// drift that makes the join match nothing -- every not-called-back re-check
+// passes the same equality, and the old verdict green-lit the 6c release of a
+// report that would show a 0% callback rate.
+test('F43: zero called-back pairs is INCONCLUSIVE, never ok -- the join was never verified', function () {
+  const noPairs = JSON.stringify([
+    { a_id: 'ab2', a_date: '2026-08-18', a_start: '09:00:00', o_id: null, o_date: null, o_start: null },
+    { a_id: 'ab3', a_date: '2026-08-17', a_start: '10:00:00', o_id: null, o_date: null, o_start: null },
+  ]);
+  installVetStubs_(25, 25, makeVetConn_(noPairs));
+  const out = JSON.parse(JSON.stringify(h.call('runOutboundVettingCheck')));
+  assert.match(out.result, /^INCONCLUSIVE \(0 called-back pairs among the 2 most recent abandons/);
+  assert.match(out.result, /HMAC_SECRET/);
+  assert.equal(out.sampledCalledBack, 0);
+  assert.equal(h.state.props.OUTBOUND_VETTING_FROM, '2026-08-06', 'INCONCLUSIVE keeps the window for the re-run');
+});
+
 test('vetting: a failed sample re-verification is a MISMATCH naming the call', function () {
   const conn = makeVetConn_(VET_PAIRS_, { pairVerifyCount: 0 });   // pair no longer verifies
   installVetStubs_(25, 25, conn);
@@ -958,6 +976,36 @@ test('(5) the email RECOMPUTES through the shared resolver — it cannot drift f
     'recompute, never trust a client-supplied payload');
   assert.match(OB_SRC, /logReportUsage_\('outbound:email'/,
     'a send is a usage event (INV-01 append-only carve-out)');
+});
+
+test('F31: the email carries the caveats the web report shows -- unmapped, sheet fallback, lagging data', function () {
+  assert.deepEqual(Array.from(h.ctx.obEmailCaveats_({ meta: {}, callback: {} })), [], 'a clean report emails no caveat');
+  const all = Array.from(h.ctx.obEmailCaveats_({
+    meta: { unmapped: true, department: 'Billing', fallbackSource: 'sheet', fallbackThrough: '2026-10-12' },
+    callback: { dataLagging: true, dataThrough: '2026-10-11' } }));
+  assert.equal(all.length, 3);
+  assert.match(all[0], /No queues are mapped for Billing/);
+  assert.match(all[1], /Outbound Calls tab \(through 2026-10-12\)/);
+  assert.match(all[2], /loaded through 2026-10-11/);
+  assert.equal(h.ctx.obEmailCaveats_({ meta: {}, callback: { dataLagging: true } }).length, 0,
+    'lagging with no date to name says nothing (the client rule)');
+  // The flag: one helper, applied on BOTH paths -- the email calls the
+  // uncached compute directly, which never set it.
+  const saved = h.ctx.inboundQueuesForDept_;
+  try {
+    h.ctx.inboundQueuesForDept_ = function () { return []; };
+    assert.equal(h.ctx.obMarkUnmapped_({ dept: 'Billing', companyView: false }, { meta: {} }).meta.unmapped, true);
+    assert.equal(h.ctx.obMarkUnmapped_({ dept: '', companyView: true }, { meta: {} }).meta.unmapped, undefined,
+      'the company view is never unmapped');
+    h.ctx.inboundQueuesForDept_ = function () { return ['A_Q_X']; };
+    assert.equal(h.ctx.obMarkUnmapped_({ dept: 'CSR', companyView: false }, { meta: {} }).meta.unmapped, undefined);
+  } finally { h.ctx.inboundQueuesForDept_ = saved; }
+  const send = OB_SRC.slice(OB_SRC.indexOf('function sendOutboundReportEmail('));
+  assert.match(send, /obMarkUnmapped_\(scope, data\);[\s\S]{0,120}const caveats = obEmailCaveats_\(data\);/);
+  assert.match(send, /ekCalloutHtml_\('Read this first', caveats\.map\(ekEsc_\)\.join\('<br>'\), 'warn'\)/,
+    'rendered first, escaped, in the warn callout');
+  assert.match(OB_SRC, /const data = computeOutboundReport_\(scope\);\s*data\.meta\.computeMs[\s\S]{0,200}obMarkUnmapped_\(scope, data\);/,
+    'the web path keeps the flag');
 });
 
 test('(5) the delay table stays QUIET when there is nothing to distribute', function () {

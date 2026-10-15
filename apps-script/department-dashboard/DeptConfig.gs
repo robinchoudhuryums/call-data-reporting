@@ -485,7 +485,11 @@ function getFinalDeptLabels_(dept) {
  *    neither claims falls back to its entry queue, and nothing double-counts.
  *  - A ROSTER read that throws lands in the catch and returns the EMPTY union:
  *    every label looks unmapped and the on-hold arm takes its entry-queue
- *    fallback -- attribution degrades rather than a dept losing calls.
+ *    fallback -- attribution degrades rather than a dept losing calls. That
+ *    is single-counted only because the consumers (inboundDeptPredicate_ /
+ *    ihRowInDept_) turn their LABEL arm off on an empty union (F61,
+ *    broad-scan 2026-10-14): with this dept's full label list still live, the
+ *    call matched both its label's dept and its entry queue's.
  * The unsafe shape is a union PARTIAL against FULL per-dept lists, which would
  * double-count; neither path produces it.
  */
@@ -1223,28 +1227,17 @@ function compareDeptConfigSources() {
   if (neon === null) {
     Logger.log('compareDeptConfigSources: NEON UNREACHABLE -- no comparison performed. '
       + 'Do NOT flip CONFIG_SOURCE on this result.');
-    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
-             missingInNeon: [], missingInSheet: [], mismatched: [] };
+    return { clean: false, compared: 0, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [], duplicates: [] };
   }
   const key = function (r) {
     return JSON.stringify([r.qcdQueues, r.overviewParent, r.teamAvgExcludes,
       r.queueExtOverrides, r.active, r.notes, r.inboundAliases,
       r.finalDeptLabels]);
   };
-  const sMap = {}, nMap = {};
-  sheet.forEach(function (r) { sMap[r.dept] = r; });
-  neon.forEach(function (r) { nMap[r.dept] = r; });
-  const missingInNeon = [], missingInSheet = [], mismatched = [];
-  sheet.forEach(function (r) {
-    if (!nMap[r.dept]) missingInNeon.push(r.dept);
-    else if (key(r) !== key(nMap[r.dept])) mismatched.push(r.dept);
-  });
-  neon.forEach(function (r) { if (!sMap[r.dept]) missingInSheet.push(r.dept); });
-  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
-  Logger.log('compareDeptConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
-    clean ? 'PARITY CLEAN' : 'DIFFERENCES FOUND',
-    JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
-  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
+  // F42: duplicates fail the gate; the verdict counts what it compared.
+  const entries = function (rows) { return rows.map(function (r) { return [r.dept, key(r)]; }); };
+  return configSourceCompare_('compareDeptConfigSources', entries(sheet), entries(neon));
 }
 
 /**

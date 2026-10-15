@@ -292,3 +292,297 @@ test('PIPE-7: a normal import does not run the per-call backfills (the import ca
     h.ctx.processNewImport = saved.imp; h.ctx.backfillInboundCalls = saved.ib; h.ctx.backfillOutboundCalls = saved.ob;
   }
 });
+
+// F7 (broad-scan 2026-10-14): PIPE-7's sibling. The same killed run also never
+// ran the steps AFTER the sheet writes -- Direct Call History (which ALREADY IN
+// HISTORY does not check) and the CDR / QCD / DQE Neon mirrors (deferred mode:
+// the queue row). The catch-up now does them for an already-imported date too.
+const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+
+function withStubs(stubs, fn) {
+  const saved = {};
+  Object.keys(stubs).forEach(function (k) { saved[k] = h.ctx[k]; h.ctx[k] = stubs[k]; });
+  try { return fn(); } finally { Object.keys(stubs).forEach(function (k) { h.ctx[k] = saved[k]; }); }
+}
+
+test('F7: a derived step that cannot finish keeps the date pending (ledgered), never remembered', function () {
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-23']);
+  withStubs({
+    processNewImport: function () { return 'ALREADY IN HISTORY'; },
+    backfillInboundCalls: function () { return { inserted: 0, failures: 0, unreachable: false }; },
+    backfillOutboundCalls: function () { return { inserted: 0, failures: 0, unreachable: false }; },
+    pendingImportDerivedCatchUp_: function () { return false; },
+  }, function () { h.call('processPendingImports_'); });
+  assert.ok(!h.state.props.lastSheets || JSON.parse(h.state.props.lastSheets).indexOf('Call_Legs_2026-09-23') === -1,
+    'not remembered while Direct / a mirror is still owed');
+  const fails = JSON.parse(h.state.props[h.ctx.PENDING_IMPORT_FAILS_PROP_] || '{}');
+  assert.match(fails['2026-09-23'].err, /F7/);
+});
+
+test('F7: the derived catch-up runs even when the per-call catch-up failed (both always run)', function () {
+  h.state.props = {};
+  h.state.spreadsheet = fakeSource(['Call_Legs_2026-09-23']);
+  let derived = 0;
+  withStubs({
+    processNewImport: function () { return 'ALREADY IN HISTORY'; },
+    backfillInboundCalls: function () { return { inserted: 0, failures: 0, unreachable: true }; },
+    backfillOutboundCalls: function () { return { inserted: 0, failures: 0, unreachable: false }; },
+    pendingImportDerivedCatchUp_: function () { derived++; return true; },
+  }, function () { h.call('processPendingImports_'); });
+  assert.equal(derived, 1);
+});
+
+function directSS(withLegs) {
+  const sheets = { 'DO NOT EDIT!': [['Name']] };
+  if (withLegs) sheets['Call_Legs_2026-09-23'] = [['H1', 'H2', 'DATE'], ['a', 'b', '09/23/2026 09:00:00']];
+  return makeFakeSpreadsheet({ sheets: sheets });
+}
+
+test('F7: Direct is rebuilt from the Call_Legs tab only when Direct Call History lacks the date', function () {
+  const builds = [];
+  const rows = [];
+  h.state.spreadsheet = directSS(true);
+  const ss = h.state.spreadsheet;
+  const dateObj = new Date(2026, 8, 23, 12, 0, 0);
+  withStubs({
+    checkHistoryForDate: function () { return false; },
+    buildDirectCallFromRaw_: function (tss, grid, cfg, opts) {
+      builds.push({ rows: grid.length, header: grid[0][0], expected: opts.expectedDate.getDate() });
+      return { wrote: 4, neon: {}, meta: {} };
+    },
+    logPipelineHealthWithFallback_: function (s, ev) { rows.push(ev); },
+  }, function () {
+    assert.equal(h.call('pendingImportDirectCatchUp_', ss, '2026-09-23', dateObj), true);
+  });
+  assert.deepEqual(builds, [{ rows: 2, header: 'H1', expected: 23 }],
+    'the tab\'s grid, header row included, pinned to the date (the P-4 guard)');
+  assert.equal(rows[0].step, 'processIntegratedHistory:Direct');
+  assert.equal(rows[0].status, 'success');
+  assert.match(rows[0].notes, /catch-up \(F7\)/);
+
+  builds.length = 0;
+  withStubs({
+    checkHistoryForDate: function () { return true; },
+    buildDirectCallFromRaw_: function () { builds.push(1); return { wrote: 0, neon: {}, meta: {} }; },
+  }, function () {
+    assert.equal(h.call('pendingImportDirectCatchUp_', ss, '2026-09-23', dateObj), true);
+  });
+  assert.equal(builds.length, 0, 'a date Direct already holds is not rebuilt');
+});
+
+test('F7: a Direct rebuild that throws is a FAILURE row and keeps the date pending', function () {
+  const rows = [];
+  h.state.spreadsheet = directSS(true);
+  withStubs({
+    checkHistoryForDate: function () { return false; },
+    buildDirectCallFromRaw_: function () { throw new Error('Raw Data derives date 2026-09-22'); },
+    logPipelineHealthWithFallback_: function (s, ev) { rows.push(ev); },
+  }, function () {
+    assert.equal(h.call('pendingImportDirectCatchUp_', h.state.spreadsheet, '2026-09-23', new Date(2026, 8, 23, 12)), false);
+  });
+  assert.equal(rows[0].status, 'failure');
+  assert.match(rows[0].notes, /derives date 2026-09-22/);
+});
+
+test('F7: mirrors -- deferred mode queues the date; inline re-mirrors CDR/QCD/DQE; unconfigured skips', function () {
+  const ss = makeFakeSpreadsheet({ sheets: {} });
+  const dateObj = new Date(2026, 8, 23, 12);
+  const calls = [];
+  const rows = [];
+  const mirror = function (label, res) { return function (s, iso) { calls.push(label + ' ' + iso); return res; }; };
+  const base = {
+    mirrorCdrForDate_: mirror('CDR', { rows: 3 }),
+    mirrorQcdForDate_: mirror('QCD', { unreachable: true, rows: 0 }),
+    mirrorDqeForDate_: mirror('DQE', { rows: 9 }),
+    logPipelineHealthWithFallback_: function (s, ev) { rows.push(ev); },
+  };
+
+  // Deferred: the queue row is the record; its result decides.
+  let queued = 0;
+  withStubs(Object.assign({}, base, {
+    getNeonMirrorMode_: function () { return 'deferred'; },
+    enqueueNeonMirror_: function () { queued++; return true; },
+  }), function () {
+    assert.equal(h.call('pendingImportMirrorCatchUp_', ss, '2026-09-23', dateObj), true);
+  });
+  assert.equal(queued, 1);
+  assert.equal(calls.length, 0, 'deferred mode does not mirror inline');
+  withStubs(Object.assign({}, base, {
+    getNeonMirrorMode_: function () { return 'deferred'; },
+    enqueueNeonMirror_: function () { return false; },
+  }), function () {
+    assert.equal(h.call('pendingImportMirrorCatchUp_', ss, '2026-09-23', dateObj), false, 'a lost enqueue keeps the date pending');
+  });
+
+  // Inline, NEON_HOST unset: nothing to mirror to.
+  h.state.props = {};
+  withStubs(Object.assign({}, base, { getNeonMirrorMode_: function () { return 'inline'; } }), function () {
+    assert.equal(h.call('pendingImportMirrorCatchUp_', ss, '2026-09-23', dateObj), true);
+  });
+  assert.equal(calls.length, 0);
+
+  // Inline, configured: all three run; the unreachable one fails its row and the date.
+  h.state.props = { NEON_HOST: 'db.example' };
+  withStubs(Object.assign({}, base, { getNeonMirrorMode_: function () { return 'inline'; } }), function () {
+    assert.equal(h.call('pendingImportMirrorCatchUp_', ss, '2026-09-23', dateObj), false);
+  });
+  assert.deepEqual(calls, ['CDR 2026-09-23', 'QCD 2026-09-23', 'DQE 2026-09-23'], 'every step gets its turn');
+  assert.equal(rows.length, 1, 'only the failed step logs (the inline FAILURE-ONLY names)');
+  assert.equal(rows[0].step, 'processIntegratedHistory:QCD:neon');
+  assert.equal(rows[0].status, 'failure');
+  assert.match(rows[0].notes, /catch-up \(F7\): Neon unreachable/);
+  h.state.props = {};
+});
+
+// G1 (broad-scan 259, E3): "make date D whole" -- one action, against a
+// per-date ledger, running only what the date is owed through the existing
+// paths (a NON-force import for missing sheets; the PIPE-7 / F7 catch-ups).
+const G1_ISO = '2026-09-23';
+function g1Workbook(opts) {
+  opts = opts || {};
+  const sheets = {};
+  const withDate = function (name, col) {
+    const header = col === 2 ? ['A', 'Date'] : ['A', 'B', 'Date'];
+    const row = col === 2 ? ['m', '09/23/2026'] : ['m', 'x', '09/23/2026'];
+    sheets[name] = [header, row];
+  };
+  (opts.have || []).forEach(function (n) { withDate(n, /DQE|Direct/.test(n) ? 2 : 3); });
+  if (opts.source !== false) sheets['Call_Legs_' + G1_ISO] = [['h'], ['r']];
+  return makeFakeSpreadsheet({ timeZone: 'America/Mexico_City', sheets: sheets });
+}
+const G1_ALL = ['CDR Historical Data', 'Q Path Historical Data', 'QCD Historical Data',
+  'CSR Transfer Historical Data', 'DQE Historical Data', 'Direct Call History'];
+function fakeCountConn(counts) {
+  return {
+    prepareStatement: function (sql) {
+      const t = /FROM (\w+)/.exec(sql)[1];
+      return { setQueryTimeout: function () {}, setString: function () {},
+        executeQuery: function () {
+          if (counts[t] === 'throw') throw new Error('relation "' + t + '" does not exist');
+          let first = true;
+          return { next: function () { const r = first; first = false; return r; },
+                   getString: function () { return String(counts[t]); }, close: function () {} };
+        }, close: function () {} };
+    },
+    close: function () {},
+  };
+}
+
+test('G1: the ledger reads the source tab, the six sheets and the six Neon counts (or says why not)', function () {
+  h.state.props = {};
+  h.state.spreadsheet = g1Workbook({ have: ['CDR Historical Data', 'DQE Historical Data'] });
+  const off = JSON.parse(JSON.stringify(h.call('dateWholeLedger_', h.state.spreadsheet, G1_ISO)));
+  assert.equal(off.source, true);
+  assert.equal(off.sheets['CDR Historical Data'], true);
+  assert.equal(off.sheets['DQE Historical Data'], true, 'DQE keys on col B');
+  assert.equal(off.sheets['QCD Historical Data'], false);
+  assert.equal(off.neon, null);
+  assert.match(off.neonNote, /not configured/);
+
+  h.state.props = { NEON_HOST: 'x' };
+  withStubs({ getReachableNeonConn_: function () { return null; } }, function () {
+    assert.equal(h.call('dateWholeLedger_', h.state.spreadsheet, G1_ISO).neonNote, 'unreachable');
+  });
+  withStubs({ getReachableNeonConn_: function () {
+    return fakeCountConn({ call_history_dept: 4, qcd_history: 0, dqe_history: 9, direct_call_history: 'throw',
+                           inbound_calls: 12, outbound_calls: 3 });
+  } }, function () {
+    const l = JSON.parse(JSON.stringify(h.call('dateWholeLedger_', h.state.spreadsheet, G1_ISO)));
+    assert.deepEqual(l.neon, { call_history_dept: 4, qcd_history: 0, dqe_history: 9, direct_call_history: null,
+                               inbound_calls: 12, outbound_calls: 3 });
+  });
+});
+
+test('G1: dateWholeOwed_ -- missing sheets, sheet-sourced Neon zeros, and per-call zeros only until the backfill ran', function () {
+  const sheets = {};
+  G1_ALL.forEach(function (n) { sheets[n] = true; });
+  const neon = { call_history_dept: 4, qcd_history: 2, dqe_history: 9, direct_call_history: 5, inbound_calls: 1, outbound_calls: 1 };
+  const owed = function (l, o) { return JSON.parse(JSON.stringify(h.call('dateWholeOwed_', l, o))); };
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: neon }), [], 'a whole date owes nothing');
+  assert.deepEqual(owed({ source: true, sheets: Object.assign({}, sheets, { 'QCD Historical Data': false }),
+    neon: Object.assign({}, neon, { qcd_history: 0 }) }), ['sheet: QCD Historical Data'],
+    'Neon cannot owe QCD rows the sheet does not have');
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: Object.assign({}, neon, { dqe_history: 0 }) }),
+    ['neon: dqe_history']);
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: Object.assign({}, neon, { dqe_history: 0 }) }, { deferred: true }),
+    [], 'deferred mode queued the mirror; the drain owes it, not this run');
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: Object.assign({}, neon, { outbound_calls: 0 }) }),
+    ['neon: outbound_calls (or a quiet day)']);
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: Object.assign({}, neon, { outbound_calls: 0 }) }, { perCallChecked: true }),
+    [], 'after a clean backfill a zero is a quiet day');
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: Object.assign({}, neon, { inbound_calls: null }) }),
+    ['neon: inbound_calls (could not count)']);
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: null }), [], 'Neon off: only the sheets are judged');
+});
+
+test('G1: a date missing core sheets runs ONE non-force import that bypasses lastSheets, then both catch-ups', function () {
+  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_' + G1_ISO]),
+                    PENDING_IMPORT_FAILURES: JSON.stringify({ '2026-09-23': { n: 3, at: 'x', err: 'parked' } }) };
+  h.state.spreadsheet = g1Workbook({ have: ['CDR Historical Data', 'DQE Historical Data'] });
+  const calls = [];
+  withStubs({
+    processNewImport: function (force, iso, silent, ss, cache, opts) {
+      calls.push({ force: force, iso: iso, ignore: !!(opts && opts.ignoreLastSheets), noAlert: !!(opts && opts.noAlert) });
+      return 'DONE: 2s';
+    },
+    pendingImportPerCallCatchUp_: function (iso) { calls.push('percall ' + iso); return true; },
+    pendingImportDerivedCatchUp_: function (iso) { calls.push('derived ' + iso); return true; },
+  }, function () {
+    const out = h.call('makeDateWhole_', G1_ISO, h.state.spreadsheet);
+    assert.match(out.report, /imported the missing sheets \(Q Path Historical Data, QCD Historical Data, CSR Transfer Historical Data\): DONE: 2s/);
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), { force: false, iso: G1_ISO, ignore: true, noAlert: true },
+    'never force -- the per-sheet exists checks write only what is missing');
+  assert.deepEqual(calls.slice(1), ['percall ' + G1_ISO, 'derived ' + G1_ISO]);
+});
+
+test('G1: a whole date leaves the failed-import ledger and is remembered; nothing is imported', function () {
+  h.state.props = { PENDING_IMPORT_FAILURES: JSON.stringify({ '2026-09-23': { n: 3, at: 'x', err: 'parked' }, '2026-09-20': { n: 1 } }) };
+  h.state.spreadsheet = g1Workbook({ have: G1_ALL });
+  let imports = 0;
+  withStubs({
+    processNewImport: function () { imports++; return 'DONE'; },
+    pendingImportPerCallCatchUp_: function () { return true; },
+    pendingImportDerivedCatchUp_: function () { return true; },
+  }, function () {
+    const out = h.call('makeDateWhole_', G1_ISO, h.state.spreadsheet);
+    assert.equal(out.whole, true);
+    assert.match(out.report, /The date is whole\./);
+    assert.match(out.report, /cleared from the failed-import ledger/);
+  });
+  assert.equal(imports, 0, 'every core sheet holds the date: no import');
+  assert.deepEqual(Object.keys(JSON.parse(h.state.props.PENDING_IMPORT_FAILURES)), ['2026-09-20'], 'only this date leaves the ledger');
+  assert.ok(JSON.parse(h.state.props.lastSheets).indexOf('Call_Legs_' + G1_ISO) !== -1);
+});
+
+test('G1: with the Call_Legs tab gone, missing sheets are reported, not imported, and the date is not whole', function () {
+  h.state.props = {};
+  h.state.spreadsheet = g1Workbook({ have: ['CDR Historical Data'], source: false });
+  let imports = 0;
+  withStubs({
+    processNewImport: function () { imports++; return 'DONE'; },
+    pendingImportPerCallCatchUp_: function () { return true; },
+    pendingImportDerivedCatchUp_: function () { return true; },
+  }, function () {
+    const out = h.call('makeDateWhole_', G1_ISO, h.state.spreadsheet);
+    assert.equal(out.whole, false);
+    assert.match(out.report, /could NOT rebuild Q Path Historical Data, QCD Historical Data/);
+    assert.match(out.report, /recreate it, Operator State #43/);
+    assert.match(out.report, /Still owed: sheet: Q Path Historical Data/);
+  });
+  assert.equal(imports, 0);
+  assert.equal(h.state.props.lastSheets, undefined, 'never remembered while owed');
+});
+
+test('G1: processNewImport honours ignoreLastSheets -- a remembered date is otherwise ALREADY PROCESSED', function () {
+  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_' + G1_ISO]) };
+  h.state.spreadsheet = g1Workbook({ have: [] });
+  assert.equal(h.call('processNewImport', false, G1_ISO, true, null, null, { noAlert: true }), 'ALREADY PROCESSED');
+  withStubs({ logPipelineHealthWithFallback_: function () {}, notifyImportFailure_: function () {} }, function () {
+    assert.throws(function () {
+      h.call('processNewImport', false, G1_ISO, true, h.state.spreadsheet, null,
+        { noAlert: true, noFailureEmail: true, ignoreLastSheets: true });
+    }, /Target Sheets missing/, 'the opt-in gets past the memo (this fixture then stops on its missing target sheets)');
+  });
+});

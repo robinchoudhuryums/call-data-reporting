@@ -1886,10 +1886,11 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
  *   { date, perQueue: [{ queue, subDept|null, totalCalls, totalAnswered,
  *     abandoned, abandonedPct, abandonedPctStr, violations }, ...],
  *     totalCalls, totalAnswered, abandoned, abandonedPct,
- *     abandonedPctStr, violations }            // all-queues sum (the
- *                                              // client renders it as a
- *                                              // clearly-labeled total
- *                                              // row, never alone)
+ *     abandonedPctStr, violations }            // OWN-queues sum (P3:
+ *                                              // sub-queue children
+ *                                              // excluded; the all-
+ *                                              // inclusive figure is
+ *                                              // `allTotals`)
  * `subDept` names the child dept owning the queue (e.g. 'PAP') so the
  * client can tag sub-queue rows.
  *
@@ -2317,8 +2318,10 @@ function parseRosterCell_(cellValue) {
 
 /**
  * Resolves the set of queue extensions that belong to this dept, used
- * for queue-scope matching (Data.gs) and sentinel-row matching
- * (MissedCallsReport.gs). Two sources, in priority order:
+ * for queue-scope (floater) matching -- computeSummary_, the IR / Insights
+ * floater pickers, and the Missed report's legacy queue/both scope.
+ * (Sentinel rows are attributed by queue NAME since R6 / R8-1, not by
+ * this set.) Two sources, in priority order:
  *
  *   1. Effective queue-ext override (Dept Config sheet over the
  *      DEPT_QUEUE_EXT_OVERRIDES constant, via

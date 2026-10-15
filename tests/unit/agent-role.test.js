@@ -229,3 +229,122 @@ test('loginNotifyOutcomeKey_: agent key carries the dept, so an agent dept move 
   assert.equal(h.call('loginNotifyOutcomeKey_', { role: 'agent', agentDept: 'CSR' }), 'agent:CSR');
   assert.equal(h.call('loginNotifyOutcomeKey_', { role: 'agent' }), 'agent:?');
 });
+
+// F1 (broad-scan 2026-10-14): the documented go-live order stages agent rows
+// BEFORE AGENT_ROLE_ENABLED is set (Operator State #46). A brand-new staged
+// row used to get the welcome email ("Access: Live now") -- the agent then
+// signed in to access-denied, and the admins got a DENIED notice.
+test('F1: a brand-new AGENT row saved while agent sign-in is OFF sends no welcome and says so', function () {
+  const real = h.ctx.acSendWelcomeEmail_;
+  const sent = [];
+  h.ctx.acSendWelcomeEmail_ = function (email) { sent.push(email); return true; };
+  try {
+    install([]);
+    const off = h.call('saveAccessControlRow', { email: 'a@x.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+    assert.equal(off.welcomed, false);
+    assert.equal(off.welcomeDeferred, true);
+    assert.deepEqual(sent, [], 'no "Live now" email while the role cannot sign in');
+
+    install([], { AGENT_ROLE_ENABLED: 'true' });
+    const on = h.call('saveAccessControlRow', { email: 'b@x.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+    assert.equal(on.welcomeDeferred, false);
+    assert.equal(on.welcomed, true, 'with agent sign-in on, a new agent is welcomed as before');
+    assert.deepEqual(sent, ['b@x.com']);
+
+    install([]);
+    const mgr = h.call('saveAccessControlRow', { email: 'c@x.com', department: 'CSR' });
+    assert.equal(mgr.welcomeDeferred, false, 'a manager grant is never deferred by the agent flag');
+    assert.deepEqual(sent, ['b@x.com', 'c@x.com']);
+  } finally { h.ctx.acSendWelcomeEmail_ = real; }
+});
+
+// G3 (broad-scan 259, E1): a staged agent row's deferred welcome waits on the
+// AGENT_WELCOME_PENDING list; the Access modal lists it, and once agent
+// sign-in is on one admin click sends every pending welcome.
+const J = function (x) { return JSON.parse(JSON.stringify(x)); };   // vm arrays are another realm's
+function withWelcomeSpy(body) {
+  const real = h.ctx.acSendWelcomeEmail_;
+  const sent = [];
+  h.ctx.acSendWelcomeEmail_ = function (email, depts, role) { sent.push([email, depts.join('|'), role]); return true; };
+  try { body(sent); } finally { h.ctx.acSendWelcomeEmail_ = real; }
+}
+
+test('G3: a staged agent joins the pending list; init lists it; removing the agent row drops it', function () {
+  withWelcomeSpy(function () {
+    install([]);
+    const res = h.call('saveAccessControlRow', { email: 'Ana@X.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+    assert.equal(res.welcomeDeferred, true);
+    assert.equal(res.pendingTracked, true);
+    assert.deepEqual(JSON.parse(h.state.props.AGENT_WELCOME_PENDING), ['ana@x.com'], 'stored lowercase');
+    // A re-save is not a new grant: still exactly one entry.
+    h.call('saveAccessControlRow', { email: 'ana@x.com', department: 'CSR', role: 'agent', agentName: 'Devon Park' });
+    assert.deepEqual(J(h.call('getAccessControlInit').pendingWelcomes), ['ana@x.com']);
+    // Removing the address's MANAGER rows leaves the pending agent alone.
+    h.call('saveAccessControlRow', { email: 'ana@x.com', department: 'Sales' });
+    assert.equal(h.call('removeAccessControlRow', { email: 'ana@x.com', role: 'manager' }).removed, 1);
+    assert.deepEqual(J(h.call('getAccessControlInit').pendingWelcomes), ['ana@x.com']);
+    h.call('removeAccessControlRow', { email: 'ana@x.com', role: 'agent' });
+    assert.deepEqual(J(h.call('getAccessControlInit').pendingWelcomes), []);
+    assert.equal(h.state.props.AGENT_WELCOME_PENDING, undefined, 'an empty list deletes the property');
+  });
+});
+
+test('G3: sendPendingAgentWelcomes refuses while sign-in is off or welcomes cannot go out, and never empties the list then', function () {
+  withWelcomeSpy(function (sent) {
+    install([AGENT_ROW], { AGENT_WELCOME_PENDING: '["agent1@x.com"]', DASHBOARD_URL: 'https://x' });
+    assert.throws(function () { h.call('sendPendingAgentWelcomes', {}); }, /Agent sign-in is still OFF/);
+    h.state.props.AGENT_ROLE_ENABLED = 'true';
+    h.state.props.ACCESS_WELCOME_EMAIL = 'false';
+    assert.throws(function () { h.call('sendPendingAgentWelcomes', {}); }, /ACCESS_WELCOME_EMAIL=false/);
+    delete h.state.props.ACCESS_WELCOME_EMAIL;
+    delete h.state.props.DASHBOARD_URL;
+    assert.throws(function () { h.call('sendPendingAgentWelcomes', {}); }, /DASHBOARD_URL/);
+    assert.deepEqual(sent, []);
+    assert.equal(h.state.props.AGENT_WELCOME_PENDING, '["agent1@x.com"]');
+    h.state.userEmail = 'm@x.com';
+    assert.throws(function () { h.call('sendPendingAgentWelcomes', { dismiss: true }); }, /admin/i, 'admin-gated');
+  });
+});
+
+test('G3: once sign-in is on, one call welcomes each pending agent, drops a removed one and keeps a failure', function () {
+  const real = h.ctx.acSendWelcomeEmail_;
+  const sent = [];
+  h.ctx.acSendWelcomeEmail_ = function (email, depts, role) {
+    sent.push([email, depts.join('|'), role]);
+    return email !== 'Fail@x.com';
+  };
+  try {
+    install([AGENT_ROW, ['Fail@x.com', 'Sales', '', 'agent', 'Sam Reed'], ['mgr@x.com', 'CSR', '', 'manager', '']],
+      { AGENT_ROLE_ENABLED: 'true', DASHBOARD_URL: 'https://x',
+        AGENT_WELCOME_PENDING: '["agent1@x.com","gone@x.com","fail@x.com"]' });
+    const r = h.call('sendPendingAgentWelcomes', {});
+    assert.deepEqual(sent, [['agent1@x.com', 'CSR', 'agent'], ['Fail@x.com', 'Sales', 'agent']],
+      'sent to the stored address with its row\'s department; nothing for an address with no agent row');
+    assert.equal(r.sent, 1);
+    assert.equal(r.dropped, 1);
+    assert.deepEqual(J(r.failed), ['fail@x.com']);
+    assert.equal(r.remaining, 1);
+    assert.deepEqual(JSON.parse(h.state.props.AGENT_WELCOME_PENDING), ['fail@x.com'], 'a failed send stays pending');
+    // Dismiss clears without sending.
+    const d = h.call('sendPendingAgentWelcomes', { dismiss: true });
+    assert.equal(d.dropped, 1);
+    assert.equal(sent.length, 2);
+    assert.equal(h.state.props.AGENT_WELCOME_PENDING, undefined);
+  } finally { h.ctx.acSendWelcomeEmail_ = real; }
+});
+
+test('G3: the pending list is capped (the 9 KB property limit) and its parser is tolerant', function () {
+  assert.deepEqual(J(h.call('acParsePendingWelcomes_', 'not json')), []);
+  assert.deepEqual(J(h.call('acParsePendingWelcomes_', '{"a":1}')), []);
+  assert.deepEqual(J(h.call('acParsePendingWelcomes_', '[" A@x.com ","a@x.com","",null,"b@x.com"]')), ['a@x.com', 'b@x.com']);
+  withWelcomeSpy(function () {
+    const full = [];
+    for (let i = 0; i < h.ctx.AC_WELCOME_PENDING_MAX_; i++) full.push('p' + i + '@x.com');
+    install([], { AGENT_WELCOME_PENDING: JSON.stringify(full) });
+    const res = h.call('saveAccessControlRow', { email: 'late@x.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+    assert.equal(res.welcomeDeferred, true);
+    assert.equal(res.pendingTracked, false, 'the modal is told this one is not queued');
+    assert.equal(JSON.parse(h.state.props.AGENT_WELCOME_PENDING).length, h.ctx.AC_WELCOME_PENDING_MAX_);
+    assert.ok(h.state.props.AGENT_WELCOME_PENDING.length < 9000);
+  });
+});

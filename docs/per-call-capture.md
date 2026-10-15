@@ -88,7 +88,12 @@ capture. Rows captured before the deploy are rewritten by the editor-run
 `rewritePerCallAgentNames` -- Operator State #72. `origin_agent` is also never
 taken from a leg whose caller is an EXTERNAL number (PC-7). A run with
 `HMAC_SECRET` unset writes NULL caller hashes, so the step's Pipeline Health
-row is now a `failure` naming it (PC-10, Operator State #17), not a success.
+row is now a `failure` naming it (PC-10, Operator State #17), not a success --
+and since F8 (broad-scan 2026-10-14) so is every path that drains through the
+backfills: the `inboundBackfill` / `outboundBackfill` summary row and the
+deferred drain's `neonMirror:Inbound` / `:Outbound` step (the date still
+completes there -- a retry cannot add hashes). `outbound-calls.test.js`,
+`neon-mirror-tail.test.js`.
 A FORCE `backfillInboundCalls` / `backfillOutboundCalls` with the secret unset
 REFUSES every already-mirrored date (a FAILED entry, which also keeps a
 deferred-mirror date queued) instead of replacing its stored hashes with NULL,
@@ -99,7 +104,10 @@ and still writes a date Neon has never seen (PIPE-15, `outbound-calls.test.js`).
 `backfillOutboundCalls` for that one date (each skips a date Neon already
 holds), and keeps the date pending -- through the import-failure ledger and its
 park -- while Neon is unreachable, instead of remembering it with no per-call
-rows. `pending-imports.test.js`.
+rows. Since F7 it also restores the other post-sheet steps (Direct Call
+History, the CDR / QCD / DQE mirrors -- Operator State #56), and since F9 the
+retention prune keeps a date's tab while its capture is still owed (#43).
+`pending-imports.test.js`, `retention-prune.test.js`.
 
 ### Internal-transfer journey enrichment (R11-N)
 
@@ -585,7 +593,9 @@ partitioning `episodes`; every rate divides by `episodes`. **The window has
 EDGES and the rules run across them (B1/PC-1):** attempts from `from - 3` are
 swept so an in-window retry of an episode opened before the window JOINS it
 (and is not counted), and attempts up to 3 days past `to` join but never open
--- so one-day views add up to the week. Every fetcher reads through ONE span
+a COUNTED episode (with none to join they open a hidden one that only consumes
+its own team's dial, F30) -- so one-day views add up to the week, outcomes
+included. Every fetcher reads through ONE span
 helper (`obEpReadSpan_`); the trailing read is one window deep, a documented
 bound. A dial that closes
 its own team's episode is CONSUMED and never counts as "another team" for the
@@ -646,7 +656,7 @@ from the first attempt, connected or not, and the deciding dial's call id
 drill of that dial is entitled by a THIRD server-re-derived arm
 (`outboundJourneyCallbackEntitled_`, B1/PC-3): the dial went to a caller who
 abandoned one of the manager's dept queues within the callback window before
-it. It applies only once `OUTBOUND_VETTING_GATE_` is released, and it is
+it -- before it to the second, not just on or before its date (F32). It applies only once `OUTBOUND_VETTING_GATE_` is released, and it is
 Neon-only (the list itself is), so the sheet fallback keeps refusing. Rows show
 the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
@@ -916,7 +926,12 @@ another's puts someone else's call on this page; without the `first_agent` arm
 every journey-pruned day renders EMPTY instead of as a disclosed subset.
 (2) The day header comes from the **DQE agent-day row via the DAL**, never from
 counting the per-call list -- that is what lets the list be a subset without the
-header lying, and it makes the figures the SAME ones My Department shows.
+header lying, and it makes the figures the SAME ones My Department shows --
+including under `QUEUE_SPLIT_SCOPE=dept`, since F29 narrows the DAL rows to the
+row's dept the way `computeSummary_` does (the client sends the row's
+`data-dept`; the server honours it only for one of the agent's roster homes the
+viewer owns). F33: the DQE read asks for that one agent (and the strip skips
+missed detail), except while narrowing is on, which needs the roster's rows.
 `agentDayReconcile_` states the gap rather than reconciling it away, and never
 claims `exact` on a degraded day even when the numbers coincide.
 

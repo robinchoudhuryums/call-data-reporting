@@ -217,7 +217,7 @@ test('I-6: processNewImport COMPUTES before the force-delete block (a compute th
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
   const iCompute = src.indexOf('const results = calculateMetricsInMemory(cleanData, configSheet);');
   const iQcd = src.indexOf('results.qcdData = calcQcdReport(cleanData, targetSS);');
-  const iCsr = src.indexOf('results.csrData = calcCsrReport(cleanData, targetSS);');
+  const iCsr = src.indexOf('results.csrData = calcCsrReport(csrDay.rows, targetSS);');   // F64: the day's legs
   const iForce = src.indexOf('const forceDeleted = { qcd: false, csr: false, dqe: false, cdr: false };');   // CR-9 added cdr
   const iSource = src.indexOf('if (sourceData.length < 2) throw new Error("Source sheet empty.");');
   assert.ok(iCompute > 0 && iQcd > 0 && iCsr > 0 && iForce > 0 && iSource > 0, 'anchors present');
@@ -572,4 +572,72 @@ test('PIPE-3: a tab whose calls are mostly on another day refuses; carry-over le
   assert.ok(iCheck < src.indexOf('rawDataSheet.clearContents();'));
   assert.ok(iCheck < src.indexOf('forceDeleted.qcd = !!existsInQCD;'));
   assert.ok(iCheck < src.indexOf('const results = calculateMetricsInMemory(cleanData, configSheet);'));
+});
+
+// F63 (broad-scan 2026-10-14): the per-queue counts are computed in QCDR Output
+// N1:X1 order and written positionally into the history sheet's H..R, whose
+// own header labels them on the dashboard. A reorder on either side filed
+// every count under the wrong queue silently. The check fires only on a
+// PROVABLE reorder -- a name found at another position -- since the history
+// row may legitimately carry friendlier labels.
+test('F63: a reordered CSR history header is detected; differently-spelled labels are not a reorder', function () {
+  const src = ['Field Ops', 'Billing', 'Intake'].concat(new Array(8).fill(''));
+  assert.equal(h.call('csrQueueHeaderReorder_', src, ['field ops', 'billing', 'intake']), '', 'same order (case-insensitive)');
+  assert.equal(h.call('csrQueueHeaderReorder_', src, ['Field Operations', 'Billing Dept', 'New patients']), '',
+    'friendlier labels in the history row are not a reorder');
+  const bad = h.call('csrQueueHeaderReorder_', src, ['Billing', 'Field Ops', 'Intake']);
+  assert.match(bad, /"Field Ops" is column 1 in QCDR Output N1:X1 but column 2 in the history header/);
+  assert.match(bad, /"Billing" is column 2 .* but column 1/);
+});
+
+test('F63: the daily write REFUSES a reordered header and logs why; the repair throws', function () {
+  const appended = [], written = [];
+  const histHeader = ['m', 'w', 'd', 'a', 'p', 't', 'x', 'Billing', 'Field Ops'].concat(new Array(9).fill(''));
+  const csrHD = {
+    getMaxColumns: function () { return 18; },
+    getLastRow: function () { return 1; },
+    getRange: function (r, c, nr, nc) {
+      return { getDisplayValues: function () { return [histHeader.slice(c - 1, c - 1 + nc)]; },
+               setValues: function (v) { written.push(v); } };
+    },
+  };
+  const sheets = { 'CSR Transfer Historical Data': csrHD,
+                   'Pipeline Health': { appendRow: function (r) { appended.push(r); } } };
+  const fakeSS = { getSheetByName: function (n) { return sheets[n] || null; } };
+  const results = { csrData: { agents: [['Ann']], totalCalls: [[10]], queues: [[3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+                               headers: ['Field Ops', 'Billing'].concat(new Array(9).fill('')) } };
+  h.call('processIntegratedHistory', fakeSS, null, results, new Date(2026, 6, 14),
+    true, true, true, false, true, null, false, {});
+  assert.equal(written.length, 0, 'nothing is written under the wrong labels');
+  const fail = appended.filter(function (r) { return r[1] === 'processIntegratedHistory:CSR' && r[2] === 'failure'; });
+  assert.equal(fail.length, 1, 'a failure row names it (the watchdog emails it)');
+  assert.match(String(fail[0].join(' ')), /out of order -- "Field Ops" is column 1/);
+  // In order, it writes as before.
+  histHeader[7] = 'Field Ops'; histHeader[8] = 'Billing';
+  h.call('processIntegratedHistory', fakeSS, null, results, new Date(2026, 6, 14),
+    true, true, true, false, true, null, false, {});
+  assert.equal(written.length, 1);
+  // The repair writes positionally too.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /var csrData = calcCsrReport\(rawDisp, ss\);\s*\/\/ F63[^\n]*\n\s*var headerProblem = csrHistoryHeaderProblem_\(csrHD, csrData\.headers\);\s*if \(headerProblem\) throw/);
+  assert.match(src, /const csrBulkHeaderProblem = \(!skipCSR && results\.csrData\)\s*\? csrHistoryHeaderProblem_\(/,
+    'and so does the bulk path, at queue time');
+});
+
+// F64 (broad-scan 2026-10-14): the daily CSR engine and repairCsrTransfer now
+// read the SAME day-only grid, so a repair of a clean import reproduces it.
+test('F64: the daily CSR compute drops other-day legs exactly as the repair does', function () {
+  const hw = loadGas({ project: 'cdr-import', files: ['neonWrite.js', 'autoImport.js'] });
+  const grid = [['CALL ID', 'LEG', 'START'],
+    ['s', '1', '03/08/2026 10:00:00'],                                   // another day, in working hours
+    ['1', '1', '03/09/2026 10:00:00'], ['2', '1', '03/09/2026 11:00:00']];
+  const day = hw.call('csrRepairDayRows_', grid);
+  assert.equal(day.dateIso, '2026-03-09');
+  assert.equal(day.strays, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(day.rows.map(function (r) { return r[0]; }))), ['CALL ID', '1', '2'],
+    'header kept, the stray dropped');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /const csrDay = csrRepairDayRows_\(cleanData\);\s*results\.csrData = calcCsrReport\(csrDay\.rows, targetSS\);/,
+    'the daily path feeds the engine that grid');
+  assert.match(src, /function csrRepairApply_[\s\S]{0,200}calcCsrReport\(rawDisp, ss\)/, 'as the repair does (rawDisp = split.rows)');
 });

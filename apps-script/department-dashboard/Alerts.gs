@@ -587,7 +587,14 @@ function alertsOutcomeString_(dateIso, results, opts) {
   else if (unlogged) lead = 'FAILED-LOG ' + dateIso + ': ' + unlogged + ' Alert Log row(s) not written (sends stand); ';
   else if (opts.lateLatest) lead = 'LATE ' + dateIso + ': DQE data was still only through ' + opts.lateLatest
     + ' at the ' + ALERTS_CUTOFF_HOUR_ + ':00 cutoff; ';
-  else if (n > 0 && (counts['no-data'] || 0) === n) lead = 'EMPTY ' + dateIso + ': every dept had no data; ';
+  // F19 (broad-scan 2026-10-14): EMPTY is judged over the ASSESSED depts.
+  // `skipped` rows (an inactive dept, a duplicate row, a skip date) are config,
+  // not data -- counting them in the denominator meant one Active=FALSE row
+  // made EMPTY unreachable, so a run where every assessed dept read no-data
+  // was recorded `ok` and Health stayed green.
+  else if (n - (counts.skipped || 0) > 0 && (counts['no-data'] || 0) === n - (counts.skipped || 0)) {
+    lead = 'EMPTY ' + dateIso + ': every dept had no data; ';
+  }
   else lead = 'ok ' + dateIso + ': ';
   var head = lead + n + ' dept(s) assessed, ' + fired + ' fired'
     + (detail ? ' (' + detail + ')' : '');
@@ -894,7 +901,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
 // small per-date subset by its roster. ~14 configured depts previously
 // re-read the whole multi-year sheet 14x per run -- linear-in-history
 // waste that lengthened exactly the lock-hold window OPS-2 cares about.
-let ALERT_DATE_ROWS_MEMO_ = { dateIso: null, rows: null };
+var ALERT_DATE_ROWS_MEMO_ = { dateIso: null, rows: null };   // var, not let: per-execution, and the test harness resets it (F39)
 function alertRowsForDate_(dateIso) {
   if (ALERT_DATE_ROWS_MEMO_.dateIso === dateIso && ALERT_DATE_ROWS_MEMO_.rows) {
     return ALERT_DATE_ROWS_MEMO_.rows;
@@ -1325,12 +1332,13 @@ function backfillAlertConfigToNeon() {
 
 function compareAlertConfigSources() {
   assertAdmin_();
+  // F42: an ORDERED [key, fingerprint] list -- the old key->value map kept the
+  // LAST row of a duplicated key while the live run loop honours the first.
   const norm = function (rows) {
-    const m = {};
-    rows.forEach(function (e) {
-      m[e.department] = JSON.stringify([e.threshold, e.extraRecipients, e.active, e.notes, e.skipDatesRaw]);
+    return rows.map(function (e) {
+      // Case-folded like parseAlertConfigValues_'s OPS-9 duplicate key.
+      return [String(e.department).toLowerCase(), JSON.stringify([e.threshold, e.extraRecipients, e.active, e.notes, e.skipDatesRaw])];
     });
-    return m;
   };
   // Read each source DIRECTLY -- never through the flag-aware reader, and
   // never by flipping the live CONFIG_SOURCE property (F-5). The old
@@ -1345,18 +1353,11 @@ function compareAlertConfigSources() {
   if (neonRaw === null) {
     Logger.log('compareAlertConfigSources: NEON UNREACHABLE -- no comparison performed. '
       + 'Do NOT flip CONFIG_SOURCE on this result.');
-    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
-             missingInNeon: [], missingInSheet: [], mismatched: [] };
+    return { clean: false, compared: 0, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [], duplicates: [] };
   }
   const neonRows = parseAlertConfigValues_(neonRaw);
-  const s = norm(sheetRows), nn = norm(neonRows);
-  const missingInNeon = [], missingInSheet = [], mismatched = [];
-  Object.keys(s).forEach(function (d) { if (!(d in nn)) missingInNeon.push(d); else if (s[d] !== nn[d]) mismatched.push(d); });
-  Object.keys(nn).forEach(function (d) { if (!(d in s)) missingInSheet.push(d); });
-  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
-  Logger.log('compareAlertConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
-    clean ? 'PARITY CLEAN' : 'DIFFERENCES', JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
-  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
+  return configSourceCompare_('compareAlertConfigSources', norm(sheetRows), norm(neonRows));
 }
 
 // -- C3 Alert Config WRITE path (admin editor RPCs) -----------------------

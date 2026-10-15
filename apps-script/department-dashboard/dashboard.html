@@ -2848,6 +2848,8 @@
             <div class="ir-col" style="flex:1 1 260px;">
               <label for="al-dept-targets">Per-dept overrides (<code>Dept=target/band</code>, comma-separated)</label>
               <input type="text" id="al-dept-targets" style="width:100%;" placeholder="CSR=92/2">
+              <!-- G2: which depts have their own target and which ride the company default. -->
+              <p class="al-hint" id="al-dept-targets-coverage" style="margin:6px 0 0;"></p>
             </div>
           </div>
           <div class="al-trigger-actions" style="align-items:flex-end; flex-wrap:wrap; gap:10px; margin-top:8px;">
@@ -3379,6 +3381,8 @@
             <div class="esc-form-actions">
               <button class="btn" id="ac-agent-save-btn" type="button">Add agent</button>
             </div>
+            <!-- G3: staged agents still owed a welcome email (AGENT_WELCOME_PENDING). -->
+            <div class="al-hint" id="ac-agent-pending" role="status" style="display:none; margin-top:10px;"></div>
             <table class="al-config-table" style="margin-top:10px;">
               <thead><tr><th>Email</th><th>Department</th><th>Agent</th><th>Actions</th></tr></thead>
               <tbody id="ac-agent-tbody"></tbody>

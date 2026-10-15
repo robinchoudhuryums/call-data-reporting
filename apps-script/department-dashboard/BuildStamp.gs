@@ -10,8 +10,8 @@
  * HOW IT WORKS: this committed file holds the PLACEHOLDER below.
  * scripts/deploy.sh overwrites it with the real stamp (UTC time + git
  * short SHA + branch) immediately before `clasp push -f` and restores the
- * placeholder from git immediately after (trap-guarded, so a failed push
- * restores too) -- the working tree never stays dirty and the repo never
+ * placeholder from a pre-write copy (DEP-2) immediately after
+ * (trap-guarded, so a failed push restores too) -- the working tree never stays dirty and the repo never
  * churns. The stamp therefore lives ONLY in the pushed Apps Script
  * project, which is exactly where it means something.
  *

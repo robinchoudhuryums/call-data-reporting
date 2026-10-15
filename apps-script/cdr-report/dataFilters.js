@@ -466,7 +466,7 @@ function getExtractionDataJSON() {
   const isDnisRow      = [4, 43].includes(targetRow);
   const isGlobalExcRow = [35, 36, 37, 40].includes(targetRow);   // 34 refuses as a total row (owner ruling)
 
-  // --- Parsing helpers (must stay in sync with CDR Pipeline v31) ---
+  // --- Parsing helpers (must stay in sync with cdr-import/autoImport.js; see the header) ---
   function simulateSplitCol2(val) {
     if (!val) return -1;
     let str   = String(val).trim();

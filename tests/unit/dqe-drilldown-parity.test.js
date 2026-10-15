@@ -44,23 +44,9 @@ const h = loadGas({
 h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
 h.ctx.notifyNeonWriteFailure = function () {};
 
-// Raw Data columns both implementations read (0-indexed display grid).
-function rawRow(o) {
-  const r = new Array(26).fill('');
-  r[0]  = o.callId || '';
-  r[1]  = o.legId != null ? String(o.legId) : '';
-  r[2]  = o.start || '';
-  r[6]  = o.talk || '';
-  r[7]  = o.callTime || '';
-  r[8]  = o.caller || '';
-  r[11] = o.calleeName || '';
-  r[14] = o.parentCall || '';
-  r[22] = o.callerId || '';
-  r[23] = o.missed ? 'Missed' : '';
-  r[24] = o.abandoned ? 'Abandoned' : '';
-  r[25] = o.answered ? 'Answered' : '';
-  return r;
-}
+// Raw Data columns both implementations read -- ONE builder for every mirror
+// suite (ST5, tests/harness/parityDay.js).
+const { rawRow } = require('../harness/parityDay');
 
 const DATE = '03/09/2026';
 const IN   = DATE + ' 7:00:00';    // 25200s PST -- inside [6:30, 15:00)
@@ -93,13 +79,15 @@ function fixtureRows(annaFeedName) {
   ];
 }
 
+function listLen(v) { const t = String(v == null ? '' : v).trim(); return t ? t.split(',').length : 0; }
+
 // Runs the REAL build, then exposes the REAL drill over the same sheet.
 function scenario(opts) {
   opts = opts || {};
   const rosterName = opts.rosterName || 'Anna Smith';
   const ss = makeFakeSpreadsheet({
     sheets: {
-      'Raw Data': [new Array(26).fill('')].concat(fixtureRows(opts.feedName)),
+      'Raw Data': [new Array(26).fill('')].concat(fixtureRows(opts.feedName), opts.extraRows || []),
       'DQE Historical Data': [new Array(34).fill('')],
       'DO NOT EDIT!': rosterGrid({ CSR: [rosterName + ', 103'] }),
     },
@@ -114,7 +102,9 @@ function scenario(opts) {
 
   return {
     cell: { unique: built[4], rung: built[5], missed: built[6],
-            answered: built[7], ttt: built[8], att: built[9] },
+            answered: built[7], ttt: built[8], att: built[9],
+            // F11: AD / AE / AF as the NUMBER OF ENTRIES each holds.
+            ad: listLen(built[29]), ae: listLen(built[30]), af: listLen(built[31]) },
     // The sidebar's "Found N" -- the number an operator reconciles by hand.
     drill: function (column) {
       const out = h.fn('getDQEDrilldownRows')({
@@ -324,4 +314,55 @@ test('TOOL-5: drilling a date Raw Data does not hold names the held day; an unpa
   assert.ok(!unpadded.error, String(unpadded.error));
   assert.equal(unpadded.rowCount, s.cell.answered, 'same Found-N as the padded form');
   assert.equal(s.drill(8).rowCount, s.cell.answered);
+});
+
+// ── F11 (broad-scan 2026-10-14): col E and the abandoned columns ────────────
+// The parity suite never drove AD/AE/AF, and its fixture had no 'N/A'-parent
+// queue leg, so two drifts lived on: dedupeByParent counted every no-parent
+// leg as ONE phantom parent (col E), and the abandoned filter kept answered
+// legs on an abandoned parent (AE/AF) and ignored the unpaired ids AD appends.
+function abandonExtras() {
+  const anna = 'Anna Smith';
+  return [
+    // P6: abandoned after a 120 s wait; Anna missed it once, then (oddly) an
+    // answered leg on the same parent -- AE/AF hold the missed leg only.
+    rawRow({ callId: 'P6', legId: 0, start: IN, callTime: '0:02:00', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
+    rawRow({ callId: 'Q6a', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: anna, parentCall: 'P6', callerId: 'A_Q_CSR', missed: true }),
+    rawRow({ callId: 'Q6b', legId: 1, start: IN, caller: 'CallQueue(103)', calleeName: anna, parentCall: 'P6', callerId: 'A_Q_CSR', answered: true }),
+    // P7: abandoned, but Anna's only leg on it is ANSWERED -- AD's unpaired id.
+    rawRow({ callId: 'P7', legId: 0, start: IN, callTime: '0:03:00', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
+    rawRow({ callId: 'Q7', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: anna, parentCall: 'P7', callerId: 'A_Q_CSR', answered: true }),
+    // A queue leg with NO parent (col O 'N/A'): rung, never a unique parent.
+    rawRow({ callId: 'Q8', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: anna, parentCall: 'N/A', callerId: 'A_Q_CSR', missed: true }),
+    rawRow({ callId: 'Q9', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: anna, parentCall: 'N/A', callerId: 'A_Q_CSR', missed: true }),
+  ];
+}
+
+test('F11: col 5 (Unique) -- no-parent legs are never a unique parent, in the drill as in the build', function () {
+  const s = scenario({ extraRows: abandonExtras() });
+  const out = s.drill(5);
+  assert.equal(out.rowCount, s.cell.unique, 'Found-N == the stored unique-parent count');
+  assert.ok((out.rejectReasons['No parent call (col O) -- not a unique parent in the build'] || 0) >= 2,
+    'the no-parent legs are shown as rejected with a reason, not folded into a phantom parent');
+});
+
+test('F11: cols 30-32 (AD / AE / AF) -- the drill finds exactly the entries the build wrote', function () {
+  const s = scenario({ extraRows: abandonExtras() });
+  assert.ok(s.cell.ae > 0 && s.cell.ad > s.cell.ae, 'fixture guard: AD carries an unpaired id beyond AE ('
+    + s.cell.ad + ' vs ' + s.cell.ae + ')');
+  assert.equal(s.cell.ae, s.cell.af, 'AE and AF are positionally paired');
+  assert.equal(s.drill(31).rowCount, s.cell.ae, 'AE: missed legs on abandoned parents only (no answered leg)');
+  assert.equal(s.drill(32).rowCount, s.cell.af, 'AF: same list as AE');
+  assert.equal(s.drill(30).rowCount, s.cell.ad, 'AD: the paired entries plus each unpaired abandoned parent once');
+});
+
+test('F12: a queue-sentinel row explains itself instead of "no source rows"', function () {
+  scenario();
+  const out = h.fn('getDQEDrilldownRows')({ dateStr: DATE, agentName: 'A_Q_CSR', column: 30 });
+  assert.match(String(out.error), /"A_Q_CSR" is a queue row, not an agent \(INV-23\)/);
+  assert.match(String(out.error), /filter column L/);
+  const b = h.fn('getDQEDrilldownRows')({ dateStr: DATE, agentName: 'Backup CSR', column: 30 });
+  assert.match(String(b.error), /"Backup CSR" is a queue row/);
+  const agent = h.fn('getDQEDrilldownRows')({ dateStr: DATE, agentName: 'Anna Smith', column: 6 });
+  assert.ok(!agent.error, 'an agent row still drills');
 });

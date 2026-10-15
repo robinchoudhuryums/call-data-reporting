@@ -104,6 +104,17 @@ function sampleQueueSplitCallIds() {
     queueNameByExt[qCalleeExt] = qCalleeName;
   }
 
+  // F59 (broad-scan 2026-10-14): drop legs on any date but the run's, as the
+  // build has since P-7 -- one stray carry-over leg used to make two dates
+  // "present", which switched the col-AI self-check OFF for the whole day.
+  // ST2 (broad-scan 259, E4): the run's date is the grid's MAJORITY day through
+  // the one shared rule (rawGridDay_), not the first valid row -- the ING-7
+  // shape, where a carry-over leg sorts first, used to date the run by the
+  // stray. In the daily path that is also the build's date (PIPE-3 proves the
+  // tab's date is the majority, and the build is pinned to the tab's date).
+  var buildDate = rawGridDay_([[]].concat(body.map(function (r) { return ['', '', r[DQE_C.START_TIME]]; }))).dateIso || '';
+  var strays = {};
+
   var legsByAgent = {};
   var dateSeen = {};
   var skippedNoQueue = 0, skippedExcluded = 0, recoveredByExt = 0;
@@ -128,7 +139,8 @@ function sampleQueueSplitCallIds() {
     if (DQE_EXCLUDED_AGENTS.indexOf(agent) !== -1) { skippedExcluded++; continue; }
 
     var startRaw = row[DQE_C.START_TIME];
-    var d = dateIso(startRaw);
+    var d = rawGridDayIso_(startRaw) || dateIso(startRaw);   // ST2: the shared parse; unrecognized compares as-is
+    if (d && buildDate && d !== buildDate) { strays[d] = (strays[d] || 0) + 1; continue; }   // F59 / P-7
     if (d) dateSeen[d] = (dateSeen[d] || 0) + 1;
 
     (legsByAgent[agent] = legsByAgent[agent] || []).push({
@@ -143,16 +155,19 @@ function sampleQueueSplitCallIds() {
     });
   }
 
-  var dates = Object.keys(dateSeen).sort();
+  var dates = buildDate ? [buildDate] : Object.keys(dateSeen).sort();
+  var strayDates = Object.keys(strays).sort();
   Logger.log('=== Queue-split call-id sample ===');
   Logger.log('Raw Data rows: %s   queue legs: %s   (skipped: no queue in caller-id %s, '
     + 'pseudo-agent %s; recovered via the R18e CallQueue-ext fallback %s)', body.length,
     Object.keys(legsByAgent).reduce(function (n, k) { return n + legsByAgent[k].length; }, 0),
     skippedNoQueue, skippedExcluded, recoveredByExt);
-  Logger.log('Date(s) present in Raw Data: %s', dates.join(', ') || '(none)');
-  if (dates.length > 1) {
-    Logger.log('!! More than one date in Raw Data -- the build stamps ONE date per run, '
-      + 'so these totals will not line up with a single DQE row set.');
+  Logger.log('Date: %s (the build\'s -- its first valid START_TIME)', dates.join(', ') || '(none)');
+  if (strayDates.length) {
+    Logger.log('Skipped %s stray queue leg(s) on other dates (%s) -- the build drops them too (P-7), '
+      + 'so they are not part of any total below.',
+      String(strayDates.reduce(function (n, k) { return n + strays[k]; }, 0)),
+      strayDates.map(function (k) { return k + '=' + strays[k]; }).join(', '));
   }
   // R49: the FLOOR is per queue (the CSR family starts half an hour earlier),
   // and it comes from the build's own helper -- never a restated constant.

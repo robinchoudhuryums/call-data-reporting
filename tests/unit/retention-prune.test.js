@@ -530,3 +530,67 @@ test('IG-1: a cell-cap refusal on insertSheet fails THAT file only; the rest imp
   assert.match(alerts[0].msg, /1 file\(s\) failed .*Call_Legs_2026-06-01\.csv/);
   assert.equal(ss.getSheetByName('Call_Legs_2026-06-01'), null);
 });
+
+// ── F9 (broad-scan 2026-10-14): "imported" is not "done" ───────────────────
+// A date in DQE/QCD history can still owe its per-call capture: queued in the
+// Neon Mirror Queue (deferred mode, an outage outlasting the window) or held
+// in the PIPE-7 / F7 catch-up ledger. Both re-derive from the Call_Legs tab,
+// so deleting it on day 15 lost inbound_calls / outbound_calls for good.
+
+test('F9: an over-age, imported tab still in the catch-up ledger is KEPT and named', function () {
+  h.state.props = { PENDING_IMPORT_FAILURES: JSON.stringify({ '2026-06-02': { n: 1, err: 'PIPE-7' } }) };
+  const out = prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02']);
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-06-02'], '06-01 is done (deleted); 06-02 is still owed');
+  assert.deepEqual(Array.from(out.result.owed), ['Call_Legs_2026-06-02']);
+  assert.equal(out.result.deleted, 1);
+  h.state.props = {};
+});
+
+test('F9: the Neon Mirror Queue counts as owed (Date-coerced cells included) and is read in the TARGET workbook', function () {
+  const target = makeFakeSpreadsheet({ sheets: { 'Neon Mirror Queue': [
+    ['Enqueued At', 'Call Date', 'Source', 'Attempts'],
+    // a coerced '2026-06-03' cell: midnight in the workbook's Mexico City TZ
+    [new Date(2026, 5, 20), new Date(Date.UTC(2026, 5, 3, 6, 0, 0)), 'processIntegratedHistory', 2],
+    [new Date(2026, 5, 20), '2026-06-04', 'processIntegratedHistory', 0],
+  ] } });
+  h.ctx.getTargetSsId_ = function () { return 'target-id'; };
+  h.state.spreadsheetsById['target-id'] = target;
+  try {
+    h.state.props = {};
+    const owed = h.call('retentionOwedIsos_');
+    assert.deepEqual(Object.keys(owed).sort(), ['2026-06-03', '2026-06-04']);
+  } finally {
+    delete h.ctx.getTargetSsId_;
+    delete h.state.spreadsheetsById['target-id'];
+  }
+});
+
+test('F9: a failed owed-capture read keeps the tab and FAILS the row (no proof, no delete)', function () {
+  h.state.props = {};
+  h.state.spreadsheet = ssWith(['Call_Legs_2026-06-01']);
+  const prev = h.ctx.retentionOwedIsos_;
+  h.ctx.retentionOwedIsos_ = function () { throw new Error('target unavailable'); };
+  let rows;
+  try {
+    rows = captureHealthRows(function () {
+      withToday(2026, 8, 31, function () { h.fn('runRetentionPrune_')(); });
+    });
+  } finally { h.ctx.retentionOwedIsos_ = prev; }
+  assert.deepEqual(liveNames(h.state.spreadsheet), ['Call_Legs_2026-06-01']);
+  assert.equal(rows[0].status, 'failure');
+  assert.match(rows[0].notes, /still owed a per-call capture \(F9/);
+  assert.match(rows[0].notes, /owed-capture check: target unavailable/);
+});
+
+test('F9: the owed read happens only when a tab is about to be deleted', function () {
+  h.state.props = {};
+  let reads = 0;
+  const prev = h.ctx.retentionOwedIsos_;
+  h.ctx.retentionOwedIsos_ = function () { reads++; return {}; };
+  try {
+    prune([2026, 8, 31], ['Call_Legs_2026-08-30']);
+    assert.equal(reads, 0, 'nothing over-age -> no read');
+    prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02']);
+    assert.equal(reads, 1, 'read ONCE per run, however many tabs are deleted');
+  } finally { h.ctx.retentionOwedIsos_ = prev; }
+});

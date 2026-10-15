@@ -260,3 +260,25 @@ test('S2B-5: the sheet source path is unchanged (one write, no mirror, no warnin
   equal(h.call('upsertDeptConfigRow_', rec), null);
   deepEqual(JSON.parse(JSON.stringify(h.call('deactivateDeptConfig_', 'Sales'))), { count: 1, warning: null });
 });
+
+// F42 (broad-scan 2026-10-14): two sheet rows for one dept -- the live reader
+// serves the FIRST active one (A-3), the backfill's upserts leave the LAST in
+// Neon, and the old gate compared last-vs-last and printed PARITY CLEAN.
+test('F42: compareDeptConfigSources fails a duplicated dept by name', function () {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const csr = LOGICAL.filter(function (r) { return r.dept === 'CSR'; })[0];
+  const csr2 = Object.assign({}, csr, { notes: 'second copy' });
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: { 'Dept Config': [HEADERS].concat(LOGICAL.map(sheetRow)).concat([sheetRow(csr2)]) },
+  });
+  const neonRows = LOGICAL.map(function (r) { return neonRow(r.dept === 'CSR' ? csr2 : r); });
+  h.ctx.getDashboardNeonConn_ = function () { return fakeDeptConfigConn(neonRows); };
+  const cmp = h.call('compareDeptConfigSources');
+  equal(cmp.clean, false, 'a duplicated dept is never parity');
+  deepEqual(JSON.parse(JSON.stringify(cmp.duplicates)), ['CSR (sheet x2)']);
+  equal(cmp.compared, LOGICAL.length);
+});

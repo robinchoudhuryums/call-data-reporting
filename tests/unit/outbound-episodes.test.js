@@ -536,6 +536,23 @@ test('B1/PC-1: an attempt AFTER the window joins an open episode (extending its 
   assert.deepEqual(alone, [], 'an attempt past the window opens nothing');
 });
 
+test('F30: one-day views add up to the multi-day view in OUTCOMES, not just counts', function () {
+  // k1 abandons CSR on 09-14, then Sales on 09-15, and a Sales agent calls
+  // back on 09-15. The week has two episodes: CSR (no CSR dial: none) and
+  // Sales (own). The one-day 09-14 view used to drop the 09-15 Sales attempt
+  // as "late" without opening anything, so Sam's dial fell through as
+  // ANOTHER TEAM on the CSR episode -- 'other' on the day, 'none' on the week.
+  const ev = { ab: [ab(1, '2026-09-14', '08:00:00', 'a_q_csr'), ab(1, '2026-09-15', '08:00:00', 'a_q_sales')],
+               ob: [ob(1, '2026-09-15', '09:00:00', 'Sam', true)] };
+  const week = run(ev, { from: '2026-09-14', to: '2026-09-15' });
+  const byFirst = (eps) => eps.map((e) => e.firstIso + ':' + e.teamKey + ':' + e.outcome).sort();
+  const days = ['2026-09-14', '2026-09-15'].reduce((acc, d) => acc.concat(run(ev, { from: d, to: d })), []);
+  assert.deepEqual(byFirst(days), byFirst(week), 'every episode has the same outcome on its day as on the week');
+  assert.deepEqual(week.map((e) => e.outcome).sort(), ['none', 'own']);
+  // The hidden trailing episode is never reported.
+  assert.equal(run(ev, { from: '2026-09-14', to: '2026-09-14' }).length, 1);
+});
+
 test('B1/PC-1: the read span widens one window each side, identically for every fetcher', function () {
   const s = JSON.parse(JSON.stringify(h.ctx.obEpReadSpan_('2026-09-01', '2026-09-30', 0)));
   assert.deepEqual(s, { abFrom: '2026-08-29', abTo: '2026-10-03', evFrom: '2026-08-29', evTo: '2026-10-06' });

@@ -113,7 +113,8 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # it as abandoned-only, R8-E6), plus simulateSplitCol2 /
 # parseDurationDecimal across dataFilters.js / autoImport.js (compared
 # on CODE -- one copy is nested, so indentation/blank lines are
-# normalized away). Non-zero exit on drift.
+# normalized away), plus ST2's rawGridDay_ / rawGridDayIso_ day rule
+# across queueOverlapAudit.js / autoImport.js. Non-zero exit on drift.
 # Also runs automatically as a non-blocking SessionStart hook
 # (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
@@ -227,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# THIRTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# FOURTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -251,7 +252,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # return, one at a time, CSV untouched, 360 px -- Batch B), drive-deptoutbound.js
 # (the Inbound | Outbound | Both switch + Team Outbound panel: payload totals,
 # manager/view-as fall back to Inbound, panels never overlap, prior-period
-# chips on agent rows only -- Batches D/F),
+# chips on agent rows only -- Batches D/F), drive-crossstate.js (the
+# SEQUENCES before the UX-2 / 6c gates open: dept switch, view-as in/out,
+# direction -- E5),
 # drive-outbound-e.js (the Overview tiles' outbound line per card window +
 # the Outbound summary's two-window deltas under the outbound table, UX-1;
 # neither reaches a manager or View-as -- Batch E), drive-callbacks.js (the
@@ -829,10 +832,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   does NOT auto-expand columns, so the writer WIDENS a narrower sheet first
   (`DQE_WRITE_WIDTH`, 37 since Batch 3; a getRange past `getMaxColumns` throws
   -- REP-10). Mirrored
-  to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
-  COALESCEs so a sheet-sourced NULL can't erase a stored split -- which is
-  why the duplicate merge, which BLANKS AI..AK on purpose, NULLs the Neon
-  twin itself (CRT-2, `sheet-repairs-merge.test.js`).
+  to `dqe_history.queue_split` via an idempotent ADD COLUMN. Only the
+  NON-authoritative upsert (`backfillDQEHistoryUpsert`) COALESCEs, so a
+  sheet-sourced NULL can't erase a stored split there -- which is why the
+  duplicate merge, which BLANKS AI..AK on purpose, NULLs the Neon twin itself
+  (CRT-2, `sheet-repairs-merge.test.js`); every authoritative per-date writer
+  deletes the date first, so Neon simply matches the sheet (F10).
   **The pipeline always WRITES this column; whether any dashboard surface USES
   it is a separate switch** -- `QUEUE_SPLIT_SCOPE`, default `off` (Operator
   State #42). So keep deploying and backfilling the split on its own urgency
@@ -879,8 +884,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the INV-02 duration trap. (2) NULL and 0 are DIFFERENT facts: an agent or
   sentinel row with nothing after hours writes numeric `0`/`0`; a blank (a
   pre-Batch-3 row, or a duplicate-merge, which clears AI..AK together) mirrors
-  as NULL to the nullable-int `dqe_history` pair (idempotent ADD COLUMN, every
-  upsert COALESCEs, binds via `NULLIF(?, '')::int`) -- a future reader must
+  as NULL to the nullable-int `dqe_history` pair (idempotent ADD COLUMN, the
+  non-authoritative upsert COALESCEs, binds via `NULLIF(?, '')::int`) -- a future reader must
   keep them apart. (3) `DQE_WRITE_WIDTH`=37: the writer widens first (REP-10),
   labels the two headers ONCE (only while AJ's header is blank), and every
   full-width reader clamps to `getMaxColumns()` with a 37 ceiling -- a ceiling
@@ -1223,7 +1228,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   READBACK alone does NOT canonicalize non-legacy colors** — modern
   browsers serialize an oklch/oklab/color() fillStyle back VERBATIM,
   which silently defeated the whole mechanism for the oklch tokens
-  (accent/good/warn/bad + softs) and rendered every R11-L trend arrow
+  (accent/good/warn + softs) and rendered every R11-L trend arrow
   gray via `parseColorRgb_`'s fallback. `colorToCanvasRgb_` now detects
   a non-`#hex`/`rgb()` readback and resolves it via a painted-pixel
   `getImageData` (which always yields a real RGB triple). Any future
@@ -1485,7 +1490,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   their scope is identical, so no suite legitimately resets only half.
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
   memo resets the whole family" (R40 in fix-history). A third memo over this
-  sheet joins `DQE_EXEC_MEMOS`.
+  sheet joins `DQE_EXEC_MEMOS`. Since F39 the harness itself restores every
+  `var *MEMO*` global on each `h.call` (`h.inExecution` scopes a multi-call
+  memo test -- tests/README.md rule 3).
 - **Count badges must be idempotent, not append-only (F10).**
   `escApplyBadge_(counts)` (script-2-chrome) updates the escalations nav badge
   IN PLACE, REMOVES it at zero, and hides + empties the Overview strip;
@@ -1596,7 +1603,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   they make EVERY connection fail instantly, in every project at once
   (incident: docs/known-issues.md). Bound STATEMENTS with
   `stmt.setQueryTimeout(seconds)` instead -- the platform supports that.
-  `cross-file-pins.test.js` pins their ABSENCE across all six builders and
+  `cross-file-pins.test.js` pins their ABSENCE across all five builders and
   sweeps for unlisted `Jdbc.getConnection` callsites. **The hanging-connect
   problem is therefore still OPEN**: a connect that hangs can burn the
   execution ceiling (#70), whose kill SKIPS catch blocks, so none of the
@@ -1689,7 +1696,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`neonNoteEgress_`; OD-3 sweep `neon-egress-coverage.test.js` + the EA-1
   label pin; unlabeled folds into `other`); `neonStorageVerdict_` names the
   top 5 tables (neon-retention.test.js). Every other row is described in its Operator State item
-  (`build-stamp` #2, `retention-risk` #40/#43, `workbook-cells` #62,
+  (`build-stamp` / `deploy-currency` #2, `retention-risk` #40/#43, `workbook-cells` #62,
   `backup-scrub` #28, ...).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
@@ -1780,8 +1787,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `agentHist:v1`'s embedded latest date; the B1-B5 late-joiner story is in fix-history), ENFORCED (S3):
   cache-version-sync's ANCHOR_SPECS classifies every prefix and fails when
   a tag-anchored file stops calling `reportFreshnessTag_()`. A key that
-  EMBEDS queue data (`summary`, `insights`) also carries
-  `':q' + qcdFreshnessTag_()` (DATA-6). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  EMBEDS queue data (`summary`, `insights`, `companyOverview`,
+  `overviewChartYtd`) also carries `':q' + qcdFreshnessTag_()` (DATA-6, F4)
+  and skips its put on `qcdSnapshotReadFailed_()` (ST1: cache-version-sync). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- keyed on the latest QCD date (`qcdAllFreshnessAnchor_`,
   D-1) and never caching an EMPTY payload, so a pre-ingest request cannot pin
@@ -2114,7 +2122,7 @@ status table with remediation hints; fall through to the numbered
 items for anything it flags or doesn't cover.)
 
 1. Did the daily ingest run? (+ `probeOverviewChartDates()` when a date gap shows despite parity-clean data)
-2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp)
+2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp; the Health `deploy-currency` row flags a project left on older code, G4)
 3. Did the user actually have access? (the email match is case-INsensitive -- check the Department cell + Role, and `EMAIL_ALIASES`)
 4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
@@ -2168,7 +2176,7 @@ items for anything it flags or doesn't cover.)
 53. Script Properties past the settings page's 50-row cap -- set or clear one from a TEMPORARY editor-run function; the Health inventory is the complete read view
 54. Caller Lookup's one-time Neon index (`idx_inbound_calls_caller_hash`) -- create it in the Neon console; nothing auto-creates it
 55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants, a push and a re-sync
-56. Reprocessing historical dates -- Manual Export per date over the bulk path, the `DQE_UPSERT_RESUME` reset, the zero-talk post-rebuild scan and the duplicate-merge repair
+56. Reprocessing historical dates -- CDR Tools -> Make a date whole for a date MISSING something (G1), Manual Export per date over the bulk path, the `DQE_UPSERT_RESUME` reset, the zero-talk post-rebuild scan and the duplicate-merge repair
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` write gate, the weekly `NEON_RETENTION_ENABLED` prune, `NEON_STORAGE_CAP_MB`, and the one-time reclaim runbook
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` / `ALL_DEPT_NOTIFY_OPT_IN` -- the admin-copy rule on every dashboard email, the welcome email a brand-new Access Control grant sends, and which ALL managers get dept-manager email
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every bulk `repair*` apply snapshots into first, and the restore procedure

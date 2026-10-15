@@ -20,28 +20,13 @@ const { rosterGrid } = require('../harness/fixtures');
 // The last test proves the self-check BITES: with the tool's floor forced flat
 // after the build ran, the CSR-family agent reads MISMATCH.
 
-const h = loadGas({ project: 'cdr-import', files: ['buildDQEHistoricalData.js', 'queueSplitSample.js'] });
+// ST2: the sample dates its run through rawGridDay_ (autoImport.js, the same project scope).
+const h = loadGas({ project: 'cdr-import', files: ['buildDQEHistoricalData.js', 'queueSplitSample.js', 'autoImport.js'] });
 h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
 h.ctx.notifyNeonWriteFailure = function () {};
 h.ctx.getTargetSsId_ = function () { return 'fake'; };
 
-function rawRow(o) {
-  const r = new Array(26).fill('');
-  r[0]  = o.callId || '';
-  r[1]  = o.legId != null ? String(o.legId) : '';
-  r[2]  = o.start || '';
-  r[6]  = o.talk || '';
-  r[7]  = o.callTime || '';
-  r[8]  = o.caller || '';
-  r[10] = o.callee || '';
-  r[11] = o.calleeName || '';
-  r[14] = o.parentCall || '';
-  r[22] = o.callerId || '';
-  r[23] = o.missed ? 'Missed' : '';
-  r[24] = o.abandoned ? 'Abandoned' : '';
-  r[25] = o.answered ? 'Answered' : '';
-  return r;
-}
+const { rawRow } = require('../harness/parityDay');   // ST5: the one Raw Data row builder
 
 const EARLY = '03/09/2026 6:10:00';   // 6:10 PST: inside the CSR family's floor, outside INV-06's
 const IN    = '03/09/2026 7:00:00';
@@ -66,11 +51,11 @@ function grid() {
   ]);
 }
 
-function installAndBuild() {
+function installAndBuild(extraRows) {
   h.state.props = {};
   h.state.spreadsheet = makeFakeSpreadsheet({
     sheets: {
-      'Raw Data': grid(),
+      'Raw Data': grid().concat(extraRows || []),
       'DQE Historical Data': [new Array(34).fill('')],
       'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'], Sales: ['Bob, 105'], Power: ['Carl, 344'] }),
     },
@@ -137,4 +122,25 @@ test('P-5: the sample tool writes nothing', function () {
   runSample();
   const after = JSON.stringify(ss._sheet('DQE Historical Data')._data) + JSON.stringify(ss._sheet('Raw Data')._data);
   assert.equal(after, before);
+});
+
+// F59 (broad-scan 2026-10-14): one stray carry-over leg (another date) used
+// to make two dates "present", switching the col-AI self-check OFF for the
+// whole day, and the closing message then named the stray date. The tool now
+// dates the run by the grid's MAJORITY day (rawGridDay_, ST2) and drops strays
+// (P-7); tests/unit/parity-day.test.js covers a stray sorted FIRST.
+test('F59: a stray leg on another date neither disables the self-check nor becomes the date', function () {
+  installAndBuild([
+    // A next-day carry-over leg for Anna on a parent the build never sees.
+    rawRow({ callId: 'S1', legId: 0, start: '03/10/2026 0:05:00', caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'PS', callerId: 'A_Q_CSR', missed: true }),
+  ]);
+  const lines = runSample();
+  ['Anna', 'Bob', 'Carl'].forEach(function (a) {
+    assert.equal(verdictOf(lines, a), 'OK (matches col AI)', a + ' is still self-checked: '
+      + JSON.stringify(lines.filter(function (l) { return l.indexOf(a) !== -1; })));
+  });
+  assert.ok(lines.some(function (l) { return /^Date: 2026-03-09 \(the build's/.test(l); }), 'the build\'s date, not the stray');
+  assert.ok(lines.some(function (l) { return /Skipped 1 stray queue leg\(s\) on other dates \(2026-03-10=1\)/.test(l); }));
+  assert.ok(lines.some(function (l) { return /A_Q_CSR\s+rung=2 missed=1 answered=1/.test(l); }), 'the stray is in no total');
 });

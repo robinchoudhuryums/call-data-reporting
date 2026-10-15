@@ -83,6 +83,19 @@ test('ENG-3: an all-no-data run leads EMPTY (bad), errors still lead FAILED-PART
   assert.match(h.call('alertsOutcomeString_', '2026-09-21', [{ status: 'error' }], { lateLatest: 'x' }), /^FAILED-PARTIAL/);
 });
 
+// F19 (broad-scan 2026-10-14): `skipped` rows (an inactive dept, a duplicate
+// row, a skip date) are config, not data. Counting them made EMPTY
+// unreachable once any one existed, so an all-no-data run read `ok`.
+test('F19: EMPTY is judged over the ASSESSED depts -- a skipped config row cannot hide it', function () {
+  install('2026-09-21');
+  const withSkip = h.call('alertsOutcomeString_', '2026-09-21',
+    [{ status: 'no-data' }, { status: 'no-data' }, { status: 'skipped' }]);
+  assert.match(withSkip, /^EMPTY 2026-09-21: every dept had no data/);
+  assert.equal(h.call('healthOutcomeIsBad_', withSkip), true);
+  assert.match(h.call('alertsOutcomeString_', '2026-09-21', [{ status: 'skipped' }, { status: 'skipped' }]), /^ok /,
+    'nothing assessed at all (every dept configured off) is not EMPTY');
+});
+
 test('ENG-3: weekends and holidays still skip before the gate; uninstall clears a pending retry', function () {
   const env = install('2026-09-18');
   assert.equal(h.call('alertsGatedAttempt_', new Date('2026-09-26T08:05:00-05:00'), 'trigger').decision, 'skip-weekend');

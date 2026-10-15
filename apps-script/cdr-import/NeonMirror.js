@@ -106,6 +106,7 @@ function getNeonMirrorMode_() {
 /**
  * Append one date to the shared Neon Mirror Queue tab. Best-effort: a logging
  * failure must never break the import (the sheets are already written).
+ * Returns true when the row was appended, false when it was not (F7).
  */
 function enqueueNeonMirror_(targetSS, dateObj) {
   try {
@@ -118,6 +119,7 @@ function enqueueNeonMirror_(targetSS, dateObj) {
     }
     sh.appendRow([new Date(), iso, 'processIntegratedHistory', 0]);
     Logger.log('enqueueNeonMirror_: queued %s for deferred Neon mirror.', iso);
+    return true;   // F7: the PIPE-7 catch-up keeps a date pending when this fails
   } catch (e) {
     Logger.log('enqueueNeonMirror_ failed (best-effort): ' + e);
     // PIPE-6 (broad-scan 2026-10-12): in deferred mode the queue row IS the
@@ -138,6 +140,7 @@ function enqueueNeonMirror_(targetSS, dateObj) {
         });
       }
     } catch (e2) { /* best-effort, like the enqueue itself */ }
+    return false;
   }
 }
 
@@ -342,6 +345,12 @@ function neonMirrorDate_(ss, iso) {
       neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0,
         iso + ' | SOURCE PRUNED: ' + (res.note || 'Call_Legs_' + iso + ' no longer exists')
         + ' -- ' + label.toLowerCase() + ' rows for this date cannot be re-derived (terminal; not retried)');
+    } else if (res && res.hashless) {
+      // F8 (broad-scan 2026-10-14): written, but without phone hashes. Not
+      // retried (allOk stays true -- re-running cannot add a hash the writer
+      // never had), yet a FAILURE row, so Health and PipelineWatch see it the
+      // way PC-10 makes the inline daily path's :Inbound / :Outbound rows say it.
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', res.rows || 0, t0, iso + ' | ' + res.note);
     } else {
       // F6: writers may attach a `note` (e.g. CDR's phone-child count) so a
       // secondary-mirror outcome is visible in the Pipeline Health row.
@@ -638,11 +647,13 @@ function mirrorDqeForDate_(ss, iso) {
       abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
       avgAbdWait:       r[32] || null,
       csrAvgAbdWait:    r[33] || null,
-      // Sub-queue Phase 1. The writer COALESCEs a NULL, so a pre-Phase-1 date
-      // draining from the queue cannot erase a split written by a later build.
+      // Sub-queue Phase 1. A blank AI mirrors as NULL. F10: this is an
+      // AUTHORITATIVE per-date replace, so Neon ends up matching the sheet --
+      // the writer's COALESCE has no stored row to keep (the date is deleted
+      // first). The sheet is the source of truth.
       queueSplit:       r[34] || null,
-      // Batch 3: AJ/AK after-hours; undefined/'' on a narrower sheet -> NULL,
-      // which the writer COALESCEs.
+      // Batch 3: AJ/AK after-hours; undefined/'' on a narrower sheet -> NULL
+      // (the same authoritative rule).
       afterHoursAnswered: (r[35] == null || r[35] === '') ? null : r[35],
       afterHoursTtt:      (r[36] == null || r[36] === '') ? null : r[36],
     });
@@ -688,6 +699,13 @@ function mirrorInboundForDate_(iso) {
     // DQE writers surface a non-skip error).
     throw new Error('inbound mirror failed for ' + iso + ' (' + res.failures + ' write failure(s))');
   }
+  // F8: rows written WITHOUT phone hashes (no HMAC_SECRET) -- the date is done
+  // (a retry cannot add hashes the writer never had), but its step is a FAILURE.
+  if (res && res.hashless) {
+    return { hashless: true, rows: (res && res.inserted) || 0,
+             note: 'inbound_calls rows WRITTEN WITHOUT phone hashes: HMAC_SECRET is not set in cdr-import -- callbacks and '
+               + 'insurer labels are blind for this date; set it (Operator State #17) and re-run the backfill with force' };
+  }
   return { rows: (res && res.inserted) || 0 };
 }
 
@@ -708,6 +726,13 @@ function mirrorOutboundForDate_(iso) {
   }
   if (res && res.failures) {
     throw new Error('outbound mirror failed for ' + iso + ' (' + res.failures + ' write failure(s))');
+  }
+  // F8: rows written WITHOUT phone hashes (no HMAC_SECRET) -- the date is done
+  // (a retry cannot add hashes the writer never had), but its step is a FAILURE.
+  if (res && res.hashless) {
+    return { hashless: true, rows: (res && res.inserted) || 0,
+             note: 'outbound_calls rows WRITTEN WITHOUT phone hashes: HMAC_SECRET is not set in cdr-import -- callbacks and '
+               + 'insurer labels are blind for this date; set it (Operator State #17) and re-run the backfill with force' };
   }
   return { rows: (res && res.inserted) || 0 };
 }

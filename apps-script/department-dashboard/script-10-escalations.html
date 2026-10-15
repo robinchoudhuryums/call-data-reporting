@@ -485,7 +485,9 @@
     // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
     tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
     tiles.push(escBandOldestTile_(meta.oldestOpenAt));
-    tiles.push(escBandTile_('Resolved · MTD', Number(meta.resolvedMTD || 0), 'good', null));   // R11-H: 7d -> month-to-date
+    // F45: null = unknown (the outage snapshot holds no resolved rows) -- a dash, never a 0.
+    tiles.push(escBandTile_('Resolved · MTD', meta.resolvedMTD == null ? '—' : Number(meta.resolvedMTD || 0),
+      meta.resolvedMTD == null ? 'muted' : 'good', null));   // R11-H: 7d -> month-to-date
     band.innerHTML = tiles.join('');
     band.style.display = '';
   }
@@ -1629,9 +1631,17 @@
     const history = ((data && data.outboundHistory) || []).filter(function (e) {
       return e.callDate && !outDates[e.callDate];
     });
+    // F34: on the sheet fallback the Inbound Calls tab can be missing -- then
+    // "no inbound calls" is not known, and must not be said.
+    const inboundUnknown = meta.inboundAvailable === false;
+    const inboundUnknownNote = 'Inbound calls could not be read (Neon is unreachable and the Inbound Calls '
+      + 'tab is missing), so this is not the caller’s full history.';
     if (!calls.length && !outCalls.length && !history.length) {
       const hint = $('cl-empty-hint');
-      if (hint) hint.textContent = 'No calls to or from this number between '
+      if (hint) hint.textContent = inboundUnknown
+        ? 'No outbound calls to this number between ' + (meta.from || '?') + ' and ' + (meta.to || '?')
+          + '. ' + inboundUnknownNote
+        : 'No calls to or from this number between '
         + (meta.from || '?') + ' and ' + (meta.to || '?')
         + '. Inbound capture starts the day the inbound mirror first ran; per-call outbound starts '
         + 'with the outbound capture (day-level outbound reaches back through the CDR mirror).';
@@ -1641,7 +1651,8 @@
     const title = $('cl-results-title');
     if (title) {
       const parts = [];
-      parts.push(calls.length + ' inbound' + (meta.truncated ? ' (truncated)' : ''));
+      parts.push(inboundUnknown ? 'inbound unavailable'
+        : calls.length + ' inbound' + (meta.truncated ? ' (truncated)' : ''));   // F34
       parts.push(outCalls.length + ' outbound' + (meta.outboundTruncated ? ' (truncated)' : '')
         + (history.length ? ' (+' + history.length + ' earlier day-summar' + (history.length === 1 ? 'y' : 'ies') + ')' : ''));
       title.textContent = parts.join(' · ')
@@ -1659,6 +1670,7 @@
       return ka < kb ? 1 : (ka > kb ? -1 : 0);
     });
     let html = merged.length ? clGroupByDayHtml_(merged) : '';
+    if (inboundUnknown) html += '<div class="ds-note">' + escapeHtml(inboundUnknownNote) + '</div>';   // F34
     if (meta.outboundAvailable === false) {
       html += '<div class="ds-note">Per-call outbound capture isn’t live yet '
         + '(deploy cdr-import and run <code>backfillOutboundCalls</code>) — showing inbound calls'
@@ -2543,7 +2555,7 @@
   //     never disagree about what a day means.
 
   var AP_ = { agent: null, idx: 0, from: '', to: '', seq: 0, strip: null,
-              date: null, tab: 'in', days: {}, node: null };
+              date: null, tab: 'in', days: {}, node: null, dept: '' };
 
   function apWindow_() {
     const m = (state && state.meta) || {};
@@ -2594,18 +2606,29 @@
     if (AP_.node && AP_.node.parentNode) AP_.node.parentNode.removeChild(AP_.node);
     AP_.node = null; AP_.agent = null; AP_.strip = null; AP_.date = null; AP_.days = {};
     apRowsFor_(agent).forEach(function (tr) {
-      tr.classList.remove('ap-open'); tr.removeAttribute('aria-expanded'); tr.removeAttribute('aria-controls');
+      tr.classList.remove('ap-open');
+      const b = apRowToggle_(tr);
+      if (b) { b.setAttribute('aria-expanded', 'false'); b.removeAttribute('aria-controls'); }
     });
     if (focusRow && agent) {
       const tr = apRowsFor_(agent)[idx] || apRowsFor_(agent)[0];
-      if (tr) tr.focus();
+      const b = tr && apRowToggle_(tr);
+      if (b) b.focus();
     }
   }
 
+  // F27 (broad-scan 2026-10-14, the E-8 / Batch 9 rule): the row is not the
+  // control. Its agent-name cell holds a real <button> (apRowToggleHtml_,
+  // script-5) that owns aria-expanded -- "false" when closed, never removed --
+  // and the native Enter/Space; the whole row stays the click target by
+  // bubbling. The row keeps only the visual .ap-open state.
+  function apRowToggle_(tr) {
+    return (tr && tr.querySelector) ? tr.querySelector('button.ap-row-toggle') : null;
+  }
   function apMarkRow_(tr) {
     tr.classList.add('ap-open');
-    tr.setAttribute('aria-expanded', 'true');
-    tr.setAttribute('aria-controls', 'ap-panel');
+    const b = apRowToggle_(tr);
+    if (b) { b.setAttribute('aria-expanded', 'true'); b.setAttribute('aria-controls', 'ap-panel'); }
   }
 
   /** Row click / Enter / Space. Toggles; a second agent replaces the first. */
@@ -2616,6 +2639,13 @@
     if (AP_.agent === agent && AP_.idx === idx) { apClose_(true); return; }
     if (AP_.agent) apClose_(false);
     apOpen_(agent, idx);
+    // F27: a click on any cell used to focus the (tabindex) row, so Escape
+    // and Tab then worked from there. The row is no longer focusable: put
+    // focus on its button instead, the same place a keyboard open leaves it.
+    const b = apRowToggle_(apRowsFor_(agent)[idx]);
+    if (b && document.activeElement !== b) {
+      try { b.focus({ preventScroll: true }); } catch (eF) { /* best-effort */ }
+    }
   }
 
   function apOpen_(agent, idx) {
@@ -2623,6 +2653,10 @@
     if (!tr) return;
     const win = apWindow_();
     AP_.agent = agent; AP_.idx = idx; AP_.from = win.from; AP_.to = win.to;
+    // F29: the department whose figures this row shows (a combined view's group,
+    // else the page's dept) -- the server narrows the panel's DQE figures to it
+    // under QUEUE_SPLIT_SCOPE=dept, so the panel agrees with the row.
+    AP_.dept = tr.getAttribute('data-dept') || (typeof getRequestedDept === 'function' ? getRequestedDept() : '') || '';
     AP_.strip = null; AP_.date = null; AP_.tab = 'in'; AP_.days = {};
     const row = document.createElement('tr');
     row.className = 'ap-row';
@@ -2684,7 +2718,7 @@
         apSetHtml_('[data-ap-strip]', '<div class="ds-note">Could not load this agent’s days: '
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
       })
-      .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to });
+      .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to, department: AP_.dept });
   }
 
   // Owner (2026-10): the day's INBOUND answer rate in the box's top-right
@@ -2779,7 +2813,7 @@
         apSetHtml_('[data-ap-day]', '<div class="ds-note">Could not load ' + escapeHtml(date) + ': '
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
       })
-      .getAgentDay({ agentName: AP_.agent, date: date });
+      .getAgentDay({ agentName: AP_.agent, date: date, department: AP_.dept });
   }
 
   function apInboundTableHtml_(rows) {

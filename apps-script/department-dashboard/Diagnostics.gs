@@ -611,6 +611,7 @@ function auditQueueSplitAttribution() {
   Logger.log('');
   Logger.log('--- Every queue in the split, and which dept claims it ---');
   const orphanRung = { v: 0 }, orphanAns = { v: 0 };
+  const doubled = [];   // F46: queues more than one dept claims
   const claimedBy = {};
   Object.keys(perQueue).sort().forEach(function (q) {
     const key = q.trim().toLowerCase();
@@ -629,6 +630,7 @@ function auditQueueSplitAttribution() {
         pad(q, 28), pad(b.rung, 6), pad(b.answered, 6),
         Object.keys(homes).sort().join(', ') || '(none)');
     } else if (owners.length > 1) {
+      doubled.push(q + ' (' + owners.join(' + ') + ', rung=' + b.rung + ')');
       Logger.log('  ?? %s rung=%s answered=%s  claimed by %s -- DOUBLE-COUNTED',
         pad(q, 28), pad(b.rung, 6), pad(b.answered, 6), owners.join(' + '));
     } else {
@@ -753,7 +755,17 @@ function auditQueueSplitAttribution() {
       + 'RAW queue name (exactly as printed above) to the owning dept\'s '
       + '"Inbound queue aliases" in Dept Config -- no redeploy, effective on the '
       + 'next request.');
-  } else {
+  }
+  if (doubled.length) {
+    // F46 (broad-scan 2026-10-14): the verdict used to key on dropped volume
+    // alone, so a run that had just printed DOUBLE-COUNTED lines closed with
+    // "claimed by exactly one dept ... the fix working".
+    Logger.log('');
+    Logger.log('>> DOUBLE-COUNTED: %s queue(s) are claimed by more than one dept, so their calls '
+      + 'count in EACH claiming dept\'s total: %s. Keep each RAW queue name on ONE dept\'s Dept '
+      + 'Config row (QCD Queues / Inbound queue aliases).', doubled.length, doubled.join('; '));
+  }
+  if (!(orphanRung.v || orphanAns.v) && !doubled.length) {
     Logger.log('');
     Logger.log('>> Every queue in the split is claimed by exactly one dept, so no '
       + 'volume was dropped: a dept whose total FELL simply stopped counting '

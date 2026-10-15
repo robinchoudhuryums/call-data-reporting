@@ -108,6 +108,10 @@ test('digest: deep link primes the Insights report in the share-state format', f
   const link = h.call('digestDeepLink_', 'Alpha', '2026-05-01', '2026-05-31', 'monthly');
   // Existing fragment stripped; share-state route + params appended.
   assert.ok(link.indexOf('/exec#/report/insights?') !== -1, 'route present, old fragment stripped');
+  // F16: the link names its dept, so a multi-dept recipient lands on it.
+  assert.ok(link.indexOf('#/report/insights?dept=Alpha&') !== -1, 'dept param leads');
+  assert.ok(h.call('digestDeepLink_', 'Eligibility MM&R', '2026-05-01', '2026-05-31', 'monthly')
+    .indexOf('dept=Eligibility%20MM%26R&') !== -1, 'and is encoded');
   assert.ok(link.indexOf('from=2026-05-01') !== -1 && link.indexOf('to=2026-05-31') !== -1);
   assert.ok(link.indexOf('agents=' + encodeURIComponent('Anna|Ben')) !== -1, 'full roster selection');
   // Monthly cadence -> custom prior window = previous calendar month.

@@ -407,3 +407,39 @@ test('DATA-4: an empty snapshot after a Neon fallback flags the execution; the s
   assert.equal(h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago', {}), null);
   assert.equal(h.call('qcdSnapshotReadFailed_'), false, 'no fallback, no flag -- caches as before');
 });
+
+// F5 (broad-scan 2026-10-14): DATA-4's flag reached the snapshot readers but
+// not computeQcdReport_, which feeds Insights Queue health (and the UX-2
+// brief). A Neon miss with an empty -- or trimmed -- sheet fallback returned a
+// zero report unflagged, so getInsightsReport cached "0 calls / 0.00%" for 6 h.
+test('F5: computeQcdReport_ flags the execution when a Neon fallback leaves it empty or trimmed; a reachable source does not', function () {
+  const reset = function () {
+    h.state.props.SPREADSHEET_ID = 'fake';
+    h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+    h.call('resetExecReadFailureFlags_');
+  };
+  const realFetch = h.ctx.neonFetchQcdGrid_;
+  try {
+    h.state.props.QCD_READ_SOURCE = 'neon';
+    h.ctx.neonFetchQcdGrid_ = function () { return null; };   // unreachable -> sheet fallback
+    // (1) the fallback sheet exists but is empty
+    h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [QCD_HEADER] } });
+    reset();
+    h.call('computeQcdReport_', 'CSR', '2026-09-01', '2026-09-30', {});
+    assert.equal(h.call('qcdSnapshotReadFailed_'), true, 'empty fallback: never cached as a real zero');
+    // (2) the fallback sheet is trimmed below the window
+    h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [QCD_HEADER,
+      ['Jan 2026', 'W1', '01/05/2026', 'A_Q_CustomerSuccess', 'Total Calls', 50, 48, 2, '0:01:00', '0:00:20', '4.00%', 1]] } });
+    reset();
+    h.call('computeQcdReport_', 'CSR', '2026-09-01', '2026-09-30', {});
+    assert.equal(h.call('qcdSnapshotReadFailed_'), true, 'trimmed fallback: flagged too');
+  } finally {
+    h.ctx.neonFetchQcdGrid_ = realFetch;
+    delete h.state.props.QCD_READ_SOURCE;
+  }
+  // The sheet path, same empty window: a genuinely quiet range, not an outage.
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [QCD_HEADER] } });
+  reset();
+  h.call('computeQcdReport_', 'CSR', '2026-09-01', '2026-09-30', {});
+  assert.equal(h.call('qcdSnapshotReadFailed_'), false, 'no fallback, no flag -- caches as before');
+});

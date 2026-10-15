@@ -137,3 +137,56 @@ test('F-5: Neon unreachable -> compare gates return clean:false + error (never a
   // And the live CONFIG_SOURCE property is never touched by a compare.
   assert.equal(h.state.props.CONFIG_SOURCE, undefined);
 });
+
+// F42 (broad-scan 2026-10-14): the gates built key->row maps that kept the
+// LAST row of a duplicated key, while the live readers serve the FIRST
+// (OPS-9 / O-4). A hand-edited sheet with two CSR rows, whose LAST one is
+// what the backfill's upserts left in Neon, compared last-vs-last and printed
+// PARITY CLEAN -- and the flip silently changed CSR's threshold.
+test('F42: a duplicated sheet key fails the gate by name (never a last-vs-last PARITY CLEAN)', function () {
+  installSheet();
+  asAdmin();
+  const dupAlerts = ALERT_ROWS.concat([['csr', '70', '', 'TRUE', '', '']]);   // OPS-9's key is case-folded
+  const dupDigests = DIGEST_ROWS.concat([['M@x.com', 'CSR', 'weekly', 'TRUE', '', 'summary']]);
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Alert Config': [['Department', 'Threshold %', 'Extra Recipients', 'Active', 'Notes', 'Skip Dates']].concat(dupAlerts),
+    'Digest Config': [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format']].concat(dupDigests),
+  } });
+  // Neon holds what an in-order upsert of the sheet leaves: the LAST row per key.
+  const lastWins = function (rows, keyOf) {
+    const m = {};
+    rows.forEach(function (r) { m[keyOf(r)] = r; });
+    return Object.keys(m).map(function (k) { return m[k]; });
+  };
+  h.ctx.getDashboardNeonConn_ = function () {
+    return { close: function () {}, createStatement: function () {
+      return { close: function () {}, execute: function () { return true; }, executeQuery: function (sql) {
+        if (sql.indexOf('FROM alert_config') !== -1) {
+          return rsFor(JSON.stringify(lastWins(dupAlerts, function (r) { return r[0].toLowerCase(); }).map(function (r) {
+            return { department: r[0], threshold: r[1], extra_recipients: r[2], active: r[3] !== 'FALSE', notes: r[4], skip_dates: r[5] };
+          })));
+        }
+        return rsFor(JSON.stringify(lastWins(dupDigests, function (r) { return r[0].toLowerCase() + '|' + r[1]; }).map(function (r) {
+          return { email: r[0], department: r[1], cadence: r[2], active: r[3] !== 'FALSE', notes: r[4], format: r[5] };
+        })));
+      } };
+    } };
+  };
+  const a = h.call('compareAlertConfigSources');
+  assert.equal(a.clean, false, 'a duplicated dept is never parity');
+  assert.deepEqual(Array.from(a.duplicates), ['csr (sheet x2)']);
+  const d = h.call('compareDigestConfigSources');
+  assert.equal(d.clean, false);
+  assert.deepEqual(Array.from(d.duplicates), ['m@x.com|CSR (sheet x2)']);
+});
+
+test('F42: a clean verdict counts what it compared', function () {
+  installSheet();
+  asAdmin();
+  h.ctx.getDashboardNeonConn_ = fakeConn;
+  const a = h.call('compareAlertConfigSources');
+  assert.equal(a.clean, true);
+  assert.equal(a.compared, 2);
+  assert.deepEqual(Array.from(a.duplicates), []);
+  assert.equal(h.call('compareDigestConfigSources').compared, 2);
+});

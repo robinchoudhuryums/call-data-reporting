@@ -499,6 +499,8 @@ function getAccessControlInit() {
   return { rows: rows, managers: managers, agents: agents,
            departments: getAllDepartments_(), adminEmails: getAdminEmails_(),
            agentRoleEnabled: agentRoleEnabled_(),
+           // G3: staged agent addresses still owed a welcome email.
+           pendingWelcomes: acReadPendingWelcomes_(),
            // Phase B: the modal's agent-name picker source (one roster read).
            rosterNamesByDept: acRosterNamesByDept_() };
 }
@@ -580,6 +582,8 @@ function saveAccessControlRow(req) {
   let hadRows = false;
   let coexistsWith = '';
   let marked = false;
+  let welcomeDeferred = false;
+  let pendingTracked = false;
   try {
     const ss = openSpreadsheet_();
     let sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
@@ -614,6 +618,10 @@ function saveAccessControlRow(req) {
     if (normalized !== typedNormalized) CacheService.getScriptCache().remove('access:' + typedNormalized);
     Logger.log('saveAccessControlRow: %s -> [%s] role=%s%s by %s', normalized, toStore.join(', '),
       role, role === 'agent' ? (' agent=' + agentName) : '', Session.getActiveUser().getEmail());
+    // F1 + G3 (see below): a brand-new agent row staged while agent sign-in
+    // is OFF joins the pending-welcome list, under the same lock as the row.
+    welcomeDeferred = !hadRows && role === 'agent' && !agentRoleEnabled_();
+    if (welcomeDeferred) pendingTracked = acAddPendingWelcome_(normalized);
   } finally {
     if (marked) { try { acSaveMarkEnd_(); } catch (me) { /* the marker TTL self-clears */ } }
     lock.releaseLock();
@@ -623,8 +631,17 @@ function saveAccessControlRow(req) {
   // Skipped for re-grants/edits, when ACCESS_WELCOME_EMAIL=false, or when
   // there is no DASHBOARD_URL to send. Best-effort: a send failure never
   // fails the save (the row is already written).
-  const welcomed = !hadRows && acSendWelcomeEmail_(email, toStore, role);
-  return { saved: true, departments: toStore, role: role, welcomed: welcomed, coexistsWith: coexistsWith,
+  // F1 (broad-scan 2026-10-14): an AGENT row saved while agent sign-in is OFF
+  // (AGENT_ROLE_ENABLED, Operator State #46 -- the documented go-live order
+  // stages the rows first) must not be told "Access: Live now": the agent
+  // clicks through, resolves to role 'none', sees access-denied, and the
+  // admins get a DENIED sign-in notice. No welcome is sent; the response says
+  // so and the modal tells the admin. G3: the address waits on the pending
+  // list (AGENT_WELCOME_PENDING) until sendPendingAgentWelcomes sends it.
+  const welcomed = !hadRows && !welcomeDeferred && acSendWelcomeEmail_(email, toStore, role);
+  return { saved: true, departments: toStore, role: role, welcomed: welcomed, welcomeDeferred: welcomeDeferred,
+           pendingTracked: pendingTracked,
+           coexistsWith: coexistsWith,
            // S2B-6: set when the typed address was an EMAIL_ALIASES alias.
            storedAs: (normalized !== typedNormalized) ? normalized : '' };
 }
@@ -726,6 +743,167 @@ function acSendWelcomeEmail_(email, depts, role) {
   }
 }
 
+// ── G3 (broad-scan 259, E1): staged agent rows and their deferred welcome ──
+//
+// F1 stopped the welcome email for an agent row saved while agent sign-in is
+// OFF (it would say "Access: Live now" to someone who then sees access
+// denied). That left the agent with no message at all once the flag flipped
+// -- the operator had to tell each one by hand. The deferred address now
+// waits on a pending list (the AGENT_WELCOME_PENDING Script Property, a JSON
+// array of lowercase addresses), the Access modal lists it, and once
+// AGENT_ROLE_ENABLED is on an admin sends every pending welcome in one
+// click. The flag is a hand-set Script Property, so nothing can observe the
+// flip itself: the send is a deliberate admin action, never automatic.
+// INV-01: admin-gated, and it writes a Script Property only.
+
+var AC_WELCOME_PENDING_PROP_ = 'AGENT_WELCOME_PENDING';
+// ~40 bytes an address: 150 stays well inside the 9 KB property value limit.
+var AC_WELCOME_PENDING_MAX_ = 150;
+// One click sends at most this many (each is two MailApp sends with the
+// admin copy); the rest stay pending for the next click.
+var AC_WELCOME_BULK_MAX_ = 40;
+
+/** PURE. The pending list from its stored form: lowercase, de-duplicated; bad JSON -> []. */
+function acParsePendingWelcomes_(raw) {
+  let arr = [];
+  try { arr = JSON.parse(String(raw || '[]')); } catch (e) { arr = []; }
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  arr.forEach(function (x) {
+    const e = String(x == null ? '' : x).trim().toLowerCase();
+    if (e && out.indexOf(e) === -1) out.push(e);
+  });
+  return out;
+}
+
+function acReadPendingWelcomes_() {
+  try {
+    return acParsePendingWelcomes_(PropertiesService.getScriptProperties().getProperty(AC_WELCOME_PENDING_PROP_));
+  } catch (e) { return []; }
+}
+
+/** Caller holds the script lock. An empty list deletes the property. */
+function acWritePendingWelcomes_(list) {
+  const props = PropertiesService.getScriptProperties();
+  if (list.length) props.setProperty(AC_WELCOME_PENDING_PROP_, JSON.stringify(list));
+  else props.deleteProperty(AC_WELCOME_PENDING_PROP_);
+}
+
+/** Caller holds the script lock. True when the address is on the list after the call. Never throws. */
+function acAddPendingWelcome_(emailLower) {
+  try {
+    const list = acReadPendingWelcomes_();
+    if (list.indexOf(emailLower) !== -1) return true;
+    if (list.length >= AC_WELCOME_PENDING_MAX_) {
+      Logger.log('acAddPendingWelcome_: pending list full (%s); %s is staged without a queued welcome',
+        AC_WELCOME_PENDING_MAX_, emailLower);
+      return false;
+    }
+    list.push(emailLower);
+    acWritePendingWelcomes_(list);
+    return true;
+  } catch (e) {
+    Logger.log('acAddPendingWelcome_ failed (best-effort): ' + ((e && e.message) || e));
+    return false;
+  }
+}
+
+/** Caller holds the script lock. Never throws. */
+function acDropPendingWelcomes_(emailsLower) {
+  try {
+    const list = acReadPendingWelcomes_();
+    const next = list.filter(function (e) { return emailsLower.indexOf(e) === -1; });
+    if (next.length !== list.length) acWritePendingWelcomes_(next);
+  } catch (e) {
+    Logger.log('acDropPendingWelcomes_ failed (best-effort): ' + ((e && e.message) || e));
+  }
+}
+
+/** The current agent rows, keyed by lowercase email (first row wins). */
+function acAgentRowsByEmail_() {
+  const out = {};
+  const sheet = openSpreadsheet_().getSheetByName(SHEETS.ACCESS_CONTROL);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  const width = Math.min(Math.max(sheet.getLastColumn(), 2), ACCESS_CONTROL_HEADERS.length);
+  if (width < 4) return out;   // a pre-agent sheet holds no agent rows
+  const vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  vals.forEach(function (r) {
+    const email = String(r[0] || '').trim();
+    if (!email || !acRowIsAgent_(r[3])) return;
+    const key = email.toLowerCase();
+    if (!out[key]) out[key] = { email: email, department: String(r[1] || '').trim() };
+  });
+  return out;
+}
+
+/**
+ * G3. Sends the welcome email to every staged agent address on the pending
+ * list (up to AC_WELCOME_BULK_MAX_ per call), or -- with `req.dismiss` --
+ * clears the list without sending. Refuses to send while agent sign-in is
+ * OFF (the email says access is live) or when welcome emails cannot go out
+ * (ACCESS_WELCOME_EMAIL=false, no DASHBOARD_URL), so nothing is dropped
+ * from the list unsent. An address whose agent row is gone is dropped. The
+ * sends run OUTSIDE the lock (a mail loop would starve every Access save);
+ * the list is re-read under the lock afterwards so a save made meanwhile
+ * survives. Returns { sent, dropped, failed: [emails], remaining }.
+ */
+function sendPendingAgentWelcomes(req) {
+  assertAdmin_();
+  const dismiss = !!(req && req.dismiss);
+  if (!dismiss) {
+    if (!agentRoleEnabled_()) {
+      throw new Error('Agent sign-in is still OFF. Set the AGENT_ROLE_ENABLED Script Property to true first '
+        + '(Operator State #46) -- the welcome email tells the agent their access is live.');
+    }
+    const props = PropertiesService.getScriptProperties();
+    if (String(props.getProperty('ACCESS_WELCOME_EMAIL') || 'true').toLowerCase() === 'false') {
+      throw new Error('Welcome emails are turned off (ACCESS_WELCOME_EMAIL=false). Turn them on, or clear the list.');
+    }
+    if (!String(props.getProperty('DASHBOARD_URL') || '').trim()) {
+      throw new Error('DASHBOARD_URL is not set, so the welcome email has no link to send (Operator State #7).');
+    }
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let pending;
+  try {
+    pending = acReadPendingWelcomes_();
+    if (dismiss) {
+      acWritePendingWelcomes_([]);
+      Logger.log('sendPendingAgentWelcomes: %s pending welcome(s) cleared unsent by %s',
+        pending.length, Session.getActiveUser().getEmail());
+      return { sent: 0, dropped: pending.length, failed: [], remaining: 0 };
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  const rows = acAgentRowsByEmail_();
+  const sent = [], gone = [], failed = [];
+  pending.slice(0, AC_WELCOME_BULK_MAX_).forEach(function (e) {
+    const row = rows[e];
+    if (!row) { gone.push(e); return; }
+    if (acSendWelcomeEmail_(row.email, [row.department], 'agent')) sent.push(e);
+    else failed.push(e);
+  });
+  let remaining = 0;
+  if (!lock.tryLock(15000)) {
+    // The emails went out; leaving them listed only risks a repeat send, so say so.
+    throw new Error('Sent ' + sent.length + ' welcome(s) but could not update the pending list -- '
+      + 'clear those addresses before sending again.');
+  }
+  try {
+    const done = sent.concat(gone);
+    const next = acReadPendingWelcomes_().filter(function (e) { return done.indexOf(e) === -1; });
+    acWritePendingWelcomes_(next);
+    remaining = next.length;
+  } finally {
+    lock.releaseLock();
+  }
+  Logger.log('sendPendingAgentWelcomes: sent %s, dropped %s (no agent row), failed %s, remaining %s, by %s',
+    sent.length, gone.length, failed.length, remaining, Session.getActiveUser().getEmail());
+  return { sent: sent.length, dropped: gone.length, failed: failed, remaining: remaining };
+}
+
 /**
  * Remove an email's Access Control rows. S2B-1: `req.role` ('manager' |
  * 'agent') scopes the delete to that role's rows, so removing an agent entry
@@ -754,6 +932,8 @@ function removeAccessControlRow(req) {
     const res = acDeleteEmailRows_(sheet, normalized, role || null);
     removed = res.matched;
     kept = res.kept;
+    // G3: an address whose agent row is gone is owed no welcome.
+    if (removed > 0 && role !== 'manager') acDropPendingWelcomes_([normalized]);
     CacheService.getScriptCache().remove('access:' + normalized);
     Logger.log('removeAccessControlRow: removed %s %srow(s) for %s by %s', removed,
       role ? role + ' ' : '', normalized, Session.getActiveUser().getEmail());

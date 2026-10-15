@@ -594,15 +594,27 @@ function updateCoachingFlagStatus(req) {
   var note = String(req.note || '').trim().slice(0, COACHING_NOTE_MAX_);
   var admin = (Session.getActiveUser().getEmail() || '').toLowerCase();
 
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(15000)) throw new Error('Another coaching write is in progress — retry in a moment.');
+  // F3 (broad-scan 2026-10-14): connect + schema BEFORE the lock (the ESC-D2
+  // rule; coachingDeliveryRun_ already does it). The script lock is
+  // PROJECT-WIDE, so holding it across a Neon cold start or the CREATE TABLE
+  // made every other admin write -- escalation verbs, Access Control, Dept
+  // Config, Alert/Digest saves, Orphan Fix -- fail its 15 s tryLock.
   var conn = getDashboardNeonConn_();
-  if (!conn) { lock.releaseLock(); throw new Error('Coaching storage (Neon) is not configured/reachable.'); }
+  if (!conn) throw new Error('Coaching storage (Neon) is not configured/reachable.');
+  var lock = null;
   try {
     coachingEnsureTable_(conn);
+    lock = LockService.getScriptLock();
+    if (!lock.tryLock(15000)) {
+      lock = null;
+      throw new Error('Another coaching write is in progress — retry in a moment.');
+    }
     var stmt = conn.prepareStatement('UPDATE coaching_flags SET status = ?, '
       + "note = NULLIF(?, ''), closed_by = ?, closed_at = now(), updated_at = now() "
       + "WHERE id = ? AND status = 'open'");
+    // Bounded, so a lock wait inside Neon cannot hold the script lock for the
+    // execution ceiling (the escTimed_ pattern; the fake has no setter).
+    try { if (typeof stmt.setQueryTimeout === 'function') stmt.setQueryTimeout(30); } catch (te) { /* best-effort */ }
     stmt.setString(1, action);
     stmt.setString(2, note);
     stmt.setString(3, admin);
@@ -618,7 +630,7 @@ function updateCoachingFlagStatus(req) {
     throw new Error(e && e.message ? e.message : 'Could not update the flag.');
   } finally {
     try { conn.close(); } catch (ce) {}
-    lock.releaseLock();
+    if (lock) lock.releaseLock();
   }
 }
 

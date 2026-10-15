@@ -114,7 +114,9 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   // r[34] is undefined and the mirror maps it to '' below, so an old sheet
   // re-mirrors byte-identically to before Phase 1.
   // Batch 3: 37 since AJ/AK (after-hours); a narrower sheet yields undefined
-  // for the missing cells and the writer COALESCEs the resulting NULLs.
+  // for the missing cells, which mirror as NULL -- this re-mirror is an
+  // AUTHORITATIVE per-date replace, so Neon then matches the sheet (F10: the
+  // writer's COALESCE never sees a stored row here).
   const readWidth = Math.min(37, dqeSheet.getMaxColumns());
   const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, readWidth).getDisplayValues();
   const matched = {};

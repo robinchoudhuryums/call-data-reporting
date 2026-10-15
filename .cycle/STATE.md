@@ -1,18 +1,97 @@
 # Cycle State — resume note
 
 ## Current
-Cycle: 258
-Phase: idle
+Cycle: 259
+Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-14
+Updated: 2026-10-15
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-15 -- /sync-docs over the 22 commits since 2005240 (UX-2, sync-commands, cycle 259 Batches 1-10 + E1-E5).** Drift was small because each batch updated its own docs: three CLAUDE.md index lines lagged their full items -- Operator State #2 (now names the G4 `deploy-currency` row), #56 (now leads with CDR Tools -> Make a date whole, G1) and the Health bullet's row list (`build-stamp` / `deploy-currency` #2). Subsystem lists clean (no new app files; every listed path exists). No undocumented operator state (`AGENT_WELCOME_PENDING` is engine state, registered and described in #46). Weight: CLAUDE.md 179.6 KB of 200 KB (87.7%, under the 90% warn); largest bullet 3.9 KB (the comma-joined cells one, all rule); nothing pruned. 2527 tests pass.
+  **Next (weight):** the next real saving is the ~5 KB ci:ui stage list in Key commands, which could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E5 IMPLEMENTED (block 259): manager-release readiness. The cycle-259 plan is now complete except F35 (operator check) and F62 (owner ruling).** ST4 tools/ui-harness/drive-crossstate.js is a new BLOCKING ci:ui stage walking the sequences before the UX-2 / 6c gates open (dept switch with the brief, dept switch in Outbound, the Callbacks row, View-as in/out, the Callbacks jump); the Insights mock now routes by dept with real CSR + Sales captures. It found one bug, fixed with owner approval: leaving View-as on the same dept left the admin's brief without its Callbacks row (applyViewAs_ now re-renders the brief, the F21 pattern). 2528 tests, ci:ui all stages green (18/18 new), rendered + unit bites land.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** F35 after the operator clasp check; F62 deferred; when UX-2 / 6c release to managers, extend drive-crossstate with the manager walk.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E4 IMPLEMENTED (block 259): mirror discipline (new capability).** ST2, NARROW by owner ruling (no stored figure changes): rawGridDay_ / rawGridDayIso_ is the one "which day is this grid, which legs are strays" rule (majority date) -- PIPE-3, the CSR engine + repair, diagnoseQcdVsDqe, queueSplitSample and (a guarded cdr-report copy) the overlap audit all use it; CDR / QCD / Q Path keep counting carry-over legs. ST5: tests/harness/parityDay.js is one shared day that drives the build (both copies), the drill, the split sample and the overlap audit, which must agree. 2527 tests, 10/10 bites + the guard bitten by hand, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy cdr-import and cdr-report. No operator steps.
+  **Decision recorded:** ST2 "Full" (filter carry-over legs at the import, changing stored CDR / QCD / Q Path) was declined -- revisit only on purpose.
+  **Next:** E5 (ST4 cross-state drivers) -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E3 IMPLEMENTED (block 259): recovery + deploy visibility (new capability).** G1 CDR Tools -> Make a date whole… (cdr-import): a per-date ledger (Call_Legs tab, six history sheets, six Neon tables), only what is owed via the existing paths (non-force import with the new ignoreLastSheets opt-in for missing core sheets; the PIPE-7 / F7 catch-ups), before/after report, un-parks a date that ends whole; never deletes. G4 every deploy.sh stamp carries `trees d=.. i=.. r=..`; the Health page's deploy-currency row treats the newest deploy as HEAD and warns for a project running older code. 2518 tests, 12/12 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy all three projects with scripts/deploy.sh once (the row stays muted until each has a G4 stamp). Use Make a date whole for a date missing something (Operator State #56).
+  **Next:** E4 (ST2 stray-leg filter + ST5 shared parity fixture), E5 (ST4 cross-state drivers) -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E2 IMPLEMENTED (block 259): systemic gate + anchor rules (new capability).** ST3 parityGate_ (Util.gs) is the one verdict every key-by-key flip gate reaches (DQE, QCD, the three config compares) -- duplicates, `compared` = keys on both sides, empty = INCONCLUSIVE; a sweep fails a new compare*Sources gate that skips it. ST1 cache-version-sync's QUEUE_SPECS: every cache in a file that reads queue data is classified, an embedding one needs the ':q' anchor AND the qcdSnapshotReadFailed_ put skip, and each QCD reader must flag its degraded exits. No production behaviour changed apart from the gates' `compared` meaning. 2510 tests, 15/15 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy the dashboard whenever convenient (gate-only). No operator steps.
+  **Next:** E3 (G1 make-date-whole + G4 build-stamp row), E4, E5 -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E1 IMPLEMENTED (block 259): go-live readiness (new capability).** G3 agent rows staged while agent sign-in is off wait on a pending-welcome list (AGENT_WELCOME_PENDING); the Access modal lists them and, once AGENT_ROLE_ENABLED is on, "Send N welcomes" sends them in one click (or clears the list). G2 Alerts ▸ Display standards lists the depts on the company default target, and the Insights brief labels a dept judged against it ("Default 80% target"). 2501 tests, 11/12 bites (1 equivalent mutant), lint + INV-16 + module-deps clean, ci:ui all stages green (+3 rendered checks).
+  **Owner-side:** deploy the dashboard. When you flip AGENT_ROLE_ENABLED, reopen Admin ▸ Access and press Send welcomes (Operator State #46).
+  **Next:** E2 (ST3 compare-gate helper + ST1 queue-anchor sweep), E3 (G1 make-date-whole + G4 build-stamp row, part done by F40), E4, E5 -- all optional; F35 still waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 10 IMPLEMENTED (block 259): deploy / docs / tooling. The cycle-259 batch plan is now complete except F35 and F62.** F41 deploy.sh "dirty" is scoped to the project's clasp rootDir; F40 the INV-16 pair's hash rides the sibling build stamps (deploy-time warning + Health `inv16-skew` row); F38 lint:gas allows an advanced service only when the manifest enables it; F39 the harness resets every *MEMO* per h.call (h.inExecution shares one); F36/F37/F6/F14/F53 doc drift + dead code (ovWireTablePeriodBar_, two numCols). 2494 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard (cdr-report push optional, comment-only). Use scripts/deploy.sh for cdr-import + cdr-report so the inv16-skew row fills in.
+  **BLOCKED:** F35 needs the operator check (throwaway file: push, delete locally, push, run check-remote-orphans, look in the web editor) before the INV-17 text is rewritten.
+  **Next:** F35 after that check; F62 deferred (owner ruling); Expansion E1-E5 optional.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 9 IMPLEMENTED (block 259): verification mirrors.** F11 the DQE drill reconciles with the build on col E and AD/AE/AF (parity suite now drives them); F12 a queue-sentinel drill explains itself; F13 the overlap audit reads only the build's date (P-7) and canonicalizes names via the build; F59 queueSplitSample dates like the build so one stray no longer disables its self-check; F60 the QCD-vs-DQE diagnostic dates Raw Data by majority; F63 a reordered CSR history header is refused (daily / bulk / repair) instead of mislabeling counts; F64 the daily CSR engine reads the same day-only grid as the repair. 2489 tests, 11/11 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** push cdr-report and cdr-import. No operator steps.
+  **Next:** Batch 10 (deploy / docs / tooling: F35 operator check first, F41, F40, F38, F39, F36/F37/F6/F14/F53). F62 stays deferred (owner ruling).
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 8 IMPLEMENTED (block 259): per-call edges before 6c.** F30 a trailing attempt opens a hidden episode, so per-day callback OUTCOMES add up to the week; F31 the Outbound email leads with the unmapped / sheet-fallback / lagging caveats (obMarkUnmapped_ now on both paths); F32 the PC-3 callback entitlement requires the abandon before the dial to the second; F34 Caller Lookup says inbound is unavailable when the Inbound Calls tab is missing. 2480 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard. No operator steps. Expect small shifts in one-day / prior-window callback outcomes (F30, intended).
+  **Next:** Batch 9 (mirrors: F11, F12, F13, F59, F60, F63, F64), then Batch 10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 7 IMPLEMENTED (block 259): interface / a11y, + F65/F66 (owner moved Batch 6's two follow-ons here).** F26 dark-mode --ink-muted re-declared; F27 the agent row's control is a name-cell button owning aria-expanded (row loses tabindex, false never removed); F54 Window buttons sync aria-pressed; F55 closed sub-queue details are inert; F56 open sub-queue cards survive re-renders; F57 Health folds survive the Neon repaint; F58 per-agent Copy data names; F65 Insights share links / Open in new tab carry dept (saved views stay dept-free); F66 a sort click mid-load no longer repaints the old window. 2476 tests, 10/10 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; walk S39 (its keyboard step now Tabs to the agent NAME). No operator steps.
+  **Next:** Batch 8 (per-call edges: F30, F31, F32, F34), then Batches 9-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 6 IMPLEMENTED (block 259): client state + consent.** F47 a saved YTD chart range is fetched at boot; F48 the YTD cache follows the Overview latest date; F49 the IR edit popover takes the R30 clamp; F50 a config save/remove drops the alert preview (and an in-flight one); F16 the digest link carries dept= and the Insights link applies it (shareApplyDeptParam_, shared with #/dept); F51 the silent refresh keeps the Overview agent rows; F52 roster loaders reset to the skeleton; F25 latest dates re-read every 5 min. 2467 tests, 12/12 unit bites + 1 rendered, lint + INV-16 + module-deps clean, ci:ui all stages green (new drive-smoke YTD-boot stage).
+  **Owner-side:** deploy the dashboard. No operator steps. Next digest send carries the dept param.
+  **Next:** Batch 7 (a11y: F26, F27, F54-F58, + F65/F66 added from the Batch 6 follow-ons), then Batches 8-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 5 IMPLEMENTED (block 259): UX-2 brief coherence.** F20 the Callbacks row quotes only the on-screen window's payload (and repaints on load); F21 View-as redraws the trend shading; F22 the headline's "behind" count uses the R18 benchmark; F23 the "need a look" count includes the top line; F24 a Callbacks jump switches direction only from Inbound (Both is never overwritten); F28 no Queue health row while its fold is hidden. 2460 tests, 8/8 bites + lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; re-walk S61. No operator steps.
+  **Next:** Batch 6 (client state: F47, F50, F49, F16, F48, F51, F52, F25), then Batches 7-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 4 IMPLEMENTED (block 259): cache anchors + DAL.** F4 Overview + YTD keys carry the QCD freshness tag; F5 computeQcdReport_ raises the outage flag (Insights never caches a Neon-miss zero); F29 Agent Day + the inline panel strip narrow to the row's dept (rows carry data-dept); F33 the Agent Day DQE read is one agent (strip without missed detail) unless narrowing is on; F61 an empty label union turns the on-hold label arm off. 2454 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 5 (UX-2 brief coherence: F20, F21, F22, F23, F24, F28), then Batches 6-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 3 IMPLEMENTED (block 259): escalations + access.** F44 escalation times as script-zone wall clock + overdue on the script-zone date; F45 snapshot Overdue computed, MTD a dash; F1 no welcome email for a staged agent row; F3 coaching close connects before the lock; F2 Report Usage formula guard. 2449 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; optionally `SHOW TimeZone;` in Neon to confirm F44 was live. Follow-ons: escalation MTD month boundary + Coaching timestamps are the same UTC class.
+  **Next:** Batch 4 (cache anchors + DAL: F4, F5, F29, F33, F61), then Batches 5-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 2 IMPLEMENTED (block 259): false-clean gates + backup.** F42 config compare gates fail a duplicated key + report `compared`; F43 outbound vetting INCONCLUSIVE with 0 called-back pairs; F15 the backup keeps its Sheets store (NEON_BACKUP_STORE=drive to move), restore never creates one; F18 DQE-silence INCONCLUSIVE on a zero-agent day; F19 Alerts EMPTY over assessed depts; F46 audit verdict names double-claimed queues; F17 ingest watchdog records its installer. 2443 tests, 9/9 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 3 (escalations + access: F44 first -- run `SHOW TimeZone` on Neon), then Batches 4-10 per the list in the cycle-259 entry below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 (64 findings F1-F64, G1-G5, ST1-ST5) + Batch 1 IMPLEMENTED (block 259).**
+  - Batch 1 (pipeline loss + silent green): F7 the catch-up also rebuilds Direct + re-mirrors CDR/QCD/DQE (deferred: queues) for an already-imported date; F8 hashless per-call writes fail every backfill-driven path; F9 the retention prune keeps tabs whose capture is still owed; F10 COALESCE comment/doc truth.
+  - Verification: 2434 tests (+11), 8/8 bites, INV-16 + module-deps + lint:gas clean.
+  **Owner-side:** deploy cdr-import (cdr-report: comment-only INV-16 pair, push to keep it identical). No operator steps; HMAC_SECRET missing in cdr-import now shows red (Operator State #17).
+  **Next (the scan's plan; full report in the session record):**
+    - Batch 2 false-clean gates + backup: F42 config-source compares (duplicates/compared/empty), F43 outbound vetting with 0 called-back pairs, F15 NeonBackup Sheets->Drive switch, F18 DqeSilence readiness gate, F19 Alerts EMPTY with skipped rows, F46 auditQueueSplitAttribution verdict, F17 IngestWatchdog installer record.
+    - Batch 3 escalations + access: F44 server timestamps shown in UTC (check `SHOW TimeZone` first) + CURRENT_DATE overdue, F45 snapshot overdue/MTD zeros, F1 welcome email for staged agent rows, F3 Coaching close lock-before-connect, F2 logReportUsage_ sheetSafeCell_.
+    - Batch 4 cache anchors + DAL: F4 Overview/YTD keys lack qcdFreshnessTag_ (+INV-30 text), F5 computeQcdReport_ outage flag, F29 AgentDay/strip queue-split narrowing, F33 AgentDay agent filter, F61 empty final-dept union double-count.
+    - Batch 5 UX-2 brief: F20 stale callbacks row, F21 view-as shading, F22 insHeadline_ R18 basis, F23 top line, F24 Both overwrite, F28 hidden queue row.
+    - Batch 6 client state: F47 YTD at boot, F50 alert preview after config edit, F49 IR popover clamp, F16 digest link dept, F48 YTD refresh, F51 silent-refresh table blank, F52 IR roster stale error, F25 latest-dates cadence.
+    - Batch 7 a11y: F26 --ink-muted dark, F27 agent-table tr, F54-F58.
+      + F65 (added 2026-10-15 from Batch 6's follow-ons, owner): the Insights SHARE_STATE_ collect() omits dept, so "Open in new tab" / saved views of a non-default dept land on the viewer's default dept (the F16 class; script-4-nav.html).
+      + F66 (added 2026-10-15 from Batch 6's follow-ons, owner): a header click on the Overview mini-table while a NEW window loads re-sorts the previous window's rows (ovUserRows_ kept until the reply lands; script-3-overview.html).
+    - Batch 8 per-call edges: F30 trailing attempts, F31 outbound email flags, F32 PC-3 order, F34 Caller Lookup inbound availability.
+    - Batch 9 mirrors: F11 drill col E/AD-AF, F12 sentinel rows, F13 overlap audit, F59 queueSplitSample strays, F60 qdd row-2 date, F63 CSR N1:X1 header check, F64 stray legs in daily engines.
+    - Batch 10 deploy/docs/tooling: F35 INV-17 premise (operator check first), F41 deploy.sh dirty scope, F40 INV-16 deploy skew, F38 lint allowlist, F39 harness memo reset, F36/F37/F6/F14/F53 docs + dead code.
+    - Deferred: F62 PC-1 retroactive rewrite (owner ruling). Expansion E1-E5 (G1-G5, ST1-ST5) optional.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
 - **2026-10-14 -- WS-1 verified + /sync-docs.** Everything through #368 is merged; the branch was restarted from main.
   - The owner ran `previewInternalWaitStartAllDates` (9 dates, 2026-09-30..2026-10-12): 1,516 internal records UNCHANGED, CHANGED 0, SUSPECT 0; 9,110 external, 0 changed. Clean -- no Manual Export needed (recorded in Operator State #75).
   - /sync-docs over dec41e3..73cb259 (UX-2 + the command sync): #75 first-run note, CLAUDE.md index line 75 + the ranked brief in the client-conventions index, the Agents fold in client-ui-conventions' folds entry. CLAUDE.md ~175 KB.

@@ -943,6 +943,13 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     throw new Error('Sheet "QCD Historical Data" not found. Verify the pipeline has run at least once for this dept.');
   }
   if (sheetData.empty) {
+    // F5 (broad-scan 2026-10-14): DATA-4's outage flag, which the snapshot
+    // readers raise and this report did not. On a Neon miss with an empty
+    // sheet fallback the zero shape read as "0 calls / 0.00%" in Insights
+    // Queue health (and the UX-2 brief), and getInsightsReport cached it for
+    // 6 h. The flag fires only when THIS execution fell back, so a genuinely
+    // empty window on a reachable source stays cacheable.
+    qcdFlagEmptyIfOutage_('computeQcdReport_');
     return emptyQcdReport_(dept, from, to, includeSubQueues, separate);
   }
   const ssTZ = sheetData.ssTZ;
@@ -992,6 +999,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   const dailyAcc = {};
   const dailyDateSet = {};   // F-15: union of ALL queues' active dates (axis)   // iso -> { totalCalls, answered, abandoned, violations }
 
+  let rangeRows = 0;   // F5: Total-Calls rows for this dept in the selected range
   const tLoop = Date.now();
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -1045,6 +1053,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     if (source !== QCD_TOTAL_CALLS_SOURCE) continue;   // dept totals/trend/daily are Total-Calls only
 
     if (inUserRange) {
+      rangeRows++;
       bucket.totalCalls    += totalCalls;
       bucket.totalAnswered += totalAnswered;
       bucket.abandoned     += abandoned;
@@ -1127,6 +1136,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     }
   }
   const loopMs = Date.now() - tLoop;
+  if (!rangeRows) qcdFlagEmptyIfOutage_('computeQcdReport_');   // F5: a trimmed fallback sheet
 
   // Per-queue rows in DEPT_QCD_QUEUES order.
   const queueBreakdown = queues.map(function (q) {
@@ -1515,14 +1525,15 @@ function compareQcdSources_() {
     return verdict({ error: 'Neon grid unavailable (unreachable / unconfigured)' });
   }
 
-  // Normalize either grid to comparable rows keyed by date|queue|source over
-  // the compare window. `windowed=true` filters (the whole-sheet grid); the
-  // Neon grid is already windowed.
-  // QO-3 (broad-scan 2026-10-01): `counts` records how many ROWS share each key.
-  // The map keeps one row per key, so a duplicated sheet row collapsed and read
-  // CLEAN while the sheet path sums both -- the DL-1 blind spot in this gate.
-  var norm = function (grid, windowed, counts) {
-    var m = {};
+  // Normalize either grid to comparable [date|queue|source, row] entries over
+  // the compare window, in source order. `windowed=true` filters (the
+  // whole-sheet grid); the Neon grid is already windowed.
+  // QO-3 (broad-scan 2026-10-01): a duplicated sheet row used to collapse in
+  // a key->row map and read CLEAN while the sheet path sums both -- the DL-1
+  // blind spot. ST3 (broad-scan 259, E2): duplicates, `compared` and the
+  // empty -> INCONCLUSIVE rule now live in the one shared gate, parityGate_.
+  var norm = function (grid, windowed) {
+    var out = [];
     var vals = grid.values || [], disps = grid.displays || [];
     var tz = grid.ssTZ || TZ;
     for (var i = 0; i < vals.length; i++) {
@@ -1533,26 +1544,20 @@ function compareQcdSources_() {
       var key = dateIso
         + '|' + String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1]  || '').trim()
         + '|' + String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
-      counts[key] = (counts[key] || 0) + 1;
-      m[key] = {
+      out.push([key, {
         totalCalls:     Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0,
         totalAnswered:  Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
         abandoned:      Number(r[QCD_HISTORICAL_COLS.ABANDONED - 1])      || 0,
         violations:     Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1])     || 0,
         longestWaitSec: parseHmsDisplay_(rd[QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]),
         avgAnswerSec:   parseHmsDisplay_(rd[QCD_HISTORICAL_COLS.AVG_ANSWER - 1]),
-      };
+      }]);
     }
-    return m;
+    return out;
   };
-  var sCount = {}, nCount = {};
-  var sMap = norm(sheetGrid, true, sCount);
-  var nMap = norm(neonGrid, false, nCount);
-  var duplicates = [];
-  Object.keys(sCount).forEach(function (k) { if (sCount[k] > 1) duplicates.push(k + ' (sheet x' + sCount[k] + ')'); });
-  Object.keys(nCount).forEach(function (k) { if (nCount[k] > 1) duplicates.push(k + ' (neon x' + nCount[k] + ')'); });
-  Logger.log('sheet rows (in window): %s | neon rows: %s',
-             Object.keys(sMap).length, Object.keys(nMap).length);
+  var sEntries = norm(sheetGrid, true);
+  var nEntries = norm(neonGrid, false);
+  Logger.log('sheet rows (in window): %s | neon rows: %s', sEntries.length, nEntries.length);
 
   // Counts must match EXACTLY; the two duration-derived fields get a ±1s
   // tolerance (R5, owner parity run). WHY: the writer stores avg_answer /
@@ -1565,22 +1570,22 @@ function compareQcdSources_() {
   // clear it). Anything >1s apart is still a real mismatch.
   var EXACT_FIELDS = ['totalCalls', 'totalAnswered', 'abandoned', 'violations'];
   var TOLERANT_FIELDS = ['longestWaitSec', 'avgAnswerSec'];   // ±1s = display-rounding noise
-  var missingInNeon = [], extraInNeon = [], mismatches = [], roundingOnly = 0;
-  Object.keys(sMap).forEach(function (k) {
-    if (!nMap[k]) { missingInNeon.push(k); return; }
-    var s = sMap[k], n = nMap[k], diffs = [], hadRounding = false;
-    EXACT_FIELDS.forEach(function (f) {
-      if (String(s[f]) !== String(n[f])) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
-    });
-    TOLERANT_FIELDS.forEach(function (f) {
-      var d = Math.abs((Number(s[f]) || 0) - (Number(n[f]) || 0));
-      if (d > 1) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
-      else if (d === 1) hadRounding = true;
-    });
-    if (diffs.length) mismatches.push(k + ' :: ' + diffs.join(', '));
-    else if (hadRounding) roundingOnly++;
+  var gate = parityGate_(sEntries, nEntries, {
+    diff: function (s, n) {
+      var diffs = [], hadRounding = false;
+      EXACT_FIELDS.forEach(function (f) {
+        if (String(s[f]) !== String(n[f])) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
+      });
+      TOLERANT_FIELDS.forEach(function (f) {
+        var d = Math.abs((Number(s[f]) || 0) - (Number(n[f]) || 0));
+        if (d > 1) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
+        else if (d === 1) hadRounding = true;
+      });
+      return { diffs: diffs, rounding: hadRounding };
+    },
   });
-  Object.keys(nMap).forEach(function (k) { if (!sMap[k]) extraInNeon.push(k); });
+  var missingInNeon = gate.missingInNeon, extraInNeon = gate.extraInNeon;
+  var mismatches = gate.mismatched, duplicates = gate.duplicates, roundingOnly = gate.roundingOnly;
 
   Logger.log('--- missing in Neon (sheet rows not mirrored): %s', missingInNeon.length);
   missingInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
@@ -1603,10 +1608,9 @@ function compareQcdSources_() {
   // compared NOTHING -- the strongest possible green light for a
   // QCD_READ_SOURCE=neon flip, on no evidence. `neonFetchQcdGrid_` returns a
   // non-null EMPTY grid for an empty range, so the `!neonGrid` guard above does
-  // not cover it. An empty comparison is now an explicit NOT-clean error, the
-  // same rule CORE-5/F-5 established for the three CONFIG compare gates.
-  var compared = Object.keys(sMap).length;
-  if (!compared) {
+  // not cover it. Since ST3 that is parityGate_'s `inconclusive`.
+  var compared = gate.compared;
+  if (gate.inconclusive) {
     Logger.log('=== QCD PARITY INCONCLUSIVE -- ZERO sheet rows in %s..%s, so nothing was '
       + 'compared. This is NOT a pass. Set QCD_PARITY_FROM / QCD_PARITY_TO to a '
       + 'range the QCD sheet actually covers (the in-source default is a fixed '
@@ -1616,8 +1620,7 @@ function compareQcdSources_() {
                      extraInNeon: extraInNeon.length });
   }
 
-  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0
-               && duplicates.length === 0);
+  var clean = gate.clean;
   Logger.log('=== QCD PARITY %s ===', clean
     ? 'CLEAN -- qcd_history matches the sheet for this range (' + compared
       + ' rows compared); the QCD read-back gate PASSED'

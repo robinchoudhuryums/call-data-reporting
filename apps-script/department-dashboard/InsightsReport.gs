@@ -342,10 +342,6 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // relative to current once custom priors exist), and the 12-mo trend
   // [trendFrom,trendTo]. Mirrors the Performance Report read; default
   // 'sheet' is unchanged.
-  // Adoption round (Phase 4): read through col AI so the sheet path carries
-  // queue_split like the DAL does (REP-10-bounded for a pre-Phase-1 sheet).
-  const numCols  = Math.min(HISTORICAL_COLS.QUEUE_SPLIT,
-    sheet ? sheet.getMaxColumns() : HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
   let fetchFrom = from;
   if (trendFrom < fetchFrom) fetchFrom = trendFrom;
   if (priorFrom < fetchFrom) fetchFrom = priorFrom;

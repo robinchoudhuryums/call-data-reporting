@@ -285,8 +285,17 @@ function inboundDeptPredicate_(dept, deptQueues) {
     ? ("lower(trim(coalesce(c.final_dept,''))) NOT IN ("
        + allLabels.map(inboundSqlLit_).join(',') + ')')
     : 'true';
+  // F61 (broad-scan 2026-10-14): an EMPTY union (getAllFinalDeptLabels_'s
+  // fail-open on a roster read error) makes every label "unmapped", so the
+  // entry-queue arm claims every on-hold call -- while THIS dept's label arm
+  // still matched its FULL list, and one call landed in two depts (its label's
+  // and its entry queue's). With no union, attribute by entry queue ONLY: the
+  // label arm is off for every dept alike, so each call still lands once.
+  const labelArm = allLabels.length
+    ? 'lower(trim(c.final_dept)) IN (' + labelList + ')'
+    : 'false';
   return ' AND ((' + isOnHoldAnswered
-       + ' AND lower(trim(c.final_dept)) IN (' + labelList + '))'
+       + ' AND ' + labelArm + ')'
        + ' OR ((NOT ' + isOnHoldAnswered + ' OR ' + unmappedLabel + ')'
        + " AND lower(trim(coalesce(c.entry_queue,''))) IN (" + queueList + ')))';
 }
@@ -540,6 +549,12 @@ function getOutboundCallJourney_(callId, date, dept, user) {
  * within OUTBOUND_CALLBACK_WINDOW_DAYS before the dial's date -- the
  * population a CE-1 episode is built from. Bound parameters for the client
  * values; fails CLOSED (false) on any error.
+ *
+ * F32 (broad-scan 2026-10-14): the abandon must come BEFORE the dial, to the
+ * second (the engine's rule: a dial stamped the same second as the abandon
+ * counts as after it). The date-only range also admitted an abandon later on
+ * the dial's own day -- a dial that cannot have been a callback of it. Same
+ * timestamp form as the uncalled-list SQL in OutboundReport.gs.
  */
 function outboundJourneyCallbackEntitled_(conn, callId, date, dept, deptQueues) {
   try {
@@ -550,6 +565,8 @@ function outboundJourneyCallbackEntitled_(conn, callId, date, dept, deptQueues) 
       +   "AND c.disposition = 'abandoned' AND COALESCE(c.is_internal, FALSE) = FALSE "
       +   "AND COALESCE(trim(c.entry_queue),'') <> '' "
       +   'AND c.call_date BETWEEN (?::date - ' + Number(win) + ') AND ?::date '
+      +   "AND (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval) "
+      +   "<= (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval) "
       +   'AND ' + inboundWindowClause_(true)
       +   inboundDeptPredicate_(dept, deptQueues) + ') LIMIT 1';
     const st = conn.prepareStatement(sql);
@@ -2595,7 +2612,9 @@ function ihRowInDept_(row, qSet, labels, allLabels) {
   var isOHA = disposition === 'answered' && onHold;
   var fd = String(row[12] == null ? '' : row[12]).trim().toLowerCase();
   var eq = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
-  var labelMatch = isOHA && labels.indexOf(fd) !== -1;
+  // F61: the SQL predicate's twin -- an empty union turns the label arm OFF
+  // (entry queue only), so one on-hold call never lands in two depts.
+  var labelMatch = isOHA && allLabels.length > 0 && labels.indexOf(fd) !== -1;
   var unmappedLabel = allLabels.length ? allLabels.indexOf(fd) === -1 : true;
   var entryMatch = (!isOHA || unmappedLabel) && qSet[eq] === true;
   return labelMatch || entryMatch;

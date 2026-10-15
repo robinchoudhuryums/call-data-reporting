@@ -84,3 +84,40 @@ test('ENG-14 follow-on: with the sheet retired on a Neon-read install, diagnoseA
   const r = JSON.parse(JSON.stringify(hd.call('diagnoseAbandoned')));
   assert.deepEqual(r, { sheetUnavailable: true, neonReads: true });
 });
+
+// F46 (broad-scan 2026-10-14): the closing verdict keyed on DROPPED volume
+// alone, so a run that had just printed "?? ... DOUBLE-COUNTED" lines ended
+// with "Every queue in the split is claimed by exactly one dept ... the fix
+// working". A double-claimed queue now gets its own verdict.
+test('F46: auditQueueSplitAttribution names a double-claimed queue in its verdict, never "exactly one dept"', function () {
+  const ha = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'NeonRead.gs', 'Diagnostics.gs'] });
+  ha.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com', QUEUE_SPLIT_AUDIT_DATE: '2026-10-09' };
+  ha.state.userEmail = 'admin@x.com';
+  const W = 35;   // through col AI (Queue Split)
+  const row = function (agent, split) {
+    const r = new Array(W).fill('');
+    r[1] = '2026-10-09'; r[2] = agent; r[5] = '4'; r[7] = '3';
+    r[34] = JSON.stringify(split);
+    return r;
+  };
+  ha.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DO NOT EDIT!': rosterGrid({ CSR: ['Ann, 101'], Sales: ['Bo, 201'] }),
+    'DQE Historical Data': [new Array(W).fill('')].concat([
+      row('Ann', { A_Q_Shared: { r: 4, a: 3 } }),
+      row('Bo', { A_Q_Shared: { r: 4, a: 3 } }),
+    ]),
+  } });
+  ha.ctx.inboundQueuesForDept_ = function () { return ['A_Q_Shared']; };   // BOTH depts map it
+  const logs = [];
+  ha.ctx.Logger = { log: function () {
+    const a = Array.prototype.slice.call(arguments);
+    let i = 1;
+    logs.push(String(a[0]).replace(/%s/g, function () { return String(a[i++]); }));
+  } };
+  ha.call('auditQueueSplitAttribution');
+  const text = logs.join('\n');
+  assert.match(text, /\?\? A_Q_Shared .* DOUBLE-COUNTED/);
+  assert.match(text, />> DOUBLE-COUNTED: 1 queue\(s\) are claimed by more than one dept/);
+  assert.match(text, /A_Q_Shared \(CSR \+ Sales, rung=8\)/);
+  assert.doesNotMatch(text, /claimed by exactly one dept/, 'the contradiction is gone');
+});

@@ -1029,7 +1029,8 @@
     if (insLastRoster.dept === dept && insLastRoster.agents.length && insLastRoster.rangeKey === rangeKey) {
       insRenderAgentList(); return;
     }
-    $('ins-agent-loader').style.display = ''; $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
+    rosterLoaderShowLoading_('ins-agent-loader');   // F52
+    $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
     const __rk = ++insRosterReqSeq_;
     google.script.run
       .withSuccessHandler(function (data) {
@@ -1785,6 +1786,42 @@
     return { name: best.name, pct: Math.round((best.a / total) * 100) };
   }
 
+  // F20 (broad-scan 2026-10-14): PURE. The callbacks payload the brief may
+  // quote -- ONLY the one held for the window on screen. INS_CB_ keeps the
+  // last loaded window, and insCbSync_ returns early on the Inbound view
+  // before it resets the key, so a dept or date change there left the brief
+  // quoting another department's callback rate.
+  function insBriefCallbackFor_(store, curKey) {
+    if (!store || !store.data || !curKey || store.key !== curKey) return null;
+    return store.data.callback || null;
+  }
+
+  // F23: PURE. How many things "need a look" -- the section rows AND the top
+  // line's own tier, so a red top-line pill is never followed by "Nothing
+  // needs a look." (the common case under the default 80/10 target).
+  function insBriefLookCount_(ranked, topTier) {
+    var n = (ranked || []).filter(function (r) { return r.tier === 'red' || r.tier === 'amber'; }).length;
+    return n + ((topTier === 'red' || topTier === 'amber') ? 1 : 0);
+  }
+
+  // G2 (broad-scan 259, E1): PURE. The top line's "default target" label --
+  // '' when the dept has its own answer target (or there is no tier to
+  // judge), else the label naming the company default it is judged against.
+  // Under the default 80/10 a red pill is the default's verdict, not one an
+  // admin chose for this dept, so the brief says so.
+  function insBriefTargetNote_(std, hasCalls) {
+    if (!hasCalls || !std || !std.isDefault) return '';
+    var t = Number(std.target);
+    return 'Default ' + (isFinite(t) && t > 0 ? t + '% ' : '') + 'target';
+  }
+
+  // F28: PURE. Whether the Queue health fold is on screen -- insQhFoldSync_
+  // hides it when there is no payload, or one with no totals that is neither
+  // an error nor unmapped. A brief row must never point at a hidden section.
+  function insBriefQueueVisible_(qh) {
+    return !!(qh && (qh.error || qh.unmapped || qh.totals));
+  }
+
   function insRenderBrief_(data) {
     var box = $('ins-brief');
     var res = $('insights-results');
@@ -1805,8 +1842,8 @@
     var pct = Number((ts.pct && ts.pct.val) || 0);
     var hasCalls = Number((ts.rung && ts.rung.val) || 0) > 0;
     var topTier = hasCalls ? insBriefTopTier_(answerTierCls_(pct, dept)) : 'grey';
+    var targetNote = insBriefTargetNote_(answerStdFor_(dept), hasCalls);   // G2
     var rows = [
-      Object.assign({ key: 'queue' }, insBriefQueue_(data.queueHealth, ABANDON_STANDARD_)),
       { key: 'agents', tier: agentsV.tier, text: agentsV.text },
       { key: 'detail', tier: 'grey', text: (function () {
           var parts = [];
@@ -1817,15 +1854,20 @@
         })() },
       { key: 'trend', tier: trendV.tier, text: trendV.text },
     ];
+    if (insBriefQueueVisible_(data.queueHealth)) {   // F28
+      rows.unshift(Object.assign({ key: 'queue' }, insBriefQueue_(data.queueHealth, ABANDON_STANDARD_)));
+    }
     // Callbacks: no standard yet (owner) -- always grey, and only where the
     // Outbound view exists for this viewer (admin-only until 6c).
     if (typeof obAllowed_ === 'function' && obAllowed_()) {
-      var cb = (typeof INS_CB_ !== 'undefined' && INS_CB_.data) ? INS_CB_.data.callback : null;
+      var cbw = (typeof insCbWindow_ === 'function') ? insCbWindow_() : null;
+      var cb = (typeof INS_CB_ !== 'undefined')
+        ? insBriefCallbackFor_(INS_CB_, cbw ? [cbw.department, cbw.from, cbw.to].join('|') : null) : null;   // F20
       rows.push({ key: 'callbacks', tier: 'grey',
         text: cb ? 'Callbacks: ' + insCbHeadText_(cb) : 'Callbacks for abandoned callers are in the Outbound view' });
     }
     var ranked = insBriefRank_(rows);
-    var look = ranked.filter(function (r) { return r.tier === 'red' || r.tier === 'amber'; }).length;
+    var look = insBriefLookCount_(ranked, hasCalls ? topTier : 'grey');   // F23
     var dp = Number((ts.pct && ts.pct.deltaPct) || 0);
     var top = hasCalls
       ? 'Answer rate ' + pct.toFixed(1) + '%'
@@ -1833,7 +1875,9 @@
         + '. ' + (look === 0 ? 'Nothing needs a look.' : (look === 1 ? '1 thing needs a look.' : look + ' things need a look.'))
       : 'No calls in this window.';
     box.innerHTML = '<p class="ins-brief-top"><span class="ins-brief-top-tier ins-brief--' + topTier + '">'
-      + escapeHtml(INS_BRIEF_WORD_[topTier]) + '</span>' + escapeHtml(top) + '</p>'
+      + escapeHtml(INS_BRIEF_WORD_[topTier]) + '</span>' + escapeHtml(top)
+      + (targetNote ? ' <span class="ins-brief-default" title="This department has no answer target of its own, so it is judged against the company default. Set one in Alerts, Answer targets.">'
+          + escapeHtml(targetNote) + '</span>' : '') + '</p>'
       + '<ul class="ins-brief-list">' + ranked.map(function (r) {
         var t = INS_BRIEF_TARGET_[r.key] || {};
         return '<li><button type="button" class="ins-brief-row ins-brief--' + r.tier + '" data-brief-key="' + r.key + '">'
@@ -1857,7 +1901,11 @@
   function insBriefGo_(key) {
     var t = INS_BRIEF_TARGET_[key];
     if (!t) return;
-    if (key === 'callbacks') {
+    // F24: only from the Inbound view. "Both" already shows the Callbacks
+    // section, and the switch's click handler SAVES the choice -- so clicking
+    // "out" from Both silently replaced the admin's saved direction.
+    var fromInbound = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() === 'in' : true;
+    if (key === 'callbacks' && fromInbound) {
       var out = document.querySelector('#dept-dir-switch [data-dir="out"]');
       if (out) out.click();
     }
@@ -1870,7 +1918,7 @@
       try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (err) {}
       var sum = el.querySelector && el.querySelector('summary');
       if (sum) { try { sum.focus({ preventScroll: true }); } catch (err2) {} }
-    }, key === 'callbacks' ? 150 : 0);
+    }, (key === 'callbacks' && fromInbound) ? 150 : 0);
   }
 
   // A1: scroll to + pulse an agent's card by name (the strip chip target).
@@ -2623,6 +2671,11 @@
   }
 
   function insCbRender_(data) {
+    // F20: the brief quotes this payload's headline -- repaint it now, or it
+    // keeps the placeholder until the next Insights render.
+    if (typeof insLastData !== 'undefined' && insLastData && typeof insRenderBrief_ === 'function') {
+      try { insRenderBrief_(insLastData); } catch (eB) { /* the brief is best-effort */ }
+    }
     var meta = (data && data.meta) || {};
     var cb = (data && data.callback) || {};
     var head = $('ins-cb-fold-head');
@@ -5207,6 +5260,8 @@
   // snapshot the SHARE_STATE_ provider's state: dates, compare mode, custom
   // prior, agents ('' = whole department), Simple/Detailed. Deliberately NOT
   // the department -- the header selector owns that, and managers are pinned.
+  // (A share LINK does carry it -- shareLinkStateFor_, F65 -- because the
+  // link is opened by someone else, on a page whose selector starts elsewhere.)
   // Applying a view (or opening a shared link) runs the NORMAL fetch +
   // permission path; nothing is rendered from storage.
   var INS_VIEWS_MAX_ = 12;
@@ -5254,7 +5309,7 @@
     }
     let suffix = '';
     try {
-      const state = insCurrentViewState_();
+      const state = shareLinkStateFor_('/report/insights');   // F65: the link names its dept
       const encoded = state ? encodeShareParams_(state) : '';
       if (encoded) suffix = '?' + encoded;
     } catch (e) { /* bare route */ }

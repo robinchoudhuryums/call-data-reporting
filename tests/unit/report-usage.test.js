@@ -77,3 +77,19 @@ test('F-27: cache-warm suppression -- no usage rows while REPORT_USAGE_SUPPRESS_
   h.call('getDepartmentSummary', REQ);
   assert.equal(h.state.spreadsheet.getSheetByName('Report Usage')._data.length, 2);
 });
+
+// F2 (broad-scan 2026-10-14): two callers put DATA in the dept column -- a
+// roster agent name (individual:to-agent, a feed spelling) and escalation
+// departments read back from Neon (escalations:delete) -- and logReportUsage_
+// appended it raw into the admin-opened sheet. It now passes the formula
+// guard every other sheet writer uses, at the one chokepoint.
+test('F2: a formula-shaped report/dept value is neutralized before it reaches the sheet', function () {
+  install(true);
+  h.call('logReportUsage_', 'individual:to-agent', '=HYPERLINK("http://x","y")', { role: 'admin', email: 'admin@x.com' }, false);
+  h.call('logReportUsage_', '+evil', '-Name', { role: 'admin', email: 'admin@x.com' }, false);
+  const rows = h.state.spreadsheet.getSheetByName('Report Usage')._data;
+  assert.equal(rows[1][1], 'individual:to-agent', 'a plain value is untouched');
+  assert.equal(rows[1][2], '\'=HYPERLINK("http://x","y")');
+  assert.equal(rows[2][1], "'+evil");
+  assert.equal(rows[2][2], "'-Name");
+});

@@ -276,8 +276,12 @@ test('fallback constants are the SAME globals the SQL is built from (no fork kno
 // {includeChildren:false} opt-out, and the sheet fallbacks share the list.
 test('PCR-1/PCR-2: a parent\'s inbound scope rolls in its children\'s raw aliases and final-dept labels', function () {
   install();
-  const saved = { q: h.ctx.queuesForDept_, a: h.ctx.getInboundQueueAliases_, l: h.ctx.getFinalDeptLabels_, p: h.ctx.getOverviewParentMap_ };
+  const saved = { q: h.ctx.queuesForDept_, a: h.ctx.getInboundQueueAliases_, l: h.ctx.getFinalDeptLabels_, p: h.ctx.getOverviewParentMap_,
+                  u: h.ctx.getAllFinalDeptLabels_ };
   h.ctx.getOverviewParentMap_ = function () { return { PAP: 'Sales' }; };
+  // F61: the label arm needs a non-empty union (production's always is); an
+  // empty one turns it off, which the F61 test pins separately.
+  h.ctx.getAllFinalDeptLabels_ = function () { return ['sales', 'pap', 'patient assistance']; };
   h.ctx.queuesForDept_ = function (d, o) {
     const own = { Sales: ['A_Q_Sales'], PAP: ['A_Q_PAP_Canon'] };
     return d === 'Sales' && !(o && o.includeChildren === false) ? own.Sales.concat(own.PAP) : (own[d] || []);
@@ -301,5 +305,32 @@ test('PCR-1/PCR-2: a parent\'s inbound scope rolls in its children\'s raw aliase
   } finally {
     h.ctx.queuesForDept_ = saved.q; h.ctx.getInboundQueueAliases_ = saved.a;
     h.ctx.getFinalDeptLabels_ = saved.l; h.ctx.getOverviewParentMap_ = saved.p;
+    if (saved.u) h.ctx.getAllFinalDeptLabels_ = saved.u; else delete h.ctx.getAllFinalDeptLabels_;
+  }
+});
+
+// F61 (broad-scan 2026-10-14): getAllFinalDeptLabels_ fails OPEN to an EMPTY
+// union (a roster read error). Every label then reads "unmapped", so the
+// entry-queue arm claimed each on-hold call -- while the label arm still
+// matched the dept's FULL list, and one call counted in two depts. With no
+// union the label arm is OFF everywhere: the entry queue alone attributes.
+test('F61: an empty label union attributes on-hold calls by entry queue ONLY (no double count), in SQL and on the sheet', function () {
+  install();
+  const saved = { l: h.ctx.getFinalDeptLabels_, u: h.ctx.getAllFinalDeptLabels_ };
+  h.ctx.getFinalDeptLabels_ = function (d) { return [String(d).toLowerCase()]; };
+  h.ctx.getAllFinalDeptLabels_ = function () { return []; };
+  try {
+    const pred = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+    assert.doesNotMatch(pred, /final_dept\)\) IN \(/, 'no label arm');
+    assert.match(pred, /AND false\)/, 'the label arm is off');
+    // Sheet twin: an on-hold call labelled CSR that entered Sales' queue.
+    const row = []; row[5] = 'Answered'; row[7] = 'TRUE'; row[12] = 'csr'; row[10] = 'A_Q_Sales';
+    assert.equal(h.call('ihRowInDept_', row, { a_q_csr: true }, ['csr'], []), false, 'not CSR by label');
+    assert.equal(h.call('ihRowInDept_', row, { a_q_sales: true }, ['sales'], []), true, 'Sales by entry queue -- once');
+    // With a union the label arm is back.
+    assert.equal(h.call('ihRowInDept_', row, { a_q_csr: true }, ['csr'], ['csr', 'sales']), true);
+  } finally {
+    h.ctx.getFinalDeptLabels_ = saved.l;
+    if (saved.u) h.ctx.getAllFinalDeptLabels_ = saved.u; else delete h.ctx.getAllFinalDeptLabels_;
   }
 });

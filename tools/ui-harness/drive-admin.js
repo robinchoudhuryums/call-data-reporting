@@ -174,6 +174,33 @@ const MODALS = [
             JSON.stringify(picker.vals) === JSON.stringify(picker.served),
             'picker=' + JSON.stringify(picker.vals) + ' served=' + JSON.stringify(picker.served));
         }
+        // G2 (broad-scan 259, E1): the editor names the depts riding the
+        // company default target. The fixture sets no per-dept override, so
+        // every dept but the CSR seed must be listed under the default.
+        const cov = await page.evaluate(() => {
+          const el = document.getElementById('al-dept-targets-coverage');
+          return el ? el.textContent : null;
+        });
+        record('Alerts: the answer-target editor lists the depts on the company default',
+          !!cov && /On the company default \(80%, amber within 10 pts\): .*Sales/.test(cov) && /Own target: CSR 92%/.test(cov),
+          'text=' + JSON.stringify(cov));
+      }
+      // G3 (broad-scan 259, E1): a staged agent (the fixture's pending list,
+      // agent sign-in OFF) shows the pending bar with its send button
+      // DISABLED, and the agent's row carries the "welcome pending" chip.
+      if (m.name === 'Access Control' && info.found && info.visible) {
+        const pend = await page.evaluate(() => {
+          const box = document.getElementById('ac-agent-pending');
+          const btn = document.getElementById('ac-welcome-send');
+          const chip = document.querySelector('#ac-agent-tbody .ds-chip');
+          return { shown: !!box && box.style.display !== 'none', text: box ? box.textContent : '',
+                   disabled: !!btn && btn.disabled, chip: chip ? chip.textContent : '' };
+        });
+        record('Access Control: the staged-agent welcome bar renders, send disabled while sign-in is off',
+          pend.shown && /1 staged agent has no welcome email yet/.test(pend.text) && pend.disabled,
+          JSON.stringify(pend));
+        record('Access Control: the staged agent row carries the "welcome pending" chip',
+          pend.chip === 'welcome pending', 'chip=' + JSON.stringify(pend.chip));
       }
       record(m.name + ': the panel does not overflow the viewport', info.overflows === false,
         'overflows=' + info.overflows);

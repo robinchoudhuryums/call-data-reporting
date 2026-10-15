@@ -105,6 +105,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getCompanyOverview: function (req) {
       return P[(${JSON.stringify(role)} === 'admin' && !(req && req.viewAsDept)) ? 'ov-admin' : 'ov-manager'];
     },
+    // F47: the YTD chart range, served the REAL getOverviewChartTrend payload
+    // per viewer (the Company line is admin-only, and View-as is a manager).
+    getOverviewChartTrend: function (req) {
+      return P[(${JSON.stringify(role)} === 'admin' && !(req && req.viewAsDept)) ? 'ovytd-admin' : 'ovytd-manager'];
+    },
     getDepartmentSummary: function (req) {
       var d = spanDays(req);
       // A dept with NO sub-queues, so the single-dept render + CSV stay covered.
@@ -159,7 +164,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     // calendar's year-to-date fallback -- one fixture for every span pinned
     // the region to a 30-day shape it rarely renders in practice.
     getInsightsReport: function (req) {
-      return spanDays(req) <= 2 ? P['insights-day'] : P['insights'];
+      // E5 / ST4: route by department -- the cross-state driver switches CSR -> Sales.
+      var sales = req && req.department === 'Sales';
+      if (spanDays(req) <= 2) return P[sales ? 'insights-day-sales' : 'insights-day'];
+      return P[sales ? 'insights-sales' : 'insights'];
     },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },

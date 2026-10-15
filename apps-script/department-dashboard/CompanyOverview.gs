@@ -125,7 +125,13 @@ function overviewCacheKey_() {
   // tiles' "X of Y agents" and per-dept rollups stale for the TTL while the
   // chart beside them updated. In this ONE helper, so every bust site inherits it.
   var rh = (typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na';
-  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf + ':' + rh;
+  // F4 (broad-scan 2026-10-14): + the latest QCD date. The tiles' queue chips
+  // (computeQcdSnapshots_) EMBED queue data, and the DQE freshness tag above
+  // does not move when a date's QCD lands or is force re-imported on its own
+  // -- DATA-6 anchored summary + insights this way and missed this key. In
+  // this ONE helper, so every bust site inherits it.
+  var qf = (typeof qcdFreshnessTag_ === 'function') ? qcdFreshnessTag_() : 'na';
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf + ':' + rh + ':q' + qf;
 }
 
 // Chart-range slider (hybrid). The multi-dept chart ships a 90-day series
@@ -1296,7 +1302,10 @@ function getOverviewChartTrend(req) {
                  + ':' + ((typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung')   // DD-2
                  // DL-5: + every dept's roster -- each dept line is its roster's
                  // agents, and a roster edit does not move latestDate.
-                 + ':' + ((typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na');
+                 + ':' + ((typeof rosterAllDeptsHash_ === 'function') ? rosterAllDeptsHash_() : 'na')
+                 // F4: + the latest QCD date -- the abandoned series and the
+                 // company abandoned line are queue data (the DATA-6 anchor).
+                 + ':q' + ((typeof qcdFreshnessTag_ === 'function') ? qcdFreshnessTag_() : 'na');
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

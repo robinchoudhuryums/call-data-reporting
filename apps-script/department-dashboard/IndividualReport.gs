@@ -318,11 +318,6 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // guards it). deptQueueExts (floater match set) needs ALL history on its
   // derived path, so the Neon path reads a cheap cols-A..D slice for the
   // unchanged getDeptQueueExts_ while the windowed rows come from Neon.
-  // Adoption round (Phase 4): read through col AI so the sheet path carries
-  // queue_split like the DAL does -- bounded by the real grid width, since a
-  // pre-Phase-1 34-col sheet must not throw (REP-10).
-  const numCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT,
-    sheet ? sheet.getMaxColumns() : HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
   let fetchFrom = trendStartIso;                       // trend start <= from <= to
   if (hasPrior && priorFrom < fetchFrom) fetchFrom = priorFrom;
   let fetchTo = to;

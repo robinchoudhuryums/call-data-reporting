@@ -92,3 +92,31 @@ test('DL-7: each entry point is a fresh execution -- a fixture swapped between c
   assert.deepEqual(Array.from(h.call('getRosterForDepartment_', 'Sales').names), []);
   assert.equal(h.call('rosterAllDeptsHash_'), 'na');
 });
+
+// F39 (broad-scan 2026-10-14): the execution boundary resets EVERY memo, found
+// by name -- not just the two workbook memos (the R40 hole: four DQE memos had
+// to be reset by hand in every suite that swapped fixtures, and a fifth would
+// have needed a fifth reset).
+test('F39: every h.call starts a fresh execution for EVERY *MEMO* global; h.inExecution shares one', function () {
+  const hm = loadGas({ files: ['Config.gs', 'Util.gs', 'Data.gs', 'NeonRead.gs', 'Alerts.gs', 'DeptConfig.gs'] });
+  ['DQE_SHEET_ROWS_MEMO_', 'DQE_DATE_COL_MEMO_', 'COMPANY_HOLIDAYS_MEMO_', 'ALERT_DATE_ROWS_MEMO_',
+   'DEPT_CONFIG_ROWS_MEMO_', 'NEON_CONN_DOWN_MEMO_', 'ROW_DATE_ISO_MEMO_'].forEach(function (k) {
+    assert.ok(hm.memoNames.indexOf(k) !== -1, k + ' is reset at the boundary (ALERT_DATE_ROWS_MEMO_ needs `var`, not `let`)');
+  });
+  assert.ok(hm.memoNames.indexOf('DQE_SHEET_ROWS_MEMO_MAX_') === -1 && hm.memoNames.indexOf('ROW_DATE_ISO_MEMO_CAP_') === -1,
+    'tuning constants are not memos');
+  hm.ctx.getProbe_ = function () { return { holidays: hm.ctx.COMPANY_HOLIDAYS_MEMO_, rowIso: hm.ctx.ROW_DATE_ISO_MEMO_ }; };
+  hm.ctx.COMPANY_HOLIDAYS_MEMO_ = ['stale'];
+  hm.ctx.ROW_DATE_ISO_MEMO_ = { k: 'stale' };
+  let p = hm.call('getProbe_');
+  assert.equal(p.holidays, null, 'a new execution starts with the load-time value');
+  assert.deepEqual(JSON.parse(JSON.stringify(p.rowIso)), {}, 'an object memo restarts EMPTY');
+  hm.ctx.ROW_DATE_ISO_MEMO_.mutated = 1;
+  assert.deepEqual(JSON.parse(JSON.stringify(hm.call('getProbe_').rowIso)), {}, 'and is never the same object twice');
+  hm.inExecution(function () {
+    hm.ctx.COMPANY_HOLIDAYS_MEMO_ = ['seeded'];
+    assert.deepEqual(Array.from(hm.call('getProbe_').holidays), ['seeded'], 'calls inside one execution share the memo');
+    assert.deepEqual(Array.from(hm.call('getProbe_').holidays), ['seeded']);
+  });
+  assert.equal(hm.call('getProbe_').holidays, null, 'the next execution is fresh again');
+});

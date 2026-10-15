@@ -10,8 +10,11 @@ Source of truth for the call-data reporting stack:
   controls + the inline Missed Calls report + the expandable **Insights**
   section at the bottom — the deeper lens that absorbed the retired
   Performance / Compare Ranges / QCD reports), and the **Escalations**
-  worklist page, toggled via header buttons; the Individual report modal
-  (plus the admin-vetted Inbound / Direct / Outbound) overlays any page.
+  worklist page, toggled via header buttons; the Individual report and
+  Agent day modals (plus the admin-vetted Inbound / Direct) overlay any page.
+  Outbound has no modal (retired, G3): it lives on My Department behind the
+  Inbound | Outbound | Both switch, with the Outbound summary and Callbacks
+  under the outbound table (UX-1).
 - **Reference copies** of related Apps Script code from sibling projects
   (CDR Report, CDR Import) that the dashboard depends on. Pulled in
   gradually so changes across projects can be reviewed in one place.

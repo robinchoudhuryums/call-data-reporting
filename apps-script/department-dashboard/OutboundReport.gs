@@ -283,10 +283,7 @@ function getOutboundReport(req) {
   const data = computeOutboundReport_(scope);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
-  // B1/PC-5: a dept view with NO mapped queues can attribute no abandon, so its
-  // callback figures are an honest zero only with that said -- the NEO-5 flag
-  // the Inbound report carries. The agent rows are roster-based and unaffected.
-  if (!scope.companyView && !(inboundQueuesForDept_(scope.dept) || []).length) data.meta.unmapped = true;
+  obMarkUnmapped_(scope, data);   // B1/PC-5
   // Fallback payloads are NEVER cached -- a recovered Neon must not be masked
   // for the TTL (the unavailable-uncached rule extended to degraded payloads,
   // same as the Direct report and the heatmap fallback).
@@ -296,6 +293,46 @@ function getOutboundReport(req) {
   }
   logReportUsage_('outbound', scope.dept || '(all)', scope.user, false);
   return data;
+}
+
+/**
+ * B1/PC-5: a dept view with NO mapped queues can attribute no abandon, so its
+ * callback figures are an honest zero only with that said -- the NEO-5 flag
+ * the Inbound report carries. The agent rows are roster-based and unaffected.
+ * One helper, because the web report AND the email (F31) both need the flag
+ * and computeOutboundReport_ -- which the email calls directly -- never set it.
+ */
+function obMarkUnmapped_(scope, data) {
+  if (data && data.meta && scope && !scope.companyView
+      && !(inboundQueuesForDept_(scope.dept) || []).length) data.meta.unmapped = true;
+  return data;
+}
+
+/**
+ * PURE (outbound-report.test.js). F31 (broad-scan 2026-10-14): the caveats
+ * the web report shows beside the callback figures, as plain sentences for
+ * the emailed copy -- which showed none of them, so an unmapped dept's
+ * zeros, a sheet-fallback read and a lagging ingest all emailed as clean
+ * numbers. Same wording as the client notes (script-8 / script-9).
+ */
+function obEmailCaveats_(data) {
+  const meta = (data && data.meta) || {};
+  const cb = (data && data.callback) || {};
+  const out = [];
+  if (meta.unmapped) {
+    out.push('No queues are mapped for ' + (meta.department || 'this department')
+      + ', so no abandoned caller can be counted -- the callback figures below are not a measured zero. '
+      + 'Map its queue names in Dept Config (admin).');
+  }
+  if (meta.fallbackSource === 'sheet') {
+    out.push('Neon was unreachable: these figures come from the Outbound Calls tab'
+      + (meta.fallbackThrough ? ' (through ' + meta.fallbackThrough + ')' : '') + '.');
+  }
+  if (cb.dataLagging && cb.dataThrough) {
+    out.push('Calls are loaded through ' + cb.dataThrough
+      + '; episodes whose window reaches past that still count as inside the window.');
+  }
+  return out;
 }
 
 /**
@@ -785,9 +822,14 @@ function obEpFamily_(teams, parentOf, childrenOf) {
  *     of lookback is exact: an attempt can only join an episode whose previous
  *     attempt is within windowDays of it. Episodes that start before ctx.from
  *     are dropped from the output, so per-day views add up to the week.
- *   * TRAILING: an attempt after ctx.to never OPENS an episode, but it JOINS
- *     an open one (extending its deadline, as the join rule says). The event
- *     fetchers read one window of such attempts (OB_EP_TRAIL_DAYS_).
+ *   * TRAILING: an attempt after ctx.to never opens a COUNTED episode, but it
+ *     JOINS an open one (extending its deadline, as the join rule says). When
+ *     there is none to join it opens a HIDDEN one, dropped from the output
+ *     like the lookback's (F30) -- so its own team's dial is consumed by it,
+ *     exactly as in a wider view, and never reads as "another team" on this
+ *     caller's in-window episode. Per-day OUTCOMES then add up to the week, not
+ *     just the counts. The event fetchers read one window of such attempts
+ *     (OB_EP_TRAIL_DAYS_).
  * The fetchers widen their reads to match (obEpReadSpan_).
  *
  * B1/PC-2: "pending" is judged against the calls actually LOADED, not the
@@ -832,7 +874,7 @@ function obCallbackEpisodes_(ev, ctx) {
     var iso = String(r[1] || '');
     if (!iso || iso < lookFrom) return;   // PC-1: lookback attempts can only absorb later ones
     push(r[0], { t: 0, iso: iso, hms: r[2] || null, ord: obOrdinal_(iso, r[2]),
-                 late: iso > ctx.to,   // PC-1: past the window -- joins, never opens
+                 late: iso > ctx.to,   // PC-1: past the window -- joins, opens only a hidden episode (F30)
                  q: String(r[3] == null ? '' : r[3]), id: String(r[4] == null ? '' : r[4]),
                  teams: Array.isArray(r[5]) ? r[5] : null,                  // CE-3
                  owner: r.length > 6 ? String(r[6] == null ? '' : r[6]) : null });
@@ -875,7 +917,9 @@ function obCallbackEpisodes_(ev, ctx) {
       delete ep.other; delete ep.deadline; delete ep.family; delete ep.firstOrd;
       // PC-1: an episode opened in the lookback absorbed its in-window
       // attempts; it started outside the window, so it is not this window's.
-      if (ep.firstIso >= ctx.from) out.push(ep);
+      // F30: the same holds on the trailing edge -- an episode opened by a
+      // late attempt exists only so it can consume its own team's dial.
+      if (ep.firstIso >= ctx.from && !(ep.firstIso > ctx.to)) out.push(ep);
     };
     evs.forEach(function (e) {
       // Expire every open episode whose window has passed this event.
@@ -894,7 +938,13 @@ function obCallbackEpisodes_(ev, ctx) {
             return;
           }
         }
-        if (e.late) return;   // PC-1: an attempt past the window never opens an episode
+        // PC-1: an attempt past the window never opens a COUNTED episode.
+        // F30 (broad-scan 2026-10-14): it still opens a hidden one (dropped
+        // by finalize, like the lookback's), so that its own team's dial is
+        // CONSUMED here exactly as it is in a view where that day is inside
+        // the window. Returning early let the dial fall through as "another
+        // team" on this caller's in-window episode, so a one-day view called
+        // an episode 'other' that the week view called 'none'.
         open.push({ k: Number(k), teamKey: team.key, teams: team.teams, family: familyOf(team),
                     firstIso: e.iso, firstHms: e.hms, firstOrd: e.ord, attempts: [att],
                     deadline: obDaysAfterIso_(e.iso, win), outcome: null, other: null,
@@ -1248,6 +1298,8 @@ function sendOutboundReportEmail(req) {
   if (!data || data.meta.available === false) {
     throw new Error('The Outbound report is unavailable right now — try again shortly.');
   }
+  obMarkUnmapped_(scope, data);   // F31: the email path never set it
+  const caveats = obEmailCaveats_(data);
   const meta = data.meta || {};
   const k = data.kpis || {};
   const cb = data.callback || {};
@@ -1297,7 +1349,11 @@ function sendOutboundReportEmail(req) {
       + (cb.ownPct != null ? cb.ownPct + '% of contact episodes called back by the team' : 'no contact episodes')
       + ' · ' + dateLabel,
     rowsHtml:
-        ekRow_('<div style="font-size:13px;color:#6b7280;margin:0 0 6px;">Did we call back the callers who abandoned?</div>'
+        // F31: the caveats lead, before any figure they qualify.
+        (caveats.length
+          ? ekRow_(ekCalloutHtml_('Read this first', caveats.map(ekEsc_).join('<br>'), 'warn'), '10px 26px 4px')
+          : '')
+      + ekRow_('<div style="font-size:13px;color:#6b7280;margin:0 0 6px;">Did we call back the callers who abandoned?</div>'
           + '<table style="border-collapse:collapse;width:100%;max-width:460px;">' + cbRows + '</table>')
       + ekRow_(outboundEmailDelayTable_(cb.delayBuckets, cb.own), '4px 26px 6px')
       + ekRow_('<div style="font-size:13px;color:#6b7280;margin:10px 0 6px;">Outbound activity</div>'
@@ -2385,6 +2441,22 @@ function runOutboundVettingCheck() {
         result: 'MISMATCH samples: ' + failures.length + '/' + (calledBack.length + uncalled.length)
           + ' re-verifications failed (' + label + ') — do NOT un-gate. ' + failures.join('; '),
         parityAbandoned: obAbandoned, failures: failures,
+      });
+    }
+    // F43 (broad-scan 2026-10-14): Leg B certifies the callback JOIN only
+    // through a called-back pair. With none sampled -- a quiet window, or a
+    // caller_hash / callee_hash format drift that makes the join match
+    // NOTHING -- every not-called-back re-check runs the same equality and
+    // passes, and the old verdict said "release is a one-line gate removal"
+    // for a report that would show a 0% callback rate. Parity over nothing
+    // certifies nothing (the Batch-6 contract above).
+    if (!calledBack.length) {
+      return logStatusReturn_({
+        result: 'INCONCLUSIVE (0 called-back pairs among the ' + rows.length + ' most recent abandons, so the '
+          + 'callback join was never verified — widen OUTBOUND_VETTING_FROM/_TO; if a wide window still finds none, '
+          + 'check that HMAC_SECRET matches across cdr-import and the dashboard, Operator State #17; never un-gate on this) '
+          + label,
+        parityAbandoned: obAbandoned, sampledCalledBack: 0, sampledUncalled: uncalled.length,
       });
     }
     // Self-cleaning tool params: only the PASS verdict clears them —

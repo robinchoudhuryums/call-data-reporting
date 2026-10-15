@@ -26,6 +26,24 @@ When something looks wrong, before assuming a code bug, check:
     row renders what scripts/deploy.sh stamped into BuildStamp.gs at push time
     (UTC + git short SHA + branch); "unstamped" means the last push bypassed
     the deploy helper, so no CI gate ran against exactly what went live.
+    **The two sibling projects share the INV-16 pair** (neonWrite.js +
+    buildDQEHistoricalData.js), so deploying only ONE of them after an INV-16
+    edit leaves the other's DQE build on the old rules (F40). deploy.sh warns
+    at push time when the other project's last deploy from this checkout
+    shipped a different copy, and each sibling stamp carries
+    `| <project> inv16 <hash>`; the Health page's `inv16-skew` row compares
+    the newest hash each project reported -- `warn` means deploy the other one.
+    **All three projects (G4, 2026-10-15):** every deploy.sh stamp also carries
+    `| trees d=<hash> i=<hash> r=<hash>` -- a hash of each project's pushed
+    code as that checkout held it. The Health page's `deploy-currency` row
+    takes the NEWEST deploy (by stamp time) as the stand-in for HEAD and warns
+    for any project whose own deployed hash differs from what that deploy saw:
+    it is running older code, so deploy it. A project with no code change
+    since its last deploy hashes the same, so it never reads as behind for a
+    change it did not need. Muted until all three have been pushed with
+    deploy.sh and have run once (cdr-import reports on its next import,
+    cdr-report on its next DQE build). Commits deployed NOWHERE are invisible
+    here -- Manage deployments is still the check for that.
 
 3. Did the user actually have access? The `Access Control` email match is
    case-INsensitive after trim (`resolveUser_`), so check the Department cell
@@ -115,9 +133,10 @@ When something looks wrong, before assuming a code bug, check:
      account that installed it, and `ScriptApp.getProjectTriggers()` lists
      only the CURRENT account's -- so a trigger another admin installed
      reads "NO trigger installed" on the Health page while it keeps firing.
-     The four editor-run installers (`installPipelineWatchTrigger`,
+     The five editor-run installers (`installPipelineWatchTrigger`,
      `installDqeSilenceWatchTrigger`, `installSheetCoverageTrigger`,
-     `installNeonRetentionTrigger`) now record their installer in
+     `installNeonRetentionTrigger`, and since F17 `installIngestWatchdogTrigger`)
+     now record their installer in
      `TRIGGER_INSTALLERS`, and the Health row for one installed by another
      account reads warn and names them: have that person run the matching
      uninstall, then reinstall as the deploying account.
@@ -639,7 +658,7 @@ When something looks wrong, before assuming a code bug, check:
     is now flippable: backfill (`backfillAlertConfigToNeon` /
     `backfillDigestConfigToNeon`) -> compare (`compareAlertConfigSources` /
     `compareDigestConfigSources`) clean -> set `CONFIG_SOURCE=neon`. (One flag
-    governs Dept + Alert + Digest config sources together.) All three compare gates (Alert, Digest, and -- since CORE-5 -- Dept Config) read Neon DIRECTLY and return `clean:false` + an `error` when Neon is unreachable, so a Neon outage (even against an empty sheet) can never print a false "PARITY CLEAN" (F-5/CORE-5); never flip the flag on a result that carries `error`. Access Control is
+    governs Dept + Alert + Digest config sources together.) All three compare gates (Alert, Digest, and -- since CORE-5 -- Dept Config) read Neon DIRECTLY and return `clean:false` + an `error` when Neon is unreachable, so a Neon outage (even against an empty sheet) can never print a false "PARITY CLEAN" (F-5/CORE-5); never flip the flag on a result that carries `error`. Since F42 (2026-10-14) a key that appears twice on either side (a hand-edited duplicate sheet row) fails the gate and is named in `duplicates` -- delete the extra row (the live readers use the FIRST), re-run the backfill, then compare again. Access Control is
     deliberately NOT in this flag -- it stays sheet-backed (auth availability),
     managed by the C1 editor.
 26. Direct-call history backfill (cdr-import; only relevant if you want Direct
@@ -749,7 +768,13 @@ When something looks wrong, before assuming a code bug, check:
     a run warns once the workbook passes 80% of the cap. The outcome says
     which store was used (`| store sheets (Drive unavailable: ...)`), and
     the Health section links the workbook. Set `NEON_BACKUP_STORE=sheets`
-    to skip the Drive attempt entirely. **The workbook holds the same PHI
+    to skip the Drive attempt entirely. **Once the workbook exists it STAYS
+    the store** while no folder id is set (F15, 2026-10-14): a later run on
+    which Drive works no longer creates an empty folder and switches to it
+    (which re-fetched every closed month from Neon, lost the journeys
+    retention had already nulled, and hid the workbook from restore). To
+    move the backup to Drive on purpose, set `NEON_BACKUP_STORE=drive`.
+    A restore never creates a store: with none set it refuses. **The workbook holds the same PHI
     as the Drive files** (caller hashes, journeys) -- keep it unshared,
     exactly like the CDR Report workbook. **RESTORE** (either store):
     set `NEON_RESTORE_FILE` to a file name (e.g.
@@ -1198,7 +1223,13 @@ When something looks wrong, before assuming a code bug, check:
     `Config.gs::ANSWER_TARGET_SURFACES` plus `band` = the amber width in
     points below the target, 0-50; unknown keys + out-of-range values
     silently dropped by `parseAnswerTargets_`). Unset = the seeds: global
-    80% (owner 2026-08, was 92) with a 10-pt amber band.
+    80% (owner 2026-08, was 92) with a 10-pt amber band. **G2:** the
+    Display standards section lists which depts have a target of their own
+    and which are "On the company default", and the Insights brief's top
+    line carries a **Default 80% target** label for a dept with no own
+    target -- under the default a red pill is the default's verdict, not one
+    you chose for that dept, so set its target here before reading it as a
+    signal.
     `DEPT_ANSWER_TARGETS`: per-dept overrides as `Dept=target/band` pairs
     (`CSR=92/2`), layered over the `DEPT_ANSWER_TARGET_SEED` (CSR 92/2) --
     read via `getAnswerStandardFor_(dept)`, which every dept-context
@@ -1459,8 +1490,11 @@ When something looks wrong, before assuming a code bug, check:
     YTD trends — the company HERO stays all-queue on purpose: company-wide,
     every call counts exactly once), the low-answer-rate Alerts engine (the
     threshold now fires on the number the dashboard displays), the manager
-    digests (via computeSummary_), and the agent app (KPIs, trend, missed
-    list, history). Deliberately NOT narrowed: `computeActiveAgentsInRange_`
+    digests (via computeSummary_), the agent app (KPIs, trend, missed
+    list, history), and -- since F29 (2026-10-14; it shipped after this list)
+    -- the Agent Day view's header + missed rings and the My Department
+    inline panel's day strip, narrowed to the row's own dept (its combined-view
+    group, else the page's dept, when the viewer owns it). Deliberately NOT narrowed: `computeActiveAgentsInRange_`
     (the IR/Insights agent-picker grouping — inclusion, not figures) and the
     DQE-silence watchdog's day read (#44 — with narrowing on, "my roster
     rang zero times on MY OWN queues while they took calls" is exactly the
@@ -1586,6 +1620,15 @@ When something looks wrong, before assuming a code bug, check:
     itself once the tab is processed or deleted, and a `success` row on the same
     step says no parked date remains. The pending window now ends at TODAY, so a
     future-dated tab can no longer hide the real ones.
+
+    **Imported but still OWED is kept too (F9, broad-scan 2026-10-14).** A date
+    in history whose per-call capture is still owed -- queued in the `Neon
+    Mirror Queue` tab (deferred mode, an outage outlasting the window) or held
+    in the `PENDING_IMPORT_FAILURES` catch-up ledger -- keeps its tab, named in
+    the row ("KEPT N still owed a per-call capture"). It clears on its own once
+    the drain or the catch-up finishes the date; a PARKED ledger date stays
+    until you fix it (above) or delete the tab. A failed read of either list
+    keeps the tab and fails the row, like the history check.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1661,7 +1704,24 @@ When something looks wrong, before assuming a code bug, check:
     CSR pilot:** deploy → add the CSR agent rows in the Access modal's
     Agents section (email + dept + roster-name picker) → set
     `AGENT_ROLE_ENABLED=true`. Sign-in notifications (#45) will confirm each
-    agent's first visit; `agentHome` rows land in Report Usage.
+    agent's first visit; `agentHome` rows land in Report Usage. **Staged rows
+    get NO welcome email** (F1, 2026-10-14): an agent row saved while the flag
+    is off is staged silently and the modal says so; the welcome email
+    (#58) goes only to a new grant that can actually sign in. **Since G3
+    (2026-10-15) the deferred address waits on a pending list** (the
+    `AGENT_WELCOME_PENDING` Script Property, engine state -- don't hand-edit
+    it): the Access modal's Agents section shows "N staged agents have no
+    welcome email yet" and tags each row "welcome pending". After you set
+    the flag, reopen Admin ▸ Access and press **Send N welcomes**
+    (`sendPendingAgentWelcomes`, admin-gated; at most 40 a click, the rest
+    stay listed; a failed send stays listed; an address whose agent row is
+    gone is dropped). It refuses while the flag is off,
+    `ACCESS_WELCOME_EMAIL=false` or `DASHBOARD_URL` is unset, so nothing
+    leaves the list unsent; **Clear the list without sending** is the opt
+    out. Nothing sends on the flip by itself -- the flag is a hand-set
+    property, so the send is always your click. Rows staged BEFORE this
+    deploy are not on the list (the pre-F1 code had already emailed them);
+    to queue one, remove it and add it again while the flag is off.
     Prereqs for a working agent row: the
     Access Control row needs Department + Role=`agent` + Agent Name matching
     that dept's `DO NOT EDIT!` roster entry EXACTLY (the editor validates
@@ -1951,7 +2011,19 @@ When something looks wrong, before assuming a code bug, check:
     column and the insurance block; nothing reads column U or any hyperlink on
     the sheet. (Verified across all four projects 2026-09-03 when `Sales MWC`
     took column U -- see docs/known-issues.md "Sales MWC".)
-56. **Reprocessing historical dates.** Prefer CDR Tools -> Manual Export, one
+56. **Reprocessing historical dates.** **Start with CDR Tools -> Make a date
+    whole… (G1, 2026-10-15)** when a date is MISSING something rather than
+    WRONG: it reads a per-date ledger (the Call_Legs tab, the date's rows in
+    the six history sheets, its row count in the six Neon tables), runs only
+    what is owed -- a NON-force import for missing core sheets (it never
+    deletes; like Manual Export it re-stages Raw Data with that date), then
+    the per-call and Direct / mirror catch-ups -- and shows the ledger before
+    and after. A date that ends whole leaves the failed-import ledger (so it
+    un-parks a parked date) and is remembered. Without the Call_Legs tab it
+    can still re-mirror from the sheets but says which sheets it could not
+    rebuild. In deferred mirror mode it queues the mirrors and says so. For
+    rows that EXIST but are wrong, use Manual Export (force) as below.
+    Otherwise prefer CDR Tools -> Manual Export, one
     date at a time: it force-rebuilds from `Call_Legs_<date>` and mirrors to
     Neon INLINE from the same build (or via the deferred queue), returning a
     toast with counts + the Neon status per date. The bulk path (`bulkHistoricalUpdate`)
@@ -2000,7 +2072,12 @@ When something looks wrong, before assuming a code bug, check:
     runs. A date already in history keeps its history sheets as they are (use
     Manual Export to force a re-import, as above), but the catch-up still runs
     the non-force per-call backfills for it, and keeps it pending while Neon
-    is unreachable (PIPE-7). Seeing a `runPendingImportCatchUp_` trigger
+    is unreachable (PIPE-7). Since F7 (broad-scan 2026-10-14) it also rebuilds
+    Direct Call History when that sheet lacks the date (from the Call_Legs tab;
+    Raw Data is untouched) and re-mirrors CDR / QCD / DQE to Neon (deferred
+    mode: queues the date instead) -- the other steps a run killed after the
+    sheet writes never reached. A step that cannot finish keeps the date pending
+    under the same ledger and park. Seeing a `runPendingImportCatchUp_` trigger
     in the cdr-import triggers list for a few minutes is normal.
 
 57. **Neon storage cap — the phones-write gate, the weekly retention prune,

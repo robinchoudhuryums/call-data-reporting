@@ -60,7 +60,9 @@ function record(name, pass, detail) {
     return {
       open: true,
       under: prev ? prev.getAttribute('data-agent') : null,
-      expanded: prev ? prev.getAttribute('aria-expanded') : null,
+      // F27: the name cell's button owns aria-expanded, not the row.
+      expanded: (prev && prev.querySelector('button.ap-row-toggle'))
+        ? prev.querySelector('button.ap-row-toggle').getAttribute('aria-expanded') : null,
       title: (p.querySelector('.ap-title') || {}).textContent || '',
       days: p.querySelectorAll('.ap-day').length,
       onDays: p.querySelectorAll('.ap-day.is-on').length,
@@ -171,22 +173,29 @@ function record(name, pass, detail) {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
   st = await panelState();
-  let focusOn = await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-agent'));
-  record('Escape inside the panel closes it and focuses the row', !st.open && focusOn === first,
+  let focusOn = await page.evaluate(() => (document.activeElement && document.activeElement.classList.contains('ap-row-toggle')) ? document.activeElement.closest('tr').getAttribute('data-agent') : null);
+  record('Escape inside the panel closes it and focuses the row\'s name button', !st.open && focusOn === first,
     'focus=' + focusOn);
 
   await page.keyboard.press('Enter');
   await page.waitForTimeout(800);
   st = await panelState();
-  record('Enter on the focused row opens it again', st.open && st.under === first);
+  record('Enter on the focused name button opens it again', st.open && st.under === first);
   await page.click('#ap-panel [data-ap-close]');
   await page.waitForTimeout(300);
   st = await panelState();
-  focusOn = await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-agent'));
-  record('Collapse closes it and focuses the row', !st.open && focusOn === first);
+  focusOn = await page.evaluate(() => (document.activeElement && document.activeElement.classList.contains('ap-row-toggle')) ? document.activeElement.closest('tr').getAttribute('data-agent') : null);
+  record('Collapse closes it and focuses the row\'s name button', !st.open && focusOn === first);
   const expandedLeft = await page.evaluate(() =>
-    document.querySelectorAll('#agents-tbody tr[data-agent][aria-expanded]').length);
+    document.querySelectorAll('#agents-tbody tr[data-agent][aria-expanded], #agents-tbody button.ap-row-toggle[aria-expanded="true"]').length);
   record('no row is left marked expanded', expandedLeft === 0, 'n=' + expandedLeft);
+  const collapsedSays = await page.evaluate((a) => {
+    const tr = Array.from(document.querySelectorAll('#agents-tbody tr[data-agent]')).find((r) => r.getAttribute('data-agent') === a);
+    const b = tr && tr.querySelector('button.ap-row-toggle');
+    return b ? b.getAttribute('aria-expanded') : null;
+  }, first);
+  record('F27: the closed row\'s button says aria-expanded=false (never removed)', collapsedSays === 'false',
+    'aria-expanded=' + collapsedSays);
 
   // ---- 6. one agent at a time ---------------------------------------------
   if (second) {

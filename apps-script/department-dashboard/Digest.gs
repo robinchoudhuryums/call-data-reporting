@@ -888,7 +888,11 @@ function digestDeepLink_(dept, fromIso, toIso, cadence) {
     .getProperty('DASHBOARD_URL') || '').trim();
   if (!base) return '';
   const roster = getRosterForDepartment_(dept);
-  const parts = ['from=' + fromIso, 'to=' + toIso];
+  // F16 (broad-scan 2026-10-14): the link names its dept. Without it a
+  // multi-dept (or ALL) recipient landed on Insights for whatever dept the
+  // page defaulted to, with THIS dept's roster as the agent pick. The client
+  // honours it only for a dept the viewer may see (SHARE_STATE_ '/report/insights').
+  const parts = ['dept=' + encodeURIComponent(dept), 'from=' + fromIso, 'to=' + toIso];
   if (roster.names.length) {
     parts.push('agents=' + encodeURIComponent(roster.names.join('|')));
   }
@@ -1193,12 +1197,12 @@ function backfillDigestConfigToNeon() {
 
 function compareDigestConfigSources() {
   assertAdmin_();
+  // F42: an ORDERED [key, fingerprint] list -- the old key->value map kept the
+  // LAST row of a duplicated key while the live run loop honours the first.
   const norm = function (rows) {
-    const m = {};
-    rows.forEach(function (e) {
-      m[e.email.toLowerCase() + '|' + e.department] = JSON.stringify([e.cadence, e.active, e.notes, e.format]);
+    return rows.map(function (e) {
+      return [e.email.toLowerCase() + '|' + e.department, JSON.stringify([e.cadence, e.active, e.notes, e.format])];
     });
-    return m;
   };
   // Read each source DIRECTLY -- never through the flag-aware reader, and
   // never by flipping the live CONFIG_SOURCE property (F-5). The old
@@ -1213,18 +1217,11 @@ function compareDigestConfigSources() {
   if (neonRaw === null) {
     Logger.log('compareDigestConfigSources: NEON UNREACHABLE -- no comparison performed. '
       + 'Do NOT flip CONFIG_SOURCE on this result.');
-    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
-             missingInNeon: [], missingInSheet: [], mismatched: [] };
+    return { clean: false, compared: 0, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [], duplicates: [] };
   }
   const neonRows = parseDigestConfigValues_(neonRaw);
-  const s = norm(sheetRows), nn = norm(neonRows);
-  const missingInNeon = [], missingInSheet = [], mismatched = [];
-  Object.keys(s).forEach(function (k) { if (!(k in nn)) missingInNeon.push(k); else if (s[k] !== nn[k]) mismatched.push(k); });
-  Object.keys(nn).forEach(function (k) { if (!(k in s)) missingInSheet.push(k); });
-  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
-  Logger.log('compareDigestConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
-    clean ? 'PARITY CLEAN' : 'DIFFERENCES', JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
-  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
+  return configSourceCompare_('compareDigestConfigSources', norm(sheetRows), norm(neonRows));
 }
 
 // -- C3 Digest Config WRITE path (admin editor RPCs) ----------------------

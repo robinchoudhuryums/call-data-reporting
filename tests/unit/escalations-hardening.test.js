@@ -1101,7 +1101,7 @@ test('ESC-L2: "removed" is a list filter + count, and the list carries who/when/
   const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
   assert.match(src, /'rejected', 'removed', 'all'\]\.indexOf\(status\)/);
   assert.match(src, /count\(\*\) FILTER \(WHERE status = 'removed'\) AS n_removed/);
-  assert.match(src, /removed_by, removed_at::text AS removed_at, removed_reason, /);
+  assert.match(src, /removed_by, " \+ escLocalTsSql_\('removed_at'\) \+ " AS removed_at, removed_reason, /);
   // The open-status lists (badge / snapshot / overdue) never include it.
   assert.ok(!/IN \('pending','in_progress'[^)]*'removed'/.test(src));
 });
@@ -1501,4 +1501,36 @@ test('ESC-D1: esc-schema warns on a missing activity column; the memo key (v2) c
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
   const seeds = src.match(/INSERT INTO escalation_activity \(id, escalation_id, action, actor, at, detail, department\)/g) || [];
   assert.equal(seeds.length, 2, 'backfillEscalationActivity\'s created + resolved seeds carry e.department');
+});
+
+// F44 (broad-scan 2026-10-14): the Neon session runs in UTC. `x::text` on the
+// server-stamped instants rendered them in UTC and the client printed the
+// digits (a 10:30 AM Central resolve read 15:30), and CURRENT_DATE rolled to
+// tomorrow at ~7 PM Central, so the badge counted rows overdue hours before
+// their cards' ⚑.
+test('F44: "overdue" uses the SCRIPT zone\'s date, never the DB session\'s CURRENT_DATE', function () {
+  const RealDate = h.ctx.Date;
+  // 8:30 PM Central on Oct 14 is already Oct 15 in UTC.
+  const fixed = new RealDate('2026-10-15T01:30:00Z').getTime();
+  class FakeDate extends RealDate {
+    constructor() { if (arguments.length) super(...arguments); else super(fixed); }
+    static now() { return fixed; }
+  }
+  h.ctx.Date = FakeDate;
+  let sql;
+  try { sql = h.call('escOverdueSql_'); } finally { h.ctx.Date = RealDate; }
+  assert.equal(sql, "(DATE '2026-10-14' - occurred_at::date) >= 3");
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  assert.doesNotMatch(src.replace(/^\s*\/\/.*$/gm, ''), /CURRENT_DATE/, 'no live SQL reads the session date');
+});
+
+test('F44: server-stamped instants render as script-zone wall clock; the typed occurred_at is untouched', function () {
+  assert.equal(h.call('escLocalTsSql_', 'a.at'),
+    "to_char(a.at AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD HH24:MI:SS.US')");
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  ['created_at', 'resolved_at', 'removed_at'].forEach(function (c) {
+    assert.doesNotMatch(src, new RegExp('\\b' + c + '::text'), c + ' is never rendered in the session zone');
+  });
+  assert.doesNotMatch(src, /\bat::text AS at/, 'activity `at` is never rendered in the session zone');
+  assert.match(src, /occurred_at::text AS occurred_at/, 'the typed wall clock keeps its round-trip');
 });

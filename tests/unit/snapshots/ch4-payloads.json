@@ -43,6 +43,22 @@
     "hint": "Not installed, disabled (HISTORICAL_SORT_ENABLED lives in the cdr-report project), or its rows have scrolled out of the window. Install from CDR Report → CDR Tools → Nightly Historical Sort Check (Operator State #61)."
    },
    {
+    "section": "pipeline",
+    "key": "inv16-skew",
+    "label": "INV-16 pair: same rules in both projects",
+    "status": "muted",
+    "value": "not reported yet",
+    "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
     "section": "neon",
     "key": "neon-conf",
     "label": "Neon connection (NEON_* properties)",
@@ -552,6 +568,22 @@
     "status": "warn",
     "value": "1 sheet(s) the check could not fix: QCD Historical Data (MIXED-TYPE)",
     "hint": "A MIXED-TYPE / TZ-SPLIT / UNPARSED date column needs its repair (previewHistoricalDateColumns → the matching repair*), not a sort; a STALE-POINTER row is an abandoned backfill *_RESUME pointer (finish that backfill or delete the property, CRT-6); a \"check threw\" or bulk-path \"sort threw\" row clears on the next clean nightly run. Latest row 2026-09-24 05:00. Operator State #61."
+   },
+   {
+    "section": "pipeline",
+    "key": "inv16-skew",
+    "label": "INV-16 pair: same rules in both projects",
+    "status": "muted",
+    "value": "not reported yet",
+    "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",
@@ -1121,6 +1153,22 @@
     "hint": "Latest row 2026-09-24 05:00. Nightly, per historical sheet: the date column must be single-typed AND in date order with no TZ split; only a single-typed out-of-order column is sorted."
    },
    {
+    "section": "pipeline",
+    "key": "inv16-skew",
+    "label": "INV-16 pair: same rules in both projects",
+    "status": "muted",
+    "value": "not reported yet",
+    "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
     "section": "neon",
     "key": "neon-conf",
     "label": "Neon connection (NEON_* properties)",
@@ -1638,6 +1686,22 @@
     "status": "warn",
     "value": "1 sheet(s) the check could not fix: QCD Historical Data (MIXED-TYPE)",
     "hint": "A MIXED-TYPE / TZ-SPLIT / UNPARSED date column needs its repair (previewHistoricalDateColumns → the matching repair*), not a sort; a STALE-POINTER row is an abandoned backfill *_RESUME pointer (finish that backfill or delete the property, CRT-6); a \"check threw\" or bulk-path \"sort threw\" row clears on the next clean nightly run. Latest row 2026-09-24 05:00. Operator State #61."
+   },
+   {
+    "section": "pipeline",
+    "key": "inv16-skew",
+    "label": "INV-16 pair: same rules in both projects",
+    "status": "muted",
+    "value": "not reported yet",
+    "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",
@@ -2221,6 +2285,22 @@
     "status": "warn",
     "value": "1 sheet(s) the check could not fix: QCD Historical Data (MIXED-TYPE)",
     "hint": "A MIXED-TYPE / TZ-SPLIT / UNPARSED date column needs its repair (previewHistoricalDateColumns → the matching repair*), not a sort; a STALE-POINTER row is an abandoned backfill *_RESUME pointer (finish that backfill or delete the property, CRT-6); a \"check threw\" or bulk-path \"sort threw\" row clears on the next clean nightly run. Latest row 2026-09-24 05:00. Operator State #61."
+   },
+   {
+    "section": "pipeline",
+    "key": "inv16-skew",
+    "label": "INV-16 pair: same rules in both projects",
+    "status": "muted",
+    "value": "not reported yet",
+    "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",
@@ -2811,6 +2891,22 @@
     "status": "muted",
     "value": "no historicalSort rows in the last 250 entries",
     "hint": "Not installed, disabled (HISTORICAL_SORT_ENABLED lives in the cdr-report project), or its rows have scrolled out of the window. Install from CDR Report → CDR Tools → Nightly Historical Sort Check (Operator State #61)."
+   },
+   {
+    "section": "pipeline",
+    "key": "inv16-skew",
+    "label": "INV-16 pair: same rules in both projects",
+    "status": "muted",
+    "value": "not reported yet",
+    "hint": "Each project reports the hash of the neonWrite.js + buildDQEHistoricalData.js copy it runs once it has been pushed with scripts/deploy.sh and has run (cdr-import: the daily import; cdr-report: its DQE build). A bare `clasp push -f` reports nothing."
+   },
+   {
+    "section": "pipeline",
+    "key": "deploy-currency",
+    "label": "Deployed code: all projects current",
+    "status": "muted",
+    "value": "not reported yet by dashboard, cdr-import, cdr-report",
+    "hint": "Each project reports the code it runs once it has been pushed with scripts/deploy.sh (the dashboard at once; cdr-import after its next daily import; cdr-report after its next DQE build). A bare `clasp push -f` reports nothing."
    },
    {
     "section": "neon",

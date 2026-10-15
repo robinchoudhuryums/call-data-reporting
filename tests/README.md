@@ -18,7 +18,7 @@ fails pins for the wrong reason. Measured across the offset range 2026-09-14:
 | Host TZ | Result |
 | --- | --- |
 | `America/Chicago`, `UTC`, `Europe/London` | green |
-| `America/Los_Angeles` | 2 failures |
+| `America/Los_Angeles` | 3 failures (re-measured 2026-10-15) |
 | `Asia/Tokyo`, `Pacific/Kiritimati` | 13-19 failures |
 
 Every one of those failures is a fixture building `new Date(y, m-1, d)` and
@@ -156,7 +156,9 @@ tests/
                               -> no row; PROPS-1: the Script Properties
                               500 KB store row -- UTF-8 bytes, chunk families,
                               80% warn, value-free; ESC-DDL: the esc-schema
-                              row on the shared conn) + smoke-check, queue-report,
+                              row on the shared conn; G4: deploy-currency --
+                              the stamp parser, newest-deploy-as-HEAD verdict,
+                              deploy.sh's project_tree_hash_) + smoke-check, queue-report,
                               pipeline-watch, missed-slice,
                               inbound-qcd-parity, journey-fallback (the
                               call-path drill's sheet fallback: source
@@ -279,7 +281,21 @@ tests/
                               phones-only refill, the R34 missing-parents
                               pass, the R35 inline parent upsert, the R37
                               stale-phantom prune), dept-config-neon /
-                              config-neon-c3, caller-lookup, answer-targets
+                              raw-grid-day (ST2: rawGridDay_, the ONE
+                              majority-date / stray rule -- ING-7 shape, ties,
+                              undated rows -- and the sweep that every
+                              stray-aware reader uses it),
+                              parity-day (ST5: the shared day in
+                              tests/harness/parityDay.js drives the build,
+                              the drill, the split sample and the overlap
+                              audit, which must all agree -- abandoned
+                              columns, sentinel, two-queue call, a stray
+                              sorted first),
+                              config-neon-c3, parity-gate (ST3: parityGate_,
+                              the one verdict every key-by-key flip gate
+                              reaches -- duplicates, `compared`, empty =
+                              INCONCLUSIVE -- plus the compare*Sources sweep),
+                              caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
                               digest-freshness-gate (R31/R32: every cadence
@@ -366,20 +382,21 @@ tests/
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
-                              setup (INV-12), alert-recipients (EML-1: ALL managers opt-in only), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire), insights-brief (UX-2: the ranked brief's pure colour rules lifted from script-8, the ranking, the --caution token sites, the admin-only container, and the server queue-wait verdict through the real QCD monthly buckets), brief-thresholds-probe (UX-2: probeBriefThresholds' share / queue-wait / rate-swing maths, its window, the Total-Calls filter and the read-only run, Operator State #76),
+                              setup (INV-12), alert-recipients (EML-1: ALL managers opt-in only), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire), insights-brief (UX-2: the ranked brief's pure colour rules lifted from script-8, the ranking, the --caution token sites, the admin-only container, and the server queue-wait verdict through the real QCD monthly buckets; G2: the default-target label + answerStdFor_'s isDefault + the Answer targets coverage split; G3: the pending-welcome bar wording), brief-thresholds-probe (UX-2: probeBriefThresholds' share / queue-wait / rate-swing maths, its window, the Total-Calls filter and the read-only run, Operator State #76),
                               client-correctness (broad-scan 2026-10-01 Batch 7: THEME keys exist (CL-1), per-day Insights deltas on unequal windows (CL-2), AC/DC save status survives the reload (CL-15), share/digest links carry their window into the dept controls (CL-17), the per-step boot guard (CL-18), sticky error toasts (CL-4), the heatmap error state (CL-6), View-as gates (CL-16), agent-app presets never anchor on today (CL-14), the IR Generate release (CL-7), the share-link copy (CL-5), the partial subscriber save (CL-22); Batch 8: escalation focus restore (CL-3, rendered in drive-admin), the remove/restore-dept in-flight guard (CL-21), the agent-app tabs pattern + history guard (CL-13, rendered in drive-agent), null-safe escapeHtml + the escaped alert status (CL-12), the #/dev hash via google.script.url (CL-19), the deleted dead helpers (CL-10), the qcd-hero-sub font + lang="en" (CL-8 / CL-11); broad-scan 2026-10-12 Batch 9: the agent app's use-strict position (CL-7), its live regions (UI-2), the inbound drill + agent-panel tab keys (UI-1, the panel rendered in drive-agentpanel), the agent app's last-good window + custom clamp + history Retry (CL-6, rendered in drive-agent)),
                               client-lifecycle (broad-scan 2026-10-12 Batch 3, ids B3/CL-n: the latest data dates re-read while the tab is visible without moving the on-screen dates (CL-1), the agent panel's cached-day sequence claim (CL-2), the hidden-tab Overview auto-refresh park (CL-3), the no-ring prefetch signature checks (CL-4), the dept Export button + Insights busy flag released on a failed capture (CL-9), IR close/open invalidating an in-flight run (CL-10), the subscriber-only Alerts reload (CL-11), the Dept Config send-time dept + edit lock (CL-12), the stashed idle label on overlapping Update / Generate runs (CL-13), the IR focus-return chain (CL-14, rendered in drive-agentpanel), the Health UI-toggle token + kept ticks + visible load error (CL-15); out-of-order responses driven through a queued fake google.script.run; CL-5's month clamp lives in date-presets),
                               outbound-home (broad-scan 2026-10-12 Batch 3b, UX-1: the Outbound summary + Callbacks (+ Direct lines) sit under the outbound agent table and outside the Insights results, read the PAGE window via obSectionWindow_ rather than Insights' last result, no duplicate agent table, and the own-group label when the table above holds sub-queues; rendered in drive-outbound-e + drive-callbacks),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
-                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up, PIPE-7: the per-call catch-up for an already-imported date and its pending-while-Neon-is-down ledger),
+                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up, PIPE-7: the per-call catch-up for an already-imported date and its pending-while-Neon-is-down ledger; G1: makeDateWhole's per-date ledger, what it owes, the non-force ignoreLastSheets import, the un-park on whole, the tab-gone report),
                               cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
                               cdr-report-neon-timeout (CR-6: getNeonConn()'s statement-timeout wrapper + the forwarded-method sweep; the dashboard twin is in neon-conn-memo, DL-3),
                               neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),
                               agent-role / agent-home (the deny wall +
                               the no-teammate-identity payload pin; Batch 9:
                               the wait-join cut-off date in meta, SEC-4, and
-                              agentWorkWindow_, CL-8),
+                              agentWorkWindow_, CL-8; G3: the staged-agent
+                              pending-welcome list and its bulk send),
                               company-overview (getCompanyOverview
                               end-to-end: crossover partition, no
                               cross-dept leak, all-queue hero invariance),
@@ -759,6 +776,16 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
    call `bustRosterMemo_()` after it, or a read later in the same execution
    serves the pre-write roster (`workbook-memo.test.js` pins the one writer,
    `appendRosterEntry_`).
+   **Since F39 (broad-scan 2026-10-14) the boundary resets EVERY per-execution
+   memo, not just those two:** the harness finds each top-level `var` whose
+   name carries `MEMO` (minus the `*_MAX_` / `*_CAP_` tuning constants) and
+   restores its load-time value on every `h.call` / `h.fn` entry -- so a new
+   memo needs no hand-written reset in any suite (declare it with `var`; a
+   top-level `let` is invisible to the vm context). A test that asserts what a
+   memo does WITHIN one execution ("read once", "a failed connect is not
+   retried", a seeded memo being served) wraps those calls in
+   `h.inExecution(function () { ... })`: one reset at the start, none between
+   the calls inside.
 
 ## Limitations (and the roadmap this Phase-1 harness leaves open)
 

@@ -459,8 +459,42 @@ test('PIPE-6: a failed enqueue logs a neonMirror:enqueue failure row naming the 
   logged.length = 0;
   const rowsAppended = [];
   const okSheet = { appendRow: function (r) { rowsAppended.push(r); }, setFrozenRows: function () {} };
-  h.fn('enqueueNeonMirror_')({ getSheetByName: function () { return okSheet; } }, new Date(2026, 9, 9, 12));
+  const okRet = h.fn('enqueueNeonMirror_')({ getSheetByName: function () { return okSheet; } }, new Date(2026, 9, 9, 12));
   assert.equal(logged.length, 0);
   assert.equal(rowsAppended.length, 1);
+  // F7: the return value tells the PIPE-7 catch-up whether the date is queued.
+  assert.equal(okRet, true, 'an appended row returns true');
+  assert.equal(h.fn('enqueueNeonMirror_')(brokenSS, new Date(2026, 9, 9, 12)), false, 'a failed enqueue returns false');
   delete h.ctx.logPipelineHealthWithFallback_;
+});
+
+// F8 (broad-scan 2026-10-14): the deferred drain's per-call steps logged a
+// plain success when the backfill wrote rows WITHOUT phone hashes. Such a date
+// is DONE (a retry cannot add a hash the writer never had) but its step is a
+// FAILURE row, the way PC-10 makes the inline daily path say it.
+test('F8: a hashless per-call write completes the date but logs its neonMirror step as a FAILURE', function () {
+  // A fresh load: the F12 tests above stub the mirror* helpers on `h` for good.
+  const f = loadGas({ project: 'cdr-import', files: ['neonWrite.js', 'NeonMirror.js'] });
+  const logged = [];
+  f.ctx.backfillInboundCalls = function () {
+    return { inserted: 7, failures: 0, unreachable: false, sheetsFound: 1, hashless: 1 };
+  };
+  f.ctx.backfillOutboundCalls = function () {
+    return { inserted: 2, failures: 0, unreachable: false, sheetsFound: 1, hashless: 0 };
+  };
+  const inRes = f.call('mirrorInboundForDate_', '2026-07-20');
+  assert.equal(inRes.hashless, true);
+  assert.equal(inRes.rows, 7);
+  assert.match(inRes.note, /inbound_calls rows WRITTEN WITHOUT phone hashes/);
+  assert.equal(f.call('mirrorOutboundForDate_', '2026-07-20').hashless, undefined, 'a hashed write is a plain success');
+
+  ['Outbound', 'Cdr', 'Qcd', 'Dqe'].forEach(function (t) { f.ctx['mirror' + t + 'ForDate_'] = function () { return { rows: 1 }; }; });
+  f.ctx.mirrorInboundForDate_ = function () { return { hashless: true, rows: 7, note: 'inbound_calls rows WRITTEN WITHOUT phone hashes' }; };
+  f.ctx.logPipelineHealthWithFallback_ = function (ss, ev) { logged.push(JSON.parse(JSON.stringify(ev))); };
+  const ok = f.fn('neonMirrorDate_')(null, '2026-07-20');
+  assert.equal(ok, true, 'the date completes -- not retried toward the gave-up cap');
+  const row = logged.filter(function (r) { return r.step === 'neonMirror:Inbound'; })[0];
+  assert.equal(row.status, 'failure');
+  assert.equal(row.rows, 7);
+  assert.match(row.notes, /^2026-07-20 \| inbound_calls rows WRITTEN WITHOUT phone hashes/);
 });

@@ -30,20 +30,10 @@ h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
 h.ctx.notifyNeonWriteFailure = function () {};
 
 const DATE = '03/09/2026';
-function raw(o) {
-  const r = new Array(26).fill('');
-  r[0]  = o.callId || '';
-  r[1]  = o.legId != null ? String(o.legId) : '';
-  r[2]  = o.start || (DATE + ' 7:00:00');
-  r[8]  = o.caller || '';
-  r[10] = o.callee || '';
-  r[11] = o.calleeName || '';
-  r[14] = o.parentCall || '';
-  r[22] = o.callerId || '';
-  r[23] = o.missed ? 'Missed' : '';
-  r[25] = o.answered ? 'Answered' : '';
-  return r;
-}
+// ST5: the one Raw Data row builder (tests/harness/parityDay.js), with this
+// suite's default in-window start.
+const { rawRow } = require('../harness/parityDay');
+function raw(o) { return rawRow(Object.assign({ start: DATE + ' 7:00:00' }, o)); }
 
 // Roster columns start at F (INV-11); "Name, ext" cells (INV-03).
 function rosterGridWith(deptToNames) {
@@ -224,20 +214,21 @@ test('a queue-sentinel row still counts as a queue LEG', function () {
 
 // ── Date selection ────────────────────────────────────────────────────────
 
-test('BUILD PARITY: unpinned, it analyses EVERY row and dates from the FIRST', function () {
-  // The build does not date-filter -- 'Raw Data' holds one day, so it takes
-  // the date from the first valid START_TIME and processes every row
-  // (buildDQEHistoricalData's "Detect call date"). This must match, or the
-  // two reports cannot be reconciled.
+test('BUILD PARITY: unpinned, it dates from the FIRST valid row and drops other-day strays (P-7)', function () {
+  // The build takes its date from the first valid START_TIME and, since P-7,
+  // drops every leg on another calendar day before any pass sees it. F13: this
+  // test used to pin the PRE-P-7 premise ("the build does not date-filter"),
+  // so the audit kept counting strays the build no longer reads.
   const rows = [
     raw({ callId: 'Q1', legId: 0, start: '03/09/2026 7:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
     raw({ callId: 'Q2', legId: 0, start: '03/09/2026 7:30:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
     raw({ callId: 'Q3', legId: 0, start: '03/10/2026 0:05:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ];
   const out = run(rows);
-  assert.match(out, /=== Queue-overlap audit -- 03\/09\/2026 {2}\(all of Raw Data -- build parity\)/,
+  assert.match(out, /=== Queue-overlap audit -- 03\/09\/2026 {2}\(the build's date -- build parity\)/,
     'the label comes from the FIRST valid START_TIME, not the maximum');
-  assert.match(out, /Queue legs: 3/, 'every row is analysed, carry-over included');
+  assert.match(out, /Queue legs: 2/, 'the build\'s day only -- the 03/10 carry-over leg is not analysed');
+  assert.match(out, /Skipped 1 stray leg\(s\) on other dates -- the build drops them too \(P-7\)/);
 });
 
 test('REGRESSION: a carry-over straggler must not become the analysed date', function () {
@@ -256,26 +247,42 @@ test('REGRESSION: a carry-over straggler must not become the analysed date', fun
   rows.push(raw({ callId: 'S2', legId: 1, start: '03/10/2026 0:03:00', parentCall: 'PS', callerId: 'A_Q_CSR',     calleeName: 'Ana', answered: true }));
 
   const out = run(rows);
-  assert.match(out, /Queue legs: 42/,
-    'all 42 legs must be analysed -- selecting only the 2 stragglers is the bug');
-  assert.match(out, /Calls touching more than one queue: 1 of 41/);
+  assert.match(out, /Queue legs: 40/,
+    'the 40 legs of the build\'s day are analysed -- selecting only the 2 stragglers is the bug');
+  assert.match(out, /Calls touching more than one queue: 0 of 40/,
+    'the stragglers\' two-queue call is not this day\'s -- the build drops it (P-7)');
+  assert.match(out, /Skipped 2 stray leg\(s\)/);
+});
+
+test('F13: agent names are canonicalized with the build\'s INV-24 rule before they meet the roster', function () {
+  // The roster holds "Ana (Annie) Lopez"; the feed says "Ana Annie Lopez" --
+  // the FLATTEN form the build rewrites to the roster name. Matched raw, her
+  // legs used to fall out of section 3 entirely.
+  const out = run([
+    raw({ callId: 'Q1', legId: 0, parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana Annie Lopez', answered: true }),
+    raw({ callId: 'Q2', legId: 0, parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana Annie Lopez', answered: true }),
+  ], { CSR: ['Ana (Annie) Lopez, 101'] });
+  assert.match(out, /CSR\s+A_Q_CSR=2/);
 });
 
 test('the date DISTRIBUTION is printed, so a mixed sheet is visible', function () {
   // The silent failure mode was invisible because nothing showed how much of
   // the sheet was being read.
+  // ST2: the day is the MAJORITY date (rawGridDay_), so 03/09 holds two rows.
   const out = run([
     raw({ callId: 'Q1', legId: 0, start: '03/09/2026 8:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q3', legId: 0, start: '03/09/2026 9:00:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
     raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:02:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ]);
   assert.match(out, /Raw Data rows by date/);
-  assert.match(out, /03\/09\/2026\s+1 row\(s\).*<- the build dates this sheet here/);
+  assert.match(out, /03\/09\/2026\s+2 row\(s\).*<- the build dates this sheet here/);
   assert.match(out, /03\/10\/2026\s+1 row\(s\)/);
 });
 
 test('QUEUE_OVERLAP_DATE pins one date and says it is NOT build parity', function () {
   const rows = [
     raw({ callId: 'Q1', legId: 0, start: '03/09/2026 7:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q3', legId: 0, start: '03/09/2026 8:00:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),   // ST2: 03/09 is the majority
     raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:05:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ];
   h.state.spreadsheet = makeFakeSpreadsheet({

@@ -118,6 +118,21 @@ function getDQEDrilldownRows(params) {
   var column      = params.column;
   var showAllRejects = !!params.showAllRejects;
 
+  // F12 (broad-scan 2026-10-14): a queue-SENTINEL row (INV-23) -- agent name
+  // is a queue id -- holds that queue's abandoned calls that rang NO agent.
+  // It has no agent legs, so the drill used to answer "No source rows match",
+  // which reads as "the build counted nothing". Say what the row is and where
+  // its calls are; re-deriving the build's queue-only rule here would be a
+  // fifth hand-mirrored rule set to keep in step.
+  var sentinelM = String(agentName || '').trim().match(/^(A_Q_[\w&]+|Backup CSR)$/);
+  if (sentinelM) {
+    return { error: '"' + sentinelM[1] + '" is a queue row, not an agent (INV-23): it holds the queue\'s '
+      + 'abandoned calls that rang no agent, so there are no agent legs for this drill to list. '
+      + 'Its calls are the parent legs that reached the queue -- in Raw Data, filter column L '
+      + '(callee name) for "' + sentinelM[1] + '" on ' + dateStr + ' and keep the abandoned ones '
+      + 'waiting over 60 seconds.' };
+  }
+
   var ss       = SpreadsheetApp.getActiveSpreadsheet();
   var rawSheet = ss.getSheetByName('Raw Data');
   if (!rawSheet) return { error: '"Raw Data" sheet not found.' };
@@ -372,17 +387,49 @@ function getDQEDrilldownRows(params) {
     matches.push(partial);
   }
 
+  // F11 (broad-scan 2026-10-14): col E counts only REAL parents -- the build
+  // drops an empty or literal 'N/A' parent id (REP-4), but dedupeByParent
+  // keyed every such row on 'N/A' and counted ONE phantom parent for them.
+  if (metricType === 'unique') {
+    matches = matches.filter(function (m) {
+      if (m.parentCallId && m.parentCallId !== 'N/A') return true;
+      addRejected(rejected, rejectReasons, m, 'No parent call (col O) -- not a unique parent in the build');
+      return false;
+    });
+  }
+
   // Dedupe by parent for unique/ttt/att (only matches, not near-misses)
   if (metricType === 'unique' || metricType === 'ttt' || metricType === 'att') {
     matches = dedupeByParent(matches);
   }
 
-  // Abandoned filter
+  // Abandoned filter. F11: mirror what the build WRITES, per column -- it
+  // used to keep every leg (answered ones too) on an abandoned parent, so
+  // Found-N disagreed with all three cells:
+  //   AE / AF (31, 32): one entry per MISSED leg on an abandoned parent with
+  //     a parseable start time (the paired, chronological list);
+  //   AD (30): those same entries, then each abandoned parent the agent
+  //     touched WITHOUT such a leg, once (the appended unpaired ids).
   if (metricType === 'abandoned') {
-    matches = matches.filter(function(m) {
+    var onAban = matches.filter(function(m) {
       var pm = parentMap[m.parentCallId];
       return pm && pm.abandoned && pm.waitSec > 60;
     });
+    var paired = onAban.filter(function (m) {
+      return m.missed && displayToTimeSecLocal(m.startTime) !== null;
+    });
+    if (parseInt(column, 10) === 30) {
+      var pairedParent = {}, unpairedSeen = {};
+      paired.forEach(function (m) { pairedParent[m.parentCallId] = true; });
+      var unpaired = onAban.filter(function (m) {
+        if (pairedParent[m.parentCallId] || unpairedSeen[m.parentCallId]) return false;
+        unpairedSeen[m.parentCallId] = true;
+        return true;
+      });
+      matches = paired.concat(unpaired);
+    } else {
+      matches = paired;
+    }
   }
 
   // Compute summary based on matches only (agent-specific talk time)

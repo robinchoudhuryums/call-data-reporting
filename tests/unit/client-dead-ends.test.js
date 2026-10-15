@@ -346,3 +346,51 @@ test('Alerts config section: server-fed picker, in-place re-render, loud empty p
   assert.ok(bail > 0 && reveal > 0 && bail < reveal,
     'the no-payload bail-out comes before the body is revealed');
 });
+
+// ===========================================================================
+// Broad-scan 2026-10-14, Batch 7 (interface / a11y): the markup-level pins.
+// The behavioural halves (the panel's aria-expanded, the sub-queue cards, the
+// Health folds, share links, the mini-table sort) are in client-lifecycle.
+// ===========================================================================
+
+test('F26: every palette that overrides --muted re-declares --ink-muted (an alias resolves where it is declared)', function () {
+  const css = src('styles.html');
+  const blocks = css.match(/[^{}]+\{[^{}]*\}/g) || [];
+  const offenders = blocks.filter(function (b) {
+    return /--muted:\s*[^;!]+;/.test(b) && !/--ink-muted:/.test(b);
+  }).map(function (b) { return b.slice(0, b.indexOf('{')).trim(); });
+  assert.deepEqual(offenders, [], 'a --muted override without its --ink-muted alias keeps the light grey');
+  const dark = blocks.find(function (b) { return /(^|\*\/|\})\s*body\[data-mode="dark"\]\s*\{/.test(b) && /--muted:/.test(b); });
+  assert.ok(dark && /--ink-muted:\s*var\(--muted\);/.test(dark), 'the dark overlay re-declares it');
+});
+
+test('F27: an agent row is not the control -- no tabindex on the row, the name-cell button owns aria-expanded', function () {
+  ['script-5-dept.html', 'script-10-escalations.html', 'script-2-chrome.html'].forEach(function (f) {
+    const bad = src(f).split('\n').filter(function (l) {
+      return !/^\s*\/\//.test(l) && /<tr data-agent=/.test(l) && /tabindex/.test(l);
+    });
+    assert.deepEqual(bad, [], f + ': an agent row carries no tabindex');
+  });
+  const dept = src('script-5-dept.html');
+  assert.match(between(dept, /function apRowToggleHtml_\(/, /\n  function /), /<button type="button" class="ap-row-toggle" aria-expanded="false"/);
+  assert.equal((dept.match(/apRowToggleHtml_\((row|e)\.agent\)/g) || []).length, 3, 'all three agent-row builders use it');
+  const ap = src('script-10-escalations.html');
+  assert.ok(!/tr\.(setAttribute|removeAttribute)\('aria-expanded'/.test(ap), 'the panel never marks the ROW expanded');
+  assert.match(between(ap, /function apClose_\(/, /\n  function /), /b\.setAttribute\('aria-expanded', 'false'\)/,
+    'closing says false, never removes the attribute');
+  // The corollary: with a native button, a row keydown for Enter/Space would toggle twice.
+  assert.ok(!/agentRowDrill_\(e\);\s*\}\);/.test(src('script-2-chrome.html')), 'no Enter/Space path re-fires the row drill');
+  assert.ok(!/\n\s*open\(e\);\s*\n\s*\}\);/.test(between(dept, /var tb = \$\('agents-ob-tbody'\);/, /var panel = \$\('dept-team-outbound'\);/)),
+    'nor on the outbound table');
+});
+
+test('F54: the Overview Window buttons sync aria-pressed (their markup), never aria-checked', function () {
+  const bar = between(src('script-3-overview.html'), /function ovWirePeriodBar_\(/, /\n  function /);
+  assert.match(bar, /b\.setAttribute\('aria-pressed', on \? 'true' : 'false'\);/);
+  assert.ok(!/setAttribute\('aria-checked'/.test(bar));
+  assert.match(src('dashboard.html'), /class="ov-period-btn active" data-period="yesterday" aria-pressed="true"/);
+});
+
+test('F58: each IR card\'s Copy data button names its agent, starting with the visible text', function () {
+  assert.match(src('script-6-ir.html'), /class="ir-copy-tsv" data-agent="' \+ safeName \+ '"'\s*\+\s*' aria-label="Copy data for ' \+ safeName \+ '">Copy data<\/button>'/);
+});

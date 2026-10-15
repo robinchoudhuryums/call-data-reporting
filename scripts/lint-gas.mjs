@@ -47,15 +47,21 @@ try {
   process.exit(0);
 }
 
-/** Apps Script platform globals. Not derivable -- provided by the runtime. */
+/** Apps Script platform globals. Not derivable -- provided by the runtime.
+ *  F38 (broad-scan 2026-10-14): BUILT-IN services only. The ADVANCED services
+ *  (Drive, Sheets, Docs, Gmail, BigQuery, People, ...) exist only in a project
+ *  whose appsscript.json enables them -- see advancedServiceGlobals_ below --
+ *  and `Blob` / `Ui` are class names, never globals. All of them used to be
+ *  allowed everywhere, so `Drive.Files.get(...)` passed this lint and threw
+ *  ReferenceError in production (no manifest enables Drive). */
 const APPS_SCRIPT_GLOBALS = [
   'SpreadsheetApp', 'DriveApp', 'GmailApp', 'MailApp', 'CalendarApp',
   'DocumentApp', 'FormApp', 'SlidesApp', 'ContactsApp', 'GroupsApp',
   'HtmlService', 'ContentService', 'CacheService', 'PropertiesService',
   'LockService', 'ScriptApp', 'UrlFetchApp', 'Utilities', 'Session',
-  'Logger', 'console', 'Browser', 'Drive', 'Docs', 'Sheets', 'Gmail',
-  'XmlService', 'Charts', 'Maps', 'LanguageApp', 'BigQuery', 'People',
-  'Jdbc', 'MimeType', 'Blob', 'Ui', 'ScriptProperties', 'UserProperties',
+  'Logger', 'console', 'Browser',
+  'XmlService', 'Charts', 'Maps', 'LanguageApp',
+  'Jdbc', 'MimeType', 'ScriptProperties', 'UserProperties',
   'JSON', 'Math', 'Date', 'Array', 'Object', 'String', 'Number', 'Boolean',
   'RegExp', 'Error', 'TypeError', 'RangeError', 'SyntaxError', 'Map', 'Set',
   'WeakMap', 'WeakSet', 'Promise', 'Symbol', 'Infinity', 'NaN', 'undefined',
@@ -71,12 +77,24 @@ const PROJECTS = [
   { dir: 'apps-script/cdr-import', ext: '.js' },
 ];
 
-const globals = {};
-for (const g of APPS_SCRIPT_GLOBALS) globals[g] = 'readonly';
+const baseGlobals = {};
+for (const g of APPS_SCRIPT_GLOBALS) baseGlobals[g] = 'readonly';
+
+/** F38: the advanced-service globals a project's manifest ENABLES (each entry's
+ *  userSymbol) -- the only place such a name is defined at runtime. */
+function advancedServiceGlobals_(dir) {
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(dir, 'appsscript.json'), 'utf8'));
+    return (((m.dependencies || {}).enabledAdvancedServices) || [])
+      .map((svc) => svc && svc.userSymbol).filter(Boolean);
+  } catch (e) { return []; }
+}
 
 let bad = 0, fileCount = 0;
 for (const p of PROJECTS) {
   const dir = path.join(ROOT, p.dir);
+  const globals = Object.assign({}, baseGlobals);
+  for (const g of advancedServiceGlobals_(dir)) globals[g] = 'readonly';
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(p.ext)).sort();
   fileCount += files.length;
   // Concatenate, remembering where each file starts so a reported line can
