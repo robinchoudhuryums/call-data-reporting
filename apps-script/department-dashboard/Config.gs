@@ -978,6 +978,7 @@ var PROP_REGISTRY_ = Object.freeze({
     INGEST_WATCHDOG_LAST: 'engine', INGEST_WATCHDOG_LAST_RESULT: 'engine',
     INGEST_WATCHDOG_ALERTED: 'engine',
     LOGIN_NOTIFY_SEEN: 'engine',
+    AGENT_WELCOME_PENDING: 'engine',   // G3: staged agent addresses owed a welcome
     NEON_BACKUP_LAST: 'engine', NEON_BACKUP_LAST_RESULT: 'engine',
     NEON_BACKUP_FOLDER_ID: 'engine',
     NEON_BACKUP_SS_ID: 'engine',        // Sheets fallback workbook (Drive-permission block)

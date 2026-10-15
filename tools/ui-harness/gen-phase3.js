@@ -74,7 +74,9 @@ const SHEETS = {
   'DO NOT EDIT!': ROSTER,
   'DQE Historical Data': dqeSheet(dqeRows),
   'QCD Historical Data': qcdRows,
-  'Access Control': [['Email','Department','Notes'], ['manager@ums.com','CSR',''], ['sales.mgr@ums.com','Sales','']],
+  // G3: one staged agent (agent sign-in OFF) on the pending-welcome list.
+  'Access Control': [['Email','Department','Notes','Role','Agent Name'], ['manager@ums.com','CSR','','',''],
+    ['sales.mgr@ums.com','Sales','','',''], ['staged.agent@ums.com','CSR','','agent','Anna Reyes']],
   'Alert Config': [['Department','Threshold %','Extra Recipients','Active','Notes','Skip Dates'],
     ['CSR', 85, '', 'TRUE', '', ''], ['Sales', 90, 'vp@ums.com', 'TRUE', '', ''], ['Billing', '', '', 'TRUE', 'typo row', '']],
   'Alert Log': [['Timestamp','Department','Date Checked','Threshold %','Answer Rate %','Sent','Recipients','Triggered By','Notes','Status'],
@@ -102,6 +104,7 @@ function install(email) {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.props.ADMIN_EMAILS = 'admin@ums.com';
   h.state.props.NEON_HOST = 'fake.neon.tech';   // neonConfigured:true
+  h.state.props.AGENT_WELCOME_PENDING = '["staged.agent@ums.com"]';   // G3
   h.state.userEmail = email;
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: SHEETS });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;

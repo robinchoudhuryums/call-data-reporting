@@ -1804,6 +1804,17 @@
     return n + ((topTier === 'red' || topTier === 'amber') ? 1 : 0);
   }
 
+  // G2 (broad-scan 259, E1): PURE. The top line's "default target" label --
+  // '' when the dept has its own answer target (or there is no tier to
+  // judge), else the label naming the company default it is judged against.
+  // Under the default 80/10 a red pill is the default's verdict, not one an
+  // admin chose for this dept, so the brief says so.
+  function insBriefTargetNote_(std, hasCalls) {
+    if (!hasCalls || !std || !std.isDefault) return '';
+    var t = Number(std.target);
+    return 'Default ' + (isFinite(t) && t > 0 ? t + '% ' : '') + 'target';
+  }
+
   // F28: PURE. Whether the Queue health fold is on screen -- insQhFoldSync_
   // hides it when there is no payload, or one with no totals that is neither
   // an error nor unmapped. A brief row must never point at a hidden section.
@@ -1831,6 +1842,7 @@
     var pct = Number((ts.pct && ts.pct.val) || 0);
     var hasCalls = Number((ts.rung && ts.rung.val) || 0) > 0;
     var topTier = hasCalls ? insBriefTopTier_(answerTierCls_(pct, dept)) : 'grey';
+    var targetNote = insBriefTargetNote_(answerStdFor_(dept), hasCalls);   // G2
     var rows = [
       { key: 'agents', tier: agentsV.tier, text: agentsV.text },
       { key: 'detail', tier: 'grey', text: (function () {
@@ -1863,7 +1875,9 @@
         + '. ' + (look === 0 ? 'Nothing needs a look.' : (look === 1 ? '1 thing needs a look.' : look + ' things need a look.'))
       : 'No calls in this window.';
     box.innerHTML = '<p class="ins-brief-top"><span class="ins-brief-top-tier ins-brief--' + topTier + '">'
-      + escapeHtml(INS_BRIEF_WORD_[topTier]) + '</span>' + escapeHtml(top) + '</p>'
+      + escapeHtml(INS_BRIEF_WORD_[topTier]) + '</span>' + escapeHtml(top)
+      + (targetNote ? ' <span class="ins-brief-default" title="This department has no answer target of its own, so it is judged against the company default. Set one in Alerts, Answer targets.">'
+          + escapeHtml(targetNote) + '</span>' : '') + '</p>'
       + '<ul class="ins-brief-list">' + ranked.map(function (r) {
         var t = INS_BRIEF_TARGET_[r.key] || {};
         return '<li><button type="button" class="ins-brief-row ins-brief--' + r.tier + '" data-brief-key="' + r.key + '">'

@@ -309,3 +309,52 @@ test('F21: entering or leaving View-as redraws the Insights trend (its shading i
   assert.match(bodyOf('script-3-overview.html', 'applyViewAs_'),
     /if \(typeof insLastData !== 'undefined' && insLastData && typeof insDrawTrendChart_ === 'function'\) \{\s*try \{ insDrawTrendChart_\(insLastData\); \}/);
 });
+
+// G2 (broad-scan 259, E1): the brief labels a top line judged against the
+// company DEFAULT answer target, and the Alerts -> Answer targets editor lists
+// which depts ride that default -- under 80/10 a red pill is the default's
+// verdict, not one an admin chose for the dept.
+test('G2: answerStdFor_ marks a dept with no own target as isDefault; the brief labels it', function () {
+  const nav = fs.readFileSync(path.join(DIR, 'script-4-nav.html'), 'utf8');
+  const src = function (name) {
+    const start = nav.indexOf('function ' + name + '(');
+    const open = nav.indexOf('{', start);
+    let depth = 0;
+    for (let i = open; i < nav.length; i++) {
+      if (nav[i] === '{') depth++;
+      else if (nav[i] === '}' && --depth === 0) return nav.slice(start, i + 1);
+    }
+    return '';
+  };
+  const win = { __ANSWER_TARGETS__: { global: 80 }, __STANDARDS__: { answer: { band: 10, depts: { CSR: { target: 92, band: 2 } } } } };
+  // eslint-disable-next-line no-new-func
+  const stdFor = new Function('window', src('answerTarget_') + '\n' + src('answerStdFor_') + '\nreturn answerStdFor_;')(win);
+  assert.deepEqual(stdFor('CSR'), { target: 92, band: 2, isDefault: false });
+  assert.deepEqual(stdFor('Sales'), { target: 80, band: 10, isDefault: true });
+  assert.equal(stdFor(null).isDefault, true);
+
+  const note = extractFn(F, 'insBriefTargetNote_');
+  assert.equal(note(stdFor('Sales'), true), 'Default 80% target');
+  assert.equal(note(stdFor('CSR'), true), '', 'a dept with its own target gets no label');
+  assert.equal(note(stdFor('Sales'), false), '', 'no calls, no tier to qualify');
+  const brief = fs.readFileSync(path.join(DIR, F), 'utf8');
+  assert.match(brief, /insBriefTargetNote_\(answerStdFor_\(dept\), hasCalls\)/, 'the top line asks the same standard its tier used');
+});
+
+test('G2: the Answer targets editor splits the depts into own-target and company-default', function () {
+  const cov = extractFn('script-7-admin.html', 'alAnswerTargetCoverage_');
+  const c = cov(['CSR', 'Sales', 'PAP', 'Power'], { CSR: { target: 92, band: 2 }, Power: { target: 85 }, Ghost: { target: 70 } });
+  assert.deepEqual(c.own, ['CSR 92% (amber 2)', 'Power 85%']);
+  assert.deepEqual(c.defaults, ['Sales', 'PAP'], 'an override for a dept not on the roster is not counted');
+  assert.deepEqual(cov([], null), { own: [], defaults: [] });
+  const admin = fs.readFileSync(path.join(DIR, 'script-7-admin.html'), 'utf8');
+  assert.match(admin, /alRenderAnswerTargets_\(data && data\.answerTargets, data && data\.departments\)/,
+    'the init render hands the editor the roster dept list');
+});
+
+test('G3: the Access modal\'s pending-welcome bar wording follows the flag', function () {
+  const txt = extractFn('script-7-admin.html', 'acPendingWelcomeText_');
+  assert.equal(txt(0, true), '');
+  assert.match(txt(1, false), /^1 staged agent has no welcome email yet\. Once agent sign-in is on/);
+  assert.match(txt(3, true), /^3 staged agents have not been sent a welcome email yet\. Agent sign-in is on/);
+});

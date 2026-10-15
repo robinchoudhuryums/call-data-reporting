@@ -502,7 +502,30 @@
   }
 
   // -- Display standards (admin-tunable thresholds, R23) ------------------
-  function alRenderAnswerTargets_(at) {
+  // G2: the roster depts from the last Alerts init, for the coverage line
+  // (the save response carries the standards but not the dept list).
+  var alAnswerDepts_ = [];
+
+  // G2 (broad-scan 259, E1): PURE. Which depts have an answer target of
+  // their own (`deptTargets` = standards.answer.depts) and which are judged
+  // against the company default -- so a dept nobody set a target for is
+  // visible here, not discovered as red-everywhere in the brief.
+  function alAnswerTargetCoverage_(depts, deptTargets) {
+    var own = [], defaults = [];
+    var dt = deptTargets || {};
+    (depts || []).forEach(function (d) {
+      var o = dt[d];
+      if (o && isFinite(Number(o.target)) && Number(o.target) > 0) {
+        own.push(d + ' ' + Number(o.target) + '%' + (o.band != null ? ' (amber ' + o.band + ')' : ''));
+      } else {
+        defaults.push(d);
+      }
+    });
+    return { own: own, defaults: defaults };
+  }
+
+  function alRenderAnswerTargets_(at, depts) {
+    if (Array.isArray(depts)) alAnswerDepts_ = depts.slice();
     const eff = (at && at.effective) || {};
     const seed = (at && at.seedDefault) || 80;
     const std = (at && at.standards) || {};
@@ -521,6 +544,17 @@
       dt.placeholder = Object.keys(seedMap).map(function (k) {
         return k + '=' + seedMap[k].target + (seedMap[k].band != null ? '/' + seedMap[k].band : '');
       }).join(', ') || 'CSR=92/2';
+    }
+    const cov = $('al-dept-targets-coverage');
+    if (cov) {
+      const c = alAnswerTargetCoverage_(alAnswerDepts_, (std.answer || {}).depts);
+      const gT = eff.global != null ? eff.global : seed;
+      const gB = eff.band != null ? eff.band : ((at && at.seedBand) || 10);
+      cov.textContent = !alAnswerDepts_.length ? ''
+        : (c.defaults.length
+            ? 'On the company default (' + gT + '%, amber within ' + gB + ' pts): ' + c.defaults.join(', ') + '.'
+            : 'Every department has its own target.')
+          + (c.own.length ? ' Own target: ' + c.own.join(', ') + '.' : '');
     }
     const tf = std.transfer || {};
     if ($('al-tf-deep'))  $('al-tf-deep').value  = tf.deep  != null ? tf.deep  : '';
@@ -592,7 +626,7 @@
         $('al-loading').style.display = 'none';
         $('al-body').style.display = '';
         alRenderInit_(data);
-        alRenderAnswerTargets_(data && data.answerTargets);
+        alRenderAnswerTargets_(data && data.answerTargets, data && data.departments);
         // Digest subscribers + trigger status is loaded separately
         // so a missing Digest.gs (e.g. mid-deploy) doesn't break the
         // whole Alerts modal.
@@ -2292,6 +2326,10 @@
     if ($('ac-tbody'))     $('ac-tbody').addEventListener('click', acOnTableClick_);
     // Agent role Phase B: the agent-rows section.
     if ($('ac-agent-save-btn')) $('ac-agent-save-btn').addEventListener('click', acAgentSave_);
+    if ($('ac-agent-pending')) $('ac-agent-pending').addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('#ac-welcome-send')) acSendPendingWelcomes_(false);
+      else if (e.target.closest && e.target.closest('#ac-welcome-clear')) acSendPendingWelcomes_(true);
+    });
     if ($('ac-agent-tbody')) $('ac-agent-tbody').addEventListener('click', function (e) {
       const rem = e.target.closest && e.target.closest('.ac-agent-remove');
       if (rem) { acAgentRemove_(Number(rem.getAttribute('data-idx'))); return; }
@@ -2412,6 +2450,9 @@
       deptSel.addEventListener('change', acFillAgentNames_);
     }
     acFillAgentNames_();
+    acRenderPendingWelcomes_();
+    const pendingSet = {};
+    (acLastInit.pendingWelcomes || []).forEach(function (e) { pendingSet[String(e).toLowerCase()] = true; });
     const tbody = $('ac-agent-tbody');
     if (!tbody) return;
     if (!agents.length) {
@@ -2424,7 +2465,10 @@
     var canPreview = !!(window.__DASHBOARD_URL__);
     tbody.innerHTML = agents.map(function (a, idx) {
       return '<tr>'
-        + '<td>' + escapeHtml(a.email) + '</td>'
+        + '<td>' + escapeHtml(a.email)
+        + (pendingSet[String(a.email).toLowerCase()]
+            ? ' <span class="ds-chip ds-chip--neutral" title="Staged while agent sign-in was off; no welcome email sent yet">welcome pending</span>' : '')
+        + '</td>'
         + '<td>' + escapeHtml(a.department) + '</td>'
         + '<td>' + escapeHtml(a.agentName) + '</td>'
         + '<td>'
@@ -2432,6 +2476,66 @@
         + '<button type="button" class="link-btn ac-agent-remove" data-idx="' + idx + '">Remove</button></td>'
         + '</tr>';
     }).join('');
+  }
+
+  // G3: the staged-agent welcome bar. Agents saved while sign-in was OFF got
+  // no welcome (F1); once AGENT_ROLE_ENABLED is on, one click sends them all
+  // (sendPendingAgentWelcomes, admin-gated; it refuses while the flag is off).
+  function acPendingWelcomeText_(n, enabled) {
+    if (!n) return '';
+    var who = n === 1 ? '1 staged agent has' : n + ' staged agents have';
+    return enabled
+      ? who + ' not been sent a welcome email yet. Agent sign-in is on, so you can send them now.'
+      : who + ' no welcome email yet. Once agent sign-in is on (AGENT_ROLE_ENABLED), come back here and send them in one go.';
+  }
+  function acRenderPendingWelcomes_() {
+    const box = $('ac-agent-pending');
+    if (!box) return;
+    const n = (acLastInit.pendingWelcomes || []).length;
+    if (!n) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    const on = !!acLastInit.agentRoleEnabled;
+    box.innerHTML = escapeHtml(acPendingWelcomeText_(n, on)) + ' '
+      + '<button type="button" class="btn" id="ac-welcome-send"' + (on ? '' : ' disabled title="Turn on agent sign-in first"') + '>'
+      + 'Send ' + n + ' welcome' + (n === 1 ? '' : 's') + '</button> '
+      + '<button type="button" class="link-btn" id="ac-welcome-clear">Clear the list without sending</button>';
+    box.style.display = '';
+  }
+  function acSendPendingWelcomes_(dismiss) {
+    const n = (acLastInit.pendingWelcomes || []).length;
+    if (!n) return;
+    dsConfirm_(dismiss ? {
+      title: 'Clear pending welcomes', tone: 'danger',
+      message: 'Clear ' + n + ' pending welcome' + (n === 1 ? '' : 's') + ' without sending? Those agents keep their access; they just get no email from the dashboard.',
+      confirmLabel: 'Clear the list', cancelLabel: 'Cancel',
+    } : {
+      title: 'Send welcome emails',
+      message: 'Send the welcome email to ' + n + ' staged agent' + (n === 1 ? '' : 's') + '? It tells each one their access is live now.',
+      confirmLabel: 'Send', cancelLabel: 'Cancel',
+    }).then(function (ok) {
+      if (!ok) return;
+      if (mutationBusy_('acWelcome')) return;
+      acSetStatus_('loading', dismiss ? 'Clearing the pending welcomes…' : 'Sending welcome emails…');
+      google.script.run
+        .withSuccessHandler(function (res) {
+          mutationDone_('acWelcome');
+          res = res || {};
+          const failed = (res.failed || []).length;
+          const msg = dismiss
+            ? 'Cleared ' + (res.dropped || 0) + ' pending welcome(s).'
+            : 'Sent ' + (res.sent || 0) + ' welcome email(s).'
+              + (res.dropped ? ' ' + res.dropped + ' had no agent row any more and were dropped.' : '')
+              + (failed ? ' ' + failed + ' failed and stay pending: ' + res.failed.join(', ') + '.' : '')
+              + (res.remaining > failed ? ' ' + (res.remaining - failed) + ' more wait for the next click.' : '');
+          acSetStatus_(failed ? 'error' : 'success', msg);
+          showToast(msg, failed ? 'error' : 'success');
+          acLoadInit_(true);   // CL-15
+        })
+        .withFailureHandler(function (err) {
+          mutationDone_('acWelcome');
+          acSetStatus_('error', (dismiss ? 'Clear' : 'Send') + ' failed: ' + (err && err.message ? err.message : String(err)));
+        })
+        .sendPendingAgentWelcomes({ dismiss: !!dismiss });
+    });
   }
 
   function acFillAgentNames_() {
@@ -2465,7 +2569,9 @@
         const stored = (res && res.storedAs) ? ' Stored as ' + res.storedAs + ' (the canonical address for this alias).' : '';
         // F1: staged while agent sign-in is off -- no welcome email went out.
         const deferred = (res && res.welcomeDeferred)
-          ? ' Agent sign-in is OFF (AGENT_ROLE_ENABLED), so this row is staged and no welcome email was sent -- it takes effect once agent sign-in is turned on.' : '';
+          ? ' Agent sign-in is OFF (AGENT_ROLE_ENABLED), so this row is staged and no welcome email was sent -- it takes effect once agent sign-in is turned on'
+            + ((res && res.pendingTracked) ? ', and its welcome waits in the pending-welcome list.'
+               : '. The pending-welcome list is full, so tell this agent yourself.') : '';
         acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + ').'
           + (deferred || ' Takes effect within ~60 s.') + stored + coexist);
         showToast('Saved agent access for ' + email, 'success');

@@ -1295,7 +1295,10 @@
       ? Number(o.target) : answerTarget_('global');
     var band = (o && o.band != null && isFinite(Number(o.band))) ? Number(o.band)
       : ((a.band != null && isFinite(Number(a.band))) ? Number(a.band) : 10);
-    return { target: target, band: band };
+    // G2: `isDefault` -- the dept has no target of its own and is judged
+    // against the company default (the brief labels it; red-everywhere under
+    // a default nobody chose for the dept is not a real signal).
+    return { target: target, band: band, isDefault: !(o && isFinite(Number(o.target)) && Number(o.target) > 0) };
   }
   // Three-tier class for an answer rate: green at/above the target, AMBER
   // within `band` points below it, red past that (owner R23).

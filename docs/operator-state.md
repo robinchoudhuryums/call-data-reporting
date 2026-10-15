@@ -1212,7 +1212,13 @@ When something looks wrong, before assuming a code bug, check:
     `Config.gs::ANSWER_TARGET_SURFACES` plus `band` = the amber width in
     points below the target, 0-50; unknown keys + out-of-range values
     silently dropped by `parseAnswerTargets_`). Unset = the seeds: global
-    80% (owner 2026-08, was 92) with a 10-pt amber band.
+    80% (owner 2026-08, was 92) with a 10-pt amber band. **G2:** the
+    Display standards section lists which depts have a target of their own
+    and which are "On the company default", and the Insights brief's top
+    line carries a **Default 80% target** label for a dept with no own
+    target -- under the default a red pill is the default's verdict, not one
+    you chose for that dept, so set its target here before reading it as a
+    signal.
     `DEPT_ANSWER_TARGETS`: per-dept overrides as `Dept=target/band` pairs
     (`CSR=92/2`), layered over the `DEPT_ANSWER_TARGET_SEED` (CSR 92/2) --
     read via `getAnswerStandardFor_(dept)`, which every dept-context
@@ -1690,8 +1696,21 @@ When something looks wrong, before assuming a code bug, check:
     agent's first visit; `agentHome` rows land in Report Usage. **Staged rows
     get NO welcome email** (F1, 2026-10-14): an agent row saved while the flag
     is off is staged silently and the modal says so; the welcome email
-    (#58) goes only to a new grant that can actually sign in, so tell the
-    pilot agents yourself once you set the flag.
+    (#58) goes only to a new grant that can actually sign in. **Since G3
+    (2026-10-15) the deferred address waits on a pending list** (the
+    `AGENT_WELCOME_PENDING` Script Property, engine state -- don't hand-edit
+    it): the Access modal's Agents section shows "N staged agents have no
+    welcome email yet" and tags each row "welcome pending". After you set
+    the flag, reopen Admin ▸ Access and press **Send N welcomes**
+    (`sendPendingAgentWelcomes`, admin-gated; at most 40 a click, the rest
+    stay listed; a failed send stays listed; an address whose agent row is
+    gone is dropped). It refuses while the flag is off,
+    `ACCESS_WELCOME_EMAIL=false` or `DASHBOARD_URL` is unset, so nothing
+    leaves the list unsent; **Clear the list without sending** is the opt
+    out. Nothing sends on the flip by itself -- the flag is a hand-set
+    property, so the send is always your click. Rows staged BEFORE this
+    deploy are not on the list (the pre-F1 code had already emailed them);
+    to queue one, remove it and add it again while the flag is off.
     Prereqs for a working agent row: the
     Access Control row needs Department + Role=`agent` + Agent Name matching
     that dept's `DO NOT EDIT!` roster entry EXACTLY (the editor validates
