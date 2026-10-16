@@ -741,6 +741,17 @@ function teamAvgExcludeSet_(dept) {
  * change), and that snapshot has its own Main / Sub-queues / All-queues
  * carousel, so combining across depts here would double-count sub-queue calls.
  */
+/**
+ * PURE. Step 4: a { iso: { answered, missed } } map as the payload's sorted
+ * list of COMPACT tuples [iso, answered, missed] (the summary is cached under
+ * CacheService's ~100 KB per-value cap; objects tripled the size).
+ */
+function summaryDailyList_(perDay) {
+  return Object.keys(perDay || {}).sort().map(function (iso) {
+    return [iso, perDay[iso].answered, perDay[iso].missed];
+  });
+}
+
 function combineSummaries_(primary, parts) {
   if (parts.length === 1) {
     // D-9 (broad-scan 2026-09-17): the requested dept is the payload's
@@ -770,8 +781,32 @@ function combineSummaries_(primary, parts) {
   // This is a MITIGATION, not the fix: each dept still shows the agent's
   // all-queue numbers. Phase 2 removes the duplication at its source by giving
   // each dept only its own queues' slice. See docs/sub-queue-split-plan.md.
+  // Step 4 (day bars): the per-date sum, corrected below by every repeat the
+  // totals are corrected by -- so the bars always sum to the grand total.
+  const wantDaily = parts.every(function (p) { return p && p.totals && Array.isArray(p.totals.daily); });
+  const grandDaily = {};
+  const partOfRow = new Map();
+  const dropDays = function (r) {
+    if (!wantDaily) return;
+    const p = partOfRow.get(r);
+    const da = p && p.totals && p.totals._dailyByAgent && p.totals._dailyByAgent[String(r.agent || '')];
+    if (!da) return;
+    Object.keys(da).forEach(function (iso) {
+      const g = grandDaily[iso];
+      if (!g) return;
+      g.answered -= da[iso].answered;
+      g.missed   -= da[iso].missed;
+    });
+  };
   parts.forEach(function (p) {
-    (p.rows || []).forEach(function (r) { rows.push(r); });
+    (p.rows || []).forEach(function (r) { rows.push(r); partOfRow.set(r, p); });
+    if (wantDaily) {
+      p.totals.daily.forEach(function (d) {
+        const g = grandDaily[d[0]] || (grandDaily[d[0]] = { answered: 0, missed: 0 });
+        g.answered += Number(d[1]) || 0;
+        g.missed   += Number(d[2]) || 0;
+      });
+    }
     const t = p.totals || {};
     groups.push({ dept: p.meta.department, rowCount: (p.rows || []).length, totals: t });
     ['totalUnique', 'totalRung', 'totalMissed', 'totalAnswered', 'tttSeconds',
@@ -866,6 +901,7 @@ function combineSummaries_(primary, parts) {
         grand.totalAnswered -= Number(r.totalAnswered) || 0;
         grand.tttSeconds    -= Number(r.tttSeconds) || 0;
         grand.rosterAgentCount -= 1;
+        dropDays(r);   // Step 4
       } else if (r.matchedViaQueue) {
         if (!seenQueueOnly[name]) { seenQueueOnly[name] = true; return; }
         grand.queueOnlyAgentCount -= 1;
@@ -889,9 +925,11 @@ function combineSummaries_(primary, parts) {
       grand.totalAnswered -= Number(r.totalAnswered) || 0;
       grand.tttSeconds    -= Number(r.tttSeconds) || 0;
       grand.rosterAgentCount -= 1;
+      dropDays(r);   // Step 4
     });
   });
   grand.crossoverAgentCount = crossoverAgentCount;
+  if (wantDaily) grand.daily = summaryDailyList_(grandDaily);
   // summary:v23 (owner 2026-10): the team's answered per AGENT per day is a
   // ratio of two sums, so the combined figure sums each dept's pair (above,
   // crossover repeats removed) and divides once -- never a mean of the depts'
@@ -1090,7 +1128,7 @@ function getDepartmentSummary(req) {
   // other depts skip computing them -- a read each, and a child's read
   // failure no longer blocks caching a payload that never contained it.
   const parts = deptSet.map(function (d) {
-    return computeSummary_(d, from, to, scope, { sections: d === dept });
+    return computeSummary_(d, from, to, scope, { sections: d === dept, daily: true });   // Step 4: daily
   });
   // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
   // 'subs' scope it is not among the parts, so it is computed separately --
@@ -1323,6 +1361,10 @@ function computeSummary_(dept, from, to, scope, opts) {
   // included rows for this agent so the client can distinguish
   // "no data" from "real zero".
   const priorAcc = {};
+  // Step 4 (day bars): opt-in -- only the My Department request asks for it,
+  // so Digest / Coaching / the agent app / diagnostics are unchanged.
+  const wantDaily = !!(opts && opts.daily);
+  const dailyByAgent = {};
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -1411,6 +1453,15 @@ function computeSummary_(dept, from, to, scope, opts) {
     }
 
     if (!row.queueScoped) a.queueScoped = false;
+
+    // Step 4 (day bars): this agent's answered / missed per DATE, kept off the
+    // payload (only the dept-level sum ships -- see totals.daily below).
+    if (wantDaily) {
+      const da = dailyByAgent[agent] || (dailyByAgent[agent] = {});
+      const dd = da[dateIso] || (da[dateIso] = { answered: 0, missed: 0 });
+      dd.answered += Number(row.totalAnswered) || 0;
+      dd.missed   += Number(row.totalMissed) || 0;
+    }
 
     a.totalUnique   += row.totalUnique;
     a.totalRung     += row.totalRung;
@@ -1554,6 +1605,27 @@ function computeSummary_(dept, from, to, scope, opts) {
   totals.avgAbdWaitNonzeroCount = countNonzero_(rosterRows, 'avgAbdWaitSeconds');
   totals.csrAvgAbdWaitNonzeroCount = countNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
+  // Step 4 (day bars): the ROSTER agents' answered / missed per date -- the
+  // same population as the totals above, so the bars sum to the % Answered
+  // tile. The per-agent map rides along NON-ENUMERABLE (never serialized,
+  // never cached): combineSummaries_ needs it to drop a crossover agent's
+  // repeat days exactly as it drops their repeat totals.
+  if (wantDaily) {
+    const perDay = {};
+    const rosterDaily = {};
+    rosterRows.forEach(function (r) {
+      const da = dailyByAgent[r.agent];
+      if (!da) return;
+      rosterDaily[r.agent] = da;
+      Object.keys(da).forEach(function (iso) {
+        const t = perDay[iso] || (perDay[iso] = { answered: 0, missed: 0 });
+        t.answered += da[iso].answered;
+        t.missed   += da[iso].missed;
+      });
+    });
+    totals.daily = summaryDailyList_(perDay);
+    Object.defineProperty(totals, '_dailyByAgent', { value: rosterDaily, enumerable: false });
+  }
   // summary:v23 (owner 2026-10): the team's answered per AGENT per day --
   // the roster agents' answered ÷ their summed ring-days. Floaters are already
   // out (rosterRows); the dept's team-average excludes come out too, the R18
@@ -2033,6 +2105,10 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     const pTo   = (opts && opts.priorTo)   ? String(opts.priorTo)   : '';
     const byQueueRange = {};
     const byQueueRangePrior = {};
+    // Step 4 (owner 2026-10-16, day bars): the range block's OWN-queue figures
+    // per DAY, accumulated in this same scan, so the team cards' day bars sum
+    // exactly to the tiles they sit in (same rows, same own-queue rule).
+    const byDayRange = {};
     if ((rFrom && rTo) || (pFrom && pTo)) {
       for (let k = 0; k < values.length; k++) {
         const r3 = values[k];
@@ -2060,6 +2136,17 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         };
         if (inRange) bump3(byQueueRange);
         if (inPrior) bump3(byQueueRangePrior);
+        if (inRange && !queueOwner[q3]) {
+          const dy = byDayRange[d3] || (byDayRange[d3] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0 });
+          const ansD = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+          dy.total     += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
+          dy.answered  += ansD;
+          dy.abandoned += Number(r3[QCD_HISTORICAL_COLS.ABANDONED - 1]) || 0;
+          if (displays && typeof parseHmsDisplay_ === 'function') {
+            const avgD = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
+            if (ansD > 0 && avgD > 0) { dy.avgWSum += avgD * ansD; dy.avgWN += ansD; }
+          }
+        }
       }
     }
 
@@ -2158,7 +2245,18 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       mtdPriorWorkdays: countWorkingDays_(mtdPriorStart, mtdPriorEnd),
       // Batch D: the selected-period block for the team-strip QCD tiles (null
       // when no range supplied). Carries from/to for the tile subtitle.
-      range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), { from: rFrom, to: rTo }) : null,
+      range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), {
+        from: rFrom, to: rTo,
+        // Step 4: one COMPACT tuple per date with own-queue activity, oldest
+        // first -- [iso, totalCalls, totalAnswered, abandoned, avgAnswerSec]
+        // (avg answered-weighted like the block's own; null = none). Tuples,
+        // not objects: a 2-year window is ~500 of them and this payload is
+        // cached under CacheService's ~100 KB per-value cap.
+        daily: Object.keys(byDayRange).sort().map(function (iso) {
+          const dy = byDayRange[iso];
+          return [iso, dy.total, dy.answered, dy.abandoned, dy.avgWN > 0 ? Math.round(dy.avgWSum / dy.avgWN) : null];
+        }),
+      }) : null,
       // R11-C1: the same block over the E5 prior window (null when no prior
       // supplied) -- consumed by the Avg-answer tile's delta chip.
       rangePrior: (pFrom && pTo) ? Object.assign(buildBlock_(byQueueRangePrior, null), { from: pFrom, to: pTo }) : null,

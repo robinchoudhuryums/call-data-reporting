@@ -3377,7 +3377,7 @@
     var underTarget = total && rate < stripStd.target;
     var fillPct = total ? Math.max(0, Math.min(100, rate)) : 0;
 
-    var heroTile = '<div class="dts-tile dts-tile--hero">'
+    var heroTile = '<div class="dts-tile dts-tile--hero" data-dts-metric="rate">'
       + '<div class="dts-label">% Answered (rings) <span class="dts-scope">this range</span></div>'
       + '<div class="dts-value' + rateCls + '" data-flash-key="dts:rate">' + (total ? rate + '%' : '–') + '</div>'
       + '<div class="dts-track" title="' + stripStd.target + '% target for this department">'
@@ -3425,7 +3425,7 @@
           + '/day over ' + wd + ' workdays</div>'
         : '';
       ansTile =
-          '<div class="dts-tile dts-tile--queue" title="Calls offered to the department&#39;s mapped queues this range &mdash; total (answered / abandoned). Workdays = Mon&ndash;Fri minus company holidays.">'
+          '<div class="dts-tile dts-tile--queue" data-dts-metric="qcalls" title="Calls offered to the department&#39;s mapped queues this range &mdash; total (answered / abandoned). Workdays = Mon&ndash;Fri minus company holidays.">'
         +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
         +   '<div class="dts-value dts-value--split">'
         +     '<span class="dts-qcalls" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</span>'
@@ -3440,12 +3440,12 @@
       // (Its "N abandoned" sub is gone -- the count now reads in warm type
       // one tile over, and restating it side-by-side was pure duplication.)
       qAbdTile =
-          '<div class="dts-tile dts-tile--queue">'
+          '<div class="dts-tile dts-tile--queue" data-dts-metric="qabd">'
         +   '<div class="dts-label">Abandoned %</div>'
         +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
         + '</div>';
     } else {
-      ansTile = '<div class="dts-tile">'
+      ansTile = '<div class="dts-tile" data-dts-metric="answered">'
         + '<div class="dts-label">Answered</div>'
         + '<div class="dts-value" data-flash-key="dts:answered">' + fmtNumber(a) + '</div>'
         + (ansDeltaHtml ? '<div class="dts-sub">' + ansDeltaHtml + ' vs prior</div>' : '')
@@ -3470,7 +3470,7 @@
           priorTip + ': ' + qrp.avgAnswer);
       }
       qAvgTile =
-          '<div class="dts-tile dts-tile--queue" title="Answered-weighted average time to answer across the department&#39;s mapped queues, this range.">'
+          '<div class="dts-tile dts-tile--queue" data-dts-metric="qavg" title="Answered-weighted average time to answer across the department&#39;s mapped queues, this range.">'
         +   '<div class="dts-label">Avg answer <span class="dts-scope">queue</span></div>'
         +   '<div class="dts-value" data-flash-key="dts:qavg">' + escapeHtml(qr.avgAnswer) + '</div>'
         +   '<div class="dts-sub">' + (qAvgChip ? qAvgChip + ' vs prior' : 'time to answer') + '</div>'
@@ -3515,6 +3515,267 @@
     // stays visibly "refreshing" until the live repaint unfrosts.
     if (strip.classList.contains('ds-frost-host')) dsFrostShow_(strip, 'Refreshing…');
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
+    dtsAttachDayBars_(strip, state);   // Step 4: linked day bars (admin trial)
+  }
+
+  // ── Step 4 (owner 2026-10-16): linked DAY BARS in the team cards ──────────
+  // Each card gets a row of bars, one per WORKDAY of the loaded range (no bar
+  // for a weekend or company holiday; a workday with no calls gets an empty
+  // bar), or one per Monday-start WEEK past DTS_DAILY_MAX_ workdays. Pointing
+  // at a bar in ANY card selects that day in EVERY card, and each card's
+  // readout line shows its own value for it. The data rides the same payload
+  // as the tiles (totals.daily, qcd.range.daily -- Data.gs), so a card's bars
+  // always sum to the card. ADMIN-ONLY while trialled: built only for an
+  // admin, and [data-admin-only] hides it in View-as.
+  var DTS_DAILY_MAX_ = 31;
+  var DTS_WEEKLY_MAX_ = 130;
+  var DTS_MON_ = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var DTS_WD_ = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  /**
+   * PURE. The bar buckets for a window: `isoList` = every date of the range,
+   * `dayMap` = { iso: dayFigures }, `isWorkday(iso)`. Up to DTS_DAILY_MAX_
+   * workdays: one bucket per workday; past it: one per Monday-start week;
+   * past DTS_WEEKLY_MAX_ workdays (about six months): one per calendar month.
+   * Each bucket is { key, from, to, n (workdays), weekly, monthly,
+   * days: [dayFigures...] } -- an empty `days` is a quiet workday or period,
+   * drawn as an empty bar.
+   */
+  function dtsDayBuckets_(isoList, dayMap, isWorkday) {
+    var MAX = 31;           // DTS_DAILY_MAX_ (kept literal: this function is lifted by the tests)
+    var WEEKLY_MAX = 130;   // DTS_WEEKLY_MAX_
+    var work = (isoList || []).filter(function (iso) { return isWorkday(iso); });
+    var monthly = work.length > WEEKLY_MAX;
+    var weekly = !monthly && work.length > MAX;
+    var out = [], cur = null;
+    work.forEach(function (iso) {
+      var key = iso;
+      if (monthly) key = iso.slice(0, 7);
+      else if (weekly) {
+        var p = iso.split('-');
+        var d = new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12));
+        d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));   // back to Monday
+        key = d.toISOString().slice(0, 10);
+      }
+      if (!cur || cur.key !== key) {
+        cur = { key: key, from: iso, to: iso, n: 0, weekly: weekly, monthly: monthly, days: [] };
+        out.push(cur);
+      }
+      cur.to = iso;
+      cur.n++;
+      if (dayMap && dayMap[iso]) cur.days.push(dayMap[iso]);
+    });
+    return out;
+  }
+
+  function dtsBarsActive_() {
+    return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
+      && document.body.getAttribute('data-view-as') !== 'manager';
+  }
+
+  function dtsShortDate_(iso) {
+    var p = String(iso).split('-');
+    return DTS_MON_[(+p[1]) - 1] + ' ' + (+p[2]);
+  }
+  function dtsBucketLabel_(b) {
+    if (b.monthly) {
+      var mp = b.from.split('-');
+      return DTS_MON_[(+mp[1]) - 1] + ' ' + mp[0] + ' (' + b.n + ' workday' + (b.n === 1 ? '' : 's') + ')';
+    }
+    if (!b.weekly) {
+      var p = b.from.split('-');
+      return DTS_WD_[new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12)).getUTCDay()] + ' ' + dtsShortDate_(b.from);
+    }
+    return 'Week of ' + dtsShortDate_(b.from) + (b.n < 5 ? ' (' + b.n + ' workday' + (b.n === 1 ? '' : 's') + ')' : '');
+  }
+  // One bucket's sums across its days.
+  function dtsSum_(b) {
+    var t = { ans: 0, miss: 0, q: 0, qans: 0, abd: 0, avgW: 0, avgN: 0 };
+    b.days.forEach(function (d) {
+      t.ans += d.ans || 0; t.miss += d.miss || 0; t.q += d.q || 0; t.qans += d.qans || 0;
+      t.abd += d.abd || 0;
+      if (d.avg != null && d.qans > 0) { t.avgW += d.avg * d.qans; t.avgN += d.qans; }
+    });
+    return t;
+  }
+  // Per card: the bar value (null = no bar height), its readout, its tint.
+  var DTS_METRICS_ = {
+    rate: { v: function (t) { return (t.ans + t.miss) ? t.ans / (t.ans + t.miss) * 100 : null; },
+            f: function (t) { return (t.ans + t.miss) ? (t.ans / (t.ans + t.miss) * 100).toFixed(1) + '% answered'
+                                                     + ' (' + fmtNumber(t.ans) + ' of ' + fmtNumber(t.ans + t.miss) + ')' : 'no rings'; },
+            cls: function (t, dept) {
+              if (!(t.ans + t.miss)) return '';
+              var c = answerTierCls_(t.ans / (t.ans + t.miss) * 100, dept);
+              return c === ' bm-bad' ? 'is-bad' : (c === ' bm-watch' ? 'is-watch' : '');
+            } },
+    answered: { v: function (t, b) { return t.ans / b.n; },
+                f: function (t, b) { return b.n > 1 ? (Math.round(t.ans / b.n * 10) / 10) + ' answered / workday' : fmtNumber(t.ans) + ' answered'; },
+                cls: function () { return ''; } },
+    qcalls: { v: function (t, b) { return t.q / b.n; },
+              f: function (t, b) { return b.n > 1 ? (Math.round(t.q / b.n * 10) / 10) + ' calls / workday'
+                                                   : fmtNumber(t.q) + ' calls (' + fmtNumber(t.qans) + ' / ' + fmtNumber(t.abd) + ')'; },
+              cls: function () { return ''; } },
+    qabd: { v: function (t) { return t.q ? t.abd / t.q * 100 : null; },
+            f: function (t) { return t.q ? (t.abd / t.q * 100).toFixed(2) + '% abandoned (' + fmtNumber(t.abd) + ')' : 'no queue calls'; },
+            cls: function (t) { return (t.q && t.abd / t.q * 100 >= ABANDON_STANDARD_) ? 'is-bad' : ''; } },
+    qavg: { v: function (t) { return t.avgN ? t.avgW / t.avgN : null; },
+            f: function (t) { return t.avgN ? fmtDuration(t.avgW / t.avgN) + ' avg answer' : 'no answered queue calls'; },
+            cls: function () { return ''; } },
+  };
+
+  /**
+   * The day map the bars read: DQE rings from totals.daily ([iso, answered,
+   * missed]) and queue figures from qcd.range.daily ([iso, calls, answered,
+   * abandoned, avgAnswerSec]) -- compact tuples (Data.gs).
+   */
+  function dtsDayMap_(state) {
+    var map = {};
+    var get = function (iso) { return map[iso] || (map[iso] = {}); };
+    ((state.totals && state.totals.daily) || []).forEach(function (d) {
+      var x = get(d[0]); x.ans = Number(d[1]) || 0; x.miss = Number(d[2]) || 0;
+    });
+    var qr = state.qcd && state.qcd.range;
+    ((qr && qr.daily) || []).forEach(function (d) {
+      var x = get(d[0]);
+      x.q = Number(d[1]) || 0; x.qans = Number(d[2]) || 0;
+      x.abd = Number(d[3]) || 0; x.avg = (d[4] != null) ? Number(d[4]) : null;
+    });
+    return map;
+  }
+
+  function dtsAttachDayBars_(strip, state) {
+    strip.__dts = null;
+    if (!dtsBarsActive_()) return;
+    var m = state && state.meta;
+    if (!m || !m.from || !m.to || m.from === m.to) return;   // one day: nothing to choose between
+    var hasDqe = !!(state.totals && Array.isArray(state.totals.daily));
+    var hasQ = !!(state.qcd && state.qcd.range && Array.isArray(state.qcd.range.daily));
+    if (!hasDqe && !hasQ) return;   // a payload cached before the daily fields shipped
+    var isoList = [];
+    var p = m.from.split('-'), q = m.to.split('-');
+    for (var ms = Date.UTC(+p[0], p[1] - 1, +p[2], 12), end = Date.UTC(+q[0], q[1] - 1, +q[2], 12); ms <= end; ms += 86400000) {
+      isoList.push(new Date(ms).toISOString().slice(0, 10));
+    }
+    var isWorkday = function (iso) {
+      var dow = new Date(iso + 'T12:00:00Z').getUTCDay();
+      return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(iso);
+    };
+    var bs = dtsDayBuckets_(isoList, dtsDayMap_(state), isWorkday);
+    if (bs.length < 2) return;
+    var sums = bs.map(dtsSum_);
+    var dept = getRequestedDept();
+    var weekly = bs[0].weekly;
+    var period = bs[0].monthly ? 'month' : (weekly ? 'week' : 'day');
+    var idle = bs[0].monthly ? 'Monthly &middot; point at a bar' : (weekly ? 'Weekly &middot; point at a bar' : 'Point at a bar');
+    var built = 0;
+    strip.querySelectorAll('[data-dts-metric]').forEach(function (tile) {
+      var key = tile.getAttribute('data-dts-metric');
+      var mt = DTS_METRICS_[key];
+      if (!mt || (key === 'rate' || key === 'answered' ? !hasDqe : !hasQ)) return;
+      var vals = sums.map(function (t, i) { return mt.v(t, bs[i]); });
+      var nums = vals.filter(function (v) { return v != null && isFinite(v); });
+      if (!nums.length) return;
+      var max = Math.max.apply(null, nums), min = Math.min.apply(null, nums);
+      var label = (tile.querySelector('.dts-label') || {}).textContent || key;
+      label = String(label).replace(/\s+this range$|\s+queue$/i, '').trim();
+      var bars = vals.map(function (v, i) {
+        var h = (v == null || !isFinite(v)) ? 0 : 22 + 78 * (max === min ? 1 : (v - min) / (max - min));
+        var c = mt.cls(sums[i], dept);
+        return '<span class="dts-bar' + (c ? ' ' + c : '') + (v == null ? ' is-empty' : '') + '" style="height:' + h.toFixed(0) + '%"></span>';
+      }).join('');
+      var block = document.createElement('div');
+      block.className = 'dts-daybars';
+      block.setAttribute('data-admin-only', '');
+      block.innerHTML = '<div class="dts-bars" tabindex="0" role="slider" aria-label="' + escapeHtml(label) + ' by ' + period + '"'
+        + ' aria-valuemin="0" aria-valuemax="' + (bs.length - 1) + '" aria-valuetext="No day selected">' + bars + '</div>'
+        + '<div class="dts-axis"><span>' + escapeHtml(dtsShortDate_(bs[0].from)) + '</span><span>' + escapeHtml(dtsShortDate_(bs[bs.length - 1].from)) + '</span></div>'
+        + '<div class="dts-readout is-idle">' + idle + '</div>';
+      block.__metric = key;
+      tile.appendChild(block);
+      built++;
+    });
+    if (!built) return;
+    strip.__dts = { bs: bs, sums: sums, sel: null, held: false, idle: idle };
+    dtsWire_(strip);
+  }
+
+  function dtsSelect_(strip, i) {
+    var st = strip.__dts;
+    if (!st) return;
+    st.sel = i;
+    strip.querySelectorAll('.dts-daybars').forEach(function (block) {
+      var mt = DTS_METRICS_[block.__metric];
+      var barsEl = block.querySelector('.dts-bars'), ro = block.querySelector('.dts-readout');
+      barsEl.classList.toggle('is-on', i != null);
+      Array.prototype.forEach.call(barsEl.children, function (s, j) { s.classList.toggle('is-sel', j === i); });
+      if (i == null) {
+        ro.className = 'dts-readout is-idle';
+        ro.innerHTML = st.idle;
+        barsEl.removeAttribute('aria-valuenow');
+        barsEl.setAttribute('aria-valuetext', 'No day selected');
+        return;
+      }
+      var b = st.bs[i], text = mt.f(st.sums[i], b), lbl = dtsBucketLabel_(b);
+      barsEl.setAttribute('aria-valuenow', String(i));
+      barsEl.setAttribute('aria-valuetext', lbl + ': ' + text);
+      ro.className = 'dts-readout';
+      ro.innerHTML = '<span class="dts-readout-d">' + escapeHtml(lbl) + '</span>' + escapeHtml(text);
+    });
+  }
+
+  function dtsIndexAt_(strip, barsEl, clientX) {
+    var st = strip.__dts, r = barsEl.getBoundingClientRect(), n = st.bs.length;
+    return Math.max(0, Math.min(n - 1, Math.floor((clientX - r.left) / Math.max(r.width, 1) * n)));
+  }
+
+  // Wired ONCE per strip element; every handler reads the CURRENT model
+  // (strip.__dts), which each render replaces.
+  function dtsWire_(strip) {
+    if (strip.__dtsWired) return;
+    strip.__dtsWired = true;
+    strip.addEventListener('pointermove', function (e) {
+      var st = strip.__dts;
+      if (!st || e.pointerType === 'touch' || st.held) return;
+      var barsEl = e.target.closest && e.target.closest('.dts-bars');
+      if (barsEl) dtsSelect_(strip, dtsIndexAt_(strip, barsEl, e.clientX));
+    });
+    strip.addEventListener('pointerleave', function () {
+      var st = strip.__dts;
+      if (st && !st.held) dtsSelect_(strip, null);
+    });
+    // Touch / pen: a tap HOLDS a day (hover does not exist); a tap anywhere
+    // else in the strip lets go. A mouse click does nothing extra.
+    strip.addEventListener('click', function (e) {
+      var st = strip.__dts;
+      if (!st) return;
+      var barsEl = e.target.closest && e.target.closest('.dts-bars');
+      if (!barsEl) { if (st.held) { st.held = false; dtsSelect_(strip, null); } return; }
+      if (e.pointerType === 'mouse') return;
+      st.held = true;
+      dtsSelect_(strip, dtsIndexAt_(strip, barsEl, e.clientX));
+    });
+    strip.addEventListener('keydown', function (e) {
+      var st = strip.__dts;
+      if (!st || !(e.target.closest && e.target.closest('.dts-bars'))) return;
+      var n = st.bs.length, i = st.sel == null ? n - 1 : st.sel;
+      if (e.key === 'ArrowLeft') i = Math.max(0, i - 1);
+      else if (e.key === 'ArrowRight') i = Math.min(n - 1, i + 1);
+      else if (e.key === 'Home') i = 0;
+      else if (e.key === 'End') i = n - 1;
+      else if (e.key === 'Escape') { st.held = false; dtsSelect_(strip, null); return; }
+      else return;
+      e.preventDefault();
+      st.held = true;
+      dtsSelect_(strip, i);
+    });
+    strip.addEventListener('focusin', function (e) {
+      var st = strip.__dts;
+      if (st && st.sel == null && e.target.closest && e.target.closest('.dts-bars')) dtsSelect_(strip, st.bs.length - 1);
+    });
+    strip.addEventListener('focusout', function (e) {
+      var st = strip.__dts;
+      if (st && !(e.relatedTarget && strip.contains(e.relatedTarget))) { st.held = false; dtsSelect_(strip, null); }
+    });
   }
 
   // (Round-16, owner: renderDeptInsightsStrip_/wireDeptInsightsStrip_ -- the
