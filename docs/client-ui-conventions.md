@@ -2280,7 +2280,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   `INS_BRIEF_OPEN_.callbacks` before the brief exists -- and never touches the
   outbound columns toggle). It shows wherever `obAllowed_` holds (admin-only
   until 6c, hidden in View-as; Step 3: independent of the columns toggle) and
-  PRELOADS (Step 3 #8, owner 2026-10-16): a closed section fetches once the
+  PRELOADS (Step 3 #8, owner 2026-10-16) -- ONLY while My Department is the
+  page (`insCbOnDeptPage_`: the dept page also renders under the Overview
+  landing, which must fetch nothing for it; entering the page re-syncs via
+  `deptInsightsEnsureLive_`): a closed section fetches once the
   page has settled -- `INS_CB_PREFETCH_MS_` after the last sync, so a burst of
   date / dept changes sends one request (`INS_CB_.loadingKey` joins one already
   out) -- and its head + brief row answer before it is opened; opening it
