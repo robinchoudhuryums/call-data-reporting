@@ -937,7 +937,8 @@ var PROP_REGISTRY_ = Object.freeze({
     // Step 5a (Notifications.gs): the manager layer's release switch, and the
     // stored stricter-only values (written by saveNotifyManagerRule).
     NOTIFY_MANAGER_EDIT: 'operator', NOTIFY_MANAGER_RULES: 'operator',
-    COACHING_DEPT_RULES: 'operator',   // Step 5b: per-dept coaching gates (saveCoachingDeptRule)
+    COACHING_DEPT_RULES: 'operator',
+    ALERT_REASON_RULES: 'operator',   // Step 5c: the admin-only alert reasons (saveAlertReasonRule)   // Step 5b: per-dept coaching gates (saveCoachingDeptRule)
     NEON_EGRESS_BUDGET_MB: 'operator', NEON_STORAGE_CAP_MB: 'operator',
     // operator — engine flags + tunables
     COACHING_DELIVERY_ENABLED: 'operator',

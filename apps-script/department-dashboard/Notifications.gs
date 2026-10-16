@@ -398,7 +398,7 @@ function notifyAlertLogByDate_(dept, sinceIso) {
       var r = rows[i];
       if (String(r[1]) !== dept) continue;
       var by = String(r[7] || '');
-      if (by.indexOf('preview:') === 0 || by.indexOf('test:') === 0) continue;
+      if (by.indexOf('preview:') === 0 || by.indexOf('test:') === 0 || by.indexOf('reason:') === 0) continue;
       var d = notifyIsoOf_(r[2]);
       if (!d || d < sinceIso || out[d]) continue;
       out[d] = { status: String(r[9] || ''), triggeredBy: by };

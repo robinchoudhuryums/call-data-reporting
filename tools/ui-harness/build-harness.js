@@ -219,6 +219,24 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         pct: 71.2, threshold: 85, wouldFire: true };
     },
     setNotifyManagerEdit: function (req) { return { enabled: !!(req && req.enabled) }; },
+    // Step 5c: the reason rules + a Preview with one dept row and two reason rows.
+    saveAlertReasonRule: function (req) {
+      if (req && req.agentLowDays !== '' && Number(req.agentLowDays) < 2) throw new Error('The number of workdays must be from 2 to 20.');
+      const r = {};
+      if (req && req.agentLowThreshold !== '') r.agentLow = { threshold: Number(req.agentLowThreshold), days: Number(req.agentLowDays) };
+      if (req && req.callbacksMin !== '') r.callbacks = { minCallers: Number(req.callbacksMin) };
+      const rules = {}; if (Object.keys(r).length) rules[req.department] = r;
+      return { rules: rules };
+    },
+    previewAlerts: function (req) {
+      return [
+        { department: 'CSR', status: 'above-threshold', answerRate: 91.2, threshold: 85, recipients: ['csr.mgr@ums.com'], notes: 'Above threshold; no alert sent' },
+        { department: 'CSR', reason: 'agent-low', status: 'would-send', answerRate: null, threshold: 40, recipients: [],
+          notes: '1 agent(s) below 40% on each of the last 5 workdays (2026-08-13..2026-08-19): Test Agent (preview)' },
+        { department: 'CSR', reason: 'callbacks', status: 'quiet', answerRate: null, threshold: 2, recipients: [],
+          notes: '1 of 14 caller(s) who could not get through on 2026-08-18 were not called back by the end of 2026-08-19' },
+      ];
+    },
     getNotifyRules: function () {
       return { enabled: true, rules: [{ department: 'CSR', hasAlert: true, active: true, adminThreshold: 85,
         managerThreshold: null, managerBy: '', managerAt: '', effectiveThreshold: 85, effectiveSource: 'admin',

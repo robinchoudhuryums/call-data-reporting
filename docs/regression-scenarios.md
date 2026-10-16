@@ -621,3 +621,14 @@ S64 | Coaching release prep: per-dept gates, Met / Rotated / Dismissed, the held
   Expected: as described; no manager receives any coaching email.
   Fails if: a manager is emailed; a looser manager gate is accepted or applied; a department's gates change another's; or a close lands under the wrong status.
 
+S65 | Alert reasons: an agent below a threshold over N workdays; callers not called back (Step 5c) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, open Admin > Alerts > "More alert reasons". Set CSR: agent below 40% for 5 workdays, callers not called back >= 2. Two sentences appear: "When an agent in CSR answers under 40% on each of the last 5 workdays, email the admins." and "When 2 or more callers who could not get through to CSR are not called back within a business day, email the admins." A 1-workday window is refused.
+    - Run Preview for yesterday: besides CSR's answer-rate row, two rows labelled "· agents below" and "· callbacks", the callbacks threshold reading "2+ callers", each Will alert / Did not fire / Inactive with a note naming the agents or the caller counts and dates.
+    - Cross-check one named agent against the agent table for each of the 5 workdays (one-day windows): every day below 40%.
+    - With Neon unreachable (or before yesterday's calls are loaded) the callbacks row reads Inactive (skipped) with the reason -- never "fired".
+    - Send alerts (or wait for the 8 AM run): reason emails arrive "[Dashboard Alert · admin trial] CSR: ..." addressed to the ADMINS only; no manager receives them. They carry no caller number. The Alert Log rows read `reason:agent-low:...` / `reason:callbacks:...`; CSR's fire-rate chip and History do not move; the Health alerts outcome ends "reasons: N checked, M fired".
+    - Clear the boxes and save: the sentences disappear and the next run checks nothing extra.
+  Expected: as described.
+  Fails if: a manager receives a reason email; a reason row changes the drift chip, History or the dept counts; an unloaded day counts as "not called back"; or an agent who missed a day, or had one day at or above the threshold, is named.
+

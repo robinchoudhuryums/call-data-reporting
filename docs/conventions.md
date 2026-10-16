@@ -525,6 +525,12 @@ From/To default (which must snap to DQE specifically).
   `coach*` fields of `NOTIFY_STRICTER_`). Every flag carries the `gates` it
   was judged under. The manager email is HELD for admins:
   `coachingManagerRecipients_` is the one release seam.
+- **Alert reasons (Step 5c, `AlertReasons.gs`)**: ride `runAlertsCore_`
+  (same date, claim, log) after the answer-rate rules; a reason row carries
+  `reason` and is excluded from the dept counts, drift and History. Admins
+  only while trialled. The callbacks reason reuses the callback ENGINE with
+  a business-day window (`obCallbackListEpisodes_`'s optional `windowDays`);
+  a day not loaded yet is `skipped`, never a miss.
 - **Daily trigger** (`runDailyAlerts_`) skips Saturdays + Sundays
   (INV-33). Holiday handling shipped in E8 (commit 319eca7): the
   `Skip Dates` column on `Alert Config` (col F) takes comma-separated
