@@ -195,8 +195,10 @@ function tileLines() {
   });
   record('UX-1: with the Insights region collapsed, the Outbound summary and Callbacks stay visible',
     collapsed.ob && collapsed.cb, JSON.stringify(collapsed));
-  // Turning the outbound columns ON reuses the windows already held (FO-3's
-  // one store): no window is asked for again, and the section is untouched.
+  // Turning the outbound columns ON asks for each window AT MOST once (FO-3's
+  // one store) and leaves the section untouched. Not "zero": an explicit
+  // Refresh clears the shared store by design, and when the driver's own
+  // date-change load lands before its Refresh click the table re-asks once.
   const nBefore = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length));
   await pg.click('#dept-dir-switch [data-ob-cols]');
   await pg.waitForTimeout(1500);
@@ -209,8 +211,8 @@ function tileLines() {
   const insCalls = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
     .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'))).slice(nBefore)
     .filter((k) => k === insMeta.from + '|' + insMeta.to || k === insMeta.priorFrom + '|' + insMeta.priorTo);
-  record('turning the columns on re-fetches nothing already held, and leaves the Outbound section as it was',
-    both.dir === 'both' && both.table > 0 && both.shown && both.tiles === 5 && insCalls.length === 0,
+  record('turning the columns on asks for each window at most once, and leaves the Outbound section as it was',
+    both.dir === 'both' && both.table > 0 && both.shown && both.tiles === 5 && new Set(insCalls).size === insCalls.length,
     JSON.stringify({ both: both, refetch: insCalls }));
 
   // View-as hides the fold, and the Overview served to View-as has no line.

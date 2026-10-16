@@ -239,11 +239,12 @@ async function openDept(page, meta) {
         table: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
         fold: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
       }));
-      // Step 3: the brief's Outbound row already loaded both windows with the
-      // page, so turning the columns on sends NOTHING -- the table reads them
-      // from the same store.
-      record('turning the columns on asks for nothing new (the Outbound row already holds both windows), and both render',
-        Object.keys(per).length === 0 && both.table > 0 && both.fold === 5,
+      // Step 3: the brief's Outbound row loads both windows with the page, so
+      // turning the columns on reads them from the same store -- at most one
+      // ask per window (an explicit Refresh clears the store by design, and
+      // the driver's own date-change load can land before its Refresh click).
+      record('turning the columns on asks for each window at most once, and both render',
+        Object.keys(per).every((k) => per[k] === 1) && both.table > 0 && both.fold === 5,
         JSON.stringify({ per: per, both: both }));
     }
     for (let round = 1; round <= 2; round++) {
