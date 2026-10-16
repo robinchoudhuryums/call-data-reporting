@@ -860,8 +860,12 @@ async function visibleErrorTones(page) {
         record('admin: the Company point sits inside the dept spread (weighted, not stray)',
           co.inRange === true, 'inRange=' + co.inRange);
       } else {
-        record('manager: NO Company aggregate line (INV-39 -- admin-only data)',
-          co.chart && !co.present, JSON.stringify(co));
+        // Step 2 #6 (owner 2026-10-16): managers get the Company LINE -- the
+        // chart series only; the aggregate figures stay admin-only (INV-39,
+        // pinned server-side by overview-chart-answered + the CH-4 golden).
+        record('manager: the Company LINE is on the % chart as a reference series (Step 2 #6)',
+          co.chart && co.present && co.points > 0 && co.width === 3 && co.hasDeptName === false,
+          JSON.stringify(co));
       }
     }
 
