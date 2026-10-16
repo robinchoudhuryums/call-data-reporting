@@ -31,6 +31,9 @@ function record(name, pass, detail) {
   await page.addInitScript(() => {
     localStorage.setItem('cdr.tour.done', '1');
     localStorage.setItem('cdr.ins.intro.v1', '1');
+    // Step 3: an admin's default is inbound + outbound together, which shows
+    // the combined table; this driver walks the INBOUND table (columns off).
+    localStorage.setItem('cdr.dept.direction', 'in');
   });
 
   await page.goto(SITE);
@@ -211,6 +214,16 @@ function record(name, pass, detail) {
         // N1: the Insights section renders open inline on the dept page and
         // generates with it -- just enter the page and wait for the render.
         await page.click('#my-dept-btn'); await page.waitForTimeout(5000);
+        // Step 3: for the admin, Queue health sits in a COLLAPSED brief row --
+        // open it from the keyboard (the row is a real button: Enter toggles).
+        const row = page.locator('#ins-brief .ins-brief-row[data-brief-key="queue"]');
+        if (await row.count()) {
+          await row.focus();
+          await page.keyboard.press('Enter');
+          await page.waitForTimeout(600);
+          record('the brief\'s Queue health row opens from the keyboard',
+            (await row.getAttribute('aria-expanded')) === 'true', '');
+        }
       } },
     { label: 'all-dept QCD report', sel: '#qcd-alldept-body tr.qcd-expandable',
       open: async () => {

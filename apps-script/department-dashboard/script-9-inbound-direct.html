@@ -2298,22 +2298,37 @@
   }
   // `req` is the surface's window ({department, from, to}; department '' =
   // the company view) or null while it has none.
-  function obDlSync_(prefix, req) {
+  // Step 3 #8 (owner 2026-10-16): `opts.prefetchMs` PRELOADS a closed block
+  // that long after the last sync (a burst of window changes sends one fetch);
+  // without it a closed block stays lazy, as the Overview's does.
+  function obDlSync_(prefix, req, opts) {
     const fold = $(prefix + '-fold');
     if (!fold || !req) return;
     const v = obDlView_(prefix);
     const key = (req.department || '') + '|' + req.from + '|' + req.to;
+    const prefetchMs = (opts && opts.prefetchMs) || 0;
     if (key !== v.key) {
       v.key = key; v.data = null; v.inFlight = false;
       v.seq++; v.repSeq++;
       obDlResetRepeats_(prefix);
       const content = $(prefix + '-content'); if (content) content.style.display = 'none';
       obDlState_(prefix, '');
-      const head = $(prefix + '-head'); if (head) head.textContent = 'open to load';
+      const head = $(prefix + '-head'); if (head) head.textContent = prefetchMs ? 'loading shortly…' : 'open to load';
     }
-    if (!fold.open) return;
+    clearTimeout(v.prefetchT);
+    if (!fold.open) {
+      if (prefetchMs && !v.data && !v.inFlight) {
+        v.prefetchT = setTimeout(function () {
+          if (v.key === key && !v.data && !v.inFlight) obDlFetch_(prefix, req, v);
+        }, prefetchMs);
+      }
+      return;
+    }
     if (v.data) { obDlRender_(prefix, v.data); return; }
     if (v.inFlight) return;
+    obDlFetch_(prefix, req, v);
+  }
+  function obDlFetch_(prefix, req, v) {
     v.inFlight = true;
     const tok = ++v.seq;
     const head = $(prefix + '-head'); if (head) head.textContent = 'loading…';

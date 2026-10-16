@@ -2732,22 +2732,90 @@
     const tok = ++AP_.seq;
     apSetHtml_('[data-ap-strip]', apLoadingHtml_('Loading days…'));
     apSetHtml_('[data-ap-day]', '');
-    google.script.run
-      .withSuccessHandler(function (res) {
-        if (tok !== AP_.seq) return;
-        AP_.strip = res || { meta: {}, days: [] };
-        apRenderStrip_();
-        const days = AP_.strip.days || [];
-        if (days.length) apSelectDay_(days[0].date);
-        else apSetHtml_('[data-ap-day]', '');
+    apPreStrip_(AP_.agent, AP_.from, AP_.to, AP_.dept, function (res) {
+      if (tok !== AP_.seq) return;
+      AP_.strip = res || { meta: {}, days: [] };
+      apRenderStrip_();
+      const days = AP_.strip.days || [];
+      if (days.length) apSelectDay_(days[0].date);
+      else apSetHtml_('[data-ap-day]', '');
+    }, function (err) {
+      if (tok !== AP_.seq) return;
+      apSetHtml_('[data-ap-strip]', '<div class="ds-note">Could not load this agent’s days: '
+        + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
+    });
+  }
+
+  // Step 3 #8 (owner 2026-10-16): PREFETCH. Resting the pointer on an agent
+  // row (or tabbing to its button) loads that agent's strip and newest day in
+  // the background, so the click opens on data already here. The panel reads
+  // through the SAME store (apPreFetch_): a request already out is joined,
+  // never sent twice; a FAILED one is never kept, so the open retries. Keys
+  // carry the window and the dept (F29), so a new window never serves an old
+  // answer; the store keeps the newest AP_PRE_MAX_ entries for this page load.
+  var AP_PRE_ = {};
+  var AP_PRE_ORDER_ = [];
+  var AP_PRE_MAX_ = 24;
+  var AP_PRE_DELAY_MS_ = 250;
+  var AP_PRE_T_ = null;
+  function apPreFetch_(key, run, ok, fail) {
+    let e = AP_PRE_[key];
+    if (e && e.done) { if (ok) ok(e.data); return; }
+    if (e) { if (ok) e.ok.push(ok); if (fail) e.fail.push(fail); return; }
+    e = AP_PRE_[key] = { done: false, data: null, ok: ok ? [ok] : [], fail: fail ? [fail] : [] };
+    AP_PRE_ORDER_.push(key);
+    while (AP_PRE_ORDER_.length > AP_PRE_MAX_) delete AP_PRE_[AP_PRE_ORDER_.shift()];
+    run(google.script.run
+      .withSuccessHandler(function (data) {
+        e.done = true; e.data = data;
+        const cbs = e.ok; e.ok = []; e.fail = [];
+        cbs.forEach(function (f) { f(data); });
       })
       .withFailureHandler(function (err) {
-        if (tok !== AP_.seq) return;
-        apSetHtml_('[data-ap-strip]', '<div class="ds-note">Could not load this agent’s days: '
-          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
-      })
-      .getAgentDayStrip({ agentName: AP_.agent, from: AP_.from, to: AP_.to, department: AP_.dept });
+        if (AP_PRE_[key] === e) delete AP_PRE_[key];   // a failure is never kept
+        const cbs = e.fail; e.ok = []; e.fail = [];
+        cbs.forEach(function (f) { f(err); });
+      }));
   }
+  function apPreStrip_(agent, from, to, dept, ok, fail) {
+    apPreFetch_(['strip', agent, from, to, dept].join('|'), function (r) {
+      r.getAgentDayStrip({ agentName: agent, from: from, to: to, department: dept });
+    }, ok, fail);
+  }
+  function apPreDay_(agent, date, dept, ok, fail) {
+    apPreFetch_(['day', agent, date, dept].join('|'), function (r) {
+      r.getAgentDay({ agentName: agent, date: date, department: dept });
+    }, ok, fail);
+  }
+  function apPrefetchRow_(tr) {
+    const agent = tr && tr.getAttribute('data-agent');
+    if (!agent || agent === AP_.agent) return;
+    if (document.body.getAttribute('data-page') !== 'dept') return;
+    const win = apWindow_();
+    if (!win.from || !win.to) return;
+    const dept = tr.getAttribute('data-dept') || (typeof getRequestedDept === 'function' ? getRequestedDept() : '') || '';
+    if (win.from === win.to) { apPreDay_(agent, win.from, dept); return; }
+    apPreStrip_(agent, win.from, win.to, dept, function (res) {
+      const days = (res && res.days) || [];
+      if (days.length) apPreDay_(agent, days[0].date, dept);   // the day the open selects
+    });
+  }
+  (function apPreWire_() {
+    const rowOf = function (t) {
+      const tr = t && t.closest && t.closest('tr[data-agent]');
+      return (tr && tr.closest('#agents-tbody, #agents-ob-tbody')) ? tr : null;
+    };
+    document.addEventListener('mouseover', function (e) {
+      const tr = rowOf(e.target);
+      if (!tr) { clearTimeout(AP_PRE_T_); return; }
+      clearTimeout(AP_PRE_T_);
+      AP_PRE_T_ = setTimeout(function () { apPrefetchRow_(tr); }, AP_PRE_DELAY_MS_);
+    });
+    document.addEventListener('focusin', function (e) {
+      const tr = rowOf(e.target);
+      if (tr) { clearTimeout(AP_PRE_T_); AP_PRE_T_ = setTimeout(function () { apPrefetchRow_(tr); }, AP_PRE_DELAY_MS_); }
+    });
+  })();
 
   // Owner (2026-10): the day's INBOUND answer rate in the box's top-right
   // corner -- answered / (answered + missed), whole percent, tinted against the
@@ -2849,18 +2917,15 @@
     if (AP_.days[date]) { AP_.seq++; apRenderDay_(AP_.days[date]); return; }
     const tok = ++AP_.seq;
     apSetHtml_('[data-ap-day]', apLoadingHtml_('Loading ' + date + '…'));
-    google.script.run
-      .withSuccessHandler(function (data) {
-        if (tok !== AP_.seq) return;
-        AP_.days[date] = data;
-        apRenderDay_(data);
-      })
-      .withFailureHandler(function (err) {
-        if (tok !== AP_.seq) return;
-        apSetHtml_('[data-ap-day]', '<div class="ds-note">Could not load ' + escapeHtml(date) + ': '
-          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
-      })
-      .getAgentDay({ agentName: AP_.agent, date: date, department: AP_.dept });
+    apPreDay_(AP_.agent, date, AP_.dept, function (data) {   // Step 3 #8: through the prefetch store
+      if (tok !== AP_.seq) return;
+      AP_.days[date] = data;
+      apRenderDay_(data);
+    }, function (err) {
+      if (tok !== AP_.seq) return;
+      apSetHtml_('[data-ap-day]', '<div class="ds-note">Could not load ' + escapeHtml(date) + ': '
+        + escapeHtml(err && err.message ? err.message : String(err)) + '</div>');
+    });
   }
 
   function apInboundTableHtml_(rows) {

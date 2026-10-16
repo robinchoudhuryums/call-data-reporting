@@ -51,6 +51,23 @@ async function bootPage(browser, role, viewport) {
   return { page, errors };
 }
 
+// Step 3: an Insights section the admin's brief accordion holds opens from its
+// ROW (setting the section's own `open` would leave it inside a hidden slot);
+// anywhere else -- a manager, View-as -- it opens in place as before.
+async function openInsSection(page, id) {
+  await page.evaluate((sid) => {
+    const el = document.getElementById(sid);
+    if (!el) return;
+    const slot = el.closest('.ins-brief-slot');
+    if (slot) {
+      const btn = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="' + slot.getAttribute('data-brief-slot') + '"]');
+      if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
+      return;
+    }
+    if (!el.open) el.open = true;
+  }, id);
+}
+
 /**
  * A canvas is BLANK when every sampled pixel is identical. Reads the bitmap in
  * page context; skips canvases that aren't visible or have no layout box (those
@@ -420,6 +437,12 @@ async function visibleErrorTones(page) {
       if (!(await btn.count())) { record(role + ': ' + name + ' tab present', false, sel + ' missing'); continue; }
       await btn.click();
       await page.waitForTimeout(name === 'dept' ? 5000 : 2200);
+      if (name === 'dept') {
+        // Step 3: the admin's agents chart starts COLLAPSED in its brief row;
+        // open it so the drawn-canvas floor still measures that chart.
+        await openInsSection(page, 'ins-agents-fold');
+        await page.waitForTimeout(1200);
+      }
 
       const blanks = await blankCanvases(page);
       record(role + '/' + name + ': no blank chart canvases', blanks.length === 0, blanks.join(', '));
@@ -564,9 +587,9 @@ async function visibleErrorTones(page) {
         editInTitle === 1 && editShown, 'inTitleLine=' + editInTitle + ' visible=' + editShown);
       // 3. Queue health: Avg answer + Longest wait are CARDS now, and the
       //    muted secondary strip they came from is empty for the dept total.
-      const qhFold = page.locator('#ins-qh-fold');
-      if (await qhFold.count() && await qhFold.isVisible().catch(() => false)) {
-        await page.evaluate(() => { const f = document.getElementById('ins-qh-fold'); if (f) f.open = true; });
+      const qhOn = await page.evaluate(() => { const f = document.getElementById('ins-qh-fold'); return !!f && f.style.display !== 'none'; });
+      if (qhOn) {
+        await openInsSection(page, 'ins-qh-fold');
         await page.waitForTimeout(400);
         const labels = await page.$$eval('#ins-qh-tiles .ds-kpi__label',
           function (ns) { return ns.map(function (n) { return n.textContent.trim(); }); });
@@ -741,10 +764,7 @@ async function visibleErrorTones(page) {
     {
       await page.click('#my-dept-btn');
       await page.waitForTimeout(4000);
-      await page.evaluate(() => {
-        const f = document.getElementById('ins-trend-fold');
-        if (f && !f.open) f.querySelector('summary').click();
-      });
+      await openInsSection(page, 'ins-trend-fold');
       await page.waitForTimeout(1200);
       await page.evaluate(() => {
         const b = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn'))
@@ -954,6 +974,10 @@ async function visibleErrorTones(page) {
     // raw per-chart config -- both that the chart was rebuilt at all and that
     // it came back carrying dark tokens.
     {
+      // Step 3: the admin's agents chart lives in a collapsed brief row.
+      await openInsSection(page, 'ins-agents-fold');
+      await openInsSection(page, 'ins-trend-fold');
+      await page.waitForTimeout(1000);
       const snap = () => page.evaluate(() => {
         const out = { mode: document.body.getAttribute('data-mode'),
                       line: getComputedStyle(document.body).getPropertyValue('--line').trim(),
@@ -1125,13 +1149,20 @@ async function visibleErrorTones(page) {
 
     // UX-2 (owner 2026-10-13): the ranked brief is ADMIN-ONLY while trialled
     // and replaces the headline banner for the admin; a manager keeps the
-    // headline and never sees the brief. For everyone, Agents leads the report
-    // as an OPEN fold, ahead of Queue health, Team detail and the trend.
+    // headline and never sees the brief, and Agents leads the report as an
+    // OPEN fold, ahead of Queue health, Team detail and the trend.
+    // Step 3 (owner 2026-10-16): for the admin the brief is an ACCORDION under
+    // the team cards, above the agent table -- each section moved into its
+    // row's slot, every one COLLAPSED on load, opening in place. Reloaded
+    // first: earlier checks opened rows, and the open state lasts the load.
     {
+      await page.reload();
+      await page.waitForTimeout(2500);
       await page.click('#my-dept-btn');
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(3500);
       const ux2 = await page.evaluate(function () {
         const vis = function (el) { return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none'; };
+        const after = function (a, b) { return !!a && !!b && !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); };
         const brief = document.getElementById('ins-brief');
         const head = document.getElementById('ins-headline');
         const rows = brief ? Array.from(brief.querySelectorAll('.ins-brief-row')) : [];
@@ -1143,10 +1174,12 @@ async function visibleErrorTones(page) {
         const ids = ['ins-agents-fold', 'ins-qh-fold', 'ins-team-detail', 'ins-trend-fold'].map(function (id) { return document.getElementById(id); });
         let inOrder = ids.every(Boolean);
         for (let j = 1; inOrder && j < ids.length; j++) {
-          if (!(ids[j - 1].compareDocumentPosition(ids[j]) & Node.DOCUMENT_POSITION_FOLLOWING)) inOrder = false;
+          if (!after(ids[j - 1], ids[j])) inOrder = false;
         }
+        const slots = brief ? Array.from(brief.querySelectorAll('.ins-brief-slot')) : [];
         return {
           briefVisible: vis(brief), rows: rows.length, tiers: tiers.join(','), ranked: ranked,
+          keys: rows.map(function (b) { return b.getAttribute('data-brief-key'); }).join(','),
           // Step 1: each tier is an icon, with its word kept for screen readers.
           words: rows.every(function (b) {
             var sev = b.querySelector('.ins-brief-sev');
@@ -1156,29 +1189,59 @@ async function visibleErrorTones(page) {
           headlineShown: vis(head), headlineHasText: !!(head && head.textContent.trim()),
           inOrder: inOrder, agentsOpen: !!(ids[0] && ids[0].open),
           agentsHead: ((document.getElementById('ins-agents-fold-head') || {}).textContent || '').trim(),
+          // Step 3: placement, collapsed-on-load, sections mounted in their rows.
+          placed: after(document.getElementById('dept-team-strip'), brief) && after(brief, document.getElementById('dqe-table-title')),
+          allCollapsed: slots.length > 0 && slots.every(function (sl) { return sl.hidden; })
+            && rows.every(function (b) { return b.getAttribute('aria-expanded') === 'false'; }),
+          mounted: !!(ids[0] && brief && brief.contains(ids[0])),
         };
       });
-      record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
-        ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));
       if (role === 'admin') {
         record('admin: UX-2 the ranked brief renders (top line + an icon row per section, word kept for screen readers, most urgent first)',
           ux2.briefVisible && ux2.rows >= 4 && ux2.ranked && ux2.words && /Answer rate|No calls/.test(ux2.top),
           JSON.stringify({ rows: ux2.rows, tiers: ux2.tiers, top: ux2.top.slice(0, 90) }));
         record('admin: UX-2 the brief replaces the headline banner', !ux2.headlineShown,
           'headlineShown=' + ux2.headlineShown);
-        // A row opens its section: the trend fold starts closed for a fresh
-        // viewer only if the saved folds say so -- close it, click, assert open.
-        await page.evaluate(function () { const f = document.getElementById('ins-trend-fold'); if (f) f.open = false; });
+        record('admin: Step 3 the brief sits under the team cards, above the agent table', ux2.placed,
+          'placed=' + ux2.placed);
+        record('admin: Step 3 every section starts collapsed, inside its row', ux2.allCollapsed && ux2.mounted,
+          JSON.stringify({ collapsed: ux2.allCollapsed, mounted: ux2.mounted }));
+        record('admin: Step 3 Outbound and Callbacks are their own rows', /outbound/.test(ux2.keys) && /callbacks/.test(ux2.keys),
+          'keys=' + ux2.keys);
+        // A row opens its section IN PLACE, under the row, and draws its chart.
         const trendRow = page.locator('#ins-brief .ins-brief-row[data-brief-key="trend"]');
         if (await trendRow.count()) {
           await trendRow.click();
-          await page.waitForTimeout(800);
-          const opened = await page.evaluate(function () { const f = document.getElementById('ins-trend-fold'); return !!(f && f.open); });
-          record('admin: UX-2 a brief row opens its section', opened, 'trendFoldOpen=' + opened);
+          await page.waitForTimeout(900);
+          const o = await page.evaluate(function () {
+            const f = document.getElementById('ins-trend-fold');
+            const slot = document.getElementById('ins-brief-slot-trend');
+            const btn = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="trend"]');
+            const cv = f && f.querySelector('canvas');
+            // An earlier check leaves the trend on its Calendar view (a saved
+            // pref), which hides the canvas -- either view drawn counts.
+            const cal = document.getElementById('ins-trend-calendar');
+            return { open: !!(f && f.open), inSlot: !!(slot && f && slot.contains(f)), slotShown: !!(slot && !slot.hidden),
+                     expanded: btn && btn.getAttribute('aria-expanded'), focus: document.activeElement === btn,
+                     canvas: !!(cv && cv.offsetWidth > 0 && cv.offsetHeight > 0)
+                       || !!(cal && cal.offsetHeight > 0 && cal.querySelectorAll('.ins-cal-drill').length > 0) };
+          });
+          record('admin: Step 3 a brief row opens its section in place under the row (chart drawn, focus kept)',
+            o.open && o.inSlot && o.slotShown && o.expanded === 'true' && o.focus && o.canvas, JSON.stringify(o));
+          await trendRow.click();
+          await page.waitForTimeout(400);
+          const c = await page.evaluate(function () {
+            const slot = document.getElementById('ins-brief-slot-trend');
+            const btn = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="trend"]');
+            return { hidden: !!(slot && slot.hidden), expanded: btn && btn.getAttribute('aria-expanded') };
+          });
+          record('admin: Step 3 a second click collapses it', c.hidden && c.expanded === 'false', JSON.stringify(c));
         } else {
-          record('admin: UX-2 a brief row opens its section', false, 'no trend row');
+          record('admin: Step 3 a brief row opens its section in place under the row (chart drawn, focus kept)', false, 'no trend row');
         }
       } else {
+        record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
+          ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));
         record(role + ': UX-2 no brief for a manager, and the headline banner stays',
           !ux2.briefVisible && (ux2.headlineShown || !ux2.headlineHasText),
           JSON.stringify({ brief: ux2.briefVisible, headline: ux2.headlineShown, text: ux2.headlineHasText }));
@@ -1249,10 +1312,15 @@ async function visibleErrorTones(page) {
           // View-as can leave the dept page, so measure the CSS outcome (the
           // computed display), not on-screen visibility.
           const shown = function (el) { return !!el && getComputedStyle(el).display !== 'none'; };
-          return { brief: shown(b), headline: shown(h), headlineText: !!(h && h.textContent.trim()) };
+          // Step 3: the accordion's sections go back home for the manager layout.
+          const home = ['ins-agents-fold', 'ins-trend-fold', 'ins-team-detail'].every(function (id) {
+            const el = document.getElementById(id);
+            return !el || !(b && b.contains(el));
+          });
+          return { brief: shown(b), headline: shown(h), headlineText: !!(h && h.textContent.trim()), home: home };
         });
-        record('admin: view-as hides the UX-2 brief and brings the headline back',
-          !ux2Preview.brief && (ux2Preview.headline || !ux2Preview.headlineText), JSON.stringify(ux2Preview));
+        record('admin: view-as hides the UX-2 brief, brings the headline back and puts every section home',
+          !ux2Preview.brief && (ux2Preview.headline || !ux2Preview.headlineText) && ux2Preview.home, JSON.stringify(ux2Preview));
         await page.selectOption('#view-as-select', '');
         await page.waitForTimeout(1500);
         const exited = await page.evaluate(() => document.body.getAttribute('data-view-as'));

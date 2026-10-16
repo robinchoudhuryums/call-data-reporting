@@ -523,6 +523,20 @@
       <div id="dept-team-zone" class="ds-zone" style="display:none;"><span class="ds-zone-label">Team &middot; this range</span></div>
       <div id="dept-team-strip" class="dept-team-strip" style="display:none;"></div>
 
+      <!-- UX-2 (owner 2026-10-13) + Step 3 (owner 2026-10-16): the RANKED BRIEF,
+           now an ACCORDION directly under the team cards and above the agent
+           table. One row per section, most urgent first (insRenderBrief_); a
+           row opens ITS section in place beneath it (insBriefToggle_ moves the
+           section's existing element into the row's slot and back home again
+           when the brief goes away -- View-as, a manager, a re-render).
+           Every section starts collapsed on each page load. ADMIN-ONLY while
+           trialled (data-admin-only, so View-as hides it too); while it shows,
+           the Insights headline banner is hidden by CSS
+           (#insights-results.ins-has-brief). Colour rules: docs/next-steps.md
+           "UX-2 RULED". -->
+      <div id="ins-brief" class="ins-brief" data-admin-only style="display:none;"
+           role="region" aria-label="This period's findings, most urgent first"></div>
+
       <!-- (Round-16, owner: the Insights hand-off TEASER STRIP is RETIRED --
            the Insights section renders inline below since N1.) -->
 
@@ -530,18 +544,21 @@
         <strong id="dqe-table-title">Agent Call Metrics</strong>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
         <span class="dept-qcd-hint">Click a row to see that agent’s days; the Individual Report is one click inside.</span>
-        <!-- Batch D (owner plan 2026-10): Inbound | Outbound | Both. ADMIN-ONLY
+        <!-- Batch D (owner plan 2026-10): the outbound view of the table. ADMIN-ONLY
              while the outbound views are vetted -- this switch is released in
              the SAME commit as OutboundReport.gs::OUTBOUND_VETTING_GATE_ and
              the Insights Outbound + Callbacks folds (Operator State #63);
              cross-file-pins fails if they disagree. The client reads the
              switch's own visibility as the permission, so view-as-manager
              (which hides [data-admin-only]) drops back to Inbound too. -->
-        <div id="dept-dir-switch" class="dept-qcd-period dept-dir-switch" role="group" aria-label="Call direction"
-             data-admin-only style="display:none;">
-          <button type="button" class="dept-qcd-period-btn active" data-dir="in" aria-pressed="true">Inbound</button>
-          <button type="button" class="dept-qcd-period-btn" data-dir="out" aria-pressed="false">Outbound</button>
-          <button type="button" class="dept-qcd-period-btn" data-dir="both" aria-pressed="false">Both</button>
+        <!-- Step 3 (owner 2026-10-16): inbound and outbound TOGETHER by default
+             -- the three-way Inbound | Outbound | Both switch became this one
+             toggle; off shows the classic inbound table. The container keeps
+             its id and data-admin-only: its visibility is still the permission
+             (obAllowed_), so managers and View-as see the inbound table only. -->
+        <div id="dept-dir-switch" class="dept-dir-switch" data-admin-only style="display:none;">
+          <button type="button" class="link-btn dept-cols-toggle" data-ob-cols aria-pressed="true"
+                  title="Show each agent's outbound calls beside their inbound ones">Show outbound columns</button>
         </div>
         <button class="link-btn dept-cols-toggle" id="dept-cols-toggle" type="button"
                 aria-expanded="false"
@@ -1102,15 +1119,8 @@
           <button type="button" class="link-btn" id="ins-intro-dismiss">Got it</button>
         </div>
         <div id="ins-results-status" role="status" class="status" style="display:none;"></div>
-        <!-- UX-2 (owner 2026-10-13): the RANKED BRIEF -- one row per section,
-             most urgent first, built by insRenderBrief_ from data the report
-             already holds. ADMIN-ONLY while it is trialled (data-admin-only, so
-             View-as hides it too); while it shows, the headline banner above it
-             is hidden by CSS (#insights-results.ins-has-brief), since the
-             brief's top line and Agents row carry the same story. Colour rules:
-             docs/next-steps.md "UX-2 RULED". -->
-        <div id="ins-brief" class="ins-brief" data-admin-only style="display:none;"
-             role="region" aria-label="This period's findings, most urgent first"></div>
+        <!-- UX-2: the ranked brief (#ins-brief) moved ABOVE the agent table in
+             Step 3 (owner 2026-10-16) -- see the dept-team-strip below it. -->
         <!-- A1: needs-attention strip. Renders directly under the injected
              #ins-headline (reportHeadline_ inserts before this element, the
              first non-skipped sibling after #ins-results-status). One chip per

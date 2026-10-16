@@ -50,6 +50,9 @@ async function openDeptThirtyDays(page) {
   await page.addInitScript(() => {
     localStorage.setItem('cdr.tour.done', '1');
     localStorage.setItem('cdr.ins.intro.v1', '1');
+    // Step 3: an admin's default is inbound + outbound together, which shows
+    // the combined table; this driver walks the INBOUND table (columns off).
+    localStorage.setItem('cdr.dept.direction', 'in');
     localStorage.removeItem('cdr.dept.subscope');   // start from the server default
     // Capture CSV downloads: the exporter Blob-and-clicks, so intercepting
     // createObjectURL gives us the exact bytes a manager would open.

@@ -3961,12 +3961,15 @@
   //   - Both shows the two side by side and never adds them: "answered +
   //     placed" is not a meaningful total.
   //   - Export and Copy still produce the INBOUND table (said in the note).
+  // Step 3 (owner 2026-10-16): inbound and outbound TOGETHER by default. The
+  // three-way switch became one "Show outbound columns" toggle, so obDir_ is
+  // now 'both' or 'in' only: an explicitly saved 'in' stays off; anything
+  // else -- unset, or the retired 'out' / 'both' -- shows the columns.
   var OB_DIR_KEY_ = 'cdr.dept.direction';
   var obDir_ = (function () {
     try {
-      var v = localStorage.getItem(OB_DIR_KEY_);
-      return (v === 'out' || v === 'both') ? v : 'in';
-    } catch (e) { return 'in'; }
+      return localStorage.getItem(OB_DIR_KEY_) === 'in' ? 'in' : 'both';
+    } catch (e) { return 'both'; }
   })();
   var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, inFlight: false, sortKey: 'obTotal', sortDir: 'desc' };
   var obWired_ = false;
@@ -3994,11 +3997,11 @@
   function obSyncButtons_(dir) {
     var sw = $('dept-dir-switch');
     if (!sw) return;
-    sw.querySelectorAll('[data-dir]').forEach(function (b) {
-      var on = b.getAttribute('data-dir') === dir;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
+    var b = sw.querySelector('[data-ob-cols]');
+    if (!b) return;
+    var on = dir !== 'in';
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
   function obWire_() {
@@ -4006,9 +4009,9 @@
     obWired_ = true;
     var sw = $('dept-dir-switch');
     if (sw) sw.addEventListener('click', function (e) {
-      var b = e.target.closest && e.target.closest('[data-dir]');
+      var b = e.target.closest && e.target.closest('[data-ob-cols]');
       if (!b) return;
-      obDir_ = b.getAttribute('data-dir') || 'in';
+      obDir_ = (obDir_ === 'in') ? 'both' : 'in';   // Step 3: a toggle, not a 3-way switch
       try { localStorage.setItem(OB_DIR_KEY_, obDir_); } catch (err) {}
       obViewSync_();
     });

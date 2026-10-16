@@ -124,20 +124,14 @@ function tileLines() {
   pg.on('pageerror', (e) => errors.push('ins pageerror: ' + e.message));
   pg.on('console', (m) => { if (m.type() === 'error') errors.push('ins console: ' + m.text()); });
   await skipTour(pg);
+  // Step 3 (owner 2026-10-16): the Outbound section is the brief's own row,
+  // independent of the outbound COLUMNS -- so land with the columns OFF and
+  // it must still be there, loaded.
+  await pg.addInitScript(() => { localStorage.setItem('cdr.dept.direction', 'in'); });
   await pg.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
   await pg.waitForTimeout(2500);
   await openDept(pg, meta);
-  // Owner 2026-10-08: the fold follows the direction switch -- hidden on
-  // Inbound (the default), shown on Outbound / Both.
-  const onInbound = await pg.evaluate(() => {
-    const f = document.getElementById('ins-ob-fold');
-    return { shown: !!f && getComputedStyle(f).display !== 'none',
-      called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length };
-  });
-  record('admin, Inbound: the Insights Outbound fold is hidden and has not fetched',
-    !onInbound.shown && onInbound.called === 0, JSON.stringify(onInbound));
-  await pg.click('#dept-dir-switch [data-dir="out"]');
-  await pg.waitForTimeout(2500);
+  await pg.waitForTimeout(1500);
   // UX-1: the summary reads the PAGE's window (the dept summary payload's
   // meta: window + INV-28 prior), not Insights'.
   const insMeta = require('./payloads/summary-30d.json').meta;
@@ -150,24 +144,26 @@ function tileLines() {
   const ins = await pg.evaluate(() => {
     const f = document.getElementById('ins-ob-fold');
     return {
-      shown: !!f && getComputedStyle(f).display !== 'none',
+      shown: !!f && f.style.display !== 'none',
       head: (document.getElementById('ins-ob-fold-head') || {}).textContent || '',
       tiles: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
       deltas: document.querySelectorAll('#ins-ob-kpis .pr-delta').length,
       agentTable: !!document.querySelector('#ins-ob-fold table'),
       note: ((document.getElementById('ins-ob-note') || {}).textContent || ''),
-      underTable: (function () {
-        var t = document.getElementById('agents-ob-wrap');
+      dir: document.body.getAttribute('data-dir'),
+      inBrief: (function () {
+        var b = document.getElementById('ins-brief');
         var reg = document.getElementById('dept-insights-region');
-        return !!t && !!f && (t.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
-          && !!reg && !reg.contains(f);
+        var row = b && b.querySelector('.ins-brief-row[data-brief-key="outbound"]');
+        return !!b && !!f && !!row && b.contains(f) && !!reg && !reg.contains(f);
       })(),
       calls: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
         .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'),
     };
   });
-  record('admin: the Insights Outbound fold is shown', ins.shown, JSON.stringify(ins.head));
-  record('UX-1: the summary sits under the outbound agent table, outside the Insights region', ins.underTable);
+  record('admin, columns OFF: the Outbound section is still on (its own brief row)', ins.shown && ins.dir === 'in',
+    JSON.stringify({ shown: ins.shown, dir: ins.dir, head: ins.head }));
+  record('Step 3: the summary sits in the brief\'s Outbound row, outside the Insights region', ins.inBrief);
   record('admin: its headline reads the current window’s totals',
     !!cur && ins.head.indexOf(fmt(cur.totals.obTotal) + ' placed') !== -1
       && ins.head.indexOf(cur.totals.obConnectRate.toFixed(1) + '% connected') !== -1, ins.head);
@@ -184,7 +180,11 @@ function tileLines() {
       && ins.note.indexOf(insMeta.department + '’s own group') !== -1
       && ins.note.indexOf(fmt(raw.totals.obTotal) + ' placed in all') !== -1,
     JSON.stringify({ head: ins.head, note: ins.note }));
-  // UX-1: collapsing the Insights region leaves both sections on screen.
+  // UX-1: collapsing the Insights region leaves both sections on screen
+  // (Step 3: once their brief rows are open -- every row starts collapsed).
+  await pg.click('#ins-brief .ins-brief-row[data-brief-key="outbound"]');
+  await pg.click('#ins-brief .ins-brief-row[data-brief-key="callbacks"]');
+  await pg.waitForTimeout(800);
   const collapsed = await pg.evaluate(() => {
     var reg = document.getElementById('dept-insights-region');
     reg.open = false;
@@ -195,26 +195,25 @@ function tileLines() {
   });
   record('UX-1: with the Insights region collapsed, the Outbound summary and Callbacks stay visible',
     collapsed.ob && collapsed.cb, JSON.stringify(collapsed));
-  // "Same windows never re-fetch" is asserted on a DIRECTION change below, not
-  // on Refresh: on Outbound an explicit Refresh refetches the Batch D table by
-  // design (OB_VIEW_.key = null) with the SAME arguments, so a call count can
-  // no longer tell an Insights re-fetch from the table's.
-  // Inbound hides it again; Both brings it back from the held result.
-  await pg.click('#dept-dir-switch [data-dir="in"]');
-  await pg.waitForTimeout(1000);
-  const hidIn = await pg.evaluate(() => getComputedStyle(document.getElementById('ins-ob-fold')).display === 'none');
+  // Turning the outbound columns ON asks for each window AT MOST once (FO-3's
+  // one store) and leaves the section untouched. Not "zero": an explicit
+  // Refresh clears the shared store by design, and when the driver's own
+  // date-change load lands before its Refresh click the table re-asks once.
   const nBefore = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length));
-  await pg.click('#dept-dir-switch [data-dir="both"]');
+  await pg.click('#dept-dir-switch [data-ob-cols]');
   await pg.waitForTimeout(1500);
   const both = await pg.evaluate(() => ({
-    shown: getComputedStyle(document.getElementById('ins-ob-fold')).display !== 'none',
+    dir: document.body.getAttribute('data-dir'),
+    table: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
+    shown: document.getElementById('ins-ob-fold').style.display !== 'none',
     tiles: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
   }));
   const insCalls = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
     .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'))).slice(nBefore)
     .filter((k) => k === insMeta.from + '|' + insMeta.to || k === insMeta.priorFrom + '|' + insMeta.priorTo);
-  record('re-rendering the same windows does not re-fetch them: Inbound hides the fold, Both shows it from the held result',
-    hidIn && both.shown && both.tiles === 5 && insCalls.length === 0, JSON.stringify({ hidIn: hidIn, both: both, refetch: insCalls }));
+  record('turning the columns on asks for each window at most once, and leaves the Outbound section as it was',
+    both.dir === 'both' && both.table > 0 && both.shown && both.tiles === 5 && new Set(insCalls).size === insCalls.length,
+    JSON.stringify({ both: both, refetch: insCalls }));
 
   // View-as hides the fold, and the Overview served to View-as has no line.
   const opts = await pg.evaluate(() => Array.from(document.querySelectorAll('#view-as-select option'))
@@ -224,7 +223,8 @@ function tileLines() {
     await pg.waitForTimeout(2500);
     const va = await pg.evaluate(() => {
       const f = document.getElementById('ins-ob-fold');
-      return { fold: !!f && getComputedStyle(f).display !== 'none', flag: document.body.getAttribute('data-view-as') };
+      // Step 3: measured on the section ITSELF (the brief hides with it in View-as).
+      return { fold: !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none', flag: document.body.getAttribute('data-view-as') };
     });
     record('View-as: the Insights Outbound fold is hidden', va.flag === 'manager' && !va.fold, JSON.stringify(va));
     await pg.click('#overview-btn');

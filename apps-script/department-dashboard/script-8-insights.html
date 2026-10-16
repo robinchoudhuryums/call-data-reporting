@@ -141,8 +141,19 @@
     insFolds_ = { qh: !!seed, trend: !!seed, detail: true, ob: true, agents: true };
     return insFolds_;
   }
-  function insFoldOpen_(key) { return !!insFoldsLoad_()[key]; }
+  function insFoldOpen_(key) {
+    // Step 3: a section mounted in the brief accordion answers with its LIVE
+    // state -- the accordion's open/closed is per page load, not the store.
+    const live = document.querySelector('[data-fold="' + key + '"]');
+    if (live && insBriefMounted_(live)) return !!live.open;
+    return !!insFoldsLoad_()[key];
+  }
   function insFoldSet_(key, open) {
+    // Step 3: the accordion never writes the per-user fold store -- every
+    // brief section starts collapsed on each load, and a manager's (or
+    // View-as) fold layout keeps the choices made there.
+    const live = document.querySelector('[data-fold="' + key + '"]');
+    if (live && insBriefMounted_(live)) return;
     const f = insFoldsLoad_();
     f[key] = !!open;
     try { localStorage.setItem(insFoldsKey_(), JSON.stringify(f)); } catch (e) { /* ignore */ }
@@ -155,6 +166,7 @@
     const f = insFoldsLoad_();
     ['qh', 'trend', 'detail', 'ob', 'cb', 'agents'].forEach(function (k) {
       const el = document.querySelector('[data-fold="' + k + '"]');
+      if (el && insBriefMounted_(el)) return;   // Step 3: the accordion owns it
       if (el && el.open !== !!f[k]) el.open = !!f[k];
     });
   }
@@ -325,8 +337,13 @@
   // created while the page was hidden.
   function deptInsightsEnsureLive_() {
     var reg = $('dept-insights-region');
-    if (!reg || !reg.open) return;
+    // Step 3: the brief accordion sits ABOVE the agent table and needs the
+    // Insights payload, so an admin's page generates it even while the
+    // region at the bottom is collapsed.
+    if (!reg || (!reg.open && !insBriefActive_())) return;
     if (document.body.getAttribute('data-page') !== 'dept') return;
+    // Step 3 #8: the Callbacks preload waits for this page (insCbSync_).
+    if (typeof insCbSync_ === 'function') insCbSync_();
     insEnsurePage_();
     insSyncToDeptWindow_();
     insRearmZeroCharts_();
@@ -1787,7 +1804,7 @@
   // Most urgent first; within a colour the fixed section order.
   function insBriefRank_(rows) {
     var tierOrder = { red: 0, amber: 1, green: 2, grey: 3 };
-    var keyOrder = { queue: 0, agents: 1, callbacks: 2, detail: 3, trend: 4 };
+    var keyOrder = { queue: 0, agents: 1, outbound: 2, callbacks: 3, detail: 4, trend: 5 };
     return (rows || []).slice().sort(function (a, b) {
       var t = (tierOrder[a.tier] != null ? tierOrder[a.tier] : 9) - (tierOrder[b.tier] != null ? tierOrder[b.tier] : 9);
       if (t) return t;
@@ -1814,7 +1831,8 @@
   var INS_BRIEF_TARGET_ = {
     queue:     { id: 'ins-qh-fold',      label: 'Queue health' },
     agents:    { id: 'ins-agents-fold',  label: 'Agents' },
-    callbacks: { id: 'ins-cb-fold',      label: 'Outbound view' },
+    outbound:  { id: 'ins-ob-fold',      label: 'Outbound' },      // Step 3
+    callbacks: { id: 'ins-cb-fold',      label: 'Callbacks' },
     detail:    { id: 'ins-team-detail',  label: 'Team detail' },
     trend:     { id: 'ins-trend-fold',   label: 'Trend' },
   };
@@ -1920,6 +1938,10 @@
   function insRenderBrief_(data) {
     var box = $('ins-brief');
     var res = $('insights-results');
+    // Step 3: the sections live inside the brief while it shows; put every one
+    // back home BEFORE the rows are rebuilt (or the brief is hidden), so a
+    // re-render, View-as or a manager never loses a section.
+    insBriefUnmountAll_();
     var agentRows = insBriefAgentRows_(data);
     var meta = (data && data.meta) || {};
     var mismatch = Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
@@ -1927,7 +1949,8 @@
     var trendV = insBriefTrend_(insBriefTrendMonths_(data), meta.trendEnd || meta.to);
     insSyncFoldHeads_(data, agentsV, trendV, agentRows);
     if (!box) return;
-    if (USER.role !== 'admin' || !data || !data.teamStats) {
+    if (!insBriefActive_() || !data || !data.teamStats) {
+      insBriefRestoreFolds_();   // home for good: back to the viewer's own fold layout
       box.style.display = 'none'; box.innerHTML = '';
       if (res) res.classList.remove('ins-has-brief');
       return;
@@ -1952,14 +1975,17 @@
     if (insBriefQueueVisible_(data.queueHealth)) {   // F28
       rows.unshift(Object.assign({ key: 'queue' }, insBriefQueue_(data.queueHealth, ABANDON_STANDARD_)));
     }
-    // Callbacks: no standard yet (owner) -- always grey, and only where the
-    // Outbound view exists for this viewer (admin-only until 6c).
+    // Outbound + Callbacks: no standard yet (owner) -- always grey, and only
+    // where outbound exists for this viewer (admin-only until 6c). Step 3:
+    // each is its own accordion row, independent of the outbound columns.
     if (typeof obAllowed_ === 'function' && obAllowed_()) {
+      var obHead = $('ins-ob-fold-head');
+      rows.push({ key: 'outbound', tier: 'grey', text: insBriefRowText_(obHead ? obHead.textContent : '', 'Outbound') });
       var cbw = (typeof insCbWindow_ === 'function') ? insCbWindow_() : null;
       var cb = (typeof INS_CB_ !== 'undefined')
         ? insBriefCallbackFor_(INS_CB_, cbw ? [cbw.department, cbw.from, cbw.to].join('|') : null) : null;   // F20
       rows.push({ key: 'callbacks', tier: 'grey',
-        text: cb ? 'Callbacks: ' + insCbHeadText_(cb) : 'Callbacks for abandoned callers are in the Outbound view' });
+        text: cb ? 'Callbacks: ' + insCbHeadText_(cb) : 'Callbacks for abandoned callers' });
     }
     var ranked = insBriefRank_(rows);
     var look = insBriefLookCount_(ranked, hasCalls ? topTier : 'grey');   // F23
@@ -1976,45 +2002,138 @@
           + escapeHtml(targetNote) + '</span>' : '') + '</p>'
       + '<ul class="ins-brief-list">' + ranked.map(function (r) {
         var t = INS_BRIEF_TARGET_[r.key] || {};
-        return '<li><button type="button" class="ins-brief-row ins-brief--' + r.tier + '" data-brief-key="' + r.key + '">'
+        var slotId = 'ins-brief-slot-' + r.key;
+        return '<li class="ins-brief-item"><button type="button" class="ins-brief-row ins-brief--' + r.tier + '" data-brief-key="' + r.key + '"'
+          + ' aria-expanded="false" aria-controls="' + slotId + '">'
           + '<span class="ins-brief-sev" title="' + escapeHtml(INS_BRIEF_WORD_[r.tier] || '') + '">' + insBriefTierIconHtml_(r.tier) + '</span>'
           + '<span class="ins-brief-text">' + escapeHtml(r.text) + '</span>'
-          + '<span class="ins-brief-go">' + escapeHtml(t.label || '') + ' &#8250;</span></button></li>';
+          + '<span class="ins-brief-go">' + escapeHtml(t.label || '') + '<span class="ins-brief-chev" aria-hidden="true"></span></span></button>'
+          + '<div class="ins-brief-slot" id="' + slotId + '" data-brief-slot="' + r.key + '" hidden></div></li>';
       }).join('') + '</ul>';
     box.style.display = '';
     if (res) res.classList.add('ins-has-brief');
+    insBriefMountAll_();
     if (!box.__briefWired) {
       box.__briefWired = true;
       box.addEventListener('click', function (e) {
         var b = e.target.closest && e.target.closest('[data-brief-key]');
-        if (b) insBriefGo_(b.getAttribute('data-brief-key'));
+        if (b && box.contains(b)) insBriefToggle_(b.getAttribute('data-brief-key'));
       });
     }
   }
 
-  // A brief row opens its section and scrolls to it; the Callbacks row first
-  // flips the page to the Outbound view, where that section lives.
-  function insBriefGo_(key) {
-    var t = INS_BRIEF_TARGET_[key];
-    if (!t) return;
-    // F24: only from the Inbound view. "Both" already shows the Callbacks
-    // section, and the switch's click handler SAVES the choice -- so clicking
-    // "out" from Both silently replaced the admin's saved direction.
-    var fromInbound = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() === 'in' : true;
-    if (key === 'callbacks' && fromInbound) {
-      var out = document.querySelector('#dept-dir-switch [data-dir="out"]');
-      if (out) out.click();
-    }
-    setTimeout(function () {
-      var el = $(t.id);
+  // Step 3 (owner 2026-10-16): the brief is an ACCORDION directly under the
+  // team cards. Each row's section is the report's EXISTING element (a fold),
+  // MOVED into a slot under the row while the brief shows and moved back to
+  // its own home (a hidden placeholder) whenever the brief is rebuilt or goes
+  // away -- so the renderers, ids, draw-on-open listeners and the manager /
+  // View-as layout are all unchanged. The section's own summary is hidden in
+  // the slot (the row is its header). Open/closed is THIS PAGE LOAD's state
+  // only: every section starts collapsed, and nothing here writes the
+  // per-user fold store (insFoldSet_ skips a mounted section).
+  var INS_BRIEF_OPEN_ = {};      // brief key -> open, this page load
+  var INS_BRIEF_MOUNTED_ = {};   // brief key -> the mounted element's id
+  function insBriefActive_() {
+    return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
+      && document.body.getAttribute('data-view-as') !== 'manager';
+  }
+  function insBriefMounted_(el) {
+    return !!(el && el.closest && el.closest('#ins-brief'));
+  }
+  function insBriefUnmountAll_() {
+    Object.keys(INS_BRIEF_MOUNTED_).forEach(function (key) {
+      var el = $(INS_BRIEF_MOUNTED_[key]);
       if (!el) return;
-      if (el.tagName === 'DETAILS' && !el.open) {
-        el.open = true;   // the fold's toggle listener persists it + runs any deferred draw
+      var ph = document.querySelector('[data-ins-home="' + el.id + '"]');
+      if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph.nextSibling);
+      el.classList.remove('ins-brief-mounted');
+    });
+    INS_BRIEF_MOUNTED_ = {};
+  }
+  // Back home with the brief gone (View-as, no payload): each section takes the
+  // viewer's saved fold state again -- the accordion left them all closed.
+  function insBriefRestoreFolds_() {
+    var f = insFoldsLoad_();
+    Object.keys(INS_BRIEF_TARGET_).forEach(function (key) {
+      var el = $(INS_BRIEF_TARGET_[key].id);
+      var fk = el && el.getAttribute('data-fold');
+      if (!fk || insBriefMounted_(el) || !document.querySelector('[data-ins-home="' + el.id + '"]')) return;
+      if (el.open !== !!f[fk]) el.open = !!f[fk];
+    });
+  }
+  function insBriefMountAll_() {
+    var box = $('ins-brief');
+    if (!box) return;
+    box.querySelectorAll('[data-brief-slot]').forEach(function (slot) {
+      var key = slot.getAttribute('data-brief-slot');
+      var t = INS_BRIEF_TARGET_[key];
+      var el = t && $(t.id);
+      if (!el || insBriefMounted_(el)) return;
+      // The placeholder marks the section's own home the first time it moves.
+      if (!document.querySelector('[data-ins-home="' + el.id + '"]') && el.parentNode) {
+        var ph = document.createElement('span');
+        ph.hidden = true;
+        ph.setAttribute('data-ins-home', el.id);
+        el.parentNode.insertBefore(ph, el);
       }
-      try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (err) {}
-      var sum = el.querySelector && el.querySelector('summary');
-      if (sum) { try { sum.focus({ preventScroll: true }); } catch (err2) {} }
-    }, (key === 'callbacks' && fromInbound) ? 150 : 0);
+      slot.appendChild(el);
+      el.classList.add('ins-brief-mounted');
+      INS_BRIEF_MOUNTED_[key] = el.id;
+      insBriefApply_(key);
+    });
+  }
+  function insBriefApply_(key) {
+    var box = $('ins-brief');
+    if (!box) return;
+    var open = !!INS_BRIEF_OPEN_[key];
+    var btn = box.querySelector('[data-brief-key="' + key + '"]');
+    var slot = box.querySelector('[data-brief-slot="' + key + '"]');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (slot) slot.hidden = !open;
+    var t = INS_BRIEF_TARGET_[key];
+    var el = t && $(t.id);
+    // Setting `open` fires the section's own toggle listener: the trend chart,
+    // the team-detail canvases, the agents chart and the Callbacks payload all
+    // draw on open exactly as they did when the section was opened in place.
+    if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
+  }
+  function insBriefToggle_(key, force) {
+    INS_BRIEF_OPEN_[key] = (force === undefined) ? !INS_BRIEF_OPEN_[key] : !!force;
+    insBriefApply_(key);
+  }
+  // Step 3: a jump that opens a section (an agent chip, a calendar day) must
+  // open its brief ROW when the section sits in the accordion -- setting the
+  // section's own `open` would leave it inside a hidden slot. `persist` keeps
+  // the old fold-store write for a section at home.
+  function insOpenSection_(id, persist) {
+    var el = $(id);
+    if (!el) return;
+    if (insBriefMounted_(el)) {
+      var key = Object.keys(INS_BRIEF_TARGET_).filter(function (k) { return INS_BRIEF_TARGET_[k].id === id; })[0];
+      if (key) { insBriefToggle_(key, true); return; }
+    }
+    if (!el.open) el.open = true;
+    var fk = el.getAttribute('data-fold');
+    if (persist && fk) insFoldSet_(fk, true);
+  }
+  // Step 3: the Outbound and Callbacks rows quote their section's head, which
+  // fills in AFTER the brief is drawn. Update the row's text in place (a full
+  // rebuild would move the sections and lose the focus). Both rows are grey
+  // (no standard yet), so the ranking cannot change.
+  var INS_BRIEF_ROW_LABEL_ = { outbound: { head: 'ins-ob-fold-head', label: 'Outbound' },
+                               callbacks: { head: 'ins-cb-fold-head', label: 'Callbacks' } };
+  function insBriefRowText_(head, label) {
+    var t = String(head || '').trim();
+    return (t && t !== 'loading…' && t !== 'loading shortly…') ? label + ': ' + t
+      : (label === 'Outbound' ? 'Outbound calls for this window' : 'Callbacks for abandoned callers');
+  }
+  function insBriefRowFromHead_(key) {
+    var box = $('ins-brief');
+    var spec = INS_BRIEF_ROW_LABEL_[key];
+    if (!box || !spec) return;
+    var el = box.querySelector('[data-brief-key="' + key + '"] .ins-brief-text');
+    var h = $(spec.head);
+    if (el) el.textContent = insBriefRowText_(h ? h.textContent : '', spec.label);
   }
 
   // A1: scroll to + pulse an agent's card by name (the strip chip target).
@@ -2024,7 +2143,7 @@
     if (!wrap || !name) return;
     // UX-2: the cards live in the Agents fold now -- open it first.
     var agentsFold = $('ins-agents-fold');
-    if (agentsFold && !agentsFold.open) { agentsFold.open = true; insFoldSet_('agents', true); }
+    if (agentsFold && !agentsFold.open) insOpenSection_('ins-agents-fold', true);
     var el = wrap.querySelector('[data-ins-agent="' + escCssId_(name) + '"]');
     // A regressed agent whose card is in the collapsed quiet group won't be
     // found in the main grid -- expand it so the target exists, then retry.
@@ -2241,7 +2360,7 @@
       const calIso = insCalDayPending_;
       insCalDayPending_ = null;
       const qhFold = $('ins-qh-fold');
-      if (qhFold) { qhFold.open = true; insFoldSet_('qh', true); }
+      if (qhFold) insOpenSection_('ins-qh-fold', true);
       setTimeout(function () { insJumpToDailyRow_(calIso); insQhDayDetail_(calIso); }, 120);
     }
     // Quick-start chip landing: scroll to + spotlight the section that
@@ -2513,11 +2632,11 @@
 
   function insObSync_() {
     var meta = (typeof obSectionWindow_ === 'function') ? obSectionWindow_() : null;
-    // Owner 2026-10-08: the fold follows the direction switch like the G1
-    // Callbacks fold -- Outbound / Both only. obEffectiveDir_ reads
-    // obAllowed_, so it is still admin-only until 6c and hidden in View-as.
-    var dir = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() : 'in';
-    if (dir === 'in' || !meta) { insObHide_(); return; }
+    // Step 3 (owner 2026-10-16): the section no longer follows the outbound
+    // COLUMNS toggle -- it is the brief's own Outbound row. obAllowed_ keeps it
+    // admin-only until 6c and hidden in View-as.
+    var allowed = (typeof obAllowed_ === 'function') && obAllowed_();
+    if (!allowed || !meta) { insObHide_(); return; }
     var key = [meta.department, meta.from, meta.to, meta.priorFrom || '', meta.priorTo || ''].join('|');
     var fold = $('ins-ob-fold');
     if (fold) fold.style.display = '';
@@ -2533,6 +2652,7 @@
       if (--pending > 0) return;
       if (!cur) {
         if (head) head.textContent = 'unavailable';
+        insBriefRowFromHead_('outbound');
         var kp = $('ins-ob-kpis'); if (kp) kp.innerHTML = '';
         insObNote_('Outbound data could not be loaded' + (failed ? ': ' + failed : '.'));
         INS_OB_.key = null;   // let the next render retry
@@ -2621,6 +2741,7 @@
     var t = (cur && cur.totals) || {};
     if (!cur || !cur.meta || cur.meta.available === false) {
       if (head) head.textContent = 'unavailable';
+      insBriefRowFromHead_('outbound');
       if (kp) kp.innerHTML = '';
       insObNote_('Outbound data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
       return;
@@ -2628,6 +2749,7 @@
     var usable = insObPriorUsable_(prior, meta);
     var pt = usable ? prior.totals : null;
     if (head) head.textContent = insObHeadText_(t, cur.scope);
+    insBriefRowFromHead_('outbound');   // Step 3: in place, never a rebuild
     if (kp) {
       kp.innerHTML = [
         insQhKpiTileHtml_('Placed', fmtNumber(t.obTotal || 0), 'outbound calls',
@@ -2694,8 +2816,10 @@
     var fold = $('ins-cb-fold');
     if (!fold) return;
     var w = insCbWindow_();
-    var dir = (typeof obEffectiveDir_ === 'function') ? obEffectiveDir_() : 'in';
-    if (!w || dir === 'in') { fold.style.display = 'none'; return; }
+    // Step 3: the brief's Callbacks row, independent of the outbound columns
+    // toggle; admin-only until 6c (obAllowed_), hidden in View-as.
+    var allowed = (typeof obAllowed_ === 'function') && obAllowed_();
+    if (!w || !allowed) { fold.style.display = 'none'; clearTimeout(INS_CB_PREFETCH_T_); return; }
     fold.style.display = '';
     var key = [w.department, w.from, w.to].join('|');
     var head = $('ins-cb-fold-head');
@@ -2704,28 +2828,59 @@
       // drill still in flight for the old one (each lands only on its own key).
       INS_CB_.key = key; INS_CB_.data = null; INS_CB_.error = null;
       INS_CB_.cbkSeq++;   // CE-2: the called-back drill is orphaned too
+      INS_CB_.loadingKey = null;   // Step 3: the old window's fetch no longer counts as out
       INS_CB_.seq++; INS_CB_.uncSeq++;
       insCbResetUncalled_();
       var content = $('ins-cb-content'); if (content) content.style.display = 'none';
       insCbState_('');
-      if (head) head.textContent = 'open to load abandoned-caller callbacks';
+      if (head) head.textContent = 'loading shortly…';
     }
-    if (!fold.open) return;
+    clearTimeout(INS_CB_PREFETCH_T_);
     if (INS_CB_.data) { insCbRender_(INS_CB_.data); return; }
     if (INS_CB_.error) { insCbState_('Callbacks could not be loaded: ' + INS_CB_.error); return; }
+    if (INS_CB_.loadingKey === key) return;   // this window's fetch is already out
+    // Step 3 #8 (owner 2026-10-16): PRELOAD. A closed section still loads,
+    // once the page has settled (INS_CB_PREFETCH_MS_ after the last sync, so a
+    // burst of date / dept changes sends one fetch), and its row + head read
+    // the answer before anyone opens it. Opening it fetches at once. ONLY on
+    // My Department: the dept page also renders under the Overview landing,
+    // which must fetch nothing for it -- entering the page re-syncs
+    // (deptInsightsEnsureLive_), and that sync schedules the preload.
+    if (!fold.open) {
+      if (insCbOnDeptPage_()) {
+        INS_CB_PREFETCH_T_ = setTimeout(function () {
+          if (!insCbOnDeptPage_()) return;
+          if (INS_CB_.key === key && !INS_CB_.data && !INS_CB_.error && INS_CB_.loadingKey !== key) insCbFetch_(w, key);
+        }, INS_CB_PREFETCH_MS_);
+      }
+      return;
+    }
+    insCbFetch_(w, key);
+  }
+
+  var INS_CB_PREFETCH_MS_ = 1500;
+  function insCbOnDeptPage_() { return document.body.getAttribute('data-page') === 'dept'; }
+  var INS_CB_PREFETCH_T_ = null;
+  function insCbFetch_(w, key) {
+    var head = $('ins-cb-fold-head');
     var tok = ++INS_CB_.seq;
+    INS_CB_.loadingKey = key;
     if (head) head.textContent = 'loading…';
+    insBriefRowFromHead_('callbacks');
     insCbState_('Loading callbacks…');
     google.script.run
       .withSuccessHandler(function (data) {
         if (tok !== INS_CB_.seq) return;   // superseded by a newer window / dept
+        INS_CB_.loadingKey = null;
         INS_CB_.data = data || {};
         insCbRender_(INS_CB_.data);
       })
       .withFailureHandler(function (err) {
         if (tok !== INS_CB_.seq) return;
+        INS_CB_.loadingKey = null;
         INS_CB_.error = (err && err.message) ? err.message : String(err);
         if (head) head.textContent = 'unavailable';
+        insBriefRowFromHead_('callbacks');
         insCbState_('Callbacks could not be loaded: ' + INS_CB_.error);
         insCbScrollIfPending_();
       })
@@ -2767,21 +2922,18 @@
   }
 
   function insCbRender_(data) {
-    // F20: the brief quotes this payload's headline -- repaint it now, or it
-    // keeps the placeholder until the next Insights render.
-    if (typeof insLastData !== 'undefined' && insLastData && typeof insRenderBrief_ === 'function') {
-      try { insRenderBrief_(insLastData); } catch (eB) { /* the brief is best-effort */ }
-    }
     var meta = (data && data.meta) || {};
     var cb = (data && data.callback) || {};
     var head = $('ins-cb-fold-head');
     var content = $('ins-cb-content');
+    var fold = $('ins-cb-fold');
     // 'dept': the page's single date authority is the dept controls row (M4),
     // so "Adjust range" moves the My Department From date and re-runs it.
     coverageNoteUpsert_('ins-cb-body', 'dept', meta.from || null, null, meta.coverageStart || null);
     if (meta.available === false) {
       if (content) content.style.display = 'none';
       if (head) head.textContent = 'unavailable';
+      insBriefRowFromHead_('callbacks');
       insCbState_('Callback data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
       insCbScrollIfPending_();
       return;
@@ -2791,6 +2943,7 @@
       // would read as "nobody abandoned".
       if (content) content.style.display = 'none';
       if (head) head.textContent = 'no queues mapped';
+      insBriefRowFromHead_('callbacks');
       insCbState_('No queues are mapped for ' + (meta.department || 'this department')
         + ', so no abandoned caller can be counted. Map its queue names in Dept Config (admin).');
       insCbScrollIfPending_();
@@ -2799,6 +2952,7 @@
     if (!cb.abandonedTotal) {
       if (content) content.style.display = 'none';
       if (head) head.textContent = insCbHeadText_(cb);
+      insBriefRowFromHead_('callbacks');
       insCbState_('No abandoned calls on this department’s queues in this window, so there is nothing to call back.');
       insCbScrollIfPending_();
       return;
@@ -2806,15 +2960,22 @@
     insCbState_('');
     if (content) content.style.display = '';
     if (head) head.textContent = insCbHeadText_(cb);
+    // F20 / Step 3: the brief quotes this headline. Its row text is updated IN
+    // PLACE -- rebuilding the accordion here would take the focus off a row
+    // the user just opened.
+    insBriefRowFromHead_('callbacks');
     var kp = $('ins-cb-kpis');
     if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
     var win = $('ins-cb-window');
     if (win) win.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
     outboundRenderDelayStrip_(cb, $('ins-cb-delay-strip'));
     outboundRenderHourStrip_((data && data.callbackByHour) || [], $('ins-cb-hour-strip'));
-    // Draw-on-open: only reached while the fold is open (insCbSync_ returns
-    // early when it is closed), so the canvas has a real size here.
-    outboundRenderCbChart_((data && data.daily) || [], $('ins-cb-chart-wrap'), $('ins-cb-chart'));
+    // Draw-on-open (C3): a PRELOADED payload paints while the section is
+    // closed, when the canvas has no size -- the chart waits for the open,
+    // whose toggle re-runs insCbSync_ -> here.
+    if (fold && fold.open) {
+      outboundRenderCbChart_((data && data.daily) || [], $('ins-cb-chart-wrap'), $('ins-cb-chart'));
+    }
     var notes = [];
     var subDepts = (meta.scopeDepts || []).slice(1);
     if (subDepts.length) {
@@ -2827,9 +2988,9 @@
     }
     var note = $('ins-cb-note');
     if (note) { note.style.display = notes.length ? '' : 'none'; note.textContent = notes.join(' '); }
-    // CE-3: the Direct lines block follows this fold's window (lazy: it
-    // fetches only while its own <details> is open).
-    obDlSync_('ins-dl', insCbWindow_());
+    // CE-3: the Direct lines block follows this fold's window. Step 3 #8: it
+    // PRELOADS once the page has settled, like the Callbacks payload above.
+    obDlSync_('ins-dl', insCbWindow_(), insCbOnDeptPage_() ? { prefetchMs: INS_CB_PREFETCH_MS_ } : null);
     insCbScrollIfPending_();
   }
 
@@ -2874,19 +3035,21 @@
   }
 
   // G3: the #/report/outbound deep link (script-4's router) lands HERE, the
-  // retired modal's home. Only while the direction switch is visible (admin
-  // until 6c): set the switch to Outbound, open the fold (persisted, so the
-  // render's insFoldsApply_ keeps it open) and scroll to it once its payload
-  // has painted. For anyone else it is a plain My Department landing.
+  // retired modal's home. Only while outbound is allowed (admin until 6c).
+  // Step 3: it opens the brief's Callbacks ROW (INS_BRIEF_OPEN_, so the
+  // brief's next build mounts it open) -- it no longer touches the outbound
+  // columns toggle -- and scrolls once its payload has painted. Before the
+  // brief exists the section opens in place at home, as before. For anyone
+  // else it is a plain My Department landing.
   var INS_CB_SCROLL_ = false;
   function insCbDeepLink_() {
     if (typeof obAllowed_ !== 'function' || !obAllowed_()) return;
-    obDir_ = 'out';
-    try { localStorage.setItem(OB_DIR_KEY_, obDir_); } catch (e) { /* ignore */ }
-    insFoldSet_('cb', true);
-    var fold = $('ins-cb-fold');
     INS_CB_SCROLL_ = true;
-    if (fold && !fold.open) fold.open = true;   // its toggle runs insCbSync_
+    var fold = $('ins-cb-fold');
+    if (insBriefMounted_(fold)) { insBriefToggle_('callbacks', true); return; }   // its toggle runs insCbSync_
+    INS_BRIEF_OPEN_.callbacks = true;
+    insFoldSet_('cb', true);
+    if (fold && !fold.open) fold.open = true;
     obViewSync_();
   }
 
@@ -3479,8 +3642,7 @@
     }
     // The daily table lives inside the Queue-health FOLD, which may be
     // closed when clicking from the Trends calendar at the page bottom.
-    const fold = $('ins-qh-fold');
-    if (fold) fold.open = true;
+    insOpenSection_('ins-qh-fold', false);
     insJumpToDailyRow_(iso);
     insQhDayDetail_(iso);
   }
