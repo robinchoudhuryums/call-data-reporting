@@ -251,7 +251,13 @@ test('coaching delivery: a run with a NEW flag inserts, updates the continuing r
   assert.equal(updates.length, 1);
   assert.equal(updates[0].p[10], 'id-1', 'continuing update targets the open row id');
   assert.match(updates[0].sql, /times_flagged = times_flagged \+ 1/);
-  assert.equal(h.state.sentEmails.length, 1);
+  assert.equal(h.state.sentEmails.length, 2, 'the admin summary + CSR\'s manager email, HELD for admins (Step 5b)');
+  const held = h.state.sentEmails[1];
+  assert.equal(held.to, 'admin@x.com', 'the manager email goes to admins only until release');
+  assert.match(held.subject, /^\[Held for admins\] Coaching for CSR: 1 agent to talk with/);
+  assert.match(held.body, /Held for admins: this is the email CSR's managers/);
+  assert.match(held.body, /Brand New: answered/);
+  assert.match(out.result, /1 manager email\(s\) held for admins/);
   const mail = h.state.sentEmails[0];
   assert.equal(mail.to, 'admin@x.com', 'admin-only until released (owner ruling)');
   assert.match(mail.body, /Brand New/);
@@ -357,11 +363,11 @@ test('coaching close: open-only UPDATE — a stale id / already-closed row is a 
   h.ctx.getDashboardNeonConn_ = function () { return conn; };
   const before = h.state.locks;
   const out = h.call('updateCoachingFlagStatus', { id: 'id-9', action: 'Resolved', note: '  talked on Friday  ' });
-  assert.equal(out.status, 'resolved', 'action is case-normalized');
+  assert.equal(out.status, 'met', 'action is case-normalized; the pre-5b "resolved" is stored as met');
   assert.equal(h.state.locks, before + 1, 'LockService serialization (INV-01 data-mutation set)');
   const upd = conn.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); })[0];
   assert.match(upd.sql, /AND status = 'open'/);
-  assert.equal(upd.p[1], 'resolved');
+  assert.equal(upd.p[1], 'met');
   assert.equal(upd.p[2], 'talked on Friday', 'note trimmed');
   assert.equal(upd.p[3], 'admin@x.com', 'closed_by audit');
   assert.equal(upd.p[4], 'id-9');
@@ -373,8 +379,12 @@ test('coaching close: open-only UPDATE — a stale id / already-closed row is a 
 
   // Validation: bad action, missing id, oversize note capped not rejected.
   assert.throws(function () { h.call('updateCoachingFlagStatus', { id: 'x', action: 'deleted' }); },
-    /resolved.*dismissed/i);
+    /met.*rotated.*dismissed/i);
   assert.throws(function () { h.call('updateCoachingFlagStatus', { action: 'resolved' }); }, /Missing flag id/);
+  // Step 5b: rotated is a close of its own.
+  const connR = makeConn_('[]');
+  h.ctx.getDashboardNeonConn_ = function () { return connR; };
+  assert.equal(h.call('updateCoachingFlagStatus', { id: 'r1', action: 'rotated' }).status, 'rotated');
   const conn3 = makeConn_('[]');
   h.ctx.getDashboardNeonConn_ = function () { return conn3; };
   h.call('updateCoachingFlagStatus', { id: 'x', action: 'dismissed', note: new Array(700).join('n') });

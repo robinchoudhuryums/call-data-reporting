@@ -1337,27 +1337,47 @@
     if (!list) return;
     const rules = (m && m.rules) || [];
     if (!rules.length) {
-      list.innerHTML = '<p class="al-hint">Your department has no answer-rate alert yet &mdash; ask an admin to set one up.</p>';
+      list.innerHTML = '<p class="al-hint">Nothing to set for your department yet &mdash; ask an admin.</p>';
       return;
     }
+    const num = function (id, label, min, max, val, ph, field) {
+      return '<label for="' + id + '">' + label + '</label><input type="number" id="' + id + '" data-field="' + field
+        + '" min="' + min + '" max="' + max + '" step="1" value="' + (val != null ? escapeHtml(String(val)) : '')
+        + '" placeholder="' + escapeHtml(String(ph)) + '">';
+    };
     list.innerHTML = rules.map(function (r, i) {
-      const id = 'settings-notify-in-' + i;
-      return '<div class="al-rule" data-dept="' + escapeHtml(r.department) + '">'
-        + '<p class="al-rule-sentence">' + notifyRuleSentenceHtml_({ department: r.department, active: r.active,
+      let html = '<div class="al-rule" data-dept="' + escapeHtml(r.department) + '">';
+      if (r.hasAlert !== false && r.adminThreshold != null) {
+        html += '<p class="al-rule-sentence">' + notifyRuleSentenceHtml_({ department: r.department, active: r.active,
             threshold: r.adminThreshold, extraRecipients: [] }, r) + '</p>'
-        + '<p class="al-hint">Admin&rsquo;s threshold: ' + escapeHtml(String(r.adminThreshold)) + '%. '
-        + (r.managerThreshold != null ? 'Yours: ' + escapeHtml(String(r.managerThreshold)) + '%.' : 'You have not set one.') + '</p>'
-        + '<div class="settings-notify-row"><label for="' + id + '">Your threshold %</label>'
-        + '<input type="number" id="' + id + '" min="' + escapeHtml(String(r.adminThreshold)) + '" max="100" step="1" value="'
-        + (r.managerThreshold != null ? escapeHtml(String(r.managerThreshold)) : '') + '" placeholder="' + escapeHtml(String(r.adminThreshold)) + '">'
-        + '<button type="button" class="btn btn-secondary settings-notify-save" data-dept="' + escapeHtml(r.department) + '" data-in="' + id + '">Save</button></div>'
-        + '</div>';
+          + '<p class="al-hint">Admin&rsquo;s threshold: ' + escapeHtml(String(r.adminThreshold)) + '%. '
+          + (r.managerThreshold != null ? 'Yours: ' + escapeHtml(String(r.managerThreshold)) + '%.' : 'You have not set one.') + '</p>'
+          + '<div class="settings-notify-row" data-kind="alert">'
+          + num('settings-notify-in-' + i, 'Your threshold %', r.adminThreshold, 100, r.managerThreshold, r.adminThreshold, 'alertThreshold')
+          + '<button type="button" class="btn btn-secondary settings-notify-save">Save</button></div>';
+      }
+      const c = r.coaching;
+      if (c && c.admin && c.effective) {
+        const st = c.stored || {};
+        html += '<p class="al-rule-sentence">Coaching: ' + coachingGateSentence_(c.effective) + '</p>'
+          + '<p class="al-hint">Admin&rsquo;s gates: ' + escapeHtml(String(c.admin.maxTeamRatioPct)) + '%, '
+          + escapeHtml(String(c.admin.behindPts)) + ' points, ' + escapeHtml(String(c.admin.minMissed))
+          + ' missed. Yours can only flag more agents: a higher %, fewer points, fewer missed rings.</p>'
+          + '<div class="settings-notify-row" data-kind="coaching">'
+          + num('settings-coach-r-' + i, 'Ratio %', c.admin.maxTeamRatioPct, 100, st.maxTeamRatioPct, c.admin.maxTeamRatioPct, 'coachRatioPct')
+          + num('settings-coach-b-' + i, 'Points behind', 0, c.admin.behindPts, st.behindPts, c.admin.behindPts, 'coachBehindPts')
+          + num('settings-coach-m-' + i, 'Missed rings', 1, c.admin.minMissed, st.minMissed, c.admin.minMissed, 'coachMinMissed')
+          + '<button type="button" class="btn btn-secondary settings-notify-save">Save</button></div>';
+      }
+      return html + '</div>';
     }).join('');
     list.querySelectorAll('.settings-notify-save').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        const dept = btn.getAttribute('data-dept');
-        const inp = $(btn.getAttribute('data-in'));
+        const row = btn.closest('.settings-notify-row');
+        const dept = btn.closest('.al-rule').getAttribute('data-dept');
         const st = $('settings-notify-status');
+        const req = { department: dept };
+        row.querySelectorAll('input[data-field]').forEach(function (inp) { req[inp.getAttribute('data-field')] = inp.value; });
         if (mutationBusy_('notifySave')) return;
         btn.disabled = true;
         google.script.run
@@ -1372,10 +1392,11 @@
             btn.disabled = false;
             if (st) { st.textContent = err && err.message ? err.message : String(err); st.classList.add('is-error'); }
           })
-          .saveNotifyManagerRule({ department: dept, alertThreshold: inp ? inp.value : '' });
+          .saveNotifyManagerRule(req);
       });
     });
   }
+
 
   // E10 threshold-drift chip. Renders per-dept summary of the most
   // recent ~30 daily-trigger entries from the Alert Log: fire-rate
@@ -3247,6 +3268,13 @@
   // per-row note input (server caps at 500 chars).
 
   var coachingRows_ = [];
+  // Step 5b: Met / Rotated / Dismissed; a pre-5b `resolved` row reads as Met.
+  var COACHING_STATUS_LABEL_ = { met: 'Met', resolved: 'Met', rotated: 'Rotated', dismissed: 'Dismissed' };
+  var COACHING_CLOSE_COPY_ = {
+    met: { verb: 'Mark met', why: 'Met: the conversation happened.' },
+    rotated: { verb: 'Mark rotated', why: 'Rotated: their queue assignment was changed instead.' },
+    dismissed: { verb: 'Dismiss', why: 'Dismissed: judged not a real issue for this agent.' },
+  };
 
   function initCoaching_() {
     const btn = $('coaching-btn');
@@ -3371,6 +3399,7 @@
       }
       return;
     }
+    coachingRenderGates_(meta);
     coachingRows_ = resp.rows || [];
     const openCount = coachingRows_.filter(function (r) { return r.status === 'open'; }).length;
     if (summary) {
@@ -3394,6 +3423,96 @@
     if (table) table.style.display = '';
   }
 
+  // ---- Step 5b: gates by department ----
+  // PURE (pinned): a dept's gates as the sentence they enforce.
+  function coachingGateSentence_(g) {
+    return 'Flag an agent who answers less than <strong>' + escapeHtml(String(g.maxTeamRatioPct)) + '%</strong> as often as the team, '
+      + 'at least <strong>' + escapeHtml(String(g.behindPts)) + '</strong> points behind, with <strong>'
+      + escapeHtml(String(g.minMissed)) + '+</strong> missed rings over 10 workdays.';
+  }
+  var COACHING_GATE_INPUTS_ = [
+    ['maxTeamRatioPct', 'Ratio % of team', 5, 100],
+    ['behindPts', 'Points behind', 0, 50],
+    ['minMissed', 'Missed rings', 1, 1000],
+  ];
+  function coachingRenderGates_(meta) {
+    const box = $('coaching-gates');
+    if (!box) return;
+    const gates = (meta && meta.deptGates) || {};
+    const depts = Object.keys(gates);
+    if (!depts.length) { box.innerHTML = '<p class="al-hint">Department gates unavailable.</p>'; return; }
+    box.innerHTML = depts.map(function (d, i) {
+      const g = gates[d] || {}, eff = g.effective || {}, adm = g.admin || {}, mgr = g.manager || {};
+      const mgrKeys = Object.keys(mgr);
+      const mgrNote = mgrKeys.length
+        ? '<span class="al-rule-chip is-on">Manager stricter: ' + mgrKeys.map(function (k) {
+            return escapeHtml(k === 'maxTeamRatioPct' ? mgr[k] + '%' : k === 'behindPts' ? mgr[k] + ' pts' : mgr[k] + ' missed');
+          }).join(', ') + ' &middot; applies</span>' : '';
+      return '<div class="al-rule" role="listitem" data-dept="' + escapeHtml(d) + '">'
+        + '<p class="al-rule-sentence"><strong>' + escapeHtml(d) + '</strong> &mdash; ' + coachingGateSentence_(eff) + '</p>'
+        + (mgrNote ? '<div class="al-rule-meta">' + mgrNote + '</div>' : '')
+        + '<div class="coaching-gate-row">'
+        + COACHING_GATE_INPUTS_.map(function (f) {
+            const id = 'coaching-gate-' + i + '-' + f[0];
+            return '<label for="' + id + '">' + f[1] + '</label><input type="number" id="' + id + '" data-gate="' + f[0]
+              + '" min="' + f[2] + '" max="' + f[3] + '" step="1" value="' + (adm[f[0]] != null ? escapeHtml(String(adm[f[0]])) : '') + '">';
+          }).join('')
+        + '<button type="button" class="btn btn-secondary coaching-gate-save">Save</button>'
+        + '<button type="button" class="link-btn coaching-gate-preview">Email me the manager version</button>'
+        + '</div></div>';
+    }).join('');
+    box.querySelectorAll('.coaching-gate-save').forEach(function (b) {
+      b.addEventListener('click', function () { coachingSaveGates_(b.closest('.al-rule'), b); });
+    });
+    box.querySelectorAll('.coaching-gate-preview').forEach(function (b) {
+      b.addEventListener('click', function () { coachingPreviewManagerEmail_(b.closest('.al-rule').getAttribute('data-dept'), b); });
+    });
+  }
+  function coachingGatesStatus_(msg, isError) {
+    const el = $('coaching-gates-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('is-error', !!isError);
+  }
+  function coachingSaveGates_(card, btn) {
+    if (!card || mutationBusy_('coachingGates')) return;
+    const dept = card.getAttribute('data-dept');
+    const req = { department: dept };
+    card.querySelectorAll('input[data-gate]').forEach(function (inp) { req[inp.getAttribute('data-gate')] = inp.value; });
+    if (btn) btn.disabled = true;
+    google.script.run
+      .withSuccessHandler(function () {
+        mutationDone_('coachingGates');
+        if (btn) btn.disabled = false;
+        coachingGatesStatus_('Saved the gates for ' + dept + '. The next weekly run uses them.');
+        coachingLoad_();
+      })
+      .withFailureHandler(function (err) {
+        mutationDone_('coachingGates');
+        if (btn) btn.disabled = false;
+        coachingGatesStatus_(err && err.message ? err.message : String(err), true);
+      })
+      .saveCoachingDeptRule(req);
+  }
+  function coachingPreviewManagerEmail_(dept, btn) {
+    if (mutationBusy_('coachingPreview')) return;
+    if (btn) btn.disabled = true;
+    coachingGatesStatus_('Sending ' + dept + '’s manager email to you…');
+    google.script.run
+      .withSuccessHandler(function (r) {
+        mutationDone_('coachingPreview');
+        if (btn) btn.disabled = false;
+        coachingGatesStatus_('Sent to ' + (r && r.sentTo || 'you') + ': ' + dept + '’s manager email (' + (r && r.flags) + ' agent'
+          + (r && r.flags === 1 ? '' : 's') + '). No manager received it.');
+      })
+      .withFailureHandler(function (err) {
+        mutationDone_('coachingPreview');
+        if (btn) btn.disabled = false;
+        coachingGatesStatus_(err && err.message ? err.message : String(err), true);
+      })
+      .previewCoachingManagerEmail({ department: dept });
+  }
+
   function coachingRowHtml_(r) {
     const open = r.status === 'open';
     const ratio = r.team_ratio_pct != null ? Math.round(r.team_ratio_pct) : null;
@@ -3402,17 +3521,19 @@
       + (ratio != null ? ' <span class="al-hint">(' + ratio + '% of team, '
         + (r.gap_pts != null ? r.gap_pts : '—') + ' pts behind)</span>' : '');
     const statusCell = open ? 'open'
-      : escapeHtml(r.status) + (r.closed_by ? ' <span class="al-hint" title="'
+      : escapeHtml(COACHING_STATUS_LABEL_[r.status] || r.status) + (r.closed_by ? ' <span class="al-hint" title="'
         + escapeHtml((r.closed_at || '') + (r.note ? (' — ' + r.note) : ''))
         + '">by ' + escapeHtml(r.closed_by) + '</span>' : '');
     const actions = open
       ? '<input type="text" class="coaching-note-input" data-note-for="' + escapeHtml(r.id)
         + '" maxlength="500" placeholder="note (optional)" style="width:110px;"'
         + ' aria-label="Note for ' + escapeHtml(r.agent_name || 'this flag') + ' (optional)"> '   // UI-8
-        + '<button class="btn btn-secondary" type="button" data-coaching-action="resolved" data-id="'
-        + escapeHtml(r.id) + '">Resolve</button> '
+        + '<button class="btn btn-secondary" type="button" data-coaching-action="met" data-id="'
+        + escapeHtml(r.id) + '" title="The conversation happened">Met</button> '
+        + '<button class="btn btn-secondary" type="button" data-coaching-action="rotated" data-id="'
+        + escapeHtml(r.id) + '" title="Their queue assignment was changed instead">Rotated</button> '
         + '<button class="btn btn-ghost" type="button" data-coaching-action="dismissed" data-id="'
-        + escapeHtml(r.id) + '">Dismiss</button>'
+        + escapeHtml(r.id) + '" title="Not a real issue for this agent">Dismissed</button>'
       : '';
     return '<tr>'
       + '<td>' + escapeHtml(r.department || '') + '</td>'
@@ -3444,13 +3565,12 @@
     const row = coachingRows_.filter(function (r) { return r.id === id; })[0];
     const noteInput = document.querySelector('input[data-note-for="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
     const note = noteInput ? noteInput.value.trim() : '';
-    const verb = action === 'resolved' ? 'Resolve' : 'Dismiss';
+    const copy = COACHING_CLOSE_COPY_[action] || COACHING_CLOSE_COPY_.dismissed;
+    const verb = copy.verb;
     dsConfirm_({
-      title: verb + ' this coaching flag?',
+      title: verb + ' — this coaching flag?',
       messageHtml: '<strong>' + escapeHtml(row ? (row.department + ' — ' + row.agent_name) : id) + '</strong><br>'
-        + (action === 'resolved'
-          ? 'Mark resolved: the conversation happened (or the queue/roster was adjusted).'
-          : 'Dismiss: judged not a real issue for this agent.')
+        + escapeHtml(copy.why)
         + (note ? '<br><span class="al-hint">Note: ' + escapeHtml(note) + '</span>' : ''),
       confirmLabel: verb,
       tone: action === 'dismissed' ? 'danger' : undefined,
@@ -3459,7 +3579,7 @@
       google.script.run
         .withSuccessHandler(function () {
           done();
-          showToast('Flag ' + action, 'success');
+          showToast('Flag marked ' + (COACHING_STATUS_LABEL_[action] || action).toLowerCase(), 'success');
           coachingLoad_();
         })
         .withFailureHandler(function (err) {

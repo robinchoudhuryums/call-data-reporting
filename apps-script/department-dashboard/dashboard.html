@@ -2548,13 +2548,28 @@
           </tr></thead>
           <tbody id="coaching-tbody"></tbody>
         </table>
+        <!-- Step 5b: per-department gates (admin), with the manager layer's
+             stricter values named, and the held manager email per dept. -->
+        <div class="al-section" id="coaching-gates-section">
+          <h3 class="al-section-title">Gates by department</h3>
+          <p class="al-hint">
+            Each department starts on the company gates. Set any of them for one department;
+            a blank box keeps the company value. Once the manager layer is on (Admin &rsaquo; Alerts),
+            a department&rsquo;s manager can make a gate stricter &mdash; flag more agents &mdash; never
+            looser; the stricter value applies. <strong>Email me the manager version</strong> sends you
+            what that department&rsquo;s managers will read once coaching is released.
+          </p>
+          <div class="coaching-gates" id="coaching-gates" role="list" aria-label="Coaching gates by department"></div>
+          <p class="al-hint" id="coaching-gates-status" role="status"></p>
+        </div>
         <!-- Delivery engine controls (the Neon-backup section shape). -->
         <div class="al-section" id="coaching-delivery-section">
           <h3 class="al-section-title">Weekly delivery</h3>
           <p class="al-hint">
             Monday-morning check: recomputes the flags, refreshes this worklist, and
             emails <strong>admins only</strong> when NEW flags appear (owner ruling —
-            managers are not copied until release). A flag that stops meeting the
+            managers are not copied until release). Each department with new flags also
+            gets its manager email, <strong>held for admins</strong> until release. A flag that stops meeting the
             gates stays open for you to close: the math doesn't know whether the
             conversation happened.
           </p>

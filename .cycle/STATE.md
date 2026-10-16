@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-16 -- Owner plan Step 5b IMPLEMENTED (block 259-step5b): coaching release prep (admin trial).** Per-dept coaching gates (COACHING_DEPT_RULES) with the stricter-only manager clamp, Met / Rotated / Dismissed closes, and the manager email HELD for admins (coachingManagerRecipients_ is the release seam). 2594 tests, 7/7 bites, drive-notify 26/26.
+  **Owner-side:** deploy the dashboard.
+  **Next:** 5c (two new alert reasons, admin-only).
+  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR after 5a merges.
 - **2026-10-16 -- Owner plan Step 5a IMPLEMENTED (block 259-step5a): the Notifications page (admin trial).** Sentence rules, would-it-have-fired History, test send to the admin only, and the stricter-only MANAGER LAYER built but off (NOTIFY_MANAGER_EDIT, Operator State #77). 2587 tests, 8/8 bites, drive-notify 18/18.
   **Owner-side:** deploy the dashboard. Release the manager layer only after walking S63.
   **Next:** 5b coaching release prep (per-dept gates + the same clamp, Met / Rotated / Dismissed, manager email still to admins only), then 5c (two new alert reasons).

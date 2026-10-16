@@ -220,18 +220,29 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     },
     setNotifyManagerEdit: function (req) { return { enabled: !!(req && req.enabled) }; },
     getNotifyRules: function () {
-      return { enabled: true, rules: [{ department: 'CSR', active: true, adminThreshold: 85,
-        managerThreshold: null, managerBy: '', managerAt: '', effectiveThreshold: 85, effectiveSource: 'admin' }] };
+      return { enabled: true, rules: [{ department: 'CSR', hasAlert: true, active: true, adminThreshold: 85,
+        managerThreshold: null, managerBy: '', managerAt: '', effectiveThreshold: 85, effectiveSource: 'admin',
+        coaching: { admin: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 }, stored: {},
+                    effective: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 } } }] };
     },
     saveNotifyManagerRule: function (req) {
       const v = req && req.alertThreshold;
       if (v !== '' && v != null && Number(v) < 85) {
         throw new Error("Managers can only make this rule stricter: the admin's value is 85%, so choose 85% or higher.");
       }
+      const cb = req && req.coachBehindPts;
+      if (cb !== '' && cb != null && Number(cb) > 5) {
+        throw new Error("Managers can only make this rule stricter: the admin's value is 5 pts, so choose 5 pts or lower.");
+      }
       const mv = (v === '' || v == null) ? null : Number(v);
-      return { enabled: true, rules: [{ department: (req && req.department) || 'CSR', active: true, adminThreshold: 85,
+      const st = {}, eff = { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 };
+      if (req && req.coachRatioPct) { st.maxTeamRatioPct = Number(req.coachRatioPct); eff.maxTeamRatioPct = Math.max(50, st.maxTeamRatioPct); }
+      if (cb !== '' && cb != null) { st.behindPts = Number(cb); eff.behindPts = Math.min(5, st.behindPts); }
+      if (req && req.coachMinMissed) { st.minMissed = Number(req.coachMinMissed); eff.minMissed = Math.min(20, st.minMissed); }
+      return { enabled: true, rules: [{ department: (req && req.department) || 'CSR', hasAlert: true, active: true, adminThreshold: 85,
         managerThreshold: mv, managerBy: 'manager@ums.com', managerAt: '2026-08-20T12:00:00Z',
-        effectiveThreshold: mv == null ? 85 : Math.max(85, mv), effectiveSource: mv != null && mv > 85 ? 'manager' : 'admin' }] };
+        effectiveThreshold: mv == null ? 85 : Math.max(85, mv), effectiveSource: mv != null && mv > 85 ? 'manager' : 'admin',
+        coaching: { admin: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 }, stored: st, effective: eff } }] };
     },
     getDigestsInit: function () { return P['digests-init']; },
     getQueueReportInit: function () { return P['queuereport-init']; },
@@ -442,7 +453,22 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         lastRunAt: '2026-08-17T13:00:00.000Z',
         lastResult: 'ok 1 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — emailed admins',
         enabled: true,
-        thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
+        thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 },
+        // Step 5b: per-dept gates (CSR has its own ratio + a manager's stricter points)
+        managerLayerOn: true,
+        deptGates: {
+          CSR: { admin: { maxTeamRatioPct: 60, behindPts: 5, minMissed: 20 }, manager: { behindPts: 3 },
+                 effective: { maxTeamRatioPct: 60, behindPts: 3, minMissed: 20 } },
+          Sales: { admin: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 }, manager: {},
+                   effective: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 } },
+        } } };
+    },
+    saveCoachingDeptRule: function (req) {
+      if (req && req.maxTeamRatioPct !== '' && Number(req.maxTeamRatioPct) < 5) throw new Error('maxTeamRatioPct must be a number from 5 to 100.');
+      return { department: req && req.department, gates: {} };
+    },
+    previewCoachingManagerEmail: function (req) {
+      return { sentTo: 'admin@ums.com', department: req && req.department, flags: 1, window: { from: '2026-08-03', to: '2026-08-14' } };
     },
     sendOutboundReportEmail: function () { return { to: 'admin@example.com' }; },
     // CE-2: grouped by contact episode -- a pending one (still inside the

@@ -609,3 +609,15 @@ S63 | Notifications: sentence rules, history, test send, the manager layer (Step
     - Turn the switch OFF again: the manager's section disappears on their next load and their value stops applying.
   Expected: as described. Nothing changes for any manager until the switch is on; the stricter of the two values always applies.
   Fails if: a manager sees the section, saves, or has their value applied while the switch is off; a looser manager value is accepted; a test send reaches anyone but the admin; or History's verdicts do not follow the rule as it stands.
+
+S64 | Coaching release prep: per-dept gates, Met / Rotated / Dismissed, the held manager email (Step 5b) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, open Admin > Coaching. Under the worklist, "Gates by department" lists every department as a sentence: "Flag an agent who answers less than 50% as often as the team, at least 5 points behind, with 20+ missed rings over 10 workdays."
+    - Set CSR's ratio to 60 and save. CSR's sentence reads 60%; every other department keeps 50%. Clear the box and save: CSR returns to 50%. A ratio of 2 is refused.
+    - Click "Email me the manager version" for a department with flags: you receive "[Preview] [Held for admins] Coaching for <dept>: N agents to talk with", naming the managers it will reach on release and the What to do steps. No manager receives it. A department with no flags says there is nothing to preview.
+    - On an open flag: three buttons, Met / Rotated / Dismissed, each confirming in its own words. Close one as Rotated: under Closed it reads "Rotated by <you>". An older flag closed as resolved reads "Met".
+    - Run now (or wait for Monday) with a NEW flag: the admins get the usual summary AND one held manager email per department with new flags; the delivery status line says "N manager email(s) held for admins".
+    - With the manager layer on (S63), as a manager: Settings shows the coaching gates as a sentence and three boxes; 8 points behind (looser than 5) is refused, 3 saves and the sentence reads 3; the admin's Gates card shows "Manager stricter: 3 pts · applies".
+  Expected: as described; no manager receives any coaching email.
+  Fails if: a manager is emailed; a looser manager gate is accepted or applied; a department's gates change another's; or a close lands under the wrong status.
+

@@ -44,6 +44,136 @@ var COACHING_MAX_TEAM_RATIO_   = 0.5;   // headline gate: < half the team's answ
 var COACHING_BEHIND_TEAM_PTS_  = 5;     // absolute floor beneath the ratio
 var COACHING_MIN_MISSED_       = 20;    // volume gate (missed rings in window)
 
+// ── Per-department gates (owner plan Step 5b, 2026-10-16) ─────────────────
+//
+// The three gates above are now the COMPANY DEFAULTS. An admin may set any of
+// them per department (`COACHING_DEPT_RULES`, Script Property, JSON
+// `{ "<dept>": { "maxTeamRatioPct": 60, "behindPts": 4, "minMissed": 15 } }`,
+// written only by saveCoachingDeptRule); a blank field keeps the default. On
+// top, the Step 5a MANAGER LAYER (Notifications.gs) lets a dept's manager
+// make a gate STRICTER -- flag more agents: a higher ratio, fewer points
+// behind, fewer missed rings -- never looser, and only once
+// NOTIFY_MANAGER_EDIT is on. The window (10 workdays) and the schedule stay
+// admin-only and company-wide.
+var COACHING_DEPT_RULES_PROP_ = 'COACHING_DEPT_RULES';
+var COACHING_DEPT_RULES_MEMO_ = null;   // per execution (F39)
+// gate -> [manager-layer field, min, max] (the ratio is held as a PERCENT)
+var COACHING_GATE_FIELDS_ = Object.freeze({
+  maxTeamRatioPct: ['coachRatioPct', 5, 100],
+  behindPts:       ['coachBehindPts', 0, 50],
+  minMissed:       ['coachMinMissed', 1, 1000],
+});
+
+function coachingDefaultGates_() {
+  return { maxTeamRatioPct: Math.round(COACHING_MAX_TEAM_RATIO_ * 100),
+           behindPts: COACHING_BEHIND_TEAM_PTS_, minMissed: COACHING_MIN_MISSED_ };
+}
+
+/** The stored per-dept admin gates; a malformed property reads as EMPTY. */
+function readCoachingDeptRules_() {
+  if (COACHING_DEPT_RULES_MEMO_) return COACHING_DEPT_RULES_MEMO_;
+  var out = {};
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(COACHING_DEPT_RULES_PROP_);
+    var obj = raw ? JSON.parse(raw) : {};
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      Object.keys(obj).forEach(function (dept) {
+        var r = obj[dept] || {}, clean = {};
+        Object.keys(COACHING_GATE_FIELDS_).forEach(function (g) {
+          var v = Number(r[g]);
+          if (r[g] !== '' && r[g] != null && isFinite(v)) clean[g] = v;
+        });
+        if (Object.keys(clean).length) out[dept] = clean;
+      });
+    }
+  } catch (e) {
+    Logger.log('readCoachingDeptRules_: unreadable -- defaults apply: %s', e);
+  }
+  COACHING_DEPT_RULES_MEMO_ = out;
+  return out;
+}
+
+/** The admin's gates for a dept: its overrides over the company defaults. */
+function coachingAdminGates_(dept) {
+  var g = coachingDefaultGates_();
+  var o = readCoachingDeptRules_()[dept] || {};
+  Object.keys(o).forEach(function (k) { g[k] = o[k]; });
+  return g;
+}
+
+/**
+ * The gates the engine applies for a dept: `{ admin, manager, effective }`,
+ * each `{maxTeamRatioPct, behindPts, minMissed}` (manager: only the fields a
+ * manager set, and only while the layer is on). `effective` is the stricter
+ * per gate (notifyStricterOf_, Notifications.gs).
+ */
+function coachingEffectiveGates_(dept) {
+  var admin = coachingAdminGates_(dept);
+  var manager = {}, effective = {};
+  Object.keys(COACHING_GATE_FIELDS_).forEach(function (g) {
+    var field = COACHING_GATE_FIELDS_[g][0];
+    var mv = (typeof notifyAppliedManagerValue_ === 'function') ? notifyAppliedManagerValue_(dept, field) : null;
+    if (mv != null) manager[g] = mv;
+    effective[g] = (typeof notifyStricterOf_ === 'function') ? notifyStricterOf_(field, admin[g], mv) : admin[g];
+  });
+  return { admin: admin, manager: manager, effective: effective };
+}
+
+/** computeCoachingFlags_'s opts from a gates object. */
+function coachingFlagOpts_(g) {
+  return { maxTeamRatio: g.maxTeamRatioPct / 100, behindPts: g.behindPts, minMissed: g.minMissed };
+}
+
+/**
+ * RPC (admin): set a department's coaching gates. `req = { department,
+ * maxTeamRatioPct, behindPts, minMissed }`; a blank field returns that gate
+ * to the company default, all blank clears the dept. Config write (INV-01):
+ * assertAdmin_ + validation + LockService + a Logger audit line.
+ */
+function saveCoachingDeptRule(req) {
+  assertAdmin_();
+  req = req || {};
+  var dept = String(req.department || '').trim();
+  if (!dept) throw new Error('Department is required.');
+  if (getAllDepartments_().indexOf(dept) === -1) throw new Error('Unknown department: ' + dept);
+  var rec = {};
+  Object.keys(COACHING_GATE_FIELDS_).forEach(function (g) {
+    var v = req[g];
+    if (v === '' || v == null) return;
+    var n = Number(v), lim = COACHING_GATE_FIELDS_[g];
+    if (!isFinite(n) || n < lim[1] || n > lim[2]) {
+      throw new Error(g + ' must be a number from ' + lim[1] + ' to ' + lim[2] + '.');
+    }
+    rec[g] = g === 'minMissed' ? Math.round(n) : Math.round(n * 10) / 10;
+  });
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Busy -- please retry in a moment.');
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var cur = {};
+    try { cur = JSON.parse(props.getProperty(COACHING_DEPT_RULES_PROP_) || '{}') || {}; } catch (pe) { cur = {}; }
+    if (typeof cur !== 'object' || Array.isArray(cur)) cur = {};
+    if (Object.keys(rec).length) cur[dept] = rec; else delete cur[dept];
+    if (Object.keys(cur).length) props.setProperty(COACHING_DEPT_RULES_PROP_, JSON.stringify(cur));
+    else props.deleteProperty(COACHING_DEPT_RULES_PROP_);
+    COACHING_DEPT_RULES_MEMO_ = null;
+    Logger.log('saveCoachingDeptRule: %s %s by %s', dept, JSON.stringify(rec) || '(defaults)',
+      Session.getActiveUser().getEmail());
+  } finally {
+    lock.releaseLock();
+  }
+  return { department: dept, gates: coachingEffectiveGates_(dept) };
+}
+
+/** Every dept's gates, for the worklist page. Best-effort per dept. */
+function coachingAllDeptGates_() {
+  var out = {};
+  (getAllDepartments_() || []).forEach(function (d) {
+    try { out[d] = coachingEffectiveGates_(d); } catch (e) { /* skip */ }
+  });
+  return out;
+}
+
 /**
  * PURE. The trailing N-working-day window ending at `latestIso` (stepping
  * the end back first if it lands on a weekend/holiday). `isHolidayFn` is
@@ -155,10 +285,7 @@ function computeCoachingPreview_() {
   var flags = [], errors = [], depts = getAllDepartments_();
   depts.forEach(function (dept) {
     try {
-      var summary = computeSummary_(dept, win.from, win.to, 'roster');
-      var deptFlags = computeCoachingFlags_((summary && summary.rows) || [],
-        getTeamAvgExcludes_(dept));
-      deptFlags.forEach(function (f) { f.dept = dept; flags.push(f); });
+      coachingDeptFlags_(dept, win).forEach(function (f) { flags.push(f); });
     } catch (e) {
       errors.push({ dept: dept, error: String(e && e.message || e) });
     }
@@ -179,6 +306,25 @@ function computeCoachingPreview_() {
     flags: flags,
     errors: errors,
   };
+}
+
+/** One dept's flags over `win`, under that dept's applied gates (Step 5b). */
+function coachingDeptFlags_(dept, win) {
+  var summary = computeSummary_(dept, win.from, win.to, 'roster');
+  var gates = coachingEffectiveGates_(dept).effective;   // per dept, stricter-only clamp
+  var deptFlags = computeCoachingFlags_((summary && summary.rows) || [],
+    getTeamAvgExcludes_(dept), coachingFlagOpts_(gates));
+  deptFlags.forEach(function (f) { f.dept = dept; f.gates = gates; });
+  return deptFlags;
+}
+
+/** The trailing coaching window ending at the latest DQE date, or null. */
+function coachingCurrentWindow_() {
+  var latest = getLatestDataDate();
+  if (!latest) return null;
+  return coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_, function (isoDay) {
+    try { return isCompanyHoliday_(isoDay); } catch (e) { return false; }
+  });
 }
 
 /** Editor wrapper (the Run-picker convention: no trailing underscore) with
@@ -229,6 +375,7 @@ function runCoachingPreview() {
 // writable until release.
 
 var COACHING_DELIVERY_HOUR_ = 8;        // Monday morning, Central (trigger)
+var COACHING_CLOSE_ACTIONS_ = ['met', 'rotated', 'dismissed'];   // Step 5b
 var COACHING_NOTE_MAX_ = 500;
 
 function coachingEnsureTable_(conn) {
@@ -308,6 +455,96 @@ function coachingEmailBody_(newFlags, continuingCount, recoveredCount, win, dash
       + ' missed — over roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides.',
     'Admin-only until released (owner ruling); managers are not copied.');
   return lines.join('\n');
+}
+
+// ── The MANAGER email, held for admins (Step 5b) ──────────────────────────
+//
+// What a department's managers will receive once coaching is released: their
+// own dept's NEW flags, worded for the person who has the conversation. Until
+// release it is HELD FOR ADMINS -- coachingManagerRecipients_ is the ONE place
+// that decides who gets it, and today it returns the admins, naming the
+// managers it would reach. Release = changing that function, nothing else.
+
+function coachingManagerRecipients_(dept) {
+  var managers = [];
+  try { if (typeof lookupDeptManagers_ === 'function') managers = lookupDeptManagers_(dept) || []; } catch (e) { managers = []; }
+  return { to: getAdminEmails_(), wouldGoTo: managers, held: true };
+}
+
+/** PURE-ish: the manager email for one dept -- `{ subject, notice, body }`. */
+function coachingManagerEmail_(dept, flags, win, rcpt) {
+  var n = flags.length;
+  var g = (flags[0] && flags[0].gates) || coachingDefaultGates_();
+  var line = function (f) {
+    return f.agent + ': answered ' + f.ratePct + '% of their rings while the team answered '
+      + f.teamRatePct + '% (about ' + Math.round(f.teamRatioPct) + '% as often as their teammates), with '
+      + f.missed + ' missed rings over ' + COACHING_WINDOW_WORKDAYS_ + ' workdays';
+  };
+  var heldFor = rcpt && rcpt.wouldGoTo && rcpt.wouldGoTo.length ? rcpt.wouldGoTo.join(', ') : 'no manager on file yet';
+  var heldText = 'Held for admins: this is the email ' + dept + "'s managers (" + heldFor
+    + ') will get once coaching is released. They were not sent it.';
+  var subject = '[Held for admins] Coaching for ' + dept + ': ' + n + ' agent' + (n === 1 ? '' : 's') + ' to talk with';
+  var notice = {
+    tone: 'neutral', kicker: 'Coaching · ' + dept,
+    title: n + ' agent' + (n === 1 ? '' : 's') + ' to talk with',
+    subtitle: win.from + ' .. ' + win.to + ' (' + COACHING_WINDOW_WORKDAYS_ + ' workdays)',
+    callout: { kicker: 'Held for admins', html: appEsc_(heldText), tone: 'warn' },
+    list: { title: 'Answering well behind the team', items: flags.map(function (f) { return appEsc_(line(f)); }) },
+    stepsTitle: 'What to do',
+    steps: [
+      { head: 'Talk, or change the queues.', body: 'Meet with each of them about it, or change their queue assignment.' },
+      { head: 'Close the flag.', body: 'Mark it Met (you talked), Rotated (you changed the queues) or Dismissed (not a real issue) in the coaching worklist.' },
+    ],
+    ctaUrl: appDashUrl_('#/admin/coaching'), ctaLabel: 'Open the coaching worklist',
+    footerHtml: appEsc_('Flagged when an agent answers less than ' + g.maxTeamRatioPct + '% as often as the team, at least '
+      + g.behindPts + ' points behind, with ' + g.minMissed + '+ missed rings.'),
+  };
+  var body = [heldText, '', subject.replace('[Held for admins] ', ''), win.from + ' .. ' + win.to, '']
+    .concat(flags.map(function (f) { return '  - ' + line(f); }))
+    .concat(['', 'What to do: meet with each of them, or change their queue assignment; then mark the flag Met,',
+      'Rotated or Dismissed in the coaching worklist.']).join('\n');
+  return { subject: subject, notice: notice, body: body };
+}
+
+/** Sends the held manager email for every dept with NEW flags. Best-effort:
+ *  a failed send is counted, never thrown (the run itself already landed). */
+function coachingSendHeldManagerEmails_(newFlags, win) {
+  var byDept = {}, out = { sent: 0, failed: 0 };
+  (newFlags || []).forEach(function (f) { (byDept[f.dept] = byDept[f.dept] || []).push(f); });
+  Object.keys(byDept).forEach(function (dept) {
+    try {
+      var rcpt = coachingManagerRecipients_(dept);
+      if (!rcpt.to || !rcpt.to.length) { out.failed++; return; }
+      var m = coachingManagerEmail_(dept, byDept[dept], win, rcpt);
+      sendAppEmail_({ to: rcpt.to.join(','), subject: m.subject, notice: m.notice, body: m.body });
+      out.sent++;
+    } catch (e) {
+      out.failed++;
+      Logger.log('coachingSendHeldManagerEmails_: %s failed: %s', dept, (e && e.message) || e);
+    }
+  });
+  return out;
+}
+
+/**
+ * RPC (admin): email the CALLER the manager version for one dept over the
+ * current window -- what that dept's managers would read today. Throttled
+ * (SEC-2). Refuses a dept with nothing flagged rather than send an empty one.
+ */
+function previewCoachingManagerEmail(req) {
+  assertAdmin_();
+  var me = String(Session.getActiveUser().getEmail() || '').trim();
+  if (!me) throw new Error('Could not tell who you are -- sign in again.');
+  var dept = String((req && req.department) || '').trim();
+  if (getAllDepartments_().indexOf(dept) === -1) throw new Error('Unknown department: ' + dept);
+  var win = coachingCurrentWindow_();
+  if (!win) throw new Error('No DQE data yet.');
+  var flags = coachingDeptFlags_(dept, win);
+  if (!flags.length) throw new Error('No agent in ' + dept + ' meets the coaching gates for ' + win.from + ' .. ' + win.to + ' -- nothing to preview.');
+  assertReportEmailThrottle_(me);
+  var m = coachingManagerEmail_(dept, flags, win, coachingManagerRecipients_(dept));
+  sendAppEmail_({ to: me, subject: '[Preview] ' + m.subject, notice: m.notice, body: m.body });
+  return { sentTo: me, department: dept, flags: flags.length, window: win };
 }
 
 /** Trigger handler. Weekly; gated on COACHING_DELIVERY_ENABLED. */
@@ -469,8 +706,8 @@ function coachingDeliveryRun_() {
                   + '% as often as the team (' + appEsc_(f.ratePct) + '% vs ' + appEsc_(f.teamRatePct) + '%, ' + appEsc_(f.gapPts)
                   + ' pts behind) — ' + appEsc_(f.missed) + ' missed of ' + appEsc_(f.rung) + ' rung';
               }) },
-              callout: { kicker: 'Gates', html: 'rate &lt; ' + (COACHING_MAX_TEAM_RATIO_ * 100) + '% of team rate, &ge; ' + COACHING_BEHIND_TEAM_PTS_
-                + ' pts behind, &ge; ' + COACHING_MIN_MISSED_ + ' missed — roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides. '
+              callout: { kicker: 'Gates', html: 'company defaults: rate &lt; ' + (COACHING_MAX_TEAM_RATIO_ * 100) + '% of team rate, &ge; ' + COACHING_BEHIND_TEAM_PTS_
+                + ' pts behind, &ge; ' + COACHING_MIN_MISSED_ + ' missed (a department may set its own) — roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides. '
                 + 'Admin-only until released; managers are not copied.', tone: 'neutral' },
               ctaUrl: appDashUrl_('#/admin/coaching'), ctaLabel: 'Open the worklist',
               footerHtml: 'Sent by the weekly coaching delivery (Operator State #48).',
@@ -501,6 +738,10 @@ function coachingDeliveryRun_() {
           + '); ' + toEmail.length + ' flag(s) kept pending, re-emailed on the next run';
       }
     }
+    // Step 5b: each dept's MANAGER email for its NEW flags, held for admins.
+    var held = coachingSendHeldManagerEmails_(diff.newFlags, preview.window);
+    if (held.sent) emailNote += ' — ' + held.sent + ' manager email(s) held for admins';
+    if (held.failed) emailNote += ' — ' + held.failed + ' held manager email(s) not sent';
     return {
       // ENG-7 (broad-scan 2026-09-23): a run whose notification did not go
       // out is not an "ok" -- the OPS-8 classifier trusts the prefix, so the
@@ -547,7 +788,11 @@ function getCoachingWorklist(req) {
                   maxTeamRatio: COACHING_MAX_TEAM_RATIO_,
                   behindTeamPts: COACHING_BEHIND_TEAM_PTS_,
                   minMissed: COACHING_MIN_MISSED_ },
+    // Step 5b: every dept's admin / manager / applied gates, best-effort.
+    deptGates: {},
+    managerLayerOn: (typeof notifyManagerEditEnabled_ === 'function') && notifyManagerEditEnabled_(),
   };
+  try { meta.deptGates = coachingAllDeptGates_(); } catch (ge) { Logger.log('getCoachingWorklist: gates skipped: %s', ge); }
   var conn = getDashboardNeonConn_();
   if (!conn) return { available: false, rows: [], meta: meta };
   try {
@@ -588,8 +833,13 @@ function updateCoachingFlagStatus(req) {
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing flag id.');
   var action = String(req.action || '').toLowerCase().trim();
-  if (action !== 'resolved' && action !== 'dismissed') {
-    throw new Error('Action must be "resolved" or "dismissed".');
+  // Step 5b: three closes -- MET (the conversation happened), ROTATED (the
+  // agent's queue assignment was changed instead), DISMISSED (not a real
+  // issue). The pre-5b `resolved` is accepted as `met` (rows already closed
+  // as `resolved` keep that value and read as Met).
+  if (action === 'resolved') action = 'met';
+  if (COACHING_CLOSE_ACTIONS_.indexOf(action) === -1) {
+    throw new Error('Action must be "met", "rotated" or "dismissed".');
   }
   var note = String(req.note || '').trim().slice(0, COACHING_NOTE_MAX_);
   var admin = (Session.getActiveUser().getEmail() || '').toLowerCase();
