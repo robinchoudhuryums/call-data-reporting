@@ -67,6 +67,14 @@ function record(name, pass, detail) {
       days: p.querySelectorAll('.ap-day').length,
       onDays: p.querySelectorAll('.ap-day.is-on').length,
       onDate: (p.querySelector('.ap-day.is-on') || { getAttribute: () => null }).getAttribute('data-ap-date'),
+      dates: Array.from(p.querySelectorAll('.ap-day')).map((d) => d.getAttribute('data-ap-date')),
+      // Step 1: the selected box is inside the strip's visible scroll area.
+      onVisible: (function () {
+        const box = p.querySelector('[data-ap-stripbox]'), on = p.querySelector('.ap-day.is-on');
+        if (!box || !on) return false;
+        const b = box.getBoundingClientRect(), r = on.getBoundingClientRect();
+        return r.left >= b.left - 1 && r.right <= b.right + 1;
+      })(),
       tiles: p.querySelectorAll('.ap-kpis .ds-kpi').length,
       tabs: Array.from(p.querySelectorAll('.ap-tab')).map((t) => t.getAttribute('data-ap-tab')),
       onTab: (p.querySelector('.ap-tab.is-on') || { getAttribute: () => null }).getAttribute('data-ap-tab'),
@@ -84,8 +92,15 @@ function record(name, pass, detail) {
   record('row click opens the panel under that row', st.open && st.under === first,
     JSON.stringify({ under: st.under, want: first }));
   record('the open row says it is expanded', st.expanded === 'true');
-  record('the strip renders days, newest first, one selected',
+  record('the strip renders days, one selected',
     st.days > 1 && st.onDays === 1, 'days=' + st.days + ' on=' + st.onDays);
+  // Step 1 (owner 2026-10-16): oldest-first left to right; the panel opens on
+  // the NEWEST day, which is the right-hand end and scrolled into view.
+  const ascending = st.dates.every((d, i) => i === 0 || st.dates[i - 1] < d);
+  record('the strip runs oldest to newest, left to right', ascending, st.dates.join(','));
+  record('it opens on the newest day, scrolled into view',
+    st.onDate === st.dates[st.dates.length - 1] && st.onVisible,
+    JSON.stringify({ on: st.onDate, last: st.dates[st.dates.length - 1], visible: st.onVisible }));
   // Each day box carries its inbound answer rate top-right, computed exactly
   // as the Answer % column does (answered / (answered + missed), whole %).
   const rates = await page.evaluate(() => Array.from(document.querySelectorAll('#ap-panel .ap-day')).map((b) => {
