@@ -1,7 +1,10 @@
 'use strict';
 /**
- * ASSERTING driver for the My Department INBOUND | OUTBOUND | BOTH switch
- * and the Team Outbound side panel (Batch D).
+ * ASSERTING driver for the My Department outbound columns and the Team
+ * Outbound side panel (Batch D). Step 3 (owner 2026-10-16): inbound and
+ * outbound are TOGETHER by default for the admin -- the three-way Inbound |
+ * Outbound | Both switch became one "Show outbound columns" toggle (on =
+ * Both, off = the classic inbound table); the Outbound-only view is retired.
  *
  * The outbound view is a second table rendered over the same page state, so
  * the failures worth catching are the ones only a browser shows: the wrong
@@ -49,7 +52,7 @@ async function openDept(page, meta) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     page.on('pageerror', (e) => errors.push('manager pageerror: ' + e.message));
     await skipTour(page);
-    await page.addInitScript(() => { localStorage.setItem('cdr.dept.direction', 'out'); });
+    await page.addInitScript(() => { localStorage.setItem('cdr.dept.direction', 'both'); });
     await page.goto('file://' + path.join(__dirname, 'site', 'index-manager.html'));
     await page.waitForTimeout(2500);
     await openDept(page, meta);
@@ -59,8 +62,8 @@ async function openDept(page, meta) {
       obShown: getComputedStyle(document.getElementById('agents-ob-wrap')).display !== 'none',
       called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length,
     }));
-    record('manager: the direction switch is hidden', st.sw === 'none', st.sw);
-    record('manager: a stored "outbound" preference still shows the INBOUND table',
+    record('manager: the outbound columns toggle is hidden', st.sw === 'none', st.sw);
+    record('manager: a stored "columns on" preference still shows the INBOUND table',
       st.inShown && !st.obShown, JSON.stringify(st));
     await page.close();
   }
@@ -89,85 +92,33 @@ async function openDept(page, meta) {
     };
   });
 
-  let v = await view();
-  record('admin: Inbound is the default view', v.dir === 'in' && v.inShown && !v.obShown, JSON.stringify(v).slice(0, 120));
+  const toggleCols = async () => { await page.click('#dept-dir-switch [data-ob-cols]'); await page.waitForTimeout(900); };
 
-  // ---- Outbound ----------------------------------------------------------
-  await page.click('#dept-dir-switch [data-dir="out"]');
-  await page.waitForTimeout(900);
-  v = await view();
-  record('Outbound shows the outbound table and hides the inbound one', v.obShown && !v.inShown, JSON.stringify({ i: v.inShown, o: v.obShown }));
-  record('Outbound lists every agent the payload carries', v.rows === ob.agents.length,
-    'rows=' + v.rows + ' payload=' + ob.agents.length);
+  let v = await view();
+  record('admin: inbound AND outbound together is the default view (Step 3)',
+    v.dir === 'both' && v.obShown && !v.inShown, JSON.stringify(v).slice(0, 120));
+  record('the toggle reads "on"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'true');
+  record('the table shows inbound AND outbound columns side by side',
+    v.heads.some((h) => /Inbound/.test(h)) && v.heads.some((h) => /Outbound/.test(h)), v.heads.join(' | '));
+  {
+    const shown = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
+    const missing = ob.agents.map((a) => a.agent).filter((a) => shown.indexOf(a) === -1);
+    record('every agent the outbound payload carries has a row', !missing.length, 'missing=' + missing.join(', '));
+  }
   record('the total row shows the payload’s placed / connected totals',
     v.total.indexOf('(' + ob.totals.obTotal + ')') !== -1 && v.total.indexOf(String(ob.totals.obConnected)) !== -1,
-    v.total.slice(0, 80));
+    v.total.slice(0, 120));
   record('the team per-day figure renders on the total row', v.total.indexOf(ob.totals.obPerDay + ' / day') !== -1,
     'want ' + ob.totals.obPerDay);
   record('the note says what Connected means and that exports stay inbound',
     /far end answered/.test(v.note) && /inbound table/.test(v.note), v.note.slice(0, 90));
   record('the off-roster dialler is disclosed, not shown', /1 dialler/.test(v.note)
     && !(await page.locator('#agents-ob-tbody tr[data-agent="Off Roster Dialler"]').count()));
-  record('Team Outbound replaces Team Rings in the Outbound view', v.tob && !v.rings && v.tobRows === ob.agents.length,
+  record('Team Rings stays and Team Outbound shows beside it', v.rings && v.tob && v.tobRows === ob.agents.length,
     JSON.stringify({ tob: v.tob, rings: v.rings, rows: v.tobRows }));
   record('Team Outbound tiles show the payload totals', v.tobTiles.indexOf(String(ob.totals.obTotal)) !== -1, v.tobTiles.slice(0, 60));
   record('a parent view groups the rows with per-dept subtotals',
     (await page.locator('#agents-ob-tbody tr.subq-subtotal').count()) === (ob.deptGroups ? ob.deptGroups.length : 0));
-
-  // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
-  {
-    const sum30 = require('./payloads/summary-30d.json');
-    const pri = (require('./payloads/dept-outbound-windows.json'))[sum30.meta.priorFrom + '|' + sum30.meta.priorTo];
-    const c = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
-      return {
-        perRow: rows.map((r) => r.querySelectorAll('.wow-chip').length),
-        notConnMuted: rows.every((r) => { const u = r.querySelector('.ob-u'); const ch = u && u.nextElementSibling; return !!ch && ch.classList.contains('wow-chip-muted'); }),
-        first: rows[0] ? { agent: rows[0].getAttribute('data-agent'), conn: Number(rows[0].querySelector('.ob-c').textContent),
-          chip: (rows[0].querySelector('.ob-c').nextElementSibling || {}).textContent || '' } : null,
-        totals: document.querySelectorAll('#agents-ob-tfoot .wow-chip, #agents-ob-tbody tr.subq-subtotal .wow-chip').length,
-      };
-    });
-    record('Batch F: the prior window is captured for this view', !!pri, sum30.meta.priorFrom + '|' + sum30.meta.priorTo);
-    record('Batch F: every agent row carries three chips (connected, not connected, connect %)',
-      c.perRow.length > 0 && c.perRow.every((n) => n === 3), c.perRow.join(','));
-    record('Batch F: the not-connected chip is always neutral', c.notConnMuted);
-    const pa = pri && c.first && pri.agents.filter((a) => a.agent === c.first.agent)[0];
-    const want = pa ? c.first.conn - pa.obConnected : NaN;
-    const got = c.first ? Number(c.first.chip.replace(/[^0-9+\u2212-]/g, '').replace('\u2212', '-')) : NaN;
-    record('Batch F: the connected chip is current minus prior for that agent', pa && got === want,
-      (c.first && c.first.chip) + ' want ' + want);
-    record('Batch F: Total and subtotal rows carry no chips', c.totals === 0, 'chips=' + c.totals);
-  }
-
-  // Sorting by a column re-renders and keeps the rows.
-  await page.click('#agents-ob-thead th[data-ob-sort="agent"]');
-  await page.waitForTimeout(300);
-  const firstAfterSort = await page.locator('#agents-ob-tbody tr[data-agent]').first().getAttribute('data-agent');
-  const expectFirst = ob.agents.filter((a) => a.scopeDept === ob.meta.scopeDepts[0])
-    .map((a) => a.agent).sort((x, y) => x.localeCompare(y))[0];
-  record('sorting by Agent orders the rows A-Z within the group', firstAfterSort === expectFirst,
-    firstAfterSort + ' vs ' + expectFirst);
-
-  // The inline agent panel opens from an outbound row too.
-  await page.locator('#agents-ob-tbody tr[data-agent]').first().click();
-  await page.waitForTimeout(900);
-  const panel = await page.evaluate(() => {
-    const p = document.getElementById('ap-panel');
-    return { open: !!p, inOb: !!p && !!p.closest('#agents-ob-tbody') };
-  });
-  record('an outbound row opens the inline agent panel beneath it', panel.open && panel.inOb, JSON.stringify(panel));
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
-
-  // ---- Both --------------------------------------------------------------
-  await page.click('#dept-dir-switch [data-dir="both"]');
-  await page.waitForTimeout(700);
-  v = await view();
-  record('Both shows inbound AND outbound columns side by side',
-    v.heads.some((h) => /Inbound/.test(h)) && v.heads.some((h) => /Outbound/.test(h)) && v.obShown && !v.inShown,
-    v.heads.join(' | '));
-  record('Both keeps Team Rings AND shows Team Outbound', v.rings && v.tob);
   const overlap = await page.evaluate(() => {
     const a = document.getElementById('dept-team-rings').getBoundingClientRect();
     const b = document.getElementById('dept-team-outbound').getBoundingClientRect();
@@ -178,23 +129,75 @@ async function openDept(page, meta) {
     const r = document.querySelector('#agents-ob-tbody tr[data-agent]');
     return r ? r.querySelectorAll('td').length : 0;
   });
-  record('each Both row carries both directions’ cells', bothRow === 6, 'cells=' + bothRow);
-  const bothChips = await page.evaluate(() => {
-    const r = document.querySelector('#agents-ob-tbody tr[data-agent]');
-    return r ? r.querySelectorAll('td.ob-dir-out .wow-chip').length : -1;
+  record('each row carries both directions’ cells', bothRow === 6, 'cells=' + bothRow);
+
+  // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
+  {
+    const sum30 = require('./payloads/summary-30d.json');
+    const pri = (require('./payloads/dept-outbound-windows.json'))[sum30.meta.priorFrom + '|' + sum30.meta.priorTo];
+    const c = await page.evaluate(() => {
+      // Rows with an outbound record (an inbound-only agent has no outbound chips).
+      const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).filter((r) => r.querySelector('.ob-c'));
+      return {
+        perRow: rows.map((r) => r.querySelectorAll('td.ob-dir-out .wow-chip').length),
+        notConnMuted: rows.every((r) => { const u = r.querySelector('.ob-u'); const ch = u && u.nextElementSibling; return !!ch && ch.classList.contains('wow-chip-muted'); }),
+        first: rows[0] ? { agent: rows[0].getAttribute('data-agent'), conn: Number(rows[0].querySelector('.ob-c').textContent),
+          chip: (rows[0].querySelector('.ob-c').nextElementSibling || {}).textContent || '' } : null,
+        totals: document.querySelectorAll('#agents-ob-tfoot td.ob-dir-out .wow-chip, #agents-ob-tbody tr.subq-subtotal td.ob-dir-out .wow-chip').length,
+      };
+    });
+    record('Batch F: the prior window is captured for this view', !!pri, sum30.meta.priorFrom + '|' + sum30.meta.priorTo);
+    record('Batch F: every outbound row carries three chips (connected, not connected, connect %)',
+      c.perRow.length > 0 && c.perRow.every((n) => n === 3), c.perRow.join(','));
+    record('Batch F: the not-connected chip is always neutral', c.notConnMuted);
+    const pa = pri && c.first && pri.agents.filter((a) => a.agent === c.first.agent)[0];
+    const want = pa ? c.first.conn - pa.obConnected : NaN;
+    const got = c.first ? Number(c.first.chip.replace(/[^0-9+\u2212-]/g, '').replace('\u2212', '-')) : NaN;
+    record('Batch F: the connected chip is current minus prior for that agent', pa && got === want,
+      (c.first && c.first.chip) + ' want ' + want);
+    record('Batch F: Total and subtotal rows carry no outbound chips', c.totals === 0, 'chips=' + c.totals);
+  }
+
+  // Sorting by a column re-renders and keeps the rows.
+  await page.click('#agents-ob-thead th[data-ob-sort="agent"]');
+  await page.waitForTimeout(300);
+  const firstGroup = await page.evaluate(() => {
+    const out = [];
+    for (const r of Array.from(document.querySelectorAll('#agents-ob-tbody tr'))) {
+      if (r.classList.contains('subq-subtotal')) break;
+      if (r.hasAttribute('data-agent')) out.push(r.getAttribute('data-agent'));
+    }
+    return out;
   });
-  record('Batch F: Both rows carry the outbound chips too', bothChips === 3, 'chips=' + bothChips);
+  const sortedA = firstGroup.slice().sort((x, y) => x.localeCompare(y));
+  const sortedD = sortedA.slice().reverse();
+  record('sorting by Agent orders the rows within the group',
+    firstGroup.length > 1 && (firstGroup.join('|') === sortedA.join('|') || firstGroup.join('|') === sortedD.join('|')),
+    firstGroup.slice(0, 4).join(', '));
 
-  // ---- back to Inbound, and the view-as guard -------------------------------
-  await page.click('#dept-dir-switch [data-dir="in"]');
-  await page.waitForTimeout(500);
+  // The inline agent panel opens from a row of the combined table too.
+  await page.locator('#agents-ob-tbody tr[data-agent]').first().click();
+  await page.waitForTimeout(900);
+  const panel = await page.evaluate(() => {
+    const p = document.getElementById('ap-panel');
+    return { open: !!p, inOb: !!p && !!p.closest('#agents-ob-tbody') };
+  });
+  record('a combined-table row opens the inline agent panel beneath it', panel.open && panel.inOb, JSON.stringify(panel));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+
+  // ---- columns off, and back on --------------------------------------------
+  await toggleCols();
   v = await view();
-  record('Inbound restores the original table and Team Rings', v.inShown && !v.obShown && v.rings && !v.tob);
-
-  await page.click('#dept-dir-switch [data-dir="out"]');
-  await page.waitForTimeout(600);
-  const stored = await page.evaluate(() => localStorage.getItem('cdr.dept.direction'));
-  record('the choice persists per browser', stored === 'out', String(stored));
+  record('columns OFF restores the original inbound table and Team Rings only', v.dir === 'in' && v.inShown && !v.obShown && v.rings && !v.tob,
+    JSON.stringify({ dir: v.dir, i: v.inShown, o: v.obShown, rings: v.rings, tob: v.tob }));
+  record('the toggle reads "off"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'false');
+  let stored = await page.evaluate(() => localStorage.getItem('cdr.dept.direction'));
+  record('"off" persists per browser', stored === 'in', String(stored));
+  await toggleCols();
+  stored = await page.evaluate(() => localStorage.getItem('cdr.dept.direction'));
+  v = await view();
+  record('columns back ON', v.dir === 'both' && v.obShown && !v.inShown && stored === 'both', JSON.stringify({ dir: v.dir, stored: stored }));
 
   // ---- narrow viewport --------------------------------------------------
   await page.setViewportSize({ width: 360, height: 800 });
@@ -212,16 +215,17 @@ async function openDept(page, meta) {
   // An explicit Refresh refetches the view (OB_VIEW_.key = null), and render()
   // can run obViewSync_ again before the reply lands: the request for a window
   // still in flight must not be sent a second time. A fresh page, in the order
-  // a user takes: land on Inbound, switch to Outbound, Refresh (twice).
+  // a user takes: land with the columns off, turn them on, Refresh (twice).
   {
     const pr = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     pr.on('pageerror', (e) => errors.push('refresh pageerror: ' + e.message));
     await skipTour(pr);
+    await pr.addInitScript(() => { localStorage.setItem('cdr.dept.direction', 'in'); });
     await pr.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
     await pr.waitForTimeout(2500);
     await openDept(pr, meta);
     const beforeSwitch = await pr.evaluate(() => (window.__HARNESS__.calls || []).length);
-    await pr.click('#dept-dir-switch [data-dir="out"]');
+    await pr.click('#dept-dir-switch [data-ob-cols]');
     await pr.waitForTimeout(2500);
     // FO-3: the table and the Insights Outbound fold share ONE client store,
     // so the switch asks for each window once between them, not once each.
@@ -235,8 +239,11 @@ async function openDept(page, meta) {
         table: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
         fold: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
       }));
-      record('switching to Outbound asks for each window ONCE between the table and the Insights fold, and both render',
-        Object.keys(per).length === 2 && Object.keys(per).every((k) => per[k] === 1) && both.table > 0 && both.fold === 5,
+      // Step 3: the brief's Outbound row already loaded both windows with the
+      // page, so turning the columns on sends NOTHING -- the table reads them
+      // from the same store.
+      record('turning the columns on asks for nothing new (the Outbound row already holds both windows), and both render',
+        Object.keys(per).length === 0 && both.table > 0 && both.fold === 5,
         JSON.stringify({ per: per, both: both }));
     }
     for (let round = 1; round <= 2; round++) {

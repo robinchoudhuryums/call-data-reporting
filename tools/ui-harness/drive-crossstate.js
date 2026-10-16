@@ -11,12 +11,14 @@
  * walks the sequences a manager will walk once the gates open:
  *   1. dept switch with the brief open -- the brief follows the new dept's
  *      payload (answer rate, tier, the G2 default-target label);
- *   2. dept switch in the Outbound view -- the direction holds and no row of
- *      the previous dept survives;
+ *   2. dept switch with the outbound columns on (Step 3: the three-way
+ *      switch became one toggle) -- it holds and no row of the previous dept
+ *      survives;
  *   3. the brief's Callbacks row never quotes another dept's callbacks;
- *   4. view-as in and out -- the brief and the switch hide, the direction
- *      falls back to Inbound and comes back, the brief follows the dept shown;
- *   5. the brief's Callbacks jump switches direction only from Inbound (F24).
+ *   4. view-as in and out -- the brief and the toggle hide, the table falls
+ *      back to Inbound and comes back, the brief follows the dept shown;
+ *   5. the brief's Callbacks row opens its section in place, with the outbound
+ *      columns on OR off, and never changes them (F24 / Step 3).
  * The Insights mock routes by department (build-harness.js) and serves REAL
  * server payloads for CSR and Sales (gen-payloads.js), so a brief left on the
  * previous dept is visible.
@@ -86,7 +88,12 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
     };
   });
   const switchDept = async (d) => { await page.selectOption('#dept-selector', d); await page.waitForTimeout(3500); };
-  const setDir = async (d) => { await page.click('#dept-dir-switch [data-dir="' + d + '"]'); await page.waitForTimeout(1200); };
+  // Step 3: the switch is one "Show outbound columns" toggle -- 'both' (on) or
+  // 'in' (off). Click it only when the page is not already in the state asked.
+  const setDir = async (d) => {
+    const cur = await page.evaluate(() => document.body.getAttribute('data-dir'));
+    if (cur !== d) { await page.click('#dept-dir-switch [data-ob-cols]'); await page.waitForTimeout(1200); }
+  };
 
   // ---- 1. dept switch with the brief open -------------------------------
   let s = await state();
@@ -103,19 +110,19 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
   record('dept switch: the top-line tier is the new dept\'s verdict (green at 80, not CSR\'s 92/2 amber)',
     s.tier === 'green', s.tier);
 
-  // ---- 2. dept switch in the Outbound view ------------------------------
+  // ---- 2. dept switch with the outbound columns on ----------------------
   await switchDept('CSR');
-  await setDir('out');
+  await setDir('both');
   s = await state();
-  record('Outbound on CSR lists the payload\'s agents', s.dir === 'out' && s.obShown && !s.inShown && s.obAgents.length === ob.agents.length,
+  record('outbound columns on CSR list the payload\'s agents', s.dir === 'both' && s.obShown && !s.inShown && s.obAgents.length === ob.agents.length,
     JSON.stringify({ dir: s.dir, rows: s.obAgents.length, want: ob.agents.length }));
   const csrAgents = s.obAgents.slice();
   const csrCb = s.cbText;
   await switchDept('Sales');
   s = await state();
-  record('dept switch in Outbound: the direction holds and the tables never overlap',
-    s.dir === 'out' && s.obShown && !s.inShown, JSON.stringify({ dir: s.dir, i: s.inShown, o: s.obShown }));
-  record('dept switch in Outbound: no row of the previous dept survives',
+  record('dept switch with outbound columns: the toggle holds and the tables never overlap',
+    s.dir === 'both' && s.obShown && !s.inShown, JSON.stringify({ dir: s.dir, i: s.inShown, o: s.obShown }));
+  record('dept switch with outbound columns: no row of the previous dept survives',
     !s.obAgents.some((a) => csrAgents.indexOf(a) !== -1), JSON.stringify(s.obAgents));
 
   // ---- 3. the brief's Callbacks row (F20) --------------------------------
@@ -137,8 +144,8 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
   await page.selectOption('#view-as-select', '');
   await page.waitForTimeout(3500);
   s = await state();
-  record('leaving view-as: the saved direction comes back (Outbound) and the switch returns',
-    !s.viewAs && s.switchShown && s.dir === 'out' && s.obShown && !s.inShown,
+  record('leaving view-as: the outbound columns come back and the toggle returns',
+    !s.viewAs && s.switchShown && s.dir === 'both' && s.obShown && !s.inShown,
     JSON.stringify({ viewAs: s.viewAs, sw: s.switchShown, dir: s.dir, i: s.inShown, o: s.obShown }));
   record('leaving view-as: the brief has its Callbacks row back (it was rendered during the preview, without one)',
     s.cbText !== null, JSON.stringify(s.cbText));
@@ -146,21 +153,33 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
     s.briefShown && !!RATE[s.dept] && s.top.indexOf(RATE[s.dept]) !== -1,
     JSON.stringify({ dept: s.dept, top: s.top.slice(0, 70) }));
 
-  // ---- 5. the Callbacks jump (F24) --------------------------------------
-  await setDir('both');
+  // ---- 5. the Callbacks row (F24 / Step 3) -------------------------------
+  // The row opens the Callbacks section IN PLACE and never touches the outbound
+  // columns: Outbound and Callbacks are their own rows, independent of them.
   const cbRow = page.locator('#ins-brief .ins-brief-row[data-brief-key="callbacks"]');
+  const cbOpen = () => page.evaluate(() => {
+    const f = document.getElementById('ins-cb-fold');
+    const slot = document.getElementById('ins-brief-slot-callbacks');
+    return { open: !!(f && f.open), inSlot: !!(slot && f && slot.contains(f)), shown: !!(slot && !slot.hidden),
+             dir: document.body.getAttribute('data-dir') };
+  });
   if (await cbRow.count()) {
+    await setDir('both');
     await cbRow.click();
-    await page.waitForTimeout(800);
-    s = await state();
-    record('Callbacks jump from Both keeps Both (F24)', s.dir === 'both', s.dir);
+    await page.waitForTimeout(900);
+    let o = await cbOpen();
+    record('Callbacks row opens its section in place; the columns stay on', o.open && o.inSlot && o.shown && o.dir === 'both', JSON.stringify(o));
+    await cbRow.click();
+    await page.waitForTimeout(400);
     await setDir('in');
-    await cbRow.click();
-    await page.waitForTimeout(800);
-    s = await state();
-    record('Callbacks jump from Inbound switches to Outbound', s.dir === 'out', s.dir);
+    await page.locator('#ins-brief .ins-brief-row[data-brief-key="callbacks"]').click();
+    await page.waitForTimeout(900);
+    o = await cbOpen();
+    record('Callbacks row with the columns OFF: it opens, and the columns stay off', o.open && o.inSlot && o.shown && o.dir === 'in', JSON.stringify(o));
+    const obRow = page.locator('#ins-brief .ins-brief-row[data-brief-key="outbound"]');
+    record('Outbound row is there with the columns off', (await obRow.count()) === 1, 'rows=' + (await obRow.count()));
   } else {
-    record('Callbacks jump: the brief carries a Callbacks row for the admin', false, 'no row');
+    record('Callbacks row: the brief carries a Callbacks row for the admin', false, 'no row');
   }
 
   const unmocked = await page.evaluate(() => (window.__HARNESS__ || {}).unmocked || []);

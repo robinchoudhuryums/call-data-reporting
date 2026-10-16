@@ -4,9 +4,13 @@
  * Insights region -- the Outbound report's callback analysis moving onto the
  * page (G3 retired the modal). Admin-only while the report is (6c).
  *
- * What only a browser shows: the fold appearing ONLY on the Outbound / Both
- * direction, staying LAZY (no getOutboundReport until it is opened, one fetch
- * per window), the modal's own renderers actually painting into it (tiles,
+ * Step 3 (owner 2026-10-16): the fold is the Insights brief's Callbacks ROW
+ * (an accordion under the team cards), independent of the outbound columns
+ * toggle, and it PRELOADS -- one fetch per window once the page settles, the
+ * row and head answering before it is opened (Direct lines too).
+ *
+ * What only a browser shows: the section opening in place from its row,
+ * one fetch per window, the modal's own renderers actually painting into it (tiles,
  * both strips, a NON-blank chart -- including after a close/reopen, the C3
  * zero-height trap), the not-called-back drill reaching the call path, the
  * CSV / email actions reading the window on screen, a 360 px page that does
@@ -58,8 +62,18 @@ function calls(page, fn) {
 
 function foldState() {
   const f = document.getElementById('ins-cb-fold');
-  return { shown: !!f && getComputedStyle(f).display !== 'none', open: !!f && f.open,
+  const slot = document.getElementById('ins-brief-slot-callbacks');
+  const row = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="callbacks"] .ins-brief-text');
+  return { shown: !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none', open: !!f && f.open,
+    inRow: !!slot && !!f && slot.contains(f), slotShown: !!slot && !slot.hidden,
+    row: row ? row.textContent : null,
     head: ((document.getElementById('ins-cb-fold-head') || {}).textContent || '').trim() };
+}
+
+// Step 3: the section opens and closes from its brief row (its own summary is
+// hidden while it sits in the accordion).
+async function toggleCb(page) {
+  await page.click('#ins-brief .ins-brief-row[data-brief-key="callbacks"]');
 }
 
 // A canvas that is laid out AND drawn (varied pixels) -- drive-smoke's rule.
@@ -76,8 +90,8 @@ function chartDrawn() {
   return { drawn: false, why: 'uniform pixels' };
 }
 
-async function setDir(page, dir) {
-  await page.click('#dept-dir-switch [data-dir="' + dir + '"]');
+async function toggleColumns(page) {
+  await page.click('#dept-dir-switch [data-ob-cols]');
   await page.waitForTimeout(1200);
 }
 
@@ -88,6 +102,11 @@ async function setDir(page, dir) {
   const browser = await chromium.launch(launchOptions());
   const errors = [];
 
+  // Step 3: the preload also fetches the window the page LANDED on (before
+  // the driver sets its dates) -- a legitimate request -- so every count below
+  // is for the window on screen.
+  const onScreen = (arr) => arr.filter((a) => a && a.from === insMeta.from && a.to === insMeta.to);
+
   // ---- admin ----------------------------------------------------------------
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -95,21 +114,22 @@ async function setDir(page, dir) {
   await boot(page, 'index-admin.html', 'in');
   await openDept(page, meta);
 
+  await page.waitForTimeout(1500);   // the preload settles
   let st = await page.evaluate(foldState);
-  record('admin, Inbound: the Callbacks fold is hidden', !st.shown, JSON.stringify(st));
-
-  await setDir(page, 'out');
-  st = await page.evaluate(foldState);
-  record('admin, Outbound: the Callbacks fold is shown, closed, and says it loads on open',
-    st.shown && !st.open && /open to load/.test(st.head), JSON.stringify(st));
-  record('LAZY: nothing is fetched while the fold is closed', (await calls(page, 'getOutboundReport')).length === 0);
-
-  await page.click('#ins-cb-fold > summary');
-  await page.waitForTimeout(2000);
-  const fetched = await calls(page, 'getOutboundReport');
-  record('opening it fetches the report ONCE, for the dept and the window on screen',
+  record('admin, columns OFF: the Callbacks section is on, in its brief row, closed',
+    st.shown && st.inRow && !st.open && !st.slotShown, JSON.stringify(st));
+  const fetched = onScreen(await calls(page, 'getOutboundReport'));
+  record('PRELOAD: it fetched the report ONCE while closed, for the dept and the window on screen',
     fetched.length === 1 && fetched[0].department === insMeta.department
       && fetched[0].from === insMeta.from && fetched[0].to === insMeta.to, JSON.stringify(fetched));
+  record('PRELOAD: the row and the head already answer the question',
+    /called back by the team/.test(st.head) && /^Callbacks: .*called back by the team/.test(st.row || ''), JSON.stringify({ head: st.head, row: st.row }));
+
+  await toggleCb(page);
+  await page.waitForTimeout(1500);
+  st = await page.evaluate(foldState);
+  record('its row opens it in place, with no second fetch',
+    st.open && st.slotShown && onScreen(await calls(page, 'getOutboundReport')).length === 1, JSON.stringify(st));
 
   const r = await page.evaluate(() => ({
     head: (document.getElementById('ins-cb-fold-head') || {}).textContent || '',
@@ -135,13 +155,13 @@ async function setDir(page, dir) {
   record('the daily callback chart is drawn (non-blank)', ch.drawn, JSON.stringify(ch));
 
   // Close + reopen: no re-fetch, and the chart is redrawn at a real size.
-  await page.click('#ins-cb-fold > summary');
+  await toggleCb(page);
   await page.waitForTimeout(400);
-  await page.click('#ins-cb-fold > summary');
+  await toggleCb(page);
   await page.waitForTimeout(1200);
   ch = await page.evaluate(chartDrawn);
   record('reopening repaints from the held payload (no second fetch) with a drawn chart',
-    (await calls(page, 'getOutboundReport')).length === 1 && ch.drawn, JSON.stringify(ch));
+    onScreen(await calls(page, 'getOutboundReport')).length === 1 && ch.drawn, JSON.stringify(ch));
 
   // The not-called-back drill, then the call path from one of its rows.
   await page.click('#ins-cb-uncalled-btn');
@@ -215,14 +235,15 @@ async function setDir(page, dir) {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(500);
 
-  // CE-3: Direct lines -- lazy inside the fold, then the repeat list.
-  record('CE-3: the Direct lines block is closed and has fetched nothing',
-    (await calls(page, 'getOutboundDirectCallbacks')).length === 0
+  // CE-3: Direct lines -- PRELOADED (Step 3) with the Callbacks payload,
+  // still closed, then opened, then the repeat list.
+  record('CE-3 / Step 3: the Direct lines block is closed and already loaded, once',
+    onScreen(await calls(page, 'getOutboundDirectCallbacks')).length === 1
       && await page.evaluate(() => !document.getElementById('ins-dl-fold').open
-        && /open to load/.test(document.getElementById('ins-dl-head').textContent)));
+        && /called back by the team/.test(document.getElementById('ins-dl-head').textContent)));
   await page.click('#ins-dl-fold > summary');
   await page.waitForTimeout(1200);
-  const dlc = await calls(page, 'getOutboundDirectCallbacks');
+  const dlc = onScreen(await calls(page, 'getOutboundDirectCallbacks'));
   const dl = await page.evaluate(() => ({
     head: document.getElementById('ins-dl-head').textContent,
     counts: document.getElementById('ins-dl-counts').textContent,
@@ -230,7 +251,7 @@ async function setDir(page, dir) {
     after: document.querySelectorAll('#ins-dl-after .ds-kpi').length,
     note: (function () { const n = document.getElementById('ins-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })(),
   }));
-  record('CE-3: opening it fetches the direct-line figures ONCE, for the fold’s window and dept',
+  record('CE-3: opening it sends nothing new -- the ONE fetch was for the fold’s window and dept',
     dlc.length === 1 && dlc[0].from === insMeta.from && dlc[0].to === insMeta.to && dlc[0].department === insMeta.department,
     JSON.stringify(dlc));
   record('CE-3: work-hours and after-hours rows, "by the person" and "by their team" apart',
@@ -264,7 +285,7 @@ async function setDir(page, dir) {
   await page.click('#ins-dl-fold > summary');
   await page.waitForTimeout(800);
   record('CE-3: closing and reopening the block does not re-fetch',
-    (await calls(page, 'getOutboundDirectCallbacks')).length === 1);
+    onScreen(await calls(page, 'getOutboundDirectCallbacks')).length === 1);
 
   // CSV + email read the held payload's window.
   await page.click('#ins-cb-csv-btn');
@@ -282,13 +303,15 @@ async function setDir(page, dir) {
     mail.length === 1 && mail[0].from === insMeta.from && mail[0].to === insMeta.to
       && mail[0].department === insMeta.department, JSON.stringify(mail));
 
-  await setDir(page, 'both');
+  // Step 3: the outbound COLUMNS toggle never touches the Callbacks section.
+  await toggleColumns(page);
   st = await page.evaluate(foldState);
-  record('Both: the fold stays', st.shown, JSON.stringify(st));
-  await setDir(page, 'in');
+  const dirOn = await page.evaluate(() => document.body.getAttribute('data-dir'));
+  record('columns ON: the section stays, open, in its row', dirOn === 'both' && st.shown && st.open && st.inRow, JSON.stringify(st));
+  await toggleColumns(page);
   st = await page.evaluate(foldState);
-  record('back to Inbound: the fold hides again', !st.shown, JSON.stringify(st));
-  record('...and switching direction never re-fetched the report', (await calls(page, 'getOutboundReport')).length === 1);
+  record('columns OFF again: still there', st.shown && st.inRow, JSON.stringify(st));
+  record('...and the toggle never re-fetched the report', onScreen(await calls(page, 'getOutboundReport')).length === 1);
 
   // View-as: the fold disappears with the direction switch.
   const opts = await page.evaluate(() => Array.from(document.querySelectorAll('#view-as-select option'))
@@ -330,8 +353,8 @@ async function setDir(page, dir) {
         top: r ? Math.round(r.top) : null,
         modal: !!document.getElementById('outbound-modal') };
     });
-    record('G3: #/report/outbound lands on My Department, Outbound, the Callbacks fold open, loaded and held at the top of the screen',
-      dl.page === 'dept' && dl.dir === 'out' && dl.shown && dl.open && dl.tiles === 7 && dl.inView && !dl.modal,
+    record('G3: #/report/outbound lands on My Department with the Callbacks row open, loaded and held at the top of the screen -- the saved columns choice untouched',
+      dl.page === 'dept' && dl.dir === 'in' && dl.shown && dl.open && dl.tiles === 7 && dl.inView && !dl.modal,
       JSON.stringify(dl));
     await pd.close();
   }
@@ -355,9 +378,9 @@ async function setDir(page, dir) {
   {
     const pn = await browser.newPage({ viewport: { width: 360, height: 800 } });
     pn.on('pageerror', (e) => errors.push('360 pageerror: ' + e.message));
-    await boot(pn, 'index-admin.html', 'out');
+    await boot(pn, 'index-admin.html', 'both');
     await openDept(pn, meta);
-    await pn.evaluate(() => { const f = document.getElementById('ins-cb-fold'); if (f) f.open = true; });
+    await toggleCb(pn);
     await pn.waitForTimeout(2000);
     const n = await pn.evaluate(() => ({
       tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
@@ -372,14 +395,14 @@ async function setDir(page, dir) {
   {
     const pm = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     pm.on('pageerror', (e) => errors.push('manager pageerror: ' + e.message));
-    await boot(pm, 'index-manager.html', 'out');
+    await boot(pm, 'index-manager.html', 'both');
     await openDept(pm, meta);
     const m = await pm.evaluate(() => {
       const f = document.getElementById('ins-cb-fold');
       return { fold: !!f && getComputedStyle(f).display !== 'none',
         called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getOutboundReport').length };
     });
-    record('manager (Outbound saved): the Callbacks fold is hidden and never fetches', !m.fold && m.called === 0, JSON.stringify(m));
+    record('manager (outbound columns saved on): the Callbacks fold is hidden and never fetches', !m.fold && m.called === 0, JSON.stringify(m));
     await pm.close();
   }
 

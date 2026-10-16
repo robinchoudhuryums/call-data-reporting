@@ -2170,7 +2170,17 @@ stay pinned by INV-39, INV-53 and INV-06.
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
   stripped by `personalizeOverview_` (`companyOverview:v28`).
-- **Inbound | Outbound | Both on the agent table (owner 2026-10, Batch D).**
+- **Outbound columns on the agent table (owner 2026-10, Batch D; one toggle
+  since Step 3).** **Step 3 (owner 2026-10-16): inbound and outbound are
+  TOGETHER by default** -- the three-way Inbound | Outbound | Both switch is now
+  ONE "Show outbound columns" toggle (`[data-ob-cols]`, `aria-pressed`): on =
+  the Both table, off = the classic inbound table. `obDir_` is 'both' unless
+  `cdr.dept.direction` holds an explicit 'in'; the retired 'out' (and an unset
+  key) lands on 'both', so the Outbound-only rendering below and the
+  `body[data-dir="out"]` rules are now UNREACHABLE (left in place, inert).
+  The Outbound summary and Callbacks no longer follow this toggle -- they are
+  the Insights brief's own rows (next bullets). Drivers that walk the INBOUND
+  table pin `cdr.dept.direction='in'`. The original Batch D text follows.
   `#dept-dir-switch` (admin-only until the Outbound report's 6c release; the
   6c pin in `cross-file-pins.test.js` moves it with the gate and the two outbound sections under the table).
   The client's permission IS the switch's visibility (`obAllowed_`), so
@@ -2212,10 +2222,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   table above is that); when the table also holds sub-queue agents, its head
   reads "<dept> only · N placed" and a note names the left-out sub-queues and
   the table's total (`insObHeadText_` / `insObOwnScope_`'s `scope`). It
-  shows only on the Outbound or Both direction (`obEffectiveDir_`,
-  i.e. `obAllowed_()`, the same gate as Batch D -- owner 2026-10-08 aligned it
-  with the G1 Callbacks fold; `obViewSync_` re-syncs both folds on a switch),
-  so Inbound, View-as and managers never fetch. A prior window that starts before capture shows
+  shows wherever `obAllowed_()` holds -- Step 3 (owner 2026-10-16): no longer
+  tied to the outbound COLUMNS toggle; for the admin it is mounted in the
+  Insights brief's Outbound ROW (the accordion bullet below) -- so View-as
+  and managers never fetch. A prior window that starts before capture shows
   no comparison and says why. A repeat sync of the same windows repaints from
   the last result. The fold persists as `ob` in the Insights folds store and
   is open by default. Rendered-gated by `drive-outbound-e.js` (incl. its
@@ -2265,12 +2275,22 @@ stay pinned by INV-39, INV-53 and INV-06.
   `INS_CB_SCROLL_QUIET_MS_`, capped at `INS_CB_SCROLL_MAX_MS_`, released by
   any wheel / touch / pointer / key input (FO-3: the sections above it are
   still loading at first paint, and a single scroll could leave the fold off
-  screen); a plain My Department landing while the switch is hidden). It shows only on the Outbound or Both
-  direction (`obEffectiveDir_`, i.e. `obAllowed_`: admin-only until 6c, hidden
-  in View-as) and is LAZY: nothing is fetched until the fold is open, one fetch
-  per dept + window, a reopen repaints from the held payload (the chart is
-  drawn only while open -- the C3 trap), and a new window orphans an in-flight
-  fetch and drill. For a parent dept the figures include its sub-queues'
+  screen); a plain My Department landing while the switch is hidden; Step 3: the link
+  opens the brief's Callbacks ROW -- `insBriefToggle_('callbacks', true)`, or
+  `INS_BRIEF_OPEN_.callbacks` before the brief exists -- and never touches the
+  outbound columns toggle). It shows wherever `obAllowed_` holds (admin-only
+  until 6c, hidden in View-as; Step 3: independent of the columns toggle) and
+  PRELOADS (Step 3 #8, owner 2026-10-16): a closed section fetches once the
+  page has settled -- `INS_CB_PREFETCH_MS_` after the last sync, so a burst of
+  date / dept changes sends one request (`INS_CB_.loadingKey` joins one already
+  out) -- and its head + brief row answer before it is opened; opening it
+  fetches at once if nothing is held. One fetch per dept + window, a reopen
+  repaints from the held payload (the chart is drawn only while open -- the C3
+  trap: a preloaded paint skips it, the open re-runs the render), and a new
+  window orphans an in-flight fetch and drill. The nested Direct lines block
+  preloads with it (`obDlSync_(prefix, req, { prefetchMs })`; the Overview's
+  `#ov-dl-fold` passes no option and stays lazy). Pinned behaviourally by
+  `brief-accordion.test.js`. For a parent dept the figures include its sub-queues'
   abandoned callers (as the modal's dept view did) and a note says so. The
   coverage note's "Adjust range" moves the My Department From date. The fold
   persists as `cb` in the Insights folds store. Rendered-gated by
@@ -2318,6 +2338,14 @@ stay pinned by INV-39, INV-53 and INV-06.
   Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:
   the Answer % column's formula and `answerTierCls_` dept-standard tint).
   Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
+  **PREFETCH (Step 3 #8, owner 2026-10-16):** resting the pointer on a row of
+  either agent table, or tabbing to its button, loads that agent's strip and
+  newest day after `AP_PRE_DELAY_MS_`, and the panel reads through the SAME
+  store (`apPreFetch_` / `apPreStrip_` / `apPreDay_`): a request already out is
+  joined, never sent twice; a failed one is never kept, so the open retries;
+  keys carry the window and the dept (F29); the newest `AP_PRE_MAX_` entries
+  are kept for the page load. Pinned by `brief-accordion.test.js` and
+  `drive-agentpanel.js` (hover sends one strip + one day; the click sends none).
   **Call DIRECTION has its own hue** (owner 2026-10): inbound = `--accent`
   (already "inbound" on Caller Lookup's chip), outbound = `--dir-out`, a
   violet no status token uses, so neither direction reads as good/bad. Both
@@ -2440,10 +2468,32 @@ stay pinned by INV-39, INV-53 and INV-06.
   `html-include-structure.test.js` pins both writers' `csvSafeCell_` routing,
   and `drive-subqueue.js` asserts the real clipboard bytes (tab-separated,
   every row carrying the header's column count, same row set as the CSV).
-- **The Insights ranked brief (UX-2, owner 2026-10-13).** `#ins-brief` sits at
-  the top of the Insights region: a top line and one row per section, most
+- **The Insights ranked brief (UX-2, owner 2026-10-13; an ACCORDION since
+  Step 3).** `#ins-brief` sits on My Department directly UNDER the team cards
+  (`#dept-team-strip`) and ABOVE the agent table (Step 3, owner 2026-10-16;
+  it used to open the Insights region): a top line and one row per section, most
   urgent first (`insBriefRank_`: red, amber, green, grey; ties Queue ->
-  Agents -> Callbacks -> Team detail -> Trend). The colour rules are PURE,
+  Agents -> Outbound -> Callbacks -> Team detail -> Trend). **Each row is a
+  disclosure button** (`aria-expanded` / `aria-controls`) that opens ITS
+  section in place beneath it: the section's EXISTING element is MOVED into
+  the row's `.ins-brief-slot` (`insBriefMountAll_`, a hidden
+  `[data-ins-home]` placeholder marks its home) and moved back
+  (`insBriefUnmountAll_`) at the top of every `insRenderBrief_` -- so ids,
+  renderers and draw-on-open listeners are unchanged, and View-as / a manager
+  get every section back at home (`insBriefRestoreFolds_` re-applies their
+  saved fold state). In the slot the section's own `<summary>` is hidden (the
+  row is its header). Open / closed is per PAGE LOAD (`INS_BRIEF_OPEN_`):
+  every section starts collapsed and nothing the accordion does writes the
+  per-user fold store (`insFoldSet_` / `insFoldsApply_` skip a mounted
+  section). A jump into a section (an agent chip, a calendar day, the
+  Callbacks deep link) goes through `insOpenSection_`, which opens the ROW
+  when the section is mounted -- setting the section's own `open` would leave
+  it inside a hidden slot. Outbound and Callbacks are their own grey rows
+  (`obAllowed_`), quoting their section heads; those fill in after the brief
+  is drawn, so `insBriefRowFromHead_` updates the row TEXT in place (a rebuild
+  would take the focus off a row just opened). `deptInsightsEnsureLive_`
+  generates the Insights payload for the admin even while the region at the
+  bottom is collapsed -- the brief needs it. The colour rules are PURE,
   self-contained functions in script-8 (`insBriefTopTier_` / `insBriefQueue_`
   / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
   `insights-brief.test.js` -- keep their thresholds as literals inside them,
@@ -2455,14 +2505,17 @@ stay pinned by INV-39, INV-53 and INV-06.
   and the `title`, so colour is never the only carrier; red uses `--warn`, amber the
   new `--caution` (same values as `--stale`, defined at every `--stale`
   site). ADMIN-ONLY during the trial: `data-admin-only` on the container,
-  the `USER.role` check in `insRenderBrief_`, and the same check on the trend
-  shading; while the brief shows, `#insights-results.ins-has-brief` hides
+  `insBriefActive_()` in `insRenderBrief_` (admin and not View-as), and the
+  `USER.role` check on the trend shading; while the brief shows, `#insights-results.ins-has-brief` hides
   `#ins-headline` -- guarded by `body:not([data-view-as="manager"])` so the
   headline returns in View-as. The Agents section is now a fold
   (`data-fold="agents"`, open by default) and leads the report, followed by
   Queue health, Team detail and Trend; every fold head is filled by
   `insSyncFoldHeads_` for every role. drive-smoke asserts the admin brief,
-  the manager and View-as absence, the order and a row opening its section.
+  its placement, collapsed-on-load, a row opening its section in place (chart
+  drawn, focus kept) and closing it, the manager and View-as absence (every
+  section back home) and the manager order; `brief-accordion.test.js` pins the
+  mount / restore / store rules.
 - **Draggable / resizable modals.** All modals can be
   repositioned via header drag and resized via a bottom-right
   corner handle. Position and size reset on close so the next

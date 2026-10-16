@@ -37,6 +37,9 @@ function record(name, pass, detail) {
   await page.addInitScript(() => {
     localStorage.setItem('cdr.tour.done', '1');
     localStorage.setItem('cdr.ins.intro.v1', '1');
+    // Step 3: an admin's default is inbound + outbound together, which shows
+    // the combined table; this driver walks the INBOUND table (columns off).
+    localStorage.setItem('cdr.dept.direction', 'in');
   });
   await page.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
   await page.waitForTimeout(2500);
@@ -88,9 +91,23 @@ function record(name, pass, detail) {
     };
   });
 
+  // ---- 0. Step 3 #8: resting the pointer on a row PREFETCHES its panel -----
+  const apCalls = () => page.evaluate((a) => (window.__HARNESS__.calls || [])
+    .filter((c) => (c.fn === 'getAgentDayStrip' || c.fn === 'getAgentDay') && c.args && c.args[0] && c.args[0].agentName === a)
+    .map((c) => c.fn), first);
+  const coldCalls = (await apCalls()).length;
+  await rows.nth(0).hover();
+  await page.waitForTimeout(1200);
+  const warm = await apCalls();
+  record('hovering a row prefetches its strip and newest day', coldCalls === 0
+    && warm.filter((f) => f === 'getAgentDayStrip').length === 1 && warm.filter((f) => f === 'getAgentDay').length === 1,
+    JSON.stringify({ before: coldCalls, after: warm }));
+
   // ---- 1. click opens it under the clicked row ----------------------------
   await rows.nth(0).click();
   await page.waitForTimeout(900);
+  record('opening the hovered row sends nothing new -- it reads the prefetch', (await apCalls()).length === warm.length,
+    JSON.stringify(await apCalls()));
   let st = await panelState();
   record('row click opens the panel under that row', st.open && st.under === first,
     JSON.stringify({ under: st.under, want: first }));

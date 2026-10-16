@@ -146,8 +146,11 @@ test('B3/CL-2: a cached day claims the sequence, so an older in-flight day canno
     apRenderDay_: function (d) { painted.push(d.date); },
     apSetHtml_: function () {}, apLoadingHtml_: function () { return ''; },
     escapeHtml: String,
+    AP_PRE_: {}, AP_PRE_ORDER_: [], AP_PRE_MAX_: 24,
   };
-  vm.runInNewContext(extractFn(s10, 'apSelectDay_'), sb);
+  // Step 3 #8: the day fetch goes through the prefetch store.
+  vm.runInNewContext(extractFn(s10, 'apSelectDay_') + '\n' + extractFn(s10, 'apPreFetch_')
+    + '\n' + extractFn(s10, 'apPreDay_'), sb);
   sb.AP_.days['2026-10-08'] = { date: '2026-10-08' };
   sb.apSelectDay_('2026-10-09');          // not cached: fetch in flight
   sb.apSelectDay_('2026-10-08');          // cached: instant render

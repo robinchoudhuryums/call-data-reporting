@@ -1003,12 +1003,14 @@ test('6c: the outbound vetting gate and the My Department outbound surfaces are 
     + ' -- release (or hold) the Insights Outbound fold with the report (Operator State #63).');
   assert.match(read('script-8-insights.html', DASH),
     // UX-1: the window is the page's (obSectionWindow_), so the guard is just "no window".
-    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(dir === 'in' \|\| !meta\) \{ insObHide_\(\); return; \}/,
-    'the Insights Outbound fold must take its permission from obEffectiveDir_ (obAllowed_, the ONE client gate) and hide on Inbound');
+    // Step 3 (owner 2026-10-16): the fold is the brief's Outbound row, so it no
+    // longer follows the outbound COLUMNS toggle -- obAllowed_ directly.
+    /var allowed = \(typeof obAllowed_ === 'function'\) && obAllowed_\(\);\n\s*if \(!allowed \|\| !meta\) \{ insObHide_\(\); return; \}/,
+    'the Insights Outbound fold must take its permission from obAllowed_ (the ONE client gate)');
 
   // G1: the Insights Callbacks fold (the Outbound report moving onto My
   // Department) rides the same pair, and takes its permission from the
-  // direction switch through obEffectiveDir_ ('in' whenever obAllowed_ is not).
+  // ONE client gate, obAllowed_ (Step 3: no longer the columns toggle).
   const cbFold = html.match(/<details[^>]*id="ins-cb-fold"[\s\S]*?>/);
   assert.ok(cbFold, '#ins-cb-fold is missing from dashboard.html');
   const cbHidden = /data-admin-only/.test(cbFold[0]) && /style="display:none;"/.test(cbFold[0]);
@@ -1017,8 +1019,8 @@ test('6c: the outbound vetting gate and the My Department outbound surfaces are 
     'OUTBOUND_VETTING_GATE_ is ' + gated + ' but #ins-cb-fold is ' + (cbHidden ? 'hidden' : 'visible')
     + ' -- release (or hold) the Insights Callbacks fold with the report (Operator State #63).');
   assert.match(read('script-8-insights.html', DASH),
-    /var dir = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) : 'in';\n\s*if \(!w \|\| dir === 'in'\) \{ fold\.style\.display = 'none'; return; \}/,
-    'the Insights Callbacks fold must take its permission from obEffectiveDir_ and hide on Inbound');
+    /var allowed = \(typeof obAllowed_ === 'function'\) && obAllowed_\(\);\n\s*if \(!w \|\| !allowed\) \{ fold\.style\.display = 'none';/,
+    'the Insights Callbacks fold must take its permission from obAllowed_');
 
   // Batch E2: the Overview tiles' outbound line is stripped on serve while the
   // gate stands, and FAILS CLOSED when OutboundReport.gs is not loaded.

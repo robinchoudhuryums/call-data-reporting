@@ -267,7 +267,10 @@ test('F20: the brief quotes callbacks ONLY for the window on screen', function (
   assert.match(brief, /insBriefCallbackFor_\(INS_CB_, cbw \? \[cbw\.department, cbw\.from, cbw\.to\]\.join\('\|'\) : null\)/,
     'the key is built exactly as insCbSync_ builds INS_CB_.key');
   assert.match(bodyOf(F, 'insCbSync_'), /var key = \[w\.department, w\.from, w\.to\]\.join\('\|'\);/);
-  assert.match(bodyOf(F, 'insCbRender_'), /insRenderBrief_\(insLastData\)/, 'a callbacks load repaints the brief');
+  // Step 3: the row is updated IN PLACE -- a rebuild would move the sections
+  // and take the focus off a row the user just opened.
+  assert.match(bodyOf(F, 'insCbRender_'), /insBriefRowFromHead_\('callbacks'\)/, 'a callbacks load updates its brief row');
+  assert.doesNotMatch(bodyOf(F, 'insCbRender_'), /insRenderBrief_\(/, 'and never rebuilds the accordion');
 });
 
 test('F23: the "need a look" count includes the top line\'s own tier', function () {
@@ -292,13 +295,14 @@ test('F28: no Queue health row while the Queue health fold is hidden', function 
   assert.match(bodyOf(F, 'insRenderQueueHealth_'), /if \(!qh \|\| !qh\.totals\) \{ wrap\.style\.display = 'none'; insQhFoldSync_\(''\); return; \}/);
 });
 
-test('F24: a brief jump to Callbacks switches direction only FROM Inbound', function () {
-  const go = bodyOf(F, 'insBriefGo_');
-  assert.match(go, /var fromInbound = \(typeof obEffectiveDir_ === 'function'\) \? obEffectiveDir_\(\) === 'in' : true;/);
-  assert.match(go, /if \(key === 'callbacks' && fromInbound\) \{\s*var out = document\.querySelector\('#dept-dir-switch \[data-dir="out"\]'\);/);
-  assert.match(go, /\(key === 'callbacks' && fromInbound\) \? 150 : 0/);
+test('F24 / Step 3: the Callbacks deep link opens the brief row and never touches the outbound columns', function () {
+  const deep = bodyOf(F, 'insCbDeepLink_');
+  assert.doesNotMatch(deep, /obDir_\s*=/, 'the link no longer flips the direction');
+  assert.match(deep, /if \(insBriefMounted_\(fold\)\) \{ insBriefToggle_\('callbacks', true\); return; \}/,
+    'a mounted section opens through its row');
+  assert.match(deep, /INS_BRIEF_OPEN_\.callbacks = true;/, 'before the brief exists, its first build opens the row');
+  assert.ok(!/function insBriefGo_\(/.test(srcOf(F)), 'the old jump-and-scroll is gone');
 });
-
 test('F22: the headline\'s "behind" count uses the R18 benchmark the chips use', function () {
   const head = bodyOf('script-4-nav.html', 'insHeadline_');
   assert.match(head, /const teamPctH = insTeamBenchmarkPct_\(data\);/);

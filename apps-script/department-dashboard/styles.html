@@ -1051,6 +1051,20 @@
   .ins-brief-top-tier.ins-brief--green { background: var(--good-soft); }
   .ins-brief--grey  { border-left-color: var(--line); }
   .ins-brief--grey  .ins-brief-sev, .ins-brief-top-tier.ins-brief--grey { color: var(--muted); }
+  /* Step 3 (owner 2026-10-16): the brief is an ACCORDION under the team cards.
+     A row opens its section in place: the section's own element is MOVED into
+     the row's slot (insBriefMountAll_), where its summary is hidden -- the row
+     is its header. */
+  .ins-brief-chev { display: inline-block; width: 0; height: 0; margin-left: 6px; vertical-align: 2px;
+    border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor;
+    transition: transform 0.15s ease; }
+  .ins-brief-row[aria-expanded="true"] .ins-brief-chev { transform: rotate(180deg); }
+  .ins-brief-row[aria-expanded="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .ins-brief-slot { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 var(--r) var(--r);
+    background: var(--paper-card); padding: 8px 12px 10px; min-width: 0; }
+  .ins-brief-slot > .ins-brief-mounted { margin: 0; border: 0; padding: 0; background: none; box-shadow: none; }
+  .ins-brief-slot > details.ins-brief-mounted > summary { display: none; }
+  @media (prefers-reduced-motion: reduce) { .ins-brief-chev { transition: none; } }
   @media (max-width: 600px) {
     .ins-brief-row { flex-wrap: wrap; }
     .ins-brief-go { width: 100%; }
@@ -3710,6 +3724,8 @@
      back over the outbound view. Direction hues follow the Agent Day tiles:
      inbound = --accent, outbound = --dir-out. */
   .dept-dir-switch { margin-left: 8px; }
+  /* Step 3: the switch is one "Show outbound columns" toggle, so data-dir is
+     'both' or 'in' now and the two 'out' rules below are inert. */
   body[data-dir="out"] #agents-in-wrap,
   body[data-dir="both"] #agents-in-wrap { display: none; }
   body[data-dir="out"] #dept-team-rings { display: none !important; }
