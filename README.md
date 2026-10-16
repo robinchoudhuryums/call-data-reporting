@@ -460,8 +460,8 @@ ships both, and the stamp says `+dirty`) or the branch is not `main`;
   Alerts → Install daily trigger (8 AM). The trigger calls
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
-- Once the trigger has been running for ~10 weekdays, the Alerts
-  modal's config table gains a **Last 30 days** chip per dept
+- Once the trigger has been running for ~10 weekdays, each rule card in
+  the Notifications (Alerts) modal gains a **Last 30 assessed days** chip
   summarizing recent trigger outcomes (E10). Warn-tinted chip =
   threshold firing chronically (alert fatigue likely); muted =
   threshold sits well below actual performance and may be too

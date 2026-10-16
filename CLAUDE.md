@@ -606,8 +606,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
-  (`renameAgentInNeon_`).
-  It's admin-gated (rides inside `applyOrphanRename`), conflict-safe
+  (`renameAgentInNeon_`). **One public write is NON-admin and writes no
+  sheet:** the Step 5 manager layer (`Notifications.gs::saveNotifyManagerRule`,
+  a Script Property) -- INV-55-shaped (dept gate + validation + lock + usage
+  row), stricter-only, and refused for managers while `NOTIFY_MANAGER_EDIT` is
+  off (INV-01 entry, Operator State #77). The mirror is
+  admin-gated (rides inside `applyOrphanRename`), conflict-safe
   (skips `(call_date, toName)` collisions rather than violating
   `uq_dqe_history`), and never throws (a Neon failure leaves the
   authoritative sheet rename intact). Needs the dashboard-project
@@ -773,8 +777,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`#dept-missed-scope-chip`) names the active scope with an ✕
   clear. The bucket drill panel stays DEPT-WIDE by design;
   scope resets on every fresh fetch (`deptMissedRender_`).
-- **Threshold-drift surface (E10, commit b3a5a51).** The Alerts
-  modal config table renders a "Last 30 days" chip per dept
+- **Threshold-drift surface (E10, commit b3a5a51).** The Notifications
+  (Alerts) modal renders a "Last 30 assessed days" chip on each rule card,
   summarizing the most-recent daily-trigger entries from the
   Alert Log. Five tunable constants near the top of `Alerts.gs`:
   `DRIFT_LOOKBACK_ENTRIES` (=30; per-dept window size),
@@ -801,10 +805,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (~10 weekdays after the trigger goes live). **Best-effort:**
   the helper is wrapped in a try/catch inside
   `alertConfigSection_` (the shared rows + drift + dept-list builder that
-  `getAlertsInit` and both config write paths read)
+  `getAlertsInit` and both config write paths read; since Step 5 it also
+  carries the manager layer and the reason rules, each best-effort)
   so a missing or corrupt Alert Log returns an empty drift map
-  and the modal table still renders the rest of the payload --
-  the column just shows dashes for every row. Admin-only via the
+  and the rule cards still render -- each chip just shows a dash. Admin-only via the
   existing modal gating (`assertAdmin_` in `getAlertsInit`);
   no separate gate needed.
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
