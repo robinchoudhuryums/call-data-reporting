@@ -3488,3 +3488,26 @@ When something looks wrong, before assuming a code bug, check:
     (`coachRatioPct` higher, `coachBehindPts` lower, `coachMinMissed` lower --
     each flags more agents), clamped against the dept's admin gates (#48).
     Pinned by `tests/unit/notifications.test.js` and `drive-notify.js`.
+
+78. **Alert REASONS (Step 5c, 2026-10-16; dashboard) -- admin trial.** Two
+    more reasons the daily alert run checks per department, set in Admin >
+    Alerts > "More alert reasons" (stored in `ALERT_REASON_RULES`, written
+    only by `saveAlertReasonRule`):
+    - **Agent below X% on each of the last N workdays** (N 2..20). Every one
+      of those days must have answerable calls and sit below X; managers in
+      the dept's team-average exclusions are left out. An individual's rate
+      is bounded by how many rings they share, so pick X from History, not by
+      feel -- a floor near 50% fires on almost everyone.
+    - **Callers not called back within a business day**: the previous
+      workday's callers who could not get through, with no dial from the
+      department's own team (and no successful call in) by the end of the
+      assessed day; fires at the configured caller count. Needs Neon (the
+      6c-vetted callback data); unreachable or not-yet-loaded days log
+      `skipped`, never a false miss.
+    Both email the ADMINS ONLY while trialled. Rows land in the Alert Log
+    with Triggered By `reason:<kind>:<runner>` and the statuses `sent` /
+    `would-send` / `quiet` / `skipped` / `error`; the drift chip and History
+    ignore them, and the Health outcome line counts them separately
+    ("reasons: N checked, M fired"). Preview shows them. Clear a reason by
+    saving its boxes blank. Pinned by `tests/unit/alert-reasons.test.js` and
+    `drive-notify.js`; walk S65.

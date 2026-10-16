@@ -2804,6 +2804,42 @@
           </div>
         </div>
 
+        <!-- Step 5c: two more alert REASONS, admin-only while trialled
+             (AlertReasons.gs). They ride the daily run; only admins are emailed. -->
+        <div class="al-section" id="al-reasons-section">
+          <h3 class="al-section-title">More alert reasons <span class="al-state-pill is-off">ADMIN TRIAL</span></h3>
+          <p class="al-hint">
+            Two more reasons to alert, per department, checked by the same daily run. While they are
+            trialled <strong>only admins are emailed</strong>. An individual answer rate is bounded by
+            how many rings the agent shares, so pick the agent threshold from what History shows.
+            A callback is a dial to the caller by the department&rsquo;s own team (or the caller getting
+            through); a day whose calls are not loaded yet is skipped, never counted as missed.
+          </p>
+          <div class="al-rules" id="al-reasons" role="list" aria-label="More alert reasons"></div>
+          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
+            <div class="ir-col" style="flex:1 1 150px;">
+              <label for="al-reason-dept">Department</label>
+              <select id="al-reason-dept"></select>
+            </div>
+            <div class="ir-col" style="flex:0 1 130px;">
+              <label for="al-reason-agent-threshold">Agent below %</label>
+              <input type="number" id="al-reason-agent-threshold" min="1" max="100" step="1" placeholder="blank = off">
+            </div>
+            <div class="ir-col" style="flex:0 1 130px;">
+              <label for="al-reason-agent-days">for workdays</label>
+              <input type="number" id="al-reason-agent-days" min="2" max="20" step="1" placeholder="e.g. 5">
+            </div>
+            <div class="ir-col" style="flex:0 1 160px;">
+              <label for="al-reason-cb-min">Callers not called back &ge;</label>
+              <input type="number" id="al-reason-cb-min" min="1" max="500" step="1" placeholder="blank = off">
+            </div>
+            <div class="ir-col" style="flex:0 1 auto;">
+              <button class="btn btn-secondary" id="al-reason-save" type="button">Save reasons</button>
+            </div>
+          </div>
+          <p class="al-hint" id="al-reason-status" role="status"></p>
+        </div>
+
         <!-- Step 5a: the MANAGER LAYER (trial). Built but off: while the switch
              is off managers see nothing, the server refuses their saves, and
              stored values do not apply to any send. -->

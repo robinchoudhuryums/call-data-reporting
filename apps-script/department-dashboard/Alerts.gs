@@ -122,7 +122,11 @@ function alertConfigSection_() {
   } catch (e) {
     Logger.log('alertConfigSection_: manager layer skipped: %s', e);
   }
-  return { config: config, drift: drift, departments: departments, managerLayer: managerLayer };
+  // Step 5c: the admin-only alert reasons (AlertReasons.gs). Best-effort.
+  let reasonRules = null;
+  try { if (typeof readAlertReasonRules_ === 'function') reasonRules = readAlertReasonRules_(); }
+  catch (e) { Logger.log('alertConfigSection_: reason rules skipped: %s', e); }
+  return { config: config, drift: drift, departments: departments, managerLayer: managerLayer, reasonRules: reasonRules };
 }
 
 function getAlertsInit() {
@@ -183,6 +187,7 @@ function getAlertsInit() {
     // the envelope arrives empty, no choice at all).
     departments: section.departments,
     managerLayer: section.managerLayer,   // Step 5a
+    reasonRules: section.reasonRules,     // Step 5c
     log: readAlertLog_(20),
     trigger: getAlertTriggerStatus_(),
     pipelineHealth: readPipelineHealth_(20),
@@ -584,17 +589,23 @@ function alertsClearRetryTriggers_() {
 function alertsOutcomeString_(dateIso, results, opts) {
   opts = opts || {};
   var counts = {};
-  (results || []).forEach(function (r) {
+  // Step 5c: reason rows (AlertReasons.gs) are reported in their own segment;
+  // the dept counts, EMPTY and "fired" stay about the answer-rate rule.
+  var reasonRows = (results || []).filter(function (r) { return r && r.reason; });
+  var deptRows = (results || []).filter(function (r) { return !(r && r.reason); });
+  deptRows.forEach(function (r) {
     var st = String((r && r.status) || 'unknown');
     counts[st] = (counts[st] || 0) + 1;
   });
-  var n = (results || []).length;
+  var reasonErrors = reasonRows.filter(function (r) { return r.status === 'error'; }).length;
+  var reasonFired = reasonRows.filter(function (r) { return r.status === 'sent'; }).length;
+  var n = deptRows.length;
   var errors = counts.error || 0;
   var fired = counts.sent || 0;
   var detail = Object.keys(counts).sort().map(function (k) { return counts[k] + ' ' + k; }).join(', ');
   var lead;
   var unlogged = (results && results.logFailures) ? results.logFailures.length : 0;   // ENG-7
-  if (errors) lead = 'FAILED-PARTIAL ' + dateIso + ': ' + errors + ' dept error(s); ';
+  if (errors || reasonErrors) lead = 'FAILED-PARTIAL ' + dateIso + ': ' + (errors + reasonErrors) + ' dept error(s); ';
   else if (unlogged) lead = 'FAILED-LOG ' + dateIso + ': ' + unlogged + ' Alert Log row(s) not written (sends stand); ';
   else if (opts.lateLatest) lead = 'LATE ' + dateIso + ': DQE data was still only through ' + opts.lateLatest
     + ' at the ' + ALERTS_CUTOFF_HOUR_ + ':00 cutoff; ';
@@ -608,7 +619,8 @@ function alertsOutcomeString_(dateIso, results, opts) {
   }
   else lead = 'ok ' + dateIso + ': ';
   var head = lead + n + ' dept(s) assessed, ' + fired + ' fired'
-    + (detail ? ' (' + detail + ')' : '');
+    + (detail ? ' (' + detail + ')' : '')
+    + (reasonRows.length ? '; reasons: ' + reasonRows.length + ' checked, ' + reasonFired + ' fired' : '');
   return head + '. At ' + new Date();
 }
 
@@ -707,7 +719,9 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
     results.push(rec);
     if (rec && rec.status === 'sent') sentDepts.push(rec.department);
     try {
-      appendAlertLog_(rec, loggedBy, dateIso);
+      // Step 5c: a reason row (AlertReasons.gs) is tagged `reason:<kind>:` so
+      // the drift chip (daily-trigger rows only) and History never count it.
+      appendAlertLog_(rec, rec && rec.reason ? ('reason:' + rec.reason + ':' + loggedBy) : loggedBy, dateIso);
     } catch (logErr) {
       const why = (logErr && logErr.message) ? logErr.message : String(logErr);
       logFailures.push({ department: rec.department, status: rec.status, error: why });
@@ -900,6 +914,11 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       });
     }
   });
+  // Step 5c: the admin-only alert REASONS ride the same run, date, claim and
+  // log. Never throws: a reason's own failure is an `error` row.
+  if (typeof runAlertReasons_ === 'function') {
+    runAlertReasons_(dateIso, dryRun, honorSkipDates, cfg, pushAndLog);
+  }
   } catch (runErr) {
     // ENG-7: anything that still escapes carries the depts ALREADY emailed, so
     // the failure email can say which ones a manual re-send would repeat.
@@ -1059,6 +1078,7 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
 
   let rung = 0, answered = 0, missed = 0;
   const lowAgents = [];
+  const agents = [];   // Step 5c: every roster agent with answerable calls (AlertReasons.gs)
 
   for (let i = 0; i < dateRows.length; i++) {
     const r = dateRows[i];
@@ -1072,6 +1092,7 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
 
     if (answerRateDenom_(aAnswered, aMissed, aRung) > 0) {
       const aPct = answerRatePct_(aAnswered, aMissed, aRung);   // DD-2: one formula
+      agents.push({ name: r.agent, rung: aRung, answered: aAnswered, missed: aMissed, pct: round1_(aPct) });
       if (aPct < ALERT_LOW_AGENT_THRESHOLD) {
         lowAgents.push({
           name: r.agent, rung: aRung, answered: aAnswered, missed: aMissed,
@@ -1085,6 +1106,7 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
     rung: rung, answered: answered, missed: missed,
     pct: answerRatePct_(answered, missed, rung),   // DD-2: one formula (ANSWER_RATE_FORMULA)
     lowAgents: lowAgents,
+    agents: agents,
   };
 }
 
@@ -1486,6 +1508,7 @@ function alertSectionResult_(base) {
     out.drift = section.drift;
     out.departments = section.departments;
     out.managerLayer = section.managerLayer;
+    out.reasonRules = section.reasonRules;
   } catch (e) {
     Logger.log('alertSectionResult_: section re-read failed: %s', e);
     out.sectionStale = true;

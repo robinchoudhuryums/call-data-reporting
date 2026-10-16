@@ -124,6 +124,30 @@ async function openNotifications(page) {
   record('Confirm sends ONE test and reports who got it',
     (await calls(page, 'sendAlertTest')) === 1 && /Test sent to admin@ums\.com/.test(sentStatus), sentStatus);
 
+  // Step 5c: more alert reasons
+  await page.selectOption('#al-reason-dept', 'CSR');
+  await page.fill('#al-reason-agent-threshold', '40');
+  await page.fill('#al-reason-agent-days', '1');
+  await page.fill('#al-reason-cb-min', '2');
+  await page.click('#al-reason-save');
+  await page.waitForTimeout(500);
+  const rErr = await page.evaluate(() => document.getElementById('al-reason-status').textContent);
+  record('reasons: a 1-workday window is refused with the reason', /from 2 to 20/.test(rErr), rErr);
+  await page.fill('#al-reason-agent-days', '5');
+  await page.click('#al-reason-save');
+  await page.waitForTimeout(500);
+  const reasons = await page.evaluate(() => Array.from(document.querySelectorAll('#al-reasons .al-rule-sentence')).map((p) => p.textContent.trim()));
+  record('reasons: each reads as a sentence that emails the ADMINS',
+    reasons.length === 2 && /^When an agent in CSR answers under 40% on each of the last 5 workdays, email the admins\.$/.test(reasons[0])
+      && /^When 2 or more callers who could not get through to CSR are not called back within a business day, email the admins\.$/.test(reasons[1]),
+    JSON.stringify(reasons));
+  await page.click('#al-preview-btn');
+  await page.waitForTimeout(800);
+  const prev = await page.evaluate(() => Array.from(document.querySelectorAll('#al-results-tbody tr')).map((tr) => Array.from(tr.cells).map((c) => c.textContent.trim())));
+  record('reasons: Preview names each reason row and its own kind of threshold',
+    prev.length === 3 && /agents below/.test(prev[1][0]) && prev[1][2] === '40%' && /callbacks/.test(prev[2][0])
+      && prev[2][2] === '2+ callers' && prev[2][4] === 'Did not fire', JSON.stringify(prev));
+
   // Manager-layer switch
   const sw = await page.evaluate(() => ({ checked: document.getElementById('al-mgr-enabled').checked,
     pill: document.getElementById('al-mgr-pill').textContent }));
@@ -251,7 +275,8 @@ async function openNotifications(page) {
   // The modal's keep-warm / cache-warm panels are unmocked on purpose (their
   // own error states render); only this page's verbs must all be mocked.
   const NOTIFY_RPCS = ['getAlertHistory', 'sendAlertTest', 'setNotifyManagerEdit', 'getNotifyRules', 'saveNotifyManagerRule',
-    'saveCoachingDeptRule', 'previewCoachingManagerEmail', 'updateCoachingFlagStatus', 'getCoachingWorklist'];
+    'saveCoachingDeptRule', 'previewCoachingManagerEmail', 'updateCoachingFlagStatus', 'getCoachingWorklist',
+    'saveAlertReasonRule', 'previewAlerts'];
   const unmocked = unmockedA.concat(unmockedM).filter((n) => NOTIFY_RPCS.indexOf(n) !== -1);
   record('no Notifications RPC is unmocked', unmocked.length === 0, unmocked.join(', '));
   await browser.close();

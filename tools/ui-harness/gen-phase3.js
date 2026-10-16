@@ -99,7 +99,7 @@ const h = loadGas({
           'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'InboundReport.gs',
           'Escalations.gs', 'Alerts.gs', 'Digest.gs', 'QueueReportEmail.gs',
           'OrphanFix.gs', 'SystemHealth.gs', 'CacheWarm.gs', 'NeonKeepWarm.gs',
-          'Notifications.gs'],
+          'Notifications.gs', 'AlertReasons.gs'],
 });
 function install(email) {
   h.state.props.SPREADSHEET_ID = 'fake';

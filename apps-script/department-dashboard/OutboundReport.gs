@@ -1492,7 +1492,7 @@ function obEpTeamLabel_(agent, homesOf) {
  * `extraDays` past it) + the engine. Returns { eps, ev, ctx } or null when the
  * read produced nothing.
  */
-function obCallbackListEpisodes_(conn, scope, extraDays) {
+function obCallbackListEpisodes_(conn, scope, extraDays, windowDays) {
   const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
   const evSql = obCallbackEventsSql_(scope, deptQueues, scope.from, scope.from, scope.to, null, extraDays);
   const stmt = conn.createStatement();
@@ -1505,6 +1505,9 @@ function obCallbackListEpisodes_(conn, scope, extraDays) {
   const ev = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
   const ctx = obEpContext_(obCallbackDeptMap_(), buildDeptsByAgent_());
   ctx.observedThroughIso = obj.cbThrough || null;   // B1/PC-2
+  // Step 5c: the "not called back within a business day" alert asks with its
+  // own (shorter) window; every other caller keeps OUTBOUND_CALLBACK_WINDOW_DAYS.
+  if (windowDays) ctx.windowDays = windowDays;
   const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
   return { eps: eps, ev: ev, ctx: ctx, dataThrough: obj.cbThrough || null };
 }

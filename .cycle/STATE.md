@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-16 -- Owner plan Step 5c IMPLEMENTED (block 259-step5c): two admin-trial alert reasons.** An agent below X% on each of N workdays; callers not called back within a business day (callback engine, business-day window, unloaded days skipped). Admins-only email, `reason:` Alert Log rows, Preview rows. 2604 tests, 8/9 bites (1 equivalent), drive-notify 29/29. **Step 5 (and the owner plan) is now fully implemented.**
+  **Owner-side:** deploy the dashboard; try the reasons (Operator State #78, S65); release decisions for the manager layer (#77), coaching (#48) and the reasons remain the owner's.
+  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PRs for 5b + 5c after 5a merges.
 - **2026-10-16 -- Owner plan Step 5b IMPLEMENTED (block 259-step5b): coaching release prep (admin trial).** Per-dept coaching gates (COACHING_DEPT_RULES) with the stricter-only manager clamp, Met / Rotated / Dismissed closes, and the manager email HELD for admins (coachingManagerRecipients_ is the release seam). 2594 tests, 7/7 bites, drive-notify 26/26.
   **Owner-side:** deploy the dashboard.
   **Next:** 5c (two new alert reasons, admin-only).

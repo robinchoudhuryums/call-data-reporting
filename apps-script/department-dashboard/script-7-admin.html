@@ -128,6 +128,7 @@
   function alCfgApplySection_(res) {
     if (!res || res.sectionStale || !res.config) { alLoadInit_(); return; }
     if (res.managerLayer) alRenderManagerLayer_(res.managerLayer);
+    if (res.reasonRules) alRenderReasons_(res.reasonRules);
     alRenderConfigTable_(res.config, res.drift || {}, res.departments || []);
   }
   // Dims + marks the config table busy while a write is in flight, so the
@@ -449,6 +450,7 @@
     if ($('al-cfg-save'))  $('al-cfg-save').addEventListener('click', alCfgSave_);
     if ($('al-mgr-enabled')) $('al-mgr-enabled').addEventListener('change', alMgrToggle_);
     if ($('al-mgr-save'))  $('al-mgr-save').addEventListener('click', alMgrSave_);
+    if ($('al-reason-save')) $('al-reason-save').addEventListener('click', alReasonSave_);
     if ($('al-cfg-clear')) $('al-cfg-clear').addEventListener('click', alCfgClear_);
     // Unified Report Subscribers add/edit form (Batch 3).
     if ($('al-rs-save'))       $('al-rs-save').addEventListener('click', alRsSave_);
@@ -973,6 +975,7 @@
       $('al-open-sheet').href = data.spreadsheetUrl;
     }
     alRenderManagerLayer_(data.managerLayer || null);   // before the rules: each card names its manager value
+    alRenderReasons_(data.reasonRules || {});
     alRenderConfigTable_(data.config || [], data.drift || {}, data.departments || []);
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
@@ -1256,6 +1259,76 @@
         })
         .sendAlertTest({ department: c.department, date: date });
     });
+  }
+
+  // ---- Step 5c: more alert reasons (admin trial) ----
+  var alReasons_ = {};
+  // PURE (pinned): one reason as the sentence it enforces.
+  function alReasonSentenceHtml_(dept, kind, r) {
+    var d = '<strong>' + escapeHtml(dept) + '</strong>';
+    if (kind === 'agentLow') {
+      return 'When an agent in ' + d + ' answers under <strong>' + escapeHtml(String(r.threshold))
+        + '%</strong> on each of the last <strong>' + escapeHtml(String(r.days)) + '</strong> workdays, email the admins.';
+    }
+    var n = Number(r.minCallers) || 1;
+    return 'When ' + (n === 1 ? 'a caller' : '<strong>' + n + '</strong> or more callers') + ' who could not get through to '
+      + d + (n === 1 ? ' is' : ' are') + ' not called back within a business day, email the admins.';
+  }
+  function alRenderReasons_(rules) {
+    alReasons_ = rules || {};
+    alFillDeptSelect_('al-reason-dept');
+    const list = $('al-reasons');
+    if (!list) return;
+    const depts = Object.keys(alReasons_).sort();
+    if (!depts.length) { list.innerHTML = '<p class="al-empty">No extra reasons set.</p>'; return; }
+    const cards = [];
+    depts.forEach(function (d) {
+      ['agentLow', 'callbacks'].forEach(function (k) {
+        if (!alReasons_[d][k]) return;
+        cards.push('<div class="al-rule" role="listitem" data-dept="' + escapeHtml(d) + '" data-kind="' + k + '">'
+          + '<p class="al-rule-sentence">' + alReasonSentenceHtml_(d, k, alReasons_[d][k]) + '</p>'
+          + '<div class="al-rule-actions"><button type="button" class="link-btn al-reason-edit">Edit</button></div></div>');
+      });
+    });
+    list.innerHTML = cards.join('');
+    list.querySelectorAll('.al-reason-edit').forEach(function (b) {
+      b.addEventListener('click', function () { alReasonEdit_(b.closest('.al-rule').getAttribute('data-dept')); });
+    });
+  }
+  function alReasonEdit_(dept) {
+    const r = alReasons_[dept] || {};
+    if ($('al-reason-dept')) $('al-reason-dept').value = dept;
+    if ($('al-reason-agent-threshold')) $('al-reason-agent-threshold').value = r.agentLow ? r.agentLow.threshold : '';
+    if ($('al-reason-agent-days')) $('al-reason-agent-days').value = r.agentLow ? r.agentLow.days : '';
+    if ($('al-reason-cb-min')) $('al-reason-cb-min').value = r.callbacks ? r.callbacks.minCallers : '';
+  }
+  function alReasonSave_() {
+    const st = $('al-reason-status');
+    const say = function (m, bad) { if (st) { st.textContent = m; st.classList.toggle('is-error', !!bad); } };
+    const dept = $('al-reason-dept') ? $('al-reason-dept').value : '';
+    if (!dept) { say('Pick a department.', true); return; }
+    if (mutationBusy_('alReasonSave')) return;
+    const btn = $('al-reason-save');
+    if (btn) btn.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        mutationDone_('alReasonSave');
+        if (btn) btn.disabled = false;
+        say('Saved ' + dept + '’s reasons. The next daily run checks them; Preview shows them now.');
+        alRenderReasons_(res && res.rules);
+        alInvalidatePreview_(alLastPreview ? 'Alert reasons changed -- run Preview again before sending.' : '');
+      })
+      .withFailureHandler(function (err) {
+        mutationDone_('alReasonSave');
+        if (btn) btn.disabled = false;
+        say(err && err.message ? err.message : String(err), true);
+      })
+      .saveAlertReasonRule({
+        department: dept,
+        agentLowThreshold: $('al-reason-agent-threshold') ? $('al-reason-agent-threshold').value : '',
+        agentLowDays: $('al-reason-agent-days') ? $('al-reason-agent-days').value : '',
+        callbacksMin: $('al-reason-cb-min') ? $('al-reason-cb-min').value : '',
+      });
   }
 
   // ---- Manager layer (trial) ----
@@ -1665,6 +1738,7 @@
     if (counts['no-recipients']) summary.push(counts['no-recipients'] + ' no recipients');
     if (counts['skipped'])       summary.push(counts['skipped'] + ' inactive');
     if (counts['error'])         summary.push(counts['error'] + ' errored');
+    if (counts['quiet'])         summary.push(counts['quiet'] + ' reason(s) did not fire');
     $('al-results-summary').textContent = summary.join(' · ');
 
     tbody.innerHTML = results.map(function (r) {
@@ -1674,10 +1748,14 @@
         ? escapeHtml(r.recipients.join(', '))
         : '<span class="al-empty-inline">-</span>';
       const statusCell = alStatusBadge_(r.status, isPreview);
-      return '<tr class="al-row-' + r.status + '">'
-           +   '<td>' + escapeHtml(r.department) + '</td>'
+      // Step 5c: a reason row names its reason; its threshold is a % only for agent-low.
+      const reasonLbl = r.reason === 'agent-low' ? ' · agents below' : r.reason === 'callbacks' ? ' · callbacks' : '';
+      const threshCell = r.reason === 'callbacks' ? (Number(r.threshold) || 0) + '+ callers'
+        : Number(r.threshold).toFixed(0) + '%';
+      return '<tr class="al-row-' + r.status + (r.reason ? ' al-row-reason' : '') + '">'
+           +   '<td>' + escapeHtml(r.department) + '<span class="al-hint">' + reasonLbl + '</span></td>'
            +   '<td class="num">' + rateCell + '</td>'
-           +   '<td class="num">' + Number(r.threshold).toFixed(0) + '%</td>'
+           +   '<td class="num">' + escapeHtml(threshCell) + '</td>'
            +   '<td class="al-recipients-cell">' + recipientsCell + '</td>'
            +   '<td>' + statusCell + '</td>'
            +   '<td>' + escapeHtml(r.notes || '') + '</td>'
@@ -1694,6 +1772,8 @@
       'no-recipients':   { text: 'No recipients',   cls: 'pr-delta-neg' },
       'skipped':         { text: 'Inactive',        cls: 'pr-delta-neu' },
       'error':           { text: 'Error',           cls: 'pr-delta-neg' },
+      'quiet':           { text: 'Did not fire',    cls: 'pr-delta-neu' },   // Step 5c reason rows
+      'test-sent':       { text: 'Test',            cls: 'pr-delta-neu' },   // Step 5a
     };
     // CL-12: an UNKNOWN status is a raw Alert Log cell -- escape it (the known
     // labels are literals above). Escaping is idempotent for those.
