@@ -342,6 +342,8 @@
     // region at the bottom is collapsed.
     if (!reg || (!reg.open && !insBriefActive_())) return;
     if (document.body.getAttribute('data-page') !== 'dept') return;
+    // Step 3 #8: the Callbacks preload waits for this page (insCbSync_).
+    if (typeof insCbSync_ === 'function') insCbSync_();
     insEnsurePage_();
     insSyncToDeptWindow_();
     insRearmZeroCharts_();
@@ -2840,17 +2842,24 @@
     // Step 3 #8 (owner 2026-10-16): PRELOAD. A closed section still loads,
     // once the page has settled (INS_CB_PREFETCH_MS_ after the last sync, so a
     // burst of date / dept changes sends one fetch), and its row + head read
-    // the answer before anyone opens it. Opening it fetches at once.
+    // the answer before anyone opens it. Opening it fetches at once. ONLY on
+    // My Department: the dept page also renders under the Overview landing,
+    // which must fetch nothing for it -- entering the page re-syncs
+    // (deptInsightsEnsureLive_), and that sync schedules the preload.
     if (!fold.open) {
-      INS_CB_PREFETCH_T_ = setTimeout(function () {
-        if (INS_CB_.key === key && !INS_CB_.data && !INS_CB_.error && INS_CB_.loadingKey !== key) insCbFetch_(w, key);
-      }, INS_CB_PREFETCH_MS_);
+      if (insCbOnDeptPage_()) {
+        INS_CB_PREFETCH_T_ = setTimeout(function () {
+          if (!insCbOnDeptPage_()) return;
+          if (INS_CB_.key === key && !INS_CB_.data && !INS_CB_.error && INS_CB_.loadingKey !== key) insCbFetch_(w, key);
+        }, INS_CB_PREFETCH_MS_);
+      }
       return;
     }
     insCbFetch_(w, key);
   }
 
   var INS_CB_PREFETCH_MS_ = 1500;
+  function insCbOnDeptPage_() { return document.body.getAttribute('data-page') === 'dept'; }
   var INS_CB_PREFETCH_T_ = null;
   function insCbFetch_(w, key) {
     var head = $('ins-cb-fold-head');
@@ -2981,7 +2990,7 @@
     if (note) { note.style.display = notes.length ? '' : 'none'; note.textContent = notes.join(' '); }
     // CE-3: the Direct lines block follows this fold's window. Step 3 #8: it
     // PRELOADS once the page has settled, like the Callbacks payload above.
-    obDlSync_('ins-dl', insCbWindow_(), { prefetchMs: INS_CB_PREFETCH_MS_ });
+    obDlSync_('ins-dl', insCbWindow_(), insCbOnDeptPage_() ? { prefetchMs: INS_CB_PREFETCH_MS_ } : null);
     insCbScrollIfPending_();
   }
 

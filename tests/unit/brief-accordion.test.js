@@ -75,6 +75,8 @@ function cbSandbox(win) {
   const rendered = [];
   const sb = {
     google: f.google, setTimeout: t.setTimeout, clearTimeout: t.clearTimeout,
+    page: 'dept',
+    document: { body: { getAttribute: function () { return sb.page; } } },
     $: function (id) { return els[id] || null; },
     insCbWindow_: function () { return win; },
     obAllowed_: function () { return sb.allowed; },
@@ -85,7 +87,7 @@ function cbSandbox(win) {
     insCbScrollIfPending_: function () {}, insBriefRowFromHead_: function () {},
     insCbRender_: function (d) { rendered.push(d); },
   };
-  vm.runInNewContext(extractFn(S8, 'insCbSync_') + '\n' + extractFn(S8, 'insCbFetch_'), sb);
+  vm.runInNewContext(extractFn(S8, 'insCbSync_') + '\n' + extractFn(S8, 'insCbFetch_') + '\n' + extractFn(S8, 'insCbOnDeptPage_'), sb);
   return { sb: sb, f: f, t: t, els: els, rendered: rendered };
 }
 
@@ -109,6 +111,22 @@ test('8: a CLOSED Callbacks section loads once the page settles, and only once',
   c.sb.insCbSync_();
   assert.equal(c.f.calls.length, 1, 'opening it needs no fetch');
   assert.equal(c.rendered.length, 2, 'it renders the held payload');
+});
+
+test('8: the preload runs ONLY on My Department -- the Overview landing fetches nothing for it', function () {
+  const c = cbSandbox({ department: 'CSR', from: '2026-10-15', to: '2026-10-15' });
+  c.sb.page = 'overview';
+  c.sb.insCbSync_();
+  assert.equal(c.t.list.length + c.f.calls.length, 0, 'nothing scheduled while the dept page renders under the Overview');
+  c.sb.page = 'dept';
+  c.sb.insCbSync_();   // entering the page re-syncs
+  assert.equal(c.t.list.length, 1);
+  c.sb.page = 'overview';   // left again before it fired
+  c.t.flush();
+  assert.equal(c.f.calls.length, 0, 'a preload that fires after the user left sends nothing');
+  assert.match(extractFn(S8, 'deptInsightsEnsureLive_'),
+    /if \(document\.body\.getAttribute\('data-page'\) !== 'dept'\) return;\s*\/\/[^\n]*\n\s*if \(typeof insCbSync_ === 'function'\) insCbSync_\(\);/,
+    'entering My Department re-syncs, which schedules the preload');
 });
 
 test('8: an OPEN section fetches at once; a superseded preload never paints', function () {
@@ -178,7 +196,8 @@ test('8: Direct lines preloads only when asked to; the Overview\'s stays lazy', 
   pre.sb.obDlSync_('x', req, { prefetchMs: 1500 });
   assert.equal(pre.f.calls.length, 1, 'opening it serves the preloaded payload');
   assert.equal(pre.rendered.length, 2);
-  assert.match(S8, /obDlSync_\('ins-dl', insCbWindow_\(\), \{ prefetchMs: INS_CB_PREFETCH_MS_ \}\)/);
+  assert.match(S8, /obDlSync_\('ins-dl', insCbWindow_\(\), insCbOnDeptPage_\(\) \? \{ prefetchMs: INS_CB_PREFETCH_MS_ \} : null\)/,
+    'and only on My Department');
   assert.match(src('script-3-overview.html'), /obDlSync_\('ov-dl', ovCbDeptWindow_\(\)\);/, 'the Overview block is unchanged');
 });
 
