@@ -7662,6 +7662,30 @@
   .dts-track-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; left: 92%;
     background: var(--ink); opacity: 0.55; }
   @media (max-width: 720px) { .dept-team-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  /* Step 4 (owner 2026-10-16): linked DAY BARS under each card's figure
+     (dtsAttachDayBars_, script-5). One bar per workday, or per week past 31
+     workdays; pointing at a bar selects that day in EVERY card and each
+     card's readout names its own value. Admin trial: [data-admin-only]. */
+  .dts-daybars { align-self: stretch; width: 100%; min-width: 0; margin-top: 6px; text-align: left; }
+  .dts-bars { display: flex; align-items: flex-end; gap: 2px; height: 34px; cursor: crosshair;
+    touch-action: pan-y; border-radius: var(--r); }
+  .dts-bars:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .dts-bar { flex: 1 1 0; min-width: 1px; background: var(--accent); opacity: 0.38;
+    border-radius: 1px 1px 0 0; transition: opacity 0.12s ease; }
+  .dts-bar.is-watch { background: var(--caution); }
+  .dts-bar.is-bad { background: var(--warn); }
+  .dts-bar.is-empty { height: 2px !important; background: var(--line); opacity: 1; }
+  .dts-bars.is-on .dts-bar { opacity: 0.18; }
+  .dts-bars.is-on .dts-bar.is-sel { opacity: 1; }
+  .dts-bars.is-on .dts-bar.is-empty.is-sel { background: var(--ink); }
+  .dts-axis { display: flex; justify-content: space-between; font: 400 10px/1.4 var(--mono); color: var(--muted); }
+  .dts-readout { min-height: 17px; font: 400 11.5px/1.4 var(--ui); font-variant-numeric: tabular-nums;
+    color: var(--ink); border-top: 1px dashed var(--line); padding-top: 3px; margin-top: 2px;
+    overflow-wrap: anywhere; }
+  .dts-readout.is-idle { color: var(--muted); }
+  .dts-readout-d { font: 500 10.5px var(--mono); color: var(--muted); margin-right: 6px; }
+  @media (prefers-reduced-motion: reduce) { .dts-bar { transition: none; } }
+  @media print { .dts-daybars { display: none; } }
 
   /* (Round-16, owner: the .dept-insights-strip / .dis-* Insights teaser CSS
      is retired with the strip -- the lens switcher is the route now.) */

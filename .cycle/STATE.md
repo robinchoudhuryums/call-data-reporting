@@ -13,10 +13,15 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-16 -- Owner plan Step 4 IMPLEMENTED (block 259-step4): linked day bars in the My Department team cards (admin trial).** Owner ruling mid-step: extend the dept payload (totals.daily + qcd.range.daily, compact tuples, no new call) so the bars add up to the cards, incl. the combined view and Avg answer. 2572 tests pass, 9/9 bites, drive-daybars 20/20.
+  **Owner-side:** deploy the dashboard.
+  **Next:** Step 5 (9a/9b notifications page, 10 coaching release prep, 9c alert reasons; all admin-only; stricter-only manager thresholds).
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn; PR + merge on green next.
+- **2026-10-16 -- Owner plan Step 3 SHIPPED ([PR #373](https://github.com/robinchoudhuryums/call-data-reporting/pull/373), merged).**
 - **2026-10-16 -- Owner plan Step 3 IMPLEMENTED (block 259-step3): brief accordion under the team cards, inbound + outbound together (one "Show outbound columns" toggle), preloading (Callbacks / Direct lines background, agent panel on hover).** Client-only, all admin-only; 2561 tests pass, 14/14 bites land, ci:ui green.
   **Owner-side:** deploy the dashboard.
   **Next:** Step 4 (day bars option B) and Step 5 (9a/9b notifications, 10 coaching release prep, 9c alert reasons; admin-only; stricter-only manager thresholds) await the owner.
-  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn; PR + merge on green next.
+  **Where I left off:** shipped as PR #373.
 - **2026-10-16 -- Owner plan Step 2 SHIPPED ([PR #372](https://github.com/robinchoudhuryums/call-data-reporting/pull/372), merged): Overview manager default highlight (Company line released by allowlist) + agent panel From / To labels and callback cue (block 259-step2).**
 - **2026-10-16 -- Owner plan Step 1 IMPLEMENTED (block 259-step1): agent-panel days oldest-first, brief tier icons, partial trend month on count charts (option A).** Client-only; 2538 tests pass, ci:ui 554/0, 5/5 unit bites + 1 rendered bite land.
   **Owner plan (agreed 2026-10-16, full text in the session):** Step 2 = 6 Overview trend default highlight (Company + own dept for a single-dept manager, Company only for ALL managers, admins unchanged, no axis zoom on the default) + 1b agent-panel caller/callee LABELS only (staff name / insurer / "Outside caller|number") + the "callback to HH:MM inbound" link. Step 3 = brief accordion under the team cards (collapsed, opens in place) + inbound/outbound together by default (admin-only; Outbound + Callbacks as their own rows; the 3-way switch becomes a Columns option) + preloading (background Callbacks/Direct, agent panel on hover/focus). Step 4 = day bars option B (linked highlight across the four cards, per-card value line, weekly past ~31 workdays). Step 5 = Notifications page (9a/9b), coaching release prep (10), two alert reasons (9c: agent below threshold over N workdays; callers not called back within a day) -- ALL admin-only until the owner tests; managers may only set STRICTER thresholds than the admin's, enforced server-side, stricter of the two wins.

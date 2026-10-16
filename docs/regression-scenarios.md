@@ -582,3 +582,17 @@ S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3
     - Sign in as a MANAGER: the same as View as -- no brief, headline present, sections in the Insights region with their one-line heads.
   Expected: as described; every coloured row agrees with the section it opens.
   Fails if: a manager or View-as sees the brief or the shading, or loses a section; the admin sees both the brief and the headline; a row's colour contradicts its section (e.g. Red queue with every queue under 4%); a row does not open its section in place, or opens it with a blank chart; a row starts open after a reload; Share of answered, Outbound, Callbacks or Team detail ever shows a colour other than No signal.
+
+S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, open My Department for a dept with queues (e.g. CSR) over the last month. Under the figure in each card -- % Answered, Queue calls, Abandoned %, Avg answer -- a row of bars, one per WORKDAY (no bar for a Saturday, Sunday or company holiday; a workday with no calls is a flat line). The CSR Transfer % card has none (there is no per-day transfer figure).
+    - Point at a bar in any card: the SAME day lights up in all four, and each card's bottom line names the day and its own value ("Mon Sep 28 · 90.5% answered (105 of 116)", "97 calls (88 / 9)", "9.28% abandoned (9)", "0:00:40 avg answer"). Move off the cards: the selection clears.
+    - Reconcile one day against the Queue health daily table (Insights) and one agent-day total against the agent table for a one-day window on that date: the figures match.
+    - Keyboard: Tab to a bar row -- the newest day is selected; Left / Right move every card together; Home / End jump; Escape clears. A screen reader announces the day and value.
+    - On a phone (or with touch): tap a bar to hold its day, tap elsewhere in the cards to let go.
+    - Widen to year to date: one bar per MONTH, labelled "Oct 2026 (11 workdays)"; count cards show the per-workday average. Between about 7 weeks and 6 months: one bar per week ("Week of Sep 8 (4 workdays)").
+    - Set a one-day window: no bars.
+    - View as a manager, and sign in as a MANAGER: no bars.
+    - On a phone-width window: the cards go two-up, the bars stay inside them and the page does not scroll sideways.
+  Expected: as described; for a parent dept (CSR, Sales, Power) the % Answered bars cover the combined view, crossover agents counted once, so they add up to the card. Weekend or holiday calls stay in the card total but get no bar.
+  Fails if: the cards disagree on the selected day; a bar appears for a weekend or holiday; a card's bars do not add up to its figure for a weekday-only window; a manager or View-as sees bars; or the page scrolls sideways at phone width.

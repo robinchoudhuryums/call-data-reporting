@@ -54,6 +54,10 @@ const STAGES = [
   // day + tab switch / survive a re-sort / IR button / Escape + Collapse focus
   // return / one panel at a time / CSV untouched / no overflow at 360 px.
   ['node', ['drive-agentpanel.js'], 'inline agent panel (My Department row click)'],
+  // Step 4 (owner 2026-10-16): the team cards' linked day bars -- one shared
+  // selection across four cards, workday / monthly bucketing, keyboard and
+  // touch, admin-only, and no sideways scroll at 360 px.
+  ['node', ['drive-daybars.js'], 'team cards: linked day bars (Step 4)'],
   // Batch D: the Inbound | Outbound | Both switch -- a second table over the
   // same page state, so the bugs are visibility and reconciliation ones only
   // a browser shows (the wrong table, the inbound panel painting back, the

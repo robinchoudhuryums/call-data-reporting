@@ -228,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# FOURTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# FIFTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -249,7 +249,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # drive-smoke's unmocked-RPC check would have flagged the call),
 # drive-agentpanel.js (the My Department row-click inline agent panel:
 # open, day/tab switch, survives a re-sort, IR button, Escape/Collapse focus
-# return, one at a time, CSV untouched, 360 px -- Batch B), drive-deptoutbound.js
+# return, one at a time, CSV untouched, 360 px -- Batch B), drive-daybars.js (the
+# team cards' linked day bars: one shared selection, workday/monthly buckets,
+# keyboard + touch, admin-only -- Step 4), drive-deptoutbound.js
 # (the outbound-columns toggle -- on by default since Step 3 -- + Team Outbound panel: payload totals,
 # manager/view-as fall back to Inbound, panels never overlap, prior-period
 # chips on agent rows only -- Batches D/F), drive-crossstate.js (the
@@ -2364,6 +2366,7 @@ S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, 
 S59 | Callbacks under the outbound table on My Department (Batch G1, UX-1) | Subsystem: Department Dashboard
 S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard
 S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3) | Subsystem: Department Dashboard
+S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

@@ -1403,6 +1403,28 @@ behind the removed button.
   format the QCD side panel's Total Calls tile now uses — one dialect on both
   surfaces. The side panel's MTD view carries delta sub-lines
   (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
+- **Team strip LINKED DAY BARS (Step 4, owner 2026-10-16; admin trial).**
+  `dtsAttachDayBars_` (script-5, end of `renderDeptTeamStrip_`) appends a
+  `.dts-daybars` block to each tile that names its figure with
+  `data-dts-metric` (`rate` / `answered` / `qcalls` / `qabd` / `qavg`; the CSR
+  Transfer % tile has no per-day source and gets none). Buckets come from the
+  PURE `dtsDayBuckets_`: one per WORKDAY (weekends and `isCompanyHolidayIso_`
+  dates get no bar; a quiet workday is an empty bar), one per Monday-start
+  week past 31 workdays, one per calendar month past 130; count cards read
+  per-workday averages on a multi-day bucket. ONE selection is shared by
+  every card (`strip.__dts`): hover (pointermove), touch tap-to-hold, and a
+  `role="slider"` row per card (focus selects the newest, arrows / Home / End,
+  Escape clears); each card's `.dts-readout` names the day and its own value.
+  The data rides the SAME payload as the tiles, so a card's bars sum to it
+  (weekday-only windows): `totals.daily` ([iso, answered, missed] -- roster
+  agents, combined view with every crossover repeat dropped, Data.gs) and
+  `qcd.range.daily` ([iso, calls, answered, abandoned, avgAnswerSec] -- own
+  queues). Compact tuples on purpose: the summary is cached under the ~100 KB
+  per-value cap. No `summary:v23` bump (additive fields; a payload cached
+  before the deploy just draws no bars until the next ingest mints a new key).
+  Admin-only: built only when `dtsBarsActive_()` (admin, not View-as) and the
+  block carries `data-admin-only`. Pinned by `day-bars.test.js` (server sums,
+  crossover days, bucketing) and rendered by `drive-daybars.js`.
 - **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
   sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
   queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`) — the EMAIL's
