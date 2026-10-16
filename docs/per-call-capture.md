@@ -967,6 +967,24 @@ usage-logged -- the panel opens on its newest day, and that `getAgentDay` call
 logs the `agentDay` row. A one-day window skips the strip. The Individual
 Report the row used to open directly is the panel's first button.
 
+**Who was on the other end -- LABELS only (Step 2 1b, owner 2026-10-16).**
+Inbound rows carry `from`, outbound rows `to` and `callback`. No number or
+outside name exists in the capture, so a label is: a STAFF member (an internal
+call's `origin_agent`, or the colleague an internal dial's journey reached --
+named ONLY when the name is exactly a roster name, INV-04, so a masked outside
+leg like `A.P.` can never print); the INSURER the number belongs to (a join to
+`insurance_numbers`, run for ADMINS only while the Inbound report is
+admin-gated -- pass `{ insurer: true }` for managers when that gate lifts); or
+"outside" plus the company line it came in on (`DIAL_IN_LABELS`). An outbound
+row with no outside number and no colleague is `unknown`, never "internal" (a
+row whose number failed to hash looks the same). The CALLBACK cue is the
+latest same-day inbound call from the number dialled that came BEFORE the dial,
+among those the viewer may see: on the agent's own list, in the agent's dept
+queues (`inboundQueuesForDept_`), or any for an admin. Every hash is compared
+IN SQL and never selected; each extra read is its own best-effort query, so a
+missing table costs the label, never the day. Pinned by
+`agent-day-labels.test.js` and drive-agentpanel.
+
 **Auth is server-derived from the ROSTER** (`buildDeptsByAgent_` -> the shared
 `assertDeptAccess_`), so it inherits the R-3 allDepts and Tier C multi-dept
 fixes. A CROSSOVER agent has several homes and ANY of them entitles (the homes

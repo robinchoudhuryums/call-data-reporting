@@ -3693,6 +3693,10 @@
   .agents .ap-list > .ds-note { margin: 8px; }
   .agents .ap-rings { padding: 10px 12px; font: 400 12px/1.6 var(--mono); }
   .agents .ap-calls { width: 100%; border-collapse: collapse; font-size: 12px; }
+  /* Step 2 1b: the From / To label wraps (an insurer + line can be long) and
+     carries the callback cue on its own line. */
+  .agents .ap-calls td.ap-party { white-space: normal; min-width: 120px; max-width: 240px; }
+  .ap-callback { color: var(--accent); font-size: 11px; }
   .agents .ap-calls th, .agents .ap-calls td { padding: 6px 10px; text-align: left; white-space: nowrap; }
   .agents .ap-calls thead th { cursor: default; padding: 8px 10px; font-size: 9.5px; letter-spacing: 0.16em; }
   .agents .ap-calls td { border-top: 1px solid var(--line); border-bottom: 0; }

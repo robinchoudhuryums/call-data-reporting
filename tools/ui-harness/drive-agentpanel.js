@@ -79,6 +79,9 @@ function record(name, pass, detail) {
       tabs: Array.from(p.querySelectorAll('.ap-tab')).map((t) => t.getAttribute('data-ap-tab')),
       onTab: (p.querySelector('.ap-tab.is-on') || { getAttribute: () => null }).getAttribute('data-ap-tab'),
       callRows: p.querySelectorAll('.ap-calls tbody tr').length,
+      // Step 2 1b: the From / To column and the callback cue.
+      heads: Array.from(p.querySelectorAll('.ap-calls thead th')).map((t) => t.textContent.trim()),
+      parties: Array.from(p.querySelectorAll('.ap-calls td.ap-party')).map((t) => t.textContent.trim()),
       note: (p.querySelector('.ap-note') || {}).textContent || '',
       loading: !!p.querySelector('.ap-loading'),
       panels: document.querySelectorAll('#ap-panel').length,
@@ -115,6 +118,13 @@ function record(name, pass, detail) {
     badRate ? JSON.stringify(badRate) : rates.length + ' boxes');
   record('the strip says what it shows', /days? with activity/.test(st.note), st.note.slice(0, 90));
   record('the selected day renders its tile rows', st.tiles >= 10, 'tiles=' + st.tiles);
+  // Step 2 1b (owner 2026-10-16): who was on the other end, as labels.
+  record('inbound calls name the caller: insurer + line, an outside caller, a colleague',
+    st.heads[1] === 'From'
+      && st.parties.indexOf('Acme Health · Main CSR Line') !== -1
+      && st.parties.indexOf('Outside caller') !== -1
+      && st.parties.indexOf('Bea Buddy (Sales)') !== -1,
+    JSON.stringify({ heads: st.heads, parties: st.parties }));
   record('the day opens on the Inbound tab with its calls', st.onTab === 'in' && st.callRows > 0,
     'tab=' + st.onTab + ' rows=' + st.callRows);
 
@@ -129,6 +139,11 @@ function record(name, pass, detail) {
   await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').click();
   await page.waitForTimeout(300);
   st = await panelState();
+  record('outbound calls name the callee and carry the callback cue',
+    st.heads[1] === 'To'
+      && st.parties.some((t) => /^Outside number\s*↩ callback to \d{1,2}:\d{2}/.test(t))
+      && st.parties.indexOf('Cal Colleague (CSR)') !== -1,
+    JSON.stringify({ heads: st.heads, parties: st.parties }));
   record('the Outbound tab shows the outbound calls', st.onTab === 'out' && st.callRows > 0,
     'rows=' + st.callRows);
   const tabFocused = await page.evaluate(() =>

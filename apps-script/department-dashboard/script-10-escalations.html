@@ -2451,6 +2451,8 @@
     if (c.holdSeconds > 0)     facts.push('Held ' + fmtDuration(c.holdSeconds));
     if (c.numTransfers)        facts.push(c.numTransfers + ' transfer' + (c.numTransfers === 1 ? '' : 's'));
     if (c.isInternal)          facts.push('internal');
+    const from = adPartyText_(c.from, 'in');
+    if (from)                  facts.unshift('From ' + escapeHtml(from));   // Step 2 1b
     return '<div class="cl-call-card">'
          +   '<div class="cl-call-head">'
          +     '<span class="cl-call-when">' + when + '</span>'
@@ -2459,6 +2461,28 @@
          +   '</div>'
          +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
          + '</div>';
+  }
+
+  // Step 2 1b (owner 2026-10-16): who was on the other end, as a LABEL -- the
+  // server sends { kind, name/dept | insurer/line } and never a number. One
+  // wording for the Agent Day cards and the inline panel's tables.
+  function adPartyText_(p, dir) {
+    if (!p) return '';
+    if (p.kind === 'staff') {
+      const who = p.name || 'Staff';
+      return p.dept ? who + ' (' + p.dept + ')' : who;
+    }
+    if (p.kind === 'outside') {
+      const base = p.insurer || (dir === 'out' ? 'Outside number' : 'Outside caller');
+      return p.line ? base + ' · ' + p.line : base;
+    }
+    return '';
+  }
+  // The callback cue on an outbound call: the earlier inbound call from the
+  // same number that day (server-matched; the number never reaches here).
+  function adCallbackText_(cb) {
+    if (!cb || !cb.time) return '';
+    return '↩ callback to ' + clCstTime_(cb.time) + ' inbound' + (cb.disposition ? ' (' + cb.disposition + ')' : '');
   }
 
   // Shared by the Agent Day card below and the inline panel's outbound table
@@ -2476,6 +2500,10 @@
     if (c.connected && c.talkSec > 0) facts.push('Talked ' + fmtDuration(c.talkSec));
     if (!c.connected && c.ringSec != null) facts.push('Rang ' + fmtDuration(c.ringSec));
     if (c.attempts > 1) facts.push(c.attempts + ' attempts');
+    const to = adPartyText_(c.to, 'out');                                     // Step 2 1b
+    if (to) facts.unshift('To ' + escapeHtml(to));
+    const cbText = adCallbackText_(c.callback);
+    if (cbText) facts.push('<span class="ap-callback">' + escapeHtml(cbText) + '</span>');
     return '<div class="cl-call-card cl-call-card--out">'
          +   '<div class="cl-call-head">'
          +     '<span class="cl-call-when">' + when + '</span>'
@@ -2837,7 +2865,7 @@
 
   function apInboundTableHtml_(rows) {
     if (!rows.length) return '<div class="ds-note">No inbound calls recorded for this agent on this day.</div>';
-    return '<table class="ap-calls"><thead><tr><th>Time</th><th>Path</th><th>Outcome</th><th>Talk</th><th>Waited</th></tr></thead><tbody>'
+    return '<table class="ap-calls"><thead><tr><th>Time</th><th>From</th><th>Path</th><th>Outcome</th><th>Talk</th><th>Waited</th></tr></thead><tbody>'
       + rows.map(function (c) {
           const path = escapeHtml(c.entryQueue || '')
             + (c.finalQueue && c.finalQueue !== c.entryQueue
@@ -2845,6 +2873,7 @@
             + (c.transferredOn ? ' <span class="ap-path">· moved on</span>' : '')
             + (c.isInternal ? ' <span class="ap-path">· internal</span>' : '');
           return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?') + '</td>'
+            + '<td class="ap-party">' + escapeHtml(adPartyText_(c.from, 'in') || '–') + '</td>'
             + '<td>' + (path || '–') + '</td>'
             + '<td>' + adRoleChip_(c.role) + '</td>'
             + '<td class="m">' + (c.talkSec ? fmtDuration(c.talkSec) : '–') + '</td>'
@@ -2855,10 +2884,13 @@
 
   function apOutboundTableHtml_(rows) {
     if (!rows.length) return '<div class="ds-note">No outbound calls recorded for this agent on this day.</div>';
-    return '<table class="ap-calls"><thead><tr><th>Time</th><th>Outcome</th><th>Talk</th><th>Rang</th><th>Attempts</th></tr></thead><tbody>'
+    return '<table class="ap-calls"><thead><tr><th>Time</th><th>To</th><th>Outcome</th><th>Talk</th><th>Rang</th><th>Attempts</th></tr></thead><tbody>'
       + rows.map(function (c) {
           const outcome = adOutboundOutcomeChip_(c);
+          const cbText = adCallbackText_(c.callback);   // Step 2 1b
           return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?') + '</td>'
+            + '<td class="ap-party">' + escapeHtml(adPartyText_(c.to, 'out') || '–')
+            +   (cbText ? '<div class="ap-callback">' + escapeHtml(cbText) + '</div>' : '') + '</td>'
             + '<td>' + outcome + '</td>'
             + '<td class="m">' + (c.connected && c.talkSec > 0 ? fmtDuration(c.talkSec) : '–') + '</td>'
             + '<td class="m">' + (c.ringSec != null ? fmtDuration(c.ringSec) : '–') + '</td>'

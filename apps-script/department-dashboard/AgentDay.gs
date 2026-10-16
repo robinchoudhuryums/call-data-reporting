@@ -83,8 +83,19 @@ var AGENT_DAY_OUTBOUND_CAPTURE_START_ = '2026-07-10';
  * PURE. The agent's ROSTER homes, alphabetical. Empty for an unrostered name.
  * Split out so the auth test can drive it without a spreadsheet.
  */
+// Step 2 1b: the roster map is read once per EXECUTION -- the entitlement
+// check and the staff-name labels both need it (the DEPT_CONFIG_ROWS_MEMO_
+// discipline; the harness resets every *MEMO* global between calls, F39).
+var AGENT_DAY_ROSTER_MEMO_ = null;
+function agentDayRosterMap_() {
+  if (!AGENT_DAY_ROSTER_MEMO_) {
+    AGENT_DAY_ROSTER_MEMO_ = (typeof buildDeptsByAgent_ === 'function') ? buildDeptsByAgent_() : {};
+  }
+  return AGENT_DAY_ROSTER_MEMO_;
+}
+
 function agentDayRosterHomes_(agentName) {
-  var byAgent = (typeof buildDeptsByAgent_ === 'function') ? buildDeptsByAgent_() : {};
+  var byAgent = agentDayRosterMap_();
   var homes = byAgent[agentName];
   return (homes && homes.length) ? homes.slice() : [];
 }
@@ -307,6 +318,101 @@ function agentDayShapeOutbound_(r) {
 }
 
 /**
+ * Step 2 1b (owner 2026-10-16): who was on the other end of each call --
+ * LABELS ONLY. No phone number or outside name exists in the capture, so the
+ * label is one of: a STAFF member (named only when the name is EXACTLY on a
+ * roster, INV-04 -- the safety net that keeps anything else from printing),
+ * the INSURER the number belongs to (published business lines; the caller
+ * passes them for admins only while the Inbound report is admin-gated), or
+ * "outside" with the company line it came in on (DIAL_IN_LABELS).
+ *
+ * PURE. `ctx` = { roster: {name: [homes]}, depts: {dept: true},
+ * dialLabels: {digits: label}, insurer: {callId: name} }.
+ */
+function agentDayInboundFrom_(r, ctx) {
+  ctx = ctx || {};
+  if (r && r.is_internal) {
+    var who = String(r.origin_agent || '').trim();
+    var od = String(r.origin_dept || '').trim();
+    return { kind: 'staff',
+             name: (who && ctx.roster && ctx.roster[who]) ? who : null,
+             dept: (od && ctx.depts && ctx.depts[od]) ? od : null };
+  }
+  var digits = String((r && r.dial_in_number) || '').replace(/\D/g, '');
+  var labels = ctx.dialLabels || {};
+  var line = null;
+  if (digits) {
+    line = labels[digits]
+      || (digits.length === 11 && digits.charAt(0) === '1' ? labels[digits.slice(1)] : null)
+      || (digits.length === 10 ? labels['1' + digits] : null)
+      || null;
+  }
+  return { kind: 'outside', insurer: (ctx.insurer && r && ctx.insurer[r.call_id]) || null, line: line };
+}
+
+/**
+ * PURE. The internal colleague an outbound dial reached: the first non-queue
+ * journey event whose name is EXACTLY a roster agent other than the dialler.
+ * Masked outside legs ('A.P.', '(external caller)', '(unknown)') never match
+ * a roster name, so nothing outside can surface here. Null when none.
+ */
+function agentDayInternalCallee_(journeyJson, agentName, roster) {
+  var ev;
+  try { ev = JSON.parse(journeyJson || 'null'); } catch (e) { return null; }
+  if (!ev || !ev.length || !roster) return null;
+  for (var i = 0; i < ev.length; i++) {
+    var e1 = ev[i];
+    if (!e1 || e1.kind === 'queue') continue;
+    var n = String(e1.name == null ? '' : e1.name).trim();
+    if (n && n !== agentName && roster[n]) return n;
+  }
+  return null;
+}
+
+/** PURE. The To label for one outbound row (see agentDayInboundFrom_). */
+function agentDayOutboundTo_(r, ctx) {
+  ctx = ctx || {};
+  if (r && r.no_ext) {
+    // No outside number on the row: an internal dial -- named when the path
+    // names a colleague, otherwise unknown (a row whose number failed to hash
+    // also lands here, and must not be called "internal").
+    var name = agentDayInternalCallee_(r.journey, ctx.agentName, ctx.roster);
+    if (name) return { kind: 'staff', name: name, dept: ((ctx.roster[name] || [])[0]) || null };
+    return { kind: 'unknown' };
+  }
+  return { kind: 'outside', insurer: (ctx.insurer && r && ctx.insurer[r.call_id]) || null };
+}
+
+/**
+ * PURE. The callback cue for one outbound call: the LATEST same-day inbound
+ * call from the number dialled that came BEFORE the dial, among those the
+ * viewer may see -- one on this agent's own list, one that entered the
+ * agent's dept queues, or (admins) any. `matches` = [{ ob, ib, ts, d, q }]
+ * already narrowed to this outbound call. Returns { time, disposition,
+ * inboundCallId } (the id only when the call is on the agent's own list, so
+ * the client can point at a row it shows) or null.
+ */
+function agentDayPickCallback_(obStart, matches, ctx) {
+  ctx = ctx || {};
+  var obSec = agentDayClockSec_(obStart);
+  if (obSec == null) return null;
+  var best = null, bestSec = -1;
+  (matches || []).forEach(function (m) {
+    var sec = agentDayClockSec_(m && m.ts);
+    if (sec == null || sec >= obSec) return;
+    var mine = !!(ctx.inboundIds && ctx.inboundIds[m.ib]);
+    var q = String(m.q || '').trim().toLowerCase();
+    var inDept = !!(q && ctx.deptQueues && ctx.deptQueues[q]);
+    if (!ctx.isAdmin && !mine && !inDept) return;
+    if (sec > bestSec) {
+      bestSec = sec;
+      best = { time: m.ts, disposition: m.d || null, inboundCallId: mine ? m.ib : null };
+    }
+  });
+  return best;
+}
+
+/**
  * PURE. Fold the day's entries into the counts the header strip shows.
  * Kept separate from the DQE aggregate on purpose -- see `agentDayReconcile_`.
  */
@@ -434,8 +540,9 @@ function agentDayLikePattern_(agentName) {
   return '%' + JSON.stringify(String(agentName == null ? '' : agentName)).replace(/[\\%_]/g, '\\$&') + '%';
 }
 
-function agentDayFetchCapture_(agentName, dateIso) {
-  var out = { available: false, inbound: [], outbound: [], anyJourney: false };
+function agentDayFetchCapture_(agentName, dateIso, opts) {
+  var out = { available: false, inbound: [], outbound: [], anyJourney: false,
+              insurerIn: [], insurerOut: [], callbackMatches: [] };
   if (typeof getDashboardNeonConn_ !== 'function') return out;
   var conn = null;
   try {
@@ -447,7 +554,8 @@ function agentDayFetchCapture_(agentName, dateIso) {
       "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
       + 'SELECT call_id, call_start, entry_queue, final_queue, disposition, '
       +        'abandon_stage, wait_seconds, hold_seconds, is_internal, '
-      +        'num_transfers, first_agent, journey '
+      +        'num_transfers, first_agent, journey, '
+      +        'dial_in_number, origin_agent, origin_dept '   // Step 2 1b: the From label
       + 'FROM inbound_calls WHERE call_date = ?::date '
       + 'AND (journey LIKE ? OR first_agent = ?) '
       + 'ORDER BY call_start LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t');
@@ -461,7 +569,8 @@ function agentDayFetchCapture_(agentName, dateIso) {
 
     var st2 = conn.prepareStatement(
       "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
-      + 'SELECT call_id, call_start, connected, talk_seconds, ring_seconds, attempts '
+      + 'SELECT call_id, call_start, connected, talk_seconds, ring_seconds, attempts, '
+      +        '(callee_hash IS NULL) AS no_ext, journey '   // Step 2 1b: the To label
       + 'FROM outbound_calls WHERE call_date = ?::date AND agent_name = ? '
       + 'ORDER BY call_start LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t');
     st2.setString(1, dateIso);
@@ -478,6 +587,52 @@ function agentDayFetchCapture_(agentName, dateIso) {
     out.inbound = JSON.parse(ij || '[]');
     out.outbound = JSON.parse(oj || '[]');
     out.available = true;
+
+    // Step 2 1b (owner 2026-10-16): the extras behind the caller / callee
+    // labels and the callback link. Each is its OWN best-effort read, so a
+    // missing insurance_numbers table (or any failure here) costs the label,
+    // never the day. Hashes are compared IN SQL and never selected: nothing
+    // that identifies a number leaves the database.
+    var extra = function (sql, binds) {
+      try {
+        var q = conn.prepareStatement(sql);
+        for (var b = 0; b < binds.length; b++) q.setString(b + 1, binds[b]);
+        var r = q.executeQuery();
+        var txt = r.next() ? r.getString('j') : '[]';
+        r.close(); q.close();
+        if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(txt ? txt.length : 0, 'agentDay');
+        return JSON.parse(txt || '[]');
+      } catch (eX) {
+        Logger.log('agentDayFetchCapture_ label read skipped: ' + (eX && eX.message ? eX.message : eX));
+        return [];
+      }
+    };
+    if (opts && opts.insurer) {
+      // Insurer names (published business lines) -- admin-only for now, the
+      // Inbound report's temporary gate (see the caller).
+      out.insurerIn = extra(
+        "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+        + 'SELECT c.call_id AS id, i.insurance_name AS n FROM inbound_calls c '
+        + 'JOIN insurance_numbers i ON i.phone_hash = c.caller_hash '
+        + 'WHERE c.call_date = ?::date AND (c.journey LIKE ? OR c.first_agent = ?)) t',
+        [dateIso, agentDayLikePattern_(agentName), agentName]);
+      out.insurerOut = extra(
+        "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+        + 'SELECT o.call_id AS id, i.insurance_name AS n FROM outbound_calls o '
+        + 'JOIN insurance_numbers i ON i.phone_hash = o.callee_hash '
+        + 'WHERE o.call_date = ?::date AND o.agent_name = ?) t',
+        [dateIso, agentName]);
+    }
+    // Every same-day inbound call from the number this agent dialled; the
+    // caller keeps the latest one BEFORE the dial that the viewer may see.
+    out.callbackMatches = extra(
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + 'SELECT o.call_id AS ob, c.call_id AS ib, c.call_start AS ts, c.disposition AS d, c.entry_queue AS q '
+      + 'FROM outbound_calls o JOIN inbound_calls c '
+      + 'ON c.call_date = o.call_date AND c.caller_hash = o.callee_hash '
+      + 'WHERE o.call_date = ?::date AND o.agent_name = ? AND o.callee_hash IS NOT NULL '
+      + 'AND COALESCE(c.is_internal, FALSE) = FALSE) t',
+      [dateIso, agentName]);
   } catch (e) {
     Logger.log('agentDayFetchCapture_ best-effort miss: ' + (e && e.message ? e.message : e));
   } finally {
@@ -560,8 +715,13 @@ function getAgentDay(req) {
     Logger.log('getAgentDay DQE half failed: ' + (e && e.message ? e.message : e));
   }
 
-  var cap = agentDayFetchCapture_(scope.agentName, scope.date);
+  // Step 2 1b: insurer names ride the Inbound report's TEMPORARY admin-only
+  // gate (docs/per-call-capture.md), so only an admin's read asks for them;
+  // when that report reaches managers, pass true for them here too.
+  var isAdmin = !!(scope.user && scope.user.role === 'admin');
+  var cap = agentDayFetchCapture_(scope.agentName, scope.date, { insurer: isAdmin });
   out.meta.neonAvailable = cap.available;
+  var labelCtx = agentDayLabelContext_(scope, cap, isAdmin);
 
   var inbound = [];
   var anyJourney = false;
@@ -577,10 +737,26 @@ function getAgentDay(req) {
     var roleInfo = agentDayKeepRow_(
       agentDayInboundRole_(journey, scope.agentName), r.first_agent, scope.agentName);
     if (!roleInfo) return;   // a LIKE false positive -- not this agent's call
-    inbound.push(agentDayShapeInbound_(r, roleInfo));
+    var entry = agentDayShapeInbound_(r, roleInfo);
+    entry.from = agentDayInboundFrom_(r, labelCtx.inbound);   // Step 2 1b
+    inbound.push(entry);
   });
 
-  var outbound = cap.outbound.map(agentDayShapeOutbound_);
+  // Step 2 1b: the To label, and the callback cue against the inbound calls
+  // this agent's list now holds (or the dept's queues -- agentDayPickCallback_).
+  var inboundIds = {};
+  inbound.forEach(function (e) { if (e.callId) inboundIds[e.callId] = true; });
+  var cbByOb = {};
+  (cap.callbackMatches || []).forEach(function (m) {
+    if (m && m.ob) (cbByOb[m.ob] = cbByOb[m.ob] || []).push(m);
+  });
+  var outbound = cap.outbound.map(function (r) {
+    var e = agentDayShapeOutbound_(r);
+    e.to = agentDayOutboundTo_(r, labelCtx.outbound);
+    e.callback = agentDayPickCallback_(r.call_start, cbByOb[r.call_id] || [],
+      { inboundIds: inboundIds, deptQueues: labelCtx.deptQueues, isAdmin: isAdmin });
+    return e;
+  });
   // PCR-5: the SQL hitting its LIMIT means rows past it were never read --
   // true even when the exact-name filter above left fewer than the cap.
   if (cap.inbound.length > AGENT_DAY_MAX_CALLS_) out.meta.truncated = true;
@@ -606,6 +782,37 @@ function getAgentDay(req) {
 
   try { logReportUsage_('agentDay', scope.dept || '(unrostered)', scope.user, false); } catch (e3) {}
   return out;
+}
+
+/**
+ * Step 2 1b: everything the label helpers read, gathered once per request.
+ * Best-effort throughout: a missing input just means a plainer label.
+ */
+function agentDayLabelContext_(scope, cap, isAdmin) {
+  var roster = {};
+  try { roster = agentDayRosterMap_(); } catch (e) { roster = {}; }
+  var depts = {};
+  try { (getAllDepartments_() || []).forEach(function (d) { depts[d] = true; }); } catch (e1) {}
+  var dialLabels = {};
+  try { if (typeof inboundDialInLabels_ === 'function') dialLabels = inboundDialInLabels_(); } catch (e2) {}
+  var toMap = function (rows) {
+    var m = {};
+    (rows || []).forEach(function (x) { if (x && x.id && x.n) m[x.id] = String(x.n); });
+    return m;
+  };
+  var deptQueues = {};
+  try {
+    if (scope.dept && typeof inboundQueuesForDept_ === 'function') {
+      inboundQueuesForDept_(scope.dept).forEach(function (q) { deptQueues[String(q).trim().toLowerCase()] = true; });
+    }
+  } catch (e3) {}
+  return {
+    inbound: { roster: roster, depts: depts, dialLabels: dialLabels,
+               insurer: isAdmin ? toMap(cap.insurerIn) : {} },
+    outbound: { roster: roster, agentName: scope.agentName,
+                insurer: isAdmin ? toMap(cap.insurerOut) : {} },
+    deptQueues: deptQueues,
+  };
 }
 
 /**

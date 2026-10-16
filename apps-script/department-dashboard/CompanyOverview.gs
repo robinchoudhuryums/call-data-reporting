@@ -1404,7 +1404,8 @@ function getOverviewChartTrend(req) {
   const data = {
     available: true, latestDate: latestDate,
     trendIsoLabels: labels, trendLabels: displayLabels, depts: depts,
-    // ADMIN-ONLY, stripped on serve by ovStripChartTrend_ below -- the same
+    // The LINE series reach managers too since Step 2 #6 (2026-10-16), by the
+    // allowlist in ovStripChartTrend_ below -- the same
     // compute-once / personalize-post-cache split personalizeOverview_ uses,
     // so one warmed blob serves both roles.
     company: {
@@ -1458,8 +1459,15 @@ function getOverviewChartTrend(req) {
 function ovStripChartTrend_(payload, user) {
   if (!payload || !payload.company) return payload;
   if (user && user.role === 'admin') return payload;
+  // Step 2 #6 (owner ruling 2026-10-16): non-admins keep the Company LINE --
+  // the two chart series, by ALLOWLIST, so a field added to `company` later
+  // stays admin-only until it is named here. Everything else still goes.
   const out = JSON.parse(JSON.stringify(payload));
-  delete out.company;
+  const c = out.company || {};
+  out.company = {
+    trend: Array.isArray(c.trend) ? c.trend : [],
+    trendAbandonedPct: Array.isArray(c.trendAbandonedPct) ? c.trendAbandonedPct : [],
+  };
   return out;
 }
 
@@ -1719,7 +1727,20 @@ function personalizeOverview_(blob, user) {
     out.pipelineFreshness = ovReageFreshness_(out.pipelineFreshness);   // DATA-7
   }
   if (user.role !== 'admin') {
+    // Step 2 #6 (owner ruling 2026-10-16): managers get the Company TREND LINE
+    // -- the two chart series and nothing else -- so the Overview chart can
+    // open with Company + their own dept highlighted. The aggregate FIGURES
+    // (rung / answered / rates / tiles) in companyAggregate stay admin-only.
+    // An ALLOWLIST copy, never a pass-through: a field added to
+    // companyAggregate later stays stripped until it is named here.
+    const caLine = out.companyAggregate;
     delete out.companyAggregate;
+    if (caLine && (Array.isArray(caLine.trendChart) || Array.isArray(caLine.trendChartAbandonedPct))) {
+      out.companyTrendLine = {
+        trendChart: Array.isArray(caLine.trendChart) ? caLine.trendChart : [],
+        trendChartAbandonedPct: Array.isArray(caLine.trendChartAbandonedPct) ? caLine.trendChartAbandonedPct : [],
+      };
+    }
     delete out.pipelineFreshness;
     delete out.orphanNag;
     delete out.unmappedQcd;
