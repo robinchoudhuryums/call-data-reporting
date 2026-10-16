@@ -1095,7 +1095,11 @@ async function visibleErrorTones(page) {
         }
         return {
           briefVisible: vis(brief), rows: rows.length, tiers: tiers.join(','), ranked: ranked,
-          words: rows.every(function (b) { return (b.querySelector('.ins-brief-sev') || {}).textContent; }),
+          // Step 1: each tier is an icon, with its word kept for screen readers.
+          words: rows.every(function (b) {
+            var sev = b.querySelector('.ins-brief-sev');
+            return !!sev && !!sev.querySelector('svg.ins-brief-ico') && /\S/.test(((sev.querySelector('.sr-only') || {}).textContent || ''));
+          }),
           top: brief ? ((brief.querySelector('.ins-brief-top') || {}).textContent || '') : '',
           headlineShown: vis(head), headlineHasText: !!(head && head.textContent.trim()),
           inOrder: inOrder, agentsOpen: !!(ids[0] && ids[0].open),
@@ -1105,7 +1109,7 @@ async function visibleErrorTones(page) {
       record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
         ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));
       if (role === 'admin') {
-        record('admin: UX-2 the ranked brief renders (top line + a worded row per section, most urgent first)',
+        record('admin: UX-2 the ranked brief renders (top line + an icon row per section, word kept for screen readers, most urgent first)',
           ux2.briefVisible && ux2.rows >= 4 && ux2.ranked && ux2.words && /Answer rate|No calls/.test(ux2.top),
           JSON.stringify({ rows: ux2.rows, tiers: ux2.tiers, top: ux2.top.slice(0, 90) }));
         record('admin: UX-2 the brief replaces the headline banner', !ux2.headlineShown,

@@ -6,13 +6,17 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-15
+Updated: 2026-10-16
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-16 -- Owner plan Step 1 IMPLEMENTED (block 259-step1): agent-panel days oldest-first, brief tier icons, partial trend month on count charts (option A).** Client-only; 2538 tests pass, ci:ui 554/0, 5/5 unit bites + 1 rendered bite land.
+  **Owner plan (agreed 2026-10-16, full text in the session):** Step 2 = 6 Overview trend default highlight (Company + own dept for a single-dept manager, Company only for ALL managers, admins unchanged, no axis zoom on the default) + 1b agent-panel caller/callee LABELS only (staff name / insurer / "Outside caller|number") + the "callback to HH:MM inbound" link. Step 3 = brief accordion under the team cards (collapsed, opens in place) + inbound/outbound together by default (admin-only; Outbound + Callbacks as their own rows; the 3-way switch becomes a Columns option) + preloading (background Callbacks/Direct, agent panel on hover/focus). Step 4 = day bars option B (linked highlight across the four cards, per-card value line, weekly past ~31 workdays). Step 5 = Notifications page (9a/9b), coaching release prep (10), two alert reasons (9c: agent below threshold over N workdays; callers not called back within a day) -- ALL admin-only until the owner tests; managers may only set STRICTER thresholds than the admin's, enforced server-side, stricter of the two wins.
+  **Owner-side:** deploy the dashboard.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn; PR next.
 - **2026-10-15 -- /sync-docs over the 22 commits since 2005240 (UX-2, sync-commands, cycle 259 Batches 1-10 + E1-E5).** Drift was small because each batch updated its own docs: three CLAUDE.md index lines lagged their full items -- Operator State #2 (now names the G4 `deploy-currency` row), #56 (now leads with CDR Tools -> Make a date whole, G1) and the Health bullet's row list (`build-stamp` / `deploy-currency` #2). Subsystem lists clean (no new app files; every listed path exists). No undocumented operator state (`AGENT_WELCOME_PENDING` is engine state, registered and described in #46). Weight: CLAUDE.md 179.6 KB of 200 KB (87.7%, under the 90% warn); largest bullet 3.9 KB (the comma-joined cells one, all rule); nothing pruned. 2527 tests pass.
   **Next (weight):** the next real saving is the ~5 KB ci:ui stage list in Key commands, which could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
   **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.

@@ -2282,8 +2282,10 @@ stay pinned by INV-39, INV-53 and INV-06.
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's
-  days in the loaded window (`getAgentDayStrip`, newest first, at most 31 with
-  a "most recent 31 of N" note) and the selected day's Agent Day view with
+  days in the loaded window (`getAgentDayStrip`: the server picks the 31 most
+  recent and sends them newest first; the strip DRAWS them oldest first, left to
+  right, scrolled to the selected newest day -- Step 1, owner 2026-10-16 --
+  with a "most recent 31 of N" note) and the selected day's Agent Day view with
   Inbound / Outbound / Missed-rings tabs. The Individual Report the row used to
   open directly is the panel's first button (`irDrillToAgent_`, same window).
   ONE agent at a time; Escape or Collapse close it and return focus to the row;
@@ -2428,8 +2430,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
   `insights-brief.test.js` -- keep their thresholds as literals inside them,
   or the extraction breaks. The queue-wait verdict is server-side
-  (`queueHealth.perQueue[].wait`, InsightsReport.gs). Colour words are always
-  rendered (Red / Amber / Green / No signal); red uses `--warn`, amber the
+  (`queueHealth.perQueue[].wait`, InsightsReport.gs). Each tier renders as an
+  ICON (Step 1, owner 2026-10-16: `insBriefTierIconHtml_` -- green thumbs-up,
+  amber exclamation mark, red flag, grey circle-with-dash), aria-hidden, with
+  its word (On track / Watch / Needs attention / No signal) kept in `.sr-only`
+  and the `title`, so colour is never the only carrier; red uses `--warn`, amber the
   new `--caution` (same values as `--stale`, defined at every `--stale`
   site). ADMIN-ONLY during the trial: `data-admin-only` on the container,
   the `USER.role` check in `insRenderBrief_`, and the same check on the trend

@@ -2533,8 +2533,8 @@
   // ── Inline agent panel on My Department (Batch B, owner 2026-10) ──────────
   //
   // A click (or Enter / Space) anywhere on an agent row opens this panel in
-  // the row below: a strip of the agent's days in the LOADED window, newest
-  // first, and the full Agent Day view for the selected day underneath. It
+  // the row below: a strip of the agent's days in the LOADED window, oldest
+  // first (Step 1), and the full Agent Day view for the selected day underneath. It
   // replaced the row's old drill straight to the Individual Report, which now
   // sits behind the panel's "Individual report" button with the same window.
   //
@@ -2736,7 +2736,11 @@
 
   function apStripHtml_(strip, selected) {
     const meta = (strip && strip.meta) || {};
-    const days = (strip && strip.days) || [];
+    // Step 1 (owner 2026-10-16): drawn OLDEST-first, left to right. The server
+    // still picks the most RECENT days and sends them newest-first (days[0] is
+    // the newest -- apLoadStrip_ opens on it), so only the drawing order flips;
+    // apScrollStripToSelected_ brings the selected (newest) box into view.
+    const days = ((strip && strip.days) || []).slice().reverse();
     const span = escapeHtml(apShortDate_(meta.from || AP_.from)) + ' – ' + escapeHtml(apShortDate_(meta.to || AP_.to));
     if (!days.length) {
       return '<div class="ds-note">No days with activity for this agent in ' + span + '.</div>';
@@ -2760,15 +2764,15 @@
     const total = Number(meta.totalActiveDays) || days.length;
     let note = total > days.length
       ? 'Showing the ' + days.length + ' most recent of ' + total + ' days with activity in ' + span
-        + ' (newest first). Narrow the dates above to reach earlier days.'
-      : total + ' day' + (total === 1 ? '' : 's') + ' with activity in ' + span + ' (newest first).';
+        + ' (oldest first). Narrow the dates above to reach earlier days.'
+      : total + ' day' + (total === 1 ? '' : 's') + ' with activity in ' + span + ' (oldest first).';
     if (meta.outboundAvailable === false) {
       note += ' Outbound counts could not be read just now, so the strip shows inbound only.';
     }
     return '<div class="ap-strip-wrap">'
-      + '<button type="button" class="ap-arrow" data-ap-scroll="-1" aria-label="Newer days">‹</button>'
+      + '<button type="button" class="ap-arrow" data-ap-scroll="-1" aria-label="Earlier days">‹</button>'
       + '<div class="ap-strip" data-ap-stripbox>' + boxes + '</div>'
-      + '<button type="button" class="ap-arrow" data-ap-scroll="1" aria-label="Older days">›</button>'
+      + '<button type="button" class="ap-arrow" data-ap-scroll="1" aria-label="Later days">›</button>'
       + '</div>'
       + '<p class="ap-note">' + escapeHtml(note) + '</p>';
   }
@@ -2783,6 +2787,21 @@
           ? ' · most recent ' + (meta.maxDays || (AP_.strip.days || []).length) : '');
     }
     apSetHtml_('[data-ap-strip]', apStripHtml_(AP_.strip, AP_.date));
+    apScrollStripToSelected_();
+  }
+
+  // Step 1: the strip runs oldest-first, so a freshly drawn (or re-attached --
+  // moving the panel's node resets its scroll) strip would show its OLDEST
+  // days with the selected newest box off to the right. Scroll just enough to
+  // show the selected box, or the newest end when none is selected yet.
+  function apScrollStripToSelected_() {
+    const box = AP_.node && AP_.node.querySelector('[data-ap-stripbox]');
+    if (!box) return;
+    const sel = box.querySelector('.ap-day.is-on');
+    if (!sel) { box.scrollLeft = box.scrollWidth; return; }
+    const b = box.getBoundingClientRect(), r = sel.getBoundingClientRect();
+    if (r.right > b.right) box.scrollLeft += r.right - b.right;
+    else if (r.left < b.left) box.scrollLeft -= b.left - r.left;
   }
 
   function apSelectDay_(date) {
@@ -2963,6 +2982,7 @@
     if (td) td.colSpan = tr.children.length || 1;
     apMarkRow_(tr);
     apSizeToWrap_();
+    apScrollStripToSelected_();
   }
 
   window.addEventListener('resize', function () { if (AP_.node) apSizeToWrap_(); });

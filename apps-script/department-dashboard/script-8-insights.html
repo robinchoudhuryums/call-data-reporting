@@ -1704,6 +1704,86 @@
     return { dir: c > 0 ? 'up' : (c < 0 ? 'down' : 'flat'), t: Math.round(t * 100) / 100 };
   }
 
+  // Step 1 (owner 2026-10-16, option A): a MONTH the trend only partly covers
+  // -- the window ends mid-month (the default window ends yesterday) or, on a
+  // 366+-day window, starts mid-month -- holds fewer workdays than a whole
+  // one, so its raw COUNT (answered / missed / rung / queue calls) reads as a
+  // dip that is only the calendar. Rates are unaffected. PURE (lifted by
+  // insights-partial-month.test.js): `months` is trendData.months
+  // ('YYYY-MM' per point), `dataEnd` the latest DATA date (a window ending
+  // past it is cut there), `workdaysFn(fromIso, toIso)` the holiday-aware
+  // workday count. Returns one entry per month: null for a whole month, else
+  // { month, from, to, elapsed, total } in workdays.
+  function insTrendPartialMonths_(months, trendStart, trendEnd, dataEnd, workdaysFn) {
+    var list = months || [];
+    var out = list.map(function () { return null; });
+    if (!list.length || typeof workdaysFn !== 'function') return out;
+    var isIso = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); };
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    var monthEnd = function (ym) {
+      return ym + '-' + pad(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate());
+    };
+    var end = isIso(trendEnd) ? String(trendEnd) : '';
+    if (end && isIso(dataEnd) && String(dataEnd) < end) end = String(dataEnd);
+    var start = isIso(trendStart) ? String(trendStart) : '';
+    var lastI = list.length - 1;
+    [0, lastI].forEach(function (i) {
+      var ym = String(list[i] || '');
+      if (!/^\d{4}-\d{2}$/.test(ym) || out[i]) return;
+      var first = ym + '-01', last = monthEnd(ym);
+      var from = (i === 0 && start && start > first && start <= last) ? start : first;
+      var to = (i === lastI && end && end < last) ? end : last;
+      if (to < from) to = from;
+      var total = workdaysFn(first, last);
+      var elapsed = (i === lastI && end && end < first) ? 0 : workdaysFn(from, to);
+      if (total > 0 && elapsed < total) out[i] = { month: ym, from: from, to: to, elapsed: elapsed, total: total };
+    });
+    return out;
+  }
+
+  // PURE. The whole-month pace of a partial month's count: value scaled by
+  // its workdays; null when nothing has elapsed yet.
+  function insTrendPace_(value, part) {
+    var v = Number(value);
+    if (!part || !(part.elapsed > 0) || !isFinite(v)) return null;
+    return Math.round(v * part.total / part.elapsed);
+  }
+
+  // The partial-month list for a loaded Insights payload.
+  function insPartialForData_(data) {
+    var td = (data && data.trendData) || {}, meta = (data && data.meta) || {};
+    var dataEnd = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : '';
+    return insTrendPartialMonths_(td.months || [], meta.trendStart, meta.trendEnd, dataEnd,
+      (typeof workingDaysBetween_ === 'function') ? workingDaysBetween_ : null);
+  }
+
+  // Chart.js pieces that mark the partial month(s) on a COUNT series: the
+  // segment into (or out of) a partial point is dashed, the point is drawn
+  // hollow, the axis tick reads "<label> (to date)", and the tooltip line
+  // carries the pace. The data and the labels are untouched -- the point
+  // drill parses the label (insTrendLabelToRange_).
+  function insPartialChartBits_(partial) {
+    var p = partial || [];
+    var any = p.some(Boolean);
+    var shortDate = function (iso) {
+      var n = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return (n[Number(String(iso).slice(5, 7)) - 1] || '') + ' ' + Number(String(iso).slice(8, 10));
+    };
+    return {
+      any: any,
+      at: function (i) { return p[i] || null; },
+      segment: { borderDash: function (ctx) { return (p[ctx.p0DataIndex] || p[ctx.p1DataIndex]) ? [5, 4] : undefined; } },
+      tick: function (label, i) { return p[i] ? label + ' (to date)' : label; },
+      note: function (i, value) {
+        var part = p[i];
+        if (!part) return '';
+        var pace = insTrendPace_(value, part);
+        return ' so far (' + shortDate(part.from) + '–' + shortDate(part.to) + ', ' + part.elapsed + ' of ' + part.total + ' workdays)'
+          + (pace != null ? ' · on pace for ~' + pace : '');
+      },
+    };
+  }
+
   // Most urgent first; within a colour the fixed section order.
   function insBriefRank_(rows) {
     var tierOrder = { red: 0, amber: 1, green: 2, grey: 3 };
@@ -1715,7 +1795,22 @@
     });
   }
 
-  var INS_BRIEF_WORD_ = { red: 'Red', amber: 'Amber', green: 'Green', grey: 'No signal' };
+  // Step 1 (owner 2026-10-16): each tier is an ICON, not a colour word --
+  // green a thumbs-up, amber an exclamation mark, red a flag, grey (no signal)
+  // a circle with a dash. The word stays for screen readers (.sr-only) and the
+  // icon is aria-hidden, so a colour is never the only carrier of the verdict.
+  var INS_BRIEF_WORD_ = { red: 'Needs attention', amber: 'Watch', green: 'On track', grey: 'No signal' };
+  var INS_BRIEF_ICON_PATH_ = {
+    green: '<path fill="currentColor" d="M2 10h4v11H2zM8 21h9.3a2 2 0 0 0 2-1.6l1.6-7.5A2 2 0 0 0 19 9.5h-5.4l.9-4.2a1.6 1.6 0 0 0-2.8-1.3L8 9.2z"/>',
+    amber: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path style="fill:var(--paper-card)" d="M11 6h2v8h-2zM11 16h2v2h-2z"/>',
+    red:   '<path fill="currentColor" d="M5 2h2v20H5zM8 3h10l-2.5 4.5L18 12H8z"/>',
+    grey:  '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M7 11h10v2H7z"/>',
+  };
+  function insBriefTierIconHtml_(tier) {
+    var t = INS_BRIEF_ICON_PATH_[tier] ? tier : 'grey';
+    return '<svg class="ins-brief-ico" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">'
+      + INS_BRIEF_ICON_PATH_[t] + '</svg><span class="sr-only">' + escapeHtml(INS_BRIEF_WORD_[t]) + '</span>';
+  }
   var INS_BRIEF_TARGET_ = {
     queue:     { id: 'ins-qh-fold',      label: 'Queue health' },
     agents:    { id: 'ins-agents-fold',  label: 'Agents' },
@@ -1874,14 +1969,15 @@
         + (isFinite(dp) && Math.abs(dp) >= 0.05 ? ', ' + (dp < 0 ? 'down ' : 'up ') + Math.abs(dp).toFixed(1) + ' pts vs the prior period' : '')
         + '. ' + (look === 0 ? 'Nothing needs a look.' : (look === 1 ? '1 thing needs a look.' : look + ' things need a look.'))
       : 'No calls in this window.';
-    box.innerHTML = '<p class="ins-brief-top"><span class="ins-brief-top-tier ins-brief--' + topTier + '">'
-      + escapeHtml(INS_BRIEF_WORD_[topTier]) + '</span>' + escapeHtml(top)
+    box.innerHTML = '<p class="ins-brief-top"><span class="ins-brief-top-tier ins-brief--' + topTier + '"'
+      + ' title="' + escapeHtml(INS_BRIEF_WORD_[topTier]) + '">'
+      + insBriefTierIconHtml_(topTier) + '</span>' + escapeHtml(top)
       + (targetNote ? ' <span class="ins-brief-default" title="This department has no answer target of its own, so it is judged against the company default. Set one in Alerts, Answer targets.">'
           + escapeHtml(targetNote) + '</span>' : '') + '</p>'
       + '<ul class="ins-brief-list">' + ranked.map(function (r) {
         var t = INS_BRIEF_TARGET_[r.key] || {};
         return '<li><button type="button" class="ins-brief-row ins-brief--' + r.tier + '" data-brief-key="' + r.key + '">'
-          + '<span class="ins-brief-sev">' + escapeHtml(INS_BRIEF_WORD_[r.tier] || '') + '</span>'
+          + '<span class="ins-brief-sev" title="' + escapeHtml(INS_BRIEF_WORD_[r.tier] || '') + '">' + insBriefTierIconHtml_(r.tier) + '</span>'
           + '<span class="ins-brief-text">' + escapeHtml(r.text) + '</span>'
           + '<span class="ins-brief-go">' + escapeHtml(t.label || '') + ' &#8250;</span></button></li>';
       }).join('') + '</ul>';
@@ -3876,6 +3972,22 @@
       if (qNames.length > 1) {
         spotlightOpts = isPct ? { skipLabel: QCD_THRESH_LABEL_ } : {};
       }
+      // Step 1: Total calls / Violations are COUNTS -- mark a partly covered
+      // month on the monthly view. The queue trend is built over the same
+      // INV-29 months as the team trend; the guard skips the marking if the
+      // two ever disagree in length rather than mark the wrong point.
+      const teamMonths = (data.trendData && data.trendData.months) || [];
+      const qPart = insPartialChartBits_((!daily && !isPct && (labels || []).length === teamMonths.length)
+        ? insPartialForData_(data) : []);
+      if (qPart.any) {
+        datasets.forEach(function (ds) {
+          const base = ds.borderColor;
+          ds.segment = qPart.segment;
+          ds.pointBackgroundColor = function (ctx) { return qPart.at(ctx.dataIndex) ? THEME.paperCard : base; };
+          ds.pointBorderColor = function (ctx) { return qPart.at(ctx.dataIndex) ? base : THEME.paperCard; };
+          if (!ds.pointRadius) ds.pointRadius = function (ctx) { return qPart.at(ctx.dataIndex) ? 3 : 0; };
+        });
+      }
       if (isPct) {
         // Violation-day markers (ported from the retired QCD chart, #6):
         // points at/over the standard render warn-colored + enlarged on every %
@@ -3927,7 +4039,8 @@
               filter: function (ctx) { return ctx.dataset.label !== QCD_THRESH_LABEL_ && chartTooltipPinFilter_(ctx); },
               callbacks: {
                 label: function (ctx) {
-                  return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
+                  return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y))
+                    + (ctx.parsed.y == null ? '' : qPart.note(ctx.dataIndex, ctx.parsed.y));
                 },
                 footer: function () {
                   return 'Click the point to reload for this ' + (daily ? 'day' : 'month');
@@ -3936,7 +4049,8 @@
             },
           },
           scales: {
-            x: { ticks: { maxRotation: 0, autoSkip: true } },
+            x: { ticks: { maxRotation: 0, autoSkip: true,
+              callback: function (v, i) { return qPart.tick(this.getLabelForValue(v), i); } } },
             y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? (v + '%') : fmtNumber(v); } } },
           },
         },
@@ -3965,6 +4079,9 @@
         dataPoints = series.map(function (s) { return s.answered; });
         color = IR_VOLUME_COLORS.answered; label = 'Answered';
       }
+      // Step 1: a COUNT metric's partly covered month on the MONTHLY view
+      // (the daily view has no partial buckets; rates and talk time need none).
+      const part = insPartialChartBits_((!daily && !isPercent && !isMinutes) ? insPartialForData_(data) : []);
       canvas.style.display = '';
       // UX-2 trend shading (admin trial, like the brief): each MONTHLY answer-
       // rate point shades from the line colour toward --good / --warn by its
@@ -3997,7 +4114,11 @@
             label: label, data: dataPoints, borderColor: color,
             backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
             tension: 0.4, fill: true,
-            pointBackgroundColor: shadeFill, pointBorderColor: THEME.paperCard,
+            segment: part.any ? part.segment : undefined,
+            pointBackgroundColor: part.any
+              ? function (ctx) { return part.at(ctx.dataIndex) ? THEME.paperCard : color; } : shadeFill,
+            pointBorderColor: part.any
+              ? function (ctx) { return part.at(ctx.dataIndex) ? color : THEME.paperCard; } : THEME.paperCard,
             pointBorderWidth: 1.5, pointRadius: shadeRadius, pointHoverRadius: 5,
           }],
         },
@@ -4010,7 +4131,7 @@
               label: function (ctx) {
                 if (isPercent) return label + ': ' + ctx.parsed.y + '%';
                 if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
-                return label + ': ' + ctx.parsed.y;
+                return label + ': ' + ctx.parsed.y + part.note(ctx.dataIndex, ctx.parsed.y);
               },
               footer: function (items) {
                 var foot = 'Click the point to reload for this ' + (daily ? 'day' : 'month');
@@ -4035,6 +4156,7 @@
             },
           },
           scales: {
+            x: part.any ? { ticks: { callback: function (v, i) { return part.tick(this.getLabelForValue(v), i); } } } : {},
             y: {
               beginAtZero: true,
               suggestedMax: isPercent ? 100 : undefined,
@@ -4782,6 +4904,10 @@
       // Nothing to plot -- leave the (already-destroyed) canvas blank.
       return;
     }
+    // Step 1: on a COUNT metric, mark a partly covered month (dashed in,
+    // hollow point, "(to date)", pace in the tooltip). % Answered is a rate
+    // and needs none of it.
+    const part = insPartialChartBits_(isPct ? [] : insPartialForData_(insLastData));
     const datasets = cards.map(function (c, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       // R11-M (metric-aware gaps): a per-agent series has real ABSENCES (months
@@ -4806,10 +4932,13 @@
         cubicInterpolationMode: 'monotone',
         tension: 0,
         spanGaps: false,   // % Answered breaks the line over an absent month
-        pointRadius: 0,
+        segment: part.any ? part.segment : undefined,
+        pointRadius: part.any ? function (ctx) { return part.at(ctx.dataIndex) ? 3 : 0; } : 0,
         pointHoverRadius: 4,
-        pointBackgroundColor: color,
-        pointBorderColor: THEME.paperCard,
+        pointBackgroundColor: part.any
+          ? function (ctx) { return part.at(ctx.dataIndex) ? THEME.paperCard : color; } : color,
+        pointBorderColor: part.any
+          ? function (ctx) { return part.at(ctx.dataIndex) ? color : THEME.paperCard; } : THEME.paperCard,
         pointBorderWidth: 1.5,
         fill: false,
       };
@@ -4841,12 +4970,13 @@
           datalabels: { display: false },
           tooltip: {
             callbacks: {
-              label: function (ctx) { return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y); },
+              label: function (ctx) { return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y) + part.note(ctx.dataIndex, ctx.parsed.y); },
             },
           },
         },
         scales: {
-          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: true } },
+          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: true,
+            callback: function (v, i) { return part.tick(this.getLabelForValue(v), i); } } },
           y: {
             beginAtZero: !isPct,
             min: isPct ? 0 : undefined,

@@ -951,7 +951,7 @@ stays the two directions' sum; `inboundTalkSec` / `outboundTalkSec` split it.
 **The inline agent panel (owner 2026-10, Batch B) is this view's second
 entrance.** A click / Enter / Space on a My Department agent row opens it in
 the row below (`apToggleFromRow_`, script-10): a strip of the agent's days in
-the LOADED window, newest first, and the selected day's view underneath,
+the LOADED window, drawn oldest first and opened on the newest (Step 1), and the selected day's view underneath,
 rendered by the SAME helpers as the modal (`adTierNote_` / `adKpiRowsHtml_` /
 `adRoleChip_` / `adOutboundOutcomeChip_`). The strip is
 `getAgentDayStrip({ agentName, from, to })` -- per-day rung / answered / missed
