@@ -596,3 +596,16 @@ S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
     - On a phone-width window: the cards go two-up, the bars stay inside them and the page does not scroll sideways.
   Expected: as described; for a parent dept (CSR, Sales, Power) the % Answered bars cover the combined view, crossover agents counted once, so they add up to the card. Weekend or holiday calls stay in the card total but get no bar.
   Fails if: the cards disagree on the selected day; a bar appears for a weekend or holiday; a card's bars do not add up to its figure for a weekday-only window; a manager or View-as sees bars; or the page scrolls sideways at phone width.
+
+S63 | Notifications: sentence rules, history, test send, the manager layer (Step 5a) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, open Admin > Alerts. The modal is titled Notifications and each rule is one sentence: "When CSR's answer rate on a workday falls below 85%, email its managers and a@x.com." A paused rule starts "Paused --"; a rule with no valid threshold says it is not monitored and offers no History or Test send.
+    - Click History on a rule: a table of the last 20 workdays -- that day's answer rate, whether the rule AS IT STANDS would have fired, and what the Alert Log says happened (a preview or test send is never "what happened"). Change the threshold and reopen it: the verdicts follow the new value. Click History again to fold it.
+    - Set "Date to check", click Test send: a confirm says only you receive it; Cancel sends nothing; Send test emails the real alert to you alone, "[Test]" in the subject, saying whether the rule would have fired. The Alert Log gains a `test-sent` row with Triggered By `test:<you>`; no manager receives anything and the fire-rate chip does not move.
+    - Manager layer: the switch starts OFF. Set a manager value for a dept (e.g. 90 against your 85): its card says "Manager: 90% · not applied: the manager layer is off", and Preview still judges the dept against 85. A value below yours is refused with "Managers can only make this rule stricter".
+    - Sign in as that dept's MANAGER with the switch off: Settings has no alert section.
+    - Turn the switch ON. The card now reads "below 90%" and "applies: stricter than your 85%"; Preview judges against 90 and its note names the manager's value. Raise your own threshold to 92: yours applies again.
+    - As the manager (reload after the switch): Settings shows the rule as a sentence and a "Your threshold %" box. 80 is refused with the reason; 90 saves and the sentence reads 90%. They cannot pick another department.
+    - Turn the switch OFF again: the manager's section disappears on their next load and their value stops applying.
+  Expected: as described. Nothing changes for any manager until the switch is on; the stricter of the two values always applies.
+  Fails if: a manager sees the section, saves, or has their value applied while the switch is off; a looser manager value is accepted; a test send reaches anyone but the admin; or History's verdicts do not follow the rule as it stands.

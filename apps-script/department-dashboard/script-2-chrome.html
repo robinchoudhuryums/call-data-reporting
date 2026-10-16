@@ -1185,6 +1185,7 @@
       if (ttToggle) ttToggle.checked = !CHART_TOOLTIPS_OFF_;
       const bannerToggle = $('report-banner-toggle');
       if (bannerToggle) bannerToggle.checked = !headlinesHidden_();
+      notifySettingsOpen_();   // Step 5a: the manager layer, when released
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';

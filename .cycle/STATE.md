@@ -13,6 +13,11 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-16 -- Owner plan Step 5a IMPLEMENTED (block 259-step5a): the Notifications page (admin trial).** Sentence rules, would-it-have-fired History, test send to the admin only, and the stricter-only MANAGER LAYER built but off (NOTIFY_MANAGER_EDIT, Operator State #77). 2587 tests, 8/8 bites, drive-notify 18/18.
+  **Owner-side:** deploy the dashboard. Release the manager layer only after walking S63.
+  **Next:** 5b coaching release prep (per-dept gates + the same clamp, Met / Rotated / Dismissed, manager email still to admins only), then 5c (two new alert reasons).
+  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green next.
+- **2026-10-16 -- Owner plan Step 4 SHIPPED ([PR #374](https://github.com/robinchoudhuryums/call-data-reporting/pull/374), merged).**
 - **2026-10-16 -- Owner plan Step 4 IMPLEMENTED (block 259-step4): linked day bars in the My Department team cards (admin trial).** Owner ruling mid-step: extend the dept payload (totals.daily + qcd.range.daily, compact tuples, no new call) so the bars add up to the cards, incl. the combined view and Avg answer. 2572 tests pass, 9/9 bites, drive-daybars 20/20.
   **Owner-side:** deploy the dashboard.
   **Next:** Step 5 (9a/9b notifications page, 10 coaching release prep, 9c alert reasons; all admin-only; stricter-only manager thresholds).

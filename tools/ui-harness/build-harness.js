@@ -200,6 +200,39 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     removeEscalationDepartment: function (req) { return { id: req && req.id, department: 'CSR' }; },                  // ESC-L2
     moveEscalation: function (req) { return { id: req && req.id, from: 'CSR', to: req && req.department }; },   // ESC-R1: drive-admin moves one card
     getAlertsInit: function () { return P['alerts-init']; },
+    // Step 5a: the Notifications page. Inline fixtures; the server shapes are
+    // pinned by tests/unit/notifications.test.js. The stricter-only refusal is
+    // mirrored here so drive-notify can assert the message reaches the user.
+    getAlertHistory: function (req) {
+      const days = ['2026-08-19', '2026-08-18', '2026-08-17', '2026-08-14', '2026-08-13'];
+      const pcts = [71.2, 84.5, null, 79.9, 88.1];
+      return { department: (req && req.department) || 'CSR', active: true, threshold: 85, adminThreshold: 85,
+        managerThreshold: null, source: 'admin', managerLayerOn: false, firedCount: 3, assessedCount: 4,
+        days: days.map(function (d, i) {
+          return { date: d, rung: pcts[i] == null ? 0 : 100, answered: 0, missed: 0, pct: pcts[i],
+            verdict: pcts[i] == null ? 'no-data' : (pcts[i] < 85 ? 'would-fire' : 'quiet'), skipped: false,
+            logged: i === 0 ? { status: 'sent', triggeredBy: 'daily-trigger' } : null };
+        }) };
+    },
+    sendAlertTest: function (req) {
+      return { sentTo: 'admin@ums.com', department: req && req.department, date: req && req.date,
+        pct: 71.2, threshold: 85, wouldFire: true };
+    },
+    setNotifyManagerEdit: function (req) { return { enabled: !!(req && req.enabled) }; },
+    getNotifyRules: function () {
+      return { enabled: true, rules: [{ department: 'CSR', active: true, adminThreshold: 85,
+        managerThreshold: null, managerBy: '', managerAt: '', effectiveThreshold: 85, effectiveSource: 'admin' }] };
+    },
+    saveNotifyManagerRule: function (req) {
+      const v = req && req.alertThreshold;
+      if (v !== '' && v != null && Number(v) < 85) {
+        throw new Error("Managers can only make this rule stricter: the admin's value is 85%, so choose 85% or higher.");
+      }
+      const mv = (v === '' || v == null) ? null : Number(v);
+      return { enabled: true, rules: [{ department: (req && req.department) || 'CSR', active: true, adminThreshold: 85,
+        managerThreshold: mv, managerBy: 'manager@ums.com', managerAt: '2026-08-20T12:00:00Z',
+        effectiveThreshold: mv == null ? 85 : Math.max(85, mv), effectiveSource: mv != null && mv > 85 ? 'manager' : 'admin' }] };
+    },
     getDigestsInit: function () { return P['digests-init']; },
     getQueueReportInit: function () { return P['queuereport-init']; },
     getOrphanFixInit: function () { return P['orphan-init']; },
@@ -590,7 +623,13 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
               fail && fail(new Error('harness: injected failure ' + name));
               return;
             }
-            if (h) { try { ok && ok(h.apply(null, args)); } catch (e) { console.error('[harness ok-handler]', name, e); } }
+            if (h) {
+              // A fixture that THROWS mirrors a server throw: the failure
+              // handler gets it (Step 5a's stricter-only refusal relies on it).
+              var res;
+              try { res = h.apply(null, args); } catch (fe) { fail && fail(fe); return; }
+              try { ok && ok(res); } catch (e) { console.error('[harness ok-handler]', name, e); }
+            }
             else {
               window.__HARNESS__.unmocked.push(name);
               console.warn('[harness] unmocked RPC: ' + name);

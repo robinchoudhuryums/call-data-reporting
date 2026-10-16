@@ -228,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# FIFTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# SIXTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
 # CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
@@ -251,7 +251,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # open, day/tab switch, survives a re-sort, IR button, Escape/Collapse focus
 # return, one at a time, CSV untouched, 360 px -- Batch B), drive-daybars.js (the
 # team cards' linked day bars: one shared selection, workday/monthly buckets,
-# keyboard + touch, admin-only -- Step 4), drive-deptoutbound.js
+# keyboard + touch, admin-only -- Step 4), drive-notify.js (the Notifications
+# page: sentence rules, History, Test send, the manager-layer switch, a
+# manager's Settings section off and on -- Step 5a), drive-deptoutbound.js
 # (the outbound-columns toggle -- on by default since Step 3 -- + Team Outbound panel: payload totals,
 # manager/view-as fall back to Inbound, panels never overlap, prior-period
 # chips on agent rows only -- Batches D/F), drive-crossstate.js (the
@@ -1433,7 +1435,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   [`docs/agent-role-plan.md`](docs/agent-role-plan.md).
 - **Alert Log captures every outcome of every run** -- `sent`,
   `would-send`, `above-threshold`, `no-data`, `no-recipients`,
-  `skipped`, `error`. Preview rows (from the modal's **Preview**
+  `skipped`, `error`, and a Notifications test send's `test-sent`
+  (Triggered By `test:<admin>`; drift and History skip it). Preview rows (from the modal's **Preview**
   button) are marked by a `preview:` prefix on the Triggered By
   column and use the `would-send` status (real fires use `sent`).
   Filter on `triggeredBy NOT LIKE 'preview:%'` to scope to real
@@ -2200,6 +2203,7 @@ items for anything it flags or doesn't cover.)
 74. Outbound source probe (Batch C) -- `probeOutboundSourceAgreement` (dashboard) compares the CDR Historical sheet's placed counts with Neon `outbound_calls`; its verdict picks Batch D's source, never on INCONCLUSIVE/FAILED
 75. Internal-call wait, before vs after (WS-1) -- `previewInternalWaitStart` (cdr-import, read-only) logs each internal call's old and new wait; expect SUSPECT 0 and 0 external changes; first run (2026-10-14) clean with 0 changed, so nothing to re-import
 76. Brief-threshold probe (UX-2) -- `probeBriefThresholds` (dashboard, read-only) logs what normal looks like for share of answered, queue wait and the monthly answer-rate swing, before any of those brief rows gets a colour
+77. `NOTIFY_MANAGER_EDIT` / `NOTIFY_MANAGER_RULES` -- the alert manager layer (Step 5a): off by default; while off, managers see nothing and stored values do not apply; flip it from the Notifications modal only once the owner releases it
 
 ## Cycle Workflow Config
 
@@ -2219,7 +2223,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/AgentDay.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/NeonRetention.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/AgentDay.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/NeonRetention.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/Notifications.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -2367,6 +2371,7 @@ S59 | Callbacks under the outbound table on My Department (Batch G1, UX-1) | Sub
 S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard
 S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3) | Subsystem: Department Dashboard
 S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
+S63 | Notifications: sentence rules, history, test send, the manager layer (Step 5a) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

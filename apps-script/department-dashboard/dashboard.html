@@ -1913,6 +1913,16 @@
         <h3>Report summary banners</h3>
         <p>The plain-language summary strip at the top of each report (the green &ldquo;On track&rdquo; / orange &ldquo;Watch&rdquo; banners). Uncheck to hide them everywhere.</p>
         <label class="settings-toggle"><input type="checkbox" id="report-banner-toggle" checked> Show report summary banners</label>
+        <!-- Step 5a: the manager layer of the low-answer-rate alert. Rendered
+             only when USER.notifyEdit (the admin's release switch is on). -->
+        <div id="settings-notify" hidden>
+          <h3>Answer rate alerts</h3>
+          <p>Your department&rsquo;s alert emails you when the answer rate falls below a threshold.
+            You can make it stricter (a higher threshold) than the one your admin set; you can&rsquo;t
+            make it looser. The stricter of the two always applies.</p>
+          <div id="settings-notify-list"></div>
+          <p class="al-hint" id="settings-notify-status" role="status"></p>
+        </div>
         <h3>Guided tour</h3>
         <p>A short walkthrough of the dashboard&rsquo;s main areas. It runs automatically the first time you visit; replay it any time here.</p>
         <button class="btn" type="button" id="tour-replay-btn">Take the tour</button>
@@ -2725,43 +2735,26 @@
                 aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="alerts-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Operations &middot; Admin</div>
-        <h2 id="alerts-modal-title">Low Answer Rate Alerts</h2>
+        <h2 id="alerts-modal-title">Notifications</h2>
       </div>
       <div class="modal-panel-body">
       <div id="al-loading" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading alert configuration&hellip;</div>
 
       <div id="al-body" style="display:none;">
         <div class="al-section">
-          <h3 class="al-section-title">Configuration</h3>
+          <h3 class="al-section-title">Low answer rate rules</h3>
           <p class="al-hint">
-            Threshold (%) and Extra Recipients are configured in the
-            <strong>Alert Config</strong> sheet in the dashboard spreadsheet.
-            Dept managers from <strong>Access Control</strong> are added
-            automatically. Admins are always cc'd.
-            <strong>Skip Dates</strong> (col F) accepts comma-separated
-            <code>YYYY-MM-DD</code> dates and inclusive ranges via
-            <code>..</code> (e.g. <code>2026-12-25, 2026-12-31..2026-01-01</code>)
-            -- honored by the daily trigger only; manual sends always fire.
-            The <strong>Last 30 assessed days</strong> column summarizes the most recent
-            trigger outcomes per dept: a warn chip means the threshold
-            is firing chronically (alert fatigue likely);
-            a muted chip means the threshold sits well below actual
-            performance and may be too lenient to catch real degradations.
+            Each rule reads as the sentence it enforces. Dept managers from
+            <strong>Access Control</strong> are emailed automatically, plus any extra
+            recipients; admins get a copy. Skip dates (<code>YYYY-MM-DD</code>, ranges via
+            <code>..</code>) are honored by the daily run only &mdash; manual sends always
+            fire. <strong>History</strong> shows the last 20 workdays: would the rule as it
+            stands have fired, and what actually happened. <strong>Test send</strong>
+            emails the real alert to you alone. The fire-rate chip warns when a rule fires
+            nearly every day, and mutes when it sits far below what the dept achieves.
             <a href="#" id="al-open-sheet" target="_blank">Open Alert Config sheet &rarr;</a>
           </p>
-          <table class="al-config-table">
-            <thead><tr>
-              <th>Department</th>
-              <th class="num">Threshold</th>
-              <th title="The most recent 30 ASSESSED daily-trigger days (statuses sent / above-threshold). Skipped, no-data and weekend days don't count, so the window can reach further back than 30 calendar days.">Last 30 assessed days</th>
-              <th>Extra Recipients</th>
-              <th>Active</th>
-              <th>Skip Dates</th>
-              <th>Notes</th>
-              <th>Actions</th>
-            </tr></thead>
-            <tbody id="al-config-tbody"></tbody>
-          </table>
+          <div class="al-rules" id="al-rules" role="list" aria-label="Low answer rate rules"></div>
           <!-- C3 admin edit form (writes the active source: sheet, or Neon
                when CONFIG_SOURCE=neon). -->
           <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
@@ -2794,6 +2787,35 @@
             <button class="btn btn-ghost" id="al-cfg-clear" type="button">Clear</button>
             <span id="al-cfg-status" class="status" style="display:none;"></span>
           </div>
+        </div>
+
+        <!-- Step 5a: the MANAGER LAYER (trial). Built but off: while the switch
+             is off managers see nothing, the server refuses their saves, and
+             stored values do not apply to any send. -->
+        <div class="al-section" id="al-mgr-section">
+          <h3 class="al-section-title">Manager layer <span class="al-state-pill" id="al-mgr-pill"></span></h3>
+          <p class="al-hint">
+            Lets a department&rsquo;s managers make their own alert <em>stricter</em> than yours,
+            from their Settings. The server refuses a value looser than yours, and at send time
+            the stricter of the two always applies &mdash; raise yours past theirs and yours wins.
+            Schedule and recipients stay admin-only. While this is off, managers see nothing and
+            stored values do not apply. You can set a manager value here to try it.
+          </p>
+          <label class="al-inline-check"><input type="checkbox" id="al-mgr-enabled"> Let managers set a stricter threshold (trial)</label>
+          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
+            <div class="ir-col" style="flex:1 1 150px;">
+              <label for="al-mgr-dept">Department</label>
+              <select id="al-mgr-dept"></select>
+            </div>
+            <div class="ir-col" style="flex:0 1 150px;">
+              <label for="al-mgr-threshold">Manager&rsquo;s threshold %</label>
+              <input type="number" id="al-mgr-threshold" min="1" max="100" step="1" placeholder="blank clears">
+            </div>
+            <div class="ir-col" style="flex:0 1 auto;">
+              <button class="btn btn-secondary" id="al-mgr-save" type="button">Save manager value</button>
+            </div>
+          </div>
+          <p class="al-hint" id="al-mgr-status" role="status"></p>
         </div>
 
         <div class="al-section">

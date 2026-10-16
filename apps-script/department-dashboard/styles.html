@@ -5545,11 +5545,46 @@
   /* In-flight state for a config WRITE. The save re-renders only this
      section now, so the busy cue belongs on the table rather than on the
      modal-wide loader that used to blank everything. */
-  .al-config-table.is-busy {
+  .al-config-table.is-busy,
+  .al-rules.is-busy {
     opacity: 0.55;
     pointer-events: none;
     transition: opacity 120ms ease;
   }
+
+  /* Step 5a: the Notifications rules, one sentence card per Alert Config row. */
+  .al-rules { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; }
+  .al-rule {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 10px 12px;
+    background: var(--paper);
+    min-width: 0;
+  }
+  .al-rule.is-paused { opacity: 0.75; }
+  .al-rule-sentence { margin: 0 0 6px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+  .al-rule-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+  .al-rule-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--r);
+    border: 1px solid var(--line);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+  .al-rule-chip.is-on { background: var(--good-soft); color: var(--good); border-color: transparent; }
+  .al-rule-note { font-style: italic; overflow-wrap: anywhere; }
+  .al-rule-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+  .al-rule-history { margin-top: 8px; overflow-x: auto; }
+  .al-hist-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .al-hist-table th, .al-hist-table td { padding: 3px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+  .al-hist-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .al-hist-table tr.is-fire td { background: var(--warn-soft); }
+  .al-hist-fire { color: var(--warn); font-weight: 600; }
+  .al-hist-quiet { color: var(--muted); }
+  #al-mgr-status.is-error, #settings-notify-status.is-error { color: var(--bad); }
+  .settings-notify-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+  .settings-notify-row input { width: 90px; }
 
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
