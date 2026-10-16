@@ -1425,6 +1425,20 @@ behind the removed button.
   Admin-only: built only when `dtsBarsActive_()` (admin, not View-as) and the
   block carries `data-admin-only`. Pinned by `day-bars.test.js` (server sums,
   crossover days, bucketing) and rendered by `drive-daybars.js`.
+- **Notifications page (Step 5; admin trial).** The Alerts modal (still
+  `#alerts-modal`, route `/admin/alerts`) is titled Notifications and renders
+  each Alert Config row as a SENTENCE card in `#al-rules` (PURE
+  `notifyRuleSentenceHtml_`; the threshold it names is the APPLIED one) with
+  Edit / History / Test send / Remove; History folds open under its card and
+  re-fetches on every open. "More alert reasons" (`#al-reasons`,
+  `alReasonSentenceHtml_`) and the Manager layer switch sit under it; Preview
+  rows label a reason row and print a callbacks threshold as "N+ callers".
+  The MANAGER's surface is a section of their Settings modal
+  (`#settings-notify`, hidden; `notifySettingsOpen_` renders it only when
+  `USER.notifyEdit`), never a route. The Coaching modal gains "Gates by
+  department" (`coachingGateSentence_`) and Met / Rotated / Dismissed closes.
+  Rendered by `drive-notify.js`; the pure pieces are pinned in
+  `notifications.test.js` / `alert-reasons.test.js`.
 - **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
   sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
   queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`) — the EMAIL's

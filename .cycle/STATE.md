@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-16 -- /sync-docs over the owner-plan commits (Steps 1-5, PRs #371-#376).** Drift was small because each step updated its own docs: the Threshold-drift bullet and README still described the retired alert config TABLE (now rule cards); the public-write bullet did not name the one non-admin write (the Step 5 manager layer, a Script Property); docs/architecture.md lacked Notifications.gs / AlertReasons.gs and the new Coaching RPCs; next-steps had no row for the owner plan; client-ui-conventions had no Notifications bullet. Subsystems clean (Notifications.gs + AlertReasons.gs listed; every path exists). No undocumented operator state (#77 / #78 / #48 cover the three new properties). Weight: CLAUDE.md 182.1 KB of 200 KB (88.9%); largest bullet 3.9 KB; nothing pruned.
+  **Next (weight):** the ~6 KB ci:ui stage list in Key commands could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
+  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green.
 - **2026-10-16 -- Owner plan Step 5c IMPLEMENTED (block 259-step5c): two admin-trial alert reasons.** An agent below X% on each of N workdays; callers not called back within a business day (callback engine, business-day window, unloaded days skipped). Admins-only email, `reason:` Alert Log rows, Preview rows. 2604 tests, 8/9 bites (1 equivalent), drive-notify 29/29. **Step 5 (and the owner plan) is now fully implemented.**
   **Owner-side:** deploy the dashboard; try the reasons (Operator State #78, S65); release decisions for the manager layer (#77), coaching (#48) and the reasons remain the owner's.
   **Where I left off:** committed on claude/exciting-goodall-7tkygn; PRs for 5b + 5c after 5a merges.
