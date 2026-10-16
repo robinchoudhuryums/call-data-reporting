@@ -210,6 +210,54 @@ async function ytdBootPass(browser, role) {
   await page.close();
 }
 
+// Step 2 #6 (owner 2026-10-16): the Overview chart opens with a MANAGER's
+// default highlight -- the Company line (released to managers as the line
+// only) + their own dept, every other line greyed, the y-axis NOT zoomed --
+// and an admin keeps every line. Read off the live Chart.js instance.
+async function ovDefaultPinsPass(browser, role) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + String(e && e.message ? e.message : e)));
+  await page.addInitScript(() => {
+    localStorage.setItem('cdr.tour.done', '1');
+    localStorage.setItem('cdr.ins.intro.v1', '1');
+  });
+  await page.goto('file://' + path.join(__dirname, 'site', 'index-' + role + '.html'));
+  await page.waitForTimeout(3500);
+  const s = await page.evaluate(() => {
+    const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ov-trend-chart') : null;
+    if (!ch) return { chart: false };
+    const y = ch.options.scales.y, o = ch._origYAxis || {};
+    return {
+      chart: true,
+      pins: Object.keys(ch._spotlightPins || {}).sort(),
+      isDefault: !!ch._spotlightDefaultPins,
+      hasCompany: ch.data.datasets.some((d) => d.label === 'Company'),
+      dimmed: ch.data.datasets.filter((d) => d.borderColor !== d._origBorder).length,
+      lines: ch.data.datasets.length,
+      axisNatural: y.min === o.min && y.max === o.max,
+    };
+  });
+  const want = await page.evaluate(() => {
+    const p = window.__HARNESS_PAYLOADS__ ? window.__HARNESS_PAYLOADS__['ov-manager'] : null;
+    return p ? (p.viewerDept || null) : null;
+  });
+  const tag = role + ': Overview chart default highlight';
+  if (role === 'admin') {
+    record(tag + ': an admin keeps every line (no default highlight)',
+      s.chart && s.pins.length === 0 && !s.isDefault, JSON.stringify(s));
+  } else {
+    record(tag + ': a manager gets the Company line (the line only, no company figures)',
+      s.chart && s.hasCompany, JSON.stringify(s));
+    record(tag + ': it opens on Company + the manager\'s own dept, other lines greyed',
+      s.isDefault && s.pins.length === 2 && s.pins.indexOf('Company') !== -1 && s.pins.indexOf(want) !== -1 && s.dimmed > 0,
+      JSON.stringify(s) + ' want dept=' + want);
+    record(tag + ': the default does not zoom the y-axis', s.axisNatural, JSON.stringify(s));
+  }
+  record(tag + ': no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await page.close();
+}
+
 // CL-23: browser Back / Forward through google.script.history. A FRESH boot
 // (clean history stack), the recording mock in build-harness.js, and the
 // app's own change handler -- the mock calls it exactly as a popstate would.
@@ -1225,6 +1273,7 @@ async function visibleErrorTones(page) {
     await phonePass(browser, role);   // CL-9
     await historyPass(browser, role); // CL-23
     await ytdBootPass(browser, role); // F47
+    await ovDefaultPinsPass(browser, role); // Step 2 #6
   }
 
   await browser.close();

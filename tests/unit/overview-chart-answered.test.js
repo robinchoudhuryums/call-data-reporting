@@ -289,9 +289,12 @@ test('the client treats it as a reference series on PERCENTAGE metrics only', fu
 // always sent `viewAsDept`; the server ignored it, so an admin previewing a
 // manager still got the admin-only Company line. Behavioural: served from a
 // cache hit so only the viewer resolution + the strip run.
-test('UI-3: getOverviewChartTrend strips the company line for an admin previewing a manager', function () {
+// Step 2 #6 (owner 2026-10-16): managers now get the company LINE -- but by
+// ALLOWLIST: the two chart series and nothing else. The view-as resolution
+// still decides which shape a request gets.
+test('UI-3 + Step 2 #6: a manager (or an admin previewing one) gets the company LINE only, by allowlist', function () {
   const cached = JSON.stringify({ available: true, latestDate: '2026-09-22', depts: [],
-    company: { trend: [90] } });
+    company: { trend: [90], trendAbandonedPct: [2.5], secretFigure: 7 } });
   const saved = {};
   const stub = {
     resolveUser_: function () { return stub.__user; },
@@ -307,13 +310,15 @@ test('UI-3: getOverviewChartTrend strips the company line for an admin previewin
     const call = function (user, req) { stub.__user = user; return h.ctx.getOverviewChartTrend(req); };
     const admin = { email: 'a@x', role: 'admin', departments: ['Sales', 'CSR'] };
     const mgr = { email: 'm@x', role: 'manager', department: 'Sales', departments: ['Sales'] };
-    assert.ok(call(admin, {}).company, 'a plain admin keeps the company line');
-    assert.ok(call(admin, { viewAsDept: '' }).company, 'an empty view-as is not a preview');
-    assert.equal(call(admin, { viewAsDept: 'Sales' }).company, undefined,
-      'an admin previewing Sales sees what a Sales manager sees -- no company line');
-    assert.ok(call(admin, { viewAsDept: 'Nope' }).company, 'an unknown dept is ignored (no preview)');
-    assert.equal(call(mgr, {}).company, undefined, 'a real manager never gets it');
-    assert.equal(call(mgr, { viewAsDept: 'CSR' }).company, undefined,
+    const J = (x) => JSON.parse(JSON.stringify(x));
+    const LINE = { trend: [90], trendAbandonedPct: [2.5] };
+    assert.equal(call(admin, {}).company.secretFigure, 7, 'a plain admin keeps the whole company block');
+    assert.equal(call(admin, { viewAsDept: '' }).company.secretFigure, 7, 'an empty view-as is not a preview');
+    assert.deepEqual(J(call(admin, { viewAsDept: 'Sales' }).company), LINE,
+      'an admin previewing Sales sees what a Sales manager sees -- the line, nothing else');
+    assert.equal(call(admin, { viewAsDept: 'Nope' }).company.secretFigure, 7, 'an unknown dept is ignored (no preview)');
+    assert.deepEqual(J(call(mgr, {}).company), LINE, 'a real manager gets the two line series only');
+    assert.deepEqual(J(call(mgr, { viewAsDept: 'CSR' }).company), LINE,
       'view-as never WIDENS a non-admin');
   } finally {
     Object.keys(saved).forEach(function (k) { h.ctx[k] = saved[k]; });
@@ -337,4 +342,41 @@ test('UI-3 follow-on: both Overview endpoints log the REAL caller under view-as'
     'the Overview logs the admin, not the synthetic manager it previews as');
   assert.equal((gs.match(/logReportUsage_\('overviewChartYtd', '\(all\)', realUser,/g) || []).length, 3,
     'every YTD return path logs the real caller');
+});
+
+// Step 2 #6 (owner 2026-10-16): the 90-day Overview payload gives a manager
+// the company LINE as `companyTrendLine` -- the two chart series, copied by
+// allowlist -- while the aggregate figures in companyAggregate stay admin-only.
+test('Step 2 #6: personalizeOverview_ gives a manager the company line only, never the aggregate figures', function () {
+  const J = (x) => JSON.parse(JSON.stringify(x));
+  const blob = { latestDate: '2026-10-15', depts: [],
+    companyAggregate: { rung: 500, answered: 400, trendChart: [88.1, null], trendChartAbandonedPct: [2.1, 3.4], futureFigure: 9 } };
+  const admin = h.call('personalizeOverview_', blob, { role: 'admin', email: 'a@x' });
+  assert.equal(admin.companyAggregate.rung, 500, 'an admin keeps the aggregate');
+  assert.equal(admin.companyTrendLine, undefined, 'and needs no separate line field');
+  const mgr = J(h.call('personalizeOverview_', blob, { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'm@x' }));
+  assert.equal(mgr.companyAggregate, undefined, 'the aggregate figures are stripped for a manager');
+  assert.deepEqual(mgr.companyTrendLine, { trendChart: [88.1, null], trendChartAbandonedPct: [2.1, 3.4] },
+    'the manager gets the two line series and nothing else (a field added later stays stripped)');
+  const none = J(h.call('personalizeOverview_', { latestDate: '2026-10-15', depts: [] }, { role: 'manager', department: 'CSR', departments: ['CSR'] }));
+  assert.equal(none.companyTrendLine, undefined, 'no aggregate, no line field');
+  // The client reads the line from either field.
+  const ov = read('script-3-overview.html');
+  assert.match(ov, /const ca = data\.companyAggregate \|\| data\.companyTrendLine \|\| null;/);
+});
+
+// Step 2 #6: the client's manager DEFAULT highlight -- source pins, since the
+// rendered gate drives it (drive-smoke, manager role).
+test('Step 2 #6: the Overview chart opens with the manager default once, without zooming', function () {
+  const ov = read('script-3-overview.html');
+  const fn = ov.slice(ov.indexOf('function ovDefaultPins_('), ov.indexOf('function ovRenderChart_('));
+  assert.match(fn, /USER\.role !== 'manager'\) return null/, 'admins (and their View-as preview) keep every line');
+  assert.match(fn, /var want = \['Company'\];\s*if \(!USER\.allDepts\)/, 'Company always; the own dept unless an ALL manager');
+  const render = ov.slice(ov.indexOf('function ovRenderChart_('), ov.indexOf('function ovRenderChart_(') + 20000);
+  assert.match(render, /if \(!carryPins && !ovDefaultPinsDone_\) \{\s*ovDefaultPinsDone_ = true;/,
+    'applied once per page load, and never over a carried (P28) selection');
+  const fit = ov.slice(ov.indexOf('function chartSpotlightFitAxis_('), ov.indexOf('function chartSpotlightFitAxis_(') + 600);
+  assert.match(fit, /chart\._spotlightDefaultPins\) \{/, 'the default keeps the natural y-axis');
+  const toggle = ov.slice(ov.indexOf('function chartSpotlightTogglePin_('), ov.indexOf('function chartSpotlightTogglePin_(') + 400);
+  assert.match(toggle, /chart\._spotlightDefaultPins = false;/, 'a click replaces the default (and zooms as before)');
 });

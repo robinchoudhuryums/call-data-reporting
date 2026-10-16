@@ -159,6 +159,7 @@ S23 | Overview is the default landing + tile click solos the trend line | Subsys
     - Shift-click (or Cmd/Ctrl-click) a second dept tile.
     - Click the sole-pinned tile again (after releasing the others).
     - As admin (or a manager on their own dept's line): click a POINT on a dept's trend line.
+    - (Step 2 #6) Sign in as a single-dept MANAGER and reload: the chart opens with the black Company line and their own dept's line in colour and every other line grey, the y-axis NOT zoomed. Hover another dept's tile: its line previews, then the default comes back. Click any tile: it solos (and zooms) as before; release it, wait for the 5-minute refresh -- the default does not come back until the next page load. As an ALL-departments manager: only the Company line is in colour. As admin: every line, as before.
   Expected: a plain tile click SOLOS that dept's line on the 30-day trend chart (the other lines dim; the tile gains the `.ov-tile-soloed` inset ring) -- it does NOT navigate. Shift/Cmd/Ctrl-click ADDS the second dept to the pinned set (both lines highlighted). A plain click on the lone pinned tile releases the solo (all lines back to normal). A chart POINT click routes to My Department for that dept + date (header h1 becomes the dept name, dept-selector swaps, agent table renders for the clicked ISO date); the dept-selector dropdown is the other navigation path.
 
 S24 | Sub-queue nests under parent hero on Overview | Subsystem: Department Dashboard
@@ -499,6 +500,7 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
     - Widen the window past ~6 weeks: the note reads "Showing the 31 most recent of N days with activity ... Narrow the dates above to reach earlier days." and the strip holds 31 boxes. Use the ‹ › arrows to scroll it.
     - Pick an older day: the view below changes to it. Switch the tabs (Inbound calls / Outbound calls; Missed rings only on a day past the journey horizon) -- each shows its own list.
     - Sort the table by another column: the panel stays open under the same agent. Open a second agent: the first closes (one panel at a time). Collapse the sub-queue group holding the open agent: the panel closes.
+    - (Step 2 1b) Inbound calls show a From column: a colleague by name and dept for an internal call, "Outside caller · <line name>" for an outside one (as ADMIN, the insurer's name when the number is a known insurer line). Outbound calls show a To column (a colleague, or "Outside number" / the insurer for an admin) and, under it, "↩ callback to HH:MM inbound (answered|abandoned...)" when that number called in earlier the same day. Check one callback against Caller Lookup. No phone number appears anywhere.
     - Click "Individual report ↗": the Individual Report opens for that agent over the same window.
     - Export CSV / Copy for spreadsheet with the panel open: the output is the table only, unchanged.
     - Set the window to ONE day and open a row: no strip, the day view directly.

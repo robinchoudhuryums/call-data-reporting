@@ -1669,10 +1669,10 @@
         trendAbandonedPct: (d.trendChartAbandonedPct || []).slice(startIdx),
       };
     });
-    // The company reference line rides `companyAggregate`, which
-    // personalizeOverview_ deletes wholesale for non-admins -- so a manager's
-    // payload simply has no company series and the line does not draw.
-    const ca = data.companyAggregate || null;
+    // The company reference line rides `companyAggregate` for admins; since
+    // Step 2 #6 (owner 2026-10-16) a manager's payload carries the line alone
+    // as `companyTrendLine` (personalizeOverview_ strips the figures).
+    const ca = data.companyAggregate || data.companyTrendLine || null;
     const company = ca ? {
       trend: (ca.trendChart || []).slice(startIdx),
       trendAbandonedPct: (ca.trendChartAbandonedPct || []).slice(startIdx),
@@ -1726,6 +1726,31 @@
     return axis;
   }
 
+  // Step 2 #6 (owner 2026-10-16): a MANAGER's Overview chart opens with the
+  // Company line and their own dept highlighted and every other line greyed;
+  // an all-departments manager opens on Company alone. Admins (and an admin's
+  // View-as preview) keep today's all-lines view. Applied ONCE per page load:
+  // after that, P28 carries whatever the viewer has (a cleared selection
+  // stays cleared through the 5-minute auto-refresh). The default does NOT
+  // zoom the y-axis (`_spotlightDefaultPins`, chartSpotlightFitAxis_); a
+  // click that solos a line does, as before.
+  var ovDefaultPinsDone_ = false;
+  function ovDefaultPins_(chart, data) {
+    if (!chart || !chart.data || typeof USER === 'undefined' || !USER || USER.role !== 'manager') return null;
+    var have = {};
+    chart.data.datasets.forEach(function (ds) { var k = chartSpotKey_(ds); if (k) have[k] = true; });
+    var want = ['Company'];
+    if (!USER.allDepts) {
+      var own = (typeof ovViewerDept_ === 'function') ? ovViewerDept_(data) : (USER.department || '');
+      if (own) want.push(own);
+    }
+    var pins = {};
+    want.forEach(function (k) { if (have[k]) pins[k] = true; });
+    // The Company line draws on the percentage metrics only; with no line to
+    // anchor on (and, for an ALL manager, no own dept) there is no default.
+    return Object.keys(pins).length ? pins : null;
+  }
+
   function ovRenderChart_(data) {
     // P28: carry the spotlight PINS + Alt-hidden series across rebuilds.
     // chartSpotKey_ is deliberately re-render-stable (the dept name), but
@@ -1733,11 +1758,12 @@
     // the chart and reset both, so an admin's mid-comparison solo/hide
     // reverted to the full 14-line view with no signal. Keys that no longer
     // exist in the new payload simply drop out.
-    var carryPins = null, carryHidden = null;
+    var carryPins = null, carryHidden = null, carryDefault = false;
     if (ovChartInstance) {
       try {
         if (ovChartInstance._spotlightPins && Object.keys(ovChartInstance._spotlightPins).length) {
           carryPins = ovChartInstance._spotlightPins;
+          carryDefault = !!ovChartInstance._spotlightDefaultPins;
         }
         (ovChartInstance.data.datasets || []).forEach(function (ds) {
           var k = chartSpotKey_(ds);
@@ -1841,8 +1867,9 @@
     // would collide with an existing dept), so it reads by WEIGHT and LABEL in
     // neutral ink instead -- the same family as the dashed baseline above,
     // one step louder because it is real data rather than a fixed goal.
-    // Percentage metrics only, and admin-only by construction (the payload
-    // field is stripped for everyone else).
+    // Percentage metrics only. Admins get it inside companyAggregate; since
+    // Step 2 #6 (owner 2026-10-16) managers get the line alone
+    // (`companyTrendLine`) -- the aggregate figures stay admin-only.
     const companySeries = (mcfg.companyField && view.company)
       ? (view.company[mcfg.companyField] || null) : null;
     const OV_COMPANY_LABEL_ = 'Company';
@@ -1979,10 +2006,23 @@
         });
         if (Object.keys(pins).length) {
           ovChartInstance._spotlightPins = pins;
+          ovChartInstance._spotlightDefaultPins = carryDefault;
           chartSpotlightApplyPins_(ovChartInstance);
         }
       }
-      if ((carryPins || carryHidden) && typeof ovSyncTilePins_ === 'function') {
+      // Step 2 #6: the FIRST build of the page opens on the manager default.
+      var defaultApplied = false;
+      if (!carryPins && !ovDefaultPinsDone_) {
+        ovDefaultPinsDone_ = true;
+        var dpins = ovDefaultPins_(ovChartInstance, data);
+        if (dpins) {
+          ovChartInstance._spotlightPins = dpins;
+          ovChartInstance._spotlightDefaultPins = true;
+          chartSpotlightApplyPins_(ovChartInstance);
+          defaultApplied = true;
+        }
+      }
+      if ((carryPins || carryHidden || defaultApplied) && typeof ovSyncTilePins_ === 'function') {
         ovSyncTilePins_(ovChartInstance);
       }
     }
@@ -2143,7 +2183,9 @@
     var y = chart && chart.options && chart.options.scales && chart.options.scales.y;
     if (!y) return;
     var pins = chart._spotlightPins || {};
-    if (!Object.keys(pins).length) {
+    // Step 2 #6: the Overview's DEFAULT highlight keeps the natural axis --
+    // greyed lines outside the highlighted ones' range stay on the plot.
+    if (!Object.keys(pins).length || chart._spotlightDefaultPins) {
       if (chart._origYAxis) {
         y.min = chart._origYAxis.min; y.max = chart._origYAxis.max;
         y.beginAtZero = chart._origYAxis.beginAtZero;
@@ -2259,6 +2301,7 @@
   // already the sole pin).
   function chartSpotlightTogglePin_(chart, key, additive) {
     if (!chart || !key) return;
+    chart._spotlightDefaultPins = false;   // Step 2 #6: a choice replaces the default (and zooms)
     if (!chart._spotlightPins) chart._spotlightPins = {};
     const pins = chart._spotlightPins;
     if (additive) {
@@ -2332,8 +2375,14 @@
   function ovSpotlightDept_(deptName) {
     const chart = ovChartInstance;
     if (!chart || !chart.data) return;
-    if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
-    if (deptName == null) { chartSpotlightClear_(chart); return; }
+    // Step 2 #6: the manager DEFAULT highlight still lets a tile hover preview
+    // a line, then puts the default back; a chosen pin still wins over hover.
+    if (chartSpotlightHasPins_(chart) && !chart._spotlightDefaultPins) return;
+    if (deptName == null) {
+      if (chart._spotlightDefaultPins) chartSpotlightApplyPins_(chart);
+      else chartSpotlightClear_(chart);
+      return;
+    }
     let idx = -1;
     chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
     if (idx >= 0) chartSpotlightApply_(chart, idx);

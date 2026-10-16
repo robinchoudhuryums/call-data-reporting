@@ -2024,7 +2024,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd`)
   on serve for non-admins -- and, while `OUTBOUND_VETTING_GATE_` stands, the
   tiles' outbound line too (`dept.outbound`, `outboundCoverageStart`,
-  `outboundPriorWindows`; INV-39). Viewer-personalized fields (`viewerRole`,
+  `outboundPriorWindows`; INV-39) -- keeping only the Company chart LINE, copied
+  by allowlist into `companyTrendLine` (Step 2 #6). Viewer-personalized fields (`viewerRole`,
   `viewerDept`) are injected per-request so a payload warmed by
   user A still personalizes correctly for user B. Adding a new
   admin-only Overview field means adding it to the strip list

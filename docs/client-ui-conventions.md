@@ -1372,6 +1372,24 @@ behind the removed button.
 
 ## Round-16 additions (owner-driven, 2026-08)
 
+- **The manager's default highlight + the Company line (Step 2 #6, owner
+  2026-10-16).** A MANAGER's Overview chart opens with the Company line and
+  their own dept highlighted and every other line greyed; an all-departments
+  manager opens on Company alone; admins (and an admin's View-as preview)
+  keep every line. `ovDefaultPins_` (script-3) builds the pin set, applied
+  ONCE per page load and never over a carried P28 selection, so a cleared
+  selection stays cleared through the 5-minute refresh. The default does NOT
+  zoom the y-axis (`chart._spotlightDefaultPins`, read by
+  `chartSpotlightFitAxis_`); a tile or legend click replaces it
+  (`chartSpotlightTogglePin_` clears the flag) and zooms as before, and a tile
+  hover still previews a line, then restores the default. The Company line
+  reaches managers as the LINE only: `personalizeOverview_` copies the two
+  chart series into `companyTrendLine` by allowlist and still strips
+  `companyAggregate`; the YTD payload's `ovStripChartTrend_` keeps
+  `company.{trend, trendAbandonedPct}` the same way (INV-39). The line draws
+  on the percentage metrics only, so on a count metric a manager's default is
+  their own dept alone. Pinned by `overview-chart-answered.test.js` and
+  drive-smoke's `ovDefaultPinsPass`.
 - **Agent-table volume tally**: agent rows render discrete answered/missed
   blocks at a cohort-shared adaptive unit (`ansTallyUnitFor_`, script-1-core;
   ≤36 blocks for the busiest row, unit disclosed in tooltips + a totals-row
