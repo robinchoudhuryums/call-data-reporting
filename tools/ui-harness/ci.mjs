@@ -58,6 +58,9 @@ const STAGES = [
   // selection across four cards, workday / monthly bucketing, keyboard and
   // touch, admin-only, and no sideways scroll at 360 px.
   ['node', ['drive-daybars.js'], 'team cards: linked day bars (Step 4)'],
+  // Step 5a: the Notifications page -- sentence rules, History, Test send, the
+  // manager-layer switch, and a manager's Settings section (off / on).
+  ['node', ['drive-notify.js'], 'Notifications: rules, history, test send, manager layer (Step 5a)'],
   // Batch D: the Inbound | Outbound | Both switch -- a second table over the
   // same page state, so the bugs are visibility and reconciliation ones only
   // a browser shows (the wrong table, the inbound panel painting back, the

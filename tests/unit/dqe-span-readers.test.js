@@ -209,6 +209,27 @@ test('R41: the alert engine reads its one day out of an out-of-order sheet', fun
   // from/to + priorFrom/priorTo, so its read-side check is belt-and-braces.)
 });
 
+// Step 5a: the Notifications history asks the alert engine about N workdays at
+// once. alertRowsForRange_ reads the window ONCE and buckets by date; each
+// per-date call inside the window is then served from that memo -- exactly the
+// rows a single-date read returns.
+test('Step 5a: a window read is ONE wide read, bucketed per date, and per-date calls hit it', function () {
+  install(outOfOrderRows());
+  const c = r41CountWideReads();
+  try { h.inExecution(function () {   // F39: one execution -- the memo must survive between these calls
+    const byDate = h.call('alertRowsForRange_', '2026-03-09', '2026-03-10');
+    assert.equal(c.count, 1, 'one span read for the two-day window');
+    assert.deepEqual(Object.keys(byDate).sort(), ['2026-03-09', '2026-03-10']);
+    assert.equal(byDate['2026-03-09'].length, 2);
+    assert.equal(byDate['2026-03-10'].length, 2);
+    assert.ok(!byDate['2026-02-01'], 'a foreign date inside the span is filtered out');
+    const one = h.call('alertRowsForDate_', '2026-03-10');
+    assert.equal(c.count, 1, 'a date inside the memoized window costs no read');
+    assert.equal(one.length, 2);
+    assert.equal(h.call('alertRowsForDate_', '2026-03-11').length, 0, 'a date outside it reads (and is empty)');
+  }); } finally { c.restore(); }
+});
+
 test('R41: IR and Insights read their windows out of an out-of-order sheet', function () {
   install(outOfOrderRows());
   const ir = h.call('computeIndividualReport_', 'Alpha', '2026-03-09', '2026-03-10', ['Anna'], h.call('getRosterForDepartment_', 'Alpha'));

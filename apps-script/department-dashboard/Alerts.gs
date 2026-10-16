@@ -112,7 +112,17 @@ function alertConfigSection_() {
   } catch (e) {
     Logger.log('computeThresholdDrift_ failed: %s', e);
   }
-  return { config: config, drift: drift, departments: departments };
+  // Step 5a: the manager layer (Notifications.gs) rides the section, so a
+  // save re-renders each rule with its manager value. Best-effort.
+  let managerLayer = null;
+  try {
+    if (typeof notifyRulesFor_ === 'function') {
+      managerLayer = notifyRulesFor_(resolveUser_(Session.getActiveUser().getEmail()));
+    }
+  } catch (e) {
+    Logger.log('alertConfigSection_: manager layer skipped: %s', e);
+  }
+  return { config: config, drift: drift, departments: departments, managerLayer: managerLayer };
 }
 
 function getAlertsInit() {
@@ -172,6 +182,7 @@ function getAlertsInit() {
     // that list or it can present a choice the save then rejects (and, when
     // the envelope arrives empty, no choice at all).
     departments: section.departments,
+    managerLayer: section.managerLayer,   // Step 5a
     log: readAlertLog_(20),
     trigger: getAlertTriggerStatus_(),
     pipelineHealth: readPipelineHealth_(20),
@@ -822,15 +833,26 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         : '';
       const recipientsCc = getAdminEmails_();
 
+      // Step 5a: the threshold actually applied is the STRICTER of the
+      // admin's and the department manager's (a manager may only raise it;
+      // their value is inert while the manager layer is switched off). The
+      // log and the email carry the applied value; the note names its source.
+      // (typeof: the unit suites load files selectively; production's one
+      // global scope always has Notifications.gs.)
+      const eff = (typeof alertEffectiveThreshold_ === 'function') ? alertEffectiveThreshold_(entry)
+        : { threshold: entry.threshold, admin: entry.threshold, manager: null, source: 'admin' };
+      const effNote = eff.source === 'manager'
+        ? ' (manager-set ' + eff.threshold + '%, stricter than the admin\'s ' + eff.admin + '%)' : '';
+
       // Above threshold = healthy. Log but don't send.
-      if (stats.pct >= entry.threshold) {
+      if (stats.pct >= eff.threshold) {
         pushAndLog({
           department: entry.department,
           status: 'above-threshold',
           answerRate: round1_(stats.pct),
-          threshold: entry.threshold,
+          threshold: eff.threshold,
           recipients: recipientsTo,
-          notes: 'Above threshold; no alert sent',
+          notes: 'Above threshold; no alert sent' + effNote,
         });
         return;
       }
@@ -840,9 +862,9 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
           department: entry.department,
           status: 'no-recipients',
           answerRate: round1_(stats.pct),
-          threshold: entry.threshold,
+          threshold: eff.threshold,
           recipients: [],
-          notes: 'No manager in Access Control and no Extra Recipients configured' + invalidNote,
+          notes: 'No manager in Access Control and no Extra Recipients configured' + invalidNote + effNote,
         });
         return;
       }
@@ -851,17 +873,18 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       let sentStatus = 'would-send';
       let sentNotes  = 'Preview mode (dry run)';
       if (!dryRun) {
-        sendAlertEmail_(entry, dateIso, stats, recipientsTo, recipientsCc);
+        sendAlertEmail_(eff.threshold === entry.threshold ? entry : alertEntryWithThreshold_(entry, eff.threshold),
+          dateIso, stats, recipientsTo, recipientsCc);
         sentStatus = 'sent';
         sentNotes  = 'Sent to ' + recipientsTo.length + ' recipient'
                    + (recipientsTo.length === 1 ? '' : 's');
       }
-      sentNotes += invalidNote;   // EN-8
+      sentNotes += invalidNote + effNote;   // EN-8
       pushAndLog({
         department: entry.department,
         status: sentStatus,
         answerRate: round1_(stats.pct),
-        threshold: entry.threshold,
+        threshold: eff.threshold,
         recipients: recipientsTo,
         notes: sentNotes,
       });
@@ -901,19 +924,30 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
 // small per-date subset by its roster. ~14 configured depts previously
 // re-read the whole multi-year sheet 14x per run -- linear-in-history
 // waste that lengthened exactly the lock-hold window OPS-2 cares about.
-var ALERT_DATE_ROWS_MEMO_ = { dateIso: null, rows: null };   // var, not let: per-execution, and the test harness resets it (F39)
+// Step 5a: the memo holds a WINDOW (from..to, rows bucketed by date) so the
+// Notifications history ("would this rule have fired?") reads N days in one
+// span read instead of N; a single-date run is the from === to case.
+var ALERT_DATE_ROWS_MEMO_ = { from: null, to: null, byDate: null };   // var, not let: per-execution, and the test harness resets it (F39)
 function alertRowsForDate_(dateIso) {
-  if (ALERT_DATE_ROWS_MEMO_.dateIso === dateIso && ALERT_DATE_ROWS_MEMO_.rows) {
-    return ALERT_DATE_ROWS_MEMO_.rows;
-  }
-  const rows = [];
+  const m = ALERT_DATE_ROWS_MEMO_;
+  if (m && m.byDate && m.from <= dateIso && dateIso <= m.to) return m.byDate[dateIso] || [];
+  return alertRowsForRange_(dateIso, dateIso)[dateIso] || [];
+}
+
+/** Every DQE row from..to (inclusive ISO dates) as alert tuples, bucketed by
+ *  date. ONE read for the whole window (DAL or a bounded sheet span). */
+function alertRowsForRange_(fromIso, toIso) {
+  const m = ALERT_DATE_ROWS_MEMO_;
+  if (m && m.byDate && m.from === fromIso && m.to === toIso) return m.byDate;
+  const byDate = {};
   // Shared classifier so the two sources produce byte-identical output: same
   // INV-23 sentinel skip, same numeric coercion.
-  const accept = function (agent, rung, missed, answered, queueSplit) {
+  const accept = function (agent, rung, missed, answered, queueSplit, dateIso) {
+    if (!dateIso || dateIso < fromIso || dateIso > toIso) return;
     const a = String(agent || '').trim();
     if (!a) return;
     if (/^A_Q_/.test(a) || a === 'Backup CSR') return;   // INV-23 sentinels
-    rows.push({ agent: a, rung: Number(rung) || 0,
+    (byDate[dateIso] = byDate[dateIso] || []).push({ agent: a, rung: Number(rung) || 0,
                 missed: Number(missed) || 0, answered: Number(answered) || 0,
                 // Adoption round: carried so computeDeptAnswerRateForDate_ can
                 // narrow per dept (the memo is SHARED across depts -- narrowing
@@ -936,12 +970,12 @@ function alertRowsForDate_(dateIso) {
   if (neonCapable) {
     try {
       const _t0 = Date.now();
-      const dalRows = neonFetchDqeRows_(dateIso, dateIso);
+      const dalRows = neonFetchDqeRows_(fromIso, toIso);
       if (neonDqeRowsUsable_(dalRows)) {   // LM2: reachable-empty is trusted
         for (let i = 0; i < dalRows.length; i++) {
           const row = dalRows[i];
-          if (row.dateIso !== dateIso) continue;   // belt-and-braces; the query is date-bounded
-          accept(row.agent, row.totalRung, row.totalMissed, row.totalAnswered, row.queueSplit);
+          // accept() re-checks the window: belt-and-braces; the query is date-bounded
+          accept(row.agent, row.totalRung, row.totalMissed, row.totalAnswered, row.queueSplit, row.dateIso);
         }
         usedNeon = true;
         if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('alertRows', 'neon', _t0, dalRows.length);
@@ -950,7 +984,7 @@ function alertRowsForDate_(dateIso) {
       Logger.log('alertRowsForDate_: neon read failed, falling back to sheet: '
         + (e && e.message ? e.message : e));
       usedNeon = false;
-      rows.length = 0;   // discard a partial neon fill before the sheet re-reads
+      Object.keys(byDate).forEach(function (k) { delete byDate[k]; });   // discard a partial neon fill before the sheet re-reads
     }
   }
 
@@ -963,7 +997,7 @@ function alertRowsForDate_(dateIso) {
     // is the honest outcome there.
     if (!sheet) {
       if (!neonCapable) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-      Logger.log('alertRowsForDate_: neon unusable AND no DQE sheet -- no rows for ' + dateIso + '.');
+      Logger.log('alertRowsForRange_: neon unusable AND no DQE sheet -- no rows for ' + fromIso + '..' + toIso + '.');
     } else {
       const lastRow = sheet.getLastRow();
       if (lastRow >= 2) {
@@ -977,24 +1011,25 @@ function alertRowsForDate_(dateIso) {
         // the only read needed. The per-row date filter below STAYS -- the span
         // bounds the read, it does not replace the filter (the sheet is not
         // reliably date-ordered).
-        const span = dqeWindowRowSpan_(sheet, lastRow, dateIso, dateIso, ssTZ);
+        const span = dqeWindowRowSpan_(sheet, lastRow, fromIso, toIso, ssTZ);
         const values = span
           ? sheet.getRange(span.startRow, 1, span.numRows, alertNumCols).getValues() : [];
         for (let i = 0; i < values.length; i++) {
           const r = values[i];
           const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-          if (dIso !== dateIso) continue;
+          // accept() drops a dIso outside from..to: the per-row filter stays
           accept(r[HISTORICAL_COLS.AGENT - 1],
                  r[HISTORICAL_COLS.TOTAL_RUNG - 1],
                  r[HISTORICAL_COLS.TOTAL_MISSED - 1],
                  r[HISTORICAL_COLS.TOTAL_ANSWERED - 1],
-                 alertNumCols >= HISTORICAL_COLS.QUEUE_SPLIT ? r[HISTORICAL_COLS.QUEUE_SPLIT - 1] : '');
+                 alertNumCols >= HISTORICAL_COLS.QUEUE_SPLIT ? r[HISTORICAL_COLS.QUEUE_SPLIT - 1] : '',
+                 dIso);
         }
       }
     }
   }
-  ALERT_DATE_ROWS_MEMO_ = { dateIso: dateIso, rows: rows };
-  return rows;
+  ALERT_DATE_ROWS_MEMO_ = { from: fromIso, to: toIso, byDate: byDate };
+  return byDate;
 }
 
 function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
@@ -1450,6 +1485,7 @@ function alertSectionResult_(base) {
     out.config = section.config;
     out.drift = section.drift;
     out.departments = section.departments;
+    out.managerLayer = section.managerLayer;
   } catch (e) {
     Logger.log('alertSectionResult_: section re-read failed: %s', e);
     out.sectionStale = true;
@@ -1651,7 +1687,11 @@ function readAlertLog_(maxRows) {
  * table of per-agent low-performers, and a link back to the
  * dashboard for drilldown.
  */
-function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
+function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc, opts) {
+  // Step 5a: opts.test = the Notifications page's test send -- the SAME email,
+  // "[Test]" in the subject and a callout saying who it reached and whether
+  // the rule would really have fired.
+  const test = !!(opts && opts.test);
   const dept = cfgEntry.department;
   const threshold = cfgEntry.threshold;
   const pct = stats.pct;
@@ -1668,7 +1708,7 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
   const C = EK_C_, sans = EK_SANS_;
   const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
     + ekKpiTd_('Answer rate', pctStr, {
-        tone: 'bad', subHtml: ekKpiSub_(ekEsc_(thresholdStr + ' alert threshold')),
+        tone: pct < threshold ? 'bad' : undefined, subHtml: ekKpiSub_(ekEsc_(thresholdStr + ' alert threshold')),
         pad: 'padding-right:6px;' })
     + ekKpiTd_('Rung', ekFmtInt_(stats.rung), { pad: 'padding:0 3px;' })
     + ekKpiTd_('Answered', ekFmtInt_(stats.answered), { pad: 'padding:0 3px;' })
@@ -1713,13 +1753,17 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
     title: dept,
     subtitle: dateIso,
     preheader: dept + ' answered ' + pctStr + ' on ' + dateIso + ' — below the ' + thresholdStr + ' threshold.',
-    rowsHtml: ekRow_(ekCalloutHtml_('Threshold breached',
+    rowsHtml: (test ? ekRow_(ekCalloutHtml_('Test send',
+        'Only you received this. On ' + ekEsc_(dateIso) + ' the rule '
+        + (pct < threshold ? '<strong>would have fired</strong>' : 'would <strong>not</strong> have fired')
+        + ' — managers were not emailed.', 'neutral'), '16px 26px 0') : '')
+      + ekRow_(ekCalloutHtml_(pct < threshold ? 'Threshold breached' : 'Above the threshold',
         // EN-7 (broad-scan 2026-10-01): name the denominator the rate actually
         // used -- it said "of rung calls" under ANSWER_RATE_FORMULA=answerable too.
         ekEsc_(dept) + ' answered <strong>' + ekEsc_(pctStr) + '</strong> of '
         + (getAnswerRateFormula_() === 'answerable' ? 'answered-or-missed' : 'rung') + ' calls on '
-        + ekEsc_(dateIso) + ' — below the configured <strong>' + ekEsc_(thresholdStr)
-        + '</strong> alert threshold.', 'warn'), '16px 26px 0')
+        + ekEsc_(dateIso) + ' — ' + (pct < threshold ? 'below' : 'at or above') + ' the configured <strong>' + ekEsc_(thresholdStr)
+        + '</strong> alert threshold.', pct < threshold ? 'warn' : 'neutral'), '16px 26px 0')
       + ekRow_(kpis)
       + agentsRow,
     ctaUrl: dashboardUrl,
@@ -1731,7 +1775,7 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
   sendAppEmail_({
     to:       recipientsTo.join(','),
     cc:       (recipientsCc || []).join(','),
-    subject:  '[Dashboard Alert] ' + dept + ' answer rate ' + pctStr + ' on ' + dateIso,
+    subject:  (test ? '[Test] ' : '') + '[Dashboard Alert] ' + dept + ' answer rate ' + pctStr + ' on ' + dateIso,
     htmlBody: htmlBody,
   });
 }

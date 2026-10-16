@@ -3457,3 +3457,22 @@ When something looks wrong, before assuming a code bug, check:
       8 and red at 12 points below the prior-3-month average. Re-run it before
       changing any of them, or if a brief row colours far more or less often
       than expected.
+
+77. **The alert MANAGER LAYER (Step 5a, 2026-10-16; dashboard).** A
+    department's manager may make their own low-answer-rate alert STRICTER
+    (a higher threshold) than the admin's -- never looser; window length,
+    schedule and recipients stay admin-only. It is BUILT BUT OFF:
+    - `NOTIFY_MANAGER_EDIT` -- the release switch, `true` = on. Flip it from
+      the Notifications modal (Admin > Alerts > Manager layer); unset = off.
+      While off: managers' Settings show no alert section, the server refuses
+      their reads and saves, and stored values do NOT apply to any send --
+      the run uses the admin's threshold alone.
+    - `NOTIFY_MANAGER_RULES` -- the stored values (JSON, one entry per dept,
+      written by `saveNotifyManagerRule`, never by hand). An admin can set a
+      value from the modal to try the layer before releasing it.
+    Once on, every daily run applies the stricter of the two values; the
+    Alert Log's Threshold column holds the applied one and the Notes name a
+    manager-set value. Raising your own threshold past a manager's simply
+    wins. Turning the switch off again restores the admin-only behaviour at
+    the next run (managers' values stay stored). Walk S63 before releasing.
+    Pinned by `tests/unit/notifications.test.js` and `drive-notify.js`.

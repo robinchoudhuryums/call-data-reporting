@@ -127,12 +127,13 @@
   // then, fall back to the full reload.
   function alCfgApplySection_(res) {
     if (!res || res.sectionStale || !res.config) { alLoadInit_(); return; }
+    if (res.managerLayer) alRenderManagerLayer_(res.managerLayer);
     alRenderConfigTable_(res.config, res.drift || {}, res.departments || []);
   }
   // Dims + marks the config table busy while a write is in flight, so the
   // section that is about to change is the one showing the activity.
   function alCfgBusy_(on) {
-    const t = document.querySelector('.al-config-table');
+    const t = $('al-rules');
     if (!t) return;
     t.classList.toggle('is-busy', !!on);
     if (on) t.setAttribute('aria-busy', 'true');
@@ -446,6 +447,8 @@
 
     // C3 config-editor form buttons.
     if ($('al-cfg-save'))  $('al-cfg-save').addEventListener('click', alCfgSave_);
+    if ($('al-mgr-enabled')) $('al-mgr-enabled').addEventListener('change', alMgrToggle_);
+    if ($('al-mgr-save'))  $('al-mgr-save').addEventListener('click', alMgrSave_);
     if ($('al-cfg-clear')) $('al-cfg-clear').addEventListener('click', alCfgClear_);
     // Unified Report Subscribers add/edit form (Batch 3).
     if ($('al-rs-save'))       $('al-rs-save').addEventListener('click', alRsSave_);
@@ -969,6 +972,7 @@
     if ($('al-open-sheet') && data.spreadsheetUrl) {
       $('al-open-sheet').href = data.spreadsheetUrl;
     }
+    alRenderManagerLayer_(data.managerLayer || null);   // before the rules: each card names its manager value
     alRenderConfigTable_(data.config || [], data.drift || {}, data.departments || []);
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
@@ -1087,80 +1091,289 @@
     }).join('');
   }
 
+  // Step 5a: the rules render as SENTENCES -- "When CSR's answer rate on a
+  // workday falls below 85%, email its managers and a@x.com." -- one card per
+  // Alert Config row, with History / Test send beside Edit / Remove. The
+  // manager layer (alMgr_) joins in: a manager's stricter value is named on
+  // the card, and whether it applies right now.
+  var alMgr_ = { enabled: false, rules: [] };
+  function alMgrRuleFor_(dept) {
+    return (alMgr_.rules || []).filter(function (r) { return r.department === dept; })[0] || null;
+  }
+  // PURE (pinned by notifications.test.js): the sentence a rule reads as.
+  function notifyRuleSentenceHtml_(c, mgr) {
+    var dept = '<strong>' + escapeHtml(c.department) + '</strong>';
+    if (c.invalidThreshold) {
+      return dept + ' has no valid threshold (&ldquo;' + escapeHtml(c.thresholdRaw || 'blank')
+        + '&rdquo;), so it is <strong>not monitored</strong>. Edit it to set one.';
+    }
+    var eff = (mgr && mgr.effectiveThreshold != null) ? mgr.effectiveThreshold : Number(c.threshold);
+    var who = 'its managers';
+    var extras = c.extraRecipients || [];
+    if (extras.length) who += ' and ' + extras.map(escapeHtml).join(', ');
+    return (c.active ? 'When ' : 'Paused &mdash; when ') + dept + '&rsquo;s answer rate on a workday falls below <strong>'
+      + escapeHtml(String(eff)) + '%</strong>, ' + (c.active ? 'email ' : 'it would email ') + who + '.';
+  }
+  function alMgrNoteHtml_(c, mgr) {
+    if (!mgr || mgr.managerThreshold == null) return '';
+    var applies = alMgr_.enabled && mgr.effectiveSource === 'manager';
+    var why = !alMgr_.enabled ? 'not applied: the manager layer is off'
+      : applies ? 'applies: stricter than your ' + Number(c.threshold) + '%'
+      : 'not applied: your ' + Number(c.threshold) + '% is already stricter';
+    return '<span class="al-rule-chip' + (applies ? ' is-on' : '') + '" title="Set by '
+      + escapeHtml(mgr.managerBy || 'a manager') + (mgr.managerAt ? ' on ' + escapeHtml(String(mgr.managerAt).slice(0, 10)) : '')
+      + '">Manager: ' + escapeHtml(String(mgr.managerThreshold)) + '% &middot; ' + escapeHtml(why) + '</span>';
+  }
   function alRenderConfigTable_(config, drift, departments) {
-    const tbody = $('al-config-tbody');
-    if (!tbody) return;
+    const list = $('al-rules');
+    if (!list) return;
     config = config || [];
     alCfgRows_ = config;                       // C3 editor reads this for prefill
     if (departments && departments.length) alDepts_ = departments;
     alFillDeptSelect_('al-cfg-dept');
+    alFillDeptSelect_('al-mgr-dept');
     if (!config.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">'
-        + 'No alert config yet. Add one dept with the form below.'
-        + '</td></tr>';
+      list.innerHTML = '<p class="al-empty">No rules yet. Add one department with the form below.</p>';
       return;
     }
     const driftMap = drift || {};
-    tbody.innerHTML = config.map(function (c, idx) {
-      const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
-      const activeLbl = c.active ? 'Yes' : 'No';
-      // E8 Skip Dates: prefer the parsed array (server-normalized,
-      // bad tokens dropped) for the display so a malformed cell
-      // doesn't show garbage. Fallback to the raw string when the
-      // parsed array is empty so admins can see what they typed
-      // before fixing it. Empty cell shows an em-dash.
+    list.innerHTML = config.map(function (c, idx) {
       const skipDates = Array.isArray(c.skipDates) ? c.skipDates : [];
-      let skipCell = '';
+      let skip = '';
       if (skipDates.length) {
-        skipCell = skipDates.map(function (r) {
+        skip = 'Skips ' + skipDates.map(function (r) {
           return r.from === r.to ? r.from : (r.from + ' – ' + r.to);
         }).join(', ');
       } else if (c.skipDatesRaw) {
-        skipCell = '⚠︎ ' + c.skipDatesRaw;
-      } else {
-        skipCell = '—';
+        skip = '⚠︎ unreadable skip dates: ' + c.skipDatesRaw;
       }
-      // F4: an invalid-threshold dept is flagged so the admin sees it's NOT
-      // being monitored, rather than the row showing a misleading "0%".
-      const threshCell = c.invalidThreshold
-        ? '<td class="num"><span class="al-active al-active-no" title="Invalid threshold ('
-            + escapeHtml(c.thresholdRaw || 'blank') + ') -- this dept is NOT monitored. '
-            + 'Set a positive number.">⚠ invalid</span></td>'
-        : '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>';
-      // OPS-9: a duplicate dept row is inert (first row wins server-side) --
-      // chip it so the admin removes it instead of editing the wrong row.
-      const dupChip = c.duplicateRow
-        ? ' <span class="al-active al-active-no" title="Duplicate row for this department -- '
-            + 'the FIRST row wins; this one is ignored. Remove it.">⚠ duplicate</span>'
-        : '';
-      // O-3: a dept name matching no roster header is silently un-monitored
-      // (empty roster -> perpetual no-data) -- chip it like the F4 invalid
-      // threshold so the admin fixes the Department cell.
-      const unknownChip = c.unknownDept
-        ? ' <span class="al-active al-active-no" title="This department matches no roster '
-            + '(DO NOT EDIT!) header -- renamed or typo? It is NOT monitored (reads an empty '
-            + 'roster, logs no-data every run). Fix it to match the header exactly '
-            + '(case-sensitive).">⚠ unknown dept</span>'
-        : '';
-      return '<tr>'
-           +   '<td>' + escapeHtml(c.department) + dupChip + unknownChip + '</td>'
-           +   threshCell
-           +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
-           +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'
-           +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
-           +   '<td class="al-skip-dates">' + escapeHtml(skipCell) + '</td>'
-           +   '<td>' + escapeHtml(c.notes || '') + '</td>'
-           +   '<td>'
-           +     '<button type="button" class="link-btn al-cfg-edit" data-idx="' + idx + '">Edit</button> '
+      // OPS-9 / O-3: an inert duplicate row and an un-monitored unknown dept
+      // keep their chips.
+      const chips = []
+        .concat(c.duplicateRow ? ['<span class="al-active al-active-no" title="Duplicate row for this department -- the FIRST row wins; this one is ignored. Remove it.">⚠ duplicate</span>'] : [])
+        .concat(c.unknownDept ? ['<span class="al-active al-active-no" title="This department matches no roster (DO NOT EDIT!) header -- renamed or typo? It is NOT monitored. Fix it to match the header exactly (case-sensitive).">⚠ unknown dept</span>'] : [])
+        .concat([alDriftCellHtml_(c, driftMap[c.department])])
+        .concat(skip ? ['<span class="al-rule-chip">' + escapeHtml(skip) + '</span>'] : [])
+        .concat([alMgrNoteHtml_(c, alMgrRuleFor_(c.department))].filter(Boolean))
+        .concat(c.notes ? ['<span class="al-rule-note">' + escapeHtml(c.notes) + '</span>'] : []);
+      const canRun = !c.invalidThreshold && !c.duplicateRow;
+      return '<div class="al-rule' + (c.active ? '' : ' is-paused') + '" role="listitem" data-dept="' + escapeHtml(c.department) + '">'
+           +   '<p class="al-rule-sentence">' + notifyRuleSentenceHtml_(c, alMgrRuleFor_(c.department)) + '</p>'
+           +   '<div class="al-rule-meta">' + chips.join(' ') + '</div>'
+           +   '<div class="al-rule-actions">'
+           +     '<button type="button" class="link-btn al-cfg-edit" data-idx="' + idx + '">Edit</button>'
+           +     (canRun ? '<button type="button" class="link-btn al-rule-history-btn" data-idx="' + idx + '" aria-expanded="false">History</button>'
+                 + '<button type="button" class="link-btn al-rule-test-btn" data-idx="' + idx + '">Test send</button>' : '')
            +     '<button type="button" class="link-btn al-cfg-remove" data-idx="' + idx + '">Remove</button>'
-           +   '</td>'
-           + '</tr>';
+           +   '</div>'
+           +   '<div class="al-rule-history" hidden></div>'
+           + '</div>';
     }).join('');
-    tbody.querySelectorAll('.al-cfg-edit').forEach(function (btn) {
+    list.querySelectorAll('.al-cfg-edit').forEach(function (btn) {
       btn.addEventListener('click', function () { alCfgEdit_(Number(btn.getAttribute('data-idx'))); });
     });
-    tbody.querySelectorAll('.al-cfg-remove').forEach(function (btn) {
+    list.querySelectorAll('.al-cfg-remove').forEach(function (btn) {
       btn.addEventListener('click', function () { alCfgRemove_(Number(btn.getAttribute('data-idx'))); });
+    });
+    list.querySelectorAll('.al-rule-history-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { alRuleHistory_(btn); });
+    });
+    list.querySelectorAll('.al-rule-test-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { alRuleTestSend_(Number(btn.getAttribute('data-idx')), btn); });
+    });
+  }
+
+  // History: the last 20 workdays under the rule as it stands. A second click
+  // folds it; each open re-fetches (a rule edit changes every verdict).
+  function alRuleHistory_(btn) {
+    const card = btn.closest('.al-rule');
+    const box = card && card.querySelector('.al-rule-history');
+    const c = alCfgRows_[Number(btn.getAttribute('data-idx'))];
+    if (!box || !c) return;
+    if (!box.hidden) { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
+    box.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    box.innerHTML = '<p class="al-hint">Loading the last 20 workdays&hellip;</p>';
+    google.script.run
+      .withSuccessHandler(function (h) { box.innerHTML = alRuleHistoryHtml_(h); })
+      .withFailureHandler(function (err) {
+        box.innerHTML = '<p class="ds-note" role="alert">History unavailable: '
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</p>';
+      })
+      .getAlertHistory({ department: c.department, days: 20 });
+  }
+  // PURE (pinned): the history panel -- a verdict line, then one row per day.
+  function alRuleHistoryHtml_(h) {
+    if (!h || !h.days || !h.days.length) return '<p class="al-hint">No workdays to show.</p>';
+    const lead = 'Under the rule as it stands (below <strong>' + escapeHtml(String(h.threshold)) + '%</strong>'
+      + (h.source === 'manager' ? ', the manager&rsquo;s value' : '') + '), it would have fired on <strong>'
+      + h.firedCount + ' of ' + h.assessedCount + '</strong> workdays with calls.';
+    const rows = h.days.map(function (d) {
+      const verdict = d.verdict === 'would-fire' ? '<span class="al-hist-fire">would fire</span>'
+        : d.verdict === 'quiet' ? '<span class="al-hist-quiet">quiet</span>'
+        : d.verdict === 'error' ? '<span class="al-hist-quiet" title="' + escapeHtml(d.error || '') + '">error</span>'
+        : '<span class="al-hist-quiet">no calls</span>';
+      const actual = d.logged ? escapeHtml(d.logged.status) + (d.logged.triggeredBy === 'daily-trigger' ? '' : ' (manual)') : '—';
+      return '<tr class="' + (d.verdict === 'would-fire' ? 'is-fire' : '') + '">'
+        + '<td>' + escapeHtml(d.date) + (d.skipped ? ' <span class="al-rule-chip" title="A skip date: the daily run would not assess it">skip</span>' : '') + '</td>'
+        + '<td class="num">' + (d.pct == null ? '—' : escapeHtml(Number(d.pct).toFixed(1)) + '%') + '</td>'
+        + '<td>' + verdict + '</td>'
+        + '<td>' + actual + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<p class="al-hint">' + lead + '</p>'
+      + '<table class="al-hist-table"><thead><tr><th>Workday</th><th class="num">Answer rate</th>'
+      + '<th>Rule now</th><th>What happened</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  // Test send: the real email for this rule on the "Date to check", to the
+  // signed-in admin only.
+  function alRuleTestSend_(idx, btn) {
+    const c = alCfgRows_[idx];
+    if (!c) return;
+    const date = ($('al-date') && $('al-date').value) || '';
+    if (!date) { alCfgStatus_('error', 'Pick a "Date to check" under Run alerts first.'); return; }
+    dsConfirm_({
+      title: 'Send a test alert?',
+      messageHtml: 'Emails <strong>' + escapeHtml(c.department) + '</strong>&rsquo;s alert for <strong>'
+        + escapeHtml(date) + '</strong> to <strong>you only</strong>. No manager is emailed.',
+      confirmLabel: 'Send test',
+    }).then(function (ok) {
+      if (!ok || mutationBusy_('alRuleTest')) return;
+      if (btn) btn.disabled = true;
+      alCfgStatus_('loading', 'Sending a test of ' + c.department + '…');
+      google.script.run
+        .withSuccessHandler(function (r) {
+          mutationDone_('alRuleTest');
+          if (btn) btn.disabled = false;
+          alCfgStatus_('success', 'Test sent to ' + (r && r.sentTo || 'you') + ' — the rule '
+            + (r && r.wouldFire ? 'would' : 'would not') + ' have fired on ' + date + '.');
+        })
+        .withFailureHandler(function (err) {
+          mutationDone_('alRuleTest');
+          if (btn) btn.disabled = false;
+          alCfgStatus_('error', 'Test send failed: ' + (err && err.message ? err.message : String(err)));
+        })
+        .sendAlertTest({ department: c.department, date: date });
+    });
+  }
+
+  // ---- Manager layer (trial) ----
+  function alRenderManagerLayer_(m) {
+    alMgr_ = m || { enabled: false, rules: [] };
+    alSetStatePill_('al-mgr-pill', !!alMgr_.enabled);
+    if ($('al-mgr-enabled')) $('al-mgr-enabled').checked = !!alMgr_.enabled;
+  }
+  function alMgrStatus_(msg, isError) {
+    const el = $('al-mgr-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('is-error', !!isError);
+  }
+  function alMgrToggle_() {
+    const box = $('al-mgr-enabled');
+    if (!box || mutationBusy_('alMgrToggle')) return;
+    const want = box.checked;
+    box.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (r) {
+        mutationDone_('alMgrToggle');
+        box.disabled = false;
+        alMgr_.enabled = !!(r && r.enabled);
+        alRenderManagerLayer_(alMgr_);
+        alMgrStatus_(alMgr_.enabled ? 'On: managers can now make their own alert stricter from Settings.'
+          : 'Off: managers see nothing, and stored manager values do not apply.');
+        alLoadInit_();   // every rule's applied threshold changes with the switch
+      })
+      .withFailureHandler(function (err) {
+        mutationDone_('alMgrToggle');
+        box.disabled = false;
+        box.checked = !want;
+        alMgrStatus_('Could not change the switch: ' + (err && err.message ? err.message : String(err)), true);
+      })
+      .setNotifyManagerEdit({ enabled: want });
+  }
+  function alMgrSave_() {
+    const dept = $('al-mgr-dept') ? $('al-mgr-dept').value : '';
+    if (!dept) { alMgrStatus_('Pick a department.', true); return; }
+    const val = $('al-mgr-threshold') ? $('al-mgr-threshold').value : '';
+    const btn = $('al-mgr-save');
+    if (mutationBusy_('alMgrSave')) return;
+    if (btn) btn.disabled = true;
+    google.script.run
+      .withSuccessHandler(function () {
+        mutationDone_('alMgrSave');
+        if (btn) btn.disabled = false;
+        alMgrStatus_(val === '' ? 'Cleared the manager value for ' + dept + '.' : 'Saved ' + val + '% for ' + dept + '.');
+        alLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        mutationDone_('alMgrSave');
+        if (btn) btn.disabled = false;
+        alMgrStatus_(err && err.message ? err.message : String(err), true);
+      })
+      .saveNotifyManagerRule({ department: dept, alertThreshold: val });
+  }
+
+  // ---- The manager's own surface: a section of their Settings modal ----
+  // Rendered only when the admin has released the layer (USER.notifyEdit);
+  // the server refuses every call otherwise, so this is presentation only.
+  function notifySettingsOpen_() {
+    const sec = $('settings-notify');
+    if (!sec) return;
+    if (!(USER && USER.notifyEdit)) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const list = $('settings-notify-list');
+    if (list) list.innerHTML = '<p class="al-hint">Loading&hellip;</p>';
+    google.script.run
+      .withSuccessHandler(function (m) { notifySettingsRender_(m); })
+      .withFailureHandler(function (err) {
+        if (list) list.innerHTML = '<p class="ds-note" role="alert">' + escapeHtml(err && err.message ? err.message : String(err)) + '</p>';
+      })
+      .getNotifyRules();
+  }
+  function notifySettingsRender_(m) {
+    const list = $('settings-notify-list');
+    if (!list) return;
+    const rules = (m && m.rules) || [];
+    if (!rules.length) {
+      list.innerHTML = '<p class="al-hint">Your department has no answer-rate alert yet &mdash; ask an admin to set one up.</p>';
+      return;
+    }
+    list.innerHTML = rules.map(function (r, i) {
+      const id = 'settings-notify-in-' + i;
+      return '<div class="al-rule" data-dept="' + escapeHtml(r.department) + '">'
+        + '<p class="al-rule-sentence">' + notifyRuleSentenceHtml_({ department: r.department, active: r.active,
+            threshold: r.adminThreshold, extraRecipients: [] }, r) + '</p>'
+        + '<p class="al-hint">Admin&rsquo;s threshold: ' + escapeHtml(String(r.adminThreshold)) + '%. '
+        + (r.managerThreshold != null ? 'Yours: ' + escapeHtml(String(r.managerThreshold)) + '%.' : 'You have not set one.') + '</p>'
+        + '<div class="settings-notify-row"><label for="' + id + '">Your threshold %</label>'
+        + '<input type="number" id="' + id + '" min="' + escapeHtml(String(r.adminThreshold)) + '" max="100" step="1" value="'
+        + (r.managerThreshold != null ? escapeHtml(String(r.managerThreshold)) : '') + '" placeholder="' + escapeHtml(String(r.adminThreshold)) + '">'
+        + '<button type="button" class="btn btn-secondary settings-notify-save" data-dept="' + escapeHtml(r.department) + '" data-in="' + id + '">Save</button></div>'
+        + '</div>';
+    }).join('');
+    list.querySelectorAll('.settings-notify-save').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const dept = btn.getAttribute('data-dept');
+        const inp = $(btn.getAttribute('data-in'));
+        const st = $('settings-notify-status');
+        if (mutationBusy_('notifySave')) return;
+        btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (res) {
+            mutationDone_('notifySave');
+            btn.disabled = false;
+            if (st) { st.textContent = 'Saved.'; st.classList.remove('is-error'); }
+            notifySettingsRender_(res);
+          })
+          .withFailureHandler(function (err) {
+            mutationDone_('notifySave');
+            btn.disabled = false;
+            if (st) { st.textContent = err && err.message ? err.message : String(err); st.classList.add('is-error'); }
+          })
+          .saveNotifyManagerRule({ department: dept, alertThreshold: inp ? inp.value : '' });
+      });
     });
   }
 

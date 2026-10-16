@@ -146,6 +146,11 @@ function renderDashboard_(user) {
     departments: (user.role === 'admin' || user.allDepts
                   || (user.departments && user.departments.length > 1))
       ? user.departments : [],
+    // Step 5a: the manager layer's release switch (Notifications.gs). False
+    // for everyone until an admin turns NOTIFY_MANAGER_EDIT on; admins edit
+    // the layer from the Notifications modal instead.
+    notifyEdit: user.role === 'manager' && typeof notifyManagerEditEnabled_ === 'function'
+      && notifyManagerEditEnabled_(),
   };
   // Pre-escape the JSON server-side and pass as a single template
   // string. Two reasons we do this here instead of inline in the

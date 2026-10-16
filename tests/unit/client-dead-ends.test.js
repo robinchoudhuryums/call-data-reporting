@@ -329,8 +329,8 @@ test('Alerts config section: server-fed picker, in-place re-render, loud empty p
   assert.ok(/alCfgApplySection_\(res\)/.test(remove), 'alCfgRemove_ re-renders the section from the remove result');
   assert.ok(/if \(!res \|\| res\.sectionStale \|\| !res\.config\) \{ alLoadInit_\(\); return; \}/.test(s7),
     'a stale section is the ONE path back to the full reload');
-  assert.ok(/\.al-config-table\.is-busy/.test(src('styles.html')),
-    'the busy cue is on the config table, not the modal-wide loader');
+  assert.ok(/\.al-rules\.is-busy/.test(src('styles.html')),
+    'the busy cue is on the rules list, not the modal-wide loader');
 
   // (3) A falsy payload must reach the retry path BEFORE the body is shown.
   // It used to be swallowed after reveal, which is what made the blank modal

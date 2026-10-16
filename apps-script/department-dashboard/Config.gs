@@ -934,6 +934,9 @@ var PROP_REGISTRY_ = Object.freeze({
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     ALL_DEPT_NOTIFY_OPT_IN: 'operator',
+    // Step 5a (Notifications.gs): the manager layer's release switch, and the
+    // stored stricter-only values (written by saveNotifyManagerRule).
+    NOTIFY_MANAGER_EDIT: 'operator', NOTIFY_MANAGER_RULES: 'operator',
     NEON_EGRESS_BUDGET_MB: 'operator', NEON_STORAGE_CAP_MB: 'operator',
     // operator — engine flags + tunables
     COACHING_DELIVERY_ENABLED: 'operator',

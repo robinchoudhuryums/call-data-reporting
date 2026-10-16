@@ -506,7 +506,19 @@ From/To default (which must snap to DQE specifically).
   always cc'd. Deduped; managers first.
 - **Status enum** (used in UI + log Sent column): `sent` /
   `would-send` (dry-run / preview) / `above-threshold` (healthy)
-  / `no-data` / `no-recipients` / `skipped` (inactive) / `error`.
+  / `no-data` / `no-recipients` / `skipped` (inactive) / `error`
+  / `test-sent` (a Notifications test send to the requesting admin,
+  Step 5a -- never counted by drift or History).
+- **Notifications (Step 5a, `Notifications.gs`)**: the modal shows each
+  rule as the sentence it enforces, with History (the last 20 workdays:
+  would the rule AS IT STANDS have fired, beside the Alert Log's real
+  outcome -- one DQE window read via `alertRowsForRange_`) and Test send.
+  **Stricter-only manager layer:** the threshold applied is
+  `notifyStricterOf_(admin, manager)` -- for a "below X%" rule the HIGHER
+  value; `NOTIFY_STRICTER_` names the direction per field, and a new
+  manager-settable field must be added there (the save check and the
+  run-time clamp both read it). Inert until `NOTIFY_MANAGER_EDIT` is on
+  (Operator State #77).
 - **Daily trigger** (`runDailyAlerts_`) skips Saturdays + Sundays
   (INV-33). Holiday handling shipped in E8 (commit 319eca7): the
   `Skip Dates` column on `Alert Config` (col F) takes comma-separated
