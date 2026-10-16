@@ -15,7 +15,7 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 const J = (x) => JSON.parse(JSON.stringify(x));
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'EmailKit.gs', 'Alerts.gs', 'Notifications.gs'] });
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'EmailKit.gs', 'Alerts.gs', 'Notifications.gs', 'Coaching.gs'] });
 
 const USERS = {
   'admin@x.com': { email: 'admin@x.com', role: 'admin', department: null, departments: ['CSR', 'Sales'] },
@@ -25,7 +25,8 @@ const USERS = {
 
 // Functions some tests stub; install() puts the real ones back.
 const REAL = {};
-['sendAlertEmail_', 'computeDeptAnswerRateForDate_', 'alertRowsForRange_', 'prevBusinessDayIso_']
+['sendAlertEmail_', 'computeDeptAnswerRateForDate_', 'alertRowsForRange_', 'prevBusinessDayIso_',
+  'computeSummary_', 'getLatestDataDate', 'getTeamAvgExcludes_']
   .forEach(function (k) { REAL[k] = h.ctx[k]; });
 
 function install(opts) {
@@ -108,7 +109,7 @@ test('released: a manager may only tighten their OWN department, under the lock,
   assert.throws(function () { h.call('saveNotifyManagerRule', { department: 'Sales', alertThreshold: 90 }); },
     /Not authorized for this department/);
   assert.throws(function () { h.call('saveNotifyManagerRule', { department: 'CSR', alertThreshold: 140 }); },
-    /between 1 and 100/);
+    /number from 1 to 100/);
   assert.equal(h.state.props.NOTIFY_MANAGER_RULES, undefined, 'no refused save wrote anything');
   const locksBefore = h.state.locks;
   const res = J(h.call('saveNotifyManagerRule', { department: 'CSR', alertThreshold: 88 }));
@@ -246,6 +247,115 @@ test('workdays helper: newest first, weekends + holidays skipped', function () {
   assert.deepEqual(days, ['2026-10-09', '2026-10-07', '2026-10-06'], 'Sunday steps back to Friday; the holiday is skipped');
 });
 
+// ── Step 5b: coaching gates per dept + the same stricter-only layer ───────
+
+test('coaching gates: the admin\'s dept override over the company default; the manager may only tighten, once released', function () {
+  install({ props: { COACHING_DEPT_RULES: JSON.stringify({ CSR: { maxTeamRatioPct: 60, minMissed: 15 } }),
+    NOTIFY_MANAGER_RULES: JSON.stringify({ CSR: { coachRatioPct: 70, coachBehindPts: 3, coachMinMissed: 30 } }) } });
+  let g = J(h.call('coachingEffectiveGates_', 'CSR'));
+  assert.deepEqual(g.admin, { maxTeamRatioPct: 60, behindPts: 5, minMissed: 15 }, 'per-dept fields over the defaults');
+  assert.deepEqual(g.effective, g.admin, 'layer off: the manager\'s values are inert');
+  assert.deepEqual(J(h.call('coachingEffectiveGates_', 'Sales')).admin, { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 });
+  install({ props: { NOTIFY_MANAGER_EDIT: 'true',
+    COACHING_DEPT_RULES: JSON.stringify({ CSR: { maxTeamRatioPct: 60, minMissed: 15 } }),
+    NOTIFY_MANAGER_RULES: JSON.stringify({ CSR: { coachRatioPct: 70, coachBehindPts: 3, coachMinMissed: 30 } }) } });
+  g = J(h.call('coachingEffectiveGates_', 'CSR'));
+  assert.deepEqual(g.effective, { maxTeamRatioPct: 70, behindPts: 3, minMissed: 15 },
+    'ratio higher + points lower are stricter and apply; a HIGHER missed floor would flag fewer, so the admin\'s 15 stays');
+});
+
+test('coaching manager layer: a looser gate is refused per field, a stricter one saves; all-or-nothing', function () {
+  install({ user: 'csr.mgr@x.com', props: { NOTIFY_MANAGER_EDIT: 'true' } });
+  assert.throws(function () { h.call('saveNotifyManagerRule', { department: 'CSR', coachRatioPct: 40 }); },
+    /admin's value is 50%, so choose 50% or higher/);
+  assert.throws(function () { h.call('saveNotifyManagerRule', { department: 'CSR', coachBehindPts: 8 }); },
+    /admin's value is 5 pts, so choose 5 pts or lower/);
+  assert.throws(function () {
+    h.call('saveNotifyManagerRule', { department: 'CSR', coachRatioPct: 60, coachMinMissed: 25 });
+  }, /20 missed or lower/);
+  assert.equal(h.state.props.NOTIFY_MANAGER_RULES, undefined, 'the valid ratio in a refused save was NOT written');
+  assert.throws(function () { h.call('saveNotifyManagerRule', { department: 'CSR' }); }, /Nothing to save/,
+    'a save naming no field is refused, not a silent no-op stamp');
+  const res = J(h.call('saveNotifyManagerRule', { department: 'CSR', coachRatioPct: 60, coachBehindPts: 4, coachMinMissed: 12 }));
+  const csr = res.rules.filter(function (r) { return r.department === 'CSR'; })[0];
+  assert.deepEqual(csr.coaching.effective, { maxTeamRatioPct: 60, behindPts: 4, minMissed: 12 });
+  assert.equal(csr.hasAlert, true);
+  // A save of ONE field leaves the others alone.
+  h.call('saveNotifyManagerRule', { department: 'CSR', coachBehindPts: '' });
+  const stored = JSON.parse(h.state.props.NOTIFY_MANAGER_RULES).CSR;
+  assert.deepEqual([stored.coachRatioPct, stored.coachBehindPts, stored.coachMinMissed], [60, undefined, 12]);
+});
+
+test('coaching flags use the dept\'s applied gates (the preview and the weekly run)', function () {
+  install({ props: { COACHING_DEPT_RULES: JSON.stringify({ CSR: { maxTeamRatioPct: 90, behindPts: 1, minMissed: 5 } }) } });
+  h.ctx.computeSummary_ = function () {
+    return { rows: [
+      { agent: 'Anna', matchedViaRoster: true, totalAnswered: 80, totalMissed: 20, totalRung: 100 },
+      { agent: 'Mid', matchedViaRoster: true, totalAnswered: 50, totalMissed: 30, totalRung: 80 },
+    ] };
+  };
+  h.ctx.getTeamAvgExcludes_ = function () { return []; };
+  const csr = J(h.call('coachingDeptFlags_', 'CSR', { from: '2026-10-01', to: '2026-10-14' }));
+  assert.deepEqual(csr.map(function (f) { return f.agent; }), ['Mid'], 'Mid (62.5% vs team 72%) flags under CSR\'s 90% ratio');
+  assert.equal(csr[0].gates.maxTeamRatioPct, 90);
+  const sales = J(h.call('coachingDeptFlags_', 'Sales', { from: '2026-10-01', to: '2026-10-14' }));
+  assert.equal(sales.length, 0, 'the company 50% ratio does not flag Mid');
+});
+
+test('the manager email preview goes to the requesting admin only, held-for-admins wording, never a manager', function () {
+  install({ user: 'admin@x.com' });
+  h.ctx.getLatestDataDate = function () { return '2026-10-14'; };
+  h.ctx.computeSummary_ = function () {
+    return { rows: [
+      { agent: 'Anna', matchedViaRoster: true, totalAnswered: 180, totalMissed: 20, totalRung: 200 },
+      { agent: 'Low', matchedViaRoster: true, totalAnswered: 15, totalMissed: 55, totalRung: 70 },
+    ] };
+  };
+  h.ctx.getTeamAvgExcludes_ = function () { return []; };
+  const r = J(h.call('previewCoachingManagerEmail', { department: 'CSR' }));
+  assert.equal(r.sentTo, 'admin@x.com');
+  assert.equal(r.flags, 1);
+  const real = h.state.sentEmails.filter(function (m) { return !/^\[Copy\]/.test(m.subject); });
+  assert.equal(real.length, 1);
+  assert.equal(real[0].to, 'admin@x.com');
+  assert.match(real[0].subject, /^\[Preview\] \[Held for admins\] Coaching for CSR: 1 agent to talk with/);
+  assert.match(real[0].body, /CSR's managers \(csr\.mgr@x\.com\) will get once coaching is released/);
+  assert.match(real[0].htmlBody, /Met \(you talked\), Rotated/);
+  h.ctx.computeSummary_ = function () { return { rows: [] }; };
+  assert.throws(function () { h.call('previewCoachingManagerEmail', { department: 'CSR' }); }, /nothing to preview/);
+  install({ user: 'csr.mgr@x.com', props: { NOTIFY_MANAGER_EDIT: 'true' } });
+  h.ctx.assertAdmin_ = function () { throw new Error('Admin only.'); };
+  try {
+    assert.throws(function () { h.call('previewCoachingManagerEmail', { department: 'CSR' }); }, /Admin only/);
+  } finally { delete h.ctx.assertAdmin_; }
+});
+
+test('saveCoachingDeptRule: admin-only, validated, under the lock; blanks return a gate to the default', function () {
+  install({ user: 'admin@x.com' });
+  assert.throws(function () { h.call('saveCoachingDeptRule', { department: 'CSR', maxTeamRatioPct: 2 }); }, /from 5 to 100/);
+  assert.throws(function () { h.call('saveCoachingDeptRule', { department: 'Nope', behindPts: 3 }); }, /Unknown department/);
+  assert.equal(h.state.props.COACHING_DEPT_RULES, undefined);
+  const locks = h.state.locks;
+  const r = J(h.call('saveCoachingDeptRule', { department: 'CSR', maxTeamRatioPct: 65, behindPts: '', minMissed: 12 }));
+  assert.ok(h.state.locks > locks);
+  assert.deepEqual(r.gates.admin, { maxTeamRatioPct: 65, behindPts: 5, minMissed: 12 });
+  h.call('saveCoachingDeptRule', { department: 'CSR', maxTeamRatioPct: '', minMissed: '' });
+  assert.equal(h.state.props.COACHING_DEPT_RULES, undefined, 'all blank clears the dept (and the property)');
+  install({ user: 'csr.mgr@x.com' });
+  h.ctx.assertAdmin_ = function () { throw new Error('Admin only.'); };
+  try {
+    assert.throws(function () { h.call('saveCoachingDeptRule', { department: 'CSR', behindPts: 1 }); }, /Admin only/);
+  } finally { delete h.ctx.assertAdmin_; }
+});
+
+test('the held manager email\'s recipients are the ADMINS today (the one release seam)', function () {
+  install();
+  const r = J(h.call('coachingManagerRecipients_', 'CSR'));
+  assert.deepEqual(r.to, ['admin@x.com']);
+  assert.deepEqual(r.wouldGoTo, ['csr.mgr@x.com']);
+  assert.equal(r.held, true);
+});
+
 // ── Client: the sentence, and the release switch reaching the client ─────
 
 const ROOT = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
@@ -283,3 +393,17 @@ test('client: the manager surface renders only when released, and Settings asks 
   const html = fs.readFileSync(path.join(ROOT, 'dashboard.html'), 'utf8');
   assert.match(html, /<div id="settings-notify" hidden>/, 'hidden by default');
 });
+
+const gateSentence = new Function('escapeHtml', 'return (' + extractFn(S7, 'coachingGateSentence_') + ');')(escapeHtml);
+test('client: coaching gates read as a sentence; the worklist closes as Met / Rotated / Dismissed', function () {
+  assert.equal(gateSentence({ maxTeamRatioPct: 60, behindPts: 4, minMissed: 15 }),
+    'Flag an agent who answers less than <strong>60%</strong> as often as the team, at least <strong>4</strong> points behind, with <strong>15+</strong> missed rings over 10 workdays.');
+  const row = extractFn(S7, 'coachingRowHtml_');
+  ['met', 'rotated', 'dismissed'].forEach(function (a) {
+    assert.ok(row.indexOf('data-coaching-action="' + a + '"') !== -1, a + ' button');
+  });
+  assert.ok(row.indexOf('data-coaching-action="resolved"') === -1, 'no Resolve button any more');
+  assert.match(S7, /var COACHING_STATUS_LABEL_ = \{ met: 'Met', resolved: 'Met', rotated: 'Rotated', dismissed: 'Dismissed' \};/,
+    'a pre-5b resolved row reads as Met');
+});
+

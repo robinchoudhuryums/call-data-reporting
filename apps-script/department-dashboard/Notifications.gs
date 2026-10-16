@@ -47,6 +47,19 @@ var NOTIFY_HISTORY_DAYS_MAX_     = 60;
 // run-time clamp read.
 var NOTIFY_STRICTER_ = Object.freeze({
   alertThreshold: 'higher',   // "answer rate below X%": a higher X fires more
+  // Step 5b, the coaching gates (Coaching.gs COACHING_GATE_FIELDS_): a flag
+  // fires when the agent answers < ratio% as often as the team, >= N points
+  // behind, with >= M missed rings -- so a higher ratio, fewer points and
+  // fewer missed rings all flag MORE agents.
+  coachRatioPct: 'higher',
+  coachBehindPts: 'lower',
+  coachMinMissed: 'lower',
+});
+// manager-layer field -> [the Coaching.gs gate it tightens, unit, min, max]
+var NOTIFY_COACH_FIELDS_ = Object.freeze({
+  coachRatioPct:  ['maxTeamRatioPct', '%', 5, 100],
+  coachBehindPts: ['behindPts', ' pts', 0, 50],
+  coachMinMissed: ['minMissed', ' missed', 1, 1000],
 });
 
 var NOTIFY_MANAGER_RULES_MEMO_ = null;   // per execution (var: the harness resets *MEMO* globals, F39)
@@ -162,28 +175,48 @@ function notifyWorkdaysEnding_(endIso, n, isHolidayFn) {
   return out;
 }
 
-/** The rules payload one viewer may see/edit: every dept they can reach that
- *  has a valid admin rule, with the admin value, the stored + applied manager
- *  value and the effective threshold. */
+/** The rules payload one viewer may see/edit: every dept they can reach
+ *  (admin: all), each with its alert rule (null fields when the dept has no
+ *  valid admin rule) -- admin value, stored + applied manager value, the
+ *  effective threshold -- and (Step 5b) its coaching gates. */
 function notifyRulesFor_(user) {
-  var cfg = readAlertConfig_();
+  var cfgByDept = {};
+  readAlertConfig_().forEach(function (c) {
+    if (c.duplicateRow || c.invalidThreshold || cfgByDept[c.department]) return;
+    cfgByDept[c.department] = c;
+  });
   var mgrRules = readNotifyManagerRules_();
   var enabled = notifyManagerEditEnabled_();
+  var depts = user && user.role === 'admin' ? (getAllDepartments_() || [])
+    : ((user && user.departments && user.departments.length) ? user.departments : [user && user.department]);
   var out = [];
-  cfg.forEach(function (c) {
-    if (c.duplicateRow || c.invalidThreshold) return;
-    if (!userCanAccessDept_(user, c.department)) return;
-    var stored = mgrRules[c.department] || null;
-    var eff = alertEffectiveThreshold_(c);
+  depts.forEach(function (dept) {
+    if (!dept || !userCanAccessDept_(user, dept)) return;
+    var c = cfgByDept[dept] || null;
+    var stored = mgrRules[dept] || null;
+    var eff = c ? alertEffectiveThreshold_(c) : null;
+    var coaching = null;
+    if (typeof coachingEffectiveGates_ === 'function') {
+      try {
+        var g = coachingEffectiveGates_(dept);
+        coaching = { admin: g.admin, effective: g.effective, stored: {} };
+        Object.keys(NOTIFY_COACH_FIELDS_).forEach(function (f) {
+          if (stored && stored[f] != null) coaching.stored[NOTIFY_COACH_FIELDS_[f][0]] = stored[f];
+        });
+      } catch (e) { coaching = null; }
+    }
+    if (!c && !coaching) return;
     out.push({
-      department: c.department,
-      active: !!c.active,
-      adminThreshold: Number(c.threshold),
+      department: dept,
+      hasAlert: !!c,
+      active: c ? !!c.active : false,
+      adminThreshold: c ? Number(c.threshold) : null,
       managerThreshold: stored && stored.alertThreshold != null ? stored.alertThreshold : null,
       managerBy: stored ? stored.by : '',
       managerAt: stored ? stored.at : '',
-      effectiveThreshold: eff.threshold,
-      effectiveSource: eff.source,
+      effectiveThreshold: eff ? eff.threshold : null,
+      effectiveSource: eff ? eff.source : 'admin',
+      coaching: coaching,
     });
   });
   return { enabled: enabled, rules: out };
@@ -214,9 +247,12 @@ function getNotifyRules() {
 }
 
 /**
- * RPC: set (or clear, with a blank value) a department's manager threshold.
- * `req = { department, alertThreshold }`. Stricter-only: refused when it would
- * fire on FEWER days than the admin's rule. Returns the caller's rules.
+ * RPC: set (or clear, with a blank value) a department's manager-layer
+ * values. `req = { department, alertThreshold?, coachRatioPct?,
+ * coachBehindPts?, coachMinMissed? }` -- only the fields PRESENT are changed.
+ * Stricter-only: each is refused when it would fire / flag LESS than the
+ * admin's value for that dept. All-or-nothing: every field is validated
+ * before anything is written. Returns the caller's rules.
  */
 function saveNotifyManagerRule(req) {
   var user = notifyCurrentUser_();
@@ -225,21 +261,35 @@ function saveNotifyManagerRule(req) {
   var dept = String(req.department || '').trim();
   if (!dept) throw new Error('Department is required.');
   assertDeptAccess_(user, dept);
-  var entry = readAlertConfig_().filter(function (c) {
-    return c.department === dept && !c.duplicateRow;
-  })[0];
-  if (!entry || entry.invalidThreshold) {
-    throw new Error('There is no alert rule for ' + dept + ' yet -- an admin sets the rule first.');
-  }
-  var raw = req.alertThreshold;
-  var clear = (raw === '' || raw == null);
-  var val = clear ? null : Number(raw);
-  if (!clear) {
-    if (!isFinite(val) || val <= 0 || val > 100) throw new Error('The threshold must be a number between 1 and 100.');
-    val = Math.round(val * 10) / 10;
-    var why = notifyCheckStricter_('alertThreshold', entry.threshold, val, '%');
+  var changes = {};   // field -> number | null (clear)
+  var present = Object.keys(NOTIFY_STRICTER_).filter(function (f) {
+    return Object.prototype.hasOwnProperty.call(req, f);
+  });
+  if (!present.length) throw new Error('Nothing to save.');
+  present.forEach(function (f) {
+    var raw = req[f];
+    if (raw === '' || raw == null) { changes[f] = null; return; }
+    var adminVal, unit, lo, hi;
+    if (f === 'alertThreshold') {
+      var entry = readAlertConfig_().filter(function (c) { return c.department === dept && !c.duplicateRow; })[0];
+      if (!entry || entry.invalidThreshold) {
+        throw new Error('There is no alert rule for ' + dept + ' yet -- an admin sets the rule first.');
+      }
+      adminVal = Number(entry.threshold); unit = '%'; lo = 1; hi = 100;
+    } else {
+      if (typeof coachingAdminGates_ !== 'function') throw new Error('Coaching gates are not available.');
+      var spec = NOTIFY_COACH_FIELDS_[f];
+      adminVal = coachingAdminGates_(dept)[spec[0]]; unit = spec[1]; lo = spec[2]; hi = spec[3];
+    }
+    var val = Number(raw);
+    if (!isFinite(val) || val < lo || val > hi || (f === 'alertThreshold' && val <= 0)) {
+      throw new Error('That value must be a number from ' + lo + ' to ' + hi + '.');
+    }
+    val = f === 'coachMinMissed' ? Math.round(val) : Math.round(val * 10) / 10;
+    var why = notifyCheckStricter_(f, adminVal, val, unit);
     if (why) throw new Error(why);
-  }
+    changes[f] = val;
+  });
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Busy -- please retry in a moment.');
   try {
@@ -247,23 +297,22 @@ function saveNotifyManagerRule(req) {
     var cur = {};
     try { cur = JSON.parse(props.getProperty(NOTIFY_MANAGER_RULES_PROP_) || '{}') || {}; } catch (pe) { cur = {}; }
     if (typeof cur !== 'object' || Array.isArray(cur)) cur = {};
-    if (clear) {
-      if (cur[dept]) {
-        delete cur[dept].alertThreshold;
-        var left = Object.keys(cur[dept]).filter(function (k) { return NOTIFY_STRICTER_[k]; });
-        if (!left.length) delete cur[dept];
-      }
+    var rec = cur[dept] || {};
+    Object.keys(changes).forEach(function (f) {
+      if (changes[f] == null) delete rec[f]; else rec[f] = changes[f];
+    });
+    var left = Object.keys(rec).filter(function (k) { return NOTIFY_STRICTER_[k]; });
+    if (left.length) {
+      rec.by = String(user.email || '');
+      rec.at = new Date().toISOString();
+      cur[dept] = rec;
     } else {
-      cur[dept] = cur[dept] || {};
-      cur[dept].alertThreshold = val;
-      cur[dept].by = String(user.email || '');
-      cur[dept].at = new Date().toISOString();
+      delete cur[dept];
     }
     if (Object.keys(cur).length) props.setProperty(NOTIFY_MANAGER_RULES_PROP_, JSON.stringify(cur));
     else props.deleteProperty(NOTIFY_MANAGER_RULES_PROP_);
     NOTIFY_MANAGER_RULES_MEMO_ = null;
-    Logger.log('saveNotifyManagerRule: %s alertThreshold=%s by %s (%s)', dept,
-      clear ? '(cleared)' : val, user.email, user.role);
+    Logger.log('saveNotifyManagerRule: %s %s by %s (%s)', dept, JSON.stringify(changes), user.email, user.role);
   } finally {
     lock.releaseLock();
   }

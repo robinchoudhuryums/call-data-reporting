@@ -253,7 +253,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # team cards' linked day bars: one shared selection, workday/monthly buckets,
 # keyboard + touch, admin-only -- Step 4), drive-notify.js (the Notifications
 # page: sentence rules, History, Test send, the manager-layer switch, a
-# manager's Settings section off and on -- Step 5a), drive-deptoutbound.js
+# manager's Settings section off and on -- Step 5a; the coaching gates,
+# Met / Rotated / Dismissed and the held manager email -- Step 5b), drive-deptoutbound.js
 # (the outbound-columns toggle -- on by default since Step 3 -- + Team Outbound panel: payload totals,
 # manager/view-as fall back to Inbound, panels never overlap, prior-period
 # chips on agent rows only -- Batches D/F), drive-crossstate.js (the
@@ -2174,7 +2175,7 @@ items for anything it flags or doesn't cover.)
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; when set, an Access Control `agent` row opens the separate agent app -- off, agents get access-denied)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
-48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching
+48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching; per-dept gates (`COACHING_DEPT_RULES`), Met / Rotated / Dismissed and the manager email HELD for admins since Step 5b
 49. Inbound Calls tab export trigger -- keeps the heatmap's and the direct-line callbacks' SHEET FALLBACK fresh, plus the one-time re-exports and the BF-1 ring backfill from stored journeys
 50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use for an emailed Individual Report; prefer adding the agent to Access Control
@@ -2203,7 +2204,7 @@ items for anything it flags or doesn't cover.)
 74. Outbound source probe (Batch C) -- `probeOutboundSourceAgreement` (dashboard) compares the CDR Historical sheet's placed counts with Neon `outbound_calls`; its verdict picks Batch D's source, never on INCONCLUSIVE/FAILED
 75. Internal-call wait, before vs after (WS-1) -- `previewInternalWaitStart` (cdr-import, read-only) logs each internal call's old and new wait; expect SUSPECT 0 and 0 external changes; first run (2026-10-14) clean with 0 changed, so nothing to re-import
 76. Brief-threshold probe (UX-2) -- `probeBriefThresholds` (dashboard, read-only) logs what normal looks like for share of answered, queue wait and the monthly answer-rate swing, before any of those brief rows gets a colour
-77. `NOTIFY_MANAGER_EDIT` / `NOTIFY_MANAGER_RULES` -- the alert manager layer (Step 5a): off by default; while off, managers see nothing and stored values do not apply; flip it from the Notifications modal only once the owner releases it
+77. `NOTIFY_MANAGER_EDIT` / `NOTIFY_MANAGER_RULES` -- the alert + coaching manager layer (Steps 5a/5b): off by default; while off, managers see nothing and stored values do not apply; flip it from the Notifications modal only once the owner releases it
 
 ## Cycle Workflow Config
 
@@ -2372,6 +2373,7 @@ S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: De
 S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3) | Subsystem: Department Dashboard
 S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
 S63 | Notifications: sentence rules, history, test send, the manager layer (Step 5a) | Subsystem: Department Dashboard
+S64 | Coaching release prep: per-dept gates, Met / Rotated / Dismissed, the held manager email (Step 5b) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

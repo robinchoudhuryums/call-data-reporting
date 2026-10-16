@@ -519,6 +519,12 @@ From/To default (which must snap to DQE specifically).
   manager-settable field must be added there (the save check and the
   run-time clamp both read it). Inert until `NOTIFY_MANAGER_EDIT` is on
   (Operator State #77).
+- **Coaching gates (Step 5b)**: the three gates are company defaults;
+  `coachingEffectiveGates_(dept)` layers the dept's admin overrides
+  (`COACHING_DEPT_RULES`) and then the manager layer (stricter only, the
+  `coach*` fields of `NOTIFY_STRICTER_`). Every flag carries the `gates` it
+  was judged under. The manager email is HELD for admins:
+  `coachingManagerRecipients_` is the one release seam.
 - **Daily trigger** (`runDailyAlerts_`) skips Saturdays + Sundays
   (INV-33). Holiday handling shipped in E8 (commit 319eca7): the
   `Skip Dates` column on `Alert Config` (col F) takes comma-separated

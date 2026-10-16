@@ -132,6 +132,48 @@ async function openNotifications(page) {
   await page.waitForTimeout(600);
   const toggled = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'setNotifyManagerEdit').map((c) => c.args[0]));
   record('the switch asks the server (admin-only verb)', toggled.length === 1 && toggled[0].enabled === true, JSON.stringify(toggled));
+  // ---- Step 5b: the Coaching worklist ------------------------------------
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { document.getElementById('admin-menu-btn').click(); });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { document.getElementById('coaching-btn').click(); });
+  await page.waitForTimeout(1500);
+  const cw = await page.evaluate(() => ({
+    actions: Array.from(document.querySelectorAll('#coaching-tbody [data-coaching-action]')).map((b) => b.textContent.trim()),
+    gates: Array.from(document.querySelectorAll('#coaching-gates .al-rule')).map((c) => ({
+      dept: c.getAttribute('data-dept'),
+      text: c.querySelector('.al-rule-sentence').textContent.trim(),
+      chip: ((c.querySelector('.al-rule-meta') || {}).textContent || '').trim(),
+      inputs: c.querySelectorAll('input[data-gate]').length,
+    })),
+  }));
+  record('coaching: an open flag closes as Met / Rotated / Dismissed',
+    JSON.stringify(cw.actions) === JSON.stringify(['Met', 'Rotated', 'Dismissed']), JSON.stringify(cw.actions));
+  const cg = cw.gates.filter((g) => g.dept === 'CSR')[0];
+  record('coaching: each dept\'s gates read as a sentence naming the APPLIED values, a manager\'s stricter value chipped',
+    cw.gates.length === 2 && !!cg && /less than 60% as often as the team, at least 3 points behind, with 20\+ missed rings/.test(cg.text)
+      && /Manager stricter: 3 pts/.test(cg.chip) && cg.inputs === 3, JSON.stringify(cw.gates));
+  await page.fill('#coaching-gates .al-rule[data-dept="Sales"] input[data-gate="maxTeamRatioPct"]', '55');
+  await page.click('#coaching-gates .al-rule[data-dept="Sales"] .coaching-gate-save');
+  await page.waitForTimeout(600);
+  const gsave = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'saveCoachingDeptRule').map((c) => c.args[0]));
+  record('coaching: Save sends that dept\'s three gates', gsave.length === 1 && gsave[0].department === 'Sales'
+    && gsave[0].maxTeamRatioPct === '55' && gsave[0].behindPts === '5', JSON.stringify(gsave));
+  await page.click('#coaching-gates .al-rule[data-dept="CSR"] .coaching-gate-preview');
+  await page.waitForTimeout(600);
+  const prevStatus = await page.evaluate(() => document.getElementById('coaching-gates-status').textContent);
+  record('coaching: "Email me the manager version" reaches the admin, and says no manager got it',
+    (await calls(page, 'previewCoachingManagerEmail')) === 1 && /No manager received it/.test(prevStatus), prevStatus);
+  await page.click('#coaching-tbody [data-coaching-action="rotated"]');
+  await page.waitForTimeout(300);
+  const rotAsk = await page.evaluate(() => (document.querySelector('.ds-confirm') || {}).textContent || '');
+  await page.click('.ds-confirm-ok');
+  await page.waitForTimeout(600);
+  const rot = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'updateCoachingFlagStatus').map((c) => c.args[0].action));
+  record('coaching: Rotated confirms in its own words and closes as rotated',
+    /queue assignment was changed/.test(rotAsk) && JSON.stringify(rot) === '["rotated"]', rotAsk.slice(0, 120) + ' ' + JSON.stringify(rot));
+
   const errsAdmin = page.__errors.slice();
   const unmockedA = await page.evaluate(() => window.__HARNESS__.unmocked.slice());
   await ctx.close();
@@ -177,6 +219,27 @@ async function openNotifications(page) {
   }));
   record('a stricter value saves and the sentence names the applied 90%',
     /Saved/.test(saved.status) && /below 90%/.test(saved.text), JSON.stringify(saved));
+  // Step 5b: the coaching row in the same section.
+  const coachText = await pn.evaluate(() => {
+    const p = Array.from(document.querySelectorAll('#settings-notify-list .al-rule-sentence')).filter((x) => /^Coaching:/.test(x.textContent))[0];
+    return p ? p.textContent : '';
+  });
+  record('manager, layer on: the coaching gates render as a sentence too', /less than 50% as often as the team/.test(coachText), coachText);
+  const coachRow = '#settings-notify-list .settings-notify-row[data-kind="coaching"]';
+  await pn.fill(coachRow + ' input[data-field="coachBehindPts"]', '8');
+  await pn.click(coachRow + ' .settings-notify-save');
+  await pn.waitForTimeout(500);
+  const cRef = await pn.evaluate(() => document.getElementById('settings-notify-status').textContent);
+  record('a looser coaching gate is refused with the server\'s reason', /5 pts or lower/.test(cRef), cRef);
+  await pn.fill(coachRow + ' input[data-field="coachBehindPts"]', '3');
+  await pn.click(coachRow + ' .settings-notify-save');
+  await pn.waitForTimeout(500);
+  const cSaved = await pn.evaluate(() => {
+    const p = Array.from(document.querySelectorAll('#settings-notify-list .al-rule-sentence')).filter((x) => /^Coaching:/.test(x.textContent))[0];
+    return { status: document.getElementById('settings-notify-status').textContent, text: p ? p.textContent : '' };
+  });
+  record('a stricter coaching gate saves and the sentence names it', /Saved/.test(cSaved.status) && /at least 3 points behind/.test(cSaved.text),
+    JSON.stringify(cSaved));
   const narrow = await pn.evaluate(() => ({ sw: document.documentElement.scrollWidth, vw: window.innerWidth }));
   record('360 px: no sideways scroll with the section open', narrow.sw <= narrow.vw + 1, JSON.stringify(narrow));
   const errsMgrOn = pn.__errors.slice();
@@ -187,7 +250,8 @@ async function openNotifications(page) {
   record('no page errors', errors.length === 0, errors.slice(0, 4).join(' | '));
   // The modal's keep-warm / cache-warm panels are unmocked on purpose (their
   // own error states render); only this page's verbs must all be mocked.
-  const NOTIFY_RPCS = ['getAlertHistory', 'sendAlertTest', 'setNotifyManagerEdit', 'getNotifyRules', 'saveNotifyManagerRule'];
+  const NOTIFY_RPCS = ['getAlertHistory', 'sendAlertTest', 'setNotifyManagerEdit', 'getNotifyRules', 'saveNotifyManagerRule',
+    'saveCoachingDeptRule', 'previewCoachingManagerEmail', 'updateCoachingFlagStatus', 'getCoachingWorklist'];
   const unmocked = unmockedA.concat(unmockedM).filter((n) => NOTIFY_RPCS.indexOf(n) !== -1);
   record('no Notifications RPC is unmocked', unmocked.length === 0, unmocked.join(', '));
   await browser.close();

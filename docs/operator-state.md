@@ -1802,6 +1802,15 @@ When something looks wrong, before assuming a code bug, check:
     `getCoachingWorklist`/`updateCoachingFlagStatus`, un-hide the menu item,
     widen the email recipients — all surfaces were built so release is
     gate-swapping, not rebuilding. Pinned by `tests/unit/coaching.test.js`.
+    - **Step 5b (2026-10-16): release prep.** Each department can carry its
+      own gates (`COACHING_DEPT_RULES`, set in the worklist's "Gates by
+      department" -- a blank box keeps the company default), and the #77
+      manager layer can make a dept's gates stricter. Flags now close as
+      **Met / Rotated / Dismissed** (older `resolved` rows read as Met). Each
+      weekly run also sends, per department with NEW flags, the email its
+      managers will get -- **held for admins**: `coachingManagerRecipients_`
+      is the ONE place that decides who receives it, and it returns the
+      admins until release. "Email me the manager version" previews it.
 
 49. **Inbound Calls tab export trigger — the heatmap's sheet fallback stays
     fresh only if this runs.** The abandon heatmap degrades to the
@@ -3475,4 +3484,7 @@ When something looks wrong, before assuming a code bug, check:
     manager-set value. Raising your own threshold past a manager's simply
     wins. Turning the switch off again restores the admin-only behaviour at
     the next run (managers' values stay stored). Walk S63 before releasing.
+    Since Step 5b the same layer carries the three COACHING gates
+    (`coachRatioPct` higher, `coachBehindPts` lower, `coachMinMissed` lower --
+    each flags more agents), clamped against the dept's admin gates (#48).
     Pinned by `tests/unit/notifications.test.js` and `drive-notify.js`.
