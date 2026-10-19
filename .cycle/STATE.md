@@ -6,32 +6,33 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-16
+Updated: 2026-10-19
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-19 -- Nothing unmerged.** The owner plan (Steps 1-5) and its docs sync are all on main (PRs #371-#377). Owner-side: deploy the dashboard (`scripts/deploy.sh .`), walk S63-S65, and decide each manager release (#77 manager layer, #48 coaching email, #78 alert reasons). Still open: F35 (operator clasp check), F62 (owner ruling), the optional ci:ui stage-list move out of CLAUDE.md.
 - **2026-10-16 -- /sync-docs over the owner-plan commits (Steps 1-5, PRs #371-#376).** Drift was small because each step updated its own docs: the Threshold-drift bullet and README still described the retired alert config TABLE (now rule cards); the public-write bullet did not name the one non-admin write (the Step 5 manager layer, a Script Property); docs/architecture.md lacked Notifications.gs / AlertReasons.gs and the new Coaching RPCs; next-steps had no row for the owner plan; client-ui-conventions had no Notifications bullet. Subsystems clean (Notifications.gs + AlertReasons.gs listed; every path exists). No undocumented operator state (#77 / #78 / #48 cover the three new properties). Weight: CLAUDE.md 182.1 KB of 200 KB (88.9%); largest bullet 3.9 KB; nothing pruned.
   **Next (weight):** the ~6 KB ci:ui stage list in Key commands could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
-  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green.
+  **Where I left off:** SHIPPED as [PR #377](https://github.com/robinchoudhuryums/call-data-reporting/pull/377), merged 2026-10-16.
 - **2026-10-16 -- Owner plan Step 5c IMPLEMENTED (block 259-step5c): two admin-trial alert reasons.** An agent below X% on each of N workdays; callers not called back within a business day (callback engine, business-day window, unloaded days skipped). Admins-only email, `reason:` Alert Log rows, Preview rows. 2604 tests, 8/9 bites (1 equivalent), drive-notify 29/29. **Step 5 (and the owner plan) is now fully implemented.**
   **Owner-side:** deploy the dashboard; try the reasons (Operator State #78, S65); release decisions for the manager layer (#77), coaching (#48) and the reasons remain the owner's.
-  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PRs for 5b + 5c after 5a merges.
+  **Where I left off:** SHIPPED with 5b as [PR #376](https://github.com/robinchoudhuryums/call-data-reporting/pull/376), merged 2026-10-16.
 - **2026-10-16 -- Owner plan Step 5b IMPLEMENTED (block 259-step5b): coaching release prep (admin trial).** Per-dept coaching gates (COACHING_DEPT_RULES) with the stricter-only manager clamp, Met / Rotated / Dismissed closes, and the manager email HELD for admins (coachingManagerRecipients_ is the release seam). 2594 tests, 7/7 bites, drive-notify 26/26.
   **Owner-side:** deploy the dashboard.
   **Next:** 5c (two new alert reasons, admin-only).
-  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR after 5a merges.
+  **Where I left off:** SHIPPED with 5c as [PR #376](https://github.com/robinchoudhuryums/call-data-reporting/pull/376), merged 2026-10-16.
 - **2026-10-16 -- Owner plan Step 5a IMPLEMENTED (block 259-step5a): the Notifications page (admin trial).** Sentence rules, would-it-have-fired History, test send to the admin only, and the stricter-only MANAGER LAYER built but off (NOTIFY_MANAGER_EDIT, Operator State #77). 2587 tests, 8/8 bites, drive-notify 18/18.
   **Owner-side:** deploy the dashboard. Release the manager layer only after walking S63.
   **Next:** 5b coaching release prep (per-dept gates + the same clamp, Met / Rotated / Dismissed, manager email still to admins only), then 5c (two new alert reasons).
-  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green next.
+  **Where I left off:** SHIPPED as [PR #375](https://github.com/robinchoudhuryums/call-data-reporting/pull/375), merged 2026-10-16.
 - **2026-10-16 -- Owner plan Step 4 SHIPPED ([PR #374](https://github.com/robinchoudhuryums/call-data-reporting/pull/374), merged).**
 - **2026-10-16 -- Owner plan Step 4 IMPLEMENTED (block 259-step4): linked day bars in the My Department team cards (admin trial).** Owner ruling mid-step: extend the dept payload (totals.daily + qcd.range.daily, compact tuples, no new call) so the bars add up to the cards, incl. the combined view and Avg answer. 2572 tests pass, 9/9 bites, drive-daybars 20/20.
   **Owner-side:** deploy the dashboard.
   **Next:** Step 5 (9a/9b notifications page, 10 coaching release prep, 9c alert reasons; all admin-only; stricter-only manager thresholds).
-  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn; PR + merge on green next.
+  **Where I left off:** SHIPPED as [PR #374](https://github.com/robinchoudhuryums/call-data-reporting/pull/374), merged.
 - **2026-10-16 -- Owner plan Step 3 SHIPPED ([PR #373](https://github.com/robinchoudhuryums/call-data-reporting/pull/373), merged).**
 - **2026-10-16 -- Owner plan Step 3 IMPLEMENTED (block 259-step3): brief accordion under the team cards, inbound + outbound together (one "Show outbound columns" toggle), preloading (Callbacks / Direct lines background, agent panel on hover).** Client-only, all admin-only; 2561 tests pass, 14/14 bites land, ci:ui green.
   **Owner-side:** deploy the dashboard.
@@ -41,7 +42,7 @@ counter starts at 0 here because no earlier count was kept.)
 - **2026-10-16 -- Owner plan Step 1 IMPLEMENTED (block 259-step1): agent-panel days oldest-first, brief tier icons, partial trend month on count charts (option A).** Client-only; 2538 tests pass, ci:ui 554/0, 5/5 unit bites + 1 rendered bite land.
   **Owner plan (agreed 2026-10-16, full text in the session):** Step 2 = 6 Overview trend default highlight (Company + own dept for a single-dept manager, Company only for ALL managers, admins unchanged, no axis zoom on the default) + 1b agent-panel caller/callee LABELS only (staff name / insurer / "Outside caller|number") + the "callback to HH:MM inbound" link. Step 3 = brief accordion under the team cards (collapsed, opens in place) + inbound/outbound together by default (admin-only; Outbound + Callbacks as their own rows; the 3-way switch becomes a Columns option) + preloading (background Callbacks/Direct, agent panel on hover/focus). Step 4 = day bars option B (linked highlight across the four cards, per-card value line, weekly past ~31 workdays). Step 5 = Notifications page (9a/9b), coaching release prep (10), two alert reasons (9c: agent below threshold over N workdays; callers not called back within a day) -- ALL admin-only until the owner tests; managers may only set STRICTER thresholds than the admin's, enforced server-side, stricter of the two wins.
   **Owner-side:** deploy the dashboard.
-  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn; PR next.
+  **Where I left off:** SHIPPED as [PR #371](https://github.com/robinchoudhuryums/call-data-reporting/pull/371), merged.
 - **2026-10-15 -- /sync-docs over the 22 commits since 2005240 (UX-2, sync-commands, cycle 259 Batches 1-10 + E1-E5).** Drift was small because each batch updated its own docs: three CLAUDE.md index lines lagged their full items -- Operator State #2 (now names the G4 `deploy-currency` row), #56 (now leads with CDR Tools -> Make a date whole, G1) and the Health bullet's row list (`build-stamp` / `deploy-currency` #2). Subsystem lists clean (no new app files; every listed path exists). No undocumented operator state (`AGENT_WELCOME_PENDING` is engine state, registered and described in #46). Weight: CLAUDE.md 179.6 KB of 200 KB (87.7%, under the 90% warn); largest bullet 3.9 KB (the comma-joined cells one, all rule); nothing pruned. 2527 tests pass.
   **Next (weight):** the next real saving is the ~5 KB ci:ui stage list in Key commands, which could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
   **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
