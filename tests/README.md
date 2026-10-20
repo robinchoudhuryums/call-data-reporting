@@ -109,7 +109,7 @@ tests/
     deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (an earlier scan's DEP-1), CI on Node 22 (HT-6); broad-scan 2026-10-12: the sanitized build-stamp branch + copy-restoring trap (DEP-2) and the pinned playwright version everywhere (DEP-1)
     workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
-    compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
+    compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window, summary v24 idle rows (an all-zero agent gets no My Department row, from the build or the queue split),
     individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
     pipeline-build.test.js    buildDQEHistoricalData end-to-end: INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST slots, INV-21 parentMap, dup guard
@@ -643,6 +643,10 @@ tests/
                               attribution for abandons, no hash in the SQL's
                               output, and Neon-vs-sheet parity against
                               hand-derived event rows),
+                              answered-bar (summary v24: the bar cell draws a
+                              muted dash for a row with no calls instead of an
+                              empty full-width track; a row with calls keeps
+                              its tally / proportional track),
                               date-presets (the SHARED preset resolver: no
                               open-ended preset includes today, the
                               degenerate month/week-start clamps, and a

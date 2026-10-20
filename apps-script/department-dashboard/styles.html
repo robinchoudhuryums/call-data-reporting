@@ -908,6 +908,8 @@
   .ans-seg.ans  { background: var(--good); }
   .ans-seg.miss { background: var(--warn); }
   .ans-seg.none { background: var(--paper-2); }
+  /* summary v24: a row with no calls -- a muted dash where the bar would be. */
+  .ans-idle { font: 500 12px/13px var(--mono); min-height: 13px; }
   /* R10-4: threshold-aware red on the split bars (both builders --
      answeredBarHtml_'s 92% standard, qcdDailyBarCell_'s abandon standard).
      Passing rows soften the red segment so it recedes; failing rows keep

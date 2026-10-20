@@ -388,3 +388,75 @@ test('DATA-7: computeSummary_ with sections:false reads neither QCD nor CSR, and
     h.ctx.computeCsrTransferRange_ = realC;
   }
 });
+
+// summary:v24 (owner 2026-10-20, idle rows): the My Department table leaves
+// out an agent whose rows in the window are ALL zero. Two writers produce such
+// rows -- the build (an agent who rang on some queue that day, every ring
+// outside the work window) and the queue split (a crossover agent narrowed to
+// zero in the dept whose queues they did not work). Both are pinned here.
+test('v24: a build-written all-zero row gets no My Department row, and lands in rosterWithNoData', function () {
+  install([
+    // Anna: one zero day (rang only outside the window) and one real day -- kept.
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 0, missed: 0, answered: 0 }),
+    dqeRow({ date: '2026-03-11', agent: 'Anna', ext: '501', unique: 3, rung: 4, missed: 1, answered: 3, ttt: '0:09:00', att: '0:03:00' }),
+    // Ben: zero every day of the window, though the per-day abandon wait is
+    // stamped on his row as on every row; prior-window activity (3/09).
+    dqeRow({ date: '2026-03-09', agent: 'Ben', ext: '501', rung: 5, missed: 4, answered: 1 }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben', ext: '501', rung: 0, missed: 0, answered: 0, aaw: '0:00:30' }),
+  ]);
+  h.state.userEmail = 'admin@x.com'; h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  const data = h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-10', to: '2026-03-11' });
+  deepEqual(data.rows.map(function (r) { return r.agent; }), ['Anna'], 'Ben has rows but no calls -- no table row');
+  assert.ok(data.diagnostics.rosterWithNoData.indexOf('Ben') !== -1, 'he is named under roster agents with no data');
+  assert.equal(data.totals.totalRung, 4);
+  assert.equal(data.totals.totalAnswered, 3);
+  assert.equal(data.totals.rosterAgentCount, 1);
+  assert.equal(rowFor(data, 'Anna').daysActive, 1, 'Anna\'s zero day is not a ring-day');
+  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:v24:') === 0; }));
+  // The other consumers (agent app, digests, coaching) do not pass the flag:
+  // the agent's own zero is a real figure there.
+  install([dqeRow({ date: '2026-03-10', agent: 'Ben', ext: '501', rung: 0, missed: 0, answered: 0 })]);
+  const plain = h.call('computeSummary_', 'Alpha', '2026-03-10', '2026-03-11', 'roster');
+  assert.equal(rowFor(plain, 'Ben').totalRung, 0, 'without dropIdle the zero row stays');
+});
+
+test('v24: a crossover agent narrowed to zero by the queue split gets no row in that dept', function () {
+  // Pad every row to col AI (35) and put the per-queue split there.
+  function withSplit(rows) {
+    const pad = function (a, v) { const b = a.slice(); while (b.length < 35) b.push(''); b[34] = v; return b; };
+    const header = new Array(35).fill('');
+    return {
+      values:   [header].concat(rows.map(function (r) { return pad(r.row.vals, r.split); })),
+      displays: [header].concat(rows.map(function (r) { return pad(r.row.disp, r.split); })),
+    };
+  }
+  install([]);
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      // Ben works both depts' rosters but only Beta's queue this window.
+      'DO NOT EDIT!': rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'], Beta: ['Ben, 202', 'Cara, 301'] }),
+      'DQE Historical Data': withSplit([
+        { row: dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', unique: 3, rung: 4, missed: 1, answered: 3 }),
+          split: JSON.stringify({ A_Q_Alpha: { u: 3, r: 4, m: 1, a: 3, t: 0, n: 0, mt: '' } }) },
+        { row: dqeRow({ date: '2026-03-10', agent: 'Ben', ext: '502', unique: 5, rung: 6, missed: 2, answered: 4 }),
+          split: JSON.stringify({ A_Q_Beta: { u: 5, r: 6, m: 2, a: 4, t: 0, n: 0, mt: '' } }) },
+      ]),
+    },
+  });
+  h.state.props.QUEUE_SPLIT_SCOPE = 'dept';
+  const realQ = h.ctx.inboundQueuesForDept_;
+  h.ctx.inboundQueuesForDept_ = function (d) { return { Alpha: ['A_Q_Alpha'], Beta: ['A_Q_Beta'] }[d] || []; };
+  try {
+    const plain = h.call('computeSummary_', 'Alpha', '2026-03-10', '2026-03-10', 'roster');
+    assert.equal(rowFor(plain, 'Ben').totalRung, 0, 'the split leaves Ben at zero in Alpha (the screenshot shape)');
+    assert.equal(rowFor(plain, 'Ben').queueScoped, true);
+    const dept = h.call('computeSummary_', 'Alpha', '2026-03-10', '2026-03-10', 'roster', { dropIdle: true });
+    deepEqual(dept.rows.map(function (r) { return r.agent; }), ['Anna']);
+    assert.ok(dept.diagnostics.rosterWithNoData.indexOf('Ben') !== -1);
+    const beta = h.call('computeSummary_', 'Beta', '2026-03-10', '2026-03-10', 'roster', { dropIdle: true });
+    assert.equal(rowFor(beta, 'Ben').totalRung, 6, 'and keeps his row in the dept whose queue he worked');
+  } finally {
+    h.ctx.inboundQueuesForDept_ = realQ;
+    delete h.state.props.QUEUE_SPLIT_SCOPE;
+  }
+});

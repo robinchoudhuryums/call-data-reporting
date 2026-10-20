@@ -930,7 +930,7 @@ function combineSummaries_(primary, parts) {
   });
   grand.crossoverAgentCount = crossoverAgentCount;
   if (wantDaily) grand.daily = summaryDailyList_(grandDaily);
-  // summary:v23 (owner 2026-10): the team's answered per AGENT per day is a
+  // summary v23 (owner 2026-10): the team's answered per AGENT per day is a
   // ratio of two sums, so the combined figure sums each dept's pair (above,
   // crossover repeats removed) and divides once -- never a mean of the depts'
   // own ratios, which would weight a small dept like a big one.
@@ -1103,7 +1103,7 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
-  const cacheKey = 'summary:v23:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v24:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
@@ -1128,7 +1128,8 @@ function getDepartmentSummary(req) {
   // other depts skip computing them -- a read each, and a child's read
   // failure no longer blocks caching a payload that never contained it.
   const parts = deptSet.map(function (d) {
-    return computeSummary_(d, from, to, scope, { sections: d === dept, daily: true });   // Step 4: daily
+    // summary:v24: dropIdle -- agents with no calls in the window get no row.
+    return computeSummary_(d, from, to, scope, { sections: d === dept, daily: true, dropIdle: true });   // Step 4: daily
   });
   // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
   // 'subs' scope it is not among the parts, so it is computed separately --
@@ -1136,7 +1137,7 @@ function getDepartmentSummary(req) {
   // than letting a child's qcd / csrTransfer / diagnostics ship under the
   // parent's identity (meta.department stays the requested dept below).
   const primaryIdx = deptSet.indexOf(dept);
-  const primary = primaryIdx >= 0 ? parts[primaryIdx] : computeSummary_(dept, from, to, scope);
+  const primary = primaryIdx >= 0 ? parts[primaryIdx] : computeSummary_(dept, from, to, scope, { dropIdle: true });
   const data = combineSummaries_(primary, parts);
   // The requested dept stays the payload's identity even in 'subs' scope, so
   // the client header and the dept selector don't jump.
@@ -1365,6 +1366,10 @@ function computeSummary_(dept, from, to, scope, opts) {
   // so Digest / Coaching / the agent app / diagnostics are unchanged.
   const wantDaily = !!(opts && opts.daily);
   const dailyByAgent = {};
+  // summary:v24 (owner 2026-10): opt-in, My Department only. An agent whose
+  // window rows are ALL zero gets no table row -- see the finalize loop.
+  const dropIdle = !!(opts && opts.dropIdle);
+  const idleAgents = {};
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -1478,7 +1483,7 @@ function computeSummary_(dept, from, to, scope, opts) {
     const caw = row.csrAvgAbdWaitSec;
     if (caw) { a.csrAvgAbdWaitSecondsSum += caw; a.csrAvgAbdWaitSecondsCount++; }
 
-    // summary:v23 (owner 2026-10): a day counts toward the agent's per-day
+    // summary v23 (owner 2026-10): a day counts toward the agent's per-day
     // average only when they had at least one ring. A DQE row with no rings
     // (logged in but not present, or a narrowed row with none of this dept's
     // queues) is not a working day for this figure.
@@ -1509,6 +1514,20 @@ function computeSummary_(dept, from, to, scope, opts) {
   for (const k in acc) {
     if (!Object.prototype.hasOwnProperty.call(acc, k)) continue;
     const a = acc[k];
+    // summary:v24 (owner 2026-10): an agent with rows in the window but no
+    // calls in them is not shown. Two things write such rows: the build writes
+    // one for every agent who rang on any queue that day, even when every ring
+    // fell outside the work window, and the queue split (QUEUE_SPLIT_SCOPE=
+    // dept) leaves a crossover agent's row at zero in the dept whose queues
+    // they did not work. Neither moves a total -- every sum is zero and the
+    // means skip zeros -- but each rendered as a blank row. They join the
+    // "roster agents with no data" diagnostics instead. Opt-in: the agent app,
+    // digests and coaching keep the row (the agent's own zero is real there).
+    if (dropIdle && !a.totalRung && !a.totalAnswered && !a.totalMissed
+        && !a.totalUnique && !a.tttSeconds) {
+      idleAgents[k] = true;
+      continue;
+    }
     const queueOnly = a.matchedViaQueue && !a.matchedViaRoster;
     // sourceHomes is an array of every dept whose roster this agent
     // appears on. Empty array (rendered as bare "QUEUE") means the
@@ -1538,7 +1557,7 @@ function computeSummary_(dept, from, to, scope, opts) {
       totalMissed: a.totalMissed,
       totalAnswered: a.totalAnswered,
       // Owner (2026-09): answered per ACTIVE day -- the `daysActive` count
-      // emitted below (since summary:v23, days with at least one RING in the
+      // emitted below (since summary v23, days with at least one RING in the
       // USER window; a.days is user-window only, the E5 prior window
       // accumulates in priorAcc), so PTO does not drag it down. 1 dp; null
       // when no active day so the client renders a dash, never 0.0.
@@ -1626,7 +1645,7 @@ function computeSummary_(dept, from, to, scope, opts) {
     totals.daily = summaryDailyList_(perDay);
     Object.defineProperty(totals, '_dailyByAgent', { value: rosterDaily, enumerable: false });
   }
-  // summary:v23 (owner 2026-10): the team's answered per AGENT per day --
+  // summary v23 (owner 2026-10): the team's answered per AGENT per day --
   // the roster agents' answered ÷ their summed ring-days. Floaters are already
   // out (rosterRows); the dept's team-average excludes come out too, the R18
   // rule for per-agent averages (TEAM_AVG_EXCLUDES / Dept Config "Team Avg
@@ -1651,7 +1670,7 @@ function computeSummary_(dept, from, to, scope, opts) {
   // Diagnostics: roster agents with no data in this range; agents
   // matched only via queue extension overlap (not on roster).
   const agentsWithData = {};
-  for (const k in acc) agentsWithData[k] = true;
+  for (const k in acc) if (!idleAgents[k]) agentsWithData[k] = true;
   const rosterWithNoData = [];
   for (let i = 0; i < roster.names.length; i++) {
     if (!agentsWithData[roster.names[i]]) {
