@@ -877,7 +877,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v28` — zero DQE rings over the trailing 7 chart days while
+  (since `companyOverview` v28 — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1134,7 +1134,16 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
-  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v28`.
+  BOUNDARIES end-to-end. Payload shape changed, so a `companyOverview` bump (v28 then).
+  **The tile's QUEUE chips follow the same Window (QD-2, `companyOverview:v29`).**
+  `ovQcdForPeriod_` (script-3-overview) is the one place that picks them:
+  Yesterday reads the latest-QCD-day snapshot (`dept.qcd`), every other window
+  reads `dept.qcd.periods[key]` (same boundaries as the DQE buckets, capped at
+  the latest DQE date), and a null block means no queue rows in that window --
+  no abandoned chip, never a false 0.00%. The abandoned %, "N aban", per-queue
+  and Viol chips and the sub-queue strip's Abd all route through it and name
+  their window in a tooltip; "viol MTD" stays month-to-date. drive-outbound-e's
+  QD-2 checks walk Yesterday / 30 days / YTD.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a
@@ -1403,7 +1412,9 @@ behind the removed button.
   `answered-bar.test.js`). Insights follows the same rule on an agent-free
   run (IDLE-2, `insights:v26`): no card for an agent with no calls in the
   window, so the quiet group and the small-sample banner no longer count them.
-- **Team strip**: non-hero tiles center both axes (the R12-23 treatment); the
+- **Team strip**: Queue calls and Abandoned % carry the vs-prior chip from
+  `qcd.rangePrior` like Avg answer (QD-1; abandoned % under 0.25 pts reads
+  muted). Non-hero tiles center both axes (the R12-23 treatment); the
   Answered + Queue-calls tiles merged into one "<total> (<ans> / <abd>)"
   split-value tile (`.dts-value--split`; abandoned mutes at zero), the same
   format the QCD side panel's Total Calls tile now uses — one dialect on both
@@ -2211,7 +2222,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v28`).
+  stripped by `personalizeOverview_` (since `companyOverview` v28).
 - **Outbound columns on the agent table (owner 2026-10, Batch D; one toggle
   since Step 3).** **Step 3 (owner 2026-10-16): inbound and outbound are
   TOGETHER by default** -- the three-way Inbound | Outbound | Both switch is now

@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v28` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v29` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -100,7 +100,11 @@
 // v28 (Batch F1): each tile outbound period gains `prior` (the INV-28
 // preceding window's placed / connected / pct, null when that window starts
 // before outbound capture) + the top-level `outboundPriorWindows`.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v28';
+// v29 (QD-2, owner 2026-10-20): each tile's `qcd` gains `periods` (the
+// queue figures for the last 30 / 60 / 90 days and the year to date, the card
+// periods), so the abandoned chips follow the card period instead of always
+// showing the latest QCD day.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v29';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -439,7 +443,8 @@ function getCompanyOverview(req) {
   // computeQcdSnapshots_ scanned with the 90-day chart window so its per-dept
   // `daily` map covers the full chart series (the tile-chip latest/MTD fields
   // are date-gated and unaffected by the wider window).
-  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, w.chartTrendStartIso, ssTZ);
+  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, w.chartTrendStartIso, ssTZ,
+    { periodFromIso: w.ytdStartIso });   // QD-2: + the card-period queue figures
   // The company-wide per-day QCD map that came back alongside the per-dept
   // snapshots, for the chart's Company line. `{}` when the QCD read failed --
   // the series then goes all-null and the line simply does not draw.
@@ -447,7 +452,7 @@ function getCompanyOverview(req) {
   const tileCtx = { deptStats: deptStats, trendIsoLabels: trendIsoLabels, chartTrendIsoLabels: chartTrendIsoLabels,
     qcdSnapshotsByDept: qcdSnapshotsByDept, deptChartDaily: periods.deptChartDaily, overviewParentMap: overviewParentMap,
     rosterByDept: rosterByDept, alertedSet: alertedSet, latestDate: latestDate, deptPeriodAcc: periods.deptPeriodAcc,
-    outboundByDept: outbound ? outbound.byDept : null };
+    outboundByDept: outbound ? outbound.byDept : null, window: w };
   const allFormatted = allDepts
     .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
     .map(function (d) { return ovFormatDept_(d, tileCtx); });
@@ -878,6 +883,48 @@ function ovFmtPeriod_(b) {
   };
 }
 
+/**
+ * QD-2 (owner 2026-10-20): a dept's queue figures for each multi-day card
+ * period -- the same windows as the tile's Rung / Ans / Miss (ovAccumulatePeriods_:
+ * last 30 / 60 / 90 days ending on the latest DQE date, and the year to date),
+ * capped at that date so the two halves of a card describe the same days. The
+ * Yesterday view keeps the latest-QCD-day snapshot itself. A period with no
+ * queue rows is null (the client then shows no abandoned chip rather than a
+ * false 0.00%).
+ */
+function ovQcdPeriods_(queueDaily, w, latestDate) {
+  const starts = { last30: w.trendStartIso, last60: w.last60StartIso,
+                   last90: w.last90StartIso, ytd: w.ytdStartIso };
+  const out = {};
+  Object.keys(starts).forEach(function (k) {
+    const from = starts[k];
+    const tot = [0, 0, 0];
+    const perQueue = [];
+    Object.keys(queueDaily).sort().forEach(function (q) {
+      const qt = [0, 0, 0];
+      let seen = false;
+      Object.keys(queueDaily[q]).forEach(function (iso) {
+        if (iso < from || iso > latestDate) return;
+        const v = queueDaily[q][iso];
+        qt[0] += v[0]; qt[1] += v[1]; qt[2] += v[2]; seen = true;
+      });
+      if (!seen) return;
+      tot[0] += qt[0]; tot[1] += qt[1]; tot[2] += qt[2];
+      const qPct = qt[0] > 0 ? (qt[1] / qt[0]) * 100 : 0;
+      perQueue.push({ queue: q, totalCalls: qt[0], abandoned: qt[1],
+        abandonedPct: round1_(qPct), abandonedPctStr: qPct.toFixed(2) + '%', violations: qt[2] });
+    });
+    if (!perQueue.length) { out[k] = null; return; }
+    const pct = tot[0] > 0 ? (tot[1] / tot[0]) * 100 : 0;
+    // perQueue only for a multi-queue dept: the tile lists queues only then,
+    // and a single queue's row would repeat the totals (the F6 size budget).
+    out[k] = { from: from, to: latestDate, totalCalls: tot[0], abandoned: tot[1],
+      abandonedPct: round1_(pct), abandonedPctStr: pct.toFixed(2) + '%', violations: tot[2] };
+    if (perQueue.length > 1) out[k].perQueue = perQueue;
+  });
+  return out;
+}
+
 /** CH-4: Overview stage -- one dept tile (latest, WoW, QCD chip, sparkline, chart series, periods). */
 function ovFormatDept_(d, c) {
   const deptStats = c.deptStats, trendIsoLabels = c.trendIsoLabels, chartTrendIsoLabels = c.chartTrendIsoLabels,
@@ -907,6 +954,13 @@ function ovFormatDept_(d, c) {
   // semantic, DQE counts RINGS, and the two are not the same species.
   const dqeSilence = ovDqeSilence_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily, 7);
   if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
+  // QD-2: the tile's queue chips follow the CARD period, like its Rung / Ans /
+  // Miss. `snap` itself stays the latest QCD day (the Yesterday view, and what
+  // every other reader of it expects).
+  if (snap) {
+    if (snap.queueDaily && c.window) snap.periods = ovQcdPeriods_(snap.queueDaily, c.window, latestDate);
+    delete snap.queueDaily;
+  }
   const tile = {
     name: d,
     parent: overviewParentMap[d] || null,
@@ -1925,8 +1979,13 @@ function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
  *
  * Safe no-op if the sheet is missing.
  */
-function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
+function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
   const out = {};
+  // QD-2 (owner 2026-10-20): `opts.periodFromIso` (the YTD start) widens the
+  // read so each dept also gets a per-queue, per-day map back to that date
+  // (`queueDaily`), from which the tile builds its queue figures for the card
+  // period. Every existing field keeps its own window and meaning.
+  const periodFromIso = (opts && opts.periodFromIso) || '';
   try {
     // R-1: source-aware read (readQcdGrid_, QCDReport.gs) so the Overview
     // QCD chips honor QCD_READ_SOURCE. The existing row filter below keeps
@@ -1939,7 +1998,8 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // zone read as the previous month's last day during US DST.
     const _readTo = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
     const _mtdStartWin = mtdStartIso_(_readTo);
-    const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
+    let _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
+    if (periodFromIso && periodFromIso < _readFrom) _readFrom = periodFromIso;   // QD-2
     let grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
     if (!grid || grid.missing || grid.empty) {
       if (typeof qcdFlagEmptyIfOutage_ === 'function') qcdFlagEmptyIfOutage_('computeQcdSnapshots_');   // DATA-4
@@ -2019,7 +2079,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       // "X viol MTD" chip while the QCD modal's full-scan MTD kept them.
       // MTD-only rows are OLDER than every in-window row, so they cannot
       // perturb the latest-day max-date tracking below.
-      if (dateIso < sinceIso && dateIso < mtdStart) continue;
+      if (dateIso < sinceIso && dateIso < mtdStart && !(periodFromIso && dateIso >= periodFromIso)) continue;
 
       const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
@@ -2050,6 +2110,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
             mtdViolations:   0,
             perQueue:        {},   // queue -> { totalCalls, abandoned, violations }
             daily:           {},   // iso -> { totalCalls, abandoned } (window rows, summed across queues) -- feeds the Overview chart's Abandoned metrics
+            queueDaily:      {},   // QD-2: queue -> iso -> [total, abandoned, violations], rows >= periodFromIso
           };
           acc[dept] = a;
         }
@@ -2057,6 +2118,13 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         // MTD violations: rows from the 1st of the latest QCD date's month
         // through that date (QO-1) contribute.
         if (dateIso >= mtdStart && (!qcdLatestIso || dateIso <= qcdLatestIso)) a.mtdViolations += violations;
+
+        // QD-2: the per-queue day map the card-period queue figures are summed from.
+        if (periodFromIso && dateIso >= periodFromIso) {
+          var qd = a.queueDaily[queue] || (a.queueDaily[queue] = {});
+          var qdd = qd[dateIso] || (qd[dateIso] = [0, 0, 0]);
+          qdd[0] += totalCalls; qdd[1] += abandoned; qdd[2] += violations;
+        }
 
         // Per-day (in-window) abandoned series for the Overview trend chart's
         // Abandoned calls / Abandoned % metric views. Only window rows
@@ -2117,6 +2185,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         violationsMtd:    a.mtdViolations,
         perQueue:         perQueueOut,
         daily:            a.daily,   // consumed by formatDept -> trendAbandoned/Pct; stripped before the tile-chip payload ships
+        queueDaily:       a.queueDaily,   // QD-2: consumed by ovQcdPeriods_; stripped before the payload ships
       };
     });
     // The company-wide per-day map, under a `_`-prefixed key so it cannot

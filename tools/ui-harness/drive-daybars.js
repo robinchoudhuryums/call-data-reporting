@@ -98,6 +98,32 @@ function bars() {
   record('idle: no selection, the readout invites a point', b.every((x) => x.sel === -1 && !x.on && /Point at a bar/.test(x.readout)),
     b.map((x) => x.readout).join(' | '));
 
+  // QD-1 (owner 2026-10-20): Queue calls and Abandoned % carry the vs-prior
+  // chip the Avg answer card already had, from the payload's prior block.
+  const sum30 = require('./payloads/summary-30d.json');
+  const qr = sum30.qcd.range, qp = sum30.qcd.rangePrior;
+  const wantCalls = qr.totalCalls - qp.totalCalls;
+  const wantAbd = Math.round((qr.abandonedPct - qp.abandonedPct) * 100) / 100;
+  const chips = await page.evaluate(() => {
+    const t = function (k) {
+      const tile = document.querySelector('#dept-team-strip .dts-tile[data-dts-metric="' + k + '"]');
+      const c = tile && tile.querySelector('.dts-delta');
+      return c ? { text: c.textContent.trim(), title: c.getAttribute('title') || '', cls: c.className } : null;
+    };
+    return { qcalls: t('qcalls'), qabd: t('qabd'), qavg: t('qavg') };
+  });
+  const num = function (c) { return c ? Number(c.text.replace(/[^0-9.]/g, '')) * (/−/.test(c.text) ? -1 : 1) : NaN; };
+  record('Queue calls and Abandoned % carry a vs-prior chip (like Avg answer), with the payload\'s deltas',
+    !!(chips.qcalls && chips.qabd && chips.qavg)
+      && num(chips.qcalls) === wantCalls && Math.abs(num(chips.qabd) - wantAbd) < 0.001
+      && /Prior period/.test(chips.qcalls.title) && /Prior period/.test(chips.qabd.title),
+    JSON.stringify(chips) + ' want calls ' + wantCalls + ' abd ' + wantAbd);
+  record('a queue-calls rise reads good; an abandoned-% move under a quarter point stays muted',
+    !!(chips.qcalls && chips.qabd)
+      && (wantCalls >= 3 ? /wow-chip-good/.test(chips.qcalls.cls) : true)
+      && (Math.abs(wantAbd) < 0.25 ? /wow-chip-muted/.test(chips.qabd.cls) : !/wow-chip-muted/.test(chips.qabd.cls)),
+    JSON.stringify(chips));
+
   // Hover a bar in the QUEUE CALLS card: the same day lights up everywhere.
   const qBars = page.locator('#dept-team-strip [data-dts-metric="qcalls"] .dts-bars');
   const box = await qBars.boundingBox();

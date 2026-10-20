@@ -73,7 +73,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   (Batch B): open, day / tab switch, survives a re-sort, the IR button,
   Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
 - `drive-daybars.js` — the team cards' **linked day bars** (Step 4): one
-  shared selection, workday / monthly buckets, keyboard + touch, admin-only.
+  shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
+  it also checks the Queue calls and Abandoned % cards' vs-prior chips.
 - `drive-notify.js` — the **Notifications** page: sentence rules, History,
   Test send, the manager-layer switch, a manager's Settings section off and
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
@@ -97,7 +98,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-outbound-e.js` — the Overview tiles' outbound line per card window
   and the **Outbound summary** under the outbound table on My Department
   (Batch E; moved out of Insights by UX-1): two-window deltas, shown only on
-  Outbound / Both, never for a manager or View-as.
+  Outbound / Both, never for a manager or View-as. Since QD-2 it also checks that the tiles'
+  abandoned chips and the sub-queue strip's Abd follow the card window, with
+  tooltips, and (QD-3) the "viol MTD" chip's 0 green / 1-3 amber / 4+ red tiers.
 - `drive-callbacks.js` — the **Callbacks** section under the outbound table on
   My Department (G1; moved out of Insights by UX-1): lazy (one
   fetch, on open), the shared renderers incl. a drawn chart after a reopen,
