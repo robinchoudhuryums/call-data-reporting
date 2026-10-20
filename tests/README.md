@@ -811,7 +811,9 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     consolidation-freeze (insights-report.test.js) — the retired
     Performance / Compare Ranges semantics pinned as fixture literals:
     INV-28 (auto prior = immediately-preceding same-length window),
-    INV-25 weighted ATT, INV-29 trend window, INV-53 roster gating;
+    INV-25 weighted ATT, INV-29 trend window, INV-53 roster gating, and
+    IDLE-2 (an agent-free run drops agents with no calls in the window; an
+    explicit pick keeps its card; the email follows the same rule);
     INV-35's working-day math lives in util.test.js
     (`countWorkingDays_`) + the Insights suite. `loadRosterCanonicalNames_`
     (pipeline) — INV-24 paren-strip map + ambiguity, INV-46 alias

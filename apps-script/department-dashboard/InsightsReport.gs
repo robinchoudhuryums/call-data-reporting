@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v25';  // v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v26';  // v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -207,8 +207,10 @@ function getInsightsReport(req) {
   }
 
   const t0 = Date.now();
+  // IDLE-2: an agent-free run leaves out agents with no calls in the window.
+  const agentFree = !((req && Array.isArray(req.agents)) ? req.agents : []).some(function (n) { return String(n || '').trim(); });
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
-                                customPriorFrom, customPriorTo);
+                                customPriorFrom, customPriorTo, { dropIdle: agentFree });
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -242,7 +244,7 @@ function getInsightsReport(req) {
 }
 
 function computeInsights_(dept, from, to, selectedAgents, roster,
-                          customPriorFrom, customPriorTo) {
+                          customPriorFrom, customPriorTo, opts) {
   const selectedSet = {};
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
   const rosterSet = {};
@@ -613,8 +615,19 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // which never matched roster anyway). queueOnlyAgentCount is therefore always
   // 0 here. Floaters remain available in IR/PR/CR (INV-53), same split as My
   // Department.
+  // IDLE-2 (owner 2026-10-20, insights:v26): on an agent-free run (the whole
+  // dept, `opts.dropIdle`) an agent with no calls in the CURRENT window gets
+  // no card -- an ex-employee kept on the roster, or (QUEUE_SPLIT_SCOPE=dept)
+  // an agent on two rosters who worked only the other dept's queues. One
+  // active the prior window rendered a 0 / 0 / 0 card marked "Slipping".
+  // Nothing else moves: the team rollup, the team average and the charts
+  // already skipped them. An explicit pick still gets its card.
+  const dropIdle = !!(opts && opts.dropIdle);
   const visibleAgents = selectedAgents.filter(function (a) {
-    return agentMatchedViaRoster[a];
+    if (!agentMatchedViaRoster[a]) return false;
+    if (!dropIdle) return true;
+    const c = perAgentCurr[a];
+    return !!(c && (c.rung || c.missed || c.answered || c.ttt));
   });
   let depsByAgent = null;
   for (let i = 0; i < visibleAgents.length; i++) {
@@ -1199,8 +1212,10 @@ function sendInsightsReportEmail(req) {
   // tiles + the behind-team-average list (the summary's unique value) + the
   // per-agent table filtered to agents WITH activity. A legacy req.style is
   // simply ignored.
+  // IDLE-2: same rule as the on-screen run, so the email matches it.
+  const agentFree = !((req && Array.isArray(req.agents)) ? req.agents : []).some(function (n) { return String(n || '').trim(); });
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
-                                customPriorFrom, customPriorTo);
+                                customPriorFrom, customPriorTo, { dropIdle: agentFree });
   const dateLabel  = (data && data.dateLabel) || (from + ' - ' + to);
   const priorLabel = (data && data.priorDateLabel) || 'the prior period';
 

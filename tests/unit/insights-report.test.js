@@ -799,3 +799,44 @@ test('DATA-3: a degraded Queue health read this execution keeps Insights out of 
   h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
   assert.equal(insightsKeys().length, 1, 'a healthy execution caches as before');
 });
+
+// IDLE-2 (owner 2026-10-20, insights:v26): an AGENT-FREE run (the Insights
+// region on My Department) leaves out every agent with no calls in the current
+// window -- an ex-employee kept on the roster (Dan), and an agent active only in
+// the PRIOR window (Ben: the 0 / 0 / 0 "Slipping" card; under the queue split,
+// an agent on two rosters who worked only the other dept's queues looks like
+// this). An explicit pick keeps its card; nothing team-level moves.
+test('IDLE-2: an agent-free run drops agents with no calls in the window; an explicit pick keeps them', function () {
+  const rows = [
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 9 }),
+    dqeRow({ date: '2026-03-05', agent: 'Anna', ext: '501', rung: 8,  missed: 1, answered: 7 }),
+    dqeRow({ date: '2026-03-05', agent: 'Ben',  ext: '501', rung: 6,  missed: 4, answered: 2 }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '501', rung: 0,  missed: 0, answered: 0 }),
+  ];
+  const withDan = function () {
+    install(rows);
+    h.state.spreadsheet.getSheetByName('DO NOT EDIT!')._data =
+      rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202', 'Dan, 203'], Beta: ['Cara, 301'] });
+  };
+  withDan();
+  const free = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15' });
+  assert.equal(JSON.stringify(free.agentData.map(function (a) { return a.name; })), '["Anna"]',
+    'Ben (prior-only) and Dan (no rows) get no card on the whole-dept run');
+  assert.equal(free.teamStats.rung.val, 10);
+  assert.equal(free.teamStats.rung.prev, 14, 'the prior team rollup still counts Ben');
+  assert.equal(free.meta.rosterAgentCount, 1);
+
+  withDan();
+  const picked = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Ben'] });
+  assert.equal(JSON.stringify(picked.agentData.map(function (a) { return a.name; }).sort()), '["Anna","Ben"]',
+    'an explicit pick still renders its zero-call card');
+  assert.equal(agent(picked, 'Ben').metrics.rung.val, 0);
+  assert.equal(JSON.stringify(picked.teamStats), JSON.stringify(free.teamStats), 'the team rollup is identical either way');
+});
+
+test('IDLE-2: the emailed report applies the same agent-free rule as the screen', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..',
+    'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.equal((src.match(/customPriorFrom, customPriorTo, \{ dropIdle: agentFree \}\)/g) || []).length, 2,
+    'getInsightsReport and sendInsightsReportEmail both pass dropIdle for an agent-free run');
+});

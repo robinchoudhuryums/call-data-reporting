@@ -223,7 +223,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v25` already makes a fresh re-generate fast too).
+  `insights:v26` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -540,7 +540,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   (line-only), and genuinely having under two days of data.
   For the TEAM metrics a window that can't fill a calendar
   falls back to `trendYtd` — the server's Jan-1-to-end-date daily series
-  (`insights:v25`), roster-gated and accumulated inside the existing 12-month
+  (since `insights` v25), roster-gated and accumulated inside the existing 12-month
   trend pass, so it costs no extra read. `insCalendarUsesYtd_` is the single
   decision (window fills a calendar → use `trendDaily`; else → YTD if it has
   more than one day), and `insCalendarEligible_` / `insRenderTrendCalendar_`
@@ -1400,7 +1400,9 @@ behind the removed button.
   A row with NO calls (any row type) draws a muted dash (`.ans-idle`) instead
   of either bar -- an empty full-width track read as a broken row; the My
   Department table no longer sends such agents at all (IDLE-1, `summary:v24`,
-  `answered-bar.test.js`).
+  `answered-bar.test.js`). Insights follows the same rule on an agent-free
+  run (IDLE-2, `insights:v26`): no card for an agent with no calls in the
+  window, so the quiet group and the small-sample banner no longer count them.
 - **Team strip**: non-hero tiles center both axes (the R12-23 treatment); the
   Answered + Queue-calls tiles merged into one "<total> (<ans> / <abd>)"
   split-value tile (`.dts-value--split`; abandoned mutes at zero), the same
