@@ -77,7 +77,7 @@ test('totals.daily is opt-in: Digest / Coaching / the agent app see no change', 
   const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');
   assert.equal(data.totals.daily, undefined);
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Data.gs'), 'utf8');
-  assert.match(src, /return computeSummary_\(d, from, to, scope, \{ sections: d === dept, daily: true \}\);/,
+  assert.match(src, /return computeSummary_\(d, from, to, scope, \{ sections: d === dept, daily: true, dropIdle: true \}\);/,
     'only the My Department request asks for it');
 });
 

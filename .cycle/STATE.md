@@ -6,13 +6,16 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-19
+Updated: 2026-10-20
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-20 -- IDLE-1 IMPLEMENTED (block 259-idle-rows): zero-call agents get no My Department row.** From a Power screenshot: an agent whose window rows are all zero (the build's out-of-window rows, or a queue-split crossover narrowed to zero) drew a 0 / 0 (0) row with an empty gray bar. getDepartmentSummary now passes `dropIdle` (other consumers unchanged), the agents land in rosterWithNoData, the bar cell draws a dash for any zero row; `summary:v24`. 2608 tests, 5/6 bites (1 subs-scope only).
+  **Owner-side:** deploy the dashboard.
+  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green.
 - **2026-10-19 -- Nothing unmerged.** The owner plan (Steps 1-5) and its docs sync are all on main (PRs #371-#377). Owner-side: deploy the dashboard (`scripts/deploy.sh .`), walk S63-S65, and decide each manager release (#77 manager layer, #48 coaching email, #78 alert reasons). Still open: F35 (operator clasp check), F62 (owner ruling), the optional ci:ui stage-list move out of CLAUDE.md.
 - **2026-10-16 -- /sync-docs over the owner-plan commits (Steps 1-5, PRs #371-#376).** Drift was small because each step updated its own docs: the Threshold-drift bullet and README still described the retired alert config TABLE (now rule cards); the public-write bullet did not name the one non-admin write (the Step 5 manager layer, a Script Property); docs/architecture.md lacked Notifications.gs / AlertReasons.gs and the new Coaching RPCs; next-steps had no row for the owner plan; client-ui-conventions had no Notifications bullet. Subsystems clean (Notifications.gs + AlertReasons.gs listed; every path exists). No undocumented operator state (#77 / #78 / #48 cover the three new properties). Weight: CLAUDE.md 182.1 KB of 200 KB (88.9%); largest bullet 3.9 KB; nothing pruned.
   **Next (weight):** the ~6 KB ci:ui stage list in Key commands could move to tools/ui-harness/README.md with a one-line pointer -- not done here.

@@ -1813,17 +1813,22 @@
     // keeps the full red + a bold value (styles.html .ans-bar--pass/--fail).
     var passCls = total ? (rate >= answerStdFor_(deptCtx).target ? ' ans-bar--pass' : ' ans-bar--fail') : '';
     var track;
-    if (useTally) {
+    if (!total) {
+      // summary v24 (owner 2026-10): a row with no calls draws a muted dash,
+      // not an empty full-width track -- beside the agents' tallies the gray
+      // bar read as a broken row (the My Department page no longer sends such
+      // agent rows; this covers any that still arrive, totals included).
+      track = '<div class="ans-idle">' + zeroCell_('–') + '</div>';
+    } else if (useTally) {
       track = '<div class="ans-tally" aria-hidden="true">'
         + ansTallyBlocks_(a, tallyUnit, 'a')
         + ansTallyBlocks_(m, tallyUnit, 'm')
         + '</div>';
     } else {
-      var segs = total
-        ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
-          + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
-        : '<span class="ans-seg none" style="width:100%"></span>';
-      track = '<div class="ans-track">' + segs + '</div>';
+      track = '<div class="ans-track">'
+        + '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+        + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
+        + '</div>';
     }
     return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
          +   track

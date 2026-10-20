@@ -285,7 +285,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v23). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v24). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -1397,6 +1397,10 @@ behind the removed button.
   `.ans-track` bar (an aggregate at agent scale would be hundreds of blocks).
   The R10-4 pass/fail treatment carries over (`.ans-bar--pass .tly.m` recedes
   translucent). `drive-subqueue.js` pins the agent-tally/subtotal-bar split.
+  A row with NO calls (any row type) draws a muted dash (`.ans-idle`) instead
+  of either bar -- an empty full-width track read as a broken row; the My
+  Department table no longer sends such agents at all (IDLE-1, `summary:v24`,
+  `answered-bar.test.js`).
 - **Team strip**: non-hero tiles center both axes (the R12-23 treatment); the
   Answered + Queue-calls tiles merged into one "<total> (<ans> / <abd>)"
   split-value tile (`.dts-value--split`; abandoned mutes at zero), the same
@@ -1420,7 +1424,7 @@ behind the removed button.
   agents, combined view with every crossover repeat dropped, Data.gs) and
   `qcd.range.daily` ([iso, calls, answered, abandoned, avgAnswerSec] -- own
   queues). Compact tuples on purpose: the summary is cached under the ~100 KB
-  per-value cap. No `summary:v23` bump (additive fields; a payload cached
+  per-value cap. No summary-key bump (then v23; additive fields; a payload cached
   before the deploy just draws no bars until the next ingest mints a new key).
   Admin-only: built only when `dtsBarsActive_()` (admin, not View-as) and the
   block carries `data-admin-only`. Pinned by `day-bars.test.js` (server sums,
@@ -2418,7 +2422,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   rate the bar folds in is readable without decoding it; the `answerRate`
   sort key and the default landing) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
-  (owner 2026-10; the figure lives in the bar cell, `summary:v23`), but the
+  (owner 2026-10; the figure lives in the bar cell, since summary v23), but the
   CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
   columns (Source / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle

@@ -1293,3 +1293,12 @@ Operator State #76). The rulings are in `docs/next-steps.md` "UX-2 RULED".
 |---|---|---|
 | `UX-2` | Insights opened on a headline banner and a long run of sections, with nothing saying which part mattered this period. It now opens on a ranked brief (one coloured, worded row per section, most urgent first), Agents leads as an open fold, and the other sections read as one line. A row is coloured only where a standard exists; the queue-wait rule compares a queue with its own last three months, because the probe showed a company-wide comparison penalises small queues on average answer (r = -0.57) and big ones on longest wait (r = +0.53). Admin-only during the trial; `insights:v25`. | client-ui-conventions.md "The Insights ranked brief"; `insights-brief.test.js`; drive-smoke UX-2 checks; S61 |
 
+
+## Idle agent rows (owner round 2026-10-20)
+
+Reported from a screenshot of the Power combined view: two agents rendered as
+`0 / 0 (0)` rows with an empty full-width gray bar.
+
+| Change | What was wrong / what changed | Live rule · evidence |
+|---|---|---|
+| `IDLE-1` | The My Department table gave a row to any agent with a DQE row in the window, even when every figure on it was zero. Two writers produce such rows: the build writes one for every agent who rang on any queue that day, even when no ring fell in the work window, and the queue split (`QUEUE_SPLIT_SCOPE=dept`) leaves a crossover agent at zero in the dept whose queues they did not work (Sophia Hemrajani: 0 in Power, 16 / 8 in PAK). The zero row then drew the bar cell's classic track at 0%, a full-width gray bar beside the agents' tallies. The My Department request now passes `dropIdle` (the agent app, digests, coaching and the smoke check do not), so those agents join `diagnostics.rosterWithNoData`; their prior-window chips go with them, the existing rule for prior-only agents. No count or sum moves. `answeredBarHtml_` draws a muted dash for any zero row. `summary:v24`. | INV-30 entry; `compute-summary.test.js` (both writers), `answered-bar.test.js` |
