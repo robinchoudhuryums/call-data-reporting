@@ -1464,6 +1464,13 @@ When something looks wrong, before assuming a code bug, check:
 42. **`QUEUE_SPLIT_SCOPE` — the per-dept queue-narrowing switch (dashboard
     project). Default `off`.**
 
+    **Production state: `dept`** — set on purpose by the owner some time
+    before 2026-10-20 (confirmed that day). So the live numbers are the
+    narrowed ones described below. One consequence worth knowing: an agent on
+    two rosters who worked none of a department's queues in the window gets
+    no My Department row there and is listed under "roster agents with no
+    data" instead (IDLE-1, `summary:v24`).
+
     Values: `dept` (narrow each agent-day to the department's own queues, the
     sub-queue Phase 2 behavior) | anything else, including unset, = `off` (every
     figure is the all-queue rollup). A typo'd value is treated as `off`, never
