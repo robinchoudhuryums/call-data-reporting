@@ -50,7 +50,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   / `historyForward()`), and the driver asserts one entry per view, no push
   on Back/Forward, a modal closed by Back and reopened by Forward, and an
   admin-only route left closed for a manager. The mock proves the app's half;
-  the owner walks S54 in two real browsers for the browser's half.
+  the owner walks S54 in two real browsers for the browser's half. It also
+  walks VIEW-AS-MANAGER: enters the preview, checks the admin-only surfaces
+  are actually hidden (measured as rendered visibility, not a class),
+  reverses cleanly, and throws nothing.
 - `drive-f13.js` — the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.
@@ -60,8 +63,25 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and
   reads the real bytes. Also the header **department switch**, which threw a
   `ReferenceError` in production until a driver first tried it.
-- `drive-deptoutbound.js` — the My Department **Inbound | Outbound | Both**
-  switch and Team Outbound panel (Batches D/F): payload totals, manager and
+- `drive-journey.js` — the **"↳ path" call-path drill**: the origin line,
+  the OUTBOUND call reached through the related-call link, and the
+  not-entitled refusal. All three were unit-pinned but had never RENDERED
+  until this driver clicked one (the dept-selector class of bug); the drill
+  was unreachable by any driver until `getCallJourney` was mocked, since
+  drive-smoke's unmocked-RPC check would have flagged the call.
+- `drive-agentpanel.js` — the My Department **row-click inline agent panel**
+  (Batch B): open, day / tab switch, survives a re-sort, the IR button,
+  Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
+- `drive-daybars.js` — the team cards' **linked day bars** (Step 4): one
+  shared selection, workday / monthly buckets, keyboard + touch, admin-only.
+- `drive-notify.js` — the **Notifications** page: sentence rules, History,
+  Test send, the manager-layer switch, a manager's Settings section off and
+  on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
+  manager email (Step 5b); the alert reasons' sentences and Preview rows
+  (Step 5c).
+- `drive-deptoutbound.js` — the My Department **outbound columns** toggle (on
+  by default since Step 3; it replaced the Inbound | Outbound | Both switch)
+  and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
   agent rows only, and one request per window (a Refresh never re-sends one
   in flight; the table and the Outbound summary share one store, FO-3).
@@ -100,7 +120,11 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   never duplicate its nav count badge across re-entry (F10). Modal ids come
   from the ROUTER TABLE in `script-4-nav.html`, which is the authority --
   guessing them is what left phase3 silently checking a modal that does not
-  exist. These surfaces had thorough server-side pins and, until this driver,
+  exist. Since F1 that mirror is ENFORCED: `cross-file-pins.test.js` fails
+  when a `kind:'modal'` route is neither driven by an asserting driver nor
+  listed in its `DRIVER_MODAL_EXEMPT` with a reason (the Inbound and Direct
+  report modals are the current exemptions -- admin-only while vetted, no
+  harness fixture yet). These surfaces had thorough server-side pins and, until this driver,
   nothing asserting that any of them RENDERED. Two walks ride along (broad
   scan Batch 7): Help, the chart tips and the "↳ path" overlay stacked over a
   real report, where Escape must close only the top layer and hand the
@@ -120,7 +144,12 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   installed before asserting anything about the panel, and its
   handler-isolation check is **behavioural** (two concurrent chains must each
   invoke their own handler): comparing two reads for identity does *not* catch
-  a shared runner, because a fresh Proxy is minted either way.
+  a shared runner, because a fresh Proxy is minted either way. A manager
+  gets no overlay even with the localStorage flag hand-set.
+- `build-agent.js` + `drive-agent.js` — the **agent app** (the fourth role's
+  separate page): boot, the hidden rank line, rendered teammate-name
+  PRIVACY, the History tab, no errors / unmocked RPCs / self-beacons, and the
+  360 px overflow check on both tabs.
 
 ### Exploratory drivers (artifacts for a human to read — NOT in CI)
 ```bash

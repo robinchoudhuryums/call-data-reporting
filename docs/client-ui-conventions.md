@@ -2482,7 +2482,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   block's severity chip: `.diag-severity-warn` for 1-5 issues,
   `.diag-severity-bad` for >5, off the same
   `rosterWithNoData.length + queueOnlyMatched.length` total the collapsible
-  reads. (**E4**) the **EXCLUDED FROM TEAM AVG pill** (`.ir-excluded-pill`) on
+  reads. Since IDLE-1 `rosterWithNoData` also holds roster agents who have
+  rows but no calls, so with `QUEUE_SPLIT_SCOPE=dept` (on in production) it
+  counts each agent on two rosters who worked only the other department's
+  queues -- a higher count on a parent dept after that deploy is expected. (**E4**) the **EXCLUDED FROM TEAM AVG pill** (`.ir-excluded-pill`) on
   IR agent cards, from the `excludedFromTeamAvg` field on each `summaryData`
   row (INV-26). (**E9**) the **QCD days-to-violation forecast**
   (`#qcd-forecast`): a 7-day linear regression on `dailySeries.abandonedPct`

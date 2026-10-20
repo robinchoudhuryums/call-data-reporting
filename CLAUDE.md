@@ -228,77 +228,19 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# SIXTEEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
-# unmocked RPCs, BLANK chart canvases, horizontal overflow (also at 360 px,
-# CL-9 -- drive-agent too), browser Back/Forward (CL-23), both roles, plus
-# VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
-# -- measured as rendered visibility, not a class -- reverses cleanly, and
-# throws nothing),
-# drive-f13.js (the S39 keyboard walk), drive-devoverlay.js (the O-11 dev
-# overlay AND its `google.script.run` probe -- the probe redefines the single
-# object every one of the ~91 server calls passes through, so a wrong wrapper
-# breaks the whole app at once; the driver asserts the app still WORKS with it
-# installed before asserting anything about the panel, and its handler-isolation
-# check is BEHAVIOURAL because comparing two reads for identity does not catch a
-# shared runner -- plus that a manager gets no overlay even with the localStorage
-# flag hand-set), drive-journey.js (the "↳ path" call-path
-# drill -- the origin line, the OUTBOUND call reached through the related-call
-# link, and the not-entitled refusal; all three were unit-pinned but had never
-# RENDERED until this driver clicked one, the dept-selector class of bug; the
-# drill was unreachable by any driver until getCallJourney was mocked, since
-# drive-smoke's unmocked-RPC check would have flagged the call),
-# drive-agentpanel.js (the My Department row-click inline agent panel:
-# open, day/tab switch, survives a re-sort, IR button, Escape/Collapse focus
-# return, one at a time, CSV untouched, 360 px -- Batch B), drive-daybars.js (the
-# team cards' linked day bars: one shared selection, workday/monthly buckets,
-# keyboard + touch, admin-only -- Step 4), drive-notify.js (the Notifications
-# page: sentence rules, History, Test send, the manager-layer switch, a
-# manager's Settings section off and on -- Step 5a; the coaching gates,
-# Met / Rotated / Dismissed and the held manager email -- Step 5b; the alert
-# reasons' sentences and Preview rows -- Step 5c), drive-deptoutbound.js
-# (the outbound-columns toggle -- on by default since Step 3 -- + Team Outbound panel: payload totals,
-# manager/view-as fall back to Inbound, panels never overlap, prior-period
-# chips on agent rows only -- Batches D/F), drive-crossstate.js (the
-# SEQUENCES before the UX-2 / 6c gates open: dept switch, view-as in/out,
-# direction -- E5),
-# drive-outbound-e.js (the Overview tiles' outbound line per card window +
-# the Outbound summary's two-window deltas under the outbound table, UX-1;
-# neither reaches a manager or View-as -- Batch E), drive-callbacks.js (the
-# Callbacks section under the outbound table, UX-1:
-# Outbound/Both only, lazy one fetch, the shared renderers incl. a drawn chart
-# after a reopen, the drill's call path, CSV/email, 360 px -- Batch G1),
-# drive-cbdept.js (Callbacks by department on the Overview: admin-only, lazy,
-# its own window + sort, grouped rows, keyboard expand, CSV -- Batch G2),
-# drive-admin.js (the EIGHT driven modals -- the admin set plus Caller Lookup
-# and Agent Day -- + the Escalations worklist: each modal
-# opens, renders, traps focus and closes on Escape, with no page errors, plus
-# the F10 no-duplicate-badge property -- these had thorough server-side pins
-# and no assertion that any of them RENDERED, the dept-selector class of bug.
-# Its MODALS list mirrors the router table in script-4-nav.html, and since F1
-# that mirror is ENFORCED: cross-file-pins.test.js fails when a `kind:'modal'`
-# route is neither driven by an asserting driver nor listed in its
-# DRIVER_MODAL_EXEMPT with a reason. The two REPORT modals Inbound and Direct
-# are the current documented exemptions -- admin-only while vetted, no harness
-# fixture yet (the Outbound modal itself is retired, G3). It also walks Help / chart tips /
-# the call path stacked over a report and a failed Escalations init (Batch 7)),
-# and drive-subqueue.js (the collapsible
-# sub-queue groups, the S35 parent-subtotal parity property, the combined AND
-# single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
-# this repo, asserted by stubbing URL.createObjectURL and reading the real Blob
-# bytes, S43 -- and the header DEPARTMENT SWITCH, which threw a ReferenceError
-# in production until a driver first tried it), plus the AGENT-APP pair
-# build-agent.js + drive-agent.js (the fourth role's separate page: boot,
-# hidden rank line, rendered teammate-name PRIVACY, the History tab, no
-# errors/unmocked RPCs/self-beacons). The other drivers (drive.js /
-# drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
-# and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job, and is
-# BLOCKING since 2026-07: it has now caught two bugs that reached production and
-# that nothing else could see -- CSS appended after `</style>` rendering as
-# visible text, and the header dept selector throwing so no admin could switch
-# departments. Neither is reachable from `node --test` (one is markup structure,
-# the other needs a real click). Re-run it after touching
-# script.html or any script-*.html fragment, styles.html, dashboard.html,
-# agent.html / agentApp.html, or any payload shape.
+# SIXTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
+# in tools/ui-harness/README.md "Asserting drivers" -- the per-driver list
+# lives there, not here). Two pins ride on them: `cross-file-pins.test.js`
+# fails when a `kind:'modal'` route in script-4-nav.html is neither driven by
+# an asserting driver nor listed in its DRIVER_MODAL_EXEMPT with a reason
+# (F1), and the agent app's teammate-name privacy is asserted at the rendered
+# page by build-agent.js + drive-agent.js. drive.js / drive-insights.js /
+# drive-phase3.js emit screenshots for a human and are deliberately NOT in the
+# gate. Runs in CI as the `ui-harness` job and is BLOCKING since 2026-07: it
+# caught two production bugs nothing else could see (CSS appended after
+# `</style>` rendering as text; the header dept selector throwing). Re-run it
+# after touching script.html or any script-*.html fragment, styles.html,
+# dashboard.html, agent.html / agentApp.html, or any payload shape.
 ```
 
 ## Common Gotchas
@@ -2176,7 +2118,7 @@ items for anything it flags or doesn't cover.)
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- cheap inside the 14-day `Call_Legs_*` window, an operator job outside it; nothing is lost for good
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates a working de-dup from a queue mapped to no dept
-42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`), its flip checklist, and what each mode makes the numbers mean
+42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`), its flip checklist, and what each mode makes the numbers mean -- `dept` in production (owner, confirmed 2026-10-20)
 43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window rests on it
 44. DQE-silence watchdog -- the queue-active-agents-dark cross-check; `installDqeSilenceWatchTrigger()`, with thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
