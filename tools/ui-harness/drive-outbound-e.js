@@ -10,6 +10,11 @@
  * (current + prior) with its deltas, and -- the 6c half -- neither surface
  * reaching a manager or surviving View-as.
  *
+ * QD-2 (owner 2026-10-20) rides along: the tiles' abandoned % / "N aban"
+ * chips and the sub-queue strip's Abd follow the same card window (the
+ * payload's qcd.periods; Yesterday = the latest QCD day), each with a tooltip.
+ * QD-3: the "viol MTD" chip's tiers (0 green / 1-3 amber in --caution / 4+ red).
+ *
  * Run: node drive-outbound-e.js   (after gen-payloads + build-harness)
  */
 const path = require('path');
@@ -118,6 +123,81 @@ function tileLines() {
       l2 && l2.text);
     await p2.close();
   }
+
+  // ---- QD-2 (owner 2026-10-20): the tiles' queue chips follow the card window --
+  // Before, the abandoned % / "N aban" chips and the sub-queue strip's Abd
+  // always showed the LATEST QCD day, so a quiet latest day read "Abd 0.0%" on a
+  // 30-day view. Each window's figures come from the payload's qcd.periods.
+  for (const winKey of ['yesterday', 'last30', 'ytd']) {
+    const pq = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    pq.on('pageerror', (e) => errors.push('qd2 pageerror: ' + e.message));
+    await skipTour(pq);
+    await pq.addInitScript((k) => { localStorage.setItem('cdr.ov.window', k); }, winKey);
+    await pq.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
+    await pq.waitForTimeout(3000);
+    const seen = await pq.evaluate(() => {
+      const out = {};
+      document.querySelectorAll('.ov-dept-tile[data-dept]').forEach(function (t) {
+        const pct = t.querySelector('[data-ov-qcd="pct"]'), cnt = t.querySelector('[data-ov-qcd="count"]');
+        out[t.getAttribute('data-dept')] = { pct: pct ? pct.textContent.trim() : null, pctTip: pct ? pct.getAttribute('title') || '' : '',
+          cntTip: cnt ? cnt.getAttribute('title') || '' : null };
+      });
+      document.querySelectorAll('.ov-subq-card[data-subq]').forEach(function (c) {
+        const abd = c.querySelector('[data-ov-qcd="pct"]');
+        out['subq:' + c.getAttribute('data-subq')] = { abd: abd ? abd.textContent.replace(/\s+/g, ' ').trim() : null, tip: abd ? abd.getAttribute('title') || '' : '' };
+      });
+      return out;
+    });
+    const block = (d) => winKey === 'yesterday' ? d.qcd : (d.qcd.periods || {})[winKey];
+    const tops = ov.depts.filter((d) => d.qcd && !d.parent && block(d));
+    const bad = tops.filter((d) => !seen[d.name] || seen[d.name].pct !== block(d).abandonedPctStr || !/Abandoned %/.test(seen[d.name].pctTip)
+      || (block(d).abandoned > 0 && !(seen[d.name].cntTip || '').length));
+    record('QD-2 ' + winKey + ': every tile\'s abandoned % is the window\'s own figure, and both abandoned chips explain themselves',
+      tops.length > 0 && bad.length === 0, bad.map((d) => d.name + ' ' + JSON.stringify(seen[d.name]) + ' want ' + block(d).abandonedPctStr).join(' | ') || tops.length + ' tiles');
+    const subs = ov.depts.filter((d) => d.qcd && d.parent && block(d));
+    const badSub = subs.filter((d) => { const v = seen['subq:' + d.name]; return !v || v.abd !== 'Abd ' + block(d).abandonedPct.toFixed(1) + '%' || !v.tip; });
+    record('QD-2 ' + winKey + ': the sub-queue strip\'s Abd is the window\'s figure, with a tooltip',
+      subs.length > 0 && badSub.length === 0, badSub.map((d) => d.name + ' ' + JSON.stringify(seen['subq:' + d.name])).join(' | ') || subs.map((d) => d.name).join(','));
+    await pq.close();
+  }
+  // The fixture must actually tell the windows apart, or the checks above prove nothing.
+  const differs = ov.depts.some((d) => d.qcd && d.qcd.periods && d.qcd.periods.last30
+    && d.qcd.periods.last30.abandonedPctStr !== d.qcd.abandonedPctStr);
+  record('QD-2: the fixture\'s 30-day abandoned % differs from its latest day somewhere', differs);
+  // QD-3 (owner 2026-10-20): "viol MTD" is 0 green / 1-3 amber / 4+ red, and the
+  // amber is the --caution token (--warn reads as red, the --stale ruling).
+  {
+    const pv = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    pv.on('pageerror', (e) => errors.push('qd3 pageerror: ' + e.message));
+    await skipTour(pv);
+    await pv.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
+    await pv.waitForTimeout(3000);
+    const vchips = await pv.evaluate(() => {
+      const probe = function (token) {
+        const el = document.createElement('span'); el.style.color = 'var(' + token + ')';
+        document.body.appendChild(el); const c = getComputedStyle(el).color; el.remove(); return c;
+      };
+      const out = { caution: probe('--caution'), bad: probe('--bad'), good: probe('--good'), tiles: {} };
+      document.querySelectorAll('.ov-dept-tile[data-dept]').forEach(function (t) {
+        const c = Array.from(t.querySelectorAll('.ov-qcd-flag')).filter(function (x) { return /viol MTD/.test(x.textContent); })[0];
+        if (c) out.tiles[t.getAttribute('data-dept')] = { cls: c.className, color: getComputedStyle(c).color, text: c.textContent.trim() };
+      });
+      return out;
+    });
+    const tier = (n) => n > 3 ? 'ov-qcd-viol-high' : (n > 0 ? 'ov-qcd-viol-low' : 'ov-qcd-viol-none');
+    const tops = ov.depts.filter((d) => d.qcd && !d.parent);
+    const wrong = tops.filter((d) => { const v = vchips.tiles[d.name]; return !v || v.cls.indexOf(tier(Number(d.qcd.violationsMtd) || 0)) === -1; });
+    record('QD-3: every "viol MTD" chip is tiered 0 green / 1-3 amber / 4+ red',
+      tops.length > 0 && wrong.length === 0, wrong.map((d) => d.name + ' ' + d.qcd.violationsMtd + ' ' + JSON.stringify(vchips.tiles[d.name])).join(' | ') || tops.length + ' tiles');
+    const amber = tops.filter((d) => { const n = Number(d.qcd.violationsMtd) || 0; return n > 0 && n <= 3; });
+    record('QD-3: an amber "viol MTD" chip is drawn in --caution, not a red',
+      amber.length > 0 && amber.every((d) => vchips.tiles[d.name] && vchips.tiles[d.name].color === vchips.caution && vchips.tiles[d.name].color !== vchips.bad),
+      JSON.stringify({ amber: amber.map((d) => d.name + ':' + d.qcd.violationsMtd), caution: vchips.caution, bad: vchips.bad,
+        seen: amber.map((d) => vchips.tiles[d.name] && vchips.tiles[d.name].color) }));
+    await pv.close();
+  }
+  record('QD-2: the per-queue day map the periods are summed from never ships',
+    ov.depts.every((d) => !d.qcd || !Object.prototype.hasOwnProperty.call(d.qcd, 'queueDaily')));
 
   // ---- admin: Insights Outbound fold --------------------------------------
   const pg = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

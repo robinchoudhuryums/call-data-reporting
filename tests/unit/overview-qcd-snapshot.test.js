@@ -443,3 +443,75 @@ test('F5: computeQcdReport_ flags the execution when a Neon fallback leaves it e
   h.call('computeQcdReport_', 'CSR', '2026-09-01', '2026-09-30', {});
   assert.equal(h.call('qcdSnapshotReadFailed_'), false, 'no fallback, no flag -- caches as before');
 });
+
+// QD-2 (owner 2026-10-20, companyOverview:v29): the tile's abandoned chips
+// showed the LATEST QCD day whatever the card period was, so a sub-queue with
+// no abandons that day read "Abd 0.0%" on a 30-day view. With
+// `opts.periodFromIso` the snapshot also carries a per-queue day map, and
+// ovQcdPeriods_ sums it into the card periods -- the same windows as the
+// tile's Rung / Ans / Miss, capped at the latest DQE date.
+test('QD-2: the card periods sum each queue over their own window, capped at the latest DQE date', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  const now = new Date();
+  const day = function (back) { return iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12)); };
+  const latest = day(1);
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [QCD_HEADER,
+    qcdRowTA(day(1), q, 50, 0),     // the latest day: no abandons (the "Abd 0.0%" shape)
+    qcdRowTA(day(5), q, 100, 8),    // inside 30 days
+    qcdRowTA(day(45), q, 200, 20),  // inside 60 / 90, outside 30
+    qcdRowTA(day(150), q, 40, 2),   // inside the year, OUTSIDE the 90-day chart window (the widened read)
+    qcdRowTA(day(0), q, 999, 999),  // past the latest DQE date: never in a period
+  ] } });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const out = h.call('computeQcdSnapshots_', ['CSR'], day(89), 'America/Chicago', { periodFromIso: day(200) });
+  assert.ok(out.CSR && out.CSR.queueDaily, 'the per-queue day map rides along');
+  const w = { trendStartIso: day(30), last60StartIso: day(59), last90StartIso: day(89), ytdStartIso: day(200) };
+  const p = JSON.parse(JSON.stringify(h.call('ovQcdPeriods_', out.CSR.queueDaily, w, latest)));
+  assert.equal(p.last30.totalCalls, 150); assert.equal(p.last30.abandoned, 8);
+  assert.equal(p.last30.abandonedPctStr, (8 / 150 * 100).toFixed(2) + '%', 'not the latest day\'s 0.00%');
+  assert.equal(p.last60.totalCalls, 350); assert.equal(p.last60.abandoned, 28);
+  assert.equal(p.last90.totalCalls, 350);
+  assert.equal(p.ytd.totalCalls, 390, 'the year reaches past the chart window; the day after the latest DQE date is never counted');
+  assert.equal(p.ytd.abandoned, 30);
+  assert.equal(out.CSR.totalCalls, 999, 'the snapshot itself is still the latest QCD day (here one past the latest DQE date)');
+  assert.equal(p.last30.perQueue, undefined, 'a single-queue dept ships no per-queue rows (they would repeat the totals)');
+  assert.equal(p.last30.from, day(30)); assert.equal(p.last30.to, latest);
+});
+
+test('QD-2: a card period with no queue rows is null, never a false 0.00%; two queues ship per-queue rows', function () {
+  const qd = { A_Q_X: { '2026-01-05': [10, 1, 0] }, A_Q_Y: { '2026-01-06': [20, 4, 1] } };
+  const w = { trendStartIso: '2026-09-01', last60StartIso: '2026-08-01', last90StartIso: '2026-07-01', ytdStartIso: '2026-01-01' };
+  const p = JSON.parse(JSON.stringify(h.call('ovQcdPeriods_', qd, w, '2026-09-30')));
+  assert.equal(p.last30, null); assert.equal(p.last90, null);
+  assert.equal(p.ytd.totalCalls, 30);
+  assert.equal(JSON.stringify(p.ytd.perQueue.map(function (r) { return [r.queue, r.totalCalls, r.abandoned, r.violations]; })),
+    '[["A_Q_X",10,1,0],["A_Q_Y",20,4,1]]');
+});
+
+test('QD-2: without periodFromIso the snapshot is unchanged (the YTD chart caller)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  const now = new Date();
+  const d1 = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12));
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [QCD_HEADER, qcdRowTA(d1, q, 50, 5)] } });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const out = h.call('computeQcdSnapshots_', ['CSR'], d1, 'America/Chicago');
+  assert.equal(JSON.stringify(out.CSR.queueDaily), '{}');
+  assert.equal(out.CSR.abandoned, 5);
+});
+
+test('QD-2: periodFromIso widens the READ window too (the Neon path reads only what it asks for)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.QCD_SHEET_DATA_MEMO_ = null; h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [QCD_HEADER] } });
+  const realRead = h.ctx.readQcdGrid_;
+  const froms = [];
+  h.ctx.readQcdGrid_ = function (from, to) { froms.push(from); return realRead.apply(null, arguments); };
+  try {
+    h.call('computeQcdSnapshots_', ['CSR'], '2026-09-01', 'America/Chicago', { periodFromIso: '2026-01-01' });
+  } finally { h.ctx.readQcdGrid_ = realRead; }
+  assert.equal(froms[0], '2026-01-01', 'the read starts at the YTD start, not the chart window');
+});

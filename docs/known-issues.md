@@ -897,10 +897,10 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v28` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v29` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v16` |
-| `InsightsReport.gs` | `insights:vN:` | `v25` |
+| `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
@@ -1677,9 +1677,10 @@ existing per-dept dropdown):
   entries in the ONE `#ins-trend-metric` dropdown — the old by-queue
   tab + metric sub-selector are retired; violation-day warn markers +
   legend spotlight unchanged).
-- **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
-  data exists (warn-tinted when P >= the 4% abandon standard), and a "X viol MTD" chip
-  when month-to-date violations > 0 (the current calendar month; Insights'
+- **Overview tile chips**: an abandoned % chip (+ "N aban") for the card
+  window whenever QCD data exists (QD-2; warn-tinted when P >= the 4% abandon
+  standard), and a "X viol MTD" chip, always shown and tiered 0 green / 1-3
+  amber / 4+ red (QD-3), over the month of the latest QCD date (QO-1; Insights'
   Violations (MTD) tile follows the WINDOW END since D-8). Powered by
   `CompanyOverview.gs::computeQcdSnapshots_`.
 - **My Department "Yesterday's QCD"**: tile row below the agent
@@ -1787,7 +1788,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v28`) on success. Per-(dept,
+constant -- currently `companyOverview:v29`) on success. Per-(dept,
 range) caches (`summary:v24`, `individual:v12`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
@@ -1838,7 +1839,7 @@ queue-level history for the gap is intact. After a Neon-read cutover,
 finish with `backfillDQEHistoryUpsert()`.
 
 **Detection if it recurs.** The DQE-silence watchdog (Operator State #44)
-and the Overview queue-lens badge (companyOverview:v28) both exist because
+and the Overview queue-lens badge (since companyOverview v28) both exist because
 of this incident — the watchdog would have emailed on day 2. The INBOUND
 capture's recognizer (`icIsQueueName_`) reads leg NAMES, not col W, and was
 unaffected — the two recognizers diverge on purpose (see the CLAUDE.md

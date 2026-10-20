@@ -480,11 +480,12 @@ From/To default (which must snap to DQE specifically).
   dept queues. Trend-window resolution matches IR/PR (range
   itself when > 366 days OR a full calendar year, else
   first-of-month(end - 12 months) → end).
-- **Overview tile chips**: when QCD data exists for a dept, an
-  "Aban N (P%)" chip always renders; warn-tinted when P >= the 4% abandon standard
-  (the pipeline's violation threshold). A "X viol MTD" chip
-  renders only when month-to-date violations > 0 (the CURRENT calendar
-  month -- it is a tile; Insights' "Violations (MTD)" tile is instead
+- **Overview tile chips**: when QCD data exists for a dept, an abandoned %
+  chip (+ "N aban" when non-zero) renders for the CARD window (QD-2; Yesterday
+  = the latest QCD day), warn-tinted when P >= the 4% abandon standard
+  (the pipeline's violation threshold). The "X viol MTD" chip always renders,
+  tiered 0 green / 1-3 amber (`--caution`) / 4+ red (QD-3), over the month of
+  the latest QCD date (QO-1 -- it is a tile; Insights' "Violations (MTD)" tile is instead
   month-to-date THROUGH THE WINDOW END, D-8, the R12-24 rule the
   all-departments queue report already follows). Visible to
   everyone -- managers see all depts' chips on Overview, same as
@@ -561,10 +562,10 @@ complete set of prefixes.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v28` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v29` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v16` |
-| `InsightsReport.gs` | `insights:vN:` | `v25` |
+| `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |

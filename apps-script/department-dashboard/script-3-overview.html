@@ -861,10 +861,35 @@
   // before collapsing the rest into a "+N more" summary, so a tile
   // stays scannable instead of stacking a row+chips per queue.
   var OV_QCD_QUEUE_BUDGET = 3;
+  // QD-3: the highest month-to-date violation count the "viol MTD" chip still
+  // shows AMBER; above it the chip is red.
+  var OV_VIOL_MTD_AMBER_MAX_ = 3;
+  // QD-2 (owner 2026-10-20, companyOverview:v29): the tile's queue figures for
+  // the CARD period, like its Rung / Ans / Miss. Yesterday keeps the latest-QCD
+  // -day snapshot (`dept.qcd` itself); the multi-day periods read
+  // `dept.qcd.periods[key]`, where null means no queue rows in that window --
+  // shown as no abandoned chip, never a false 0.00%. `phrase` names the
+  // window in every tooltip. A payload without `periods` falls back to the
+  // snapshot.
+  function ovQcdForPeriod_(dept) {
+    var q = dept && dept.qcd;
+    if (!q) return null;
+    var md = function (iso) { var p = String(iso || '').split('-'); return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : String(iso || ''); };
+    if (ovCardPeriod === 'yesterday' || !q.periods) {
+      return { stats: q, perQueue: q.perQueue || [], phrase: 'on ' + md(q.date) };
+    }
+    var b = q.periods[ovCardPeriod] || null;
+    var lbl = ((OV_CARD_PERIODS_[ovCardPeriod] || {}).label || '').toLowerCase();
+    var phrase = (ovCardPeriod === 'ytd' ? 'year to date' : lbl)
+      + (b ? ' (' + md(b.from) + ' – ' + md(b.to) + ')' : '');
+    return { stats: b, perQueue: (b && b.perQueue) || [], phrase: phrase };
+  }
   function ovBuildQcdCaption_(dept) {
     if (!dept || !dept.qcd) return '';
     var q = dept.qcd;
-    var queues = q.perQueue || [];
+    var pv = ovQcdForPeriod_(dept);
+    var ps = pv.stats;
+    var queues = pv.perQueue;
     var multiQueue = queues.length > 1;
     var html = '';
 
@@ -888,10 +913,14 @@
         var abndText = escapeHtml(pq.abandonedPctStr || '0.00%')
           + (qAbnd > 0 ? ' · ' + fmtNumber(qAbnd) + ' aban' : '');
         var chips = '<span class="ov-qcd-flag'
-              + (qPct >= ABANDON_STANDARD_ ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
+              + (qPct >= ABANDON_STANDARD_ ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '" title="'
+              + escapeHtml(pq.queue + ': ' + (pq.abandonedPctStr || '0.00%') + ' of ' + fmtNumber(Number(pq.totalCalls) || 0)
+                + ' queue calls abandoned (' + fmtNumber(qAbnd) + '), ' + pv.phrase + '.') + '">'
               + abndText + '</span>';
         if (qViol > 0) {
-          chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
+          chips += '<span class="ov-qcd-flag ov-qcd-violation" title="'
+            + escapeHtml(pq.queue + ': ' + qViol + ' day' + (qViol === 1 ? '' : 's') + ' at or over the 4% abandon standard, ' + pv.phrase + '.')
+            + '">' + qViol + ' viol</span>';
         }
         html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
              + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
@@ -906,23 +935,28 @@
              + '</div>';
       }
       html += '</div>';
-    } else {
-      var pct = Number(q.abandonedPct) || 0;
-      var abandoned = Number(q.abandoned) || 0;
+    } else if (ps) {
+      var pct = Number(ps.abandonedPct) || 0;
+      var abandoned = Number(ps.abandoned) || 0;
+      var calls = Number(ps.totalCalls) || 0;
       var abndCls = pct >= ABANDON_STANDARD_ ? 'ov-qcd-flag ov-qcd-violation' : 'ov-qcd-flag ov-qcd-elevated';
-      html += '<span class="' + abndCls + '">'
-           + escapeHtml(q.abandonedPctStr || '0.00%') + '</span>';
+      html += '<span class="' + abndCls + '" data-ov-qcd="pct" title="'
+           + escapeHtml('Abandoned %: ' + (ps.abandonedPctStr || '0.00%') + ' of the ' + fmtNumber(calls)
+             + ' calls offered to this department’s queues, ' + pv.phrase + '. The company standard is under 4%.') + '">'
+           + escapeHtml(ps.abandonedPctStr || '0.00%') + '</span>';
       if (abandoned > 0) {
-        html += '<span class="' + abndCls + '">'
+        html += '<span class="' + abndCls + '" data-ov-qcd="count" title="'
+             + escapeHtml(fmtNumber(abandoned) + ' of ' + fmtNumber(calls) + ' queue calls were abandoned (the caller hung up before an answer), ' + pv.phrase + '.') + '">'
              + fmtNumber(abandoned) + ' aban</span>';
       }
     }
 
     // R22 (owner): TIERED MTD chip -- 0 renders GREEN (a clean month is
-    // information, not silence), 1-2 amber, 3+ red. The per-queue day chips
-    // above keep the binary warn treatment.
+    // information, not silence). QD-3 (owner 2026-10-20): 1-3 AMBER, 4+ red
+    // (was 1-2 / 3+). The per-queue day chips above keep the binary warn
+    // treatment.
     var mtdViol = Number(q.violationsMtd) || 0;
-    var mtdCls = mtdViol >= 3 ? 'ov-qcd-viol-high' : (mtdViol > 0 ? 'ov-qcd-viol-low' : 'ov-qcd-viol-none');
+    var mtdCls = mtdViol > OV_VIOL_MTD_AMBER_MAX_ ? 'ov-qcd-viol-high' : (mtdViol > 0 ? 'ov-qcd-viol-low' : 'ov-qcd-viol-none');
     html += '<span class="ov-qcd-flag ' + mtdCls + '" title="'
           + mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
           + ' month-to-date">' + mtdViol + ' viol MTD</span>';
@@ -1098,15 +1132,20 @@
     const st = ovPeriodStats_(dept);
     const open = !!ovSubqOpen_[dept.name];
     const qcd = dept.qcd || null;
+    // QD-2: the strip's Abd / Viol follow the card period (ovQcdForPeriod_).
+    const pv = qcd ? ovQcdForPeriod_(dept) : null;
+    const ps = pv && pv.stats;
     const alert = dept.alertedOnLatest
       ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
       : '';
-    const abd = (qcd && typeof qcd.abandonedPct === 'number')
-      ? '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Abd</span> '
-        + '<span class="' + (qcd.abandonedPct >= ABANDON_STANDARD_ ? 'bm-over' : '') + '">' + qcd.abandonedPct.toFixed(1) + '%</span></span>'
+    const abd = (ps && typeof ps.abandonedPct === 'number')
+      ? '<span class="ov-subq-metric" data-ov-qcd="pct" title="' + escapeHtml('Abandoned %: ' + (ps.abandonedPctStr || ps.abandonedPct.toFixed(1) + '%')
+          + ' of ' + fmtNumber(Number(ps.totalCalls) || 0) + ' queue calls, ' + pv.phrase + '.') + '"><span class="ov-subq-metric-lbl">Abd</span> '
+        + '<span class="' + (ps.abandonedPct >= ABANDON_STANDARD_ ? 'bm-over' : '') + '">' + ps.abandonedPct.toFixed(1) + '%</span></span>'
       : '';
-    const viol = (qcd && qcd.violations > 0)
-      ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
+    const viol = (ps && ps.violations > 0)
+      ? '<span class="ov-subq-metric ov-subq-metric-viol" title="' + escapeHtml(ps.violations + ' queue-day' + (ps.violations === 1 ? '' : 's')
+          + ' at or over the 4% abandon standard, ' + pv.phrase + '.') + '"><span class="ov-subq-metric-lbl">Viol</span> ' + ps.violations + '</span>'
       : '';
     // Round-16: goal-gap treatment (see ovBuildGridTile_), same honest band.
     const spark = irSparklineGoal_(dept.trend || [], color,

@@ -632,3 +632,13 @@ S65 | Alert reasons: an agent below a threshold over N workdays; callers not cal
   Expected: as described.
   Fails if: a manager receives a reason email; a reason row changes the drift chip, History or the dept counts; an unloaded day counts as "not called back"; or an agent who missed a day, or had one day at or above the threshold, is named.
 
+
+S66 | Queue figures follow their period: My Department queue chips, Overview abandoned chips, Insights idle agents (QD-1, QD-2, IDLE-2) | Subsystem: Department Dashboard
+  Steps:
+    - My Department, a dept with mapped queues (e.g. CSR), last 30 days: the Queue calls card and the Abandoned % card each carry a "vs prior" chip, like Avg answer. Hover each: "Prior period <from> – <to>: ..." naming the prior figure. Compare with the Queue Call Data panel's Range tab: the same prior totals.
+    - Overview, Window = Yesterday: every card's abandoned % chip, its "N aban" chip and the sub-queue strip's Abd carry a tooltip naming the latest queue day ("on 10/19").
+    - Switch Window to Last 30 days: the abandoned % changes to the 30-day figure and the tooltips name the 30-day window. PAP (or any sub-queue whose latest day had no abandons) no longer reads "Abd 0.0%" when its 30 days had abandons. Spot-check one card against the all-departments Queue report for the same 30 days.
+    - YTD: the same, over the year.
+    - My Department > Insights (agents not picked): no card for an agent with no calls in the window -- an ex-employee still on the roster, or an agent on two rosters who worked only the other dept's queues. Pick that agent explicitly: their (zero) card appears.
+  Expected: as described.
+  Fails if: an Overview abandoned chip shows a different day's figure than the window says; a chip has no tooltip; or a whole-dept Insights run shows a 0 / 0 / 0 card.

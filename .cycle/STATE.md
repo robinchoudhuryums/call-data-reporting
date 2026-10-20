@@ -13,9 +13,15 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
-- **2026-10-20 -- /sync-docs after IDLE-1.** Recorded that `QUEUE_SPLIT_SCOPE=dept` is the PRODUCTION state (Operator State #42 + its CLAUDE.md index line); the E3 diagnostics chip now counts no-call crossover agents (client-ui-conventions); the ci:ui per-driver list moved out of CLAUDE.md into tools/ui-harness/README.md (which gained drive-journey / -agentpanel / -daybars / -notify / the agent pair, and lost the stale Inbound|Outbound|Both wording). CLAUDE.md 182.1 -> 178.0 KB.
-  **Unverified follow-on:** Insights' agent list comes from computeActiveAgentsInRange_, which is deliberately NOT narrowed, so a crossover agent may show a zero row in Insights under the split -- check before fixing.
+- **2026-10-20 -- QD-1 / QD-2 / QD-3 IMPLEMENTED (block 259-queue-figures), shipping in ONE PR with IDLE-2.** My Department Queue calls + Abandoned % gain vs-prior chips; the Overview abandoned chips + sub-queue Abd follow the card Window (were the latest QCD day; `companyOverview:v29`), with tooltips; "viol MTD" is 0 green / 1-3 amber (--caution) / 4+ red.
+  **Owner-side:** deploy the dashboard; walk S66.
   **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green.
+- **2026-10-20 -- IDLE-2 IMPLEMENTED (block 259-idle-insights): Insights drops zero-call agents on a whole-dept run.** Its agent-free run carded every roster agent; one active only in the prior window showed 0 / 0 / 0 "Slipping" (with the split on, the crossover case). computeInsights_ opts.dropIdle (screen + email, agent-free only; explicit picks keep their card); `insights:v26`. 2610 tests, 5/5 bites.
+  **Owner-side:** deploy the dashboard.
+  **Where I left off:** ships in the QD PR (above).
+- **2026-10-20 -- /sync-docs after IDLE-1.** Recorded that `QUEUE_SPLIT_SCOPE=dept` is the PRODUCTION state (Operator State #42 + its CLAUDE.md index line); the E3 diagnostics chip now counts no-call crossover agents (client-ui-conventions); the ci:ui per-driver list moved out of CLAUDE.md into tools/ui-harness/README.md (which gained drive-journey / -agentpanel / -daybars / -notify / the agent pair, and lost the stale Inbound|Outbound|Both wording). CLAUDE.md 182.1 -> 178.0 KB.
+  **Follow-on resolved:** confirmed and fixed as IDLE-2 (below).
+  **Where I left off:** SHIPPED as [PR #380](https://github.com/robinchoudhuryums/call-data-reporting/pull/380), merged 2026-10-20.
 - **2026-10-20 -- IDLE-1 IMPLEMENTED (block 259-idle-rows): zero-call agents get no My Department row.** From a Power screenshot: an agent whose window rows are all zero (the build's out-of-window rows, or a queue-split crossover narrowed to zero) drew a 0 / 0 (0) row with an empty gray bar. getDepartmentSummary now passes `dropIdle` (other consumers unchanged), the agents land in rosterWithNoData, the bar cell draws a dash for any zero row; `summary:v24`. 2608 tests, 5/6 bites (1 subs-scope only).
   **Owner-side:** deploy the dashboard.
   **Where I left off:** SHIPPED as [PR #379](https://github.com/robinchoudhuryums/call-data-reporting/pull/379), merged 2026-10-20. Owner confirmed `QUEUE_SPLIT_SCOPE=dept` is on in production on purpose (the block's follow-on is answered).

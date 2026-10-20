@@ -3032,6 +3032,9 @@
   // WoW valence + noise-muting (WOW_NOISE_THRESHOLD) so a small move stays
   // quiet. `valence` = 'good' (up is good: answered/rate) or 'warn' (up is
   // bad: missed).
+  // QD-1: an abandoned-% move under this many points renders muted (the
+  // company abandon standard is 4%, so a quarter point is the noise band).
+  var QD_ABD_NOISE_PTS_ = 0.25;
   function deptStripDelta_(delta, valence, threshold, unit, tip) {
     var abs = Math.abs(delta);
     var cls, arrow;
@@ -3420,9 +3423,28 @@
       // R7 (M-4): a 1-workday range's "≈ N/day over 1 workday" just restates
       // the headline number -- the per-day pace joins the sub only on
       // multi-day ranges (the tooltip carries scope on single days).
-      var qPaceSub = wd > 1
-        ? '<div class="dts-sub">&asymp; ' + (Math.round((qCalls / wd) * 10) / 10)
-          + '/day over ' + wd + ' workdays</div>'
+      // QD-1 (owner 2026-10-20): both queue tiles carry the vs-prior chip the
+      // Avg answer tile already had, from the same E5 prior block
+      // (qcd.rangePrior -- the side panel's Range deltas read it too). The
+      // prior window has the SAME working-day count, so counts compare raw.
+      var qrpAll = state.qcd && state.qcd.rangePrior;
+      var qPriorOk = !!(qrpAll && (Number(qrpAll.totalCalls) || 0) > 0);
+      var qCallsChip = '', qAbdChip = '';
+      if (qPriorOk) {
+        var qTip = 'Prior period ' + (qrpAll.from || '') + ' – ' + (qrpAll.to || '');
+        var pCalls = Number(qrpAll.totalCalls) || 0;
+        qCallsChip = deptStripDelta_(qCalls - pCalls, 'good', WOW_NOISE_THRESHOLD, '',
+          qTip + ': ' + fmtNumber(pCalls) + ' queue calls');
+        var dAbd = Math.round(((Number(qr.abandonedPct) || 0) - (Number(qrpAll.abandonedPct) || 0)) * 100) / 100;
+        qAbdChip = deptStripDelta_(dAbd, 'bad', QD_ABD_NOISE_PTS_, ' pts',
+          qTip + ': ' + (qrpAll.abandonedPctStr || ((Number(qrpAll.abandonedPct) || 0).toFixed(2) + '%')));
+      }
+      var qPaceSub = (wd > 1 || qCallsChip)
+        ? '<div class="dts-sub">'
+          + (qCallsChip ? qCallsChip + ' vs prior' : '')
+          + (wd > 1 ? (qCallsChip ? ' &middot; ' : '') + '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10)
+            + '/day over ' + wd + ' workdays' : '')
+          + '</div>'
         : '';
       ansTile =
           '<div class="dts-tile dts-tile--queue" data-dts-metric="qcalls" title="Calls offered to the department&#39;s mapped queues this range &mdash; total (answered / abandoned). Workdays = Mon&ndash;Fri minus company holidays.">'
@@ -3443,6 +3465,7 @@
           '<div class="dts-tile dts-tile--queue" data-dts-metric="qabd">'
         +   '<div class="dts-label">Abandoned %</div>'
         +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
+        +   (qAbdChip ? '<div class="dts-sub">' + qAbdChip + ' vs prior</div>' : '')
         + '</div>';
     } else {
       ansTile = '<div class="dts-tile" data-dts-metric="answered">'
