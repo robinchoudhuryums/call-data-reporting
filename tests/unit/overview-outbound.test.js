@@ -299,9 +299,11 @@ test('F: wiring -- tiles chip Placed + rate, rows chip both counts + rate, total
   const bar = src.slice(src.indexOf('function obBarHtml_'), src.indexOf('function obBarHtml_') + 3000);
   assert.match(bar, /obPriorChip_\(c - \(Number\(p\.obConnected\) \|\| 0\), 'good'/);
   assert.match(bar, /'neutral', WOW_NOISE_THRESHOLD/);
-  // Every totals call passes no prior, so Total / subtotal rows carry no chip (E5's rule).
-  assert.equal((src.match(/obBarHtml_\(t, 0, true\)/g) || []).length, 2);
-  assert.equal((src.match(/obPctHtml_\(t\)/g) || []).length, 2);
+  // Every totals call passes no prior, so Total / subtotal rows carry no chip
+  // (E5's rule). One call site each since the Outbound-only branch was
+  // trimmed (2026-10-21; the Both table is the only one).
+  assert.equal((src.match(/obBarHtml_\(t, 0, true\)/g) || []).length, 1);
+  assert.equal((src.match(/obPctHtml_\(t\)/g) || []).length, 1);
   assert.match(src, /var priorOk = !!\(pr && pr\.meta && pr\.meta\.available !== false && sm\.priorFrom\s*&& !\(pr\.meta\.coverageStart && sm\.priorFrom < pr\.meta\.coverageStart\)\);/,
     'the prior window must start on/after capture');
   assert.match(src, /obSummaryFetch_\(\{ department: dept, from: m\.priorFrom, to: m\.priorTo \}/,

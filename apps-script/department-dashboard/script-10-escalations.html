@@ -2598,7 +2598,7 @@
   // or the Outbound / Both one (#agents-ob-tbody).
   function apTbody_() {
     const dir = document.body.getAttribute('data-dir');
-    return (dir === 'out' || dir === 'both') ? $('agents-ob-tbody') : $('agents-tbody');
+    return dir === 'both' ? $('agents-ob-tbody') : $('agents-tbody');
   }
 
   function apRowsFor_(agent) {

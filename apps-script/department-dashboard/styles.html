@@ -3738,10 +3738,8 @@
      inbound = --accent, outbound = --dir-out. */
   .dept-dir-switch { margin-left: 8px; }
   /* Step 3: the switch is one "Show outbound columns" toggle, so data-dir is
-     'both' or 'in' now and the two 'out' rules below are inert. */
-  body[data-dir="out"] #agents-in-wrap,
+     'both' or 'in' (the 'out' rules were trimmed 2026-10-21). */
   body[data-dir="both"] #agents-in-wrap { display: none; }
-  body[data-dir="out"] #dept-team-rings { display: none !important; }
   .tly.oc { background: var(--dir-out); }
   .tly.ou { background: var(--line); }
   .ob-c { color: var(--dir-out); font-weight: 600; }

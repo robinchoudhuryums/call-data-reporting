@@ -2239,8 +2239,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   ONE "Show outbound columns" toggle (`[data-ob-cols]`, `aria-pressed`): on =
   the Both table, off = the classic inbound table. `obDir_` is 'both' unless
   `cdr.dept.direction` holds an explicit 'in'; the retired 'out' (and an unset
-  key) lands on 'both', so the Outbound-only rendering below and the
-  `body[data-dir="out"]` rules are now UNREACHABLE (left in place, inert).
+  key) lands on 'both', so the Outbound-only rendering and its
+  `body[data-dir="out"]` rules were unreachable -- TRIMMED 2026-10-21
+  (`obViewRender_` draws the Both table only; the Outbound-only description
+  in the Batch D text below is history).
   The Outbound summary and Callbacks no longer follow this toggle -- they are
   the Insights brief's own rows (next bullets). Drivers that walk the INBOUND
   table pin `cdr.dept.direction='in'`. The original Batch D text follows.
