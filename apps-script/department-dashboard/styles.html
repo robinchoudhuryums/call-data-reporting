@@ -1765,6 +1765,9 @@
     align-self: center;
   }
   .side-hint-i:hover, .side-hint-i:focus-visible { color: var(--accent); }
+  /* The glyph IS the glossary's circled-i, so it must not grow a second one
+     on hover (.gloss::after). */
+  .side-hint-i.gloss::after { content: none; }
   .dept-qcd-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
