@@ -6,19 +6,23 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-20
+Updated: 2026-10-21
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-21 -- BRF-1 / BRF-2 / ICON-1 / QD-3b fixed; APN-1 / APN-2 built (block 259-brief-exports-panel).** The admin brief no longer freezes with the bottom Insights region collapsed (`insReportLive_`); Insights Copy image + Print include the brief's sections; the side panels' ⓘ shows once; the agent panel slides; admins see each outbound call's id + copy + outbound path (Outbound tab and Agent Day cards); the QD-3 amber check no longer depends on the run date (it was red on main). 2615 tests, 11/11 bites, ci:ui green.
+  **Owner-side:** deploy the dashboard; walk S56, S61.
+  **Awaiting owner:** Direct Calls Report plan (D0 probe / D1 dashboard guard + int-ext / D2 capture fixes / D3 My Department) -- audit in the block's follow-ons; the outbound classification probe; table layout B or C (mocks: https://claude.ai/artifact/PJvnqUpQJ2tmZ1Z89pZJax); the day-bar target line.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner to say).
 - **2026-10-20 -- QD-1 / QD-2 / QD-3 IMPLEMENTED (block 259-queue-figures), shipping in ONE PR with IDLE-2.** My Department Queue calls + Abandoned % gain vs-prior chips; the Overview abandoned chips + sub-queue Abd follow the card Window (were the latest QCD day; `companyOverview:v29`), with tooltips; "viol MTD" is 0 green / 1-3 amber (--caution) / 4+ red.
   **Owner-side:** deploy the dashboard; walk S66.
-  **Where I left off:** committed on claude/exciting-goodall-7tkygn; PR + merge on green.
+  **Where I left off:** SHIPPED as [PR #381](https://github.com/robinchoudhuryums/call-data-reporting/pull/381), merged 2026-10-20 (93f5456).
 - **2026-10-20 -- IDLE-2 IMPLEMENTED (block 259-idle-insights): Insights drops zero-call agents on a whole-dept run.** Its agent-free run carded every roster agent; one active only in the prior window showed 0 / 0 / 0 "Slipping" (with the split on, the crossover case). computeInsights_ opts.dropIdle (screen + email, agent-free only; explicit picks keep their card); `insights:v26`. 2610 tests, 5/5 bites.
   **Owner-side:** deploy the dashboard.
-  **Where I left off:** ships in the QD PR (above).
+  **Where I left off:** SHIPPED in [PR #381](https://github.com/robinchoudhuryums/call-data-reporting/pull/381).
 - **2026-10-20 -- /sync-docs after IDLE-1.** Recorded that `QUEUE_SPLIT_SCOPE=dept` is the PRODUCTION state (Operator State #42 + its CLAUDE.md index line); the E3 diagnostics chip now counts no-call crossover agents (client-ui-conventions); the ci:ui per-driver list moved out of CLAUDE.md into tools/ui-harness/README.md (which gained drive-journey / -agentpanel / -daybars / -notify / the agent pair, and lost the stale Inbound|Outbound|Both wording). CLAUDE.md 182.1 -> 178.0 KB.
   **Follow-on resolved:** confirmed and fixed as IDLE-2 (below).
   **Where I left off:** SHIPPED as [PR #380](https://github.com/robinchoudhuryums/call-data-reporting/pull/380), merged 2026-10-20.
