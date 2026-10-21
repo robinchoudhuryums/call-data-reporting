@@ -241,8 +241,9 @@ test('D1: no data at all in the window -> an empty payload that says so', functi
 });
 
 test('D1: the internal / external split rides every agent row and the totals', function () {
+  let seen = null;
   installAdmin(function () {
-    return fakeConn({ kpis: Object.assign({}, PAYLOAD.kpis, { ibIntAnswered: 12, ibExtAnswered: 18, obIntTotal: 5, obExtTotal: 7, obIntConnected: 4, obExtConnected: 5 }),
+    return seen = fakeConn({ kpis: Object.assign({}, PAYLOAD.kpis, { ibIntAnswered: 12, ibExtAnswered: 18, obIntTotal: 5, obExtTotal: 7, obIntConnected: 4, obExtConnected: 5 }),
       agents: [Object.assign({}, PAYLOAD.agents[0], { ib_int_missed_free: 2, ib_ext_missed_free: 3, ob_int_connected: 2, ob_ext_connected: 3 })] });
   });
   const out = JSON.parse(JSON.stringify(h.call('getDirectCallReport', REQ)));
@@ -251,6 +252,13 @@ test('D1: the internal / external split rides every agent row and the totals', f
   assert.deepEqual(out.agents[0].split.ibMissedFree, { int: 2, ext: 3 });
   assert.deepEqual(out.agents[0].split.obConnected, { int: 2, ext: 3 });
   assert.deepEqual(out.agents[0].split.ibAnswered, { int: 8, ext: 12 });
+  // The fake returns its fixture whatever the SQL says, so pin the query
+  // itself: every split column is selected, per agent AND for the totals.
+  const main = seen.sql.find((q) => q.indexOf("'kpis'") !== -1);
+  ['ib_int_missed_free', 'ib_ext_missed_free', 'ib_int_missed_busy', 'ib_ext_missed_busy', 'ob_int_connected', 'ob_ext_connected']
+    .forEach((c) => assert.match(main, new RegExp('sum\\(' + c + '\\) AS ' + c), c + ' per agent'));
+  ['ibIntMissedFree', 'ibExtMissedFree', 'ibIntMissedBusy', 'ibExtMissedBusy', 'obIntTotal', 'obExtTotal', 'obIntConnected', 'obExtConnected']
+    .forEach((c) => assert.ok(main.indexOf("'" + c + "'") !== -1, c + ' in the totals'));
 });
 
 test('D1: dcMissingWorkdays_ lists at most 60 but counts all', function () {

@@ -250,6 +250,12 @@ test('target line: within reach the scale spans days AND target, and the line si
   assert.ok(sc.lo < 69 && sc.hi > 91, 'every day fits');
   assert.ok(sc.pos(79) < sc.line && sc.line < sc.pos(83), 'below-target days are shorter than the line, above-target taller');
   assert.ok(sc.pos(69) > 0 && sc.pos(91) <= 100);
+  // A target just ABOVE every day (within reach) still gets its own height,
+  // not the top edge: the scale must stretch to include it.
+  const up = dtsScale([60, 64, 70, 66], 80);
+  assert.equal(up.off, null);
+  assert.ok(up.hi >= 80, 'the scale reaches the target');
+  assert.ok(up.line < 100 && up.line > up.pos(70), 'the line sits above the tallest day, inside the plot');
 });
 
 test('target line: a target far above every day is not drawn (it would squash the bars); a tag says which way', function () {
