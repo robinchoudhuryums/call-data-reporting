@@ -506,6 +506,8 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
     - Set the window to ONE day and open a row: no strip, the day view directly.
     - (Step 3 #8, prefetch) With the browser's network panel open, rest the pointer on an agent row for a moment WITHOUT clicking: one strip request and one day request go out. Click it: the panel opens on the data with no "Loading days…" and no new request. Tab to a row's name button: the same prefetch.
     - On a phone-width window: the panel fits the screen, the strip scrolls sideways inside it, the page itself does not scroll sideways.
+    - Opening and closing slide smoothly (about a fifth of a second); with the OS "reduce motion" setting on, they snap. While open, scroll the table sideways: the panel stays put on the left.
+    - As the ADMIN, on the Outbound tab each call shows its id (#…), a 📋 copy button and "↳ path"; the path opens that OUTBOUND call's legs (a coworker who took it shows by name). As a manager: no id column.
     - NEGATIVE, in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getAgentDayStrip({ agentName: '<an agent on a dept you do NOT own>', from: '2026-09-01', to: '2026-09-30' })` -> "Not authorized for this department."
   Expected: as described; the selected day's tiles equal that agent's single-day row in My Department.
   Fails if: a click on a group head / subtotal / total row opens a panel; the strip shows a zero-activity day or more than 31 boxes without the note; an uncaptured day reads "0 outbound"; the panel widens the table or the page; a re-sort leaves two panels or an orphaned one; or the export carries any panel text.
@@ -577,7 +579,9 @@ S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3
     - Trend: compare the named month's rate with the 12-month chart. 12+ points below the previous 3 months' average is Red, 8-12 Amber, 8+ above Green. On the chart's % Answered monthly view, points well off their prior-3-month average are shaded toward green or orange, and the tooltip says by how much.
     - Click each row: its section opens IN PLACE beneath the row (the chevron flips; charts draw at full size); click again: it closes. Keyboard: Tab to a row, Enter / Space toggles it. Nothing scrolls and the outbound columns toggle never changes.
     - Reload: every row is collapsed again (open/closed lasts one page load). Click an agent chip in the Agents section or a day in the Trend calendar: the section it needs opens through its row.
-    - Collapse the Insights region at the bottom of the page and reload: the brief still fills in.
+    - Collapse the Insights region at the bottom of the page and reload: the brief still fills in. With it still collapsed, pick another Quick select window: the brief re-runs for the new window (it used to keep the old one until the region was reopened). Press the page's Refresh: the brief refreshes too.
+    - Export -> Insights "Copy image" and "Print": the image / print shows Queue health, Agents, Team detail and Trend (as they are open or closed in the brief), not just the header; the brief on the page is unchanged afterwards.
+    - Hover the ⓘ beside "Queue Call Data" and "Team Rings Data": one circled i, never two.
     - Switch View as to a manager of the same dept: no brief, the headline banner is back, every section back in the Insights region in the manager's order (Agents open first), no trend-point shading. Exit View as: the brief returns with its rows collapsed.
     - Sign in as a MANAGER: the same as View as -- no brief, headline present, sections in the Insights region with their one-line heads.
   Expected: as described; every coloured row agrees with the section it opens.
