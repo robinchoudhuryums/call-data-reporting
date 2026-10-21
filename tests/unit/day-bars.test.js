@@ -237,3 +237,45 @@ test('wiring: admin-only, attached on every strip render, one shared selection',
   const sel = extractFn(S5, 'dtsSelect_');
   assert.match(sel, /strip\.querySelectorAll\('\.dts-daybars'\)\.forEach/, 'a selection paints EVERY card');
 });
+
+// Option 2 (owner 2026-10-21): a card with a STANDARD draws a dashed target
+// line on a scale fitted to the days plus the target; far off, a tag instead.
+// eslint-disable-next-line no-new-func
+const dtsScale = new Function('return (' + extractFn(S5, 'dtsScale_') + ');')();
+
+test('target line: within reach the scale spans days AND target, and the line sits between the bars it divides', function () {
+  const days = [84, 79, 88, 91, 76, 83, 69, 86];
+  const sc = dtsScale(days, 80);
+  assert.equal(sc.off, null);
+  assert.ok(sc.lo < 69 && sc.hi > 91, 'every day fits');
+  assert.ok(sc.pos(79) < sc.line && sc.line < sc.pos(83), 'below-target days are shorter than the line, above-target taller');
+  assert.ok(sc.pos(69) > 0 && sc.pos(91) <= 100);
+});
+
+test('target line: a target far above every day is not drawn (it would squash the bars); a tag says which way', function () {
+  const sc = dtsScale([27, 31, 24, 33, 29, 22, 35], 80);
+  assert.equal(sc.off, 'above');
+  assert.equal(sc.line, null);
+  assert.ok(sc.pos(35) - sc.pos(22) > 60, 'the days keep their own spread');
+  assert.equal(dtsScale([0.2, 0.4, 0.3], 30).off, 'above');
+  assert.equal(dtsScale([40, 42], 10).off, 'below');
+});
+
+test('target line: Abandoned % (low is good) -- a 4% standard over sub-1% days stays drawn above them', function () {
+  const sc = dtsScale([0, 0.4, 1.2, 0.8, 0], 4);
+  assert.equal(sc.off, null, 'within the 5-pt minimum reach');
+  assert.ok(sc.line > sc.pos(1.2));
+  assert.ok(sc.lo >= 0, 'never below zero');
+});
+
+test('target line: no standard (or no data) -> no scale; the card keeps min-to-max heights', function () {
+  assert.equal(dtsScale([1, 2, 3], null), null);
+  assert.equal(dtsScale([], 80), null);
+  const attach = extractFn(S5, 'dtsAttachDayBars_');
+  assert.match(attach, /var sc = dtsScale_\(nums, tgt\);/);
+  assert.match(attach, /\(sc \? sc\.pos\(v\) : 22 \+ 78 \*/, 'a card without a standard keeps the old heights');
+  assert.match(attach, /'<div class="dts-plot">'/, 'the line sits beside the bars, not among them (dtsSelect_ indexes .dts-bars children)');
+  const metrics = S5.slice(S5.indexOf('var DTS_METRICS_ = {'), S5.indexOf('function dtsScale_'));
+  assert.match(metrics, /t: function \(dept\) \{ return answerStdFor_\(dept\)\.target; \}/, '% Ans: the dept\'s own answer standard');
+  assert.match(metrics, /t: function \(\) \{ return ABANDON_STANDARD_; \}/, 'Abandoned %: the 4% standard');
+});

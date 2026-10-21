@@ -3632,7 +3632,8 @@
               if (!(t.ans + t.miss)) return '';
               var c = answerTierCls_(t.ans / (t.ans + t.miss) * 100, dept);
               return c === ' bm-bad' ? 'is-bad' : (c === ' bm-watch' ? 'is-watch' : '');
-            } },
+            },
+            t: function (dept) { return answerStdFor_(dept).target; } },
     answered: { v: function (t, b) { return t.ans / b.n; },
                 f: function (t, b) { return b.n > 1 ? (Math.round(t.ans / b.n * 10) / 10) + ' answered / workday' : fmtNumber(t.ans) + ' answered'; },
                 cls: function () { return ''; } },
@@ -3642,7 +3643,8 @@
               cls: function () { return ''; } },
     qabd: { v: function (t) { return t.q ? t.abd / t.q * 100 : null; },
             f: function (t) { return t.q ? (t.abd / t.q * 100).toFixed(2) + '% abandoned (' + fmtNumber(t.abd) + ')' : 'no queue calls'; },
-            cls: function (t) { return (t.q && t.abd / t.q * 100 >= ABANDON_STANDARD_) ? 'is-bad' : ''; } },
+            cls: function (t) { return (t.q && t.abd / t.q * 100 >= ABANDON_STANDARD_) ? 'is-bad' : ''; },
+            t: function () { return ABANDON_STANDARD_; } },
     qavg: { v: function (t) { return t.avgN ? t.avgW / t.avgN : null; },
             f: function (t) { return t.avgN ? fmtDuration(t.avgW / t.avgN) + ' avg answer' : 'no answered queue calls'; },
             cls: function () { return ''; } },
@@ -3668,6 +3670,25 @@
     return map;
   }
 
+  // Option 2 (owner 2026-10-21): a card with a STANDARD (% Ans, Abandoned %)
+  // draws its bars on a scale fitted to the days AND the target, with a
+  // dashed target line. A target far off every day (more than twice the
+  // days' own spread, at least 5 pts) would squash the bars, so the scale
+  // fits the days alone and a tag says which way the target lies. Cards
+  // without a standard keep the min-to-max heights. Pure; literals inside.
+  function dtsScale_(nums, target) {
+    if (target == null || !isFinite(target) || !nums.length) return null;
+    var mn = Math.min.apply(null, nums), mx = Math.max.apply(null, nums);
+    var span = Math.max(mx - mn, 1);
+    var reach = Math.max(2 * span, 5);
+    var off = target > mx + reach ? 'above' : (target < mn - reach ? 'below' : null);
+    var lo = off ? mn : Math.min(mn, target), hi = off ? mx : Math.max(mx, target);
+    var pad = Math.max((hi - lo) * 0.12, 0.5);
+    lo = Math.max(0, lo - pad);
+    hi = hi + pad * 0.5;
+    var pos = function (v) { return Math.max(0, Math.min(100, 6 + 94 * (v - lo) / (hi - lo))); };
+    return { lo: lo, hi: hi, off: off, line: off ? null : pos(target), pos: pos };
+  }
   function dtsAttachDayBars_(strip, state) {
     strip.__dts = null;
     if (!dtsBarsActive_()) return;
@@ -3703,17 +3724,30 @@
       var max = Math.max.apply(null, nums), min = Math.min.apply(null, nums);
       var label = (tile.querySelector('.dts-label') || {}).textContent || key;
       label = String(label).replace(/\s+this range$|\s+queue$/i, '').trim();
+      var tgt = mt.t ? mt.t(dept) : null;
+      var sc = dtsScale_(nums, tgt);
+      var tgtStr = sc ? (Math.round(tgt * 100) / 100) + '%' : '';
       var bars = vals.map(function (v, i) {
-        var h = (v == null || !isFinite(v)) ? 0 : 22 + 78 * (max === min ? 1 : (v - min) / (max - min));
+        var h = (v == null || !isFinite(v)) ? 0
+          : (sc ? sc.pos(v) : 22 + 78 * (max === min ? 1 : (v - min) / (max - min)));
         var c = mt.cls(sums[i], dept);
         return '<span class="dts-bar' + (c ? ' ' + c : '') + (v == null ? ' is-empty' : '') + '" style="height:' + h.toFixed(0) + '%"></span>';
       }).join('');
       var block = document.createElement('div');
       block.className = 'dts-daybars';
       block.setAttribute('data-admin-only', '');
-      block.innerHTML = '<div class="dts-bars" tabindex="0" role="slider" aria-label="' + escapeHtml(label) + ' by ' + period + '"'
+      var tgtHtml = (sc && sc.line != null)
+        ? '<span class="dts-target" style="bottom:' + sc.line.toFixed(1) + '%" title="Target ' + tgtStr + '" aria-hidden="true"></span>' : '';
+      var offHtml = (sc && sc.off)
+        ? '<span class="dts-target-off" title="The target is far ' + sc.off + ' every bar, so it is not drawn">target '
+          + tgtStr + (sc.off === 'above' ? ' ↑' : ' ↓') + '</span>' : '';
+      block.innerHTML = '<div class="dts-plot">'
+        + '<div class="dts-bars" tabindex="0" role="slider" aria-label="' + escapeHtml(label) + ' by ' + period
+        + (sc ? ', target ' + tgtStr : '') + '"'
         + ' aria-valuemin="0" aria-valuemax="' + (bs.length - 1) + '" aria-valuetext="No day selected">' + bars + '</div>'
-        + '<div class="dts-axis"><span>' + escapeHtml(dtsShortDate_(bs[0].from)) + '</span><span>' + escapeHtml(dtsShortDate_(bs[bs.length - 1].from)) + '</span></div>'
+        + tgtHtml + '</div>'
+        + '<div class="dts-axis"><span>' + escapeHtml(dtsShortDate_(bs[0].from)) + '</span>' + offHtml
+        + '<span>' + escapeHtml(dtsShortDate_(bs[bs.length - 1].from)) + '</span></div>'
         + '<div class="dts-readout is-idle">' + idle + '</div>';
       block.__metric = key;
       tile.appendChild(block);

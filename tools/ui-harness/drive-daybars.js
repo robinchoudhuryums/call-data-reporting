@@ -98,6 +98,27 @@ function bars() {
   record('idle: no selection, the readout invites a point', b.every((x) => x.sel === -1 && !x.on && /Point at a bar/.test(x.readout)),
     b.map((x) => x.readout).join(' | '));
 
+  // Option 2 (owner 2026-10-21): the two cards with a STANDARD carry a
+  // dashed target line (or, when it is far off every bar, a tag in the date
+  // axis); the cards without one carry neither.
+  const tg = await page.evaluate(() => {
+    const one = function (k) {
+      const blk = Array.from(document.querySelectorAll('#dept-team-strip .dts-daybars')).find(function (b) { return b.__metric === k; });
+      if (!blk) return null;
+      const line = blk.querySelector('.dts-plot > .dts-target');
+      const off = blk.querySelector('.dts-axis .dts-target-off');
+      const bars = blk.querySelector('.dts-bars');
+      return { line: !!line, bottom: line ? parseFloat(line.style.bottom) : null, off: off ? off.textContent : null,
+               inBars: !!(bars && bars.querySelector('.dts-target')), label: bars ? bars.getAttribute('aria-label') : '' };
+    };
+    return { rate: one('rate'), qabd: one('qabd'), qcalls: one('qcalls'), qavg: one('qavg') };
+  });
+  const hasTarget = (x) => !!x && !x.inBars && (x.line ? (x.bottom >= 0 && x.bottom <= 100) : /^target \d/.test(x.off || '')) && /target \d/.test(x.label);
+  record('% Ans and Abandoned % show their target (a dashed line, or an off-scale tag); never among the bars',
+    hasTarget(tg.rate) && hasTarget(tg.qabd), JSON.stringify({ rate: tg.rate, qabd: tg.qabd }));
+  record('Queue calls and Avg answer have no target line (no standard)',
+    !!tg.qcalls && !tg.qcalls.line && !tg.qcalls.off && !!tg.qavg && !tg.qavg.line && !tg.qavg.off, JSON.stringify({ qcalls: tg.qcalls, qavg: tg.qavg }));
+
   // QD-1 (owner 2026-10-20): Queue calls and Abandoned % carry the vs-prior
   // chip the Avg answer card already had, from the payload's prior block.
   const sum30 = require('./payloads/summary-30d.json');

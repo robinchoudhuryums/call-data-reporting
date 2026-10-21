@@ -7725,6 +7725,14 @@
   .dts-bars { display: flex; align-items: flex-end; gap: 2px; height: 34px; cursor: crosshair;
     touch-action: pan-y; border-radius: var(--r); }
   .dts-bars:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  /* Option 2 (owner 2026-10-21): the dashed TARGET line on a card with a
+     standard (dtsScale_), in .dts-plot -- never inside .dts-bars, whose
+     children are the bars dtsSelect_ indexes. Off scale, a tag in the date
+     axis replaces it. */
+  .dts-plot { position: relative; }
+  .dts-target { position: absolute; left: -2px; right: -2px; height: 0;
+    border-top: 1.5px dashed var(--ink); opacity: 0.5; pointer-events: none; }
+  .dts-target-off { color: var(--ink-muted); white-space: nowrap; }
   .dts-bar { flex: 1 1 0; min-width: 1px; background: var(--accent); opacity: 0.38;
     border-radius: 1px 1px 0 0; transition: opacity 0.12s ease; }
   .dts-bar.is-watch { background: var(--caution); }
