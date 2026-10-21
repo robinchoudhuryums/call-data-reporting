@@ -2984,6 +2984,9 @@
   // and in the path whether a coworker took the call. Managers get nothing.
   function adOutboundIdHtml_(c, date) {
     if (!c || !c.callId || typeof USER === 'undefined' || !USER || USER.role !== 'admin') return '';
+    // The copy + path buttons work through the delegated handler; the Agent
+    // day view can render before any page has wired it (idempotent).
+    initClipboardOnce();
     return parentIdBadge(c.callId, date || '', 'outbound');
   }
   function apOutboundTableHtml_(rows, date) {

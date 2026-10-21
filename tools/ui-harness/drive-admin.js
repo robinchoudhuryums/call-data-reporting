@@ -285,6 +285,23 @@ const MODALS = [
       const hostOpen = await shown(HOST);
       record('UI-1: the host report (Agent Day) is open', hostOpen);
       if (hostOpen) {
+        // Owner 2026-10-21: an admin's outbound cards carry the call id, a copy
+        // button and an OUTBOUND path drill -- and the drill really opens.
+        const obIds = await page.evaluate(() => Array.from(document.querySelectorAll('#ad-outbound-list .cl-call-card')).map((c) => ({
+          num: ((c.querySelector('.pid-num') || {}).textContent || ''), copy: !!c.querySelector('.pid-copy'),
+          kind: (c.querySelector('.pid-journey') || { getAttribute: () => '' }).getAttribute('data-journey-kind') || '' })));
+        record('admin: Agent Day outbound cards show the call id, copy button and an outbound path drill',
+          obIds.length > 0 && obIds.every((r) => /^#\S/.test(r.num) && r.copy && r.kind === 'outbound'), JSON.stringify(obIds));
+        await page.evaluate(() => { window.__HARNESS__.calls.length = 0; });
+        const obPath = page.locator('#ad-outbound-list .cl-call-card .pid-journey').first();
+        if (await obPath.count()) {
+          await obPath.click(); await page.waitForTimeout(700);
+          const asked = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'getCallJourney').map((c) => (c.args[0] || {}).kind));
+          const ovOpen = await shown('#call-journey-overlay');
+          record('admin: the outbound path drill asks for an OUTBOUND journey and opens the overlay',
+            ovOpen && asked.indexOf('outbound') !== -1, JSON.stringify({ open: ovOpen, asked: asked }));
+          if (ovOpen) { await page.keyboard.press('Escape'); await page.waitForTimeout(400); }
+        }
         // (1) Help over the report.
         await page.click('#help-fab'); await page.waitForTimeout(500);
         record('UI-1: Help opens over the report', await shown('#help-modal'));
