@@ -864,10 +864,16 @@ own dates (`dcCoverage_` / `dcApplyCoverageMeta_`, shared). Every figure
 carries its internal / external split (`kpis.split`, `agents[].split`):
 internal = an inbound call whose CDR direction is Internal, an outbound dial
 to a ROSTERED extension; external = everything else, including (for now) a
-dial to an unrostered extension. **D0** (`diagnoseDirectCallCounting`,
-Operator State #80) sizes the build's suspected counting gaps before any fix
-(D2) -- an opt-in diagnose pass inside `computeDirectCallMetrics`, never a
-copied rule set. **D3:** the same endpoint feeds My Department's Team Direct
+dial to an unrostered extension. **D2 (2026-10-21) changed what the build
+counts** -- every roster extension (first beats later), one event per ROOT
+call (talk added per leg), Internal coworker dials credited to the caller as
+internal outbound, anonymous inbound rings kept, extension-length callees
+internal (`dcOutboundSide_`); an outside call keeps its first leg's side.
+NOT retroactive: a date built before the deploy keeps the old counts until it
+is re-imported (Operator State #56), so a window spanning the deploy mixes the
+two -- which is what **D0** (`diagnoseDirectCallCounting`, Operator State #80)
+sizes: an opt-in diagnose pass inside `computeDirectCallMetrics` (never a
+copied rule set) counting, per day, what D2 counts differently. **D3:** the same endpoint feeds My Department's Team Direct
 Calls card (client-ui-conventions). **TEMPORARILY admin-only while the carve-out
 numbers are vetted** (the Inbound-report model: latent per-dept manager
 path; release = a one-line gate removal in `directCallResolveRequest_` +

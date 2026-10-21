@@ -148,6 +148,19 @@ groups direct calls per agent via the roster extension map from the dashboard
 `DO NOT EDIT!` sheet, `"Name, ext1, ext2"`). Extensions not on any roster →
 bucket as **unknown**, excluded (same discipline as queue sentinels).
 
+> **As built, D2 (2026-10-21):** every digit-only extension on a roster cell
+> maps to its agent (a FIRST extension always beats another agent's later
+> one); events are one per ROOT call (parent, else the leg's own id), as step
+> 3 below always intended; a coworker dial the CDR logs `Internal` is also the
+> CALLER's internal outbound call; an anonymous / blank inbound caller is kept
+> (external); and an outbound dial to an extension-length (1-6 digit) number
+> no roster names is counted **internal** rather than excluded -- it is still
+> the company's own phone system (a room phone, an unrostered staff line).
+> An outside call keeps its first leg's side through a later internal
+> transfer. Not retroactive: dates built before D2 keep the old counts until
+> re-imported. `diagnoseDirectCallCounting` (Operator State #80) sizes the
+> difference per date.
+
 ## The new computation (the only genuinely new logic)
 
 A pure, **unit-testable** helper (proposed `cdr-import/directCallMetrics.js`),

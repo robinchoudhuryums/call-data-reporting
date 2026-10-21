@@ -2156,7 +2156,7 @@ items for anything it flags or doesn't cover.)
 77. `NOTIFY_MANAGER_EDIT` / `NOTIFY_MANAGER_RULES` -- the alert + coaching manager layer (Steps 5a/5b): off by default; while off, managers see nothing and stored values do not apply; flip it from the Notifications modal only once the owner releases it
 78. `ALERT_REASON_RULES` -- the admin-trial alert reasons (Step 5c): an agent below X% on each of N workdays, callers not called back within a business day; admins-only email, `reason:` Alert Log rows
 79. `probeOutboundCallMix` / `OUTBOUND_MIX_AGENTS` -- read-only: sorts agents' outbound calls into company line / colleague / inbound twin / misdial / redial / external, with sample call ids
-80. `diagnoseDirectCallCounting` (cdr-import, D0) -- read-only: sizes the Direct build's suspected counting gaps on the Raw Data day before any D2 fix + re-import
+80. `diagnoseDirectCallCounting` (cdr-import) -- read-only: sizes what re-importing a pre-D2 date changes (D2 is not retroactive), then re-import per #56
 
 ## Cycle Workflow Config
 

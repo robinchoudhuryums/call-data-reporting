@@ -3541,22 +3541,23 @@ When something looks wrong, before assuming a code bug, check:
     share is internal traffic counted as outbound; a high misdial / redial
     share is real dialling that the placed count overstates. The tool
     writes nothing. Pinned by `tests/unit/outbound-call-mix.test.js`.
-80. **Direct-call counting check -- `diagnoseDirectCallCounting` (D0,
-    2026-10-21; cdr-import, editor-run, read-only).** Before any of the
-    Direct build's suspected counting gaps is fixed (D2 -- each fix needs
-    the affected dates re-imported to apply), this measures how big each one
-    is on the day currently in `Raw Data`, with the build's own engine, day
-    rule and work window (an opt-in diagnose pass that leaves the rows
-    untouched): `internalDial` (coworker dials logged Internal -- the caller
-    is credited no outbound call), `secondExtIn` / `secondExtOut` (calls on
-    an agent's second roster extension -- the build maps only the first),
-    `anonymousIn` (inbound direct rings from an anonymous caller -- dropped),
-    `sameRootIn` / `sameRootOut` (two legs of one parent call counted as two
-    calls), `unrosteredOut` (dials to an extension not on the roster --
-    counted EXTERNAL; `unrosteredOutSecondExt` = those that are a roster
-    agent's second extension). Run it from the cdr-import editor after an
-    import, on three or four different days, and read the log: each counter
-    with its share of the day's in-window events, the top agents and sample
-    call ids to look up in Raw Data. A counter under ~1% is not worth a
-    re-import; report the shares so D2 can be scoped. Writes nothing.
-    Pinned by `tests/unit/direct-call-metrics.test.js` (the D0 block).
+80. **Direct-call re-import sizing -- `diagnoseDirectCallCounting` (D0 / D2,
+    2026-10-21; cdr-import, editor-run, read-only).** D2 changed what the
+    Direct build counts: every roster extension (not just the first), one
+    call per ROOT call (not one per leg), coworker dials logged Internal
+    credited to the caller as internal outbound, anonymous inbound rings
+    kept, dials to an unrostered extension counted internal. It is NOT
+    retroactive -- a date built before the cdr-import deploy keeps the old
+    counts until it is re-imported -- so this tool tells you, for the day
+    currently in `Raw Data`, how much a re-import of a pre-D2 date like it
+    changes: `internalDial`, `secondExtIn` / `secondExtOut`, `anonymousIn`,
+    `sameRootIn` / `sameRootOut` (extra legs now folded into one call),
+    `unrosteredOut`, each with its share of the day's in-window events, the
+    top agents and sample call ids to look up in Raw Data. Run it after an
+    import on three or four days. **Then decide the re-import:** shares
+    under ~1% are not worth one; otherwise re-import the dates the Direct
+    Calls report is read over (CDR Tools -> Manual Export per date, #56 --
+    the Direct block rebuilds the date's `Direct Call History` rows and its
+    Neon mirror). Until then a window spanning the deploy date mixes the two
+    rule sets, and its vs-prior chips compare them. Writes nothing. Pinned
+    by `tests/unit/direct-call-metrics.test.js` (the D2 and D0 blocks).
