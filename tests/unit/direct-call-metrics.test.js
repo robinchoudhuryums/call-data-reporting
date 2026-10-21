@@ -486,3 +486,62 @@ test('PC-4: a genuine outbound call (no Incoming leg in its group) still counts'
   assert.equal(a.ob_ext_total, 1);
   assert.equal(a.ob_ext_connected, 1);
 });
+
+// ── D0 (owner 2026-10-21): the opt-in DIAGNOSE mode ─────────────────────────
+// Read-only counters of the shapes the build may count wrong, from the SAME
+// pass; the rows must not move when it is on.
+const DMAPS = Object.assign({}, MAPS, {
+  allExtToAgent: { '101': { name: 'Anna', dept: 'CSR' }, '111': { name: 'Anna', dept: 'CSR' }, '102': { name: 'Bob', dept: 'CSR' } },
+});
+const DIAG_GRID = grid([
+  // Anna -> Bob logged Internal: Bob's ib_int counts it, Anna gets no outbound.
+  row({ cid: 'INT1', start: D + '09:00:00', dir: 'Internal', talk: '0:00:40', callTime: '0:00:40', caller: '101', callee: '102', answered: true }),
+  // A ring on Anna's SECOND extension (111): invisible.
+  row({ cid: 'SEC1', start: D + '09:10:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230000', callee: '111', missed: true }),
+  // An anonymous inbound ring to Anna: dropped.
+  row({ cid: 'ANON', start: D + '09:20:00', dir: 'Incoming', callTime: '0:00:20', caller: 'Anonymous', callee: '101', missed: true }),
+  // One call, two legs with their OWN ids under one parent: counted twice.
+  row({ cid: 'L1', parent: 'P1', start: D + '09:30:00', dir: 'Incoming', callTime: '0:00:15', caller: '+15551231111', callee: '101', missed: true }),
+  row({ cid: 'L2', parent: 'P1', start: D + '09:31:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:00', caller: '+15551231111', callee: '101', answered: true }),
+  // Anna dials an extension NOT on the map (555): counted external.
+  row({ cid: 'UNR', start: D + '09:40:00', dir: 'Outgoing', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '555' }),
+  // ...and her colleague's second extension? (here her own 111) -> unrostered, but a second ext.
+  row({ cid: 'UNR2', start: D + '09:45:00', dir: 'Outgoing', callTime: '0:00:10', caller: '102', callee: '111' }),
+  // Out of the work window: none of the counters see it.
+  row({ cid: 'LATE', start: D + '16:00:00', dir: 'Internal', callTime: '0:00:10', caller: '101', callee: '102' }),
+]);
+
+test('D0 diagnose: each counter catches its shape, in window only, with sample ids', function () {
+  const res = compute(DIAG_GRID, DMAPS, { diagnose: true });
+  const d = JSON.parse(JSON.stringify(res.meta.diag));
+  assert.equal(d.internalDial.total, 1);
+  assert.deepEqual(d.internalDial.agents[0], { agent: 'Anna', n: 1, samples: ['INT1'] });
+  assert.equal(d.secondExtIn.total, 1);
+  assert.equal(d.secondExtIn.agents[0].agent, 'Anna');
+  assert.equal(d.anonymousIn.total, 1);
+  assert.deepEqual(d.sameRootIn.agents[0], { agent: 'Anna', n: 1, samples: ['L2'] }, 'the second leg of P1 is the repeat');
+  assert.equal(d.unrosteredOut.total, 2);
+  assert.equal(d.unrosteredOutSecondExt.total, 1, '111 is a roster agent\'s second extension');
+  assert.equal(d.scale.ibEvents, 3, 'Anna\'s two P1 legs + Bob\'s internal ring');
+});
+
+test('D0 diagnose: OFF by default, and ON never moves a row', function () {
+  const off = compute(DIAG_GRID, DMAPS, {});
+  const on = compute(DIAG_GRID, DMAPS, { diagnose: true });
+  assert.equal(off.meta.diag, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(on.rows)), JSON.parse(JSON.stringify(off.rows)));
+});
+
+test('D0: dcBuildExtMaps_ keeps the build map (first extension) and adds every extension for the diagnosis', function () {
+  const cfg = {
+    getLastRow: () => 3, getLastColumn: () => 7,
+    getRange: function (r, c, nr, nc) {
+      const grid2 = [['', '', '', '', '', 'CSR', 'Sales'], ['A_Q_CSR', '103', '', '', '', 'Anna, 101, 111', 'Cal, 201'], ['', '', '', '', '', 'Bob, 102', '']];
+      return { getValues: () => grid2.slice(r - 1, r - 1 + nr).map((row2) => row2.slice(c - 1, c - 1 + nc)) };
+    },
+  };
+  const m = h.call('dcBuildExtMaps_', cfg);
+  assert.deepEqual(Object.keys(m.extToAgent).sort(), ['101', '102', '201']);
+  assert.deepEqual(Object.keys(m.allExtToAgent).sort(), ['101', '102', '111', '201']);
+  assert.equal(m.allExtToAgent['111'].name, 'Anna');
+});

@@ -3541,3 +3541,22 @@ When something looks wrong, before assuming a code bug, check:
     share is internal traffic counted as outbound; a high misdial / redial
     share is real dialling that the placed count overstates. The tool
     writes nothing. Pinned by `tests/unit/outbound-call-mix.test.js`.
+80. **Direct-call counting check -- `diagnoseDirectCallCounting` (D0,
+    2026-10-21; cdr-import, editor-run, read-only).** Before any of the
+    Direct build's suspected counting gaps is fixed (D2 -- each fix needs
+    the affected dates re-imported to apply), this measures how big each one
+    is on the day currently in `Raw Data`, with the build's own engine, day
+    rule and work window (an opt-in diagnose pass that leaves the rows
+    untouched): `internalDial` (coworker dials logged Internal -- the caller
+    is credited no outbound call), `secondExtIn` / `secondExtOut` (calls on
+    an agent's second roster extension -- the build maps only the first),
+    `anonymousIn` (inbound direct rings from an anonymous caller -- dropped),
+    `sameRootIn` / `sameRootOut` (two legs of one parent call counted as two
+    calls), `unrosteredOut` (dials to an extension not on the roster --
+    counted EXTERNAL; `unrosteredOutSecondExt` = those that are a roster
+    agent's second extension). Run it from the cdr-import editor after an
+    import, on three or four different days, and read the log: each counter
+    with its share of the day's in-window events, the top agents and sample
+    call ids to look up in Raw Data. A counter under ~1% is not worth a
+    re-import; report the shares so D2 can be scoped. Writes nothing.
+    Pinned by `tests/unit/direct-call-metrics.test.js` (the D0 block).

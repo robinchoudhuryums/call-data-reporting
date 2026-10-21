@@ -187,6 +187,21 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // inbound call; credited to that call's inbound event after the scan.
   const ownTalkOnInbound = {};
 
+  // D0 (owner 2026-10-21): opt-in DIAGNOSE mode -- READ-ONLY counters of the
+  // shapes the build may be counting wrong, gathered on the SAME pass and the
+  // SAME queue / inbound tests as the counts (never a hand-copied rule set).
+  // Off unless opts.diagnose; with it off nothing below runs and the rows are
+  // byte-identical. maps.allExtToAgent (every roster extension, not only the
+  // first) feeds the second-extension counters.
+  const diagOn = !!opts.diagnose;
+  const allExt = (maps && maps.allExtToAgent) || {};
+  const DG = { internalDial: {}, secondExtIn: {}, secondExtOut: {}, anonymousIn: {}, unrosteredOut: {}, unrosteredOutSecondExt: {} };
+  function dgAdd(kind, name, cid) {
+    const k = DG[kind][name] || (DG[kind][name] = {});
+    if (cid) k[cid] = true;
+  }
+  function dgDigits(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
+
   // agent -> { dept, occ:[{cid,s,e}], ib:{cid->ev}, ob:{cid->ev} }
   const A = {};
   function ensure(name, dept) {
@@ -240,6 +255,30 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     // the agent answered still makes them busy for a direct miss).
     if (isQueueCall(cid, parent)) continue;
 
+    // D0: counted on the same non-queue legs the buckets below see, in the
+    // same work window the rows use.
+    if (diagOn && inWindow(startSec)) {
+      // a coworker-to-coworker dial logged Internal: the callee's ib_int
+      // counts it, the CALLER's outbound never does (the branch below needs
+      // 'Outgoing').
+      if (dir === 'Internal' && callerAgent && !exclusions.has(callerAgent.name)) dgAdd('internalDial', callerAgent.name, cid);
+      // a roster agent's SECOND (or later) extension: invisible to the map.
+      const c2 = !calleeAgent && allExt[callee];
+      if (c2 && !exclusions.has(c2.name) && dcIsPhone_(caller) && (dir === 'Incoming' || dir === 'Internal')) dgAdd('secondExtIn', c2.name, cid);
+      const r2 = !callerAgent && allExt[caller];
+      if (r2 && !exclusions.has(r2.name) && dir === 'Outgoing' && !isIncomingCall(cid, parent)) dgAdd('secondExtOut', r2.name, cid);
+      // an inbound direct ring from an anonymous / blank caller: dropped.
+      if (calleeAgent && !exclusions.has(calleeAgent.name) && dir === 'Incoming' && !dcIsPhone_(caller)) dgAdd('anonymousIn', calleeAgent.name, cid);
+      // an outbound dial to a short (extension-length) number NOT on the
+      // roster map: the build counts it as EXTERNAL.
+      const cd = dgDigits(callee);
+      if (callerAgent && !exclusions.has(callerAgent.name) && dir === 'Outgoing' && !isIncomingCall(cid, parent)
+          && !extToAgent[callee] && cd.length > 0 && cd.length < 7) {
+        dgAdd('unrosteredOut', callerAgent.name, cid);
+        if (allExt[callee]) dgAdd('unrosteredOutSecondExt', callerAgent.name, cid);
+      }
+    }
+
     // (2) INBOUND DIRECT events -- agent is the callee; caller is a real
     //     number/ext that is NOT a queue distributor extension; Incoming
     //     (external) or Internal. One event per cid.
@@ -247,7 +286,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         !queueExtSet.has(caller) && (dir === 'Incoming' || dir === 'Internal')) {
       const b = ensure(calleeAgent.name, calleeAgent.dept);
       let ev = b.ib[cid];
-      if (!ev) { ev = b.ib[cid] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, caller: caller, callee: callee }; }
+      if (!ev) { ev = b.ib[cid] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, caller: caller, callee: callee, root: parent || cid }; }
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       const ringEnd = (startSec != null) ? startSec + Math.max(0, dcTimeToSec_(r[C.CALLTIME])) : null;
       if (ringEnd != null && (ev.ringEnd == null || ringEnd > ev.ringEnd)) ev.ringEnd = ringEnd;
@@ -272,7 +311,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (callerAgent && !exclusions.has(callerAgent.name) && dir === 'Outgoing') {
       const b = ensure(callerAgent.name, callerAgent.dept);
       let ev = b.ob[cid];
-      if (!ev) { ev = b.ob[cid] = { intExt: extToAgent[callee] ? 'int' : 'ext', start: startSec, connected: false, talk: 0, callee: callee }; }
+      if (!ev) { ev = b.ob[cid] = { intExt: extToAgent[callee] ? 'int' : 'ext', start: startSec, connected: false, talk: 0, callee: callee, root: parent || cid }; }
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       if (talk > 0) { ev.connected = true; ev.talk = Math.max(ev.talk, talk); }
     }
@@ -379,7 +418,51 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
 
   const meta = { agents: rows.length, droppedNoStart: droppedNoStart, missedBusyTotal: missedBusyTotal, missedFreeTotal: missedFreeTotal };
   if (collect) meta.samples = samples;
+  if (diagOn) meta.diag = dcDiagSummary_(DG, A, inWindow);
   return { rows: rows, meta: meta };
+}
+
+/**
+ * D0, PURE: totals + per-agent counts + up to 5 sample call ids for each
+ * counter, plus the same-ROOT repeats -- events the build counts separately
+ * (one per leg call id) that share a parent call, i.e. one call to the agent
+ * counted twice. Scale: the in-window inbound / outbound event totals.
+ */
+function dcDiagSummary_(DG, A, inWindow) {
+  const SAMPLES = 5;
+  const out = { scale: { ibEvents: 0, obEvents: 0 } };
+  const pack = function (byAgent) {
+    const agents = Object.keys(byAgent).map(function (n) {
+      const ids = Object.keys(byAgent[n]);
+      return { agent: n, n: ids.length, samples: ids.slice(0, SAMPLES) };
+    }).filter(function (a) { return a.n > 0; }).sort(function (x, y) { return y.n - x.n || x.agent.localeCompare(y.agent); });
+    return { total: agents.reduce(function (t, a) { return t + a.n; }, 0), agents: agents };
+  };
+  Object.keys(DG).forEach(function (k) { out[k] = pack(DG[k]); });
+  const rootIn = {}, rootOut = {};
+  Object.keys(A).forEach(function (name) {
+    const a = A[name];
+    const scan = function (evs, sink, scaleKey) {
+      const byRoot = {};
+      Object.keys(evs).forEach(function (cid) {
+        const ev = evs[cid];
+        if (!inWindow(ev.start)) return;
+        out.scale[scaleKey]++;
+        (byRoot[ev.root || cid] = byRoot[ev.root || cid] || []).push(cid);
+      });
+      Object.keys(byRoot).forEach(function (r) {
+        if (byRoot[r].length > 1) {
+          const s = sink[name] || (sink[name] = {});
+          byRoot[r].slice(1).forEach(function (cid) { s[cid] = true; });
+        }
+      });
+    };
+    scan(a.ib, rootIn, 'ibEvents');
+    scan(a.ob, rootOut, 'obEvents');
+  });
+  out.sameRootIn = pack(rootIn);
+  out.sameRootOut = pack(rootOut);
+  return out;
 }
 
 // -- Config-map builder (mirrors calculateMetricsInMemory's parse) ------------
@@ -388,10 +471,11 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
 // dept headers in row 1 cols F.., roster cells "Name, ext, ext2" below.
 function dcBuildExtMaps_(configSheet) {
   const extToAgent = {};
+  const allExtToAgent = {};
   const queueExtSet = new Set();
   const exclusions = new Set();
   const lastRow = configSheet.getLastRow();
-  if (lastRow < 2) return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions };
+  if (lastRow < 2) return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions, allExtToAgent: allExtToAgent };
 
   // Queue map (cols A/B): dept/queue-group | queue ext(s). Col B may be a
   // COMMA-JOINED list of extensions (e.g. "103,108" -- the combined CSR queues
@@ -438,9 +522,16 @@ function dcBuildExtMaps_(configSheet) {
       const ext = p[1].trim();
       const dept = deptHeaders[cIdx] || 'Unassigned';
       if (ext) extToAgent[ext] = { name: name, dept: dept };
+      // D0: EVERY digit-only extension token (INV-03), for the diagnose
+      // mode's second-extension counters only -- extToAgent (the build's
+      // map) is unchanged: first extension, last column wins.
+      p.slice(1).forEach(function (t) {
+        const e = t.trim();
+        if (/^\d+$/.test(e) && !allExtToAgent[e]) allExtToAgent[e] = { name: name, dept: dept };
+      });
     });
   });
-  return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions };
+  return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions, allExtToAgent: allExtToAgent };
 }
 
 // -- Persistence: sheet -------------------------------------------------------
@@ -957,6 +1048,67 @@ function runDirectCallBuild() {
   Logger.log('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
     r.wrote, r.dateStr, r.meta.missedBusyTotal, r.meta.missedFreeTotal, neonStr, ms);
   return { rows: r.wrote, date: r.dateStr, meta: r.meta, neon: r.neon };
+}
+
+/**
+ * D0 (owner 2026-10-21; Operator State #80): READ-ONLY. Measures, on the day
+ * currently in Raw Data, how much each suspected counting gap in the Direct
+ * build moves the numbers -- so D2's fixes (each needs a re-import to apply)
+ * are made only where the size warrants it:
+ *   internalDial     coworker dials logged Internal: the caller gets no outbound
+ *   secondExtIn/Out  calls on an agent's second extension: invisible
+ *   anonymousIn      inbound direct rings from an anonymous caller: dropped
+ *   sameRootIn/Out   one call counted twice (two legs, one parent)
+ *   unrosteredOut    dials to an extension not on the roster: counted external
+ * Same engine, same day filter, same window as the build; writes nothing.
+ * Logs one line per counter (total, % of the day's events, the top agents and
+ * sample call ids to look up in Raw Data) and returns the summary.
+ */
+function diagnoseDirectCallCounting() {
+  const ss = SpreadsheetApp.openById(getTargetSsId_());
+  const rawSheet = ss.getSheetByName('Raw Data');
+  const configSheet = ss.getSheetByName('DO NOT EDIT!');
+  if (!rawSheet || !configSheet) throw new Error('Raw Data or DO NOT EDIT! sheet missing.');
+  const raw = rawSheet.getDataRange().getDisplayValues();
+  if (raw.length < 2) { Logger.log('diagnoseDirectCallCounting: Raw Data empty.'); return { result: 'INCONCLUSIVE (Raw Data empty)' }; }
+  // The build's own day rule: the first dated row's date, legs from other
+  // dates dropped (S2C-3).
+  const toIso = function (ds) { return (typeof parseDateForNeon === 'function') ? parseDateForNeon(ds) : ds; };
+  let dateStr = '';
+  for (let i = 1; i < raw.length && !dateStr; i++) dateStr = dcDateStr_(raw[i][2]);
+  const isoDate = toIso(dateStr);
+  const dayRows = [raw[0]];
+  for (let i = 1; i < raw.length; i++) {
+    const ds = dcDateStr_(raw[i] && raw[i][2]);
+    if (!ds || toIso(ds) === isoDate) dayRows.push(raw[i]);
+  }
+  const maps = dcBuildExtMaps_(configSheet);
+  const res = computeDirectCallMetrics(dayRows, maps, { diagnose: true });
+  const d = res.meta.diag;
+  const ib = d.scale.ibEvents, ob = d.scale.obEvents;
+  const pct = function (n, of) { return of ? Math.round(n / of * 1000) / 10 + '%' : 'n/a'; };
+  const line = function (key, what, of, ofLabel) {
+    const c = d[key];
+    Logger.log('[direct-diag] %s: %s (%s of %s) -- %s', key, c.total, pct(c.total, of), ofLabel, what);
+    c.agents.slice(0, 5).forEach(function (a) {
+      Logger.log('[direct-diag]   %s: %s  e.g. %s', a.agent, a.n, a.samples.join(', '));
+    });
+  };
+  Logger.log('[direct-diag] %s: %s in-window inbound direct events, %s outbound (the build counts these).', isoDate || dateStr, ib, ob);
+  line('internalDial', 'coworker dials logged Internal; the caller is credited no outbound call', ob, 'outbound');
+  line('secondExtIn', 'inbound rings on an agent\'s second extension; not counted', ib, 'inbound');
+  line('secondExtOut', 'dials from an agent\'s second extension; not counted', ob, 'outbound');
+  line('anonymousIn', 'inbound direct rings from an anonymous caller; not counted', ib, 'inbound');
+  line('sameRootIn', 'extra inbound events sharing a parent call (one call counted more than once)', ib, 'inbound');
+  line('sameRootOut', 'extra outbound events sharing a parent call', ob, 'outbound');
+  line('unrosteredOut', 'dials to an extension not on the roster map, counted EXTERNAL', ob, 'outbound');
+  line('unrosteredOutSecondExt', '...of which a roster agent\'s second extension (a coworker after all)', ob, 'outbound');
+  const total = ['internalDial', 'secondExtIn', 'secondExtOut', 'anonymousIn', 'sameRootIn', 'sameRootOut', 'unrosteredOut']
+    .reduce(function (t, k) { return t + d[k].total; }, 0);
+  const out = { result: (ib + ob ? 'OK' : 'INCONCLUSIVE (no in-window direct events)') + ' ' + (isoDate || dateStr)
+    + ': ' + total + ' events across the seven counters vs ' + (ib + ob) + ' counted', date: isoDate || dateStr, diag: d };
+  Logger.log('[direct-diag] %s', out.result);
+  return out;
 }
 
 /**
