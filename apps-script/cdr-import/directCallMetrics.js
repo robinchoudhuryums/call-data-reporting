@@ -268,7 +268,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       const stopSec = dcStartSec_(r[C.STOP]);
       const busyS = (connSec != null && connSec >= startSec) ? connSec : startSec;
       const busyE = (stopSec != null && stopSec >= busyS) ? stopSec : startSec + talk + hold;
-      const occ = { cid: cid, root: parent || cid, s: busyS, e: busyE, info: dir + ' ' + caller + '->' + callee };
+      const occ = { cid: cid, s: busyS, e: busyE, info: dir + ' ' + caller + '->' + callee };
       if (callerAgent && !exclusions.has(callerAgent.name)) ensure(callerAgent.name, callerAgent.dept).occ.push(occ);
       if (calleeAgent && !exclusions.has(calleeAgent.name)) ensure(calleeAgent.name, calleeAgent.dept).occ.push(occ);
     }
@@ -351,8 +351,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       const b = ensure(callerAgent.name, callerAgent.dept);
       let ev = b.ob[root];
       if (!ev) { ev = b.ob[root] = { intExt: dcOutboundSide_(dir, callee, extToAgent), start: startSec, connected: false, talk: 0, legTalk: {}, legs: {}, callee: callee, root: root, firstCid: cid }; }
-      ev.legs[cid] = true;
-      if (dir === 'Internal') ev.intExt = 'int';
+      ev.legs[cid] = true;   // the call's side stays its FIRST leg's (a later internal transfer leg does not make an outside call internal)
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       if (talk > 0) { ev.connected = true; ev.legTalk[cid] = Math.max(ev.legTalk[cid] || 0, talk); ev.talk = dcSumValues_(ev.legTalk); }
     }
@@ -378,7 +377,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   function busyBlocker(occList, ring) {
     for (let j = 0; j < occList.length; j++) {
       const o = occList[j];
-      if (o.root === ring.root || o.cid === ring.cid) continue;   // D2: every leg of the ring's own call
+      if (o.cid === ring.cid) continue;
       if (ring.s < (o.e + TAIL) && o.s < ring.e) return o;
     }
     return null;
@@ -418,7 +417,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         addSample('ib_answered', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start),
           caller: ev.caller, callee: ev.callee, talkSec: ev.talk });
       } else {
-        const ring = { cid: cid, root: ev.root, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
+        const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
         const blocker = busyBlocker(a.occ, ring);
         if (blocker) {
           m['ib_' + k + '_missed_busy']++; missedBusyTotal++;

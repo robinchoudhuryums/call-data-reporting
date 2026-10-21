@@ -554,16 +554,15 @@ test('D2: two legs of ONE call to the agent are one event -- answered if either 
   assert.equal(a.ib_ext_missed_free, 1, 'P2 rang twice, one missed call');
 });
 
-test('D2: a missed ring is never "busy" because of another leg of the SAME call', function () {
+test('D2: an outside call keeps its side when a later leg transfers it internally', function () {
   const res = compute(grid([
-    // Anna is on leg B of call P (10:00:00-10:05:00, connected); leg A of P
-    // rang her at 10:01 and was missed -- one call, answered, not busy.
-    row({ cid: 'B', parent: 'P', start: D + '10:00:00', connected: D + '10:00:00', stop: D + '10:05:00', dir: 'Incoming', talk: '0:05:00', callTime: '0:05:00', caller: '+15551233333', callee: '101', answered: true }),
-    row({ cid: 'A', parent: 'P', start: D + '10:01:00', dir: 'Incoming', callTime: '0:00:15', caller: '+15551233333', callee: '101', missed: true }),
+    row({ cid: 'X', start: D + '11:00:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:00', caller: '101', callee: '+15559990000' }),
+    row({ cid: 'Y', parent: 'X', start: D + '11:01:00', dir: 'Internal', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '102', answered: true }),
   ]), D2MAPS, {});
   const a = rowFor(res, 'Anna');
-  assert.equal(a.ib_ext_answered, 1);
-  assert.equal(a.ib_ext_missed_busy, 0);
+  assert.equal(a.ob_ext_total, 1, 'one outside call');
+  assert.equal(a.ob_int_total, 0);
+  assert.equal(rowFor(res, 'Bob').ib_int_answered, 1, 'the coworker it reached still has it');
 });
 
 test('D2: a dial to an extension-length number no roster names is INTERNAL; a phone number stays external', function () {
