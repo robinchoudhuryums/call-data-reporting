@@ -290,8 +290,7 @@
       refresh();
       setTimeout(function () {
         try {
-          var reg = $('dept-insights-region');
-          if (!reg || !reg.open) return;
+          if (!insReportLive_()) return;   // open region, or the admin brief
           if (typeof insLastData === 'undefined' || !insLastData || !insLastData.meta) return;
           // A run is already IN FLIGHT (the convergence sync fired inside
           // refresh() -- runInsReport disables the generate button

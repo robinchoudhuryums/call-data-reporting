@@ -1420,6 +1420,16 @@ behind the removed button.
   format the QCD side panel's Total Calls tile now uses — one dialect on both
   surfaces. The side panel's MTD view carries delta sub-lines
   (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
+- **Day-bar TARGET LINE (option 2, owner 2026-10-21; admin trial).** The two
+  cards with a STANDARD -- % Ans (the dept's `answerStdFor_` target) and
+  Abandoned % (`ABANDON_STANDARD_`) -- draw their bars on a scale fitted to the
+  days AND the target (`dtsScale_`, pure, literals inside) with a dashed line
+  at the target (`.dts-target`, in `.dts-plot` beside -- never inside --
+  `.dts-bars`, whose children `dtsSelect_` indexes). A target more than twice
+  the days' own spread away (at least 5 pts) would squash the bars, so the
+  scale then fits the days alone and a tag in the date axis says
+  "target 80% ↑" (`.dts-target-off`). A card without a standard keeps the
+  min-to-max heights. Pinned by `day-bars.test.js` and `drive-daybars.js`.
 - **Team strip LINKED DAY BARS (Step 4, owner 2026-10-16; admin trial).**
   `dtsAttachDayBars_` (script-5, end of `renderDeptTeamStrip_`) appends a
   `.dts-daybars` block to each tile that names its figure with
@@ -2229,8 +2239,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   ONE "Show outbound columns" toggle (`[data-ob-cols]`, `aria-pressed`): on =
   the Both table, off = the classic inbound table. `obDir_` is 'both' unless
   `cdr.dept.direction` holds an explicit 'in'; the retired 'out' (and an unset
-  key) lands on 'both', so the Outbound-only rendering below and the
-  `body[data-dir="out"]` rules are now UNREACHABLE (left in place, inert).
+  key) lands on 'both', so the Outbound-only rendering and its
+  `body[data-dir="out"]` rules were unreachable -- TRIMMED 2026-10-21
+  (`obViewRender_` draws the Both table only; the Outbound-only description
+  in the Batch D text below is history).
   The Outbound summary and Callbacks no longer follow this toggle -- they are
   the Insights brief's own rows (next bullets). Drivers that walk the INBOUND
   table pin `cdr.dept.direction='in'`. The original Batch D text follows.
@@ -2248,11 +2260,34 @@ stay pinned by INV-39, INV-53 and INV-06.
   Connect %, talk, average talk per connected call, attempts; per-dept groups
   and subtotals on a parent dept. Both: the inbound bar + Answer % and the
   outbound bar + Connect % + talk on ONE row per agent, never added together.
+  **Layout B (owner 2026-10-21):** in Both, each agent's row stacks an IN line
+  over an OUT line inside every metric cell (`obPairCells_`: Calls · handled /
+  not, Rate, Talk -- In's talk is TTT) behind a direction tag column, still
+  ONE `<tr>` per agent, so sort, the agent panel, subtotals and exports keep
+  their shape. The two bar units are unified (`max(inUnit, obUnit)`, one
+  ladder) so in vs out volume compares by length. Each metric header sorts by
+  either line (`obThPairHtml_`: two real buttons, `data-ob-sort` = `inRung` /
+  `answerRate` / `tttSeconds` and `obTotal` / `obConnectRate` / `obTalkSec`;
+  `aria-sort` on the `<th>`), and the sort handler matches `[data-ob-sort]` on
+  a th OR a button. The direction's hue stays on its line (`.ob-dir-in` /
+  `.ob-dir-out`), not the cell. `drive-deptoutbound.js` pins the shape, the
+  level OUT lines, both sorts and the chips per line.
   Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
   Outbound view and stacks under it in Both (natural height there; the aside
   scrolls rather than the two overlapping). Rows open the inline agent panel
   (`apTbody_` follows the visible table). The choice persists in
   `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
+- **Team Direct Calls, the side card (D3, owner 2026-10-21; admin trial).**
+  `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
+  column: the Direct Calls report's figures for the page's dept and dates,
+  through the report's OWN `getDirectCallReport` (admin-only while vetted), so
+  the card and the report can never disagree -- answered (missed, busy, int /
+  ext), answer % (busy excluded), outbound (int / ext), a per-agent table, the
+  D1 coverage note, and a button that opens the report on the same dept and
+  dates, run (`tdcOpenReport_`). LAZY: nothing is fetched until it is opened,
+  then once per dept + window (`TDC_.key`, seq-guarded); `tdcSync_` rides
+  `obViewSync_`, so it follows every render. `data-admin-only` plus
+  `tdcActive_` (admin, not View-as). Pinned by `drive-deptoutbound.js`.
 - **Outbound on the Overview tiles and under the outbound table (owner 2026-10, Batch E; moved by UX-1).**
   Both admin-only until the 6c release. **Tiles (E2):** `ovBuildOutboundLine_`
   (script-3) adds one violet line (`.ov-dir-pill` "Outbound", Placed, Conn +
@@ -2394,6 +2429,17 @@ stay pinned by INV-39, INV-53 and INV-06.
   Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:
   the Answer % column's formula and `answerTierCls_` dept-standard tint).
   Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
+  **The panel SLIDES (owner 2026-10-21):** `.ap-clip` animates
+  `grid-template-rows` 0fr <-> 1fr (`apAnimateOpen_` / `apAnimateClose_`,
+  `AP_ANIM_MS_`), clipped ONLY while it moves -- an `overflow: hidden`
+  ancestor would break the settled `.ap`'s sticky-left. A closing panel is
+  detached at once (id removed, `inert`) and leaves the DOM when the slide
+  ends, so every caller still sees `#ap-panel` gone immediately; reduced
+  motion skips both. **Admins see each OUTBOUND call's id** (copy button +
+  an outbound "↳ path", `adOutboundIdHtml_` over `parentIdBadge(id, date,
+  'outbound')`) on the panel's Outbound tab and the Agent Day cards -- an
+  audit aid for "who did this call reach" (phone portal) and "did a
+  coworker take it" (the path). Managers get no column.
   **PREFETCH (Step 3 #8, owner 2026-10-16):** resting the pointer on a row of
   either agent table, or tabbing to its button, loads that agent's strip and
   newest day after `AP_PRE_DELAY_MS_`, and the panel reads through the SAME
@@ -2550,9 +2596,16 @@ stay pinned by INV-39, INV-53 and INV-06.
   it inside a hidden slot. Outbound and Callbacks are their own grey rows
   (`obAllowed_`), quoting their section heads; those fill in after the brief
   is drawn, so `insBriefRowFromHead_` updates the row TEXT in place (a rebuild
-  would take the focus off a row just opened). `deptInsightsEnsureLive_`
-  generates the Insights payload for the admin even while the region at the
-  bottom is collapsed -- the brief needs it. The colour rules are PURE,
+  would take the focus off a row just opened). **The report is LIVE when its
+  region is open OR the brief shows it (`insReportLive_`)**: the page ensure
+  (`deptInsightsEnsureLive_`), the window sync (`insSyncToDeptWindow_`) and
+  the dept Refresh re-run all read it, so a collapsed region at the bottom can
+  never freeze the brief on an old window (it did, 2026-10-21). **Exports put
+  the brief's sections back home:** Copy image moves them to their
+  `[data-ins-home]` placeholders inside the html2canvas CLONE
+  (`insBriefHomeIn_`, the live page untouched) and snapshots their canvases
+  too; Print unmounts them for the print and remounts after. drive-smoke pins
+  all three. The colour rules are PURE,
   self-contained functions in script-8 (`insBriefTopTier_` / `insBriefQueue_`
   / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
   `insights-brief.test.js` -- keep their thresholds as literals inside them,

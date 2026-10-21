@@ -28,7 +28,7 @@ round-trip; per-agent answer rate that EXCLUDES the busy carve-out, inbound ATT,
 outbound activity + ATT, int/ext split). **Admin-only while vetted** (the
 Inbound-report model: the per-dept manager path is written + kept intact, so
 release is a one-line gate removal + un-hiding the `data-admin-only` tab).
-Cached 30 min under `directCall:v4` (+ `kpisPrior`/`deptsPrior` for delta chips, R11-M; v3 groups the company-view agents per (agent, dept) so a crossover agent's rows stay in their own depts, B-1); unavailable payloads not cached. Client:
+Cached 6 h under `directCall:v5` (D1, 2026-10-21: coverage-aware, see the report's meta; a clamped or gappy payload is never cached) (+ `kpisPrior`/`deptsPrior` for delta chips, R11-M; v3 groups the company-view agents per (agent, dept) so a crossover agent's rows stay in their own depts, B-1); unavailable payloads not cached. Client:
 the **Direct** report tab (admin-only) + `#direct-call-modal` + route
 `#/report/direct` + CSV export. Unit coverage in
 `tests/unit/direct-call-report.test.js` (gate, derived rates, unavailable
@@ -147,6 +147,19 @@ Reuse the existing per-agent attribution already in
 groups direct calls per agent via the roster extension map from the dashboard
 `DO NOT EDIT!` sheet, `"Name, ext1, ext2"`). Extensions not on any roster →
 bucket as **unknown**, excluded (same discipline as queue sentinels).
+
+> **As built, D2 (2026-10-21):** every digit-only extension on a roster cell
+> maps to its agent (a FIRST extension always beats another agent's later
+> one); events are one per ROOT call (parent, else the leg's own id), as step
+> 3 below always intended; a coworker dial the CDR logs `Internal` is also the
+> CALLER's internal outbound call; an anonymous / blank inbound caller is kept
+> (external); and an outbound dial to an extension-length (1-6 digit) number
+> no roster names is counted **internal** rather than excluded -- it is still
+> the company's own phone system (a room phone, an unrostered staff line).
+> An outside call keeps its first leg's side through a later internal
+> transfer. Not retroactive: dates built before D2 keep the old counts until
+> re-imported. `diagnoseDirectCallCounting` (Operator State #80) sizes the
+> difference per date.
 
 ## The new computation (the only genuinely new logic)
 

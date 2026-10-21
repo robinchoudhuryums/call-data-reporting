@@ -486,3 +486,139 @@ test('PC-4: a genuine outbound call (no Incoming leg in its group) still counts'
   assert.equal(a.ob_ext_total, 1);
   assert.equal(a.ob_ext_connected, 1);
 });
+
+// ── D2 (owner 2026-10-21): the capture fixes ────────────────────────────────
+// Every roster extension maps (a first extension beats a later one); a
+// coworker dial logged Internal is the caller's internal outbound; one event
+// per ROOT call; an anonymous inbound ring is kept (external); a dial to an
+// unrostered extension-length number is internal.
+const D2MAPS = {
+  extToAgent: { '101': { name: 'Anna', dept: 'CSR' }, '111': { name: 'Anna', dept: 'CSR' }, '102': { name: 'Bob', dept: 'CSR' } },
+  firstExtToAgent: { '101': { name: 'Anna', dept: 'CSR' }, '102': { name: 'Bob', dept: 'CSR' } },
+  queueExtSet: new Set(['103']),
+  exclusions: new Set(['103']),
+};
+
+test('D2: a coworker dial logged Internal counts for BOTH sides -- the callee\'s inbound and the caller\'s internal outbound', function () {
+  const res = compute(grid([
+    row({ cid: 'INT1', start: D + '09:00:00', dir: 'Internal', talk: '0:00:40', callTime: '0:00:40', caller: '101', callee: '102', answered: true }),
+  ]), D2MAPS, {});
+  assert.equal(rowFor(res, 'Bob').ib_int_answered, 1);
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ob_int_total, 1);
+  assert.equal(a.ob_int_connected, 1);
+  assert.equal(a.ob_int_talk_sec, 40);
+  assert.equal(a.ob_ext_total, 0);
+});
+
+test('D2: an Outgoing leg and an Internal leg of ONE dial stay one outbound call', function () {
+  const res = compute(grid([
+    row({ cid: 'X', start: D + '09:00:00', dir: 'Outgoing', callTime: '0:00:05', caller: '101', callee: '102' }),
+    row({ cid: 'Y', parent: 'X', start: D + '09:00:02', dir: 'Internal', talk: '0:01:00', callTime: '0:01:00', caller: '101', callee: '102', answered: true }),
+  ]), D2MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ob_int_total, 1, 'one root call');
+  assert.equal(a.ob_int_connected, 1);
+  assert.equal(a.ob_int_talk_sec, 60);
+});
+
+test('D2: a ring on an agent\'s SECOND extension counts for her', function () {
+  const res = compute(grid([
+    row({ cid: 'S1', start: D + '09:10:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:00', caller: '+15551230000', callee: '111', answered: true }),
+  ]), D2MAPS, {});
+  assert.equal(rowFor(res, 'Anna').ib_ext_answered, 1);
+});
+
+test('D2: an anonymous / blank inbound ring is kept as external; a queue-named caller still is not', function () {
+  const res = compute(grid([
+    row({ cid: 'AN1', start: D + '09:20:00', dir: 'Incoming', callTime: '0:00:20', caller: 'Anonymous', callee: '101', missed: true }),
+    row({ cid: 'AN2', start: D + '09:25:00', dir: 'Incoming', talk: '0:00:30', callTime: '0:00:30', caller: '', callee: '101', answered: true }),
+    row({ cid: 'QN', start: D + '09:26:00', dir: 'Incoming', callTime: '0:00:20', caller: 'A_Q_CSR', callee: '102', missed: true }),
+  ]), D2MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_missed_free, 1);
+  assert.equal(a.ib_ext_answered, 1);
+  assert.equal(rowFor(res, 'Bob'), undefined, 'a caller field naming a queue is never a direct call');
+});
+
+test('D2: two legs of ONE call to the agent are one event -- answered if either leg was, talk added per leg', function () {
+  const res = compute(grid([
+    row({ cid: 'L1', parent: 'P1', start: D + '09:30:00', dir: 'Incoming', talk: '0:00:40', callTime: '0:00:40', caller: '+15551231111', callee: '101', answered: true }),
+    row({ cid: 'L2', parent: 'P1', start: D + '09:35:00', dir: 'Incoming', talk: '0:01:20', callTime: '0:01:20', caller: '+15551231111', callee: '101', answered: true }),
+    row({ cid: 'M1', parent: 'P2', start: D + '10:00:00', dir: 'Incoming', callTime: '0:00:15', caller: '+15551232222', callee: '101', missed: true }),
+    row({ cid: 'M2', parent: 'P2', start: D + '10:00:30', dir: 'Incoming', callTime: '0:00:15', caller: '+15551232222', callee: '101', missed: true }),
+  ]), D2MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_answered, 1, 'P1 once');
+  assert.equal(a.ib_ext_talk_sec, 120, '40 + 80 s, both legs talked');
+  assert.equal(a.ib_ext_missed_free, 1, 'P2 rang twice, one missed call');
+});
+
+test('D2: an outside call keeps its side when a later leg transfers it internally', function () {
+  const res = compute(grid([
+    row({ cid: 'X', start: D + '11:00:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:00', caller: '101', callee: '+15559990000' }),
+    row({ cid: 'Y', parent: 'X', start: D + '11:01:00', dir: 'Internal', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '102', answered: true }),
+  ]), D2MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ob_ext_total, 1, 'one outside call');
+  assert.equal(a.ob_int_total, 0);
+  assert.equal(rowFor(res, 'Bob').ib_int_answered, 1, 'the coworker it reached still has it');
+});
+
+test('D2: a dial to an extension-length number no roster names is INTERNAL; a phone number stays external', function () {
+  const res = compute(grid([
+    row({ cid: 'U1', start: D + '09:40:00', dir: 'Outgoing', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '555' }),
+    row({ cid: 'U2', start: D + '09:45:00', dir: 'Outgoing', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '+15559990000' }),
+  ]), D2MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ob_int_total, 1);
+  assert.equal(a.ob_ext_total, 1);
+  assert.equal(h.call('dcOutboundSide_', 'Outgoing', '5551234', {}), 'ext', '7 digits is a phone number');
+  assert.equal(h.call('dcOutboundSide_', 'Internal', '+15551234567', {}), 'int', 'the CDR said Internal');
+});
+
+test('D2: dcBuildExtMaps_ maps every extension, a FIRST extension beating a later one; the pre-D2 map is kept for the diagnosis', function () {
+  const cfg = {
+    getLastRow: () => 3, getLastColumn: () => 7,
+    getRange: function (r, c, nr, nc) {
+      const g = [['', '', '', '', '', 'CSR', 'Sales'], ['A_Q_CSR', '103', '', '', '', 'Anna, 101, 111', 'Cal, 201, 101'], ['', '', '', '', '', 'Bob, 102', '']];
+      return { getValues: () => g.slice(r - 1, r - 1 + nr).map((row2) => row2.slice(c - 1, c - 1 + nc)) };
+    },
+  };
+  const m = h.call('dcBuildExtMaps_', cfg);
+  assert.deepEqual(Object.keys(m.extToAgent).sort(), ['101', '102', '111', '201']);
+  assert.equal(m.extToAgent['111'].name, 'Anna');
+  assert.equal(m.extToAgent['101'].name, 'Anna', 'Cal\'s spare 101 never takes over Anna\'s main line');
+  assert.deepEqual(Object.keys(m.firstExtToAgent).sort(), ['101', '102', '201']);
+});
+
+// ── D0: the opt-in DIAGNOSE mode -- since D2, "what re-importing a pre-D2
+// date changes": read-only counters from the SAME pass; rows never move.
+const DIAG_GRID = grid([
+  row({ cid: 'INT1', start: D + '09:00:00', dir: 'Internal', talk: '0:00:40', callTime: '0:00:40', caller: '101', callee: '102', answered: true }),
+  row({ cid: 'SEC1', start: D + '09:10:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230000', callee: '111', missed: true }),
+  row({ cid: 'ANON', start: D + '09:20:00', dir: 'Incoming', callTime: '0:00:20', caller: 'Anonymous', callee: '101', missed: true }),
+  row({ cid: 'L1', parent: 'P1', start: D + '09:30:00', dir: 'Incoming', callTime: '0:00:15', caller: '+15551231111', callee: '101', missed: true }),
+  row({ cid: 'L2', parent: 'P1', start: D + '09:31:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:00', caller: '+15551231111', callee: '101', answered: true }),
+  row({ cid: 'UNR', start: D + '09:40:00', dir: 'Outgoing', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '555' }),
+  row({ cid: 'LATE', start: D + '16:00:00', dir: 'Internal', callTime: '0:00:10', caller: '101', callee: '102' }),
+]);
+
+test('D0 diagnose: each counter catches what D2 counts differently, in window only, with sample ids', function () {
+  const res = compute(DIAG_GRID, D2MAPS, { diagnose: true });
+  const d = JSON.parse(JSON.stringify(res.meta.diag));
+  assert.deepEqual(d.internalDial.agents[0], { agent: 'Anna', n: 1, samples: ['INT1'] });
+  assert.equal(d.secondExtIn.total, 1);
+  assert.equal(d.secondExtIn.agents[0].agent, 'Anna');
+  assert.equal(d.anonymousIn.total, 1);
+  assert.deepEqual(d.sameRootIn.agents[0], { agent: 'Anna', n: 1, samples: ['L2'] }, 'the second leg of P1 is the repeat');
+  assert.equal(d.unrosteredOut.total, 1);
+  assert.equal(d.scale.ibEvents, 4, 'Anna: SEC1, ANON, P1; Bob: INT1');
+});
+
+test('D0 diagnose: OFF by default, and ON never moves a row', function () {
+  const off = compute(DIAG_GRID, D2MAPS, {});
+  const on = compute(DIAG_GRID, D2MAPS, { diagnose: true });
+  assert.equal(off.meta.diag, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(on.rows)), JSON.parse(JSON.stringify(off.rows)));
+});

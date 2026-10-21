@@ -63,6 +63,10 @@ async function openDept(page, meta) {
       called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length,
     }));
     record('manager: the outbound columns toggle is hidden', st.sw === 'none', st.sw);
+    const tdcM = await page.evaluate(() => { const el = document.getElementById('dept-team-direct');
+      return { shown: !!el && getComputedStyle(el).display !== 'none',
+               called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length }; });
+    record('manager: no Team Direct Calls card and no direct-call request (D3, admin-only)', !tdcM.shown && tdcM.called === 0, JSON.stringify(tdcM));
     record('manager: a stored "columns on" preference still shows the INBOUND table',
       st.inShown && !st.obShown, JSON.stringify(st));
     await page.close();
@@ -98,8 +102,10 @@ async function openDept(page, meta) {
   record('admin: inbound AND outbound together is the default view (Step 3)',
     v.dir === 'both' && v.obShown && !v.inShown, JSON.stringify(v).slice(0, 120));
   record('the toggle reads "on"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'true');
-  record('the table shows inbound AND outbound columns side by side',
-    v.heads.some((h) => /Inbound/.test(h)) && v.heads.some((h) => /Outbound/.test(h)), v.heads.join(' | '));
+  // Layout B (owner 2026-10-21): an IN line over an OUT line in each agent's
+  // row -- Calls / Rate / Talk, each header sorting by either direction.
+  record('layout B: the table shows Calls, Rate and Talk, each with an in / out sort',
+    ['Calls', 'Rate', 'Talk'].every((w) => v.heads.some((h) => h.indexOf(w) === 0 && /in\s*out/.test(h.replace(/\s+/g, ' ')))), v.heads.join(' | '));
   {
     const shown = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
     const missing = ob.agents.map((a) => a.agent).filter((a) => shown.indexOf(a) === -1);
@@ -126,10 +132,28 @@ async function openDept(page, meta) {
   });
   record('the two side panels never overlap', overlap.aBottom <= overlap.bTop + 1, JSON.stringify(overlap));
   const bothRow = await page.evaluate(() => {
-    const r = document.querySelector('#agents-ob-tbody tr[data-agent]');
-    return r ? r.querySelectorAll('td').length : 0;
+    const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
+    const r = rows[0];
+    return { cells: r ? r.querySelectorAll('td').length : 0,
+      tags: r ? Array.from(r.querySelectorAll('.ob-dir-tag')).map((t) => t.textContent) : [],
+      paired: rows.every((x) => Array.from(x.querySelectorAll('td.ob-pair')).every((td) =>
+        td.querySelectorAll(':scope > .ob-line.ob-dir-in').length === 1 && td.querySelectorAll(':scope > .ob-line.ob-dir-out').length === 1)),
+      aligned: rows.every((x) => {
+        const tops = Array.from(x.querySelectorAll('td.ob-pair > .ob-line.ob-dir-out, td.ob-dir-col > .ob-line.ob-dir-out')).map((l) => Math.round(l.getBoundingClientRect().top));
+        return tops.length > 1 && Math.max.apply(null, tops) - Math.min.apply(null, tops) <= 2;
+      }) };
   });
-  record('each row carries both directions’ cells', bothRow === 6, 'cells=' + bothRow);
+  // One scale: a block means the same number of calls on both lines, so the
+  // fixture's far smaller outbound volume draws far shorter OUT bars (on
+  // separate scales both maxima would sit near the cap).
+  const scale = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
+    const blocks = (sel) => Math.max.apply(null, rows.map((r) => { const l = r.querySelector('td.ans-bar-cell > ' + sel); return l ? l.querySelectorAll('.tly').length : 0; }));
+    return { inMax: blocks('.ob-line.ob-dir-in'), outMax: blocks('.ob-line.ob-dir-out') };
+  });
+  record('layout B: IN and OUT bars share one scale (the smaller volume draws shorter)', scale.inMax > 0 && scale.outMax > 0 && scale.outMax * 2 < scale.inMax, JSON.stringify(scale));
+  record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
+    bothRow.cells === 5 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
 
   // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
   {
@@ -139,11 +163,11 @@ async function openDept(page, meta) {
       // Rows with an outbound record (an inbound-only agent has no outbound chips).
       const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).filter((r) => r.querySelector('.ob-c'));
       return {
-        perRow: rows.map((r) => r.querySelectorAll('td.ob-dir-out .wow-chip').length),
+        perRow: rows.map((r) => r.querySelectorAll('.ob-line.ob-dir-out .wow-chip').length),
         notConnMuted: rows.every((r) => { const u = r.querySelector('.ob-u'); const ch = u && u.nextElementSibling; return !!ch && ch.classList.contains('wow-chip-muted'); }),
         first: rows[0] ? { agent: rows[0].getAttribute('data-agent'), conn: Number(rows[0].querySelector('.ob-c').textContent),
           chip: (rows[0].querySelector('.ob-c').nextElementSibling || {}).textContent || '' } : null,
-        totals: document.querySelectorAll('#agents-ob-tfoot td.ob-dir-out .wow-chip, #agents-ob-tbody tr.subq-subtotal td.ob-dir-out .wow-chip').length,
+        totals: document.querySelectorAll('#agents-ob-tfoot .ob-line.ob-dir-out .wow-chip, #agents-ob-tbody tr.subq-subtotal .ob-line.ob-dir-out .wow-chip').length,
       };
     });
     record('Batch F: the prior window is captured for this view', !!pri, sum30.meta.priorFrom + '|' + sum30.meta.priorTo);
@@ -156,6 +180,37 @@ async function openDept(page, meta) {
     record('Batch F: the connected chip is current minus prior for that agent', pa && got === want,
       (c.first && c.first.chip) + ' want ' + want);
     record('Batch F: Total and subtotal rows carry no outbound chips', c.totals === 0, 'chips=' + c.totals);
+  }
+
+  // Layout B: each metric header sorts by the IN line or the OUT line.
+  {
+    const order = () => page.evaluate(() => {
+      const out = [];
+      for (const r of Array.from(document.querySelectorAll('#agents-ob-tbody tr'))) {
+        if (r.classList.contains('subq-subtotal')) break;
+        if (r.hasAttribute('data-agent')) out.push(r.getAttribute('data-agent'));
+      }
+      return out;
+    });
+    const byAgent = {};
+    ob.agents.forEach((a) => { byAgent[a.agent] = a.obTotal; });
+    await page.click('#agents-ob-thead [data-ob-sort="obTotal"]');
+    await page.waitForTimeout(300);
+    let o1 = await order();
+    if (await page.getAttribute('#agents-ob-thead [data-ob-sort="obTotal"]', 'class').then((c) => !/is-on/.test(c || ''))) {
+      await page.click('#agents-ob-thead [data-ob-sort="obTotal"]'); await page.waitForTimeout(300); o1 = await order();
+    }
+    const placed = o1.map((a) => byAgent[a] || 0);
+    const mono = placed.every((x, i) => i === 0 || (placed[i - 1] - x) * (placed[0] - placed[placed.length - 1] >= 0 ? 1 : -1) >= 0);
+    const ariaOut = await page.evaluate(() => { const b = document.querySelector('#agents-ob-thead [data-ob-sort="obTotal"]'); return b && b.closest('th').getAttribute('aria-sort'); });
+    record('layout B: "out" under Calls sorts the group by outbound placed, and the header says so',
+      o1.length > 1 && mono && /ascending|descending/.test(ariaOut || ''), JSON.stringify({ order: o1, placed: placed, aria: ariaOut }));
+    await page.focus('#agents-ob-thead [data-ob-sort="inRung"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const kb = await page.evaluate(() => ({ on: !!document.querySelector('#agents-ob-thead [data-ob-sort="inRung"].is-on'),
+      focus: !!document.activeElement && document.activeElement.getAttribute('data-ob-sort') === 'inRung' }));
+    record('layout B: "in" sorts by keyboard too and keeps the focus on the button', kb.on && kb.focus, JSON.stringify(kb));
   }
 
   // Sorting by a column re-renders and keeps the rows.
@@ -260,6 +315,47 @@ async function openDept(page, meta) {
         Object.keys(per).length === 2 && Object.keys(per).every((k) => per[k] === 1), JSON.stringify(per));
     }
     await pr.close();
+  }
+
+  // ---- D3 (owner 2026-10-21): Team Direct Calls, the admin side card ------
+  {
+    const d30 = require('./payloads/direct-30d.json');
+    const before = await page.evaluate(() => {
+      const el = document.getElementById('dept-team-direct');
+      return { shown: !!el && getComputedStyle(el).display !== 'none', open: !!(el && el.open),
+               head: (document.getElementById('tdc-head') || {}).textContent || '',
+               called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length };
+    });
+    record('D3: the Team Direct Calls card is there for the admin, collapsed, and asks for nothing until opened',
+      before.shown && !before.open && /open to load/.test(before.head) && before.called === 0, JSON.stringify(before));
+    await page.click('#dept-team-direct > summary');
+    await page.waitForTimeout(900);
+    const after = await page.evaluate(() => {
+      const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').map((c) => c.args[0]);
+      return { calls: calls, page: { from: document.getElementById('from-date').value, to: document.getElementById('to-date').value },
+               head: (document.getElementById('tdc-head') || {}).textContent || '',
+               note: (document.getElementById('tdc-note') || {}).textContent || '',
+               tiles: document.querySelectorAll('#tdc-tiles .ds-kpi').length,
+               rows: document.querySelectorAll('#tdc-tbody tr.trp-row').length };
+    });
+    const c0 = after.calls[0] || {};
+    record('D3: opening it asks ONCE, for this dept over the page\'s dates, and shows the report\'s figures',
+      after.calls.length === 1 && c0.department === 'CSR' && c0.from === after.page.from && c0.to === after.page.to
+        && after.tiles === 2 && after.rows === d30.agents.length
+        && after.head.indexOf(String(d30.kpis.ibAnswered)) === 0,
+      JSON.stringify({ calls: after.calls, head: after.head, tiles: after.tiles, rows: after.rows, want: d30.agents.length }));
+    record('D3: the card says when the data stops early and names the gap', /not imported/.test(after.note) && /1 workday/.test(after.note), after.note);
+    await page.click('#dept-team-direct > summary'); await page.waitForTimeout(200);
+    await page.click('#dept-team-direct > summary'); await page.waitForTimeout(400);
+    const again = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length);
+    record('D3: closing and reopening on the same window asks for nothing more', again === 1, 'calls=' + again);
+    await page.click('#tdc-open-report');
+    await page.waitForTimeout(1500);
+    const modal = await page.evaluate(() => ({ open: getComputedStyle(document.getElementById('direct-call-modal')).display !== 'none',
+      results: getComputedStyle(document.getElementById('direct-call-results')).display !== 'none',
+      dept: (document.getElementById('direct-call-dept') || {}).value }));
+    record('D3: "Open the Direct Calls report" opens the report on the same dept, run', modal.open && modal.results && modal.dept === 'CSR', JSON.stringify(modal));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(300);
   }
 
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));

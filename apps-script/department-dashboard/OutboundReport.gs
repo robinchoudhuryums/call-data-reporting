@@ -4941,6 +4941,191 @@ function obInstantConcentration_(agents) {
   };
 }
 
+// ── probeOutboundCallMix (owner 2026-10-21) ─────────────────────────────
+// "Are these CSRs' outbound calls really customers?" The capture keeps a
+// call only when it reached a 10+ digit number, so extension-to-extension
+// dials never count -- but a dial to a COMPANY line (a DID or the main line),
+// a call forwarded to a COLLEAGUE, the agent's leg of an INBOUND call split
+// under its own root, a MISDIAL and a REDIAL all still count as one placed
+// call each. This sorts chosen agents' calls into those buckets, with sample
+// call ids for a phone-portal check. READ-ONLY, admin, editor-run.
+//
+// Window: OUTBOUND_PROBE_FROM / _TO (the outbound probes' shared window,
+// default the 28 days to the latest data). Agents: OUTBOUND_MIX_AGENTS
+// (comma / newline list of exact roster names); unset = the window's top
+// OB_MIX_TOP_N_ diallers.
+var OB_MIX_TOP_N_ = 10;
+var OB_MIX_ROW_CAP_ = 8000;
+var OB_MIX_TWIN_SEC_ = 120;     // an inbound call from the number within 2 min
+var OB_MIX_REDIAL_SEC_ = 600;   // the same number again within 10 min
+var OB_MIX_SAMPLES_ = 5;
+var OB_MIX_BUCKETS_ = ['company-line', 'colleague', 'inbound-twin', 'misdial', 'redial', 'external'];
+
+/**
+ * PURE. One primary bucket per call, first match wins in OB_MIX_BUCKETS_
+ * order: a company number, a colleague named in the path, an inbound twin,
+ * a misdial (unconnected, rang under the brief threshold), a redial (more
+ * than one attempt, or the same number again within OB_MIX_REDIAL_SEC_),
+ * else external. ctx = { companyHashes: {hash: label}, roster: {name: [depts]},
+ * briefSec }.
+ */
+function obMixBucket_(r, ctx) {
+  ctx = ctx || {};
+  if (r.callee_hash && ctx.companyHashes && ctx.companyHashes[r.callee_hash]) return 'company-line';
+  if (agentDayInternalCallee_(r.journey, r.agent, ctx.roster || {})) return 'colleague';
+  if (r.twin) return 'inbound-twin';
+  var ring = r.ring_seconds == null ? null : Number(r.ring_seconds);
+  if (!r.connected && ring != null && ring < (ctx.briefSec || OUTBOUND_BRIEF_RING_SEC_)) return 'misdial';
+  if ((Number(r.attempts) || 1) > 1 || (r.prev_gap != null && Number(r.prev_gap) >= 0
+      && Number(r.prev_gap) <= OB_MIX_REDIAL_SEC_)) return 'redial';
+  return 'external';
+}
+
+/** PURE. Per-agent bucket counts + up to OB_MIX_SAMPLES_ sample calls each. */
+function obMixSummarize_(rows, ctx) {
+  var by = {}, tot = { placed: 0 };
+  OB_MIX_BUCKETS_.forEach(function (b) { tot[b] = 0; });
+  (rows || []).forEach(function (r) {
+    var a = r.agent || '(unattributed)';
+    var e = by[a];
+    if (!e) {
+      e = by[a] = { agent: a, placed: 0, buckets: {}, samples: {} };
+      OB_MIX_BUCKETS_.forEach(function (b) { e.buckets[b] = 0; e.samples[b] = []; });
+    }
+    var b = obMixBucket_(r, ctx);
+    e.placed++; e.buckets[b]++; tot.placed++; tot[b]++;
+    if (e.samples[b].length < OB_MIX_SAMPLES_) {
+      e.samples[b].push({ callId: r.call_id, date: r.call_date, start: r.call_start,
+        label: (b === 'company-line' && ctx.companyHashes) ? ctx.companyHashes[r.callee_hash] : undefined });
+    }
+  });
+  var agents = Object.keys(by).map(function (k) { return by[k]; })
+    .sort(function (x, y) { return y.placed - x.placed || String(x.agent).localeCompare(String(y.agent)); });
+  agents.forEach(function (e) {
+    e.share = {};
+    OB_MIX_BUCKETS_.forEach(function (b) { e.share[b] = e.placed ? Math.round(e.buckets[b] / e.placed * 1000) / 1000 : 0; });
+  });
+  return { totals: tot, agents: agents };
+}
+
+/** PURE. OUTBOUND_MIX_AGENTS -> a de-duplicated name list (comma / newline). */
+function obMixAgentList_(raw) {
+  var seen = {}, out = [];
+  String(raw || '').split(/[,\n]/).forEach(function (t) {
+    var n = t.trim();
+    if (n && !seen[n]) { seen[n] = true; out.push(n); }
+  });
+  return out;
+}
+
+function probeOutboundCallMix() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var agents = obMixAgentList_(props.getProperty('OUTBOUND_MIX_AGENTS'));
+  var win = obProbeWindow_(props);
+  var conn = null, anchor = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable)' });
+    anchor = obProbeAnchorDate_(conn);
+    win = obProbeWindow_(props, null, anchor);
+    var from = win.from, to = win.to;
+
+    // Company lines: every inbound dial-in number seen in the last 90 days of
+    // the window, plus DIAL_IN_LABELS, hashed the way the capture hashed the
+    // dialled number (callerLookupHashPhone_ = cdrHashPhone_).
+    var secret = props.getProperty('HMAC_SECRET');
+    var companyHashes = {};
+    if (secret) {
+      var lines = {};
+      var labels = (typeof inboundDialInLabels_ === 'function') ? inboundDialInLabels_() : {};
+      Object.keys(labels).forEach(function (d) { lines[d] = labels[d]; });
+      var st0 = conn.prepareStatement('SELECT COALESCE(json_agg(DISTINCT dial_in_number), \'[]\')::text AS j FROM inbound_calls '
+        + "WHERE call_date BETWEEN (?::date - 90) AND ?::date AND dial_in_number IS NOT NULL AND dial_in_number <> ''");
+      st0.setString(1, from); st0.setString(2, to);
+      var rs0 = st0.executeQuery();
+      var j0 = rs0.next() ? rs0.getString('j') : '[]';
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j0 ? j0.length : 0, 'outbound-mix');
+      rs0.close(); st0.close();
+      JSON.parse(j0 || '[]').forEach(function (n) {
+        var d = String(n || '').replace(/\D/g, '');
+        if (d.length >= 10 && !lines[d]) lines[d] = 'dial-in ' + d.slice(-4);
+      });
+      Object.keys(lines).forEach(function (d) {
+        callerLookupHashCandidates_(d.length === 11 && d.charAt(0) === '1' ? d.slice(1) : d).forEach(function (c) {
+          companyHashes[callerLookupHashPhone_(c, secret)] = lines[d];
+        });
+        companyHashes[callerLookupHashPhone_('+' + d, secret)] = lines[d];
+      });
+    }
+
+    var tm = function (col) { return "(CASE WHEN " + col + " ~ '^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$' THEN " + col + "::time END)"; };
+    var who = agents.length
+      ? 'trim(agent_name) IN (' + agents.map(function () { return '?'; }).join(', ') + ')'
+      : 'trim(agent_name) IN (SELECT trim(agent_name) FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+        + 'AND agent_name IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT ' + OB_MIX_TOP_N_ + ')';
+    var sql = 'WITH o AS (SELECT call_date, call_id, call_start, trim(agent_name) AS agent, callee_hash, connected, '
+      + 'ring_seconds, talk_seconds, COALESCE(attempts, 1) AS attempts, journey, '
+      + 'extract(epoch FROM (' + tm('call_start') + ' - lag(' + tm('call_start') + ') OVER '
+      +   '(PARTITION BY call_date, trim(agent_name), callee_hash ORDER BY call_start)))::int AS prev_gap '
+      + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND ' + who + ' '
+      + 'ORDER BY call_date, call_start LIMIT ' + (OB_MIX_ROW_CAP_ + 1) + ') '
+      + "SELECT COALESCE(json_agg(json_build_object('call_date', o.call_date::text, 'call_id', o.call_id, "
+      + "'call_start', o.call_start, 'agent', o.agent, 'callee_hash', o.callee_hash, 'connected', o.connected, "
+      + "'ring_seconds', o.ring_seconds, 'attempts', o.attempts, 'journey', o.journey, 'prev_gap', o.prev_gap, "
+      + "'twin', EXISTS (SELECT 1 FROM inbound_calls i WHERE i.call_date = o.call_date AND o.callee_hash IS NOT NULL "
+      +   'AND i.caller_hash = o.callee_hash AND abs(extract(epoch FROM (' + tm('i.call_start') + ' - ' + tm('o.call_start') + '))) <= '
+      +   OB_MIX_TWIN_SEC_ + '))), \'[]\')::text AS j FROM o';
+    var ps = conn.prepareStatement(sql);
+    var k = 1;
+    ps.setString(k++, from); ps.setString(k++, to);
+    if (agents.length) agents.forEach(function (a) { ps.setString(k++, a); });
+    else { ps.setString(k++, from); ps.setString(k++, to); }
+    if (typeof ps.setQueryTimeout === 'function') ps.setQueryTimeout(120);
+    var rs = ps.executeQuery();
+    var j = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'outbound-mix');
+    rs.close(); ps.close();
+    var rows = JSON.parse(j || '[]');
+    var truncated = rows.length > OB_MIX_ROW_CAP_;
+    if (truncated) rows = rows.slice(0, OB_MIX_ROW_CAP_);
+    var roster = {};
+    try { roster = agentDayRosterMap_(); } catch (eR) { roster = {}; }
+    var sum = obMixSummarize_(rows, { companyHashes: companyHashes, roster: roster, briefSec: OUTBOUND_BRIEF_RING_SEC_ });
+    var t = sum.totals;
+    var pct = function (n) { return t.placed ? Math.round(n / t.placed * 1000) / 10 + '%' : '0%'; };
+    var out = {
+      window: { from: from, to: to, anchoredToData: !!win.anchoredTo, anchorDate: anchor },
+      agentsAsked: agents.length ? agents : ('top ' + OB_MIX_TOP_N_ + ' diallers'),
+      companyLinesKnown: secret ? Object.keys(companyHashes).length : 'HMAC_SECRET unset -- company-line bucket skipped',
+      truncated: truncated,
+      totals: t,
+      agents: sum.agents,
+    };
+    out.result = (t.placed ? 'OK' : 'INCONCLUSIVE (no outbound calls for these agents in the window)')
+      + ' ' + from + '..' + to + (win.anchoredTo ? ' [anchored to the latest data]' : '') + ': ' + t.placed + ' placed -- '
+      + OB_MIX_BUCKETS_.map(function (b) { return b + ' ' + t[b] + ' (' + pct(t[b]) + ')'; }).join(', ')
+      + (truncated ? ' [first ' + OB_MIX_ROW_CAP_ + ' calls only]' : '');
+    Logger.log('[outbound-mix] %s', out.result);
+    sum.agents.forEach(function (e) {
+      Logger.log('[outbound-mix] %s: %s placed -- %s', e.agent, e.placed,
+        OB_MIX_BUCKETS_.map(function (b) { return b + ' ' + e.buckets[b]; }).join(', '));
+      OB_MIX_BUCKETS_.forEach(function (b) {
+        if (b !== 'external' && e.samples[b].length) {
+          Logger.log('[outbound-mix]   %s samples: %s', b, e.samples[b].map(function (x) {
+            return x.callId + ' (' + x.date + ' ' + (x.start || '?') + (x.label ? ', ' + x.label : '') + ')';
+          }).join('; '));
+        }
+      });
+    });
+    return logStatusReturn_(out);
+  } catch (e) {
+    return logStatusReturn_({ result: 'FAILED (' + (e && e.message ? e.message : e) + ')' });
+  } finally {
+    try { if (conn) conn.close(); } catch (eC) { /* ignore */ }
+  }
+}
+
 function probeOutboundInstantConnects() {
   assertAdmin_();
   var props = PropertiesService.getScriptProperties();

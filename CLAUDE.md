@@ -2155,6 +2155,8 @@ items for anything it flags or doesn't cover.)
 76. Brief-threshold probe (UX-2) -- `probeBriefThresholds` (dashboard, read-only) logs what normal looks like for share of answered, queue wait and the monthly answer-rate swing, before any of those brief rows gets a colour
 77. `NOTIFY_MANAGER_EDIT` / `NOTIFY_MANAGER_RULES` -- the alert + coaching manager layer (Steps 5a/5b): off by default; while off, managers see nothing and stored values do not apply; flip it from the Notifications modal only once the owner releases it
 78. `ALERT_REASON_RULES` -- the admin-trial alert reasons (Step 5c): an agent below X% on each of N workdays, callers not called back within a business day; admins-only email, `reason:` Alert Log rows
+79. `probeOutboundCallMix` / `OUTBOUND_MIX_AGENTS` -- read-only: sorts agents' outbound calls into company line / colleague / inbound twin / misdial / redial / external, with sample call ids
+80. `diagnoseDirectCallCounting` (cdr-import) -- read-only: sizes what re-importing a pre-D2 date changes (D2 is not retroactive), then re-import per #56
 
 ## Cycle Workflow Config
 
@@ -2326,6 +2328,7 @@ S63 | Notifications: sentence rules, history, test send, the manager layer (Step
 S64 | Coaching release prep: per-dept gates, Met / Rotated / Dismissed, the held manager email (Step 5b) | Subsystem: Department Dashboard
 S65 | Alert reasons: an agent below a threshold over N workdays; callers not called back (Step 5c) | Subsystem: Department Dashboard
 S66 | Queue figures follow their period: My Department queue chips, Overview abandoned chips, Insights idle agents (QD-1, QD-2, IDLE-2) | Subsystem: Department Dashboard
+S67 | Direct Calls report covers only days that exist: the clamp, missing workdays, the int / ext split (D1) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

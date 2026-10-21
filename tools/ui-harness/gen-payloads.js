@@ -213,7 +213,7 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs',
-          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs'],
+          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs'],
 });
 
 function install(email) {
@@ -351,6 +351,69 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
     windows[w[0] + '|' + w[1]] = h.call('getDeptOutboundSummary', { department: 'CSR', from: w[0], to: w[1] });
   });
   dump('dept-outbound-windows', windows);
+  h.ctx.getDashboardNeonConn_ = realConn;
+}
+// D1 (owner 2026-10-21): the Direct Calls report, served by the REAL
+// getDirectCallReport over a fake direct_call_history. The data stops one
+// workday BEFORE the asked end (the not-yet-imported day -> the clamp) and
+// one mid-window workday has no rows (-> the missing-workday note, the prior
+// chips dropped); 'direct-all-clean' has full coverage, so its chips render.
+{
+  const sum = JSON.parse(fs.readFileSync(path.join(OUT, 'summary-30d.json'), 'utf8'));
+  const rows = (sum.rows || []).filter(function (r) { return r.agent; });
+  const agentRows = function (dept) {
+    return rows.map(function (r, i) {
+      const ia = 3 + (i % 4), ea = 9 + (i * 5) % 17, imf = i % 3, emf = 2 + (i % 5), imb = i % 2, emb = 1 + (i % 3);
+      const ot = 6 + (i * 3) % 11, oi = 1 + (i % 3), oc = Math.max(1, ot - 2 - (i % 3));
+      return { agent: r.agent, dept: dept, ib_answered: ia + ea, ib_missed_free: imf + emf, ib_missed_busy: imb + emb,
+        ib_talk_sec: (ia + ea) * (95 + i * 7), ib_int_answered: ia, ib_ext_answered: ea,
+        ib_int_missed_free: imf, ib_ext_missed_free: emf, ib_int_missed_busy: imb, ib_ext_missed_busy: emb,
+        ob_total: ot, ob_connected: oc, ob_talk_sec: oc * 110, ob_int_total: oi, ob_ext_total: ot - oi,
+        ob_int_connected: Math.min(oi, oc), ob_ext_connected: oc - Math.min(oi, oc) };
+    });
+  };
+  const sumK = function (as) {
+    const k = { agents: as.length };
+    const f = { ibAnswered: 'ib_answered', ibMissedFree: 'ib_missed_free', ibMissedBusy: 'ib_missed_busy', ibTalkSec: 'ib_talk_sec',
+      obTotal: 'ob_total', obConnected: 'ob_connected', obTalkSec: 'ob_talk_sec',
+      ibIntAnswered: 'ib_int_answered', ibExtAnswered: 'ib_ext_answered', ibIntMissedFree: 'ib_int_missed_free',
+      ibExtMissedFree: 'ib_ext_missed_free', ibIntMissedBusy: 'ib_int_missed_busy', ibExtMissedBusy: 'ib_ext_missed_busy',
+      obIntTotal: 'ob_int_total', obExtTotal: 'ob_ext_total', obIntConnected: 'ob_int_connected', obExtConnected: 'ob_ext_connected' };
+    Object.keys(f).forEach(function (c) { k[c] = as.reduce(function (t, a) { return t + (a[f[c]] || 0); }, 0); });
+    return k;
+  };
+  const csr = agentRows('CSR');
+  const all = csr.concat(agentRows('Sales').slice(0, 3).map(function (a, i) { return Object.assign({}, a, { agent: ['Elena Park', 'Frank Wu', 'Gita Rao'][i] }); }));
+  const prior = function (k) { return Object.assign({}, k, { ibAnswered: Math.round(k.ibAnswered * 0.9), ibMissedFree: Math.round(k.ibMissedFree * 1.1), obTotal: Math.round(k.obTotal * 0.8) }); };
+  const asked = days.slice(-22);                       // ~a month of workdays
+  const gap = asked[10];                               // one workday with no rows
+  const mxShort = days[days.length - 2];               // the data stops a workday early
+  const presentShort = days.filter(function (d) { return d <= mxShort && d !== gap; });
+  const connFor = function (cov, body) {
+    return function () {
+      return { createStatement: function () {
+        return { executeQuery: function (sql) {
+          const j = String(sql).indexOf("'mx'") !== -1 ? JSON.stringify(cov) : JSON.stringify(body);
+          let n = 0;
+          return { next: function () { return n++ === 0; }, getString: function () { return j; }, close: function () {} };
+        }, close: function () {} };
+      }, close: function () {} };
+    };
+  };
+  const realConn = h.ctx.getDashboardNeonConn_;
+  install('admin@ums.com');
+  h.state.cache.clear();
+  h.ctx.getDashboardNeonConn_ = connFor({ mx: mxShort, days: presentShort },
+    { kpis: sumK(csr), agents: csr, kpisPrior: prior(sumK(csr)), deptsPrior: [], coverageStart: days[0] });
+  dump('direct-30d', h.call('getDirectCallReport', { from: asked[0], to: LATEST, department: 'CSR' }));
+  h.state.cache.clear();
+  h.ctx.getDashboardNeonConn_ = connFor({ mx: LATEST, days: days },
+    { kpis: sumK(all), agents: all, kpisPrior: prior(sumK(all)),
+      deptsPrior: [{ dept: 'CSR', ib_answered: 400, ib_missed_free: 60, ib_missed_busy: 30, ob_total: 150 },
+                   { dept: 'Sales', ib_answered: 90, ib_missed_free: 20, ib_missed_busy: 5, ob_total: 40 }],
+      coverageStart: days[0] });
+  dump('direct-all-clean', h.call('getDirectCallReport', { from: asked[0], to: LATEST, department: '' }));
+  dump('direct-meta', { asked: { from: asked[0], to: LATEST }, gap: gap, dataThrough: mxShort });
   h.ctx.getDashboardNeonConn_ = realConn;
 }
 const yStart = iso(new Date(today.getFullYear(), 0, 1));

@@ -87,6 +87,41 @@ const MODALS = [
       ['#ad-outbound-list .cl-call-card', 'outbound call cards'],
       ['#ad-tier-note[style*="none"]', 'NO tier banner on a full-fidelity day'],
     ] } },
+  // D1 (owner 2026-10-21): the Direct Calls report. The company run is clean
+  // (full coverage); the probe then runs CSR, whose fixture data stops a
+  // workday before the asked end and skips one workday mid-window.
+  { name: 'Direct Calls',   btn: '#direct-call-report-btn', sel: '#direct-call-modal',
+    menu: '#reports-menu-btn',
+    run: { click: '#direct-call-generate-btn', wait: 1500, expect: [
+      ['#direct-call-kpi-row .ds-kpi', 'KPI tiles'],
+      ['#direct-call-dept-cards .al-section-title', 'per-department cards (company view)'],
+    ], probe: async function (page, record) {
+      const meta = require('./payloads/direct-meta.json');
+      const P30 = require('./payloads/direct-30d.json');
+      const clean = await page.evaluate(() => { const n = document.getElementById('direct-call-coverage-note');
+        return { none: !n || n.style.display === 'none', chips: document.querySelectorAll('#direct-call-kpi-row .pr-delta').length }; });
+      record('Direct: a fully covered window carries no coverage note and keeps its vs-prior chips', clean.none && clean.chips > 0, JSON.stringify(clean));
+      await page.click('#direct-call-back-btn'); await page.waitForTimeout(300);
+      await page.selectOption('#direct-call-dept', 'CSR');
+      await page.fill('#direct-call-to', meta.asked.to);
+      await page.click('#direct-call-generate-btn'); await page.waitForTimeout(1500);
+      const c = await page.evaluate((who) => {
+        const n = document.getElementById('direct-call-coverage-note');
+        const tr = Array.from(document.querySelectorAll('#direct-call-agent-tbody tr')).find((r) => r.cells[0] && r.cells[0].textContent.trim() === who);
+        return { note: n && n.style.display !== 'none' ? n.textContent : '', to: document.getElementById('direct-call-to').value,
+                 preset: document.getElementById('direct-call-preset').value, date: (document.getElementById('direct-call-results-date') || {}).textContent || '',
+                 split: tr ? Array.from(tr.querySelectorAll('.dc-split')).map((x) => x.textContent) : [],
+                 chips: document.querySelectorAll('#direct-call-kpi-row .pr-delta').length };
+      }, P30.agents[0].agent);
+      record('Direct: an end past the last imported day is corrected -- the note says so and the End date moves back',
+        /data runs through/.test(c.note) && /not been imported/.test(c.note) && c.to === meta.dataThrough && c.preset === 'custom'
+          && c.date.indexOf(meta.dataThrough) !== -1, JSON.stringify({ note: c.note.slice(0, 140), to: c.to, want: meta.dataThrough, date: c.date }));
+      record('Direct: a workday with no data is named, and the vs-prior chips are withheld',
+        /No data for 1 workday/.test(c.note) && /No vs-prior chips/.test(c.note) && c.chips === 0, JSON.stringify({ chips: c.chips, note: c.note.slice(-160) }));
+      const s0 = P30.agents[0].split;
+      record('Direct: each count shows its internal / external split',
+        c.split.length === 5 && c.split[0] === s0.ibAnswered.int + ' int · ' + s0.ibAnswered.ext + ' ext', JSON.stringify(c.split));
+    } } },
 ];
 
 (async () => {
@@ -285,6 +320,23 @@ const MODALS = [
       const hostOpen = await shown(HOST);
       record('UI-1: the host report (Agent Day) is open', hostOpen);
       if (hostOpen) {
+        // Owner 2026-10-21: an admin's outbound cards carry the call id, a copy
+        // button and an OUTBOUND path drill -- and the drill really opens.
+        const obIds = await page.evaluate(() => Array.from(document.querySelectorAll('#ad-outbound-list .cl-call-card')).map((c) => ({
+          num: ((c.querySelector('.pid-num') || {}).textContent || ''), copy: !!c.querySelector('.pid-copy'),
+          kind: (c.querySelector('.pid-journey') || { getAttribute: () => '' }).getAttribute('data-journey-kind') || '' })));
+        record('admin: Agent Day outbound cards show the call id, copy button and an outbound path drill',
+          obIds.length > 0 && obIds.every((r) => /^#\S/.test(r.num) && r.copy && r.kind === 'outbound'), JSON.stringify(obIds));
+        await page.evaluate(() => { window.__HARNESS__.calls.length = 0; });
+        const obPath = page.locator('#ad-outbound-list .cl-call-card .pid-journey').first();
+        if (await obPath.count()) {
+          await obPath.click(); await page.waitForTimeout(700);
+          const asked = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'getCallJourney').map((c) => (c.args[0] || {}).kind));
+          const ovOpen = await shown('#call-journey-overlay');
+          record('admin: the outbound path drill asks for an OUTBOUND journey and opens the overlay',
+            ovOpen && asked.indexOf('outbound') !== -1, JSON.stringify({ open: ovOpen, asked: asked }));
+          if (ovOpen) { await page.keyboard.press('Escape'); await page.waitForTimeout(400); }
+        }
         // (1) Help over the report.
         await page.click('#help-fab'); await page.waitForTimeout(500);
         record('UI-1: Help opens over the report', await shown('#help-modal'));

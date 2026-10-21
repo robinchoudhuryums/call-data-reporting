@@ -1012,6 +1012,7 @@ var PROP_REGISTRY_ = Object.freeze({
     OUTBOUND_VETTING_FROM: 'tool', OUTBOUND_VETTING_TO: 'tool',
     OUTBOUND_VETTING_DEPT: 'tool', OUTBOUND_VETTING_SAMPLE: 'tool',
     OUTBOUND_PROBE_FROM: 'tool', OUTBOUND_PROBE_TO: 'tool',
+    OUTBOUND_MIX_AGENTS: 'tool',   // probeOutboundCallMix: which agents (unset = the top diallers)
     OUTBOUND_SOURCE_FROM: 'tool', OUTBOUND_SOURCE_TO: 'tool',   // Batch C: probeOutboundSourceAgreement window
     OUTBOUND_REVIEW_N: 'tool',
     OB_REVIEW_SS_ID: 'engine',          // #71: self-populating review workbook id

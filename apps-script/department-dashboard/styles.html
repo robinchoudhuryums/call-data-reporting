@@ -1765,6 +1765,9 @@
     align-self: center;
   }
   .side-hint-i:hover, .side-hint-i:focus-visible { color: var(--accent); }
+  /* The glyph IS the glossary's circled-i, so it must not grow a second one
+     on hover (.gloss::after). */
+  .side-hint-i.gloss::after { content: none; }
   .dept-qcd-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
@@ -3652,6 +3655,14 @@
   .agents tbody tr.ap-row:hover { background: transparent; }
   .agents tbody tr.ap-row > td { padding: 0; text-align: left; background: var(--paper);
     border-bottom: 2px solid var(--accent); }
+  /* The panel's slide (apAnimateOpen_ / apAnimateClose_): clipped only while
+     it moves, so the settled .ap keeps its sticky-left. */
+  .agents .ap-clip { display: grid; grid-template-rows: 0fr; opacity: 0;
+    transition: grid-template-rows 220ms var(--ease, ease-out), opacity 180ms var(--ease, ease-out); }
+  .agents .ap-clip > .ap-clip-in { min-height: 0; overflow: hidden; }
+  .agents tr.ap-shown .ap-clip { grid-template-rows: 1fr; opacity: 1; }
+  .agents tr.ap-settled .ap-clip > .ap-clip-in { overflow: visible; }
+  @media (prefers-reduced-motion: reduce) { .agents .ap-clip { transition: none; } }
   .agents .ap { position: sticky; left: 0; box-sizing: border-box; padding: 14px 18px 16px;
     contain: inline-size; text-align: left; white-space: normal; cursor: default; }
   .agents .ap-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -3727,20 +3738,49 @@
      inbound = --accent, outbound = --dir-out. */
   .dept-dir-switch { margin-left: 8px; }
   /* Step 3: the switch is one "Show outbound columns" toggle, so data-dir is
-     'both' or 'in' now and the two 'out' rules below are inert. */
-  body[data-dir="out"] #agents-in-wrap,
+     'both' or 'in' (the 'out' rules were trimmed 2026-10-21). */
   body[data-dir="both"] #agents-in-wrap { display: none; }
-  body[data-dir="out"] #dept-team-rings { display: none !important; }
   .tly.oc { background: var(--dir-out); }
   .tly.ou { background: var(--line); }
   .ob-c { color: var(--dir-out); font-weight: 600; }
   .ob-u { color: var(--muted); }
   .ans-seg.ob-conn { background: var(--dir-out); }
   .ans-seg.ob-unconn { background: var(--line); }
-  .agents-ob thead th.ob-dir-in { box-shadow: inset 0 -2px 0 var(--accent); }
-  .agents-ob thead th.ob-dir-out { box-shadow: inset 0 -2px 0 var(--dir-out); }
-  .agents-ob td.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
+  /* Layout B (owner 2026-10-21): each agent row holds an IN line over an OUT
+     line (obPairCells_); every cell's two lines share one height so they
+     align across the row. The direction keeps its hue (--accent / --dir-out). */
+  .agents-ob td.ob-pair, .agents-ob td.ob-dir-col { padding-top: 4px; padding-bottom: 4px; vertical-align: middle; }
+  .agents-ob .ob-line { min-height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .agents-ob td.ans-bar-cell .ob-line { justify-content: flex-start; }
+  .agents-ob td.ans-bar-cell .ob-line > * { flex: 1 1 auto; min-width: 0; }
+  .agents-ob .ob-line + .ob-line { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
+  .agents-ob .ob-line.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
+  .agents-ob td.ob-dir-col { width: 1%; text-align: left; padding-left: 4px; padding-right: 4px; }
+  .agents-ob .ob-dir-tag { justify-content: flex-start; font: 500 10px/1 var(--mono); letter-spacing: 0.12em; }
+  .agents-ob .ob-dir-tag.ob-dir-in { color: var(--accent); }
+  .agents-ob .ob-dir-tag.ob-dir-out { color: var(--dir-out); }
+  .agents-ob th.ob-pair-th { white-space: nowrap; }
+  .agents-ob .ob-pair-label { display: block; }
+  .agents-ob .ob-sort-picks { display: inline-flex; gap: 4px; margin-top: 3px; }
+  .agents-ob .ob-sort-pick { font: inherit; font-size: 0.92em; padding: 1px 6px; border: 1px solid var(--line);
+    border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; }
+  .agents-ob .ob-sort-pick[data-ob-sort="inRung"], .agents-ob .ob-sort-pick[data-ob-sort="answerRate"],
+  .agents-ob .ob-sort-pick[data-ob-sort="tttSeconds"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .agents-ob .ob-sort-pick[data-ob-sort="obTotal"], .agents-ob .ob-sort-pick[data-ob-sort="obConnectRate"],
+  .agents-ob .ob-sort-pick[data-ob-sort="obTalkSec"] { border-color: color-mix(in srgb, var(--dir-out) 45%, var(--line)); }
+  .agents-ob .ob-sort-pick.is-on { color: var(--ink); background: var(--paper-2); }
+  .agents-ob .ob-sort-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
+  /* D3: the Team Direct Calls side card -- a collapsed, lazy fold. */
+  .dtd-fold > summary.dtd-summary { cursor: pointer; list-style: none; }
+  .dtd-fold > summary.dtd-summary::-webkit-details-marker { display: none; }
+  .dtd-fold > summary.dtd-summary::after { content: '\25BE'; margin-left: 6px; color: var(--muted); }
+  .dtd-fold[open] > summary.dtd-summary::after { content: '\25B4'; }
+  .dtd-fold .dtd-note { margin: 6px 0; font-size: 11.5px; }
+  .dtd-fold .dtd-open { margin-top: 6px; font-size: 12px; }
+  .dtd-fold .trp-empty { color: var(--muted); text-align: left; }
+  /* D1: the Direct Calls report's internal / external split under a count. */
+  .dc-split { font: 400 10.5px/1.3 var(--mono); color: var(--muted); white-space: nowrap; }
   #agents-ob-note { margin: 0 0 8px; }
   @media (max-width: 700px) {
     .agents .ap { padding: 12px 10px 14px; }
@@ -7714,6 +7754,14 @@
   .dts-bars { display: flex; align-items: flex-end; gap: 2px; height: 34px; cursor: crosshair;
     touch-action: pan-y; border-radius: var(--r); }
   .dts-bars:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  /* Option 2 (owner 2026-10-21): the dashed TARGET line on a card with a
+     standard (dtsScale_), in .dts-plot -- never inside .dts-bars, whose
+     children are the bars dtsSelect_ indexes. Off scale, a tag in the date
+     axis replaces it. */
+  .dts-plot { position: relative; }
+  .dts-target { position: absolute; left: -2px; right: -2px; height: 0;
+    border-top: 1.5px dashed var(--ink); opacity: 0.5; pointer-events: none; }
+  .dts-target-off { color: var(--ink-muted); white-space: nowrap; }
   .dts-bar { flex: 1 1 0; min-width: 1px; background: var(--accent); opacity: 0.38;
     border-radius: 1px 1px 0 0; transition: opacity 0.12s ease; }
   .dts-bar.is-watch { background: var(--caution); }

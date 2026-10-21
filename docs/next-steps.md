@@ -29,6 +29,7 @@ batch, items are independent unless marked.
 | ∥ | **Outbound report → My Department** (owner 2026-10-08: managers get the My Department version, not the modal) — G1, G2, G3 IMPLEMENTED (blocks 237-240) | G1 the Insights Callbacks fold (the modal's callback analysis, shared renderers, lazy) · G2 Callbacks by department → an admin-only, lazy Overview section; S48 rewritten · G3 retire the modal: `#/report/outbound` lands on My Department → Outbound with the fold open, the 6c pin re-pointed, drivers off the modal list, S46 + #63 rewritten | dashboard | done (walk S59, S48, S46's pre-release half); the modal is gone; the 6c release is now the gate + the switch + the two Insights folds (#63) |
 | ∥ | **Callback episodes + direct lines** (owner 2026-10-09) — CE-1, CE-2, CE-3 + follow-ons IMPLEMENTED (blocks 241-244) | CE-1 the callback rate counts contact EPISODES, own team and another team kept apart, phone-menu hang-ups out · CE-2 the drill lists (called-back list, call ids, pending + got-through tags) · CE-3 direct-line callbacks (unanswered calls to a person's line, repeat-unreturned-callers list) | dashboard + cdr-import + cdr-report (follow-ons) | done (deploy cdr-import, then cdr-report + re-export, then the dashboard; walk S48, S59, S60); open: managers seeing call ids at 6c |
 | ∥ | **Owner plan 2026-10-16** — Steps 1-5 IMPLEMENTED (PRs #371-#376, blocks 259-step1..step5c) | 1 agent-panel order, brief icons, partial trend month · 2 Overview manager default highlight, agent-panel labels + callback cue · 3 brief accordion, inbound + outbound together, preloading · 4 linked day bars · 5a Notifications page + stricter-only manager layer · 5b coaching release prep · 5c two alert reasons | dashboard (DEPLOY pending; walk S56-S65) | done; the manager layer (#77), coaching (#48) and the reasons (#78) stay admin-only until the owner releases them |
+| ∥ | **Owner round 2026-10-21** — IMPLEMENTED (block 259-owner-1021) | day-bar target line (option 2) · agent table layout B · `probeOutboundCallMix` (#79) · Direct D1 (coverage clamp + gaps + int/ext, `directCall:v5`) · D0 `diagnoseDirectCallCounting` (#80) · D3 Team Direct Calls card | dashboard + cdr-import (DEPLOY pending; walk S57, S62, S67) | done; **D2 implemented 2026-10-21 (block 259-d2-cleanup)** -- not retroactive: re-import the dates the report is read over, sized by D0 (#80) |
 | ∥ | **Broad scan 2026-10-12** — ALL 11 batches + 3b IMPLEMENTED (blocks 246-258, incl. the WS-1 follow-on, block 255) | 11 batches + 3b; full list in the next section | per batch | dashboard + cdr-report + cdr-import deploys (cdr-import re-consent for SEC-7); only the deferred owner rulings remain |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
@@ -708,6 +709,44 @@ the first `probeBriefThresholds` run, Operator State #76):**
 `data-admin-only` from `#ins-brief` and the admin check in `insRenderBrief_`
 + the trend shading, then walk S61. Pinned by `insights-brief.test.js` and
 drive-smoke's UX-2 checks.
+
+**On a wide release, the bottom Insights region should go -- CAREFULLY
+(owner 2026-10-21; checked, not done).** With the accordion active
+(`insBriefActive_`) all six sections (`INS_BRIEF_TARGET_`) move up into
+`#ins-brief`. What stays in `#dept-insights-region` is a shell: the region
+summary, the results header (title, dept pill, date pill, "Comparison &
+agents"), the compare + "Showing:" lines, the notes, the Team insights
+sentences, and an orphan "Team" zone label (dashboard.html, `.ds-zone` before
+the hidden rollup row). It is NOT dead: these still depend on it, so each
+needs a new home or a ruling before the markup goes:
+- **The region's `open` state.** The sync, the page ensure and the dept
+  Refresh re-run read `insReportLive_()` (open region OR the admin brief;
+  fixed 2026-10-21 -- a collapsed region used to freeze the brief on the old
+  window). With the region gone it reduces to "the report is live".
+- **The edit popover** (`#ins-edit-selection-btn`) is the only UI for the
+  comparison mode, a custom prior range (S19) and the agent selection (S37).
+- **The context lines:** the compare line (which prior window), "Showing:",
+  and the dept pill (load-bearing for parent depts: the table above is
+  combined, Insights runs ONE dept -- M3).
+- **Notes the brief does not carry:** the INV-35 length-mismatch warning (S18),
+  the small-sample note, the needs-attention chips, the Team insights
+  sentences (`#ins-team-insights`), the first-run intro card, and
+  `#ins-results-status` (run errors, e.g. the cross-dept refusal).
+- **The loading pane and the failure / empty-roster fallback form**
+  (`insShowForm`, `launcherShowLoading_` on `insights-form`/`insights-results`).
+- **Exports.** Copy image (`insBuildCanvas_`) captures `#insights-results`
+  and Print (`body.ins-printing`) shows only `#dept-insights-region`; since
+  2026-10-21 both put the brief's sections back home for the export
+  (`insBriefHomeIn_` in the clone, `insBriefUnmountAll_` around the print).
+  Without the region they need a new capture root.
+- **Entry points:** `#/report/insights` deep links, the quick-start chips
+  (`launcherOpenInsights_`), `deptInsightsOpen_`'s scroll, the tour's My
+  Department step text ("Scroll to the bottom for the Insights section",
+  script-10-escalations), the admin A/B remote (`#ins-ab-panel`, inside
+  `#insights-page`), the print CSS, and the drivers that open the region
+  (drive-smoke, drive-outbound-e -- grep `dept-insights-region`).
+- **View-as and managers** keep the home layout until the release, so a
+  removal is the release commit itself, never before it.
 
 ## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
 

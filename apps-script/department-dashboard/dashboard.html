@@ -1612,6 +1612,29 @@
             <span id="tob-row-action-desc" class="sr-only">Activate to jump to this agent’s full row in the agent table.</span>
           </div>
         </div>
+        <!-- D3 (owner 2026-10-21): the Direct Calls report's figures for this
+             dept and the page's dates -- the SAME getDirectCallReport the modal
+             runs (admin-only while vetted), so the two can never disagree.
+             Collapsed and LAZY: nothing is fetched until it is opened, then
+             once per dept + window. data-admin-only: View-as hides it. -->
+        <details id="dept-team-direct" class="dept-qcd-snapshot dtd-fold" data-admin-only style="display:none;">
+          <summary class="dept-qcd-header dtd-summary">
+            <strong>Team Direct Calls</strong>
+            <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Calls to and from the agents’ own extensions (not the department queues) in the page’s dates, work window only -- the Direct Calls report’s figures. A ring missed while already on another call is “busy” and left out of the answer rate.">&#9432;</span>
+            <span class="dept-qcd-date" id="tdc-head">open to load</span>
+          </summary>
+          <div id="tdc-note" class="ds-note dtd-note" style="display:none;"></div>
+          <div class="trp-tiles" id="tdc-tiles"></div>
+          <div class="trp-table-wrap">
+            <table class="trp-table">
+              <thead><tr>
+                <th>Agent</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th><th class="trp-num">Out</th>
+              </tr></thead>
+              <tbody id="tdc-tbody"></tbody>
+            </table>
+          </div>
+          <button type="button" class="link-btn dtd-open" id="tdc-open-report">Open the Direct Calls report &#8599;</button>
+        </details>
       </aside>
       </div><!-- /.dept-layout -->
     </section>
@@ -2395,8 +2418,12 @@
           a population distinct from the department-queue (DQE/QCD) metrics. An
           inbound ring <em>missed because the agent was already on another
           call</em> is counted separately (&ldquo;missed (busy)&rdquo;) and
-          <em>excluded</em> from the answer rate. Admin-only while the numbers
-          are being vetted.
+          <em>excluded</em> from the answer rate. Only calls that start inside the
+          work window (8:30 AM&ndash;5:00 PM CST) count. Under each count:
+          <strong>int</strong> = with a coworker (an inbound call from a coworker&rsquo;s
+          extension, an outbound call to an extension on the roster),
+          <strong>ext</strong> = everything else. The end date stops at the last
+          day with imported data. Admin-only while the numbers are being vetted.
         </div>
         <div id="direct-call-form-error" role="status" class="status status-error" style="display:none;"></div>
         <button class="btn" id="direct-call-generate-btn" type="button">Generate report</button>
@@ -2419,7 +2446,7 @@
         <div id="direct-call-unavailable" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128222;</div>
           <div class="empty-state-title">Direct-call data unavailable</div>
-          <div class="empty-state-hint">Couldn&rsquo;t read <code>direct_call_history</code> from Neon. Confirm the import has run since the direct-call build deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, and the <code>script.external_request</code> scope is granted.</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read the direct-call data from Neon (<code>direct_call_history</code>) <em>or</em> from its <code>Direct Call History</code> sheet. Confirm the import has run since the direct-call build deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, the <code>script.external_request</code> scope is granted, and the sheet exists in the CDR Report workbook.</div>
         </div>
 
         <div id="direct-call-empty" class="empty-state" style="display:none;">

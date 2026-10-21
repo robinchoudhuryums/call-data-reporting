@@ -2469,8 +2469,8 @@ When something looks wrong, before assuming a code bug, check:
        any more (G3, owner 2026-10-08: managers get the My Department
        version). Flip `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false`
        AND remove `data-admin-only` + `style="display:none;"` from
-       `#dept-dir-switch` (the My Department Inbound | Outbound | Both switch,
-       Batch D), `#ins-ob-fold` (the Outbound summary, Batch E) and
+       `#dept-dir-switch` (the My Department "Show outbound columns" toggle --
+       the Batch D three-way switch until Step 3), `#ins-ob-fold` (the Outbound summary, Batch E) and
        `#ins-cb-fold` (the Callbacks section, Batch G1) -- both under the
        outbound agent table since UX-1 -- in
        `dashboard.html`. The Overview tiles' outbound line needs no edit:
@@ -3518,3 +3518,46 @@ When something looks wrong, before assuming a code bug, check:
     ("reasons: N checked, M fired"). Preview shows them. Clear a reason by
     saving its boxes blank. Pinned by `tests/unit/alert-reasons.test.js` and
     `drive-notify.js`; walk S65.
+79. **Outbound call mix -- `probeOutboundCallMix` (2026-10-21; dashboard,
+    editor-run, read-only).** Answers "are these agents' outbound calls
+    really customers?" The capture already drops extension-to-extension
+    dials (it keeps only calls to a 10+ digit number), so what can still
+    inflate an agent's placed count is a dial to a COMPANY line, a call
+    forwarded to a COLLEAGUE, the agent's leg of an INBOUND call split under
+    its own root, a MISDIAL and a REDIAL. The tool sorts each call into the
+    first of: company line (the number is one of the last 90 days' inbound
+    dial-in numbers or a `DIAL_IN_LABELS` key, matched through the capture's
+    own HMAC -- needs `HMAC_SECRET` on the dashboard, #18) / colleague (a
+    roster name in the call's path) / inbound twin (an inbound call from the
+    same number within 2 minutes) / misdial (unconnected, rang under 8 s) /
+    redial (more than one attempt, or the same number again within 10
+    minutes) / external. Set `OUTBOUND_MIX_AGENTS` to a comma list of exact
+    roster names (unset = the window's top 10 diallers); the window is
+    `OUTBOUND_PROBE_FROM` / `_TO` (default the 28 days to the latest data).
+    Run it from the editor and read the log: one line per agent with the
+    bucket counts, then up to 5 sample call ids per non-external bucket --
+    paste one into the phone portal to see the number dialled, or use the
+    agent panel's "↳ path" on that day. A high colleague / company-line
+    share is internal traffic counted as outbound; a high misdial / redial
+    share is real dialling that the placed count overstates. The tool
+    writes nothing. Pinned by `tests/unit/outbound-call-mix.test.js`.
+80. **Direct-call re-import sizing -- `diagnoseDirectCallCounting` (D0 / D2,
+    2026-10-21; cdr-import, editor-run, read-only).** D2 changed what the
+    Direct build counts: every roster extension (not just the first), one
+    call per ROOT call (not one per leg), coworker dials logged Internal
+    credited to the caller as internal outbound, anonymous inbound rings
+    kept, dials to an unrostered extension counted internal. It is NOT
+    retroactive -- a date built before the cdr-import deploy keeps the old
+    counts until it is re-imported -- so this tool tells you, for the day
+    currently in `Raw Data`, how much a re-import of a pre-D2 date like it
+    changes: `internalDial`, `secondExtIn` / `secondExtOut`, `anonymousIn`,
+    `sameRootIn` / `sameRootOut` (extra legs now folded into one call),
+    `unrosteredOut`, each with its share of the day's in-window events, the
+    top agents and sample call ids to look up in Raw Data. Run it after an
+    import on three or four days. **Then decide the re-import:** shares
+    under ~1% are not worth one; otherwise re-import the dates the Direct
+    Calls report is read over (CDR Tools -> Manual Export per date, #56 --
+    the Direct block rebuilds the date's `Direct Call History` rows and its
+    Neon mirror). Until then a window spanning the deploy date mixes the two
+    rule sets, and its vs-prior chips compare them. Writes nothing. Pinned
+    by `tests/unit/direct-call-metrics.test.js` (the D2 and D0 blocks).

@@ -377,7 +377,7 @@ S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
 
 S46 | Outbound reaches a manager on My Department (the 6c release) | Subsystem: Department Dashboard
   Steps:
-    - PRE-RELEASE (run this half FIRST, while `OUTBOUND_VETTING_GATE_` is still true). As a non-admin MANAGER, open My Department: there is no Inbound | Outbound | Both switch, and neither the Outbound summary nor the Callbacks section appears under the outbound table (UX-1); the Overview tiles show no outbound line. Paste the deep link `#/report/outbound` into the address bar and reload: a plain My Department landing on Inbound -- no fold, no error toast. In the browser console, call `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getOutboundReport({ from: '<any>', to: '<any>' })`: expect "admin-only while it is being vetted". A manager who CAN see any outbound surface here means the pieces drifted.
+    - PRE-RELEASE (run this half FIRST, while `OUTBOUND_VETTING_GATE_` is still true). As a non-admin MANAGER, open My Department: there is no "Show outbound columns" toggle (`#dept-dir-switch`), and neither the Outbound summary nor the Callbacks section appears under the outbound table (UX-1); the Overview tiles show no outbound line. Paste the deep link `#/report/outbound` into the address bar and reload: a plain My Department landing on Inbound -- no fold, no error toast. In the browser console, call `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getOutboundReport({ from: '<any>', to: '<any>' })`: expect "admin-only while it is being vetted". A manager who CAN see any outbound surface here means the pieces drifted.
     - RELEASE GATE. As the admin, run `backfillOutboundCalls` (cdr-import), then `runOutboundVettingCheck` (dashboard editor) over a window with real abandons. Read the verdict: release ONLY on `ok parity`. INCONCLUSIVE (a zero-abandon window -- true by construction, not a pass), FAILED or MISMATCH all STOP here. Operator State #63 is the full runbook.
     - POST-RELEASE. Flip `OUTBOUND_VETTING_GATE_` to false AND drop `data-admin-only` + `style="display:none;"` from `#dept-dir-switch`, `#ins-ob-fold` and `#ins-cb-fold`, in the SAME commit (cross-file-pins fails on any half alone). Deploy.
     - As a single-dept MANAGER on My Department: the switch now appears. On Outbound the agent table lists ONLY agents on that manager's roster (plus a parent's sub-queue groups), and the note quantifies any off-roster diallers rather than hiding them. The Overview tile for their dept shows the outbound line.
@@ -506,6 +506,8 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
     - Set the window to ONE day and open a row: no strip, the day view directly.
     - (Step 3 #8, prefetch) With the browser's network panel open, rest the pointer on an agent row for a moment WITHOUT clicking: one strip request and one day request go out. Click it: the panel opens on the data with no "Loading days…" and no new request. Tab to a row's name button: the same prefetch.
     - On a phone-width window: the panel fits the screen, the strip scrolls sideways inside it, the page itself does not scroll sideways.
+    - Opening and closing slide smoothly (about a fifth of a second); with the OS "reduce motion" setting on, they snap. While open, scroll the table sideways: the panel stays put on the left.
+    - As the ADMIN, on the Outbound tab each call shows its id (#…), a 📋 copy button and "↳ path"; the path opens that OUTBOUND call's legs (a coworker who took it shows by name). As a manager: no id column.
     - NEGATIVE, in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getAgentDayStrip({ agentName: '<an agent on a dept you do NOT own>', from: '2026-09-01', to: '2026-09-30' })` -> "Not authorized for this department."
   Expected: as described; the selected day's tiles equal that agent's single-day row in My Department.
   Fails if: a click on a group head / subtotal / total row opens a panel; the strip shows a zero-activity day or more than 31 boxes without the note; an uncaptured day reads "0 outbound"; the panel widens the table or the page; a re-sort leaves two panels or an orphaned one; or the export carries any panel text.
@@ -520,6 +522,7 @@ S57 | My Department inbound + outbound together (Batch D; one toggle since Step 
     - View as a manager: the toggle disappears and the page shows the Inbound table. As a real MANAGER: no toggle, Inbound only, even with the columns turned on earlier on that browser.
     - NEGATIVE, as a manager in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getDeptOutboundSummary({ department: '<your dept>', from: '2026-09-01', to: '2026-09-30' })` -> "The Outbound report is admin-only while it is being vetted."
   Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
+    - (Layout B, owner 2026-10-21) Each agent's row shows an IN line over an OUT line -- Calls (handled / not), Rate (answer % / connect %), Talk -- with one bar scale, so a longer OUT bar means more outbound than inbound calls. Under Calls, Rate and Talk, "in" and "out" each sort the table by that line; the header shows which.
   Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table shows alongside the combined one; the panels overlap; a manager sees the toggle or the outbound columns; or anything adds inbound and outbound together.
 
 S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, UX-1) | Subsystem: Department Dashboard
@@ -577,7 +580,9 @@ S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3
     - Trend: compare the named month's rate with the 12-month chart. 12+ points below the previous 3 months' average is Red, 8-12 Amber, 8+ above Green. On the chart's % Answered monthly view, points well off their prior-3-month average are shaded toward green or orange, and the tooltip says by how much.
     - Click each row: its section opens IN PLACE beneath the row (the chevron flips; charts draw at full size); click again: it closes. Keyboard: Tab to a row, Enter / Space toggles it. Nothing scrolls and the outbound columns toggle never changes.
     - Reload: every row is collapsed again (open/closed lasts one page load). Click an agent chip in the Agents section or a day in the Trend calendar: the section it needs opens through its row.
-    - Collapse the Insights region at the bottom of the page and reload: the brief still fills in.
+    - Collapse the Insights region at the bottom of the page and reload: the brief still fills in. With it still collapsed, pick another Quick select window: the brief re-runs for the new window (it used to keep the old one until the region was reopened). Press the page's Refresh: the brief refreshes too.
+    - Export -> Insights "Copy image" and "Print": the image / print shows Queue health, Agents, Team detail and Trend (as they are open or closed in the brief), not just the header; the brief on the page is unchanged afterwards.
+    - Hover the ⓘ beside "Queue Call Data" and "Team Rings Data": one circled i, never two.
     - Switch View as to a manager of the same dept: no brief, the headline banner is back, every section back in the Insights region in the manager's order (Agents open first), no trend-point shading. Exit View as: the brief returns with its rows collapsed.
     - Sign in as a MANAGER: the same as View as -- no brief, headline present, sections in the Insights region with their one-line heads.
   Expected: as described; every coloured row agrees with the section it opens.
@@ -592,6 +597,7 @@ S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
     - On a phone (or with touch): tap a bar to hold its day, tap elsewhere in the cards to let go.
     - Widen to year to date: one bar per MONTH, labelled "Oct 2026 (11 workdays)"; count cards show the per-workday average. Between about 7 weeks and 6 months: one bar per week ("Week of Sep 8 (4 workdays)").
     - Set a one-day window: no bars.
+    - (Option 2, owner 2026-10-21) % Answered and Abandoned % carry a dashed TARGET line (the dept's answer target; 4% abandoned): days below the answer target sit under it, days over 4% abandoned poke above it. A dept far below its target (e.g. 27% vs 80%) shows "target 80% ↑" in the date line instead of a line. Queue calls and Avg answer have no line.
     - View as a manager, and sign in as a MANAGER: no bars.
     - On a phone-width window: the cards go two-up, the bars stay inside them and the page does not scroll sideways.
   Expected: as described; for a parent dept (CSR, Sales, Power) the % Answered bars cover the combined view, crossover agents counted once, so they add up to the card. Weekend or holiday calls stay in the card total but get no bar.
@@ -642,3 +648,18 @@ S66 | Queue figures follow their period: My Department queue chips, Overview aba
     - My Department > Insights (agents not picked): no card for an agent with no calls in the window -- an ex-employee still on the roster, or an agent on two rosters who worked only the other dept's queues. Pick that agent explicitly: their (zero) card appears.
   Expected: as described.
   Fails if: an Overview abandoned chip shows a different day's figure than the window says; a chip has no tooltip; or a whole-dept Insights run shows a 0 / 0 / 0 card.
+
+
+S67 | Direct Calls report covers only days that exist: the clamp, missing workdays, the int / ext split (D1) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, the morning BEFORE yesterday's raw data is uploaded: Reports -> Direct Calls, Last 30 days, a department, Generate. A note reads "The data runs through <the last imported day>, so the report ends there, not on <yesterday> (later days have not been imported yet)"; the End date in the form has moved back to that day and Quick select reads Custom range; the results header names the shorter window.
+    - Upload the day and Generate again (no wait for a cache): the note is gone and the window ends yesterday.
+    - Pick a window that spans a workday the import missed (or a date before direct-call capture began): the note names the workday(s) with no data and says the vs-prior chips are withheld; no KPI tile shows a vs-prior chip. Weekends and company holidays are never listed.
+    - A clean window: no note, and the IB answered / IB answer rate / OB calls tiles carry vs-prior chips.
+    - Every count in the agent table (IB answered, IB missed free, IB missed busy, OB calls, OB connected) shows "N int · M ext" under it; the IB answered and OB calls tiles show the totals' split. The int + ext of a cell add up to its count.
+    - Download CSV: the header carries every split column (IB int/ext answered, missed free, missed busy; OB int/ext calls, connected), and, when clamped or gappy, a line naming the last data day or the missing workdays.
+    - All departments: the per-department cards render; the same note rules apply company-wide.
+    - (D2, after the cdr-import deploy, on a date built since) A coworker-to-coworker dial shows as the caller's OB int call AND the callee's IB int call; a call that rang an agent twice (one parent, two legs) counts once; an anonymous ring to an agent's extension counts as IB ext; a ring on an agent's second roster extension counts for that agent; a dial to a short unrostered extension counts as OB int. Check two of these by call id in Raw Data (`diagnoseDirectCallCounting`'s samples, Operator State #80).
+    - (D3) My Department, as the ADMIN: under Team Outbound, a collapsed "Team Direct Calls" card reads "open to load" and has sent no request. Open it: its figures equal the report's for that dept and dates (answered / missed / busy, answer %, out calls, the int / ext split, the per-agent rows) and it repeats the coverage note. "Open the Direct Calls report" opens the report on that dept and dates. View as a manager, or as a MANAGER: no card.
+  Expected: as described.
+  Fails if: a window ending on a not-yet-imported day shows lower totals with no note; a missing workday is not named, or a weekend / holiday is; vs-prior chips show while a window has a gap; or an int / ext pair does not add up to its count.

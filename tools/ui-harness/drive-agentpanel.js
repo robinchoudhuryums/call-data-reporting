@@ -166,6 +166,30 @@ function record(name, pass, detail) {
   const tabFocused = await page.evaluate(() =>
     !!document.activeElement && document.activeElement.getAttribute('data-ap-tab') === 'out');
   record('the tab keeps focus after it re-renders', tabFocused);
+  // Admin audit aid (owner 2026-10-21): each outbound call carries its id,
+  // a copy button and an OUTBOUND path drill; a manager sees none of them.
+  const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#ap-panel .ap-calls tbody tr')).map((tr) => ({
+    num: ((tr.querySelector('.pid-num') || {}).textContent || ''),
+    copy: !!tr.querySelector('.pid-copy'),
+    kind: ((tr.querySelector('.pid-journey') || { getAttribute: () => '' }).getAttribute('data-journey-kind') || ''),
+  })));
+  record('admin: each outbound call shows its call id, a copy button and an outbound path drill',
+    ids.length > 0 && ids.every((r) => /^#oc-\d/.test(r.num) && r.copy && r.kind === 'outbound'), JSON.stringify(ids));
+  const mgrIds = await page.evaluate(() => {
+    const prev = window.__USER__.role;
+    window.__USER__.role = 'manager';
+    document.querySelector('#ap-panel .ap-tab[data-ap-tab="in"]').click();
+    document.querySelector('#ap-panel .ap-tab[data-ap-tab="out"]').click();
+    const n = document.querySelectorAll('#ap-panel .ap-calls .pid-num, #ap-panel .ap-calls .pid-journey').length;
+    const head = Array.from(document.querySelectorAll('#ap-panel .ap-calls thead th')).map((th) => th.textContent);
+    window.__USER__.role = prev;
+    document.querySelector('#ap-panel .ap-tab[data-ap-tab="in"]').click();
+    document.querySelector('#ap-panel .ap-tab[data-ap-tab="out"]').click();
+    document.querySelector('#ap-panel .ap-tab[data-ap-tab="out"]').focus();
+    return { n: n, head: head };
+  });
+  await page.waitForTimeout(300);
+  record('manager: no call id column on the outbound calls', mgrIds.n === 0 && mgrIds.head.indexOf('Call') === -1, JSON.stringify(mgrIds));
   // UI-1 (broad-scan 2026-10-12): the tabs keyboard model -- arrows move
   // selection AND focus, only the selected tab is in the Tab order.
   await page.keyboard.press('ArrowLeft');
@@ -228,8 +252,28 @@ function record(name, pass, detail) {
   await page.waitForTimeout(800);
   st = await panelState();
   record('Enter on the focused name button opens it again', st.open && st.under === first);
-  await page.click('#ap-panel [data-ap-close]');
-  await page.waitForTimeout(300);
+  // Owner 2026-10-21: the panel slides open and shut. Settled = unclipped
+  // (the inner panel's sticky-left needs it); a closing panel loses its id
+  // at once and leaves the DOM when its slide ends.
+  const settled = await page.evaluate(() => {
+    const r = document.getElementById('ap-panel');
+    const inner = r && r.querySelector('.ap-clip-in');
+    return { shown: !!(r && r.classList.contains('ap-shown')), settled: !!(r && r.classList.contains('ap-settled')),
+             overflow: inner ? getComputedStyle(inner).overflow : null,
+             rows: getComputedStyle(r.querySelector('.ap-clip')).gridTemplateRows };
+  });
+  record('the open panel has slid fully open and is unclipped', settled.shown && settled.settled && settled.overflow === 'visible',
+    JSON.stringify(settled));
+  const closing = await page.evaluate(() => {
+    document.querySelector('#ap-panel [data-ap-close]').click();
+    const ghost = document.querySelector('#agents-tbody tr.ap-row, #agents-ob-tbody tr.ap-row');
+    return { idGone: !document.getElementById('ap-panel'), ghost: !!ghost, inert: !!(ghost && ghost.hasAttribute('inert')),
+             sliding: !!(ghost && !ghost.classList.contains('ap-shown')) };
+  });
+  await page.waitForTimeout(400);
+  const gone = await page.evaluate(() => document.querySelectorAll('tr.ap-row').length);
+  record('Collapse slides the panel shut: detached at once (no id, inert), removed when the slide ends',
+    closing.idGone && closing.ghost && closing.inert && closing.sliding && gone === 0, JSON.stringify({ closing: closing, left: gone }));
   st = await panelState();
   focusOn = await page.evaluate(() => (document.activeElement && document.activeElement.classList.contains('ap-row-toggle')) ? document.activeElement.closest('tr').getAttribute('data-agent') : null);
   record('Collapse closes it and focuses the row\'s name button', !st.open && focusOn === first);

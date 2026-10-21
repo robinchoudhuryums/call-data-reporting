@@ -1239,6 +1239,88 @@ async function visibleErrorTones(page) {
         } else {
           record('admin: Step 3 a brief row opens its section in place under the row (chart drawn, focus kept)', false, 'no trend row');
         }
+        // The brief follows the page's dates even with the bottom region
+        // COLLAPSED (it used to freeze on the old window until reopened).
+        {
+          await page.evaluate(function () {
+            const reg = document.getElementById('dept-insights-region');
+            if (reg) reg.open = false;
+            window.__HARNESS__.calls.length = 0;
+          });
+          await page.waitForTimeout(300);
+          await page.locator('#date-presets .date-preset-chip', { hasText: 'Last 7 days' }).click();
+          await page.waitForTimeout(2500);
+          const fr = await page.evaluate(function () {
+            const f = document.getElementById('from-date').value, t = document.getElementById('to-date').value;
+            const runs = window.__HARNESS__.calls.filter(function (c) { return c.fn === 'getInsightsReport'; })
+              .map(function (c) { return (c.args[0] || {}).from + '..' + (c.args[0] || {}).to; });
+            const reg = document.getElementById('dept-insights-region');
+            return { want: f + '..' + t, runs: runs, regionOpen: !!(reg && reg.open) };
+          });
+          record('admin: the brief re-runs for a new window while the bottom Insights region is collapsed',
+            !fr.regionOpen && fr.runs.indexOf(fr.want) >= 0, JSON.stringify(fr));
+          // Exports show the sections the brief holds: Print moves them home
+          // for the print and back after; Copy image's clone puts them home.
+          const ids = ['ins-agents-fold', 'ins-trend-fold', 'ins-team-detail'];
+          const pr = await page.evaluate(function (ids) {
+            return new Promise(function (resolve) {
+              const realPrint = window.print;
+              window.print = function () {
+                const reg = document.getElementById('dept-insights-region');
+                window.__printSnap = ids.map(function (id) { const el = document.getElementById(id); return !!(el && reg && reg.contains(el)); });
+              };
+              document.querySelector('#dept-export-menu [data-action="ins-print"]').click();
+              setTimeout(function () {
+                window.print = realPrint;
+                const b = document.getElementById('ins-brief');
+                resolve({ atPrint: window.__printSnap || null,
+                          backInBrief: ids.map(function (id) { const el = document.getElementById(id); return !!(el && b && b.contains(el)); }) });
+              }, 400);
+            });
+          }, ids);
+          record('admin: Print shows the brief-held sections, then puts them back in the brief',
+            !!pr.atPrint && pr.atPrint.every(Boolean) && pr.backInBrief.every(Boolean), JSON.stringify(pr));
+          const cp = await page.evaluate(function (ids) {
+            return new Promise(function (resolve) {
+              const real = window.html2canvas;
+              window.html2canvas = function (root, opts) {
+                const doc = document.cloneNode(true);
+                if (opts && opts.onclone) opts.onclone(doc);
+                const res = doc.getElementById(root.id);
+                window.__capSnap = ids.map(function (id) { const el = doc.getElementById(id); return !!(el && res && res.contains(el)); });
+                const c = document.createElement('canvas'); c.width = 1; c.height = 1;
+                return Promise.resolve(c);
+              };
+              document.querySelector('#dept-export-menu [data-action="ins-copy"]').click();
+              setTimeout(function () {
+                window.html2canvas = real;
+                const b = document.getElementById('ins-brief');
+                resolve({ inCapture: window.__capSnap || null,
+                          liveUntouched: ids.map(function (id) { const el = document.getElementById(id); return !!(el && b && b.contains(el)); }) });
+              }, 600);
+            });
+          }, ids);
+          // The side panels' ⓘ is itself the glossary glyph: hovering it must
+          // not append a second one (.gloss::after).
+          const hint = page.locator('#dept-qcd-snapshot .side-hint-i, #dept-team-rings .side-hint-i').first();
+          if (await hint.count()) {
+            await hint.hover({ force: true });
+            const after = await page.evaluate(function () {
+              return Array.from(document.querySelectorAll('.side-hint-i.gloss')).map(function (el) {
+                return getComputedStyle(el, '::after').content;
+              });
+            });
+            record('side-panel info icon shows one circled i on hover, not two',
+              after.length > 0 && after.every(function (c) { return c === 'none' || c === 'normal'; }), JSON.stringify(after));
+          }
+          record('admin: Copy image captures the brief-held sections (the live page is untouched)',
+            !!cp.inCapture && cp.inCapture.every(Boolean) && cp.liveUntouched.every(Boolean), JSON.stringify(cp));
+          await page.evaluate(function () {
+            const reg = document.getElementById('dept-insights-region');
+            if (reg) reg.open = true;
+          });
+          await page.waitForTimeout(800);
+        }
       } else {
         record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
           ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));

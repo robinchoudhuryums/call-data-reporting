@@ -1384,9 +1384,17 @@
   }
   function directCallSetDefaultDates() {
     if ($('direct-call-from') && $('direct-call-from').value) return;
+    // D1: the selected "Last 30 days" preset IS the default, so the label and
+    // the dates agree (they used to disagree: today-30 .. the latest DQE day).
+    // The server clamps the end to the last day with direct-call data anyway.
+    const r = (typeof datePresetRange_ === 'function') ? datePresetRange_('last30') : null;
+    if (r) {
+      if ($('direct-call-from')) $('direct-call-from').value = r.from;
+      if ($('direct-call-to'))   $('direct-call-to').value   = r.to;
+      return;
+    }
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('direct-call-from')) $('direct-call-from').value = directCallIsoOf_(s);
-    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
     if ($('direct-call-to'))   $('direct-call-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
   }
   function directCallApplyPreset() {
@@ -1481,6 +1489,7 @@
     } else if (fbNote) {
       fbNote.style.display = 'none';
     }
+    directCallCoverageNote_(meta);
     const agents = (data && data.agents) || [];
     if (!agents.length) {
       if (body) body.style.display = 'none';
@@ -1498,7 +1507,7 @@
     const tiles = [
       inboundKpiTile_('Agents', fmtNumber(k.agents), 'with direct activity', ''),
       inboundKpiTile_('IB answered', fmtNumber(k.ibAnswered),
-        fmtNumber(k.ibMissedFree) + ' missed (free)',
+        fmtNumber(k.ibMissedFree) + ' missed (free)' + directSplitText_(k.split, 'ibAnswered', ' · '),
         p ? inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false) : ''),
       inboundKpiTile_('IB answer rate', k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—',
         'busy misses excluded', rateDelta,
@@ -1506,7 +1515,7 @@
       inboundKpiTile_('IB missed (busy)', fmtNumber(k.ibMissedBusy), 'excused — on another call', ''),
       inboundKpiTile_('IB ATT', fmtDuration(k.ibAttSec), 'avg talk per answered', ''),
       inboundKpiTile_('OB calls', fmtNumber(k.obTotal),
-        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec),
+        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec) + directSplitText_(k.split, 'obTotal', ' · '),
         p ? inboundDelta_(k.obTotal, p.obTotal, 'pos', false) : ''),
     ];
     const kpiRow = $('direct-call-kpi-row');
@@ -1538,20 +1547,77 @@
     }
   }
 
+  // D1 (owner 2026-10-21): the internal / external split of a count.
+  // Internal = an inbound call a coworker placed (CDR direction Internal), an
+  // outbound call to an extension on the roster; external = everything else.
+  function directSplitHtml_(split, key) {
+    const v = split && split[key];
+    if (!v || !(Number(v.int) + Number(v.ext))) return '';
+    return '<div class="dc-split" title="Internal (a coworker) / external">'
+      + fmtNumber(v.int) + ' int · ' + fmtNumber(v.ext) + ' ext</div>';
+  }
+  function directSplitText_(split, key, lead) {
+    const v = split && split[key];
+    if (!v || !(Number(v.int) + Number(v.ext))) return '';
+    return (lead || '') + fmtNumber(v.int) + ' int / ' + fmtNumber(v.ext) + ' ext';
+  }
+  // D1: what the window actually covers. The server clamps the end to the
+  // last day with data and lists workdays with no rows; say both, and put the
+  // corrected end date back in the form so the next run asks for what exists.
+  function directCallCoverageNote_(meta) {
+    const body = $('direct-call-body');
+    let el = $('direct-call-coverage-note');
+    const parts = [];
+    const short = function (iso) {
+      const p = String(iso || '').split('-');
+      if (p.length !== 3) return String(iso || '');
+      const d = new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12));
+      return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()] + ' '
+        + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()] + ' ' + d.getUTCDate();
+    };
+    if (meta.noDataInRange) {
+      parts.push('No direct-call data in this window yet' + (meta.dataThrough ? ' — the data runs through ' + short(meta.dataThrough) + '.' : '.'));
+    } else if (meta.clampedTo) {
+      parts.push('The data runs through ' + short(meta.dataThrough) + ', so the report ends there, not on '
+        + short(meta.requestedTo) + ' (later days have not been imported yet).');
+      if ($('direct-call-to') && meta.to) $('direct-call-to').value = meta.to;
+      if ($('direct-call-preset')) $('direct-call-preset').value = 'custom';
+    }
+    if (meta.missingCount) {
+      parts.push('No data for ' + meta.missingCount + ' workday' + (meta.missingCount === 1 ? '' : 's') + ' in this window ('
+        + (meta.missingDates || []).slice(0, 6).map(short).join(', ')
+        + (meta.missingCount > 6 ? ', …' : '') + '); its totals leave ' + (meta.missingCount === 1 ? 'that day' : 'those days') + ' out.');
+    }
+    if (meta.priorSuppressed) {
+      parts.push('No vs-prior chips: ' + (meta.missingCount ? 'this window' : 'the prior window') + ' is missing a workday, so the two would not compare fairly.');
+    }
+    if (!parts.length) { if (el) el.style.display = 'none'; return; }
+    if (!el && body) {
+      el = document.createElement('div');
+      el.id = 'direct-call-coverage-note';
+      el.className = 'ds-note dc-coverage-note';
+      el.setAttribute('role', 'status');
+      body.insertBefore(el, body.firstChild);
+    }
+    if (el) { el.textContent = parts.join(' '); el.style.display = ''; }
+  }
+
   // Shared per-agent row template + impact score (flat table AND the C5
   // per-dept expanded tables).
   function directAgentRowHtml_(r) {
     const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
     const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true, 'direct') : '';
+    // D1: each count carries its internal / external split under it.
+    const sp = function (n, key) { return fmtNumber(n) + directSplitHtml_(r.split, key); };
     return '<tr>'
       + '<td>' + escapeHtml(r.agent) + '</td>'
-      + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
-      + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
-      + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
+      + '<td class="num">' + sp(r.ibAnswered, 'ibAnswered') + '</td>'
+      + '<td class="num">' + sp(r.ibMissedFree, 'ibMissedFree') + '</td>'
+      + '<td class="num">' + sp(r.ibMissedBusy, 'ibMissedBusy') + '</td>'
       + '<td class="num' + rateCls + '">' + rateStr + '</td>'
       + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
-      + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
-      + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
+      + '<td class="num">' + sp(r.obTotal, 'obTotal') + '</td>'
+      + '<td class="num">' + sp(r.obConnected, 'obConnected') + '</td>'
       + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
       + '</tr>';
   }
@@ -1629,8 +1695,10 @@
         const rateStr = g.ibAnswerRate != null ? g.ibAnswerRate + '%' : '—';
         const rateCls = g.ibAnswerRate != null
           ? benchValueCls_('% answered', g.ibAnswerRate + '%', true, 'direct').trim() : '';
-        // R11-M: a left-rail tone on the whole dept row keyed on the 92%
-        // answer-rate standard, so a struggling dept reads distinct at a glance.
+        // R11-M: a left-rail tone on the whole dept row keyed on the direct
+        // answer-rate standard (answerTarget_('direct'), admin-tunable; the
+        // global target, else 80, when unset), so a struggling dept reads
+        // distinct at a glance.
         const toneCls = g.ibAnswerRate == null ? 'ddc-tone-muted'
           : (g.ibAnswerRate >= answerTarget_('direct') ? 'ddc-tone-good' : 'ddc-tone-warn');
         // R11-M: delta chips vs the prior window (per-dept). answered/OB up=good,
@@ -1684,13 +1752,21 @@
     lines.push(row(['Direct Calls report', meta.from + ' to ' + meta.to]));
     lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
     lines.push('');
+    if (meta.clampedTo) lines.push(row(['Data runs through', meta.dataThrough, 'asked end', meta.requestedTo]));
+    if (meta.missingCount) lines.push(row(['Workdays with no data', (meta.missingDates || []).join(' ')]));
     lines.push(row(['Agent', 'Dept', 'IB answered', 'IB missed (free)', 'IB missed (busy)',
       'Answer %', 'IB ATT sec', 'OB calls', 'OB connected', 'OB ATT sec',
-      'IB int answered', 'IB ext answered', 'OB int calls', 'OB ext calls']));
+      'IB int answered', 'IB ext answered', 'OB int calls', 'OB ext calls',
+      'IB int missed (free)', 'IB ext missed (free)', 'IB int missed (busy)', 'IB ext missed (busy)',
+      'OB int connected', 'OB ext connected']));
     (d.agents || []).forEach(function (r) {
+      const sp = r.split || {};
+      const g = function (k, side) { return (sp[k] && sp[k][side] != null) ? sp[k][side] : ''; };
       lines.push(row([r.agent, r.dept, r.ibAnswered, r.ibMissedFree, r.ibMissedBusy,
         r.ibAnswerRate != null ? r.ibAnswerRate : '', r.ibAttSec, r.obTotal, r.obConnected, r.obAttSec,
-        r.ibIntAnswered, r.ibExtAnswered, r.obIntTotal, r.obExtTotal]));
+        r.ibIntAnswered, r.ibExtAnswered, r.obIntTotal, r.obExtTotal,
+        g('ibMissedFree', 'int'), g('ibMissedFree', 'ext'), g('ibMissedBusy', 'int'), g('ibMissedBusy', 'ext'),
+        g('obConnected', 'int'), g('obConnected', 'ext')]));
     });
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');

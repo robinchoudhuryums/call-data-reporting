@@ -276,9 +276,15 @@
   // either side is incomplete, or when already in sync. A rendered report
   // re-runs via insApplyWindow_ (the validated shared tail); with nothing
   // rendered yet it just rewrites the inputs.
-  function insSyncToDeptWindow_() {
+  // The report is LIVE when its region is open -- or, for an admin, when the
+  // brief accordion above the agent table shows it: a collapsed region at
+  // the bottom must not freeze the brief on the old window.
+  function insReportLive_() {
     var reg = $('dept-insights-region');
-    if (!reg || !reg.open || !insPageInited_) return;
+    return !!reg && (reg.open || insBriefActive_());
+  }
+  function insSyncToDeptWindow_() {
+    if (!insReportLive_() || !insPageInited_) return;
     if (insLauncherAutoRun_ || insAutoRunPending_) return;
     var df = $('from-date'), dt = $('to-date');
     if (!df || !dt || !df.value || !dt.value) return;
@@ -336,11 +342,10 @@
   // auto-run), converges window/dept (M2/M3 sync), and re-arms any chart
   // created while the page was hidden.
   function deptInsightsEnsureLive_() {
-    var reg = $('dept-insights-region');
     // Step 3: the brief accordion sits ABOVE the agent table and needs the
     // Insights payload, so an admin's page generates it even while the
     // region at the bottom is collapsed.
-    if (!reg || (!reg.open && !insBriefActive_())) return;
+    if (!insReportLive_()) return;
     if (document.body.getAttribute('data-page') !== 'dept') return;
     // Step 3 #8: the Callbacks preload waits for this page (insCbSync_).
     if (typeof insCbSync_ === 'function') insCbSync_();
@@ -2039,6 +2044,20 @@
   }
   function insBriefMounted_(el) {
     return !!(el && el.closest && el.closest('#ins-brief'));
+  }
+  function insBriefMountedEls_() {
+    return Array.prototype.slice.call(document.querySelectorAll('#ins-brief .ins-brief-mounted'));
+  }
+  // Exports: put every brief-mounted section back at its home placeholder in
+  // `doc` (the html2canvas clone) -- the export then shows the report as the
+  // region lays it out, each section in its current open state.
+  function insBriefHomeIn_(doc) {
+    doc.querySelectorAll('#ins-brief .ins-brief-mounted').forEach(function (el) {
+      var ph = doc.querySelector('[data-ins-home="' + el.id + '"]');
+      if (!ph || !ph.parentNode) return;
+      ph.parentNode.insertBefore(el, ph.nextSibling);
+      el.classList.remove('ins-brief-mounted');
+    });
   }
   function insBriefUnmountAll_() {
     Object.keys(INS_BRIEF_MOUNTED_).forEach(function (key) {
@@ -5472,13 +5491,18 @@
     if (insChartInstance) insChartInstance.resize();
     requestAnimationFrame(function () { requestAnimationFrame(function () {
       const canvasMap = {};
-      root.querySelectorAll('canvas').forEach(function (cvs) {
-        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      // The admin brief holds sections OUTSIDE the capture root; their
+      // canvases are snapshotted too, and the clone puts them back home.
+      [root].concat(insBriefMountedEls_()).forEach(function (host) {
+        host.querySelectorAll('canvas').forEach(function (cvs) {
+          canvasMap[cvs.id] = cvs.toDataURL('image/png');
+        });
       });
       try {
       html2canvas(root, {
         scale: 2, useCORS: true, backgroundColor: (THEME.paper || '#f6f7f9'),
         onclone: function (clonedDoc) {
+          insBriefHomeIn_(clonedDoc);
           const btns = clonedDoc.querySelector('#insights-results .ir-action-buttons');
           if (btns) btns.style.display = 'none';
           const metricRow = clonedDoc.getElementById('ins-trend-metric-row');
@@ -5827,9 +5851,15 @@
   function insPrint_() {
     if (insChartInstance) insChartInstance.resize();
     requestAnimationFrame(function () { requestAnimationFrame(function () {
+      // The print CSS shows only the region, so the admin brief's sections
+      // go home for the print (open state kept) and back into the brief after.
+      var mounted = insBriefMountedEls_().length > 0;
+      if (mounted) insBriefUnmountAll_();
       document.body.classList.add('ins-printing');
-      window.print();
-      document.body.classList.remove('ins-printing');
+      try { window.print(); } finally {
+        document.body.classList.remove('ins-printing');
+        if (mounted) insBriefMountAll_();
+      }
     }); });
   }
 
