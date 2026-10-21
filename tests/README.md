@@ -540,7 +540,11 @@ tests/
                               literals decoded from the SQL, inline == bound
                               parity, size packing + oversize fallback --
                               report + R11-M priors + DC-1 fallback
-                              siblings),
+                              siblings; D1 coverage clamp + missing
+                              workdays, the D1b int/ext split, D0's
+                              diagnose counters and D2's counting rules --
+                              root-keyed events, every roster ext,
+                              Internal dials, anonymous callers),
                               heatmap-cell-drill (the R16h dow+slot pair
                               contract), inbound-window-scope (the
                               INBOUND_WORK_WINDOW_PST sweep + its two

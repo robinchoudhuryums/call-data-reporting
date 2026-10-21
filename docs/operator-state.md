@@ -2469,8 +2469,8 @@ When something looks wrong, before assuming a code bug, check:
        any more (G3, owner 2026-10-08: managers get the My Department
        version). Flip `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false`
        AND remove `data-admin-only` + `style="display:none;"` from
-       `#dept-dir-switch` (the My Department Inbound | Outbound | Both switch,
-       Batch D), `#ins-ob-fold` (the Outbound summary, Batch E) and
+       `#dept-dir-switch` (the My Department "Show outbound columns" toggle --
+       the Batch D three-way switch until Step 3), `#ins-ob-fold` (the Outbound summary, Batch E) and
        `#ins-cb-fold` (the Callbacks section, Batch G1) -- both under the
        outbound agent table since UX-1 -- in
        `dashboard.html`. The Overview tiles' outbound line needs no edit:
