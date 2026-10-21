@@ -224,6 +224,29 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (cid) k[cid] = true;
   }
   function dgDigits(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
+  // What an internalDial leg REACHES (owner 2026-10-21: the first run counted
+  // 90% of a day's outbound here -- far more than coworker dials -- so the
+  // counter says what the callee is before anyone acts on the rule).
+  const DGI = { seen: {}, rosterAgent: 0, self: 0, unrosteredExt: 0, outsideNumber: 0, other: 0, talked: 0, callee: {}, ctx: {} };
+  function dgiAdd(cid, callerAgent, calleeAgent, callee, calleeName, ctx, talk) {
+    if (!cid || DGI.seen[cid]) return;
+    DGI.seen[cid] = true;
+    const d = dgDigits(callee);
+    if (calleeAgent && calleeAgent.name === callerAgent.name) DGI.self++;
+    else if (calleeAgent) DGI.rosterAgent++;
+    else if (d && d === String(callee).trim() && d.length < 7) DGI.unrosteredExt++;
+    else if (d.length >= 7) DGI.outsideNumber++;
+    else DGI.other++;
+    if (talk > 0) DGI.talked++;
+    // Rostered callees are named by kind only (agent names stay out of a
+    // tally that is about the OTHER callees); numbers are masked (F-26) and
+    // an outside number's name is dropped (it can be a customer's).
+    const label = calleeAgent ? (calleeAgent.name === callerAgent.name ? '(own extension)' : '(a roster agent)')
+      : (dcMaskPhone_(callee) || '(blank)') + (calleeName && d.length < 7 ? ' "' + dcMaskPhonesInText_(calleeName) + '"' : '');
+    DGI.callee[label] = (DGI.callee[label] || 0) + 1;
+    const c = String(ctx || '').trim() || '(blank)';
+    DGI.ctx[c] = (DGI.ctx[c] || 0) + 1;
+  }
 
   // agent -> { dept, occ:[{cid,s,e}], ib:{cid->ev}, ob:{cid->ev} }
   const A = {};
@@ -283,7 +306,10 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (diagOn && inWindow(startSec)) {
       // a coworker dial logged Internal: D2 credits it to the CALLER as an
       // internal outbound call (pre-D2: only the callee's ib_int saw it).
-      if (dir === 'Internal' && callerAgent && !exclusions.has(callerAgent.name) && !isIncomingCall(cid, parent)) dgAdd('internalDial', callerAgent.name, cid);
+      if (dir === 'Internal' && callerAgent && !exclusions.has(callerAgent.name) && !isIncomingCall(cid, parent)) {
+        dgAdd('internalDial', callerAgent.name, cid);
+        dgiAdd(cid, callerAgent, calleeAgent, callee, dcClean_(r[C.CALLEE_NAME]), r[C.CTX], talk);
+      }
       // a roster agent's SECOND (or later) extension: counted since D2.
       if (firstExt) {
         if (calleeAgent && !firstExt[callee] && !exclusions.has(calleeAgent.name)
@@ -458,7 +484,16 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
 
   const meta = { agents: rows.length, droppedNoStart: droppedNoStart, missedBusyTotal: missedBusyTotal, missedFreeTotal: missedFreeTotal };
   if (collect) meta.samples = samples;
-  if (diagOn) meta.diag = dcDiagSummary_(DG, A, inWindow);
+  if (diagOn) {
+    meta.diag = dcDiagSummary_(DG, A, inWindow);
+    const top = function (o) {
+      return Object.keys(o).map(function (k) { return { v: k, n: o[k] }; })
+        .sort(function (x, y) { return y.n - x.n || (x.v < y.v ? -1 : 1); }).slice(0, 8);
+    };
+    meta.diag.internalDialShape = { rosterAgent: DGI.rosterAgent, self: DGI.self, unrosteredExt: DGI.unrosteredExt,
+      outsideNumber: DGI.outsideNumber, other: DGI.other, talked: DGI.talked,
+      topCallees: top(DGI.callee), topContexts: top(DGI.ctx) };
+  }
   return { rows: rows, meta: meta };
 }
 
@@ -1137,13 +1172,23 @@ function diagnoseDirectCallCounting() {
   const pct = function (n, of) { return of ? Math.round(n / of * 1000) / 10 + '%' : 'n/a'; };
   const line = function (key, what, of, ofLabel) {
     const c = d[key];
-    Logger.log('[direct-diag] %s: %s (%s of %s) -- %s', key, c.total, pct(c.total, of), ofLabel, what);
+    Logger.log('[direct-diag] %s: %s (%s of %s) -- %s', key, String(c.total), pct(c.total, of), ofLabel, what);
     c.agents.slice(0, 5).forEach(function (a) {
-      Logger.log('[direct-diag]   %s: %s  e.g. %s', a.agent, a.n, a.samples.join(', '));
+      Logger.log('[direct-diag]   %s: %s  e.g. %s', a.agent, String(a.n), a.samples.join(', '));
     });
   };
-  Logger.log('[direct-diag] %s: %s in-window inbound direct events, %s outbound (the build counts these).', isoDate || dateStr, ib, ob);
+  Logger.log('[direct-diag] %s: %s in-window inbound direct events, %s outbound (the build counts these).', isoDate || dateStr, String(ib), String(ob));
   line('internalDial', 'coworker dials logged Internal -- since D2 the caller\'s internal outbound call', ob, 'outbound');
+  const sh = d.internalDialShape;
+  if (sh && d.internalDial.total) {
+    const n = d.internalDial.total;
+    Logger.log('[direct-diag]   internalDial reaches: a roster agent %s (%s), the caller\'s own extension %s (%s), an unrostered extension %s (%s), '
+      + 'an outside number %s (%s), blank / a name %s (%s); talked (talk > 0) %s (%s)',
+      String(sh.rosterAgent), pct(sh.rosterAgent, n), String(sh.self), pct(sh.self, n), String(sh.unrosteredExt), pct(sh.unrosteredExt, n),
+      String(sh.outsideNumber), pct(sh.outsideNumber, n), String(sh.other), pct(sh.other, n), String(sh.talked), pct(sh.talked, n));
+    Logger.log('[direct-diag]   internalDial top callees: %s', sh.topCallees.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
+    Logger.log('[direct-diag]   internalDial top contexts: %s', sh.topContexts.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
+  }
   line('secondExtIn', 'inbound rings on an agent\'s second extension -- counted since D2', ib, 'inbound');
   line('secondExtOut', 'dials from an agent\'s second extension -- counted since D2', ob, 'outbound');
   line('anonymousIn', 'inbound direct rings from an anonymous caller -- kept since D2 (external)', ib, 'inbound');

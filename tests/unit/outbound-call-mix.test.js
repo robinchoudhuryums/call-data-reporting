@@ -74,6 +74,10 @@ function fakeConn(rows, dialIns) {
         setString: function (i, v) { b[i] = v; },
         setQueryTimeout: function () {},
         executeQuery: function () {
+          // Apps Script's JDBC counts EVERY '?' in the text as a slot, string
+          // literals included -- the live "Invalid argument" (2026-10-21).
+          const slots = (s.match(/\?/g) || []).length;
+          assert.equal(slots, Object.keys(b).length, 'every ? in the SQL is a bound slot: ' + s.slice(0, 80));
           let n = 0;
           const j = /dial_in_number/.test(s) && !/outbound_calls/.test(s) ? JSON.stringify(dialIns || []) : JSON.stringify(rows);
           return { next: () => n++ === 0, getString: () => j, close() {} };

@@ -5059,7 +5059,10 @@ function probeOutboundCallMix() {
       });
     }
 
-    var tm = function (col) { return "(CASE WHEN " + col + " ~ '^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$' THEN " + col + "::time END)"; };
+    // No '?' anywhere in the SQL text but the bind slots: Apps Script's JDBC
+    // counts one inside a string literal as a parameter too ("Invalid
+    // argument" on the first live run, 2026-10-21) -- so {0,1}, not ?.
+    var tm = function (col) { return "(CASE WHEN " + col + " ~ '^[0-9]{1,2}:[0-9]{2}(:[0-9]{2}){0,1}$' THEN " + col + "::time END)"; };
     var who = agents.length
       ? 'trim(agent_name) IN (' + agents.map(function () { return '?'; }).join(', ') + ')'
       : 'trim(agent_name) IN (SELECT trim(agent_name) FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '

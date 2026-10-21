@@ -622,3 +622,28 @@ test('D0 diagnose: OFF by default, and ON never moves a row', function () {
   assert.equal(off.meta.diag, undefined);
   assert.deepEqual(JSON.parse(JSON.stringify(on.rows)), JSON.parse(JSON.stringify(off.rows)));
 });
+
+// The first live run (2026-10-20) put 90% of a day's outbound in internalDial
+// -- far more than coworker dials -- so the counter says what those Internal
+// legs REACH before anyone acts on the D2 rule (Operator State #80).
+test('D0 diagnose: internalDial says what each Internal leg reaches, masked, with its context', function () {
+  const res = compute(grid([
+    row({ cid: 'R1', start: D + '09:00:00', dir: 'Internal', talk: '0:00:40', callTime: '0:00:40', caller: '101', callee: '102', calleeName: 'Bob', answered: true }),
+    row({ cid: 'S1', start: D + '09:01:00', dir: 'Internal', callTime: '0:00:05', caller: '101', callee: '111' }),
+    row({ cid: 'V1', start: D + '09:02:00', dir: 'Internal', callTime: '0:00:05', caller: '101', callee: '777', calleeName: 'Voicemail', ctx: 'VM' }),
+    row({ cid: 'V2', start: D + '09:03:00', dir: 'Internal', callTime: '0:00:05', caller: '102', callee: '777', calleeName: 'Voicemail', ctx: 'VM' }),
+    row({ cid: 'X1', start: D + '09:04:00', dir: 'Internal', talk: '0:00:10', callTime: '0:00:10', caller: '101', callee: '+15559990000', calleeName: 'Jane Customer', answered: true }),
+    row({ cid: 'B1', start: D + '09:05:00', dir: 'Internal', callTime: '0:00:05', caller: '101', callee: '', calleeName: 'Park' }),
+  ]), D2MAPS, { diagnose: true });
+  const sh = JSON.parse(JSON.stringify(res.meta.diag.internalDialShape));
+  assert.equal(res.meta.diag.internalDial.total, 6);
+  assert.deepEqual([sh.rosterAgent, sh.self, sh.unrosteredExt, sh.outsideNumber, sh.other, sh.talked], [1, 1, 2, 1, 1, 2]);
+  assert.deepEqual(sh.topCallees[0], { v: '777 "Voicemail"', n: 2 }, 'the busiest callee first, with its name');
+  const labels = sh.topCallees.map((t) => t.v);
+  assert.ok(labels.includes('(a roster agent)') && labels.includes('(own extension)'), 'roster callees by kind, not name');
+  assert.ok(labels.includes('…0000'), 'an outside number is masked to its last 4');
+  assert.ok(!labels.some((l) => /Jane/.test(l)), 'an outside number\'s name never reaches the log');
+  assert.deepEqual(sh.topContexts, [{ v: '(blank)', n: 4 }, { v: 'VM', n: 2 }], 'contexts tallied, busiest first');
+  const off = compute(grid([row({ cid: 'R1', start: D + '09:00:00', dir: 'Internal', caller: '101', callee: '102' })]), D2MAPS, {});
+  assert.equal(off.meta.diag, undefined, 'still nothing without diagnose');
+});
