@@ -1420,6 +1420,16 @@ behind the removed button.
   format the QCD side panel's Total Calls tile now uses — one dialect on both
   surfaces. The side panel's MTD view carries delta sub-lines
   (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
+- **Day-bar TARGET LINE (option 2, owner 2026-10-21; admin trial).** The two
+  cards with a STANDARD -- % Ans (the dept's `answerStdFor_` target) and
+  Abandoned % (`ABANDON_STANDARD_`) -- draw their bars on a scale fitted to the
+  days AND the target (`dtsScale_`, pure, literals inside) with a dashed line
+  at the target (`.dts-target`, in `.dts-plot` beside -- never inside --
+  `.dts-bars`, whose children `dtsSelect_` indexes). A target more than twice
+  the days' own spread away (at least 5 pts) would squash the bars, so the
+  scale then fits the days alone and a tag in the date axis says
+  "target 80% ↑" (`.dts-target-off`). A card without a standard keeps the
+  min-to-max heights. Pinned by `day-bars.test.js` and `drive-daybars.js`.
 - **Team strip LINKED DAY BARS (Step 4, owner 2026-10-16; admin trial).**
   `dtsAttachDayBars_` (script-5, end of `renderDeptTeamStrip_`) appends a
   `.dts-daybars` block to each tile that names its figure with
@@ -2248,11 +2258,34 @@ stay pinned by INV-39, INV-53 and INV-06.
   Connect %, talk, average talk per connected call, attempts; per-dept groups
   and subtotals on a parent dept. Both: the inbound bar + Answer % and the
   outbound bar + Connect % + talk on ONE row per agent, never added together.
+  **Layout B (owner 2026-10-21):** in Both, each agent's row stacks an IN line
+  over an OUT line inside every metric cell (`obPairCells_`: Calls · handled /
+  not, Rate, Talk -- In's talk is TTT) behind a direction tag column, still
+  ONE `<tr>` per agent, so sort, the agent panel, subtotals and exports keep
+  their shape. The two bar units are unified (`max(inUnit, obUnit)`, one
+  ladder) so in vs out volume compares by length. Each metric header sorts by
+  either line (`obThPairHtml_`: two real buttons, `data-ob-sort` = `inRung` /
+  `answerRate` / `tttSeconds` and `obTotal` / `obConnectRate` / `obTalkSec`;
+  `aria-sort` on the `<th>`), and the sort handler matches `[data-ob-sort]` on
+  a th OR a button. The direction's hue stays on its line (`.ob-dir-in` /
+  `.ob-dir-out`), not the cell. `drive-deptoutbound.js` pins the shape, the
+  level OUT lines, both sorts and the chips per line.
   Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
   Outbound view and stacks under it in Both (natural height there; the aside
   scrolls rather than the two overlapping). Rows open the inline agent panel
   (`apTbody_` follows the visible table). The choice persists in
   `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
+- **Team Direct Calls, the side card (D3, owner 2026-10-21; admin trial).**
+  `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
+  column: the Direct Calls report's figures for the page's dept and dates,
+  through the report's OWN `getDirectCallReport` (admin-only while vetted), so
+  the card and the report can never disagree -- answered (missed, busy, int /
+  ext), answer % (busy excluded), outbound (int / ext), a per-agent table, the
+  D1 coverage note, and a button that opens the report on the same dept and
+  dates, run (`tdcOpenReport_`). LAZY: nothing is fetched until it is opened,
+  then once per dept + window (`TDC_.key`, seq-guarded); `tdcSync_` rides
+  `obViewSync_`, so it follows every render. `data-admin-only` plus
+  `tdcActive_` (admin, not View-as). Pinned by `drive-deptoutbound.js`.
 - **Outbound on the Overview tiles and under the outbound table (owner 2026-10, Batch E; moved by UX-1).**
   Both admin-only until the 6c release. **Tiles (E2):** `ovBuildOutboundLine_`
   (script-3) adds one violet line (`.ov-dir-pill` "Outbound", Placed, Conn +

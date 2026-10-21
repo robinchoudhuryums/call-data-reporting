@@ -522,6 +522,7 @@ S57 | My Department inbound + outbound together (Batch D; one toggle since Step 
     - View as a manager: the toggle disappears and the page shows the Inbound table. As a real MANAGER: no toggle, Inbound only, even with the columns turned on earlier on that browser.
     - NEGATIVE, as a manager in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getDeptOutboundSummary({ department: '<your dept>', from: '2026-09-01', to: '2026-09-30' })` -> "The Outbound report is admin-only while it is being vetted."
   Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
+    - (Layout B, owner 2026-10-21) Each agent's row shows an IN line over an OUT line -- Calls (handled / not), Rate (answer % / connect %), Talk -- with one bar scale, so a longer OUT bar means more outbound than inbound calls. Under Calls, Rate and Talk, "in" and "out" each sort the table by that line; the header shows which.
   Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table shows alongside the combined one; the panels overlap; a manager sees the toggle or the outbound columns; or anything adds inbound and outbound together.
 
 S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, UX-1) | Subsystem: Department Dashboard
@@ -596,6 +597,7 @@ S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
     - On a phone (or with touch): tap a bar to hold its day, tap elsewhere in the cards to let go.
     - Widen to year to date: one bar per MONTH, labelled "Oct 2026 (11 workdays)"; count cards show the per-workday average. Between about 7 weeks and 6 months: one bar per week ("Week of Sep 8 (4 workdays)").
     - Set a one-day window: no bars.
+    - (Option 2, owner 2026-10-21) % Answered and Abandoned % carry a dashed TARGET line (the dept's answer target; 4% abandoned): days below the answer target sit under it, days over 4% abandoned poke above it. A dept far below its target (e.g. 27% vs 80%) shows "target 80% ↑" in the date line instead of a line. Queue calls and Avg answer have no line.
     - View as a manager, and sign in as a MANAGER: no bars.
     - On a phone-width window: the cards go two-up, the bars stay inside them and the page does not scroll sideways.
   Expected: as described; for a parent dept (CSR, Sales, Power) the % Answered bars cover the combined view, crossover agents counted once, so they add up to the card. Weekend or holiday calls stay in the card total but get no bar.
@@ -657,5 +659,6 @@ S67 | Direct Calls report covers only days that exist: the clamp, missing workda
     - Every count in the agent table (IB answered, IB missed free, IB missed busy, OB calls, OB connected) shows "N int · M ext" under it; the IB answered and OB calls tiles show the totals' split. The int + ext of a cell add up to its count.
     - Download CSV: the header carries every split column (IB int/ext answered, missed free, missed busy; OB int/ext calls, connected), and, when clamped or gappy, a line naming the last data day or the missing workdays.
     - All departments: the per-department cards render; the same note rules apply company-wide.
+    - (D3) My Department, as the ADMIN: under Team Outbound, a collapsed "Team Direct Calls" card reads "open to load" and has sent no request. Open it: its figures equal the report's for that dept and dates (answered / missed / busy, answer %, out calls, the int / ext split, the per-agent rows) and it repeats the coverage note. "Open the Direct Calls report" opens the report on that dept and dates. View as a manager, or as a MANAGER: no card.
   Expected: as described.
   Fails if: a window ending on a not-yet-imported day shows lower totals with no note; a missing workday is not named, or a weekend / holiday is; vs-prior chips show while a window has a gap; or an int / ext pair does not add up to its count.

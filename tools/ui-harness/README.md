@@ -77,7 +77,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
   Since 2026-10-21 also the open / close slide (settled = unclipped, a
   closing panel detached at once) and the admin-only outbound call ids.
-- `drive-daybars.js` — the team cards' **linked day bars** (Step 4): one
+- `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
+  Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
   it also checks the Queue calls and Abandoned % cards' vs-prior chips.
 - `drive-notify.js` — the **Notifications** page: sentence rules, History,
@@ -85,7 +86,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
   manager email (Step 5b); the alert reasons' sentences and Preview rows
   (Step 5c).
-- `drive-deptoutbound.js` — the My Department **outbound columns** toggle (on
+- `drive-deptoutbound.js` — (since 2026-10-21 also layout B -- an IN line
+  over an OUT line per agent, level lines, per-line sorts -- and the D3 Team
+  Direct Calls card: lazy, one request per window, the coverage note, the
+  report button, absent for a manager) the My Department **outbound columns** toggle (on
   by default since Step 3; it replaced the Inbound | Outbound | Both switch)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
@@ -124,7 +128,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-admin.js` — eight **modals** (Alerts, Outlier Fix, Dept Config,
   Access Control, System Health, Caller Lookup, Coaching, and the Agent Day
   report, run past its setup form -- whose outbound cards must carry an admin's
-  call id and an OUTBOUND path drill that opens; the Outbound modal is retired, G3) and the **Escalations
+  call id and an OUTBOUND path drill that opens; and, since D1, the Direct
+  Calls report -- a clean company run with its chips, then a clamped + gappy
+  dept run: the coverage note, the corrected End date, no chips, the int / ext
+  split; the Outbound modal is retired, G3) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and

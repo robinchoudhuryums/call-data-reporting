@@ -852,7 +852,23 @@ date's sheet rows as contiguous blocks rather than one `deleteRow` per row
 surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
 (ONE json_build_object round-trip; answer rate EXCLUDES the busy
 carve-out; cached `directCall:v5` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
-the client delta chips). **TEMPORARILY admin-only while the carve-out
+the client delta chips). **D1 (2026-10-21): the report covers only days that
+exist** -- a coverage read first (`max(call_date)` + the dates with rows), the
+window CLAMPED to the last date with data (`meta.to`, the asked end in
+`meta.requestedTo`), every workday (no weekends / company holidays) with no
+row for ANY dept listed (`meta.missingDates`, company-wide on purpose: one
+dept with no direct calls on a day is normal), the prior comparison DROPPED
+when either window has a gap (`meta.priorSuppressed`), and a clamped or
+gappy payload never cached; the sheet fallback applies the same rule from its
+own dates (`dcCoverage_` / `dcApplyCoverageMeta_`, shared). Every figure
+carries its internal / external split (`kpis.split`, `agents[].split`):
+internal = an inbound call whose CDR direction is Internal, an outbound dial
+to a ROSTERED extension; external = everything else, including (for now) a
+dial to an unrostered extension. **D0** (`diagnoseDirectCallCounting`,
+Operator State #80) sizes the build's suspected counting gaps before any fix
+(D2) -- an opt-in diagnose pass inside `computeDirectCallMetrics`, never a
+copied rule set. **D3:** the same endpoint feeds My Department's Team Direct
+Calls card (client-ui-conventions). **TEMPORARILY admin-only while the carve-out
 numbers are vetted** (the Inbound-report model: latent per-dept manager
 path; release = a one-line gate removal in `directCallResolveRequest_` +
 un-hiding the `data-admin-only` tab). **Neon-down degrades to the SHEET
