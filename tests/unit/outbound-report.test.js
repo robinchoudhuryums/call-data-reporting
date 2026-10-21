@@ -2216,13 +2216,13 @@ test('probe: the window reports whether it was ANCHORED to the data', function (
   // dates as an anchor that happens to land on yesterday, so a silent anchor
   // failure is invisible without this -- and the anchor exists precisely to
   // stop the window covering days with no data. Pinned in source across all
-  // four tools, since the probe suite mocks the connection and never runs
-  // the anchor query.
+  // five tools (probeOutboundCallMix joined 2026-10-21), since the probe
+  // suite mocks the connection and never runs the anchor query.
   const sites = OB_SRC.match(/anchoredToData: !!win\.anchoredTo/g) || [];
-  assert.equal(sites.length, 4,
-    'all four outbound tools must disclose it, got ' + sites.length);
+  assert.equal(sites.length, 5,
+    'all five outbound tools must disclose it, got ' + sites.length);
   const anchors = OB_SRC.match(/anchor = obProbeAnchorDate_\(conn\)/g) || [];
-  assert.equal(anchors.length, 4, 'and each must capture the anchor it resolved');
+  assert.equal(anchors.length, 5, 'and each must capture the anchor it resolved');
   assert.match(OB_SRC, /anchored to the latest data/,
     'the human-readable label must say so too');
 });

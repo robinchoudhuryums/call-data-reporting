@@ -3518,3 +3518,26 @@ When something looks wrong, before assuming a code bug, check:
     ("reasons: N checked, M fired"). Preview shows them. Clear a reason by
     saving its boxes blank. Pinned by `tests/unit/alert-reasons.test.js` and
     `drive-notify.js`; walk S65.
+79. **Outbound call mix -- `probeOutboundCallMix` (2026-10-21; dashboard,
+    editor-run, read-only).** Answers "are these agents' outbound calls
+    really customers?" The capture already drops extension-to-extension
+    dials (it keeps only calls to a 10+ digit number), so what can still
+    inflate an agent's placed count is a dial to a COMPANY line, a call
+    forwarded to a COLLEAGUE, the agent's leg of an INBOUND call split under
+    its own root, a MISDIAL and a REDIAL. The tool sorts each call into the
+    first of: company line (the number is one of the last 90 days' inbound
+    dial-in numbers or a `DIAL_IN_LABELS` key, matched through the capture's
+    own HMAC -- needs `HMAC_SECRET` on the dashboard, #18) / colleague (a
+    roster name in the call's path) / inbound twin (an inbound call from the
+    same number within 2 minutes) / misdial (unconnected, rang under 8 s) /
+    redial (more than one attempt, or the same number again within 10
+    minutes) / external. Set `OUTBOUND_MIX_AGENTS` to a comma list of exact
+    roster names (unset = the window's top 10 diallers); the window is
+    `OUTBOUND_PROBE_FROM` / `_TO` (default the 28 days to the latest data).
+    Run it from the editor and read the log: one line per agent with the
+    bucket counts, then up to 5 sample call ids per non-external bucket --
+    paste one into the phone portal to see the number dialled, or use the
+    agent panel's "↳ path" on that day. A high colleague / company-line
+    share is internal traffic counted as outbound; a high misdial / redial
+    share is real dialling that the placed count overstates. The tool
+    writes nothing. Pinned by `tests/unit/outbound-call-mix.test.js`.
