@@ -143,6 +143,15 @@ async function openDept(page, meta) {
         return tops.length > 1 && Math.max.apply(null, tops) - Math.min.apply(null, tops) <= 2;
       }) };
   });
+  // One scale: a block means the same number of calls on both lines, so the
+  // fixture's far smaller outbound volume draws far shorter OUT bars (on
+  // separate scales both maxima would sit near the cap).
+  const scale = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
+    const blocks = (sel) => Math.max.apply(null, rows.map((r) => { const l = r.querySelector('td.ans-bar-cell > ' + sel); return l ? l.querySelectorAll('.tly').length : 0; }));
+    return { inMax: blocks('.ob-line.ob-dir-in'), outMax: blocks('.ob-line.ob-dir-out') };
+  });
+  record('layout B: IN and OUT bars share one scale (the smaller volume draws shorter)', scale.inMax > 0 && scale.outMax > 0 && scale.outMax * 2 < scale.inMax, JSON.stringify(scale));
   record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
     bothRow.cells === 5 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
 
