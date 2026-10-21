@@ -177,7 +177,15 @@ function tileLines() {
         const el = document.createElement('span'); el.style.color = 'var(' + token + ')';
         document.body.appendChild(el); const c = getComputedStyle(el).color; el.remove(); return c;
       };
-      const out = { caution: probe('--caution'), bad: probe('--bad'), good: probe('--good'), tiles: {} };
+      const out = { caution: probe('--caution'), bad: probe('--bad'), good: probe('--good'), tiles: {}, probeAmber: null };
+      // Whether the fixture holds a 1-3 month today depends on the run date
+      // (its MTD window moves), so the amber COLOUR is also measured on a
+      // probe chip placed inside a real tile -- same CSS context, any date.
+      const host = document.querySelector('.ov-dept-tile[data-dept] .ov-qcd-flag');
+      if (host && host.parentNode) {
+        const pc = document.createElement('span'); pc.className = 'ov-qcd-flag ov-qcd-viol-low'; pc.textContent = '2 viol MTD';
+        host.parentNode.appendChild(pc); out.probeAmber = getComputedStyle(pc).color; pc.remove();
+      }
       document.querySelectorAll('.ov-dept-tile[data-dept]').forEach(function (t) {
         const c = Array.from(t.querySelectorAll('.ov-qcd-flag')).filter(function (x) { return /viol MTD/.test(x.textContent); })[0];
         if (c) out.tiles[t.getAttribute('data-dept')] = { cls: c.className, color: getComputedStyle(c).color, text: c.textContent.trim() };
@@ -191,8 +199,9 @@ function tileLines() {
       tops.length > 0 && wrong.length === 0, wrong.map((d) => d.name + ' ' + d.qcd.violationsMtd + ' ' + JSON.stringify(vchips.tiles[d.name])).join(' | ') || tops.length + ' tiles');
     const amber = tops.filter((d) => { const n = Number(d.qcd.violationsMtd) || 0; return n > 0 && n <= 3; });
     record('QD-3: an amber "viol MTD" chip is drawn in --caution, not a red',
-      amber.length > 0 && amber.every((d) => vchips.tiles[d.name] && vchips.tiles[d.name].color === vchips.caution && vchips.tiles[d.name].color !== vchips.bad),
-      JSON.stringify({ amber: amber.map((d) => d.name + ':' + d.qcd.violationsMtd), caution: vchips.caution, bad: vchips.bad,
+      vchips.probeAmber === vchips.caution && vchips.probeAmber !== vchips.bad
+        && amber.every((d) => vchips.tiles[d.name] && vchips.tiles[d.name].color === vchips.caution),
+      JSON.stringify({ probe: vchips.probeAmber, amber: amber.map((d) => d.name + ':' + d.qcd.violationsMtd), caution: vchips.caution, bad: vchips.bad,
         seen: amber.map((d) => vchips.tiles[d.name] && vchips.tiles[d.name].color) }));
     await pv.close();
   }
