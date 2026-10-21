@@ -13,6 +13,10 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-21 (2) -- Owner round IMPLEMENTED (block 259-owner-1021).** Direct D1 (the report clamps to the last imported day + corrects the End date, names missing workdays, withholds vs-prior chips on a gap, shows int / ext on every count; `directCall:v5`), D0 (`diagnoseDirectCallCounting`, Operator State #80), D3 (Team Direct Calls side card), the day-bar target line (option 2), agent table layout B, `probeOutboundCallMix` (#79). 2633 tests, 22 bites, ci:ui green. NET 1 - 1 = 0 (D1's extra round trip is the new failure mode).
+  **Owner-side:** deploy the dashboard AND cdr-import; walk S57, S62, S67; run `diagnoseDirectCallCounting` on 3-4 days and report the shares (D2 is scoped from them); optionally run `probeOutboundCallMix`.
+  **Waiting on the owner:** D2 (the Direct capture fixes -- re-import per fix), a ruling if the outbound mix shows internal traffic.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn with the earlier 2026-10-21 commits; NO PR yet (owner to say).
 - **2026-10-21 -- BRF-1 / BRF-2 / ICON-1 / QD-3b fixed; APN-1 / APN-2 built (block 259-brief-exports-panel).** The admin brief no longer freezes with the bottom Insights region collapsed (`insReportLive_`); Insights Copy image + Print include the brief's sections; the side panels' ⓘ shows once; the agent panel slides; admins see each outbound call's id + copy + outbound path (Outbound tab and Agent Day cards); the QD-3 amber check no longer depends on the run date (it was red on main). 2615 tests, 11/11 bites, ci:ui green.
   **Owner-side:** deploy the dashboard; walk S56, S61.
   **Awaiting owner:** Direct Calls Report plan (D0 probe / D1 dashboard guard + int-ext / D2 capture fixes / D3 My Department) -- audit in the block's follow-ons; the outbound classification probe; table layout B or C (mocks: https://claude.ai/artifact/PJvnqUpQJ2tmZ1Z89pZJax); the day-bar target line.
