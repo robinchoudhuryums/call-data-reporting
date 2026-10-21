@@ -709,6 +709,44 @@ the first `probeBriefThresholds` run, Operator State #76):**
 + the trend shading, then walk S61. Pinned by `insights-brief.test.js` and
 drive-smoke's UX-2 checks.
 
+**On a wide release, the bottom Insights region should go -- CAREFULLY
+(owner 2026-10-21; checked, not done).** With the accordion active
+(`insBriefActive_`) all six sections (`INS_BRIEF_TARGET_`) move up into
+`#ins-brief`. What stays in `#dept-insights-region` is a shell: the region
+summary, the results header (title, dept pill, date pill, "Comparison &
+agents"), the compare + "Showing:" lines, the notes, the Team insights
+sentences, and an orphan "Team" zone label (dashboard.html, `.ds-zone` before
+the hidden rollup row). It is NOT dead: these still depend on it, so each
+needs a new home or a ruling before the markup goes:
+- **The region's `open` state gates the brief.** `insSyncToDeptWindow_` and
+  the dept Refresh handler (script-2-chrome) return early while the region is
+  collapsed, so an admin who collapses it gets a brief stuck on the old window
+  until they reopen it (a live defect in the trial today). Re-gate both on
+  `reg.open || insBriefActive_()` (or drop the region check) first.
+- **The edit popover** (`#ins-edit-selection-btn`) is the only UI for the
+  comparison mode, a custom prior range (S19) and the agent selection (S37).
+- **The context lines:** the compare line (which prior window), "Showing:",
+  and the dept pill (load-bearing for parent depts: the table above is
+  combined, Insights runs ONE dept -- M3).
+- **Notes the brief does not carry:** the INV-35 length-mismatch warning (S18),
+  the small-sample note, the needs-attention chips, the Team insights
+  sentences (`#ins-team-insights`), the first-run intro card, and
+  `#ins-results-status` (run errors, e.g. the cross-dept refusal).
+- **The loading pane and the failure / empty-roster fallback form**
+  (`insShowForm`, `launcherShowLoading_` on `insights-form`/`insights-results`).
+- **Exports.** Copy image (`insBuildCanvas_`) captures `#insights-results`
+  and Print (`body.ins-printing`) shows only `#dept-insights-region`, so
+  for an admin both already MISS the six moved sections (a live trial
+  defect). They must be retargeted at the brief.
+- **Entry points:** `#/report/insights` deep links, the quick-start chips
+  (`launcherOpenInsights_`), `deptInsightsOpen_`'s scroll, the tour's My
+  Department step text ("Scroll to the bottom for the Insights section",
+  script-10-escalations), the admin A/B remote (`#ins-ab-panel`, inside
+  `#insights-page`), the print CSS, and the drivers that open the region
+  (drive-smoke, drive-outbound-e -- grep `dept-insights-region`).
+- **View-as and managers** keep the home layout until the release, so a
+  removal is the release commit itself, never before it.
+
 ## Rulings round — the 2026-10-01 scan's deferred items (owner, 2026-10-02)
 
 Nine items were held for an owner ruling. The rulings, and the batches they
