@@ -169,6 +169,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       if (spanDays(req) <= 2) return P[sales ? 'insights-day-sales' : 'insights-day'];
       return P[sales ? 'insights-sales' : 'insights'];
     },
+    // D1: the Direct Calls report -- a dept run is clamped + gappy, the
+    // company run is clean (its prior chips render).
+    getDirectCallReport: function (req) { return P[(req && req.department) ? 'direct-30d' : 'direct-all-clean']; },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },
     getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1, linked: 1 }; },   // ESC-L1: one open linked copy

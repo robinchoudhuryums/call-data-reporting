@@ -2395,8 +2395,12 @@
           a population distinct from the department-queue (DQE/QCD) metrics. An
           inbound ring <em>missed because the agent was already on another
           call</em> is counted separately (&ldquo;missed (busy)&rdquo;) and
-          <em>excluded</em> from the answer rate. Admin-only while the numbers
-          are being vetted.
+          <em>excluded</em> from the answer rate. Only calls that start inside the
+          work window (8:30 AM&ndash;5:00 PM CST) count. Under each count:
+          <strong>int</strong> = with a coworker (an inbound call from a coworker&rsquo;s
+          extension, an outbound call to an extension on the roster),
+          <strong>ext</strong> = everything else. The end date stops at the last
+          day with imported data. Admin-only while the numbers are being vetted.
         </div>
         <div id="direct-call-form-error" role="status" class="status status-error" style="display:none;"></div>
         <button class="btn" id="direct-call-generate-btn" type="button">Generate report</button>
@@ -2419,7 +2423,7 @@
         <div id="direct-call-unavailable" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128222;</div>
           <div class="empty-state-title">Direct-call data unavailable</div>
-          <div class="empty-state-hint">Couldn&rsquo;t read <code>direct_call_history</code> from Neon. Confirm the import has run since the direct-call build deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, and the <code>script.external_request</code> scope is granted.</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read the direct-call data from Neon (<code>direct_call_history</code>) <em>or</em> from its <code>Direct Call History</code> sheet. Confirm the import has run since the direct-call build deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, the <code>script.external_request</code> scope is granted, and the sheet exists in the CDR Report workbook.</div>
         </div>
 
         <div id="direct-call-empty" class="empty-state" style="display:none;">

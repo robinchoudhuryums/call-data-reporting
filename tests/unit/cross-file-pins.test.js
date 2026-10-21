@@ -740,7 +740,6 @@ const DRIVER_MODAL_EXEMPT = {
   // reaches managers with no rendered coverage at all. The driver goes in
   // BEFORE the release, not after it.
   'inbound-modal':     'report modal — admin-only while vetted; no harness fixture yet',
-  'direct-call-modal': 'report modal — admin-only while vetted; no harness fixture yet',
 };
 
 test('F1: every modal route in the router is driven by drive-admin.js or documented as exempt', function () {

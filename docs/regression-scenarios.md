@@ -646,3 +646,16 @@ S66 | Queue figures follow their period: My Department queue chips, Overview aba
     - My Department > Insights (agents not picked): no card for an agent with no calls in the window -- an ex-employee still on the roster, or an agent on two rosters who worked only the other dept's queues. Pick that agent explicitly: their (zero) card appears.
   Expected: as described.
   Fails if: an Overview abandoned chip shows a different day's figure than the window says; a chip has no tooltip; or a whole-dept Insights run shows a 0 / 0 / 0 card.
+
+
+S67 | Direct Calls report covers only days that exist: the clamp, missing workdays, the int / ext split (D1) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, the morning BEFORE yesterday's raw data is uploaded: Reports -> Direct Calls, Last 30 days, a department, Generate. A note reads "The data runs through <the last imported day>, so the report ends there, not on <yesterday> (later days have not been imported yet)"; the End date in the form has moved back to that day and Quick select reads Custom range; the results header names the shorter window.
+    - Upload the day and Generate again (no wait for a cache): the note is gone and the window ends yesterday.
+    - Pick a window that spans a workday the import missed (or a date before direct-call capture began): the note names the workday(s) with no data and says the vs-prior chips are withheld; no KPI tile shows a vs-prior chip. Weekends and company holidays are never listed.
+    - A clean window: no note, and the IB answered / IB answer rate / OB calls tiles carry vs-prior chips.
+    - Every count in the agent table (IB answered, IB missed free, IB missed busy, OB calls, OB connected) shows "N int · M ext" under it; the IB answered and OB calls tiles show the totals' split. The int + ext of a cell add up to its count.
+    - Download CSV: the header carries every split column (IB int/ext answered, missed free, missed busy; OB int/ext calls, connected), and, when clamped or gappy, a line naming the last data day or the missing workdays.
+    - All departments: the per-department cards render; the same note rules apply company-wide.
+  Expected: as described.
+  Fails if: a window ending on a not-yet-imported day shows lower totals with no note; a missing workday is not named, or a weekend / holiday is; vs-prior chips show while a window has a gap; or an int / ext pair does not add up to its count.
