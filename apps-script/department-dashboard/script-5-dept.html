@@ -4443,8 +4443,122 @@
    * change): decide which table shows, fetch the outbound summary for the
    * page's loaded window when it is not already held, and paint.
    */
+  // ── D3 (owner 2026-10-21): Team Direct Calls, the side card ─────────────
+  // The Direct Calls report for THIS dept over the page's window, through the
+  // report's own endpoint (admin-only while vetted). Collapsed + lazy: fetched
+  // only once the card is open, then once per dept + window (TDC_.key); a
+  // reply for an older key is dropped (seq). Admins only, never View-as.
+  var TDC_ = { key: null, data: null, error: null, loading: false, seq: 0, wired: false };
+  function tdcActive_() {
+    return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
+      && document.body.getAttribute('data-view-as') !== 'manager';
+  }
+  function tdcKey_() {
+    var m = state.meta || {};
+    var dept = getRequestedDept();
+    return (dept && m.from && m.to) ? dept + '|' + m.from + '|' + m.to : null;
+  }
+  function tdcSync_() {
+    var el = $('dept-team-direct');
+    if (!el || !tdcActive_()) return;
+    if (!TDC_.wired) {
+      TDC_.wired = true;
+      el.addEventListener('toggle', function () { if (el.open) tdcFetch_(); });
+      var ob = $('tdc-open-report');
+      if (ob) ob.addEventListener('click', tdcOpenReport_);
+    }
+    var key = tdcKey_();
+    if (key !== TDC_.key) {
+      TDC_.key = key; TDC_.data = null; TDC_.error = null; TDC_.loading = false; TDC_.seq++;
+      if (!el.open) { tdcRender_(); return; }
+    }
+    if (el.open) tdcFetch_(); else tdcRender_();
+  }
+  function tdcFetch_() {
+    var key = tdcKey_();
+    if (!key) return;
+    if (TDC_.key !== key) { TDC_.key = key; TDC_.data = null; TDC_.error = null; TDC_.loading = false; }
+    if (TDC_.data || TDC_.error || TDC_.loading) { tdcRender_(); return; }
+    var p = key.split('|');
+    var tok = ++TDC_.seq;
+    TDC_.loading = true;
+    tdcRender_();
+    google.script.run
+      .withSuccessHandler(function (d) {
+        if (tok !== TDC_.seq) return;
+        TDC_.loading = false; TDC_.data = d || null;
+        tdcRender_();
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== TDC_.seq) return;
+        TDC_.loading = false; TDC_.error = (err && err.message) ? err.message : String(err);
+        tdcRender_();
+      })
+      .getDirectCallReport({ from: p[1], to: p[2], department: p[0] });
+  }
+  function tdcRender_() {
+    var head = $('tdc-head'), note = $('tdc-note'), tiles = $('tdc-tiles'), tb = $('tdc-tbody');
+    if (!head) return;
+    var d = TDC_.data, m = (d && d.meta) || {}, k = (d && d.kpis) || {};
+    if (TDC_.loading) { head.textContent = 'loading…'; return; }
+    if (TDC_.error) { head.textContent = 'could not load'; if (note) { note.textContent = TDC_.error; note.style.display = ''; } return; }
+    if (!d) { head.textContent = 'open to load'; if (note) note.style.display = 'none'; if (tiles) tiles.innerHTML = ''; if (tb) tb.innerHTML = ''; return; }
+    if (m.available === false) { head.textContent = 'unavailable'; if (tiles) tiles.innerHTML = ''; if (tb) tb.innerHTML = ''; return; }
+    head.textContent = fmtNumber(k.ibAnswered || 0) + ' ans'
+      + (k.ibAnswerRate != null ? ' · ' + k.ibAnswerRate + '%' : '') + ' · ' + fmtNumber(k.obTotal || 0) + ' out';
+    var parts = [];
+    if (m.noDataInRange) parts.push('No direct-call data in these dates yet.');
+    else if (m.clampedTo) parts.push('Through ' + m.dataThrough + ' (later days not imported yet).');
+    if (m.missingCount) parts.push(m.missingCount + ' workday' + (m.missingCount === 1 ? '' : 's') + ' with no data, left out.');
+    if (note) { note.textContent = parts.join(' '); note.style.display = parts.length ? '' : 'none'; }
+    var sp = k.split || {};
+    var splitTxt = function (key) {
+      var v = sp[key];
+      return (v && (Number(v.int) + Number(v.ext))) ? fmtNumber(v.int) + ' int · ' + fmtNumber(v.ext) + ' ext' : '';
+    };
+    if (tiles) {
+      tiles.innerHTML =
+          '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Answered</span></div>'
+        + '<div class="ds-kpi__value">' + fmtNumber(k.ibAnswered || 0) + '</div>'
+        + '<div class="ds-kpi__foot">' + fmtNumber(k.ibMissedFree || 0) + ' missed · ' + fmtNumber(k.ibMissedBusy || 0) + ' busy'
+        +   (splitTxt('ibAnswered') ? '<br>' + splitTxt('ibAnswered') : '') + '</div></div>'
+        + '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Answer %</span></div>'
+        + '<div class="ds-kpi__value">' + (k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '–') + '</div>'
+        + '<div class="ds-kpi__foot">busy excluded · ' + fmtNumber(k.obTotal || 0) + ' out'
+        +   (splitTxt('obTotal') ? '<br>' + splitTxt('obTotal') : '') + '</div></div>';
+    }
+    var agents = ((d && d.agents) || []).slice().sort(function (x, y) {
+      var ax = (Number(x.ibAnswered) || 0) + (Number(x.ibMissedFree) || 0), ay = (Number(y.ibAnswered) || 0) + (Number(y.ibMissedFree) || 0);
+      return ay - ax || String(x.agent).localeCompare(String(y.agent));
+    });
+    if (tb) {
+      tb.innerHTML = agents.length ? agents.map(function (a) {
+        return '<tr class="trp-row"><td class="trp-name" title="' + escapeHtml(a.agent) + '">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
+          + '<td class="trp-num"><span class="trp-a">' + fmtNumber(a.ibAnswered || 0) + '</span><span class="trp-sep"> / </span>'
+          +   '<span class="trp-m">' + fmtNumber(a.ibMissedFree || 0) + '</span></td>'
+          + '<td class="trp-num">' + (a.ibAnswerRate != null ? a.ibAnswerRate + '%' : '–') + '</td>'
+          + '<td class="trp-num">' + fmtNumber(a.obTotal || 0) + '</td></tr>';
+      }).join('') : '<tr><td colspan="4" class="trp-empty">No direct calls in these dates.</td></tr>';
+    }
+  }
+  // "Open the Direct Calls report": the modal, on the same dept and dates, run.
+  function tdcOpenReport_() {
+    var key = tdcKey_();
+    var btn = $('direct-call-report-btn');
+    if (!key || !btn) return;
+    var p = key.split('|');
+    if ($('direct-call-from')) $('direct-call-from').value = p[1];
+    if ($('direct-call-to')) $('direct-call-to').value = p[2];
+    btn.click();
+    if ($('direct-call-preset')) $('direct-call-preset').value = 'custom';
+    var sel = $('direct-call-dept');
+    if (sel) sel.value = p[0];
+    if (typeof runDirectCallReport === 'function') runDirectCallReport();
+  }
+
   function obViewSync_() {
     obWire_();
+    tdcSync_();   // D3: the Team Direct Calls card follows the same renders
     var dir = obEffectiveDir_();
     obSyncButtons_(dir);
     document.body.setAttribute('data-dir', dir);

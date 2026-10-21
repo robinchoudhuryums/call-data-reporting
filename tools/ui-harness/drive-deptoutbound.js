@@ -63,6 +63,10 @@ async function openDept(page, meta) {
       called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length,
     }));
     record('manager: the outbound columns toggle is hidden', st.sw === 'none', st.sw);
+    const tdcM = await page.evaluate(() => { const el = document.getElementById('dept-team-direct');
+      return { shown: !!el && getComputedStyle(el).display !== 'none',
+               called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length }; });
+    record('manager: no Team Direct Calls card and no direct-call request (D3, admin-only)', !tdcM.shown && tdcM.called === 0, JSON.stringify(tdcM));
     record('manager: a stored "columns on" preference still shows the INBOUND table',
       st.inShown && !st.obShown, JSON.stringify(st));
     await page.close();
@@ -302,6 +306,47 @@ async function openDept(page, meta) {
         Object.keys(per).length === 2 && Object.keys(per).every((k) => per[k] === 1), JSON.stringify(per));
     }
     await pr.close();
+  }
+
+  // ---- D3 (owner 2026-10-21): Team Direct Calls, the admin side card ------
+  {
+    const d30 = require('./payloads/direct-30d.json');
+    const before = await page.evaluate(() => {
+      const el = document.getElementById('dept-team-direct');
+      return { shown: !!el && getComputedStyle(el).display !== 'none', open: !!(el && el.open),
+               head: (document.getElementById('tdc-head') || {}).textContent || '',
+               called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length };
+    });
+    record('D3: the Team Direct Calls card is there for the admin, collapsed, and asks for nothing until opened',
+      before.shown && !before.open && /open to load/.test(before.head) && before.called === 0, JSON.stringify(before));
+    await page.click('#dept-team-direct > summary');
+    await page.waitForTimeout(900);
+    const after = await page.evaluate(() => {
+      const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').map((c) => c.args[0]);
+      return { calls: calls, page: { from: document.getElementById('from-date').value, to: document.getElementById('to-date').value },
+               head: (document.getElementById('tdc-head') || {}).textContent || '',
+               note: (document.getElementById('tdc-note') || {}).textContent || '',
+               tiles: document.querySelectorAll('#tdc-tiles .ds-kpi').length,
+               rows: document.querySelectorAll('#tdc-tbody tr.trp-row').length };
+    });
+    const c0 = after.calls[0] || {};
+    record('D3: opening it asks ONCE, for this dept over the page\'s dates, and shows the report\'s figures',
+      after.calls.length === 1 && c0.department === 'CSR' && c0.from === after.page.from && c0.to === after.page.to
+        && after.tiles === 2 && after.rows === d30.agents.length
+        && after.head.indexOf(String(d30.kpis.ibAnswered)) === 0,
+      JSON.stringify({ calls: after.calls, head: after.head, tiles: after.tiles, rows: after.rows, want: d30.agents.length }));
+    record('D3: the card says when the data stops early and names the gap', /not imported/.test(after.note) && /1 workday/.test(after.note), after.note);
+    await page.click('#dept-team-direct > summary'); await page.waitForTimeout(200);
+    await page.click('#dept-team-direct > summary'); await page.waitForTimeout(400);
+    const again = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length);
+    record('D3: closing and reopening on the same window asks for nothing more', again === 1, 'calls=' + again);
+    await page.click('#tdc-open-report');
+    await page.waitForTimeout(1500);
+    const modal = await page.evaluate(() => ({ open: getComputedStyle(document.getElementById('direct-call-modal')).display !== 'none',
+      results: getComputedStyle(document.getElementById('direct-call-results')).display !== 'none',
+      dept: (document.getElementById('direct-call-dept') || {}).value }));
+    record('D3: "Open the Direct Calls report" opens the report on the same dept, run', modal.open && modal.results && modal.dept === 'CSR', JSON.stringify(modal));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(300);
   }
 
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
