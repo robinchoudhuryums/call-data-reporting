@@ -45,7 +45,10 @@
 // the client renders delta/trend chips on the KPI cards + dept header rows.
 // v3: B-1 -- the company-view agents sub-select groups per (agent, dept)
 // instead of collapsing a crossover agent under max(department).
-const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v4';   // v4: R24 working-day prior windows
+// v5 (D1, owner 2026-10-21): coverage-aware -- the window is clamped to the
+// last date with data, workdays with no rows are listed, the prior comparison
+// is dropped when either window has a gap, and the full int/ext split ships.
+const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v5';
 const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 
 /**
@@ -108,6 +111,76 @@ function directCallResolveRequest_(req) {
 
 function directCallSqlLit_(s) {
   return "'" + String(s == null ? '' : s).replace(/'/g, "''") + "'";
+}
+
+// ── D1 COVERAGE (owner 2026-10-21) ────────────────────────────────────────
+// A date the import has not reached yet has NO rows, which the sums read as a
+// quiet day: a window ending on such a date understated every figure and its
+// prior chips compared a part window with a whole one. So the window is
+// CLAMPED to the last date with data (`meta.to`, the asked end in
+// `meta.requestedTo`), each workday (Mon-Fri, not a company holiday) with no
+// row for ANY department is listed, and the prior comparison is dropped when
+// either window has such a gap. Presence is company-wide on purpose: one
+// department with no direct calls on a day is normal; no row at all is not.
+
+/** PURE. Workdays in [from, to] with no row; at most 60 listed, all counted. */
+function dcMissingWorkdays_(from, to, present, isHoliday) {
+  var out = [], count = 0;
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) return { dates: out, count: 0 };
+  var p = from.split('-'), q = to.split('-');
+  for (var ms = Date.UTC(+p[0], p[1] - 1, +p[2], 12), end = Date.UTC(+q[0], q[1] - 1, +q[2], 12); ms <= end; ms += 86400000) {
+    var d = new Date(ms), dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    var iso = d.toISOString().slice(0, 10);
+    if (isHoliday && isHoliday(iso)) continue;
+    if (present[iso]) continue;
+    count++;
+    if (out.length < 60) out.push(iso);
+  }
+  return { dates: out, count: count };
+}
+
+/** The company-holiday test, read ONCE per request (best-effort). */
+function dcHolidayFn_() {
+  try {
+    if (typeof getCompanyHolidayRanges_ === 'function' && typeof isDateInSkipRanges_ === 'function') {
+      var ranges = getCompanyHolidayRanges_();
+      return function (iso) { return isDateInSkipRanges_(iso, ranges); };
+    }
+  } catch (e) { /* no holidays known: weekends only */ }
+  return null;
+}
+
+/**
+ * PURE (given isHoliday). Resolves the window the report may honestly show:
+ * `mx` = the last date with any row (null = an empty table), `present` = the
+ * dates with rows over at least [the unclamped prior window's start, to].
+ */
+function dcCoverage_(scope, mx, present, isHoliday) {
+  var cov = { requestedTo: scope.to, dataThrough: mx || null, to: scope.to, clamped: false,
+              noData: false, missing: { dates: [], count: 0 }, priorMissing: { dates: [], count: 0 } };
+  if (!mx || mx < scope.from) { cov.noData = true; cov.pw = computePriorWindow_(scope.from, scope.to); return cov; }
+  if (mx < scope.to) { cov.to = mx; cov.clamped = true; }
+  cov.pw = computePriorWindow_(scope.from, cov.to);
+  cov.missing = dcMissingWorkdays_(scope.from, cov.to, present || {}, isHoliday);
+  cov.priorMissing = dcMissingWorkdays_(cov.pw.from, cov.pw.to, present || {}, isHoliday);
+  return cov;
+}
+
+/** Stamps the coverage onto a shaped payload; drops a gap-biased prior. */
+function dcApplyCoverageMeta_(out, cov) {
+  out.meta.requestedTo = cov.requestedTo;
+  out.meta.dataThrough = cov.dataThrough;
+  out.meta.clampedTo = cov.clamped;
+  out.meta.noDataInRange = cov.noData;
+  out.meta.missingDates = cov.missing.dates;
+  out.meta.missingCount = cov.missing.count;
+  out.meta.priorFrom = cov.pw ? cov.pw.from : null;
+  out.meta.priorTo = cov.pw ? cov.pw.to : null;
+  out.meta.priorMissingCount = cov.priorMissing.count;
+  out.meta.priorSuppressed = !!(cov.missing.count || cov.priorMissing.count);
+  if (out.meta.priorSuppressed) { out.kpisPrior = null; out.deptsPrior = []; }
+  return out;
 }
 
 function emptyDirectCallReport_(scope) {
@@ -174,7 +247,10 @@ function getDirectCallReport(req) {
   // Fallback payloads are NEVER cached -- a recovered Neon must not be
   // masked for the TTL (the unavailable-uncached rule extended to degraded
   // payloads, same as the heatmap fallback).
-  if (data.meta.available && !data.meta.fallbackSource) {
+  // D1: a clamped window or one with a missing workday is never cached --
+  // the import filling it in must show at once, not after the TTL.
+  if (data.meta.available && !data.meta.fallbackSource && !data.meta.clampedTo
+      && !data.meta.missingCount && !data.meta.priorMissingCount) {
     try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('DirectCallReport cache put failed: %s', e); }
   }
@@ -190,12 +266,32 @@ function computeDirectCallReport_(scope) {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) return directCallSheetFallback_(scope, empty);
 
+    // D1: the coverage read first -- the last date with any row, and which
+    // dates have rows from the UNCLAMPED prior window's start (the earliest a
+    // clamped window's prior can begin) to the asked end.
+    const pw0 = computePriorWindow_(from, to);
+    const covStmt = conn.createStatement();
+    const covRs = covStmt.executeQuery("SELECT json_build_object('mx', (SELECT max(call_date)::text FROM direct_call_history), "
+      + "'days', (SELECT COALESCE(json_agg(DISTINCT call_date::text), '[]') FROM direct_call_history "
+      + "WHERE call_date BETWEEN '" + pw0.from + "'::date AND '" + to + "'::date))::text AS j");
+    const covJson = covRs.next() ? covRs.getString('j') : null;
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(covJson ? covJson.length : 0, 'direct');
+    covRs.close(); covStmt.close();
+    if (!covJson) return directCallSheetFallback_(scope, empty);
+    const covObj = JSON.parse(covJson);
+    const present = {};
+    (covObj.days || []).forEach(function (d) { present[String(d)] = true; });
+    const cov = dcCoverage_(scope, covObj.mx || null, present, dcHolidayFn_());
+    if (cov.noData) return dcApplyCoverageMeta_(empty, cov);
+    const effTo = cov.to;
+
     // from/to are validated ISO; the dept literal is escaped (and is itself a
     // roster-derived dept header, not free user text). ONE query, ONE getString.
     const deptPred = scope.companyView ? '' : ' AND c.department = ' + directCallSqlLit_(scope.dept);
-    const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
-    // v2: INV-28 immediately-preceding same-length window for the delta chips.
-    const pw = computePriorWindow_(from, to);
+    const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + effTo + "'::date" + deptPred;
+    // v2: INV-28 immediately-preceding same-length window for the delta chips
+    // (D1: of the CLAMPED window, so a part window never meets a whole one).
+    const pw = cov.pw;
     const priorDr = "c.call_date BETWEEN '" + pw.from + "'::date AND '" + pw.to + "'::date" + deptPred;
     // Scope-level prior KPI sums + per-dept prior aggregates (for the company
     // view's dept header-row deltas). ib_talk kept so ATT can be re-derived.
@@ -220,7 +316,13 @@ function computeDirectCallReport_(scope) {
             "'ibTalkSec', COALESCE(sum(ib_int_talk_sec+ib_ext_talk_sec),0), " +
             "'obTotal', COALESCE(sum(ob_int_total+ob_ext_total),0), " +
             "'obConnected', COALESCE(sum(ob_int_connected+ob_ext_connected),0), " +
-            "'obTalkSec', COALESCE(sum(ob_int_talk_sec+ob_ext_talk_sec),0)" +
+            "'obTalkSec', COALESCE(sum(ob_int_talk_sec+ob_ext_talk_sec),0), " +
+            // D1: the internal / external split of every figure.
+            "'ibIntAnswered', COALESCE(sum(ib_int_answered),0), 'ibExtAnswered', COALESCE(sum(ib_ext_answered),0), " +
+            "'ibIntMissedFree', COALESCE(sum(ib_int_missed_free),0), 'ibExtMissedFree', COALESCE(sum(ib_ext_missed_free),0), " +
+            "'ibIntMissedBusy', COALESCE(sum(ib_int_missed_busy),0), 'ibExtMissedBusy', COALESCE(sum(ib_ext_missed_busy),0), " +
+            "'obIntTotal', COALESCE(sum(ob_int_total),0), 'obExtTotal', COALESCE(sum(ob_ext_total),0), " +
+            "'obIntConnected', COALESCE(sum(ob_int_connected),0), 'obExtConnected', COALESCE(sum(ob_ext_connected),0)" +
           ") FROM direct_call_history c WHERE " + dr + "), " +
         // B-1: group per (agent, department) -- direct_call_history is keyed
         // (call_date, department, agent_name), so a crossover agent
@@ -238,6 +340,9 @@ function computeDirectCallReport_(scope) {
               "sum(ib_int_missed_busy+ib_ext_missed_busy) AS ib_missed_busy, " +
               "sum(ib_int_talk_sec+ib_ext_talk_sec) AS ib_talk_sec, " +
               "sum(ib_int_answered) AS ib_int_answered, sum(ib_ext_answered) AS ib_ext_answered, " +
+              "sum(ib_int_missed_free) AS ib_int_missed_free, sum(ib_ext_missed_free) AS ib_ext_missed_free, " +
+              "sum(ib_int_missed_busy) AS ib_int_missed_busy, sum(ib_ext_missed_busy) AS ib_ext_missed_busy, " +
+              "sum(ob_int_connected) AS ob_int_connected, sum(ob_ext_connected) AS ob_ext_connected, " +
               "sum(ob_int_total+ob_ext_total) AS ob_total, " +
               "sum(ob_int_connected+ob_ext_connected) AS ob_connected, " +
               "sum(ob_int_talk_sec+ob_ext_talk_sec) AS ob_talk_sec, " +
@@ -266,7 +371,9 @@ function computeDirectCallReport_(scope) {
     rs.close(); stmt.close();
     if (!json) return directCallSheetFallback_(scope, empty);
 
-    return directCallShapePayload_(scope, JSON.parse(json));
+    const shaped = directCallShapePayload_(scope, JSON.parse(json));
+    shaped.meta.to = effTo;
+    return dcApplyCoverageMeta_(shaped, cov);
   } catch (e) {
     Logger.log('computeDirectCallReport_ failed: ' + (e && e.message ? e.message : e));
     return directCallSheetFallback_(scope, empty);
@@ -310,6 +417,7 @@ function directCallShapePayload_(scope, obj) {
       obConnected: obConnected,
       obTalkSec: obTalkSec,
       obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
+      split: directCallSplit_(k, 'camel'),   // D1
     },
     kpisPrior: directCallPriorKpis_(obj.kpisPrior || null),
     deptsPrior: (obj.deptsPrior || []).map(function (d) {
@@ -357,6 +465,26 @@ function directCallShapeAgent_(r) {
     obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
     obIntTotal: Number(r.ob_int_total) || 0,
     obExtTotal: Number(r.ob_ext_total) || 0,
+    split: directCallSplit_(r, 'snake'),   // D1
+  };
+}
+
+/**
+ * D1: the internal / external split of one row or the scope totals.
+ * Internal: an inbound call whose CDR direction is Internal (a coworker
+ * dialled the agent's extension); an outbound call to an extension on the
+ * roster. External: everything else -- including, for now, an outbound dial
+ * to an extension NOT on the roster (a room phone, a staff line nobody
+ * rosters), which the capture cannot tell apart (D0 measures it).
+ */
+function directCallSplit_(r, style) {
+  var g = function (camel, snake) { return Number(style === 'camel' ? r[camel] : r[snake]) || 0; };
+  return {
+    ibAnswered:   { int: g('ibIntAnswered', 'ib_int_answered'),     ext: g('ibExtAnswered', 'ib_ext_answered') },
+    ibMissedFree: { int: g('ibIntMissedFree', 'ib_int_missed_free'), ext: g('ibExtMissedFree', 'ib_ext_missed_free') },
+    ibMissedBusy: { int: g('ibIntMissedBusy', 'ib_int_missed_busy'), ext: g('ibExtMissedBusy', 'ib_ext_missed_busy') },
+    obTotal:      { int: g('obIntTotal', 'ob_int_total'),           ext: g('obExtTotal', 'ob_ext_total') },
+    obConnected:  { int: g('obIntConnected', 'ob_int_connected'),   ext: g('obExtConnected', 'ob_ext_connected') },
   };
 }
 
@@ -395,15 +523,16 @@ function directCallSheetRows_(fromIso, toIso) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return null;
   var dates = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
-  var coverageStart = null;
+  var coverageStart = null, maxDate = null, present = {};
   var first = -1, last = -1;
   for (var i = 0; i < dates.length; i++) {
     var d = ncCellDateIso_(dates[i][0]);
     if (!d) continue;
     if (coverageStart === null || d < coverageStart) coverageStart = d;
-    if (d >= fromIso && d <= toIso) { if (first < 0) first = i; last = i; }
+    if (maxDate === null || d > maxDate) maxDate = d;   // D1: the last date with data
+    if (d >= fromIso && d <= toIso) { present[d] = true; if (first < 0) first = i; last = i; }
   }
-  if (first < 0) return { rows: [], coverageStart: coverageStart };
+  if (first < 0) return { rows: [], coverageStart: coverageStart, maxDate: maxDate, present: present };
   var grid = sheet.getRange(2 + first, 1, last - first + 1, 18).getDisplayValues();
   var rows = [];
   for (var r = 0; r < grid.length; r++) {
@@ -424,7 +553,7 @@ function directCallSheetRows_(fromIso, toIso) {
       obExtTalkSec: dcSheetNum_(g[17]),
     });
   }
-  return { rows: rows, coverageStart: coverageStart };
+  return { rows: rows, coverageStart: coverageStart, maxDate: maxDate, present: present };
 }
 
 /** Scope/prior kpi sums over normalized rows (the priorKpiSel shape). */
@@ -439,6 +568,10 @@ function dcSumKpis_(rows) {
     k.obTotal += r.obIntTotal + r.obExtTotal;
     k.obConnected += r.obIntConnected + r.obExtConnected;
     k.obTalkSec += r.obIntTalkSec + r.obExtTalkSec;
+    ['ibIntAnswered', 'ibExtAnswered', 'ibIntMissedFree', 'ibExtMissedFree', 'ibIntMissedBusy', 'ibExtMissedBusy',
+     'obIntTotal', 'obExtTotal', 'obIntConnected', 'obExtConnected'].forEach(function (f) {
+      k[f] = (k[f] || 0) + (r[f] || 0);   // D1: the split, the SQL's camelCase kpi keys
+    });
   });
   return k;
 }
@@ -450,14 +583,18 @@ function dcSumKpis_(rows) {
  */
 function directCallSheetFallback_(scope, empty) {
   try {
-    var pw = computePriorWindow_(scope.from, scope.to);
-    var res = directCallSheetRows_(pw.from, scope.to);   // one read covers both windows
+    var pw0 = computePriorWindow_(scope.from, scope.to);
+    var res = directCallSheetRows_(pw0.from, scope.to);   // one read covers both windows (a clamp only narrows them)
     if (!res) { empty.meta.available = false; return empty; }
+    // D1: the SAME coverage rule as the Neon path, from the sheet's dates.
+    var cov = dcCoverage_(scope, res.maxDate || null, res.present || {}, dcHolidayFn_());
+    if (cov.noData) { var e0 = dcApplyCoverageMeta_(empty, cov); e0.meta.fallbackSource = 'sheet'; return e0; }
+    var pw = cov.pw, effTo = cov.to;
     var deptF = scope.companyView ? null : scope.dept;
     var cur = [], prior = [];
     res.rows.forEach(function (r) {
       if (deptF && r.dept !== deptF) return;
-      if (r.date >= scope.from && r.date <= scope.to) cur.push(r);
+      if (r.date >= scope.from && r.date <= effTo) cur.push(r);
       else if (r.date >= pw.from && r.date <= pw.to) prior.push(r);
     });
 
@@ -480,6 +617,8 @@ function directCallSheetFallback_(scope, empty) {
         ib_int_answered: 0, ib_ext_answered: 0,
         ob_total: 0, ob_connected: 0, ob_talk_sec: 0,
         ob_int_total: 0, ob_ext_total: 0,
+        ib_int_missed_free: 0, ib_ext_missed_free: 0, ib_int_missed_busy: 0, ib_ext_missed_busy: 0,
+        ob_int_connected: 0, ob_ext_connected: 0,
       });
       a.ib_answered += r.ibIntAnswered + r.ibExtAnswered;
       a.ib_missed_free += r.ibIntMissedFree + r.ibExtMissedFree;
@@ -492,6 +631,9 @@ function directCallSheetFallback_(scope, empty) {
       a.ob_talk_sec += r.obIntTalkSec + r.obExtTalkSec;
       a.ob_int_total += r.obIntTotal;
       a.ob_ext_total += r.obExtTotal;
+      a.ib_int_missed_free += r.ibIntMissedFree; a.ib_ext_missed_free += r.ibExtMissedFree;
+      a.ib_int_missed_busy += r.ibIntMissedBusy; a.ib_ext_missed_busy += r.ibExtMissedBusy;
+      a.ob_int_connected += r.obIntConnected; a.ob_ext_connected += r.obExtConnected;
     });
     var agents = Object.keys(byAgent).map(function (k2) { return byAgent[k2]; })
       .sort(function (a, b) {
@@ -521,7 +663,8 @@ function directCallSheetFallback_(scope, empty) {
       coverageStart: res.coverageStart,
     });
     out.meta.fallbackSource = 'sheet';
-    return out;
+    out.meta.to = effTo;
+    return dcApplyCoverageMeta_(out, cov);
   } catch (e) {
     Logger.log('directCallSheetFallback_ failed (best-effort): '
                + (e && e.message ? e.message : e));

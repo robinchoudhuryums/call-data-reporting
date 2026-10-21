@@ -851,7 +851,7 @@ date's sheet rows as contiguous blocks rather than one `deleteRow` per row
 `direct-call-metrics.test.js` the block delete). Dashboard read
 surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
 (ONE json_build_object round-trip; answer rate EXCLUDES the busy
-carve-out; cached `directCall:v4`; R11-M `kpisPrior`/`deptsPrior` feed
+carve-out; cached `directCall:v5` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
 the client delta chips). **TEMPORARILY admin-only while the carve-out
 numbers are vetted** (the Inbound-report model: latent per-dept manager
 path; release = a one-line gate removal in `directCallResolveRequest_` +

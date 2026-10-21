@@ -39,12 +39,15 @@ function install(opts) {
   h.ctx.getDashboardNeonConn_ = opts.conn !== undefined
     ? function () { install.connCalls++; return opts.conn; }
     : function () { install.connCalls++; return null; };
+  // Counts reads of the Direct Call History sheet only: since D1 the healthy
+  // path also opens the workbook for the company-holiday list (the missing-
+  // workday test), which is not the fallback.
   install.ssOpened = 0;
   h.ctx.openSpreadsheet_ = function () {
-    install.ssOpened++;
     return {
       getSheetByName: function (name) {
         if (name !== 'Direct Call History') return null;
+        install.ssOpened++;
         return opts.sheet || null;
       },
     };
@@ -83,15 +86,19 @@ function row(date, dept, agent, nums) {
   return ['Aug 2026', date, dept, agent].concat(nums);
 }
 
+// D1: the coverage read runs first; it sees the fixture's dates, as the
+// sheet path does (the last date with data = TO, every fixture date present).
+const COVERAGE_JSON = JSON.stringify({ mx: '2026-08-20', days: ['2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20'] });
 function neonConnReturning(json) {
   return {
     createStatement: function () {
       return {
-        executeQuery: function () {
+        executeQuery: function (sql) {
           let done = false;
+          const body = String(sql).indexOf("'mx'") !== -1 ? COVERAGE_JSON : json;
           return {
             next: function () { if (done) return false; done = true; return true; },
-            getString: function () { return json; },
+            getString: function () { return body; },
             close: function () {},
           };
         },
@@ -129,16 +136,28 @@ function neonShapeFor(pw) {
     kpis: { agents: 2, ibAnswered: 3 + 2 + 0 + 1 + 5 + 0, ibMissedFree: 1 + 0 + 0 + 1 + 0 + 2,
             ibMissedBusy: 0 + 1 + 4 + 0 + 0 + 0, ibTalkSec: 300 + 200 + 0 + 90 + 400 + 0,
             obTotal: 1 + 2 + 0 + 0 + 3 + 0, obConnected: 1 + 1 + 0 + 0 + 2 + 0,
-            obTalkSec: 50 + 80 + 0 + 0 + 120 + 0 },
+            obTalkSec: 50 + 80 + 0 + 0 + 120 + 0,
+            // D1: the split, summed per side from the same three rows.
+            ibIntAnswered: 3 + 0 + 5, ibExtAnswered: 2 + 1 + 0,
+            ibIntMissedFree: 1 + 0 + 0, ibExtMissedFree: 0 + 1 + 2,
+            ibIntMissedBusy: 0 + 4 + 0, ibExtMissedBusy: 1 + 0 + 0,
+            obIntTotal: 1 + 0 + 3, obExtTotal: 2 + 0 + 0,
+            obIntConnected: 1 + 0 + 2, obExtConnected: 1 + 0 + 0 },
     agents: [
       { agent: 'Ana', dept: 'CSR', ib_answered: 5, ib_missed_free: 1, ib_missed_busy: 1,
         ib_talk_sec: 500, ib_int_answered: 3, ib_ext_answered: 2,
+        ib_int_missed_free: 1, ib_ext_missed_free: 0, ib_int_missed_busy: 0, ib_ext_missed_busy: 1,
+        ob_int_connected: 1, ob_ext_connected: 1,
         ob_total: 3, ob_connected: 2, ob_talk_sec: 130, ob_int_total: 1, ob_ext_total: 2 },
       { agent: 'Ana', dept: 'Sales', ib_answered: 5, ib_missed_free: 2, ib_missed_busy: 0,
         ib_talk_sec: 400, ib_int_answered: 5, ib_ext_answered: 0,
+        ib_int_missed_free: 0, ib_ext_missed_free: 2, ib_int_missed_busy: 0, ib_ext_missed_busy: 0,
+        ob_int_connected: 2, ob_ext_connected: 0,
         ob_total: 3, ob_connected: 2, ob_talk_sec: 120, ob_int_total: 3, ob_ext_total: 0 },
       { agent: 'Bob', dept: 'CSR', ib_answered: 1, ib_missed_free: 1, ib_missed_busy: 4,
         ib_talk_sec: 90, ib_int_answered: 0, ib_ext_answered: 1,
+        ib_int_missed_free: 0, ib_ext_missed_free: 1, ib_int_missed_busy: 4, ib_ext_missed_busy: 0,
+        ob_int_connected: 0, ob_ext_connected: 0,
         ob_total: 0, ob_connected: 0, ob_talk_sec: 0, ob_int_total: 0, ob_ext_total: 0 },
     ],
     kpisPrior: { ibAnswered: 1 + 0 + 2 + 0, ibMissedFree: 1 + 0 + 0 + 0,
