@@ -4342,17 +4342,17 @@
       if (OB_VIEW_.sortKey === k) OB_VIEW_.sortDir = OB_VIEW_.sortDir === 'asc' ? 'desc' : 'asc';
       else { OB_VIEW_.sortKey = k; OB_VIEW_.sortDir = (k === 'agent') ? 'asc' : 'desc'; }
       obViewRender_();
-      var again = document.querySelector('#agents-ob-thead th[data-ob-sort="' + k + '"]');
+      var again = document.querySelector('#agents-ob-thead [data-ob-sort="' + k + '"]');
       if (again) again.focus();
     };
     if (thead) {
       thead.addEventListener('click', function (e) {
-        var th = e.target.closest && e.target.closest('th[data-ob-sort]');
+        var th = e.target.closest && e.target.closest('[data-ob-sort]');   // a <th>, or a layout-B pick button
         if (th) sortBy(th);
       });
       thead.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter' && e.key !== ' ') return;
-        var th = e.target.closest && e.target.closest('th[data-ob-sort]');
+        var th = e.target.closest && e.target.closest('[data-ob-sort]');
         if (th) { e.preventDefault(); sortBy(th); }
       });
     }
@@ -4592,6 +4592,10 @@
       if (k === 'agent') return String(x.agent).localeCompare(String(y.agent)) * dir;
       var xv = (k in (x.ob || {})) ? x.ob[k] : x.inb ? x.inb[k] : null;
       var yv = (k in (y.ob || {})) ? y.ob[k] : y.inb ? y.inb[k] : null;
+      if (k === 'inRung') {   // layout B: the IN line's calls (answered + missed)
+        xv = x.inb ? (Number(x.inb.totalAnswered) || 0) + (Number(x.inb.totalMissed) || 0) : null;
+        yv = y.inb ? (Number(y.inb.totalAnswered) || 0) + (Number(y.inb.totalMissed) || 0) : null;
+      }
       if (k === 'answerRate') {
         var xt = x.inb ? (Number(x.inb.totalAnswered) || 0) + (Number(x.inb.totalMissed) || 0) : 0;
         var yt = y.inb ? (Number(y.inb.totalAnswered) || 0) + (Number(y.inb.totalMissed) || 0) : 0;
@@ -4612,6 +4616,34 @@
       + escapeHtml(label) + ' <span class="arrow">' + (on ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
   }
 
+  // Layout B (owner 2026-10-21): a metric column whose header sorts by the IN
+  // line or the OUT line -- two real buttons in one <th>; aria-sort names the
+  // active one's direction.
+  function obThPairHtml_(label, inKey, outKey, cls) {
+    var on = OB_VIEW_.sortKey === inKey ? 'in' : (OB_VIEW_.sortKey === outKey ? 'out' : '');
+    var btn = function (key, word) {
+      var act = OB_VIEW_.sortKey === key;
+      return '<button type="button" class="ob-sort-pick' + (act ? ' is-on' : '') + '" data-ob-sort="' + key + '"'
+        + ' aria-label="Sort by ' + escapeHtml(label) + ', ' + word + '">' + word + ' <span class="arrow">'
+        + (act ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></button>';
+    };
+    return '<th class="ob-pair-th' + (cls ? ' ' + cls : '') + '"'
+      + (on ? ' aria-sort="' + (OB_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
+      + '<span class="ob-pair-label">' + escapeHtml(label) + '</span>'
+      + '<span class="ob-sort-picks">' + btn(inKey, 'in') + btn(outKey, 'out') + '</span></th>';
+  }
+  // One agent row's four cells: the direction tags, then each metric as an
+  // IN line over an OUT line (.ob-dir-in / .ob-dir-out), one row per agent so
+  // sort, the agent panel and the exports keep their shape.
+  function obPairCells_(inBar, outBar, inRate, outRate, inTalk, outTalk) {
+    var pair = function (cls, a, b) {
+      return '<td class="ob-pair' + (cls ? ' ' + cls : '') + '"><div class="ob-line ob-dir-in">' + a + '</div>'
+        + '<div class="ob-line ob-dir-out">' + b + '</div></td>';
+    };
+    return '<td class="ob-dir-col"><div class="ob-line ob-dir-in ob-dir-tag">IN</div><div class="ob-line ob-dir-out ob-dir-tag">OUT</div></td>'
+      + pair('ans-bar-cell', inBar, outBar) + pair('num', inRate, outRate) + pair('num', inTalk, outTalk);
+  }
+
   function obViewRender_() {
     var dir = obEffectiveDir_();
     var thead = $('agents-ob-thead'), tbody = $('agents-ob-tbody'), tfoot = $('agents-ob-tfoot');
@@ -4620,12 +4652,15 @@
     var both = dir === 'both';
     var data = OB_VIEW_.data;
     var dept = getRequestedDept();
-    var cols = both ? 6 : 6;
+    var cols = both ? 5 : 6;
     thead.innerHTML = '<tr>' + obThHtml_('agent', 'Agent')
       + (both
-        ? obThHtml_('totalAnswered', 'Inbound · Answered / Missed', 'ob-dir-in') + obThHtml_('answerRate', 'Answer %', 'ob-dir-in')
-          + obThHtml_('obTotal', 'Outbound · Connected / Not', 'ob-dir-out') + obThHtml_('obConnectRate', 'Connect %', 'ob-dir-out')
-          + obThHtml_('obTalkSec', 'Out talk', 'ob-dir-out')
+        // Layout B (owner 2026-10-21): an IN line over an OUT line in each
+        // agent's row. Each metric column sorts by either direction.
+        ? '<th class="ob-dir-col"><span class="sr-only">Direction</span></th>'
+          + obThPairHtml_('Calls · handled / not', 'inRung', 'obTotal')
+          + obThPairHtml_('Rate', 'answerRate', 'obConnectRate', 'num')
+          + obThPairHtml_('Talk', 'tttSeconds', 'obTalkSec', 'num')
         : obThHtml_('obTotal', 'Connected / Not connected') + obThHtml_('obConnectRate', 'Connect %')
           + obThHtml_('obTalkSec', 'Talk time') + obThHtml_('obAttSec', 'Avg talk') + obThHtml_('attempts', 'Attempts'))
       + '</tr>';
@@ -4691,6 +4726,9 @@
     Object.keys(groups).forEach(function (d) { all = all.concat(groups[d]); });
     var obUnit = obTallyUnitFor_(all.map(function (e) { return e.ob; }), both ? 18 : ANS_TALLY_MAX_BLOCKS_);
     var inUnit = both ? ansTallyUnitFor_(all.map(function (e) { return e.inb || {}; }), 18) : 0;
+    // Layout B: ONE scale for both lines (the units share a ladder, so the
+    // larger one fits both), so in vs out volume compares by length.
+    if (both && inUnit && obUnit) inUnit = obUnit = Math.max(inUnit, obUnit);
     var barCol = COLUMNS.find(function (c) { return c.type === 'bar'; });
     var pctCol = COLUMNS.find(function (c) { return c.type === 'pct'; });
 
@@ -4701,11 +4739,13 @@
       var ptip = priorTipFor(po);
       var cells = '<td class="agent-name">' + apRowToggleHtml_(e.agent) + '</td>';   // F27
       if (both) {
-        cells += '<td class="ans-bar-cell ob-dir-in">' + (e.inb ? fmtCell(barCol, e.inb, { tallyUnit: inUnit }) : zeroCell_('–')) + '</td>'
-          + '<td class="num ob-dir-in">' + (e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–')) + '</td>'
-          + '<td class="ans-bar-cell ob-dir-out">' + obBarHtml_(o, obUnit, false, po, ptip) + '</td>'
-          + '<td class="num ob-dir-out">' + obPctHtml_(o, po, ptip) + '</td>'
-          + '<td class="num ob-dir-out">' + (o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–')) + '</td>';
+        cells += obPairCells_(
+          e.inb ? fmtCell(barCol, e.inb, { tallyUnit: inUnit }) : zeroCell_('–'),
+          obBarHtml_(o, obUnit, false, po, ptip),
+          e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–'),
+          obPctHtml_(o, po, ptip),
+          e.inb && e.inb.tttSeconds ? fmtDuration(e.inb.tttSeconds) : zeroCell_('–'),
+          o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–'));
       } else {
         cells += '<td class="ans-bar-cell">' + obBarHtml_(o, obUnit, false, po, ptip) + '</td>'
           + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>'
@@ -4720,11 +4760,10 @@
     var totalRow = function (label, t, inT, cls) {
       var cells = '<td class="agents-total-label">' + escapeHtml(label) + '</td>';
       if (both) {
-        cells += '<td class="ans-bar-cell ob-dir-in">' + (inT ? fmtCell(barCol, inT, {}) : '') + '</td>'
-          + '<td class="num ob-dir-in">' + (inT ? fmtCell(pctCol, inT) : '') + '</td>'
-          + '<td class="ans-bar-cell ob-dir-out">' + obBarHtml_(t, 0, true) + '</td>'
-          + '<td class="num ob-dir-out">' + obPctHtml_(t) + '</td>'
-          + '<td class="num ob-dir-out">' + (t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '') + '</td>';
+        cells += obPairCells_(
+          inT ? fmtCell(barCol, inT, {}) : '', obBarHtml_(t, 0, true),
+          inT ? fmtCell(pctCol, inT) : '', obPctHtml_(t),
+          inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '');
       } else {
         cells += '<td class="ans-bar-cell">' + obBarHtml_(t, 0, true) + '</td><td class="num">' + obPctHtml_(t) + '</td>'
           + '<td class="num">' + (t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '') + '</td>'

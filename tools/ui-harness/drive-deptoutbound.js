@@ -98,8 +98,10 @@ async function openDept(page, meta) {
   record('admin: inbound AND outbound together is the default view (Step 3)',
     v.dir === 'both' && v.obShown && !v.inShown, JSON.stringify(v).slice(0, 120));
   record('the toggle reads "on"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'true');
-  record('the table shows inbound AND outbound columns side by side',
-    v.heads.some((h) => /Inbound/.test(h)) && v.heads.some((h) => /Outbound/.test(h)), v.heads.join(' | '));
+  // Layout B (owner 2026-10-21): an IN line over an OUT line in each agent's
+  // row -- Calls / Rate / Talk, each header sorting by either direction.
+  record('layout B: the table shows Calls, Rate and Talk, each with an in / out sort',
+    ['Calls', 'Rate', 'Talk'].every((w) => v.heads.some((h) => h.indexOf(w) === 0 && /in\s*out/.test(h.replace(/\s+/g, ' ')))), v.heads.join(' | '));
   {
     const shown = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
     const missing = ob.agents.map((a) => a.agent).filter((a) => shown.indexOf(a) === -1);
@@ -126,10 +128,19 @@ async function openDept(page, meta) {
   });
   record('the two side panels never overlap', overlap.aBottom <= overlap.bTop + 1, JSON.stringify(overlap));
   const bothRow = await page.evaluate(() => {
-    const r = document.querySelector('#agents-ob-tbody tr[data-agent]');
-    return r ? r.querySelectorAll('td').length : 0;
+    const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
+    const r = rows[0];
+    return { cells: r ? r.querySelectorAll('td').length : 0,
+      tags: r ? Array.from(r.querySelectorAll('.ob-dir-tag')).map((t) => t.textContent) : [],
+      paired: rows.every((x) => Array.from(x.querySelectorAll('td.ob-pair')).every((td) =>
+        td.querySelectorAll(':scope > .ob-line.ob-dir-in').length === 1 && td.querySelectorAll(':scope > .ob-line.ob-dir-out').length === 1)),
+      aligned: rows.every((x) => {
+        const tops = Array.from(x.querySelectorAll('td.ob-pair > .ob-line.ob-dir-out, td.ob-dir-col > .ob-line.ob-dir-out')).map((l) => Math.round(l.getBoundingClientRect().top));
+        return tops.length > 1 && Math.max.apply(null, tops) - Math.min.apply(null, tops) <= 2;
+      }) };
   });
-  record('each row carries both directions’ cells', bothRow === 6, 'cells=' + bothRow);
+  record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
+    bothRow.cells === 5 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
 
   // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
   {
@@ -139,11 +150,11 @@ async function openDept(page, meta) {
       // Rows with an outbound record (an inbound-only agent has no outbound chips).
       const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).filter((r) => r.querySelector('.ob-c'));
       return {
-        perRow: rows.map((r) => r.querySelectorAll('td.ob-dir-out .wow-chip').length),
+        perRow: rows.map((r) => r.querySelectorAll('.ob-line.ob-dir-out .wow-chip').length),
         notConnMuted: rows.every((r) => { const u = r.querySelector('.ob-u'); const ch = u && u.nextElementSibling; return !!ch && ch.classList.contains('wow-chip-muted'); }),
         first: rows[0] ? { agent: rows[0].getAttribute('data-agent'), conn: Number(rows[0].querySelector('.ob-c').textContent),
           chip: (rows[0].querySelector('.ob-c').nextElementSibling || {}).textContent || '' } : null,
-        totals: document.querySelectorAll('#agents-ob-tfoot td.ob-dir-out .wow-chip, #agents-ob-tbody tr.subq-subtotal td.ob-dir-out .wow-chip').length,
+        totals: document.querySelectorAll('#agents-ob-tfoot .ob-line.ob-dir-out .wow-chip, #agents-ob-tbody tr.subq-subtotal .ob-line.ob-dir-out .wow-chip').length,
       };
     });
     record('Batch F: the prior window is captured for this view', !!pri, sum30.meta.priorFrom + '|' + sum30.meta.priorTo);
@@ -156,6 +167,37 @@ async function openDept(page, meta) {
     record('Batch F: the connected chip is current minus prior for that agent', pa && got === want,
       (c.first && c.first.chip) + ' want ' + want);
     record('Batch F: Total and subtotal rows carry no outbound chips', c.totals === 0, 'chips=' + c.totals);
+  }
+
+  // Layout B: each metric header sorts by the IN line or the OUT line.
+  {
+    const order = () => page.evaluate(() => {
+      const out = [];
+      for (const r of Array.from(document.querySelectorAll('#agents-ob-tbody tr'))) {
+        if (r.classList.contains('subq-subtotal')) break;
+        if (r.hasAttribute('data-agent')) out.push(r.getAttribute('data-agent'));
+      }
+      return out;
+    });
+    const byAgent = {};
+    ob.agents.forEach((a) => { byAgent[a.agent] = a.obTotal; });
+    await page.click('#agents-ob-thead [data-ob-sort="obTotal"]');
+    await page.waitForTimeout(300);
+    let o1 = await order();
+    if (await page.getAttribute('#agents-ob-thead [data-ob-sort="obTotal"]', 'class').then((c) => !/is-on/.test(c || ''))) {
+      await page.click('#agents-ob-thead [data-ob-sort="obTotal"]'); await page.waitForTimeout(300); o1 = await order();
+    }
+    const placed = o1.map((a) => byAgent[a] || 0);
+    const mono = placed.every((x, i) => i === 0 || (placed[i - 1] - x) * (placed[0] - placed[placed.length - 1] >= 0 ? 1 : -1) >= 0);
+    const ariaOut = await page.evaluate(() => { const b = document.querySelector('#agents-ob-thead [data-ob-sort="obTotal"]'); return b && b.closest('th').getAttribute('aria-sort'); });
+    record('layout B: "out" under Calls sorts the group by outbound placed, and the header says so',
+      o1.length > 1 && mono && /ascending|descending/.test(ariaOut || ''), JSON.stringify({ order: o1, placed: placed, aria: ariaOut }));
+    await page.focus('#agents-ob-thead [data-ob-sort="inRung"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const kb = await page.evaluate(() => ({ on: !!document.querySelector('#agents-ob-thead [data-ob-sort="inRung"].is-on'),
+      focus: !!document.activeElement && document.activeElement.getAttribute('data-ob-sort') === 'inRung' }));
+    record('layout B: "in" sorts by keyboard too and keeps the focus on the button', kb.on && kb.focus, JSON.stringify(kb));
   }
 
   // Sorting by a column re-renders and keeps the rows.
