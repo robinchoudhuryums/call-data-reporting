@@ -53,7 +53,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the owner walks S54 in two real browsers for the browser's half. It also
   walks VIEW-AS-MANAGER: enters the preview, checks the admin-only surfaces
   are actually hidden (measured as rendered visibility, not a class),
-  reverses cleanly, and throws nothing.
+  reverses cleanly, and throws nothing. Since 2026-10-21 it also checks the
+  admin brief re-runs with the bottom Insights region collapsed, that Insights
+  Copy image / Print include the brief's sections, and that a side panel's ⓘ
+  shows one circled i on hover.
 - `drive-f13.js` — the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.
@@ -72,6 +75,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-agentpanel.js` — the My Department **row-click inline agent panel**
   (Batch B): open, day / tab switch, survives a re-sort, the IR button,
   Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
+  Since 2026-10-21 also the open / close slide (settled = unclipped, a
+  closing panel detached at once) and the admin-only outbound call ids.
 - `drive-daybars.js` — the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
   it also checks the Queue calls and Abandoned % cards' vs-prior chips.
@@ -100,7 +105,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   (Batch E; moved out of Insights by UX-1): two-window deltas, shown only on
   Outbound / Both, never for a manager or View-as. Since QD-2 it also checks that the tiles'
   abandoned chips and the sub-queue strip's Abd follow the card window, with
-  tooltips, and (QD-3) the "viol MTD" chip's 0 green / 1-3 amber / 4+ red tiers.
+  tooltips, and (QD-3) the "viol MTD" chip's 0 green / 1-3 amber / 4+ red tiers
+  (the amber colour on a probe chip, since whether the fixture holds a 1-3
+  month depends on the run date).
 - `drive-callbacks.js` — the **Callbacks** section under the outbound table on
   My Department (G1; moved out of Insights by UX-1): lazy (one
   fetch, on open), the shared renderers incl. a drawn chart after a reopen,
@@ -116,7 +123,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   block, including its spreadsheet-served note (FO-2).
 - `drive-admin.js` — eight **modals** (Alerts, Outlier Fix, Dept Config,
   Access Control, System Health, Caller Lookup, Coaching, and the Agent Day
-  report, run past its setup form; the Outbound modal is retired, G3) and the **Escalations
+  report, run past its setup form -- whose outbound cards must carry an admin's
+  call id and an OUTBOUND path drill that opens; the Outbound modal is retired, G3) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and
