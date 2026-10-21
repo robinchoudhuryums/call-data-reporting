@@ -3534,7 +3534,10 @@ When something looks wrong, before assuming a code bug, check:
     minutes) / external. Set `OUTBOUND_MIX_AGENTS` to a comma list of exact
     roster names (unset = the window's top 10 diallers); the window is
     `OUTBOUND_PROBE_FROM` / `_TO` (default the 28 days to the latest data).
-    Run it from the editor and read the log: one line per agent with the
+    Run it from the editor and read the log (the first live run, 2026-10-21,
+    failed with "Invalid argument": a `?` inside a SQL regex literal, which
+    Apps Script's JDBC counts as a parameter -- fixed; re-run after the
+    dashboard push): one line per agent with the
     bucket counts, then up to 5 sample call ids per non-external bucket --
     paste one into the phone portal to see the number dialled, or use the
     agent panel's "↳ path" on that day. A high colleague / company-line
@@ -3553,8 +3556,19 @@ When something looks wrong, before assuming a code bug, check:
     changes: `internalDial`, `secondExtIn` / `secondExtOut`, `anonymousIn`,
     `sameRootIn` / `sameRootOut` (extra legs now folded into one call),
     `unrosteredOut`, each with its share of the day's in-window events, the
-    top agents and sample call ids to look up in Raw Data. Run it after an
-    import on three or four days. **Then decide the re-import:** shares
+    top agents and sample call ids to look up in Raw Data. `internalDial`
+    also logs what those legs REACH -- a roster agent, the caller's own
+    extension, an unrostered extension, an outside number, blank / a name --
+    with the share that talked and the top callees and contexts (numbers
+    masked; an outside number's name is dropped). **First run (2026-10-20):
+    `internalDial` 2863 = 90% of the day's outbound, every other counter 0.**
+    That is far more than coworker dials, so treat D2's Internal-dial rule as
+    UNCONFIRMED: do not re-import yet; re-run (after the cdr-import push that
+    added the "reaches" lines) and read them. If most legs reach something
+    other than a person (voicemail, a feature code, a dialler bridge), the
+    rule needs narrowing, and the dates built since the D2 deploy then need a
+    re-import. Run it after an import on three or four days. **Then decide
+    the re-import:** shares
     under ~1% are not worth one; otherwise re-import the dates the Direct
     Calls report is read over (CDR Tools -> Manual Export per date, #56 --
     the Direct block rebuilds the date's `Direct Call History` rows and its
