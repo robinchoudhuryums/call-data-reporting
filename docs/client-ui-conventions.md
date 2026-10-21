@@ -2394,6 +2394,17 @@ stay pinned by INV-39, INV-53 and INV-06.
   Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:
   the Answer % column's formula and `answerTierCls_` dept-standard tint).
   Rendered-gated by `drive-agentpanel.js`; the keyboard path by `drive-f13.js`.
+  **The panel SLIDES (owner 2026-10-21):** `.ap-clip` animates
+  `grid-template-rows` 0fr <-> 1fr (`apAnimateOpen_` / `apAnimateClose_`,
+  `AP_ANIM_MS_`), clipped ONLY while it moves -- an `overflow: hidden`
+  ancestor would break the settled `.ap`'s sticky-left. A closing panel is
+  detached at once (id removed, `inert`) and leaves the DOM when the slide
+  ends, so every caller still sees `#ap-panel` gone immediately; reduced
+  motion skips both. **Admins see each OUTBOUND call's id** (copy button +
+  an outbound "↳ path", `adOutboundIdHtml_` over `parentIdBadge(id, date,
+  'outbound')`) on the panel's Outbound tab and the Agent Day cards -- an
+  audit aid for "who did this call reach" (phone portal) and "did a
+  coworker take it" (the path). Managers get no column.
   **PREFETCH (Step 3 #8, owner 2026-10-16):** resting the pointer on a row of
   either agent table, or tabbing to its button, loads that agent's strip and
   newest day after `AP_PRE_DELAY_MS_`, and the panel reads through the SAME
@@ -2550,9 +2561,16 @@ stay pinned by INV-39, INV-53 and INV-06.
   it inside a hidden slot. Outbound and Callbacks are their own grey rows
   (`obAllowed_`), quoting their section heads; those fill in after the brief
   is drawn, so `insBriefRowFromHead_` updates the row TEXT in place (a rebuild
-  would take the focus off a row just opened). `deptInsightsEnsureLive_`
-  generates the Insights payload for the admin even while the region at the
-  bottom is collapsed -- the brief needs it. The colour rules are PURE,
+  would take the focus off a row just opened). **The report is LIVE when its
+  region is open OR the brief shows it (`insReportLive_`)**: the page ensure
+  (`deptInsightsEnsureLive_`), the window sync (`insSyncToDeptWindow_`) and
+  the dept Refresh re-run all read it, so a collapsed region at the bottom can
+  never freeze the brief on an old window (it did, 2026-10-21). **Exports put
+  the brief's sections back home:** Copy image moves them to their
+  `[data-ins-home]` placeholders inside the html2canvas CLONE
+  (`insBriefHomeIn_`, the live page untouched) and snapshots their canvases
+  too; Print unmounts them for the print and remounts after. drive-smoke pins
+  all three. The colour rules are PURE,
   self-contained functions in script-8 (`insBriefTopTier_` / `insBriefQueue_`
   / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
   `insights-brief.test.js` -- keep their thresholds as literals inside them,

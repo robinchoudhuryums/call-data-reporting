@@ -718,11 +718,10 @@ agents"), the compare + "Showing:" lines, the notes, the Team insights
 sentences, and an orphan "Team" zone label (dashboard.html, `.ds-zone` before
 the hidden rollup row). It is NOT dead: these still depend on it, so each
 needs a new home or a ruling before the markup goes:
-- **The region's `open` state gates the brief.** `insSyncToDeptWindow_` and
-  the dept Refresh handler (script-2-chrome) return early while the region is
-  collapsed, so an admin who collapses it gets a brief stuck on the old window
-  until they reopen it (a live defect in the trial today). Re-gate both on
-  `reg.open || insBriefActive_()` (or drop the region check) first.
+- **The region's `open` state.** The sync, the page ensure and the dept
+  Refresh re-run read `insReportLive_()` (open region OR the admin brief;
+  fixed 2026-10-21 -- a collapsed region used to freeze the brief on the old
+  window). With the region gone it reduces to "the report is live".
 - **The edit popover** (`#ins-edit-selection-btn`) is the only UI for the
   comparison mode, a custom prior range (S19) and the agent selection (S37).
 - **The context lines:** the compare line (which prior window), "Showing:",
@@ -735,9 +734,10 @@ needs a new home or a ruling before the markup goes:
 - **The loading pane and the failure / empty-roster fallback form**
   (`insShowForm`, `launcherShowLoading_` on `insights-form`/`insights-results`).
 - **Exports.** Copy image (`insBuildCanvas_`) captures `#insights-results`
-  and Print (`body.ins-printing`) shows only `#dept-insights-region`, so
-  for an admin both already MISS the six moved sections (a live trial
-  defect). They must be retargeted at the brief.
+  and Print (`body.ins-printing`) shows only `#dept-insights-region`; since
+  2026-10-21 both put the brief's sections back home for the export
+  (`insBriefHomeIn_` in the clone, `insBriefUnmountAll_` around the print).
+  Without the region they need a new capture root.
 - **Entry points:** `#/report/insights` deep links, the quick-start chips
   (`launcherOpenInsights_`), `deptInsightsOpen_`'s scroll, the tour's My
   Department step text ("Scroll to the bottom for the Insights section",

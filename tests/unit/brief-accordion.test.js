@@ -301,8 +301,11 @@ test('3: sections move into the rows and back home on every rebuild; the store i
   assert.match(extractFn(S8, 'insFoldsApply_'), /if \(el && insBriefMounted_\(el\)\) return;/);
   assert.match(extractFn(S8, 'insBriefApply_'), /if \(el && insBriefMounted_\(el\) && el\.open !== open\) el\.open = open;/,
     'opening a row opens the section, so its own draw-on-open listener runs');
-  assert.match(extractFn(S8, 'deptInsightsEnsureLive_'), /if \(!reg \|\| \(!reg\.open && !insBriefActive_\(\)\)\) return;/,
+  assert.match(extractFn(S8, 'deptInsightsEnsureLive_'), /if \(!insReportLive_\(\)\) return;/,
     'the brief needs the payload even with the region at the bottom collapsed');
+  // ...and so does the window sync (it froze the brief on the old window).
+  assert.match(extractFn(S8, 'insReportLive_'), /reg\.open \|\| insBriefActive_\(\)/);
+  assert.match(extractFn(S8, 'insSyncToDeptWindow_'), /if \(!insReportLive_\(\) \|\| !insPageInited_\) return;/);
   assert.match(CSS, /\.ins-brief-slot > details\.ins-brief-mounted > summary \{ display: none; \}/, 'the row is the section\'s header');
 });
 
