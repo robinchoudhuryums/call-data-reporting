@@ -441,13 +441,15 @@
   // abandoned timestamp. Pasting the parent ID into raw CDR search
   // is the manual verification step, so the copy button is worth
   // the extra DOM. Returns '' for falsy IDs (non-abandoned rows).
-  function parentIdBadge(parentId, date) {
+  function parentIdBadge(parentId, date, kind) {
     if (!parentId) return '';
     const safe = escapeHtml(String(parentId));
     // #3: "view path" affordance on abandoned rings -- the parent call id +
     // date key inbound_calls for the leg-by-leg journey (getCallJourney).
+    // `kind` 'outbound' drills an outbound call instead (CE-2's attribute).
     const pathBtn = date
       ? '<button type="button" class="pid-journey" '
+        +   (kind === 'outbound' ? 'data-journey-kind="outbound" ' : '')
         +   'data-journey-pid="' + safe + '" '
         +   'data-journey-date="' + escapeHtml(String(date)) + '" '
         +   'title="View this call’s path (IVR → queues → agents)" '

@@ -3655,6 +3655,14 @@
   .agents tbody tr.ap-row:hover { background: transparent; }
   .agents tbody tr.ap-row > td { padding: 0; text-align: left; background: var(--paper);
     border-bottom: 2px solid var(--accent); }
+  /* The panel's slide (apAnimateOpen_ / apAnimateClose_): clipped only while
+     it moves, so the settled .ap keeps its sticky-left. */
+  .agents .ap-clip { display: grid; grid-template-rows: 0fr; opacity: 0;
+    transition: grid-template-rows 220ms var(--ease, ease-out), opacity 180ms var(--ease, ease-out); }
+  .agents .ap-clip > .ap-clip-in { min-height: 0; overflow: hidden; }
+  .agents tr.ap-shown .ap-clip { grid-template-rows: 1fr; opacity: 1; }
+  .agents tr.ap-settled .ap-clip > .ap-clip-in { overflow: visible; }
+  @media (prefers-reduced-motion: reduce) { .agents .ap-clip { transition: none; } }
   .agents .ap { position: sticky; left: 0; box-sizing: border-box; padding: 14px 18px 16px;
     contain: inline-size; text-align: left; white-space: normal; cursor: default; }
   .agents .ap-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }

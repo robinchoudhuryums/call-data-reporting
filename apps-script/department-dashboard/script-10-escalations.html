@@ -2398,7 +2398,7 @@
     const outList = $('ad-outbound-list');
     if (outList) {
       outList.innerHTML = (data.outbound || []).length
-        ? (data.outbound || []).map(adOutboundCardHtml_).join('')
+        ? (data.outbound || []).map(function (c) { return adOutboundCardHtml_(c, meta.date); }).join('')
         : '<div class="ds-note">No outbound calls recorded for this agent on this day.</div>';
     }
 
@@ -2493,7 +2493,7 @@
       : '<span class="cl-chip cl-chip-muted">Not connected</span>';
   }
 
-  function adOutboundCardHtml_(c) {
+  function adOutboundCardHtml_(c, date) {
     const when = escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?');
     const outcome = adOutboundOutcomeChip_(c);
     const facts = [];
@@ -2509,6 +2509,7 @@
          +     '<span class="cl-call-when">' + when + '</span>'
          +     '<span class="cl-chip cl-chip-dir-out">Outbound</span>'
          +     outcome
+         +     adOutboundIdHtml_(c, date)
          +   '</div>'
          +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
          + '</div>';
@@ -2628,10 +2629,38 @@
     if (inner && wrap) inner.style.width = Math.max(wrap.clientWidth, 0) + 'px';
   }
 
+  // The panel row slides open and shut (owner 2026-10-21): .ap-clip animates
+  // grid-template-rows 0fr <-> 1fr. Its overflow is clipped only WHILE it
+  // moves -- clipping a settled panel would break the inner .ap's sticky-left.
+  // A closing panel is detached at once (no id, inert) and removed when its
+  // slide ends, so every caller still sees the panel gone immediately.
+  var AP_ANIM_MS_ = 220;
+  function apReducedMotion_() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; }
+  }
+  function apAnimateOpen_(row) {
+    if (apReducedMotion_()) { row.classList.add('ap-shown', 'ap-settled'); return; }
+    void row.offsetHeight;   // start from the collapsed frame
+    requestAnimationFrame(function () {
+      row.classList.add('ap-shown');
+      setTimeout(function () { if (row.classList.contains('ap-shown')) row.classList.add('ap-settled'); }, AP_ANIM_MS_ + 40);
+    });
+  }
+  function apAnimateClose_(row) {
+    row.removeAttribute('id');
+    row.setAttribute('inert', '');
+    row.setAttribute('aria-hidden', 'true');
+    if (apReducedMotion_()) { if (row.parentNode) row.parentNode.removeChild(row); return; }
+    row.classList.remove('ap-settled');
+    void row.offsetHeight;
+    row.classList.remove('ap-shown');
+    setTimeout(function () { if (row.parentNode) row.parentNode.removeChild(row); }, AP_ANIM_MS_ + 40);
+  }
+
   function apClose_(focusRow) {
     const agent = AP_.agent, idx = AP_.idx;
     AP_.seq++;   // any in-flight strip / day response is now stale
-    if (AP_.node && AP_.node.parentNode) AP_.node.parentNode.removeChild(AP_.node);
+    if (AP_.node && AP_.node.parentNode) apAnimateClose_(AP_.node);
     AP_.node = null; AP_.agent = null; AP_.strip = null; AP_.date = null; AP_.days = {};
     apRowsFor_(agent).forEach(function (tr) {
       tr.classList.remove('ap-open');
@@ -2691,7 +2720,8 @@
     row.id = 'ap-panel';
     const td = document.createElement('td');
     td.colSpan = tr.children.length || 1;
-    td.innerHTML = '<div class="ap" role="region" aria-label="' + escapeHtml(agent) + ' — days with activity">'
+    td.innerHTML = '<div class="ap-clip"><div class="ap-clip-in">'
+      + '<div class="ap" role="region" aria-label="' + escapeHtml(agent) + ' — days with activity">'
       + '<div class="ap-head">'
       +   '<span class="ap-title">' + escapeHtml(agent) + '</span>'
       +   '<span class="ap-sub" data-ap-sub>Days with activity</span>'
@@ -2702,10 +2732,12 @@
       + '</div>'
       + '<div data-ap-strip></div>'
       + '<div data-ap-day></div>'
-      + '</div>';
+      + '</div>'
+      + '</div></div>';
     row.appendChild(td);
     AP_.node = row;
     tr.parentNode.insertBefore(row, tr.nextSibling);
+    apAnimateOpen_(row);
     apMarkRow_(tr);
     apWire_(row);
     apSizeToWrap_();
@@ -2947,19 +2979,29 @@
       + '</tbody></table>';
   }
 
-  function apOutboundTableHtml_(rows) {
+  // Admin-only audit aid (owner 2026-10-21): an outbound call's id, copy
+  // button and "↳ path" drill, to check in the phone portal who was dialled
+  // and in the path whether a coworker took the call. Managers get nothing.
+  function adOutboundIdHtml_(c, date) {
+    if (!c || !c.callId || typeof USER === 'undefined' || !USER || USER.role !== 'admin') return '';
+    return parentIdBadge(c.callId, date || '', 'outbound');
+  }
+  function apOutboundTableHtml_(rows, date) {
     if (!rows.length) return '<div class="ds-note">No outbound calls recorded for this agent on this day.</div>';
-    return '<table class="ap-calls"><thead><tr><th>Time</th><th>To</th><th>Outcome</th><th>Talk</th><th>Rang</th><th>Attempts</th></tr></thead><tbody>'
+    const ids = rows.some(function (c) { return !!adOutboundIdHtml_(c, date); });
+    return '<table class="ap-calls"><thead><tr><th>Time</th><th>To</th><th>Outcome</th><th>Talk</th><th>Rang</th><th>Attempts</th>'
+      + (ids ? '<th>Call</th>' : '') + '</tr></thead><tbody>'
       + rows.map(function (c) {
           const outcome = adOutboundOutcomeChip_(c);
           const cbText = adCallbackText_(c.callback);   // Step 2 1b
+          const idCell = ids ? '<td class="ap-call-id">' + adOutboundIdHtml_(c, date) + '</td>' : '';
           return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?') + '</td>'
             + '<td class="ap-party">' + escapeHtml(adPartyText_(c.to, 'out') || '–')
             +   (cbText ? '<div class="ap-callback">' + escapeHtml(cbText) + '</div>' : '') + '</td>'
             + '<td>' + outcome + '</td>'
             + '<td class="m">' + (c.connected && c.talkSec > 0 ? fmtDuration(c.talkSec) : '–') + '</td>'
             + '<td class="m">' + (c.ringSec != null ? fmtDuration(c.ringSec) : '–') + '</td>'
-            + '<td class="m">' + fmtNumber(c.attempts || 1) + '</td></tr>';
+            + '<td class="m">' + fmtNumber(c.attempts || 1) + '</td>' + idCell + '</tr>';
         }).join('')
       + '</tbody></table>';
   }
@@ -2983,7 +3025,7 @@
         + '<span class="ap-tab-n">' + fmtNumber(n) + '</span></button>';
     };
     let list;
-    if (tab === 'out') list = apOutboundTableHtml_(outbound);
+    if (tab === 'out') list = apOutboundTableHtml_(outbound, meta.date);
     else if (tab === 'rings') list = '<div class="ap-rings">' + rings.map(function (t) { return escapeHtml(String(t)); }).join(' · ') + '</div>';
     else list = apInboundTableHtml_(inbound);
     return '<div class="ap-daybar"><span class="ap-daybar-t">' + escapeHtml(apWeekday_(meta.date) + ' ' + (meta.date || '')) + '</span>'
