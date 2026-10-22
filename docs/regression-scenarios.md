@@ -664,3 +664,17 @@ S67 | Direct Calls report covers only days that exist: the clamp, missing workda
     - (D3) My Department, as the ADMIN: under Team Outbound, a collapsed "Team Direct Calls" card reads "open to load" and has sent no request. Open it: its figures equal the report's for that dept and dates (answered / missed / busy, answer %, out calls, the int / ext split, the per-agent rows) and it repeats the coverage note. "Open the Direct Calls report" opens the report on that dept and dates. View as a manager, or as a MANAGER: no card.
   Expected: as described.
   Fails if: a window ending on a not-yet-imported day shows lower totals with no note; a missing workday is not named, or a weekend / holiday is; vs-prior chips show while a window has a gap; or an int / ext pair does not add up to its count.
+
+S68 | Exception days: one outage day left out everywhere, said everywhere, and an admin can put it back (#81) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, Admin ▾ → Exception days: Save with no reason -- refused in place. Add a recent weekday, All departments, reason "8x8 outage". It lists with your address. Re-run `setup()` beforehand on a fresh install (the sheet is also created on save).
+    - Refresh My Department on a 30-day window spanning it: a note under the controls names the day, the reason and the calls left out. Each team card's day bars show that day striped gray at its real height, never tinted; the other bars keep their scale and the target line ignores it; pointing at it reads "Excluded (8x8 outage)". The agent table's numbers for that window are lower by exactly the note's count (spot-check one agent against the window minus that day).
+    - The Insights region and the Individual Report each carry the same note; the Missed Calls section (under the page note) has no missed calls on that day; the comparison's prior window skips the day like a holiday.
+    - Click "Include them": the table, the cards and the missed section re-ask WITH the day; the note says the days are INCLUDED. "Leave them out" returns. View as a manager: no switch. As a real MANAGER: the note, no switch.
+    - Overview: the trend lines bridge the day under a hatched band, its point has no tooltip, and a note under the chart names it. The tiles' figures exclude it.
+    - Agent app (an agent whose window spans it): "Not counted: <day>: 8x8 outage ..." under the header.
+    - The next morning's daily alert run (or Preview on that date) logs the dept rows as `skipped` -- "Exception day (...): 8x8 outage -- not assessed".
+    - Change the day to one department only: that department's figures and its own queue chips drop it; another department's, and the company hero, keep it.
+    - Remove the day (it asks first, in danger tone): within a page refresh every figure is back to including it.
+  Expected: as described.
+  Fails if: any report's numbers drop the day without a note, or show the note while still counting it; the striped bar sets the card's scale; a manager sees or can use the include switch; an alert fires or logs "no data" for the day; removing the day leaves any report excluding it after a refresh.

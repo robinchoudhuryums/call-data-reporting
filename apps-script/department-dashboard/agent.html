@@ -26,6 +26,8 @@
     .agent-custom input { font: 12px var(--mono); border: 1px solid var(--line); border-radius: var(--r, 2px);
       padding: 3px 6px; background: var(--paper-card); color: var(--ink); }
     .agent-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+    .agent-exc-note { font: 400 12.5px/1.5 var(--ui); color: var(--muted); border-left: 3px solid var(--muted);
+      padding: 6px 10px; margin-bottom: 12px; background: var(--paper-card); }
     @media (max-width: 700px) { .agent-kpis { grid-template-columns: repeat(2, 1fr); } }
     .agent-kpi { background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r, 2px); padding: 16px 18px 14px; }
     .agent-kpi .lbl { font: 600 10px var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
@@ -121,6 +123,8 @@
     <div class="agent-loading" id="agent-loading" role="status" aria-live="polite">Loading your numbers…</div>
     <div class="agent-error" id="agent-error" role="alert" style="display:none;"></div>
     <div id="agent-body" style="display:none;">
+      <!-- #81: the exception days these numbers leave out (an outage). -->
+      <div class="agent-exc-note" id="agent-exc-note" role="status" style="display:none;"></div>
       <div class="agent-kpis" id="agent-kpis"></div>
       <div class="agent-rank" id="agent-rank"></div>
       <div class="agent-team" id="agent-team"></div>

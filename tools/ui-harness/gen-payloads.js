@@ -212,7 +212,16 @@ const PH = [['Timestamp', 'Step', 'Status', 'Rows', 'Duration (ms)', 'Notes']];
 PH.push([new Date(today.getTime() - 3600e3).toISOString(), 'processIntegratedHistory:DQE', 'success', 42, 1200, LATEST]);
 PH.push([new Date(today.getTime() - 3600e3).toISOString(), 'autoImport', 'success', 900, 60000, 'Call_Legs_' + LATEST]);
 
+// #81 (owner 2026-10-22): one ALL-department exception day, 8 workdays back --
+// inside the 30-day window the dept page opens on, outside "last 7" -- so the
+// notes, the striped day bar, the Overview band and the excluded figures are
+// all driven by the REAL server code. EXC_DATE is in meta.json for the drivers.
+const EXC_DATE = days[days.length - 8];
+const EXCEPTION_DAYS = [['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At'],
+  [EXC_DATE, '', '8x8 outage', 'TRUE', 'admin@ums.com', '2026-01-01T00:00:00Z']];
+
 const SHEETS = {
+  'Exception Days': EXCEPTION_DAYS,
   'DO NOT EDIT!': ROSTER,
   'DQE Historical Data': dqeSheet(dqeRows),
   'QCD Historical Data': qcdRows,
@@ -226,7 +235,8 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs',
-          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs'],
+          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs',
+          'ExceptionDays.gs'],   // #81: the editor's init
 });
 
 function install(email) {
@@ -544,5 +554,7 @@ dump('dept-day-abandons', (function () {
 // Single day = the report's own default (the latest queue day).
 dump('qcd-alldept', h.call('getQcdAllDepartments', { from: LATEST, to: LATEST }));
 
-dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart });
+// #81: the exception-day editor's first paint, from the REAL init.
+dump('exception-init', h.call('getExceptionDaysInit'));
+dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart, excDate: EXC_DATE });
 console.log('LATEST=' + LATEST);

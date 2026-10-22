@@ -1101,6 +1101,83 @@
   // are left untouched so numeric columns aren't corrupted. Call this
   // BEFORE the RFC-4180 quote-escaping (comma/quote/newline) in every
   // CSV cell writer.
+  // ── Exception days (owner 2026-10-22, Operator State #81) ───────────────
+  // The server leaves exception days out of every windowed figure and says so
+  // in meta.exceptionDays ([{date, reason, rung, answered, missed}]); every
+  // report renders that as one note. An ADMIN can include them for this tab
+  // (EXC_INCLUDE_ -> excReq_ adds includeExceptionDays to the report calls);
+  // the server honours the flag for admins only. EXC_LAST_ remembers the days
+  // last left out, so the note can still name them while they are included.
+  var EXC_INCLUDE_ = false;
+  var EXC_LAST_ = null;
+  function excIncludeOn_() {
+    return EXC_INCLUDE_ === true && typeof USER !== 'undefined' && !!USER && USER.role === 'admin';
+  }
+  function excReq_(req) {
+    if (req && excIncludeOn_()) req.includeExceptionDays = true;
+    return req;
+  }
+  var EXC_WD_ = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var EXC_MON_ = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function excDateLabel_(iso) {
+    var p = String(iso || '').split('-');
+    if (p.length !== 3) return String(iso || '');
+    var d = new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12));
+    return EXC_WD_[d.getUTCDay()] + ' ' + EXC_MON_[(+p[1]) - 1] + ' ' + (+p[2]);
+  }
+  /** PURE. The note's text for a meta.exceptionDays list ('' when empty). */
+  function excNoteText_(list) {
+    if (!list || !list.length) return '';
+    var calls = 0;
+    var days = list.map(function (e) {
+      calls += Number(e.rung) || ((Number(e.answered) || 0) + (Number(e.missed) || 0));
+      return excDateLabel_(e.date) + (e.reason ? ': ' + e.reason : '');
+    });
+    return list.length + ' exception day' + (list.length === 1 ? '' : 's') + ' left out (' + days.join('; ') + ')'
+      + (calls ? ' — ' + calls.toLocaleString() + ' call' + (calls === 1 ? '' : 's') + ' not counted' : '')
+      + '. Every figure here excludes ' + (list.length === 1 ? 'it' : 'them') + '.';
+  }
+  /**
+   * Paints a report's exception-day note into `el` (hidden when there is
+   * nothing to say). `withToggle` adds the admin's include / exclude switch
+   * (My Department -- the list it shows is the one remembered); `fixed` marks
+   * a surface that never includes them (the Overview), so it never says so.
+   */
+  function excRenderNote_(el, list, withToggle, fixed) {
+    if (!el) return;
+    var admin = typeof USER !== 'undefined' && USER && USER.role === 'admin';
+    var toggle = function (label) {
+      return (withToggle && admin) ? ' <button type="button" class="link-btn exc-toggle" data-exc-toggle data-admin-only>'
+        + label + '</button>' : '';
+    };
+    if (withToggle && list && list.length) EXC_LAST_ = list;
+    if (!fixed && excIncludeOn_()) {
+      var named = (EXC_LAST_ || []).map(function (e) { return excDateLabel_(e.date) + (e.reason ? ' (' + e.reason + ')' : ''); });
+      el.innerHTML = '<span class="exc-note-text">Exception days are INCLUDED in these figures (admin view)'
+        + (named.length ? ': ' + escapeHtml(named.join('; ')) : '') + '.</span>' + toggle('Leave them out');
+      el.classList.add('is-included');
+      el.style.display = '';
+      return;
+    }
+    el.classList.remove('is-included');
+    var text = excNoteText_(list);
+    if (!text) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    el.innerHTML = '<span class="exc-note-text">' + escapeHtml(text) + '</span>' + toggle('Include them');
+    el.style.display = '';
+  }
+
+  /** The note as the first child of a report's results host (IR, Insights). */
+  function excNoteUpsert_(hostId, list) {
+    var host = $(hostId);
+    if (!host) return;
+    var el = host.querySelector(':scope > .exc-note');
+    if (!el) {
+      host.insertAdjacentHTML('afterbegin', '<div class="ds-note exc-note" role="status" style="display:none;"></div>');
+      el = host.querySelector(':scope > .exc-note');
+    }
+    excRenderNote_(el, list, false);
+  }
+
   function csvSafeCell_(v) {
     var s = String(v == null ? '' : v);
     // Prefix only genuine formula text. The numeric-ish exclusion keeps

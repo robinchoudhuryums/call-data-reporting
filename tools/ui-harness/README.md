@@ -81,6 +81,12 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
   it also checks the Queue calls and Abandoned % cards' vs-prior chips.
+- `drive-exceptions.js` — **exception days** (Operator State #81): the
+  disclosure note on My Department, Insights and the Overview (day, reason,
+  calls left out), one striped untinted bar per day-bar card with an
+  "Excluded" readout, the admin-only include switch re-asking the summary and
+  the missed calls WITH the flag and back, View-as and a manager never seeing
+  it, the Overview trend's shaded band + bridged lines, 360 px.
 - `drive-notify.js` — the **Notifications** page: sentence rules, History,
   Test send, the manager-layer switch, a manager's Settings section off and
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held

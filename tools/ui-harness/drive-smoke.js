@@ -540,6 +540,11 @@ async function visibleErrorTones(page) {
               const irDrawn = await drawnCanvasCount(page, '#individual-modal');
               record(role + ': the generated Individual Report drew at least one chart canvas',
                 irDrawn >= 1, 'drawn=' + irDrawn);
+              // #81: the fixture's exception day sits in IR's window, so the
+              // report must SAY it left the day out.
+              const irExc = await page.evaluate(() => { const el = document.querySelector('#individual-results > .exc-note');
+                return el && getComputedStyle(el).display !== 'none' ? el.textContent : ''; });
+              record(role + ': the generated Individual Report says which exception day it left out', /8x8 outage/.test(irExc), irExc);
             } else {
               record(role + ': the IR Generate button enables after picking an agent',
                 false, 'still disabled/hidden -- the tone check cannot run');

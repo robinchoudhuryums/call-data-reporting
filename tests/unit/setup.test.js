@@ -6,7 +6,7 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 // F-7: Setup.gs had ZERO test coverage while INV-12 asserts it is idempotent,
-// admin-gated, creates the twelve dashboard-managed sheets, and never overwrites
+// admin-gated, creates the thirteen dashboard-managed sheets, and never overwrites
 // existing rows. These pins make the claim enforced rather than asserted.
 
 const h = loadGas({
@@ -20,15 +20,16 @@ function install() {
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
 }
 
-// The twelve managed sheet names, from the captured constants (not re-typed --
+// The thirteen managed sheet names, from the captured constants (not re-typed --
 // the pin must follow the code's own list). H1 added Company Holidays, H2
-// Dashboard Standards.
+// Dashboard Standards, #81 Exception Days.
 const TEN = [
   'ACCESS_CONTROL', 'ALERT_CONFIG', 'ALERT_LOG', 'PIPELINE_HEALTH',
   'DIGEST_CONFIG', 'AGENT_ALIAS_OVERRIDES', 'ORPHAN_FIX_LOG', 'DEPT_CONFIG',
   'REPORT_USAGE', 'QUEUE_REPORT_SUBSCRIBERS', 'COMPANY_HOLIDAYS', 'DASHBOARD_STANDARDS',
+  'EXCEPTION_DAYS',
 ].map(function (k) { return h.consts.SHEETS[k]; });
-assert.equal(TEN.length, 12, 'INV-12 says twelve');
+assert.equal(TEN.length, 13, 'INV-12 says thirteen');
 
 test('INV-12: setup() is admin-gated', function () {
   install();
@@ -36,7 +37,7 @@ test('INV-12: setup() is admin-gated', function () {
   assert.throws(function () { h.call('setup'); }, /admin/i);
 });
 
-test('INV-12: setup() creates all twelve managed sheets with header rows', function () {
+test('INV-12: setup() creates all thirteen managed sheets with header rows', function () {
   install();
   h.call('setup');
   TEN.forEach(function (name) {

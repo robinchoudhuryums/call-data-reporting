@@ -31,7 +31,10 @@ function install(opts) {
     'Alert Log': [['Timestamp', 'Department', 'Date Checked', 'Threshold', 'Answer Rate', 'Sent',
       'Recipients', 'Triggered By', 'Notes', 'Status']],
     'Access Control': [['Email', 'Department', 'Notes'], ['csr.mgr@x.com', 'CSR', '']],
+    // #81: exception days (none unless a test passes some).
+    'Exception Days': [['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At']].concat(opts.exc || []),
   } });
+  h.state.cache.clear();
   h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales']; };
   h.ctx.resolveUser_ = function (email) { return { email: email, role: email === 'admin@x.com' ? 'admin' : 'none' }; };
   h.ctx.isIsoDate_ = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v)); };
@@ -171,6 +174,31 @@ test('a dept skip date silences its reasons on the trigger path only', function 
   h.ctx.sendAlertEmail_ = function () {};
   const res = h.call('runAlertsCore_', '2026-10-14', false, 'daily-trigger');
   assert.equal(res.filter(function (r) { return r.reason; })[0].status, 'skipped');
+});
+
+test('#81: an exception day is never assessed -- the answer-rate rule and agent-low both log "skipped"', function () {
+  install({ exc: [['2026-10-14', '', '8x8 outage', 'TRUE']],
+    props: { ALERT_REASON_RULES: JSON.stringify({ CSR: { agentLow: { threshold: 50, days: 3 } } }) } });
+  stubDays();
+  h.ctx.sendAlertEmail_ = function () { throw new Error('nothing fires on an exception day'); };
+  const res = h.call('runAlertsCore_', '2026-10-14', false, 'daily-trigger');
+  const dept = res.filter(function (r) { return !r.reason && r.department === 'CSR'; })[0];
+  const reason = res.filter(function (r) { return r.reason === 'agent-low'; })[0];
+  assert.equal(dept.status, 'skipped');
+  assert.match(dept.notes, /Exception day \(2026-10-14\): 8x8 outage -- not assessed/);
+  assert.equal(reason.status, 'skipped');
+  assert.match(reason.notes, /Exception day/);
+});
+
+test('#81: agent-low\'s N workdays step over an exception day for that department, like a holiday', function () {
+  install({ exc: [['2026-10-13', 'CSR', 'CSR phones down', 'TRUE']],
+    props: { ALERT_REASON_RULES: JSON.stringify({ CSR: { agentLow: { threshold: 50, days: 3 } } }) } });
+  stubDays();
+  const ranges = [];
+  h.ctx.alertRowsForRange_ = function (f, t) { ranges.push([f, t]); return {}; };
+  h.ctx.sendAlertEmail_ = function () {};
+  h.call('runAlertsCore_', '2026-10-14', false, 'daily-trigger');
+  assert.deepEqual(ranges, [['2026-10-09', '2026-10-14']], '10-14, 10-12, 10-09 -- 10-13 is not a workday to judge');
 });
 
 test('a reason that throws is an error row, and the run still finishes', function () {

@@ -47,6 +47,8 @@ function record(name, pass, detail) {
 
   // ---- rank stays hidden (owner: build, hide) -----------------------------
   const rankVisible = await page.locator('#agent-rank').isVisible().catch(() => false);
+  const excNote = await page.evaluate(() => { const el = document.getElementById('agent-exc-note'); return el && getComputedStyle(el).display !== 'none' ? el.textContent : ''; });
+  record('#81: the exception-day note names the day and the reason', /Not counted: Wed Aug 5: 8x8 outage/.test(excNote), excNote);
   record('rank: computed by the server but NOT rendered (AGENT_RANK_SHOW_ off)', !rankVisible);
 
   // ---- team strip: aggregates only ---------------------------------------

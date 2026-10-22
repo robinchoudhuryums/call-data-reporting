@@ -7779,6 +7779,18 @@
   .dts-bars.is-on .dts-bar { opacity: 0.18; }
   .dts-bars.is-on .dts-bar.is-sel { opacity: 1; }
   .dts-bars.is-on .dts-bar.is-empty.is-sel { background: var(--ink); }
+  /* #81: an exception day -- gray diagonal stripes at its real value, never a
+     standard tint, never part of the scale (dtsAttachDayBars_). */
+  .dts-bar.is-excluded, .dts-bar.is-excluded.is-empty {
+    background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 5px);
+    opacity: 0.55; box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .dts-bars.is-on .dts-bar.is-excluded { opacity: 0.3; }
+  .dts-bars.is-on .dts-bar.is-excluded.is-sel { opacity: 0.9; }
+  /* #81: the exception-day note on My Department / IR / Insights / Overview. */
+  .exc-note { border-left: 3px solid var(--muted); }
+  .exc-note.is-included { border-left-color: var(--caution); }
+  .exc-note .exc-toggle { margin-left: 6px; }
   .dts-axis { display: flex; justify-content: space-between; font: 400 10px/1.4 var(--mono); color: var(--muted); }
   .dts-readout { min-height: 17px; font: 400 11.5px/1.4 var(--ui); font-variant-numeric: tabular-nums;
     color: var(--ink); border-top: 1px dashed var(--line); padding-top: 3px; margin-top: 2px;

@@ -61,6 +61,39 @@ const MODALS = [
   // build-harness.js. cross-file-pins.test.js now fails if a NEW modal route
   // joins the router without joining this list or the documented exemptions.
   { name: 'Coaching',       btn: '#coaching-btn',        sel: '#coaching-modal',       adminMenu: true },
+  // #81 (owner 2026-10-22): the Exception Days editor -- an INV-01 admin
+  // write. The stateful mocks in build-harness.js round-trip save / remove, so
+  // the probe walks the whole loop: the fixture day is listed, a missing
+  // reason is refused in place, a save lists the new day, Remove asks in
+  // DANGER tone and the day leaves the list.
+  { name: 'Exception Days', btn: '#exception-days-btn', sel: '#exception-days-modal', adminMenu: true,
+    probe: async function (page, record) {
+      const meta = require('./payloads/meta.json');
+      const rows = () => page.evaluate(() => Array.from(document.querySelectorAll('#exc-tbody tr')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+      const r0 = await rows();
+      record('Exception Days: the fixture day is listed with its reason',
+        r0.length === 1 && /8x8 outage/.test(r0[0]) && /All departments/i.test(r0[0]), JSON.stringify(r0));
+      await page.fill('#exc-date', meta.latest);
+      await page.fill('#exc-reason', '');
+      await page.click('#exc-save-btn'); await page.waitForTimeout(300);
+      const err = await page.evaluate(() => { const s = document.getElementById('exc-status'); return s && s.style.display !== 'none' ? s.textContent : ''; });
+      record('Exception Days: a missing reason is refused in place',
+        /why/i.test(err), err);
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.fill('#exc-reason', 'Harness: carrier fault');
+      await page.click('#exc-save-btn'); await page.waitForTimeout(800);
+      const saved = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'saveExceptionDay').map((c) => c.args[0]));
+      const r1 = await rows();
+      record('Exception Days: Save sends the day for all departments and lists it',
+        saved.length === 1 && saved[0].date === meta.latest && Array.isArray(saved[0].departments) && saved[0].departments.length === 0
+          && r1.length === 2 && r1.some((t) => /carrier fault/.test(t)), JSON.stringify({ saved: saved, rows: r1 }));
+      await page.click('#exc-tbody button[data-exc-remove="' + meta.latest + '"]'); await page.waitForTimeout(300);
+      const dlg = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok'); return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')) }; });
+      record('Exception Days: Remove asks first, in DANGER tone', dlg.open && dlg.danger, JSON.stringify(dlg));
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const r2 = await rows();
+      record('Exception Days: confirming removes the day from the list', r2.length === 1 && !r2.some((t) => /carrier fault/.test(t)), JSON.stringify(r2));
+    } },
   // (G3: the Outbound report modal is retired. Its content is driven on My
   // Department by drive-callbacks.js / drive-deptoutbound.js and its
   // company-view table on the Overview by drive-cbdept.js.)
@@ -162,6 +195,7 @@ const MODALS = [
         }
         if (m.run.probe) await m.run.probe(page, record);
       }
+      else if (m.probe) await m.probe(page, record);
 
       const info = await page.evaluate((sel) => {
         const modal = document.querySelector(sel);

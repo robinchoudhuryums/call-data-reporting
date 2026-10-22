@@ -349,10 +349,34 @@
     $('agent-missed').innerHTML = html;
   }
 
+  // #81: the exception days these numbers leave out (an outage) -- the date,
+  // the reason and this agent's own calls; never a teammate's.
+  var EXC_WD_ = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var EXC_MON_ = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function renderExceptions(d) {
+    var el = $('agent-exc-note');
+    if (!el) return;
+    var list = (d.meta && d.meta.exceptionDays) || [];
+    if (!list.length) { el.style.display = 'none'; el.textContent = ''; return; }
+    var calls = 0;
+    var days = list.map(function (e) {
+      calls += Number(e.rung) || 0;
+      var p = String(e.date).split('-');
+      var dt = new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12));
+      return EXC_WD_[dt.getUTCDay()] + ' ' + EXC_MON_[(+p[1]) - 1] + ' ' + (+p[2]) + (e.reason ? ': ' + e.reason : '');
+    });
+    var which = list.length === 1 ? 'that day' : 'those days';
+    el.textContent = 'Not counted: ' + days.join('; ') + (calls ? ' — your ' + calls + ' call' + (calls === 1 ? '' : 's')
+      + ' on ' + which + (calls === 1 ? ' is' : ' are') + ' left out' : '') + '. These numbers exclude '
+      + which + ' for everyone.';
+    el.style.display = '';
+  }
+
   function render(d) {
     $('agent-loading').style.display = 'none';
     $('agent-error').style.display = 'none';
     $('agent-body').style.display = '';
+    renderExceptions(d);
     renderKpis(d); renderRank(d); renderTeam(d); renderTrend(d); renderMissed(d);
   }
 

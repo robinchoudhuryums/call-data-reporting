@@ -58,6 +58,10 @@ const STAGES = [
   // selection across four cards, workday / monthly bucketing, keyboard and
   // touch, admin-only, and no sideways scroll at 360 px.
   ['node', ['drive-daybars.js'], 'team cards: linked day bars (Step 4)'],
+  // Exception days (owner 2026-10-22, #81): every report says which day it
+  // leaves out, the day bars stripe the day off the scale, the include switch
+  // is an admin's alone and really re-asks, the Overview bridges + shades it.
+  ['node', ['drive-exceptions.js'], 'exception days: notes, striped bars, include switch, Overview band (#81)'],
   // Step 5a: the Notifications page -- sentence rules, History, Test send, the
   // manager-layer switch, and a manager's Settings section (off / on).
   ['node', ['drive-notify.js'], 'Notifications: rules, history, test send, manager layer (Step 5a)'],

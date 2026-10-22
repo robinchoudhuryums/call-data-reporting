@@ -1685,6 +1685,7 @@
           latestDate: ovYtdData.latestDate || (data && data.latestDate),
           // Admin-only, and absent for a manager (the server strips it).
           company: ovYtdData.company || null,
+          exceptionDays: ovYtdData.exceptionDays || null,   // #81
         };
       }
       // YTD not loaded yet -> show the full 90-day window meanwhile.
@@ -1722,8 +1723,66 @@
       depts: depts,
       latestDate: data.latestDate,
       company: company,
+      exceptionDays: data.exceptionDays || null,   // #81
     };
   }
+
+  /**
+   * #81 (PURE): bridge a line across its exception days. Each excluded index
+   * that sits between two real points takes the straight-line value between
+   * them -- drawn with no point and left out of the tooltip (`bridged`), so the
+   * line passes over the day instead of breaking or diving; nothing is
+   * invented for a reader to hover. Returns { data, bridged: {index: true} }.
+   */
+  function ovBridgeExceptions_(arr, exIdx) {
+    var data = (arr || []).slice(), bridged = {};
+    (exIdx || []).forEach(function (i) {
+      if (data[i] != null) return;
+      var a = i - 1, b = i + 1;
+      while (a >= 0 && (data[a] == null || bridged[a])) a--;
+      while (b < data.length && data[b] == null) b++;
+      if (a < 0 || b >= data.length) return;
+      data[i] = data[a] + (data[b] - data[a]) * (i - a) / (b - a);
+      bridged[i] = true;
+    });
+    return { data: data, bridged: bridged };
+  }
+
+  /**
+   * #81: shades each ALL-department exception day on the trend chart with gray
+   * diagonal stripes behind the lines (the day bars' treatment).
+   */
+  var ovExceptionBandPlugin_ = {
+    id: 'ovExceptionBand',
+    beforeDatasetsDraw: function (chart, args, opts) {
+      var idx = (opts && opts.idx) || [];
+      var xs = chart.scales && chart.scales.x, area = chart.chartArea;
+      if (!idx.length || !xs || !area) return;
+      var ctx = chart.ctx;
+      var step = chart.data.labels.length > 1
+        ? Math.abs(xs.getPixelForValue(1) - xs.getPixelForValue(0)) : (area.right - area.left);
+      ctx.save();
+      idx.forEach(function (i) {
+        var x = xs.getPixelForValue(i), w = Math.max(step, 6);
+        var left = Math.max(area.left, x - w / 2), right = Math.min(area.right, x + w / 2);
+        ctx.beginPath();
+        ctx.rect(left, area.top, right - left, area.bottom - area.top);
+        ctx.clip();
+        ctx.strokeStyle = (THEME && THEME.muted) || '#606872';
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = 1;
+        for (var k = left - (area.bottom - area.top); k < right; k += 5) {
+          ctx.beginPath();
+          ctx.moveTo(k, area.bottom);
+          ctx.lineTo(k + (area.bottom - area.top), area.top);
+          ctx.stroke();
+        }
+        ctx.restore();
+        ctx.save();
+      });
+      ctx.restore();
+    },
+  };
 
   // Builds the y-axis config for a metric + zoom state. The Fit/Full behavior
   // (fixing the previously-inert Zoom button): Full gives % Answered the fixed
@@ -1867,12 +1926,28 @@
     const chartDepts = (view.depts || []).filter(function (d) {
       return ovShowSubQueues_ || !d.parent;
     });
+    // #81: the exception days' positions on this axis -- all-dept days shade
+    // the plot; a line is bridged across every day that covers its dept.
+    const exIso = view.trendIsoLabels || [];
+    const exList = view.exceptionDays || [];
+    const exIdxFor = function (deptName) {
+      const out = [];
+      exList.forEach(function (e) {
+        if (e.depts && e.depts.length && (deptName == null || e.depts.indexOf(deptName) === -1)) return;
+        const i = exIso.indexOf(e.date);
+        if (i !== -1) out.push(i);
+      });
+      return out;
+    };
     const datasets = chartDepts.map(function (dept) {
       const color = colorByDept[dept.name];
       const isChild = !!dept.parent;
+      const br = ovBridgeExceptions_(dept[mcfg.field] || [], exIdxFor(dept.name));
       return {
         label: dept.name + (isChild ? ' (sub-queue)' : ''),
-        data: (dept[mcfg.field] || []),
+        data: br.data,
+        _bridged: br.bridged,   // #81: no point, no tooltip on a bridged day
+        pointHitRadius: function (c) { return br.bridged[c.dataIndex] ? 0 : 1; },
         borderColor: color,
         // Stash the resting style so the legend hover-dim can restore it
         // (see chartSpotlight* helpers). _deptName lets the tile-hover and
@@ -1913,9 +1988,11 @@
       ? (view.company[mcfg.companyField] || null) : null;
     const OV_COMPANY_LABEL_ = 'Company';
     if (companySeries && companySeries.some(function (v) { return v != null; })) {
+      const cbr = ovBridgeExceptions_(companySeries, exIdxFor(null));   // #81: all-dept days only
       datasets.push({
         label: OV_COMPANY_LABEL_,
-        data: companySeries,
+        data: cbr.data,
+        _bridged: cbr.bridged,
         borderColor: (THEME && THEME.ink) || '#1a1d21',
         _origBorder: (THEME && THEME.ink) || '#1a1d21',
         _origWidth: 3,
@@ -1963,6 +2040,12 @@
     const OV_BASELINE_LABELS_ = [answerTarget_('global') + '% target', ABANDON_STANDARD_ + '% threshold'];
 
     const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+    ovPlugins.push(ovExceptionBandPlugin_);   // #81
+    // #81: say which days the chart leaves out (a dept-scoped one names its depts).
+    excRenderNote_($('ov-exc-note'), exList.filter(function (e) { return exIso.indexOf(e.date) !== -1; })
+      .map(function (e) {
+        return { date: e.date, reason: (e.reason || 'exception day') + (e.depts && e.depts.length ? ' — ' + e.depts.join(', ') : '') };
+      }), false, true);
 
     ovChartInstance = safeChart_($('ov-trend-chart').getContext('2d'), {
       type: 'line',
@@ -1971,6 +2054,7 @@
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
+          ovExceptionBand: { idx: exIdxFor(null) },   // #81: all-dept exception days
           legend: Object.assign({
             position: 'bottom',
             labels: { boxWidth: 12, font: { size: 11 } },
@@ -1983,7 +2067,9 @@
                        && Chart.Tooltip.positioners.topBand) ? 'topBand' : undefined,
             filter: function (ctx) {
               // Hide the reference baseline from the per-line tooltip list;
-              // R11-G composes the shared pin/off filter (5a/5b).
+              // R11-G composes the shared pin/off filter (5a/5b). #81: a
+              // bridged exception day has no value to show.
+              if (ctx.dataset._bridged && ctx.dataset._bridged[ctx.dataIndex]) return false;
               return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1
                 && chartTooltipPinFilter_(ctx);
             },

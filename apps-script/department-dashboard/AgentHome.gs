@@ -336,6 +336,9 @@ function getAgentHome(req) {
       waitsAvailable: !!detail.waitsAvailable,   // Phase C: capture reachability, not coverage
       waitsTruncated: !!detail.waitsTruncated,   // SEC-4: the wait join hit its row ceiling
       waitsCoverFrom: detail.waitsCoverFrom || null,   // ...and covers rings from this date on
+      // #81: the exception days this window leaves out -- date, reason and THIS
+      // agent's own calls only (absent when none).
+      exceptionDays: detail.exceptionDays || undefined,
     },
     me: ownView.me,
     meAttFormatted: formatSecondsHms_(ownView.me.attSeconds),

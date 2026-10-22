@@ -688,7 +688,7 @@
         google.script.run
           .withSuccessHandler(function (data) { reportLastGoodWrite_('ir', sig, data); })
           .withFailureHandler(function () { /* best-effort -- the drill's own fetch surfaces errors */ })
-          .getIndividualReport(req);
+          .getIndividualReport(excReq_(req));
       }, 300);
     });
     page.addEventListener('mouseout', function (e) {
@@ -1419,7 +1419,7 @@
         insShowForm();   // dismisses the launcher loading pane if active
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getInsightsReport(req);
+      .getInsightsReport(excReq_(req));
   }
 
   /**
@@ -2186,6 +2186,7 @@
     insLastData = data;
     coverageNoteUpsert_('insights-results', 'insights',
       (data && data.meta && data.meta.from) || null, 'dqe');   // R12-26
+    excNoteUpsert_('insights-results', (data && data.meta && data.meta.exceptionDays) || null);   // #81
     // Round-16: reflect the saved fold open-state before painting so the
     // draw-on-open gating below reads the right state (incl. SWR pre-paints).
     insFoldsApply_();
@@ -2566,7 +2567,7 @@
         slotEl.innerHTML = '<div class="status status-error">'
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
       })
-      .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to, queue: queue });
+      .getMissedCallsSlice(excReq_({ department: meta.department, from: meta.from, to: meta.to, queue: queue }));
   }
 
   // Round 4: gate + count the per-queue no-ring drill buttons on REAL data.
@@ -2624,7 +2625,7 @@
           w.style.display = '';
         });
       })
-      .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to });
+      .getMissedCallsSlice(excReq_({ department: meta.department, from: meta.from, to: meta.to }));
   }
 
   // (R24, owner: the M2 live headline on the region summary -- answer rate ·
@@ -3722,7 +3723,7 @@
         if (el) el.innerHTML = missedSliceListHtml_(resp, 'Missed rings — ' + iso);
       })
       .withFailureHandler(function (err) { failInto('missed', err); })
-      .getMissedCallsSlice({ department: dept, from: iso, to: iso });
+      .getMissedCallsSlice(excReq_({ department: dept, from: iso, to: iso }));
 
     // Lens 2 -- inbound abandons for the SAME date, carrying wait/hold time.
     // R16i: the manager-reachable per-dept/per-day endpoint (the heatmap's own

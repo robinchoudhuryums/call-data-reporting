@@ -431,6 +431,17 @@
     const b = e.target.closest && e.target.closest('.missed-chart-mode [data-mode]');
     if (b) { e.preventDefault(); setMissedChartMode_(b.getAttribute('data-mode')); }
   });
+  // #81: an admin's include / leave-out switch in an exception-day note.
+  // Flips the tab-wide flag, then re-runs My Department (summary + missed)
+  // and the Insights region on the same window.
+  document.addEventListener('click', function (e) {
+    const b = e.target.closest && e.target.closest('[data-exc-toggle]');
+    if (!b) return;
+    e.preventDefault();
+    EXC_INCLUDE_ = !EXC_INCLUDE_;
+    refresh();
+    if (typeof runInsReport === 'function' && typeof insLastData !== 'undefined' && insLastData) runInsReport();
+  });
 
   // -- Bucket detail (chart drill-in) ------------------------------------
   // Click a chart bucket -> show all rings (date, agent, time) in that 30-min
@@ -1160,7 +1171,7 @@
         if (dateEl) dateEl.textContent = 'unavailable — showing the selected range';
         trpPaint_(trpRangeState_);
       })
-      .getDepartmentSummary({ department: dept, from: win.from, to: win.to });
+      .getDepartmentSummary(excReq_({ department: dept, from: win.from, to: win.to }));
   }
 
   // Resolve the active period, paint what we have, and fetch what we don't.
@@ -1763,7 +1774,7 @@
         if (myToken !== summaryReqSeq) return;
         onError(err, !!__swrHit);
       })
-      .getDepartmentSummary(req);
+      .getDepartmentSummary(excReq_(req));
 
     // N1 (always-inline): the Insights region loads WITH the page --
     // ensures/generates on the first dept load and converges an open
@@ -1803,6 +1814,7 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
+    excRenderNote_($('dept-exc-note'), (state.meta && state.meta.exceptionDays) || null, true);   // #81
     // Sub-queue Phase 1: per-dept subtotals for the combined view. Absent on a
     // single-dept payload, which is what keeps the flat render path unchanged.
     state.deptGroups = (data && data.deptGroups) || null;
@@ -2038,7 +2050,7 @@
         }
         const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       })
-      .getMissedCallsReport({ department: dept, from: from, to: to });
+      .getMissedCallsReport(excReq_({ department: dept, from: from, to: to }));
   }
 
   // Re-measure the dept missed chart after layout settles. rAF (twice, to
@@ -3706,6 +3718,15 @@
    * missed]) and queue figures from qcd.range.daily ([iso, calls, answered,
    * abandoned, avgAnswerSec]) -- compact tuples (Data.gs).
    */
+  // #81: the excluded days' own figures (totals.dailyExcluded /
+  // qcd.range.dailyExcluded, same tuple shapes) -- drawn striped, never summed.
+  function dtsExcludedDayMap_(state) {
+    return dtsDayMap_({
+      totals: { daily: (state.totals && state.totals.dailyExcluded) || [] },
+      qcd: { range: { daily: (state.qcd && state.qcd.range && state.qcd.range.dailyExcluded) || [] } },
+    });
+  }
+
   function dtsDayMap_(state) {
     var map = {};
     var get = function (iso) { return map[iso] || (map[iso] = {}); };
@@ -3753,11 +3774,27 @@
     for (var ms = Date.UTC(+p[0], p[1] - 1, +p[2], 12), end = Date.UTC(+q[0], q[1] - 1, +q[2], 12); ms <= end; ms += 86400000) {
       isoList.push(new Date(ms).toISOString().slice(0, 10));
     }
-    var isWorkday = function (iso) {
+    // #81: an exception day is not a workday for the buckets (a week's or a
+    // month's per-workday figure leaves it out); in the DAILY view it comes
+    // back as its own bucket, drawn striped at its real value.
+    var exList = (m.exceptionDays || []);
+    var exBy = {};
+    exList.forEach(function (e) { exBy[e.date] = e; });
+    var isWeekday = function (iso) {
       var dow = new Date(iso + 'T12:00:00Z').getUTCDay();
       return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(iso);
     };
+    var isWorkday = function (iso) { return isWeekday(iso) && !exBy[iso]; };
     var bs = dtsDayBuckets_(isoList, dtsDayMap_(state), isWorkday);
+    if (bs.length && !bs[0].weekly && !bs[0].monthly && exList.length) {
+      var exMap = dtsExcludedDayMap_(state);
+      exList.forEach(function (e) {
+        if (e.date < m.from || e.date > m.to || !isWeekday(e.date)) return;
+        bs.push({ key: e.date, from: e.date, to: e.date, n: 1, weekly: false, monthly: false,
+                  days: exMap[e.date] ? [exMap[e.date]] : [], excluded: e });
+      });
+      bs.sort(function (a, b) { return a.from < b.from ? -1 : (a.from > b.from ? 1 : 0); });
+    }
     if (bs.length < 2) return;
     var sums = bs.map(dtsSum_);
     var dept = getRequestedDept();
@@ -3770,7 +3807,9 @@
       var mt = DTS_METRICS_[key];
       if (!mt || (key === 'rate' || key === 'answered' ? !hasDqe : !hasQ)) return;
       var vals = sums.map(function (t, i) { return mt.v(t, bs[i]); });
-      var nums = vals.filter(function (v) { return v != null && isFinite(v); });
+      // #81: an excluded day never sets the scale (one outlier would flatten
+      // every real day) -- it is drawn against the others' scale, clipped.
+      var nums = vals.filter(function (v, i) { return !bs[i].excluded && v != null && isFinite(v); });
       if (!nums.length) return;
       var max = Math.max.apply(null, nums), min = Math.min.apply(null, nums);
       var label = (tile.querySelector('.dts-label') || {}).textContent || key;
@@ -3781,6 +3820,13 @@
       var bars = vals.map(function (v, i) {
         var h = (v == null || !isFinite(v)) ? 0
           : (sc ? sc.pos(v) : 22 + 78 * (max === min ? 1 : (v - min) / (max - min)));
+        h = Math.max(0, Math.min(100, h));
+        if (bs[i].excluded) {
+          // #81: gray diagonal stripes at the day's real value, no standard tint.
+          return '<span class="dts-bar is-excluded' + (v == null ? ' is-empty' : '') + '" style="height:'
+            + (v == null ? 100 : Math.max(h, 8)).toFixed(0) + '%" title="'
+            + escapeHtml('Excluded: ' + (bs[i].excluded.reason || 'exception day')) + '"></span>';
+        }
         var c = mt.cls(sums[i], dept);
         return '<span class="dts-bar' + (c ? ' ' + c : '') + (v == null ? ' is-empty' : '') + '" style="height:' + h.toFixed(0) + '%"></span>';
       }).join('');
@@ -3826,6 +3872,8 @@
         return;
       }
       var b = st.bs[i], text = mt.f(st.sums[i], b), lbl = dtsBucketLabel_(b);
+      // #81: an excluded day says so before its figure.
+      if (b.excluded) text = 'Excluded (' + (b.excluded.reason || 'exception day') + ') · ' + text;
       barsEl.setAttribute('aria-valuenow', String(i));
       barsEl.setAttribute('aria-valuetext', lbl + ': ' + text);
       ro.className = 'dts-readout';
