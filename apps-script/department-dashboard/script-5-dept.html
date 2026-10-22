@@ -1808,6 +1808,7 @@
     state.deptGroups = (data && data.deptGroups) || null;
     state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
     state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
+    deptApplyTransfer_(state);     // owner 2026-10-22: the Transfer % column
     deptRenderTransferDetail_();   // R25: the per-agent / per-destination drill
     state.diagnostics = (data && data.diagnostics) || null;
 
@@ -2830,6 +2831,47 @@
   // #8: parametrized so the Overview mini-table can reuse it with its own sort
   // state (was reading the My Department `state` globals). Callers pass
   // (rows, sortKey, sortDir).
+  // -- Transfer % column (owner 2026-10-22) --------------------------------
+  // The CSR tile's tier rule: <= deep deeper green, < light green, < amber
+  // amber, else red (TRANSFER_TIERS, the Standards editor).
+  function xferTierCls_(pct) {
+    if (pct == null || !isFinite(Number(pct))) return '';
+    var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
+    var p = Number(pct);
+    return p <= tt.deep ? ' tf-deep' : (p < tt.light ? ' tf-light' : (p < tt.amber ? ' tf-amber' : ' tf-red'));
+  }
+  /**
+   * Joins state.csrTransfer.agents onto the table rows by EXACT name (INV-04:
+   * the transfer sheet writes the csr_team roster spelling), sets the tile's
+   * headline on the totals row and on CSR's own subtotal in a combined view,
+   * and marks the table so the column shows. Every other dept: the marks come
+   * off and the fields are cleared, so a CSR -> Sales switch leaves nothing.
+   */
+  function deptApplyTransfer_(st) {
+    var tr = st.csrTransfer;
+    var byName = {};
+    ((tr && tr.agents) || []).forEach(function (a) { if (a && a.agent) byName[a.agent] = a; });
+    var put = function (row, src) {
+      if (!row) return;
+      row.transferPct = (src && src.pct != null) ? Number(src.pct) : null;
+      row.transferred = src ? src.transferred : null;
+      row.transferCalls = src ? src.totalCalls : null;
+    };
+    (st.rows || []).forEach(function (r) { put(r, tr ? byName[r.agent] : null); });
+    put(st.totals, tr || null);
+    (st.deptGroups || []).forEach(function (g) { put(g.totals, (tr && g.dept === 'CSR') ? tr : null); });
+    var table = $('agents-table');
+    if (table) table.classList.toggle('has-xfer', !!tr);
+  }
+  function xferCellHtml_(row) {
+    if (!row || row.transferPct == null) {
+      return '<span class="cell-zero" title="No CSR transfer data for this row in this range">–</span>';
+    }
+    var p = Number(row.transferPct);
+    return '<span class="xfer-rate' + xferTierCls_(p) + '" title="' + fmtNumber(row.transferred) + ' of '
+      + fmtNumber(row.transferCalls) + ' calls transferred">' + p.toFixed(1) + '%</span>';
+  }
+
   function sortRows(rows, sortKey, sortDir) {
     const key = sortKey;
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -2850,6 +2892,14 @@
         const bv2 = (key === 'answerRate') ? (Number(b.totalAnswered) || 0) / bt : (Number(b.totalAnswered) || 0);
         if (av2 !== bv2) return (av2 - bv2) * dir;
         return String(a.agent).localeCompare(String(b.agent));
+      }
+      // Transfer %: an agent with no transfer row in range sinks either way
+      // (a missing rate is not a 0% rate).
+      if (key === 'transferPct') {
+        const an = a.transferPct == null, bn = b.transferPct == null;
+        if (an && bn) return String(a.agent).localeCompare(String(b.agent));
+        if (an) return 1;
+        if (bn) return -1;
       }
       const av = a[key], bv = b[key];
       if (isText) {
@@ -2888,6 +2938,7 @@
       return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true, null,
         row.dept || getRequestedDept()) + '">' + prate + '%</span>';
     }
+    if (col.type === 'xfer') return xferCellHtml_(row);
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
     if (col.type === 'duration') {
@@ -4034,10 +4085,13 @@
     // single-dept export stays byte-identical to before.
     var deptsShown = (state.meta && state.meta.deptsShown) || [];
     var multiDept = deptsShown.length > 1 && !!state.deptGroups;
+    // Transfer % (owner 2026-10-22) exports only with the data behind it (CSR),
+    // so every other dept's export stays byte-identical.
+    var cols = COLUMNS.filter(function (c) { return !c.xfer || !!state.csrTransfer; });
     var cellsFor = function (row, isTotals, deptLabel) {
       var out = [];
       if (multiDept) out.push(deptLabel == null ? (row.dept || '') : deptLabel);
-      COLUMNS.forEach(function (col, i) {
+      cols.forEach(function (col, i) {
         if (isTotals && i === 0) { out.push(isTotals === 'sub'
           ? (deptLabel || '') + ' subtotal'
           // Phase 0: say it here too. A spreadsheet reader is MORE likely than
@@ -4051,6 +4105,7 @@
         else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : sourceChipCsv_(row));
         else if (col.type === 'bar') out.push(barCell(row));
         else if (col.type === 'pct') out.push(pctCell(row));
+        else if (col.type === 'xfer') out.push(row.transferPct == null ? '' : Number(row.transferPct).toFixed(1) + '%');
         else if (col.type === 'duration') out.push(fmtDuration(row[col.key]));
         else out.push(row[col.key]);
         if (col.type === 'bar') out.push(row.totalRung != null ? row.totalRung : '');
@@ -4061,7 +4116,7 @@
       });
       return out;
     };
-    var header = COLUMNS.reduce(function (acc, c) {
+    var header = cols.reduce(function (acc, c) {
       acc.push(c.label);
       if (c.type === 'bar') acc.push('Total calls');
       if (c.type === 'pct') acc.push('Ans / day');
@@ -4768,7 +4823,8 @@
     if (!thead || !tbody || !tfoot || dir === 'in') return;
     var data = OB_VIEW_.data;
     var dept = getRequestedDept();
-    var cols = 5;
+    var hasXfer = !!state.csrTransfer;   // owner 2026-10-22: Transfer % (CSR), inbound only
+    var cols = hasXfer ? 6 : 5;
     // Layout B (owner 2026-10-21): an IN line over an OUT line in each
     // agent's row. Each metric column sorts by either direction.
     thead.innerHTML = '<tr>' + obThHtml_('agent', 'Agent')
@@ -4776,6 +4832,7 @@
       + obThPairHtml_('Calls · handled / not', 'inRung', 'obTotal')
       + obThPairHtml_('Rate', 'answerRate', 'obConnectRate', 'num')
       + obThPairHtml_('Talk', 'tttSeconds', 'obTalkSec', 'num')
+      + (hasXfer ? obThHtml_('transferPct', 'Transfer %', 'num') : '')
       + '</tr>';
 
     var notes = [];
@@ -4850,7 +4907,8 @@
           e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–'),
           obPctHtml_(o, po, ptip),
           e.inb && e.inb.tttSeconds ? fmtDuration(e.inb.tttSeconds) : zeroCell_('–'),
-          o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–'));
+          o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–'))
+        + (hasXfer ? '<td class="num ob-xfer">' + xferCellHtml_(e.inb) + '</td>' : '');
       return '<tr data-agent="' + escapeHtml(e.agent) + '"'
         + (e.dept ? ' data-dept="' + escapeHtml(e.dept) + '"' : '') + ' title="Show '
         + escapeHtml(e.agent) + '’s days (the Individual Report is inside)">' + cells + '</tr>';
@@ -4860,8 +4918,8 @@
         + obPairCells_(
           inT ? fmtCell(barCol, inT, {}) : '', obBarHtml_(t, 0, true),
           inT ? fmtCell(pctCol, inT) : '', obPctHtml_(t),
-          inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '');
-      return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
+          inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '')
+        + (hasXfer ? '<td class="num ob-xfer">' + (inT && inT.transferPct != null ? xferCellHtml_(inT) : '') + '</td>' : '');
     };
 
     var body = '';

@@ -1614,6 +1614,13 @@
     // the muted "(N)"), saving a column; the CSV still emits a numeric
     // Total calls column (exportTableCsv_ splices it after the bar).
     { key: 'answerRate',           label: 'Answer %',        type: 'pct', sortKey: 'answerRate' },
+    // Owner (2026-10-22): each CSR agent's transfer rate, from the same
+    // CSR Transfer Historical Data rows as the team-strip Transfer % tile
+    // (state.csrTransfer.agents, joined by exact roster name in
+    // deptApplyTransfer_). CSR-only: the cells carry .col-xfer and show only
+    // on a table marked .has-xfer, so every other dept's table -- and the
+    // Overview mini table -- renders exactly as before.
+    { key: 'transferPct',          label: 'Transfer %',      type: 'xfer', sortKey: 'transferPct', xfer: true },
     // Owner (2026-10): the "Ans / day" column is GONE from the table -- the
     // figure renders beside the rung total in the bar cell (ansPerDayHtml_),
     // and the CSV/TSV export still carries an "Ans / day" column, spliced in
@@ -1667,7 +1674,7 @@
     else if (col.type === 'chip' && col.key === 'source') base = 'src-cell';
     else if (col.type === 'bar') base = 'ans-bar-cell';
     else base = 'num';
-    return base + (col.hideable ? ' col-extra' : '');
+    return base + (col.hideable ? ' col-extra' : '') + (col.xfer ? ' col-xfer' : '');
   }
 
   // Round-16 (owner request): AGENT rows render a VOLUME-PROPORTIONAL TALLY --

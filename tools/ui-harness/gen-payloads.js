@@ -184,14 +184,27 @@ days.slice(-90).forEach((dIso, i) => {
 // cols 3/6/7 over the range and is CSR-only). Without this sheet every payload
 // carried `csrTransfer: null`, so the My Department Transfer % tile -- and the
 // R16e Queue-health Transfer % card that mirrors it -- were structurally
-// unreachable from the gate. One row per day is enough: the range rollup sums
-// Total Calls + Transferred and never reads the agent column.
+// unreachable from the gate. Owner 2026-10-22: the rows are PER AGENT (the
+// real sheet's shape), so the agent table's Transfer % column has something to
+// join -- each day's totals split across four CSR roster agents, with Robin
+// Choudhury deliberately absent so the column's "no transfer row" dash renders.
+// The per-day totals (and so the tile) are what they were before the split.
 const CSR_TRANSFER = [['Month Year', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred']];
+const XFER_AGENTS = ['Anna Reyes', 'Ben Ortiz', 'Carla Diaz', 'Dev Patel'];
 days.slice(-90).forEach((dIso) => {
   const total = 90 + Math.round(rnd() * 40);
   const transferred = Math.round(total * (0.08 + rnd() * 0.06));
-  CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, 'CSR team',
-    (transferred / total * 100).toFixed(1) + '%', total, transferred]);
+  const share = (n, i) => Math.floor(n / 4) + (i < n % 4 ? 1 : 0);
+  // Transfers split 10/20/30/40% (remainder to Dev) so the agents land on
+  // different tiers; calls split evenly. Both still sum to the day's totals.
+  const W = [0.1, 0.2, 0.3];
+  const trs = W.map((w) => Math.floor(transferred * w));
+  trs.push(transferred - trs.reduce((a, b) => a + b, 0));
+  XFER_AGENTS.forEach((agent, i) => {
+    const calls = share(total, i);
+    CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, agent,
+      calls ? (trs[i] / calls * 100).toFixed(1) + '%' : '0%', calls, trs[i]]);
+  });
 });
 
 // Pipeline Health: recent DQE success so the admin staleness banner stays off.

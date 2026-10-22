@@ -7090,6 +7090,15 @@
   .dtf-pct.tf-light { color: var(--good); }
   .dtf-pct.tf-amber { color: var(--warn); }
   .dtf-pct.tf-red   { color: var(--bad); }
+  /* Owner 2026-10-22: the CSR agent table's Transfer % column. Shown only on
+     a table that carries transfer data (.has-xfer, CSR); everywhere else the
+     cells stay in the DOM but out of the layout, so column counts and every
+     other dept's table are unchanged. Same tier tints as the tile. */
+  .agents:not(.has-xfer) .col-xfer { display: none; }
+  .xfer-rate.tf-deep  { color: var(--good); font-weight: 600; }
+  .xfer-rate.tf-light { color: var(--good); }
+  .xfer-rate.tf-amber { color: var(--warn); }
+  .xfer-rate.tf-red   { color: var(--bad); font-weight: 600; }
 
   /* -------- Date preset chips ------------------------------------ */
   /* R18: the To-date clamp note. Sits on its own line across the controls

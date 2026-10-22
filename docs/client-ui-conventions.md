@@ -2479,7 +2479,15 @@ stay pinned by INV-39, INV-53 and INV-06.
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; the `answerRate`
-  sort key and the default landing) · Unique ·
+  sort key and the default landing) · **Transfer %** (owner 2026-10-22,
+  `type:'xfer'`, CSR only: each agent's rate from `state.csrTransfer.agents` --
+  the Transfer % tile's own rows -- joined by exact roster name in
+  `deptApplyTransfer_`; the totals row and CSR's own subtotal carry the tile's
+  headline; an agent with no transfer row shows a dash, never 0%, and sinks
+  in either sort direction; tints are the tile's tiers via `xferTierCls_`. The
+  cells carry `.col-xfer` and show only on a table marked `.has-xfer`, so every
+  other dept's table, the Overview mini table and every non-CSR export stay
+  byte-identical; layout B adds the same figure as a sixth column) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
   (owner 2026-10; the figure lives in the bar cell, since summary v23), but the
   CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
