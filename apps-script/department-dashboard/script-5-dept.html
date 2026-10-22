@@ -4920,6 +4920,7 @@
           inT ? fmtCell(pctCol, inT) : '', obPctHtml_(t),
           inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '')
         + (hasXfer ? '<td class="num ob-xfer">' + (inT && inT.transferPct != null ? xferCellHtml_(inT) : '') + '</td>' : '');
+      return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
     };
 
     var body = '';

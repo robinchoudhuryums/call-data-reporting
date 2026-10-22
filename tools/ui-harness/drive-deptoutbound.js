@@ -72,7 +72,8 @@ async function openDept(page, meta) {
     // Owner 2026-10-22: the CSR manager's table carries Transfer % -- the same
     // data the Transfer % tile already shows them -- and sorting by it sinks
     // an agent with no transfer row in BOTH directions.
-    const order = async () => page.evaluate(() => Array.from(document.querySelectorAll('#agents-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
+    // CSR's own group: the combined view sorts WITHIN each department.
+    const order = async () => page.evaluate(() => Array.from(document.querySelectorAll('#agents-tbody tr[data-agent][data-dept="CSR"]')).map((r) => r.getAttribute('data-agent')));
     const thShown = await page.evaluate(() => { const th = document.querySelector('#agents-table thead th[data-sort="transferPct"]');
       return !!th && getComputedStyle(th).display !== 'none'; });
     record('manager: the CSR table shows the Transfer % column', thShown);
@@ -181,7 +182,8 @@ async function openDept(page, meta) {
   });
   record('layout B: IN and OUT bars share one scale (the smaller volume draws shorter)', scale.inMax > 0 && scale.outMax > 0 && scale.outMax * 2 < scale.inMax, JSON.stringify(scale));
   record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
-    bothRow.cells === 5 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
+    // 6 cells on CSR: agent, direction, Calls, Rate, Talk + Transfer % (owner 2026-10-22).
+    bothRow.cells === 6 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
 
   // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
   {
