@@ -254,8 +254,13 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // voicemail / forking / a named feature) -- so the rule stays checkable.
   const DGI = { seen: {}, legs: 0, dials: 0, rosterAgent: 0, self: 0, unrosteredExt: 0, outsideNumber: 0, other: 0, talked: 0, callee: {}, ctx: {} };
   function dgiAdd(cid, callerAgent, calleeAgent, callee, calleeName, ctx, talk) {
-    if (!cid || DGI.seen[cid]) return;
-    DGI.seen[cid] = true;
+    // One tally per LEG, not per call id: the live CDR writes a call's
+    // CallRecording row under the SAME call id as the call it records, so a
+    // per-id tally kept whichever row came first and lost the dial behind it
+    // (2026-10-20: 60 dials shown here vs 282 counted).
+    const key = cid + '|' + String(callee == null ? '' : callee).trim() + '|' + String(ctx || '').trim();
+    if (!cid || DGI.seen[key]) return;
+    DGI.seen[key] = true;
     DGI.legs++;
     if (dcIsInternalDial_(callee, ctx)) DGI.dials++;
     const d = dgDigits(callee);

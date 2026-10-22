@@ -3566,7 +3566,11 @@ When something looks wrong, before assuming a code bug, check:
     **History (DC-D2b):** the first D2 build counted EVERY Internal leg as a
     dial -- on 2026-10-20 3694 legs, 90% of the day's outbound, 92.5% of
     them `CallRecording` legs (1.1% talked). Since the DC-D2b cdr-import push
-    only a dial to an extension counts (`dcIsInternalDial_`). **Repair the
+    only a dial to an extension counts (`dcIsInternalDial_`): 282 on
+    2026-10-20, 7.4% of outbound. The CDR writes a call's `CallRecording`
+    row under the SAME call id as the call it records, so the breakdown
+    tallies one row per LEG (call id + callee + context); the build was
+    never affected (events are keyed per call). **Repair the
     dates built between the D2 deploy (2026-10-21) and that push:** their
     OB-internal counts are inflated ~10x. For the date in `Raw Data`, run
     `runDirectCallBuild()` (it deletes and rewrites that date's Direct rows,
