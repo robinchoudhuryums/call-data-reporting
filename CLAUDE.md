@@ -511,8 +511,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Public write paths are admin-only — INV-01 carries the AUTHORITATIVE
   carve-out list** (OrphanFix.gs incl. the `addOrphanToRoster` New-hire flow /
   `setup()` / DeptConfig.gs / the Access Control editor in Auth.gs / the
-  Alert+Digest config editors / the append-only `logReportUsage_` telemetry
-  carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
+  Alert+Digest config editors / the Exception Days editor (#81) / the append-only
+  `logReportUsage_` telemetry carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
   with `assertAdmin_()` except the telemetry append and the row-dept-gated
   Escalations verbs. Every other
   public-callable function is read-only; helpers that touch
@@ -1762,7 +1762,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   init blobs and the Overview key ONLY -- `summary`/`missed`/`insights`/
   `individual`/`qcdAll` carry no config dimension, so a queue-mapping edit
   reaches those surfaces when the freshness tag moves or the TTL expires;
-  the freshness tag busts only when the LATEST date moves). Each report file owns its own versioned
+  the freshness tag busts only when the LATEST date moves or the #81 exception-day list changes). Each report file owns its own versioned
   cache prefix; bump the relevant version on any aggregation-rule change
   (cache-version-sync's S2 sweep fails on an unregistered prefix). See INV-30 for current versions. **Admin-modal init blobs are
   cached too (Batch 1):** the Outlier Fix + Dept Config init payloads
@@ -2201,7 +2201,7 @@ below is a finding aid.** Several invariants carry exceptions and version
 history that a one-line summary cannot hold, so open the entry before relying
 on one (INV-30's cache-version table above all).
 
-INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close, a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
+INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close / Exception Days (#81), a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDisplayValues()`, never `getValue()` -- spreadsheet-vs-script TZ | Subsystem: Department Dashboard
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard

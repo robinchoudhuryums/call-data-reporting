@@ -192,6 +192,13 @@ For a date range with one or more rows per agent:
 | CSR Avg Abd Wait | Simple mean of stored per-row values |
 | Days Active | Count of distinct dates the agent has a row in range |
 
+**Exception days (#81) come out before any of these rules run.** A date in
+the admin's `Exception Days` sheet is removed from every windowed figure --
+counts as well as rates and means -- by `applyExceptionDays_` (DQE rows) and
+`readQcdGrid_` (queue rows); an all-department day is also a non-working day
+for comparison windows and per-workday averages, like a holiday. Operator
+State #81 has the full rule; the per-call reports still count the day (phase 2).
+
 ### Why ATT is a simple mean and not `TTT / Answered`
 
 For single-row date ranges, the dashboard must match the existing DQE

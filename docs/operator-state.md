@@ -65,8 +65,9 @@ When something looks wrong, before assuming a code bug, check:
    `ADMIN_EMAILS` Script Property (or `ADMIN_EMAILS_FALLBACK`). It
    creates `Access Control`, `Alert Config`, `Alert Log`,
    `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-   `Orphan Fix Log`, `Dept Config`, `Report Usage`, and `Queue Report
-   Subscribers` -- whichever are missing. Idempotent on re-runs
+   `Orphan Fix Log`, `Dept Config`, `Report Usage`, `Queue Report
+   Subscribers`, `Company Holidays` (H1), `Dashboard Standards` (H2, which it
+   also republishes) and `Exception Days` (#81) -- whichever are missing. Idempotent on re-runs
    (existing data untouched). Without re-running setup() after a
    fresh pull, downstream writers (Pipeline Health appends, Digest
    config reads, Orphan Fix log appends) silently no-op against
