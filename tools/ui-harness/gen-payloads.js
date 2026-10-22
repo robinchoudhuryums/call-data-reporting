@@ -194,14 +194,14 @@ const XFER_AGENTS = ['Anna Reyes', 'Ben Ortiz', 'Carla Diaz', 'Dev Patel'];
 days.slice(-90).forEach((dIso) => {
   const total = 90 + Math.round(rnd() * 40);
   const transferred = Math.round(total * (0.08 + rnd() * 0.06));
-  const share = (n, i) => Math.floor(n / 4) + (i < n % 4 ? 1 : 0);
-  // Transfers split 10/20/30/40% (remainder to Dev) so the agents land on
-  // different tiers; calls split evenly. Both still sum to the day's totals.
-  const W = [0.1, 0.2, 0.3];
-  const trs = W.map((w) => Math.floor(transferred * w));
-  trs.push(transferred - trs.reduce((a, b) => a + b, 0));
+  // Transfers split 10/20/30/40% and calls 35/30/25/10% (remainders to Dev),
+  // so the agents land on different tiers -- Dev, few calls and many
+  // transfers, reads red. Both still sum to the day's totals.
+  const split = (n, ws) => { const out = ws.map((w) => Math.floor(n * w)); out.push(n - out.reduce((a, b) => a + b, 0)); return out; };
+  const trs = split(transferred, [0.1, 0.2, 0.3]);
+  const cls = split(total, [0.35, 0.3, 0.25]);
   XFER_AGENTS.forEach((agent, i) => {
-    const calls = share(total, i);
+    const calls = cls[i];
     CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, agent,
       calls ? (trs[i] / calls * 100).toFixed(1) + '%' : '0%', calls, trs[i]]);
   });
