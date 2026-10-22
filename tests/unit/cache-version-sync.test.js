@@ -81,6 +81,7 @@ const SPECS = [
   ['orphanFix:init',    'OrphanFix.gs',           /'orphanFix:init:v(\d+)'/],
   ['deptConfig:init',   'DeptConfig.gs',          /'deptConfig:init:v(\d+)'/],
   ['escSchema',         'Escalations.gs',         /'escSchema:v(\d+):'/],   // AC-5 (broad-scan 2026-10-01)
+  ['excDays',           'Util.gs',                /'excDays:v(\d+)'/],   // #81 exception-day list
 ];
 
 // Build the canonical map from code at load time so every test sees it.
@@ -221,6 +222,7 @@ const ANCHOR_SPECS = {
   'orphanFix:init':    'exception: busted on every write (bustOrphanFixCache_)',
   'deptConfig:init':   'exception: busted on every write (dcBustCaches_)',
   escSchema:           'exception: AC-5 "schema DDL already ran" flag (1 h TTL, key carries ESC_REQUIRED_COLUMNS_) -- not a report cache',
+  excDays:             'exception: the #81 exception-day LIST (5-min tier), busted by every editor save (bustExceptionDaysCache_) -- not a report cache; its hash joins reportFreshnessTag_ instead',
 };
 
 test('S3: every SPECS prefix has an anchor classification, and tag-anchored files reference reportFreshnessTag_', function () {
@@ -349,7 +351,8 @@ test('ST1: every QCD reader a cached surface calls raises the outage flag on eac
     const re = /^function (\w+)\(/gm;
     let m;
     while ((m = re.exec(src)) !== null) {
-      if (/^(readQcdGrid_|readQcdSheetData_|neonFetchQcdGrid_)$/.test(m[1])) continue;
+      // readQcdGridRaw_ (#81): readQcdGrid_'s unfiltered body -- plumbing like it.
+      if (/^(readQcdGrid_|readQcdGridRaw_|readQcdSheetData_|neonFetchQcdGrid_)$/.test(m[1])) continue;
       const b = stripComments(fnBody(src, m[1]) || '');
       if (/\b(readQcdGrid_|readQcdSheetData_|neonFetchQcdGrid_)\(/.test(b)) readers.push(m[1]);
     }

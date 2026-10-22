@@ -279,7 +279,8 @@ function computeCoachingPreview_() {
   var latest = getLatestDataDate();
   if (!latest) return { available: false, reason: 'no DQE data' };
   var win = coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_, function (isoDay) {
-    try { return isCompanyHoliday_(isoDay); } catch (e) { return false; }
+    // #81: an all-department exception day is not a coaching workday either.
+    try { return isCompanyHoliday_(isoDay) || (typeof exceptionDayFor_ === 'function' && !!exceptionDayFor_(isoDay, null)); } catch (e) { return false; }
   });
   if (!win) return { available: false, reason: 'bad latest date: ' + latest };
   var flags = [], errors = [], depts = getAllDepartments_();
@@ -323,7 +324,8 @@ function coachingCurrentWindow_() {
   var latest = getLatestDataDate();
   if (!latest) return null;
   return coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_, function (isoDay) {
-    try { return isCompanyHoliday_(isoDay); } catch (e) { return false; }
+    // #81: an all-department exception day is not a coaching workday either.
+    try { return isCompanyHoliday_(isoDay) || (typeof exceptionDayFor_ === 'function' && !!exceptionDayFor_(isoDay, null)); } catch (e) { return false; }
   });
 }
 

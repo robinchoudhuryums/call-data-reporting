@@ -43,6 +43,7 @@ const HISTORICAL_ABANDONED_PARENT_IDS    = HISTORICAL_COLS.ABANDONED_PARENT_IDS;
 const HISTORICAL_ABANDONED_MISSED_TIMES  = HISTORICAL_COLS.ABANDONED_MISSED_TIMES;
 
 function getMissedCallsReport(req) {
+  setExceptionIncludeFromReq_(req);   // #81: an ADMIN's "include exception days" (else off) -- before any cache key
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') {
@@ -371,6 +372,7 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
  * Read-only; auth-gated exactly like getMissedCallsReport.
  */
 function getMissedCallsSlice(req) {
+  setExceptionIncludeFromReq_(req);   // #81: an ADMIN's "include exception days" (else off) -- before any cache key
   const user = resolveUser_(Session.getActiveUser().getEmail());
   if (!user || user.role === 'none') throw new Error('Not authorized.');
   const dept = String((req && req.department) || '').trim();
@@ -515,6 +517,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const needsQueueExts = scope !== 'roster';
   let values = null, displays = null, deptQueueExts = needsQueueExts ? null : {};
   let qsInfo = null;
+  let excInfo = null;   // #81
   let dalRows = null;
   if (neonCapable) {
     try {
@@ -544,6 +547,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     }
     dalRows = sheetFetchDqeRows_(from, to, { includeMissedDetail: true });
   }
+  excInfo = applyExceptionDays_(dalRows, dept, { assessAgents: roster.names });   // #81
   qsInfo = applyQueueSplitToRows_(dalRows, dept, { narrowSlots: true, assessAgents: roster.names });
   {
     const grids = missedGridsFromDal_(dalRows);
@@ -910,6 +914,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     meta: {
       department: dept,
       from: from, to: to,
+      exceptionDays: (excInfo && excInfo.excluded.length) ? exceptionDaysMeta_(excInfo, from, to) : undefined,   // #81
       scope: scope,
       rosterSize: roster.names.length,
       rowsMatched: rowsMatched,

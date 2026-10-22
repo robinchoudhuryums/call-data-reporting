@@ -282,6 +282,11 @@ function getAgentHome(req) {
   }
   if (!detail) {
     var dalRows = ahFetchDalRows_(fetchFrom, to, { includeMissedDetail: true });
+    // #81: exception days leave the agent's own trend + missed list too, the
+    // way computeSummary_ leaves them out of the KPIs. The volume counted is
+    // THIS agent's alone (assessAgents) -- never a teammate's.
+    var excInfo = (typeof applyExceptionDays_ === 'function')
+      ? applyExceptionDays_(dalRows, who.dept, { assessAgents: [who.agentName] }) : null;
     // Queue-split adoption: narrow (counts AND the slot timeline via the
     // per-queue `mt`) so the agent's own trend + missed list agree with
     // their computeSummary_-derived KPIs. Off = rows untouched.
@@ -289,6 +294,8 @@ function getAgentHome(req) {
       applyQueueSplitToRows_(dalRows, who.dept, { narrowSlots: true });
     }
     detail = agentHomeOwnDetail_(dalRows, who.agentName, from, to, trendFrom);
+    var exMeta = excInfo ? exceptionDaysMeta_(excInfo, from, to) : [];
+    if (exMeta.length) detail.exceptionDays = exMeta;
     // Phase C: attach ring/wait seconds where the inbound capture holds the
     // ring (ahWaitJoin_, best-effort). Entries replace the bare time list;
     // a ring the capture doesn't hold keeps nulls and the client shows the
@@ -537,7 +544,9 @@ function getAgentHistory(req) {
 
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   var cache = CacheService.getScriptCache();
-  var key = 'agentHist:v1:' + who.dept + ':' + latest + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
+  // #81: + the exception-day tag ('' while there is none) -- this key embeds the
+  // date instead of reportFreshnessTag_, so the tag rides here explicitly.
+  var key = 'agentHist:v1:' + who.dept + ':' + latest + ((typeof exceptionDaysTag_ === 'function') ? exceptionDaysTag_() : '') + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
           + ':' + ((typeof rosterSetHash_ === 'function') ? rosterSetHash_([who.dept]) : 'na');   // DATA-10: the team monthly averages are the roster's
   var months = null, hit = false;
   var cached = cache.get(key);
@@ -545,6 +554,8 @@ function getAgentHistory(req) {
   if (!months) {
     var roster = getRosterForDepartment_(who.dept);
     var dalRows = ahFetchDalRows_(fromIso, latest, null);
+    // #81: exception days leave the monthly history too.
+    if (typeof applyExceptionDays_ === 'function') applyExceptionDays_(dalRows, who.dept, null);
     // Queue-split adoption: narrow before the monthly rollup so the history
     // (own AND team monthly averages) shares the one definition.
     if (typeof applyQueueSplitToRows_ === 'function') {

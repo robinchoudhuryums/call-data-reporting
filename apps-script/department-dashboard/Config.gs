@@ -268,6 +268,7 @@ const SHEETS = Object.freeze({
   QUEUE_REPORT_SUBSCRIBERS: 'Queue Report Subscribers',
   COMPANY_HOLIDAYS: 'Company Holidays',
   DASHBOARD_STANDARDS: 'Dashboard Standards',
+  EXCEPTION_DAYS: 'Exception Days',
 });
 
 // Phase A (agent role, docs/agent-role-plan.md): Role + Agent Name are
@@ -328,6 +329,14 @@ const QUEUE_REPORT_SUBSCRIBERS_HEADERS = Object.freeze([
 // column is plain-text pinned at creation (setup) because Sheets coerces a
 // lone `2026-12-25` to a Date; the reader ALSO tolerates a coerced Date cell
 // by formatting it in the SPREADSHEET's tz (INV-02 twin).
+// Exception Days (owner 2026-10-22): days whose data is real but unfair to
+// judge by (an 8x8 outage). One date per row; Departments blank (or ALL) =
+// every department, else a comma list of roster dept names; Active blank =
+// TRUE. Read by getExceptionDays_ (Util.gs), written by the admin editor
+// (ExceptionDays.gs). Every windowed figure EXCLUDES these days -- counts as
+// well as rates -- and every report says so (Operator State #81). The Date
+// column is plain-text pinned at creation, like Company Holidays.
+const EXCEPTION_DAYS_HEADERS = Object.freeze(['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At']);
 const COMPANY_HOLIDAYS_HEADERS = Object.freeze([
   'Dates', 'Label', 'Active', 'Notes',
 ]);
@@ -977,6 +986,7 @@ var PROP_REGISTRY_ = Object.freeze({
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
     COACHING_NOTIFY_PENDING: 'engine',
     COMPANY_HOLIDAYS_SHEET_COPY: 'engine',   // ENG-8: last-good Company Holidays ranges (sheet-read failure fallback)
+    EXCEPTION_DAYS_SHEET_COPY: 'engine',     // last-good Exception Days list (sheet-read failure fallback, #81)
     DQE_SILENCE_WATCH_LAST: 'engine', DQE_SILENCE_WATCH_LAST_RESULT: 'engine',
     DQE_SILENCE_STREAKS: 'engine',
     ESC_REVIEW_PING_WATERMARK: 'engine',

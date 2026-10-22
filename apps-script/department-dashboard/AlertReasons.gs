@@ -241,9 +241,17 @@ function runAlertReasons_(dateIso, dryRun, honorSkipDates, cfg, pushAndLog) {
       return;
     }
 
-    if (r.agentLow) {
+    // #81: the assessed day being an exception day means no new workday to
+    // judge -- the window would just slide back onto one already assessed.
+    var excToday = (r.agentLow && typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(dateIso, dept) : null;
+    if (excToday) {
+      pushAndLog(base('agent-low', { status: 'skipped', threshold: r.agentLow.threshold,
+        notes: 'Exception day (' + dateIso + '): ' + (excToday.reason || 'excluded') + ' -- not assessed' }));
+    } else if (r.agentLow) {
       try {
-        var days = notifyWorkdaysEnding_(dateIso, r.agentLow.days, holidayFn);
+        // #81: the N workdays skip exception days for this dept, like holidays.
+        var days = notifyWorkdaysEnding_(dateIso, r.agentLow.days,
+          (typeof metricsOffDayFn_ === 'function') ? metricsOffDayFn_(dept) : holidayFn);
         alertRowsForRange_(days[days.length - 1], days[0]);   // ONE read for the window
         var roster = getRosterForDepartment_(dept);
         var perDay = days.map(function (iso) {
