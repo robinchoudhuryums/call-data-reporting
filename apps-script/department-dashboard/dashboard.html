@@ -130,6 +130,9 @@
             <button class="header-menu-item" id="coaching-btn" type="button"
                     data-route="/admin/coaching" data-admin-only role="menuitem"
                     title="Coaching worklist: agents flagged by the weekly answer-rate check (behind team + high missed volume). Separate from customer-account Escalations. Admin-only until released.">Coaching</button>
+            <button class="header-menu-item" id="exception-days-btn" type="button"
+                    data-route="/admin/exception-days" data-admin-only role="menuitem"
+                    title="Days whose call data is real but unfair to judge by (an outage) -- left out of every report's figures, and every report says so. Admin-only.">Exception days</button>
           </div>
         </div>
       </nav>
@@ -265,6 +268,8 @@
             <div class="ir-chart-wrap" id="ov-chart-wrap">
               <div class="ir-chart-header"><span id="ov-chart-header-label">Answer rate trend per department</span><span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
               <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+              <!-- #81: the exception days this chart leaves out (shaded on it). -->
+              <div id="ov-exc-note" class="ds-note exc-note" role="status" style="display:none;"></div>
             </div>
           </div>
         </div>
@@ -281,6 +286,8 @@
                 <th class="col-extra">Source</th>
                 <th data-sort="totalAnswered">Answered / Missed <span class="arrow"></span></th>
                 <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
+                <!-- Keeps the 1:1 position with COLUMNS; never shown here (no .has-xfer). -->
+                <th class="col-xfer">Transfer %</th>
                 <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
                 <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
                 <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
@@ -571,6 +578,9 @@
            page body (the .pr-agent-table-wrap / .ds-heatmap-wrap pattern). The
            table keeps its id/structure, so the render + sort JS is unchanged. -->
       <div id="dept-subq-bar" class="subq-bar" style="display:none;"></div>
+      <!-- #81 (owner 2026-10-22): which exception days the figures below leave
+           out, and -- for an admin -- the include / leave-out switch. -->
+      <div id="dept-exc-note" class="ds-note exc-note" role="status" style="display:none;"></div>
       <div class="agents-table-wrap" id="agents-in-wrap">
       <table id="agents-table" class="agents">
         <thead>
@@ -579,6 +589,8 @@
             <th class="col-extra">Source</th>
             <th data-sort="totalAnswered">Answered / Missed <span class="arrow"></span></th>
             <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
+            <th data-sort="transferPct" class="col-xfer"
+                title="Calls this agent transferred &divide; calls they handled, this range (CSR Transfer Historical Data -- the Transfer % tile's own rows)">Transfer % <span class="arrow"></span></th>
             <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
             <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
             <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
@@ -2547,6 +2559,49 @@
        worklist from the customer-account Escalations page on purpose —
        coaching an agent and chasing a customer account are different jobs.
        Server: Coaching.gs (Neon coaching_flags; no sheet twin). -->
+  <!-- #81 (owner 2026-10-22): the exception-day editor. Admin-only (server:
+       assertAdmin_ on every call in ExceptionDays.gs). -->
+  <div id="exception-days-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="exception-days-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="exception-days-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="exception-days-modal-title">Exception days</h2>
+      </div>
+      <div class="modal-panel-body">
+        <p class="al-hint">A day whose call data is real but unfair to judge by &mdash; an 8x8 outage, say. Every
+          report leaves it out of its figures (counts as well as rates, so the numbers still add up),
+          says so in a note, and draws the day striped. Alerts, alert reasons and coaching skip it.
+          Removing a day puts it back everywhere within a few minutes.</p>
+        <div class="ir-form-grid exc-form">
+          <div class="ir-col">
+            <label for="exc-date">Date</label>
+            <input type="date" id="exc-date">
+          </div>
+          <div class="ir-col exc-reason-col">
+            <label for="exc-reason">Reason (every report shows it)</label>
+            <input type="text" id="exc-reason" maxlength="200" placeholder="e.g. 8x8 outage">
+          </div>
+          <div class="ir-col">
+            <label><input type="checkbox" id="exc-all" checked> All departments</label>
+            <select id="exc-depts" multiple size="5" aria-label="Departments" disabled></select>
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
+            <button class="btn" id="exc-save-btn" type="button">Save</button>
+          </div>
+        </div>
+        <div id="exc-status" role="status" class="status" style="display:none;"></div>
+        <table class="al-config-table" id="exc-table" style="display:none;">
+          <thead><tr><th>Date</th><th>Departments</th><th>Reason</th><th>Added</th><th></th></tr></thead>
+          <tbody id="exc-tbody"></tbody>
+        </table>
+        <div id="exc-empty" class="al-hint" style="display:none;">No exception days yet.</div>
+      </div>
+    </div>
+  </div>
+
   <div id="coaching-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="coaching-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
@@ -3670,6 +3725,8 @@
     // S5: company-holiday ranges ([{from, to}] ISO, from COMPANY_HOLIDAYS)
     // so the CR/Insights form hints' working-day counts match the server's.
     window.__COMPANY_HOLIDAYS__ = <?!= companyHolidaysJson ?>;
+    // #81: ALL-department exception days (ISO dates) -- not working days either.
+    window.__EXCEPTION_DAYS__ = <?!= exceptionDaysJson ?>;
     // R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property; keys from
     // the Config.gs UI_FLAG_SURFACES registry). Applied as body[data-ui-flags].
     window.__UI_FLAGS__ = <?!= uiFlagsJson ?>;

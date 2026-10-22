@@ -65,8 +65,9 @@ When something looks wrong, before assuming a code bug, check:
    `ADMIN_EMAILS` Script Property (or `ADMIN_EMAILS_FALLBACK`). It
    creates `Access Control`, `Alert Config`, `Alert Log`,
    `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-   `Orphan Fix Log`, `Dept Config`, `Report Usage`, and `Queue Report
-   Subscribers` -- whichever are missing. Idempotent on re-runs
+   `Orphan Fix Log`, `Dept Config`, `Report Usage`, `Queue Report
+   Subscribers`, `Company Holidays` (H1), `Dashboard Standards` (H2, which it
+   also republishes) and `Exception Days` (#81) -- whichever are missing. Idempotent on re-runs
    (existing data untouched). Without re-running setup() after a
    fresh pull, downstream writers (Pipeline Health appends, Digest
    config reads, Orphan Fix log appends) silently no-op against
@@ -3566,7 +3567,11 @@ When something looks wrong, before assuming a code bug, check:
     **History (DC-D2b):** the first D2 build counted EVERY Internal leg as a
     dial -- on 2026-10-20 3694 legs, 90% of the day's outbound, 92.5% of
     them `CallRecording` legs (1.1% talked). Since the DC-D2b cdr-import push
-    only a dial to an extension counts (`dcIsInternalDial_`). **Repair the
+    only a dial to an extension counts (`dcIsInternalDial_`): 282 on
+    2026-10-20, 7.4% of outbound. The CDR writes a call's `CallRecording`
+    row under the SAME call id as the call it records, so the breakdown
+    tallies one row per LEG (call id + callee + context); the build was
+    never affected (events are keyed per call). **Repair the
     dates built between the D2 deploy (2026-10-21) and that push:** their
     OB-internal counts are inflated ~10x. For the date in `Raw Data`, run
     `runDirectCallBuild()` (it deletes and rewrites that date's Direct rows,
@@ -3579,3 +3584,34 @@ When something looks wrong, before assuming a code bug, check:
     Neon mirror). Until then a window spanning the deploy date mixes the two
     rule sets, and its vs-prior chips compare them. Writes nothing. Pinned
     by `tests/unit/direct-call-metrics.test.js` (the D2 and D0 blocks).
+
+81. **Exception days -- the `Exception Days` sheet (owner 2026-10-22).** A
+    day whose call data is REAL but unfair to judge by -- the 09/21/26 8x8
+    outage is the case that asked for it. **Add one from Admin ▾ → Exception
+    days** (date, a reason every report shows, All departments or a pick);
+    re-run `setup()` once after the deploy so the sheet exists (it is also
+    created on the first save). What it does: every windowed figure leaves the
+    day out -- COUNTS as well as rates and averages, so a screen's numbers
+    still add up -- on My Department (its Missed Calls section included),
+    Insights, the Individual Report, the agent app, the Overview tiles + trend, digests
+    and the all-department queue report; each says so in a note ("1 exception
+    day left out (Mon Sep 21: 8x8 outage) — N calls not counted"). The day bars draw it
+    striped and gray at its real height, off the scale and the target line;
+    the Overview trend bridges its lines across it under a hatched band.
+    Comparison windows and per-workday averages treat an ALL-department day
+    like a holiday; daily alerts log it `skipped` ("Exception day ... -- not
+    assessed"); alert reasons and coaching do not count it as a workday. A
+    ONE-department day leaves that department's figures and its OWN queues
+    (`getDeptQcdQueues_`) only; the company line keeps it. **An admin can
+    compare:** the note's "Include them" switch re-asks the same report with
+    the day counted (admins only -- a manager's request is ignored
+    server-side, and View-as hides it). **Timing:** a save busts the list's
+    cache, and the list's hash is part of `reportFreshnessTag_`, so every
+    report re-keys at once (others' open tabs pick it up on their next
+    load). Removing a day puts it back the same way. **Not covered (phase
+    2):** the per-call reports (Inbound / Outbound / Direct / Caller Lookup /
+    the journey drill), team-tools' own reads of the workbook (#68), and
+    anomaly-suggested days. A failed sheet read serves the last-good copy in
+    `EXCEPTION_DAYS_SHEET_COPY` (engine state, never set by hand). Pinned by
+    `tests/unit/exception-days.test.js`; cross-file-pins fails a DQE reader
+    that applies the queue split without the exception step.

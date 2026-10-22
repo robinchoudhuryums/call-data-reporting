@@ -263,7 +263,10 @@ function qcdAllDeptCachedData_(from, to, opts) {
   const tAnchor = Date.now();
   const anchor = qcdAllFreshnessAnchor_();
   const anchorMs = Date.now() - tAnchor;
-  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to + ':' + qcdSrc + ':' + anchor;
+  // #81: + the exception-day tag ('' while there is none) -- readQcdGrid_
+  // leaves those days out, so an edit to the list must re-key the report.
+  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to + ':' + qcdSrc + ':' + anchor
+    + ((typeof exceptionDaysTag_ === 'function') ? exceptionDaysTag_() : '');
   // opts.fresh (the admin preview): skip the cache READ so the admin verifies
   // a freshly computed report, but still WARM the key for the next web open.
   const tGet = Date.now();
@@ -796,7 +799,17 @@ function neonFetchQcdGrid_(fromIso, toIso, conn) {
  * consumers need (the trend/range rows AND the MTD-violation month), and the
  * existing in-loop date filters keep the result identical to a whole-sheet read.
  */
-function readQcdGrid_(readFrom, readTo) {
+function readQcdGrid_(readFrom, readTo, opts) {
+  var raw = readQcdGridRaw_(readFrom, readTo);
+  // Owner 2026-10-22 (#81): exception days leave every queue figure here, the
+  // QCD side of the DQE exclusion step. `opts.raw` is for the readers that
+  // must see what happened -- the DQE-silence watchdog, diagnostics, and the
+  // per-call reports' comparisons (phase 2 of exception days).
+  if (opts && opts.raw) return raw;
+  return qcdGridWithoutExceptions_(raw, readFrom, readTo);
+}
+
+function readQcdGridRaw_(readFrom, readTo) {
   if (getQcdReadSource_() === 'neon') {
     if (!QCD_NEON_GRID_MEMO_) QCD_NEON_GRID_MEMO_ = {};
     var key = readFrom + '|' + readTo;
@@ -807,6 +820,70 @@ function readQcdGrid_(readFrom, readTo) {
     QCD_NEON_FELL_BACK_ = true;   // DATA-4 (below)
   }
   return readQcdSheetData_();
+}
+
+/**
+ * #81: the queues an exception day covers -- null = every queue (an
+ * all-department day), else the named depts' OWN queues (getDeptQcdQueues_,
+ * never the parent rollup, which would drop a child dept's queues as well).
+ */
+function qcdExceptionQueues_(day) {
+  if (!day.depts || !day.depts.length) return null;
+  var set = {};
+  day.depts.forEach(function (d) {
+    var qs = [];
+    try { qs = (typeof getDeptQcdQueues_ === 'function') ? (getDeptQcdQueues_(d) || []) : []; } catch (e) { qs = []; }
+    qs.forEach(function (q) { set[String(q).trim()] = true; });
+  });
+  return set;
+}
+
+/**
+ * #81: the predicate (dateIso, queue) -> the covering exception day or null,
+ * over the days inside [from, to]; null when there are none (or an admin
+ * includes them), so the common path costs one list read.
+ */
+function qcdExceptionPredicate_(from, to) {
+  if (typeof getExceptionDays_ !== 'function' || exceptionIncludeOn_()) return null;
+  var days = getExceptionDays_().filter(function (d) { return (!from || d.date >= from) && (!to || d.date <= to); });
+  if (!days.length) return null;
+  var byDate = {};
+  days.forEach(function (d) { (byDate[d.date] = byDate[d.date] || []).push({ day: d, queues: qcdExceptionQueues_(d) }); });
+  return function (iso, queue) {
+    var list = iso && byDate[iso];
+    if (!list) return null;
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i].queues || list[i].queues[queue]) return list[i].day;
+    }
+    return null;
+  };
+}
+
+var QCD_EXC_GRID_MEMO_ = null;   // per-execution: the filtered copy per window
+function qcdGridWithoutExceptions_(grid, from, to) {
+  if (!grid || !grid.values || !grid.values.length) return grid;
+  var excluded = qcdExceptionPredicate_(from, to);
+  if (!excluded) return grid;
+  if (!QCD_EXC_GRID_MEMO_) QCD_EXC_GRID_MEMO_ = {};
+  var mk = from + '|' + to;
+  if (QCD_EXC_GRID_MEMO_[mk] && QCD_EXC_GRID_MEMO_[mk].src === grid) return QCD_EXC_GRID_MEMO_[mk].out;
+  var tz = grid.ssTZ;
+  var keep = [];
+  for (var i = 0; i < grid.values.length; i++) {
+    var r = grid.values[i];
+    var iso = (grid.dates && grid.dates[i] !== undefined) ? grid.dates[i] : rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+    var q = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+    if (iso && excluded(iso, q)) continue;
+    keep.push(i);
+  }
+  if (keep.length === grid.values.length) return grid;
+  var out = {};
+  Object.keys(grid).forEach(function (k) { out[k] = grid[k]; });
+  out.values = keep.map(function (i) { return grid.values[i]; });
+  if (grid.displays) out.displays = keep.map(function (i) { return grid.displays[i]; });
+  if (grid.dates) out.dates = keep.map(function (i) { return grid.dates[i]; });
+  QCD_EXC_GRID_MEMO_[mk] = { src: grid, out: out };
+  return out;
 }
 
 // DATA-4 (broad-scan 2026-10-12): on the Neon path an UNREACHABLE Neon falls

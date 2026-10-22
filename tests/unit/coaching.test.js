@@ -121,6 +121,28 @@ test('coaching: window walks back over weekends and holidays', function () {
   assert.equal(win2.from, '2026-07-13');
 });
 
+test('#81: the coaching window steps over an ALL-department exception day (not a one-department one)', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const install = (exc) => {
+    h.state.props.SPREADSHEET_ID = 'fake';
+    h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+      'Exception Days': [['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At']].concat(exc) } });
+    h.state.cache.clear();
+  };
+  const realLatest = h.ctx.getLatestDataDate;
+  h.ctx.getLatestDataDate = function () { return '2026-07-20'; };
+  try {
+    install([['2026-07-10', '', '8x8 outage', 'TRUE']]);
+    assert.equal(h.call('coachingCurrentWindow_').from, '2026-07-06', 'same walk as a holiday on 07-10');
+    install([['2026-07-10', 'CSR', 'CSR only', 'TRUE']]);
+    assert.equal(h.call('coachingCurrentWindow_').from, '2026-07-07', 'a one-department day is still a company workday');
+  } finally {
+    h.ctx.getLatestDataDate = realLatest;
+    delete h.state.spreadsheet;
+    h.state.cache.clear();
+  }
+});
+
 test('coaching: previewCoachingFlags is admin-gated, scans every dept best-effort, stamps dept on each flag', function () {
   h.state.userEmail = 'admin@x.com';
   h.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };

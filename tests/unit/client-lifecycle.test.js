@@ -203,6 +203,7 @@ test('B3/CL-4: a late no-ring prefetch for an older window neither replaces the 
   };
   const sb = {
     google: f.google, uiFlagOn_: function () { return false; },
+    excReq_: function (r) { return r; },   // #81: the include flag is off in this sandbox
     $: function (id) { return id === 'ins-qh-tbody' ? tbody : null; },
     insLastData: { meta: { department: 'Sales', from: '2026-10-01', to: '2026-10-07' } },
   };

@@ -687,8 +687,17 @@ function qsAssessAgentSet_(dept, opts) {
 // Overview's deptsForAgent filter, the alert engine's roster filter), so the
 // B-1 verdict is assessed over all of them without a second roster read.
 function queueSplitNarrowedCopy_(rows, dept, opts) {
+  // Owner 2026-10-22 (#81): exception days leave first, on a COPY of the
+  // array (the caller's stays whole) -- every caller of this helper (the
+  // Overview tiles + trend, the alert engine, the digests) inherits it.
+  let exceptions = { excluded: [], daily: {} };
+  if (rows && rows.length && typeof getExceptionDays_ === 'function'
+      && !exceptionIncludeOn_() && getExceptionDays_().length) {
+    rows = rows.slice();
+    exceptions = applyExceptionDays_(rows, dept, opts && opts.assessAgents ? { assessAgents: opts.assessAgents } : null);
+  }
   if (getQueueSplitScope_() !== 'dept' || !rows || !rows.length) {
-    return { rows: rows || [], info: { scope: 'off', applied: 0, dates: {}, fellOpenUnmatched: false } };
+    return { rows: rows || [], info: { scope: 'off', applied: 0, dates: {}, fellOpenUnmatched: false }, exceptions: exceptions };
   }
   const clones = rows.map(function (r) {
     const c = {};
@@ -698,7 +707,7 @@ function queueSplitNarrowedCopy_(rows, dept, opts) {
   const o = { rowsAreRoster: true };
   if (opts) for (const k in opts) if (Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k];
   const info = applyQueueSplitToRows_(clones, dept, o);
-  return { rows: clones, info: info };
+  return { rows: clones, info: info, exceptions: exceptions };
 }
 
 /**
@@ -930,6 +939,21 @@ function combineSummaries_(primary, parts) {
   });
   grand.crossoverAgentCount = crossoverAgentCount;
   if (wantDaily) grand.daily = summaryDailyList_(grandDaily);
+  // #81: every part's excluded days, merged by date (each dept's roster
+  // volume summed -- a crossover agent's excluded day counts in both, the
+  // same as the per-dept subtotals; it is a disclosure, not a total).
+  const exByDate = {}, exDaily = {};
+  parts.forEach(function (p) {
+    ((p.meta && p.meta.exceptionDays) || []).forEach(function (e) {
+      const m = exByDate[e.date] || (exByDate[e.date] = { date: e.date, reason: e.reason, rung: 0, answered: 0, missed: 0 });
+      m.rung += e.rung; m.answered += e.answered; m.missed += e.missed;
+    });
+    ((p.totals && p.totals.dailyExcluded) || []).forEach(function (d) {
+      const m = exDaily[d[0]] || (exDaily[d[0]] = { answered: 0, missed: 0 });
+      m.answered += Number(d[1]) || 0; m.missed += Number(d[2]) || 0;
+    });
+  });
+  if (Object.keys(exDaily).length) grand.dailyExcluded = summaryDailyList_(exDaily);
   // summary v23 (owner 2026-10): the team's answered per AGENT per day is a
   // ratio of two sums, so the combined figure sums each dept's pair (above,
   // crossover repeats removed) and divides once -- never a mean of the depts'
@@ -960,6 +984,8 @@ function combineSummaries_(primary, parts) {
     });
     grand[k] = den ? Math.round(num / den) : 0;
   });
+  const exList = Object.keys(exByDate).sort().map(function (k) { return exByDate[k]; });
+  if (exList.length && base.meta) base.meta.exceptionDays = exList;
   return {
     meta: base.meta,          // caller overwrites department/subScope fields
     rows: rows,
@@ -972,6 +998,7 @@ function combineSummaries_(primary, parts) {
 }
 
 function getDepartmentSummary(req) {
+  setExceptionIncludeFromReq_(req);   // #81: an ADMIN's "include exception days" (else off) -- before any cache key
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
 
@@ -1341,6 +1368,11 @@ function computeSummary_(dept, from, to, scope, opts) {
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeSummary_:' + dept, effectiveSource, _tRead, srcRows.length);
 
+  // Owner 2026-10-22 (#81): exception days leave EVERY figure below -- the
+  // current window, the prior window and the day bars alike -- before any
+  // aggregation; what they held rides out in meta.exceptionDays /
+  // totals.dailyExcluded so the page can say so and still draw the day.
+  const excInfo = applyExceptionDays_(srcRows, dept, { assessAgents: roster.names });
   // Sub-queue Phase 2: narrow each row to THIS dept's own queues before any
   // aggregation happens, so the loop below and every rule inside it are
   // unchanged. Fails open per-row -- see applyQueueSplitToRows_.
@@ -1644,6 +1676,10 @@ function computeSummary_(dept, from, to, scope, opts) {
     });
     totals.daily = summaryDailyList_(perDay);
     Object.defineProperty(totals, '_dailyByAgent', { value: rosterDaily, enumerable: false });
+    // #81: the excluded days' own figures (roster agents), for the striped bars.
+    const exDaily = {};
+    Object.keys(excInfo.daily).forEach(function (iso) { if (iso >= from && iso <= to) exDaily[iso] = excInfo.daily[iso]; });
+    if (Object.keys(exDaily).length) totals.dailyExcluded = summaryDailyList_(exDaily);
   }
   // summary v23 (owner 2026-10): the team's answered per AGENT per day --
   // the roster agents' answered ÷ their summed ring-days. Floaters are already
@@ -1720,6 +1756,9 @@ function computeSummary_(dept, from, to, scope, opts) {
       // Drives chip tooltip ("Prior period: X – Y") on the client.
       priorFrom: priorFrom,
       priorTo:   priorTo,
+      // #81: the exception days left out of this window, with what they held
+      // (roster agents) -- absent when there are none.
+      exceptionDays: exceptionDaysMeta_(excInfo, from, to).length ? exceptionDaysMeta_(excInfo, from, to) : undefined,
       // Sub-queue Phase 2: how much of this window is actually queue-narrowed.
       // `queueSplitFrom` is the EARLIEST date in range that carried a split;
       // dates before it are all-queue and cannot ever be split (the per-leg
@@ -2169,6 +2208,34 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       }
     }
 
+    // #81: the excluded days' OWN-queue figures (same rules as byDayRange),
+    // from the UNFILTERED grid -- readQcdGrid_ left them out above -- so the
+    // day bars can draw each one striped at its real value.
+    const byDayExcl = {};
+    const excPred = (rFrom && rTo && typeof qcdExceptionPredicate_ === 'function') ? qcdExceptionPredicate_(rFrom, rTo) : null;
+    if (excPred) {
+      const rawGrid = readQcdGrid_(_readFrom, _readTo, { raw: true });
+      const rv = (rawGrid && rawGrid.values) || [];
+      const rd = (rawGrid && rawGrid.displays) || null;
+      for (let k = 0; k < rv.length; k++) {
+        const r4 = rv[k];
+        if (String(r4[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
+        const q4 = String(r4[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+        if (!queueSet[q4] || queueOwner[q4]) continue;
+        const d4 = rowDateIso_(r4[QCD_HISTORICAL_COLS.DATE - 1], tz);
+        if (!d4 || d4 < rFrom || d4 > rTo || !excPred(d4, q4)) continue;
+        const dx = byDayExcl[d4] || (byDayExcl[d4] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0 });
+        const ansX = Number(r4[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+        dx.total     += Number(r4[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
+        dx.answered  += ansX;
+        dx.abandoned += Number(r4[QCD_HISTORICAL_COLS.ABANDONED - 1]) || 0;
+        if (rd && typeof parseHmsDisplay_ === 'function') {
+          const avgX = parseHmsDisplay_(rd[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
+          if (ansX > 0 && avgX > 0) { dx.avgWSum += avgX * ansX; dx.avgWN += ansX; }
+        }
+      }
+    }
+
     // P3: decompose a per-queue map into OWN (main) queues vs SUB-queues (each
     // child queue belongs to its own department). The UNQUALIFIED dept total is
     // OWN-queues-only, so it reconciles with the QCD modal's "Department total
@@ -2275,6 +2342,11 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
           const dy = byDayRange[iso];
           return [iso, dy.total, dy.answered, dy.abandoned, dy.avgWN > 0 ? Math.round(dy.avgWSum / dy.avgWN) : null];
         }),
+        // #81: the same tuples for the excluded days (absent when none).
+        dailyExcluded: Object.keys(byDayExcl).length ? Object.keys(byDayExcl).sort().map(function (iso) {
+          const dx = byDayExcl[iso];
+          return [iso, dx.total, dx.answered, dx.abandoned, dx.avgWN > 0 ? Math.round(dx.avgWSum / dx.avgWN) : null];
+        }) : undefined,
       }) : null,
       // R11-C1: the same block over the E5 prior window (null when no prior
       // supplied) -- consumed by the Avg-answer tile's delta chip.
@@ -2842,6 +2914,11 @@ function computePriorWindow_(from, to) {
     try {
       if (typeof isCompanyHoliday_ === 'function' && isCompanyHoliday_(fmt(ms))) return false;
     } catch (e) { /* unreadable holiday config -> weekends-only */ }
+    // Owner 2026-10-22 (#81): an ALL-department exception day counts like a
+    // holiday, so the prior window matches the working days actually compared.
+    try {
+      if (typeof exceptionDayFor_ === 'function' && exceptionDayFor_(fmt(ms), null)) return false;
+    } catch (e2) { /* unreadable list -> holidays only */ }
     return true;
   };
   const fMs = toMs(from);

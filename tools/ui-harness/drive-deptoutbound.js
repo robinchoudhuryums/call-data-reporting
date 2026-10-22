@@ -69,6 +69,21 @@ async function openDept(page, meta) {
     record('manager: no Team Direct Calls card and no direct-call request (D3, admin-only)', !tdcM.shown && tdcM.called === 0, JSON.stringify(tdcM));
     record('manager: a stored "columns on" preference still shows the INBOUND table',
       st.inShown && !st.obShown, JSON.stringify(st));
+    // Owner 2026-10-22: the CSR manager's table carries Transfer % -- the same
+    // data the Transfer % tile already shows them -- and sorting by it sinks
+    // an agent with no transfer row in BOTH directions.
+    // CSR's own group: the combined view sorts WITHIN each department.
+    const order = async () => page.evaluate(() => Array.from(document.querySelectorAll('#agents-tbody tr[data-agent][data-dept="CSR"]')).map((r) => r.getAttribute('data-agent')));
+    const thShown = await page.evaluate(() => { const th = document.querySelector('#agents-table thead th[data-sort="transferPct"]');
+      return !!th && getComputedStyle(th).display !== 'none'; });
+    record('manager: the CSR table shows the Transfer % column', thShown);
+    await page.click('#agents-table thead th[data-sort="transferPct"]'); await page.waitForTimeout(300);
+    const o1 = await order();
+    await page.click('#agents-table thead th[data-sort="transferPct"]'); await page.waitForTimeout(300);
+    const o2 = await order();
+    record('manager: sorting by Transfer % keeps an agent with no transfer row last, either way',
+      o1.length > 2 && o1[o1.length - 1] === 'Robin Choudhury' && o2[o2.length - 1] === 'Robin Choudhury'
+        && o1[0] !== o2[0], o1.join(',') + ' | ' + o2.join(','));
     await page.close();
   }
 
@@ -106,6 +121,20 @@ async function openDept(page, meta) {
   // row -- Calls / Rate / Talk, each header sorting by either direction.
   record('layout B: the table shows Calls, Rate and Talk, each with an in / out sort',
     ['Calls', 'Rate', 'Talk'].every((w) => v.heads.some((h) => h.indexOf(w) === 0 && /in\s*out/.test(h.replace(/\s+/g, ' ')))), v.heads.join(' | '));
+  {
+    // Owner 2026-10-22: layout B carries Transfer % too (CSR), one value per
+    // agent, the same figure the classic table shows.
+    const sum30 = require('./payloads/summary-30d.json');
+    const dev = ((sum30.csrTransfer || {}).agents || []).find((a) => a.agent === 'Dev Patel');
+    const xb = await page.evaluate(() => {
+      const heads = Array.from(document.querySelectorAll('#agents-ob-thead th'));
+      const idx = heads.findIndex((th) => /^Transfer %/.test(th.textContent.trim()));
+      const row = document.querySelector('#agents-ob-tbody tr[data-agent="Dev Patel"]');
+      return { idx: idx, cell: (row && idx >= 0 && row.cells[idx]) ? row.cells[idx].textContent.trim() : null };
+    });
+    record('layout B: a Transfer % column shows each agent\'s rate', xb.idx > 0 && !!dev && xb.cell === dev.pct.toFixed(1) + '%',
+      JSON.stringify(xb) + ' want ' + (dev ? dev.pct : '?'));
+  }
   {
     const shown = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
     const missing = ob.agents.map((a) => a.agent).filter((a) => shown.indexOf(a) === -1);
@@ -153,7 +182,8 @@ async function openDept(page, meta) {
   });
   record('layout B: IN and OUT bars share one scale (the smaller volume draws shorter)', scale.inMax > 0 && scale.outMax > 0 && scale.outMax * 2 < scale.inMax, JSON.stringify(scale));
   record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
-    bothRow.cells === 5 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
+    // 6 cells on CSR: agent, direction, Calls, Rate, Talk + Transfer % (owner 2026-10-22).
+    bothRow.cells === 6 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
 
   // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
   {

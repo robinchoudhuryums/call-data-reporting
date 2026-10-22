@@ -36,6 +36,9 @@
  *                            (team-tools) that the dashboard never reads
  *                            itself; rewritten here and by the standards /
  *                            Dept Config editors -- Operator State #37/#68)
+ *   - Exception Days        (days excluded from every windowed figure --
+ *                            an outage; edited from Admin -> Exception days,
+ *                            Operator State #81)
  *
  * Safe to re-run; existing sheets keep every row (no data overwritten);
  * only BLANK header cells are filled in (OD-8, `healSheetHeaders_` below).
@@ -76,6 +79,8 @@ function setup() {
     [SHEETS.COMPANY_HOLIDAYS,      COMPANY_HOLIDAYS_HEADERS, [1]],
     // H2: Team Avg Excludes is comma-joined names -- text-pinned like col A above.
     [SHEETS.DASHBOARD_STANDARDS,   DASHBOARD_STANDARDS_HEADERS, [4]],
+    // Owner 2026-10-22 (#81): the Date column text-pinned like Company Holidays.
+    [SHEETS.EXCEPTION_DAYS,        EXCEPTION_DAYS_HEADERS, [1]],
   ];
   const failed = [];
   specs.forEach(function (spec) {

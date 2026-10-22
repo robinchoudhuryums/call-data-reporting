@@ -466,6 +466,9 @@ function getCompanyOverview(req) {
     // 90-day chart axis (client slices to 30/60/90; YTD fetched on demand).
     chartTrendIsoLabels: chartTrendIsoLabels,
     chartTrendLabels:    w.chartTrendLabels,
+    // #81: the exception days on this chart's axis (absent when none) -- the
+    // client bridges each line across them and shades the day.
+    exceptionDays:    ovExceptionDays_(w.chartTrendStartIso, latestDate),
     depts:            depts,
     companyAggregate: companyAggregate,
     // Admin-only surface fields (stripped by personalizeOverview_ for
@@ -635,7 +638,24 @@ function ovReadDqeRows_(ovNeonCapable, readFromIso, latestDate) {
       ? sheetFetchDqeRows_(readFromIso, latestDate) : [];
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getCompanyOverview', effectiveSource, _tRead, dqeRows.length);
+  // #81: ALL-department exception days leave the shared rows here (the
+  // company hero + its trend line read them directly); a dept-scoped day
+  // leaves that dept's tile in queueSplitNarrowedCopy_.
+  if (typeof applyExceptionDays_ === 'function') applyExceptionDays_(dqeRows, null);
   return dqeRows;
+}
+
+/**
+ * #81: the exception days in [from, to] as { date, depts, reason } -- absent
+ * (undefined) when there are none or an admin includes them, so a payload
+ * without them is byte-identical to before. Unaffected by the viewer: a
+ * day's reason and department names are not admin data.
+ */
+function ovExceptionDays_(from, to) {
+  if (typeof getExceptionDays_ !== 'function' || exceptionIncludeOn_() || !from || !to) return undefined;
+  const list = getExceptionDays_().filter(function (d) { return d.date >= from && d.date <= to; })
+    .map(function (d) { return { date: d.date, depts: d.depts.slice(), reason: d.reason }; });
+  return list.length ? list : undefined;
 }
 
 /** CH-4: Overview stage -- the company aggregate pass (each row once, on-roster visible depts only). */
@@ -1352,7 +1372,9 @@ function getOverviewChartTrend(req) {
 
   const cache = CacheService.getScriptCache();
   const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
-  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
+  // #81: + the exception-day tag ('' while there is none; this key embeds the
+  // date instead of reportFreshnessTag_, so it rides here explicitly).
+  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ((typeof exceptionDaysTag_ === 'function') ? exceptionDaysTag_() : '') + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
                  + ':' + ((typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung')   // DD-2
                  // DL-5: + every dept's roster -- each dept line is its roster's
                  // agents, and a roster edit does not move latestDate.
@@ -1397,6 +1419,9 @@ function getOverviewChartTrend(req) {
   } else {
     dqeRows = (typeof sheetFetchDqeRows_ === 'function') ? sheetFetchDqeRows_(ytdStartIso, latestDate) : [];
   }
+  // #81: all-department exception days leave the shared rows (the company
+  // line); a dept-scoped one leaves that dept's line in queueSplitNarrowedCopy_.
+  if (typeof applyExceptionDays_ === 'function') applyExceptionDays_(dqeRows, null);
   const deptDaily = {};
   // Queue-split adoption: per-dept narrowing over the SHARED row array, so
   // the YTD chart agrees with the tiles and the dept table (clone-per-dept
@@ -1458,6 +1483,7 @@ function getOverviewChartTrend(req) {
   const data = {
     available: true, latestDate: latestDate,
     trendIsoLabels: labels, trendLabels: displayLabels, depts: depts,
+    exceptionDays: ovExceptionDays_(labels[0], latestDate),   // #81 (absent when none)
     // The LINE series reach managers too since Step 2 #6 (2026-10-16), by the
     // allowlist in ovStripChartTrend_ below -- the same
     // compute-once / personalize-post-cache split personalizeOverview_ uses,

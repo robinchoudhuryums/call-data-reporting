@@ -38,7 +38,8 @@ so the gate itself is not affected -- this is the hand-run trap. When
 bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 
 ### Asserting drivers (pass/fail — these gate CI)
-- `drive-smoke.js` — boots every page as admin AND manager; fails on page /
+- `drive-smoke.js` — (since #81 also the generated Individual Report's
+  exception-day note) boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
   class: laid out and visible but entirely uniform pixels), and horizontal page
   overflow -- at 1440 px AND, in a separate fresh boot, at 360 px (CL-9), where
@@ -81,6 +82,12 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
   it also checks the Queue calls and Abandoned % cards' vs-prior chips.
+- `drive-exceptions.js` — **exception days** (Operator State #81): the
+  disclosure note on My Department, Insights and the Overview (day, reason,
+  calls left out), one striped untinted bar per day-bar card with an
+  "Excluded" readout, the admin-only include switch re-asking the summary and
+  the missed calls WITH the flag and back, View-as and a manager never seeing
+  it, the Overview trend's shaded band + bridged lines, 360 px.
 - `drive-notify.js` — the **Notifications** page: sentence rules, History,
   Test send, the manager-layer switch, a manager's Settings section off and
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
@@ -125,8 +132,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
   keyboard expand and sort, CSV bytes, and (CE-3) the company Direct lines
   block, including its spreadsheet-served note (FO-2).
-- `drive-admin.js` — eight **modals** (Alerts, Outlier Fix, Dept Config,
-  Access Control, System Health, Caller Lookup, Coaching, and the Agent Day
+- `drive-admin.js` — ten **modals** (Alerts, Outlier Fix, Dept Config,
+  Access Control, System Health, Caller Lookup, Coaching, Exception Days --
+  since #81 its list, the in-place refusal of a missing reason, save, and a
+  danger-tone Remove -- and the Agent Day
   report, run past its setup form -- whose outbound cards must carry an admin's
   call id and an OUTBOUND path drill that opens; and, since D1, the Direct
   Calls report -- a clean company run with its chips, then a clamped + gappy
@@ -166,8 +175,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   gets no overlay even with the localStorage flag hand-set.
 - `build-agent.js` + `drive-agent.js` — the **agent app** (the fourth role's
   separate page): boot, the hidden rank line, rendered teammate-name
-  PRIVACY, the History tab, no errors / unmocked RPCs / self-beacons, and the
-  360 px overflow check on both tabs.
+  PRIVACY, the History tab, no errors / unmocked RPCs / self-beacons, the
+  360 px overflow check on both tabs, and (#81) the "Not counted" exception-day
+  note from the real exclusion step.
 
 ### Exploratory drivers (artifacts for a human to read — NOT in CI)
 ```bash

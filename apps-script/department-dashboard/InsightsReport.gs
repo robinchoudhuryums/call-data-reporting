@@ -131,6 +131,7 @@ function resolveInsightsAgents_(rawAgents, roster) {
 }
 
 function getInsightsReport(req) {
+  setExceptionIncludeFromReq_(req);   // #81: an ADMIN's "include exception days" (else off) -- before any cache key
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
@@ -398,6 +399,8 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // Queue-split adoption (Phase 4): narrow BEFORE every aggregation this
   // report runs -- current window, prior window, 12-mo trend, team stats,
   // gap-vs-team -- so all of it inherits one definition. Off = untouched.
+  // #81: exception days leave every figure this report runs, before anything.
+  const excInfo = applyExceptionDays_(srcRows, dept, { assessAgents: roster.names });
   const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
   if (typeof logDqeReadTiming_ === 'function') {
     logDqeReadTiming_('computeInsights_:' + dept, effectiveSource, _tRead, srcRows.length);
@@ -773,6 +776,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     meta: {
       department: dept,
       from: from, to: to,
+      exceptionDays: exceptionDaysMeta_(excInfo, from, to).length ? exceptionDaysMeta_(excInfo, from, to) : undefined,   // #81
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
       // F12: a custom prior window that OVERLAPS the current range silently

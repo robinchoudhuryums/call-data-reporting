@@ -431,6 +431,17 @@
     const b = e.target.closest && e.target.closest('.missed-chart-mode [data-mode]');
     if (b) { e.preventDefault(); setMissedChartMode_(b.getAttribute('data-mode')); }
   });
+  // #81: an admin's include / leave-out switch in an exception-day note.
+  // Flips the tab-wide flag, then re-runs My Department (summary + missed)
+  // and the Insights region on the same window.
+  document.addEventListener('click', function (e) {
+    const b = e.target.closest && e.target.closest('[data-exc-toggle]');
+    if (!b) return;
+    e.preventDefault();
+    EXC_INCLUDE_ = !EXC_INCLUDE_;
+    refresh();
+    if (typeof runInsReport === 'function' && typeof insLastData !== 'undefined' && insLastData) runInsReport();
+  });
 
   // -- Bucket detail (chart drill-in) ------------------------------------
   // Click a chart bucket -> show all rings (date, agent, time) in that 30-min
@@ -1160,7 +1171,7 @@
         if (dateEl) dateEl.textContent = 'unavailable — showing the selected range';
         trpPaint_(trpRangeState_);
       })
-      .getDepartmentSummary({ department: dept, from: win.from, to: win.to });
+      .getDepartmentSummary(excReq_({ department: dept, from: win.from, to: win.to }));
   }
 
   // Resolve the active period, paint what we have, and fetch what we don't.
@@ -1763,7 +1774,7 @@
         if (myToken !== summaryReqSeq) return;
         onError(err, !!__swrHit);
       })
-      .getDepartmentSummary(req);
+      .getDepartmentSummary(excReq_(req));
 
     // N1 (always-inline): the Insights region loads WITH the page --
     // ensures/generates on the first dept load and converges an open
@@ -1803,11 +1814,13 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
+    excRenderNote_($('dept-exc-note'), (state.meta && state.meta.exceptionDays) || null, true);   // #81
     // Sub-queue Phase 1: per-dept subtotals for the combined view. Absent on a
     // single-dept payload, which is what keeps the flat render path unchanged.
     state.deptGroups = (data && data.deptGroups) || null;
     state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
     state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
+    deptApplyTransfer_(state);     // owner 2026-10-22: the Transfer % column
     deptRenderTransferDetail_();   // R25: the per-agent / per-destination drill
     state.diagnostics = (data && data.diagnostics) || null;
 
@@ -2037,7 +2050,7 @@
         }
         const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       })
-      .getMissedCallsReport({ department: dept, from: from, to: to });
+      .getMissedCallsReport(excReq_({ department: dept, from: from, to: to }));
   }
 
   // Re-measure the dept missed chart after layout settles. rAF (twice, to
@@ -2830,6 +2843,47 @@
   // #8: parametrized so the Overview mini-table can reuse it with its own sort
   // state (was reading the My Department `state` globals). Callers pass
   // (rows, sortKey, sortDir).
+  // -- Transfer % column (owner 2026-10-22) --------------------------------
+  // The CSR tile's tier rule: <= deep deeper green, < light green, < amber
+  // amber, else red (TRANSFER_TIERS, the Standards editor).
+  function xferTierCls_(pct) {
+    if (pct == null || !isFinite(Number(pct))) return '';
+    var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
+    var p = Number(pct);
+    return p <= tt.deep ? ' tf-deep' : (p < tt.light ? ' tf-light' : (p < tt.amber ? ' tf-amber' : ' tf-red'));
+  }
+  /**
+   * Joins state.csrTransfer.agents onto the table rows by EXACT name (INV-04:
+   * the transfer sheet writes the csr_team roster spelling), sets the tile's
+   * headline on the totals row and on CSR's own subtotal in a combined view,
+   * and marks the table so the column shows. Every other dept: the marks come
+   * off and the fields are cleared, so a CSR -> Sales switch leaves nothing.
+   */
+  function deptApplyTransfer_(st) {
+    var tr = st.csrTransfer;
+    var byName = {};
+    ((tr && tr.agents) || []).forEach(function (a) { if (a && a.agent) byName[a.agent] = a; });
+    var put = function (row, src) {
+      if (!row) return;
+      row.transferPct = (src && src.pct != null) ? Number(src.pct) : null;
+      row.transferred = src ? src.transferred : null;
+      row.transferCalls = src ? src.totalCalls : null;
+    };
+    (st.rows || []).forEach(function (r) { put(r, tr ? byName[r.agent] : null); });
+    put(st.totals, tr || null);
+    (st.deptGroups || []).forEach(function (g) { put(g.totals, (tr && g.dept === 'CSR') ? tr : null); });
+    var table = $('agents-table');
+    if (table) table.classList.toggle('has-xfer', !!tr);
+  }
+  function xferCellHtml_(row) {
+    if (!row || row.transferPct == null) {
+      return '<span class="cell-zero" title="No CSR transfer data for this row in this range">–</span>';
+    }
+    var p = Number(row.transferPct);
+    return '<span class="xfer-rate' + xferTierCls_(p) + '" title="' + fmtNumber(row.transferred) + ' of '
+      + fmtNumber(row.transferCalls) + ' calls transferred">' + p.toFixed(1) + '%</span>';
+  }
+
   function sortRows(rows, sortKey, sortDir) {
     const key = sortKey;
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -2850,6 +2904,14 @@
         const bv2 = (key === 'answerRate') ? (Number(b.totalAnswered) || 0) / bt : (Number(b.totalAnswered) || 0);
         if (av2 !== bv2) return (av2 - bv2) * dir;
         return String(a.agent).localeCompare(String(b.agent));
+      }
+      // Transfer %: an agent with no transfer row in range sinks either way
+      // (a missing rate is not a 0% rate).
+      if (key === 'transferPct') {
+        const an = a.transferPct == null, bn = b.transferPct == null;
+        if (an && bn) return String(a.agent).localeCompare(String(b.agent));
+        if (an) return 1;
+        if (bn) return -1;
       }
       const av = a[key], bv = b[key];
       if (isText) {
@@ -2888,6 +2950,7 @@
       return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true, null,
         row.dept || getRequestedDept()) + '">' + prate + '%</span>';
     }
+    if (col.type === 'xfer') return xferCellHtml_(row);
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
     if (col.type === 'duration') {
@@ -3655,6 +3718,15 @@
    * missed]) and queue figures from qcd.range.daily ([iso, calls, answered,
    * abandoned, avgAnswerSec]) -- compact tuples (Data.gs).
    */
+  // #81: the excluded days' own figures (totals.dailyExcluded /
+  // qcd.range.dailyExcluded, same tuple shapes) -- drawn striped, never summed.
+  function dtsExcludedDayMap_(state) {
+    return dtsDayMap_({
+      totals: { daily: (state.totals && state.totals.dailyExcluded) || [] },
+      qcd: { range: { daily: (state.qcd && state.qcd.range && state.qcd.range.dailyExcluded) || [] } },
+    });
+  }
+
   function dtsDayMap_(state) {
     var map = {};
     var get = function (iso) { return map[iso] || (map[iso] = {}); };
@@ -3702,11 +3774,27 @@
     for (var ms = Date.UTC(+p[0], p[1] - 1, +p[2], 12), end = Date.UTC(+q[0], q[1] - 1, +q[2], 12); ms <= end; ms += 86400000) {
       isoList.push(new Date(ms).toISOString().slice(0, 10));
     }
-    var isWorkday = function (iso) {
+    // #81: an exception day is not a workday for the buckets (a week's or a
+    // month's per-workday figure leaves it out); in the DAILY view it comes
+    // back as its own bucket, drawn striped at its real value.
+    var exList = (m.exceptionDays || []);
+    var exBy = {};
+    exList.forEach(function (e) { exBy[e.date] = e; });
+    var isWeekday = function (iso) {
       var dow = new Date(iso + 'T12:00:00Z').getUTCDay();
-      return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(iso);
+      return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(iso, true);
     };
+    var isWorkday = function (iso) { return isWeekday(iso) && !exBy[iso]; };
     var bs = dtsDayBuckets_(isoList, dtsDayMap_(state), isWorkday);
+    if (bs.length && !bs[0].weekly && !bs[0].monthly && exList.length) {
+      var exMap = dtsExcludedDayMap_(state);
+      exList.forEach(function (e) {
+        if (e.date < m.from || e.date > m.to || !isWeekday(e.date)) return;
+        bs.push({ key: e.date, from: e.date, to: e.date, n: 1, weekly: false, monthly: false,
+                  days: exMap[e.date] ? [exMap[e.date]] : [], excluded: e });
+      });
+      bs.sort(function (a, b) { return a.from < b.from ? -1 : (a.from > b.from ? 1 : 0); });
+    }
     if (bs.length < 2) return;
     var sums = bs.map(dtsSum_);
     var dept = getRequestedDept();
@@ -3719,7 +3807,9 @@
       var mt = DTS_METRICS_[key];
       if (!mt || (key === 'rate' || key === 'answered' ? !hasDqe : !hasQ)) return;
       var vals = sums.map(function (t, i) { return mt.v(t, bs[i]); });
-      var nums = vals.filter(function (v) { return v != null && isFinite(v); });
+      // #81: an excluded day never sets the scale (one outlier would flatten
+      // every real day) -- it is drawn against the others' scale, clipped.
+      var nums = vals.filter(function (v, i) { return !bs[i].excluded && v != null && isFinite(v); });
       if (!nums.length) return;
       var max = Math.max.apply(null, nums), min = Math.min.apply(null, nums);
       var label = (tile.querySelector('.dts-label') || {}).textContent || key;
@@ -3730,6 +3820,13 @@
       var bars = vals.map(function (v, i) {
         var h = (v == null || !isFinite(v)) ? 0
           : (sc ? sc.pos(v) : 22 + 78 * (max === min ? 1 : (v - min) / (max - min)));
+        h = Math.max(0, Math.min(100, h));
+        if (bs[i].excluded) {
+          // #81: gray diagonal stripes at the day's real value, no standard tint.
+          return '<span class="dts-bar is-excluded' + (v == null ? ' is-empty' : '') + '" style="height:'
+            + (v == null ? 100 : Math.max(h, 8)).toFixed(0) + '%" title="'
+            + escapeHtml('Excluded: ' + (bs[i].excluded.reason || 'exception day')) + '"></span>';
+        }
         var c = mt.cls(sums[i], dept);
         return '<span class="dts-bar' + (c ? ' ' + c : '') + (v == null ? ' is-empty' : '') + '" style="height:' + h.toFixed(0) + '%"></span>';
       }).join('');
@@ -3775,6 +3872,8 @@
         return;
       }
       var b = st.bs[i], text = mt.f(st.sums[i], b), lbl = dtsBucketLabel_(b);
+      // #81: an excluded day says so before its figure.
+      if (b.excluded) text = 'Excluded (' + (b.excluded.reason || 'exception day') + ') · ' + text;
       barsEl.setAttribute('aria-valuenow', String(i));
       barsEl.setAttribute('aria-valuetext', lbl + ': ' + text);
       ro.className = 'dts-readout';
@@ -4034,10 +4133,13 @@
     // single-dept export stays byte-identical to before.
     var deptsShown = (state.meta && state.meta.deptsShown) || [];
     var multiDept = deptsShown.length > 1 && !!state.deptGroups;
+    // Transfer % (owner 2026-10-22) exports only with the data behind it (CSR),
+    // so every other dept's export stays byte-identical.
+    var cols = COLUMNS.filter(function (c) { return !c.xfer || !!state.csrTransfer; });
     var cellsFor = function (row, isTotals, deptLabel) {
       var out = [];
       if (multiDept) out.push(deptLabel == null ? (row.dept || '') : deptLabel);
-      COLUMNS.forEach(function (col, i) {
+      cols.forEach(function (col, i) {
         if (isTotals && i === 0) { out.push(isTotals === 'sub'
           ? (deptLabel || '') + ' subtotal'
           // Phase 0: say it here too. A spreadsheet reader is MORE likely than
@@ -4051,6 +4153,7 @@
         else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : sourceChipCsv_(row));
         else if (col.type === 'bar') out.push(barCell(row));
         else if (col.type === 'pct') out.push(pctCell(row));
+        else if (col.type === 'xfer') out.push(row.transferPct == null ? '' : Number(row.transferPct).toFixed(1) + '%');
         else if (col.type === 'duration') out.push(fmtDuration(row[col.key]));
         else out.push(row[col.key]);
         if (col.type === 'bar') out.push(row.totalRung != null ? row.totalRung : '');
@@ -4061,7 +4164,7 @@
       });
       return out;
     };
-    var header = COLUMNS.reduce(function (acc, c) {
+    var header = cols.reduce(function (acc, c) {
       acc.push(c.label);
       if (c.type === 'bar') acc.push('Total calls');
       if (c.type === 'pct') acc.push('Ans / day');
@@ -4768,7 +4871,8 @@
     if (!thead || !tbody || !tfoot || dir === 'in') return;
     var data = OB_VIEW_.data;
     var dept = getRequestedDept();
-    var cols = 5;
+    var hasXfer = !!state.csrTransfer;   // owner 2026-10-22: Transfer % (CSR), inbound only
+    var cols = hasXfer ? 6 : 5;
     // Layout B (owner 2026-10-21): an IN line over an OUT line in each
     // agent's row. Each metric column sorts by either direction.
     thead.innerHTML = '<tr>' + obThHtml_('agent', 'Agent')
@@ -4776,6 +4880,7 @@
       + obThPairHtml_('Calls · handled / not', 'inRung', 'obTotal')
       + obThPairHtml_('Rate', 'answerRate', 'obConnectRate', 'num')
       + obThPairHtml_('Talk', 'tttSeconds', 'obTalkSec', 'num')
+      + (hasXfer ? obThHtml_('transferPct', 'Transfer %', 'num') : '')
       + '</tr>';
 
     var notes = [];
@@ -4850,7 +4955,8 @@
           e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–'),
           obPctHtml_(o, po, ptip),
           e.inb && e.inb.tttSeconds ? fmtDuration(e.inb.tttSeconds) : zeroCell_('–'),
-          o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–'));
+          o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–'))
+        + (hasXfer ? '<td class="num ob-xfer">' + xferCellHtml_(e.inb) + '</td>' : '');
       return '<tr data-agent="' + escapeHtml(e.agent) + '"'
         + (e.dept ? ' data-dept="' + escapeHtml(e.dept) + '"' : '') + ' title="Show '
         + escapeHtml(e.agent) + '’s days (the Individual Report is inside)">' + cells + '</tr>';
@@ -4860,7 +4966,8 @@
         + obPairCells_(
           inT ? fmtCell(barCol, inT, {}) : '', obBarHtml_(t, 0, true),
           inT ? fmtCell(pctCol, inT) : '', obPctHtml_(t),
-          inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '');
+          inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '')
+        + (hasXfer ? '<td class="num ob-xfer">' + (inT && inT.transferPct != null ? xferCellHtml_(inT) : '') + '</td>' : '');
       return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
     };
 

@@ -2239,7 +2239,9 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
 
   // QCD side: per-day Abandoned over the dept's canonical queues.
   const qcdByDay = {};
-  const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(fromIso, toIso) : null;
+  // #81: raw -- the per-call reports are exception days' phase 2, so their
+  // QCD comparison stays on the same (unexcluded) basis as the calls it sits beside.
+  const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(fromIso, toIso, { raw: true }) : null;
   if (grid && !grid.missing && !grid.empty) {
     const qSet = {};
     out.qcdQueues.forEach(function (q) { qSet[q] = true; });

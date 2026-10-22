@@ -243,7 +243,7 @@ function dqeSilenceAssess_(perDept, prevStreaks, opts, dateIso) {
  */
 function dqeSilenceReadDay_(dateIso) {
   var grid;
-  try { grid = readQcdGrid_(dateIso, dateIso); }
+  try { grid = readQcdGrid_(dateIso, dateIso, { raw: true }); }   // #81: a watchdog sees what happened
   catch (e) { return { inconclusive: true, reason: 'QCD read failed: ' + (e && e.message ? e.message : e) }; }
   if (!grid || grid.missing) return { inconclusive: true, reason: 'QCD Historical Data unavailable' };
 

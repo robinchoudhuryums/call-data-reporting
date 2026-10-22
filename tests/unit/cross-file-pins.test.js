@@ -280,6 +280,52 @@ test('B-2: no dashboard file reads the DQE sheet without a Neon path', function 
     + 'alertRowsForDate_), or add an entry to DQE_SHEET_ONLY_ALLOWED with a reason.');
 });
 
+// ---- #81: exception days reach every DQE reader and every queue read -------
+//
+// Owner 2026-10-22: exception days (an outage) leave EVERY windowed figure.
+// The exclusion step sits beside the queue-split step at each DQE reader, so
+// the C2 question "what enforces this?" is answered here: a dashboard file that
+// calls applyQueueSplitToRows_ must call applyExceptionDays_ at least as often
+// (queueSplitNarrowedCopy_ applies it itself), unless it is listed WITH a reason.
+function stripJsComments_(src) {
+  return String(src).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
+}
+const EXCEPTION_DAYS_RAW_ALLOWED = {
+  // A single day's factual call-by-call drill: on an exception day it shows
+  // what happened (the day is not "judged" here, and an empty page would hide it).
+  'AgentDay.gs': 'single-day factual drill, not a windowed figure',
+  // Editor-run diagnostics exist to show what the data holds.
+  'Diagnostics.gs': 'diagnostics see what happened',
+};
+// And an UNFILTERED queue read is a decision: these files may pass { raw: true }.
+const QCD_RAW_ALLOWED = {
+  'Data.gs': 'computeDeptQcdSnapshot_ reads the excluded days back out, to draw them striped',
+  'DqeSilenceWatch.gs': 'a watchdog sees what happened',
+  'Diagnostics.gs': 'diagnostics see what happened',
+  'InboundReport.gs': 'the per-call reports are exception days\' phase 2; its comparison stays on their basis',
+};
+
+test('#81: every DQE reader applies the exception-day step beside the queue split', function () {
+  const files = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
+  const count = function (src, re) { return (stripJsComments_(src).match(re) || []).length; };
+  const missing = [];
+  files.forEach(function (f) {
+    const src = read(f, DASH);
+    const split = count(src, /(?<!function )applyQueueSplitToRows_\(/g);
+    if (!split || EXCEPTION_DAYS_RAW_ALLOWED[f]) return;
+    const exc = count(src, /(?<!function )applyExceptionDays_\(/g);
+    if (exc < split) missing.push(f + ' (' + split + ' split, ' + exc + ' exception)');
+  });
+  assert.deepEqual(missing, [], 'these DQE readers narrow rows without leaving exception days out -- the outage '
+    + 'day would count in their figures: ' + missing.join(', ')
+    + '. Call applyExceptionDays_ beside applyQueueSplitToRows_, or list the file in EXCEPTION_DAYS_RAW_ALLOWED.');
+  const raw = [];
+  files.forEach(function (f) {
+    if (/readQcdGrid_\([^)]*raw:\s*true/.test(stripJsComments_(read(f, DASH))) && !QCD_RAW_ALLOWED[f]) raw.push(f);
+  });
+  assert.deepEqual(raw, [], 'unlisted unfiltered QCD reads (exception days would count): ' + raw.join(', '));
+});
+
 // ---- S2-2: force-path loss guards track the dashboard-read set -------------
 //
 // guardForceRebuildLoss_'s exemption list is keyed on "is this sheet

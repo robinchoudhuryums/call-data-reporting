@@ -1157,7 +1157,7 @@ function probeBriefThresholds() {
 
   // 2. queue wait
   try {
-    var grid = readQcdGrid_(w.from, w.to);
+    var grid = readQcdGrid_(w.from, w.to, { raw: true });   // #81: diagnostics see what happened
     var queueDept = {};
     depts.forEach(function (d) {
       (getDeptQcdQueues_(d) || []).forEach(function (q) { (queueDept[q] = queueDept[q] || []).push(d); });

@@ -186,6 +186,15 @@ function renderDashboard_(user) {
   let holidayRanges = [];
   try { holidayRanges = getCompanyHolidayRanges_(); } catch (e) { holidayRanges = []; }
   tmpl.companyHolidaysJson = JSON.stringify(holidayRanges).replace(/</g, '\\u003c');
+  // #81: the ALL-department exception days, which the server's working-day
+  // math (countWorkingDays_, computePriorWindow_) skips like holidays -- the
+  // client mirrors (isCompanyHolidayIso_) read them so hint and results agree.
+  let exceptionDates = [];
+  try {
+    exceptionDates = getExceptionDays_().filter(function (d) { return !d.depts.length; })
+      .map(function (d) { return d.date; });
+  } catch (e) { exceptionDates = []; }
+  tmpl.exceptionDaysJson = JSON.stringify(exceptionDates).replace(/</g, '\\u003c');
   // R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property, sanitized
   // against the Config.gs registry). [] when unset; best-effort.
   let uiFlags = [];

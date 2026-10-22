@@ -278,9 +278,9 @@ function previewCoachingFlags() {
 function computeCoachingPreview_() {
   var latest = getLatestDataDate();
   if (!latest) return { available: false, reason: 'no DQE data' };
-  var win = coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_, function (isoDay) {
-    try { return isCompanyHoliday_(isoDay); } catch (e) { return false; }
-  });
+  var win = coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_,
+    // #81: a holiday or an ALL-department exception day is not a coaching workday.
+    metricsOffDayFn_(null));
   if (!win) return { available: false, reason: 'bad latest date: ' + latest };
   var flags = [], errors = [], depts = getAllDepartments_();
   depts.forEach(function (dept) {
@@ -322,9 +322,9 @@ function coachingDeptFlags_(dept, win) {
 function coachingCurrentWindow_() {
   var latest = getLatestDataDate();
   if (!latest) return null;
-  return coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_, function (isoDay) {
-    try { return isCompanyHoliday_(isoDay); } catch (e) { return false; }
-  });
+  return coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_,
+    // #81: a holiday or an ALL-department exception day is not a coaching workday.
+    metricsOffDayFn_(null));
 }
 
 /** Editor wrapper (the Run-picker convention: no trailing underscore) with

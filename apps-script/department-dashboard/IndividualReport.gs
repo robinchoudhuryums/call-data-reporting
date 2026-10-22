@@ -128,6 +128,7 @@ function getIndividualReportInit(req) {
 // computeActiveAgentsInRange_ moved to Util.gs.
 
 function getIndividualReport(req) {
+  setExceptionIncludeFromReq_(req);   // #81: an ADMIN's "include exception days" (else off) -- before any cache key
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
@@ -373,6 +374,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // per-agent cards, the monthly trend, the prior window and the team average
   // all inherit one definition (the S2-0/B-1 fail-open rules live in the
   // shared helper; off = rows untouched, payload byte-identical).
+  // #81: exception days leave every figure (cards, trend, prior, team avg).
+  const excInfo = applyExceptionDays_(srcRows, dept, { assessAgents: roster.names });
   const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
 
   // Aggregators.
@@ -728,6 +731,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     meta: {
       department: dept,
       from: from, to: to,
+      exceptionDays: exceptionDaysMeta_(excInfo, from, to).length ? exceptionDaysMeta_(excInfo, from, to) : undefined,   // #81
       priorFrom: hasPrior ? priorFrom : null,
       priorTo:   hasPrior ? priorTo   : null,
       // F-32 follow-up (v11): a CUSTOM prior window can overlap the

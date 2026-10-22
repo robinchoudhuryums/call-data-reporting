@@ -228,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# SIXTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
+# SEVENTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
 # in tools/ui-harness/README.md "Asserting drivers" -- the per-driver list
 # lives there, not here). Two pins ride on them: `cross-file-pins.test.js`
 # fails when a `kind:'modal'` route in script-4-nav.html is neither driven by
@@ -511,8 +511,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Public write paths are admin-only — INV-01 carries the AUTHORITATIVE
   carve-out list** (OrphanFix.gs incl. the `addOrphanToRoster` New-hire flow /
   `setup()` / DeptConfig.gs / the Access Control editor in Auth.gs / the
-  Alert+Digest config editors / the append-only `logReportUsage_` telemetry
-  carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
+  Alert+Digest config editors / the Exception Days editor (#81) / the append-only
+  `logReportUsage_` telemetry carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
   with `assertAdmin_()` except the telemetry append and the row-dept-gated
   Escalations verbs. Every other
   public-callable function is read-only; helpers that touch
@@ -1568,7 +1568,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ages out from under it, and prose could not keep that claim true (B-2, the
   silently-dead alerts): `cross-file-pins.test.js` fails CI if a dashboard
   `.gs` references `SHEETS.HISTORICAL` without `neonFetchDqeRows_`, unless it
-  is on the documented `DQE_SHEET_ONLY_ALLOWED` list.
+  is on the documented `DQE_SHEET_ONLY_ALLOWED` list. **#81: the same reader
+  must call `applyExceptionDays_` beside its `applyQueueSplitToRows_`** (queue
+  data: `readQcdGrid_` filters; `{raw:true}` only on the listed readers) --
+  cross-file-pins' #81 sweep fails it otherwise (Operator State #81).
 - **Force-path data-loss guard convention (M2 generalized).** A FORCE
   re-import DELETES a date's rows for EVERY historical sheet (CDR / QPath /
   QCD / CSR / DQE) before rebuilding (`processNewImport`'s `if (force)`
@@ -1759,7 +1762,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   init blobs and the Overview key ONLY -- `summary`/`missed`/`insights`/
   `individual`/`qcdAll` carry no config dimension, so a queue-mapping edit
   reaches those surfaces when the freshness tag moves or the TTL expires;
-  the freshness tag busts only when the LATEST date moves). Each report file owns its own versioned
+  the freshness tag busts only when the LATEST date moves or the #81 exception-day list changes). Each report file owns its own versioned
   cache prefix; bump the relevant version on any aggregation-rule change
   (cache-version-sync's S2 sweep fails on an unregistered prefix). See INV-30 for current versions. **Admin-modal init blobs are
   cached too (Batch 1):** the Outlier Fix + Dept Config init payloads
@@ -2082,7 +2085,7 @@ items for anything it flags or doesn't cover.)
 3. Did the user actually have access? (the email match is case-INsensitive -- check the Department cell + Role, and `EMAIL_ALIASES`)
 4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
-6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, twelve sheets -- and it REPUBLISHES the Dashboard Standards sheet, #37)
+6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, thirteen sheets -- and it REPUBLISHES the Dashboard Standards sheet, #37)
 7. Is `DASHBOARD_URL` set? (alert-email links + every report's "Open in new tab")
 8. Are all three trigger families installed? (daily alerts / the integrated DQE build / daily+weekly+monthly digests)
 9. Did the latest push add an OAuth SCOPE? (Run any function once in the editor to consent)
@@ -2157,6 +2160,7 @@ items for anything it flags or doesn't cover.)
 78. `ALERT_REASON_RULES` -- the admin-trial alert reasons (Step 5c): an agent below X% on each of N workdays, callers not called back within a business day; admins-only email, `reason:` Alert Log rows
 79. `probeOutboundCallMix` / `OUTBOUND_MIX_AGENTS` -- read-only: sorts agents' outbound calls into company line / colleague / inbound twin / misdial / redial / external, with sample call ids
 80. `diagnoseDirectCallCounting` (cdr-import) -- read-only: sizes what re-importing a pre-D2 date changes (D2 is not retroactive), then re-import per #56
+81. Exception days -- the `Exception Days` sheet (Admin ▾ → Exception days): a day left out of every windowed figure (counts too) and named on every report; admin-only include switch; per-call reports + team-tools are phase 2
 
 ## Cycle Workflow Config
 
@@ -2176,7 +2180,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/AgentDay.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/NeonRetention.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/Notifications.gs, apps-script/department-dashboard/AlertReasons.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/AgentDay.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/NeonRetention.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/Notifications.gs, apps-script/department-dashboard/AlertReasons.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/ExceptionDays.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -2197,7 +2201,7 @@ below is a finding aid.** Several invariants carry exceptions and version
 history that a one-line summary cannot hold, so open the entry before relying
 on one (INV-30's cache-version table above all).
 
-INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close, a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
+INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close / Exception Days (#81), a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDisplayValues()`, never `getValue()` -- spreadsheet-vs-script TZ | Subsystem: Department Dashboard
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard
@@ -2208,7 +2212,7 @@ INV-08 | TTT attribution uses each agent's OWN `leg.talkSec` via `findAgentTalkO
 INV-09 | The Data.gs cache key is versioned (`summary:vN:`); bump on any aggregation-rule change | Subsystem: Department Dashboard
 INV-10 | `HISTORICAL_COLS` must match the real DQE Historical Data column positions (full map in the entry) | Subsystem: Department Dashboard
 INV-11 | ROSTER layout pins: HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6 | Subsystem: Department Dashboard
-INV-12 | `setup()` is idempotent and admin-gated; it creates the twelve dashboard-managed sheets if missing (incl. `Company Holidays`, H1, and `Dashboard Standards`, H2 -- which it also republishes) and never overwrites rows | Subsystem: Department Dashboard
+INV-12 | `setup()` is idempotent and admin-gated; it creates the thirteen dashboard-managed sheets if missing (incl. `Company Holidays`, H1, `Dashboard Standards`, H2 -- which it also republishes -- and `Exception Days`, #81) and never overwrites rows | Subsystem: Department Dashboard
 INV-13 | Deployed as "Execute as: Me" + "Anyone within domain" -- the deployer's permissions back the script | Subsystem: Department Dashboard
 INV-14 | `SPREADSHEET_ID` comes from Script Properties, never hardcoded | Subsystem: Department Dashboard
 INV-15 | Per-project `.clasp.json` files are gitignored at any depth; scriptIds stay out of the repo | Subsystem: operational/cross-cutting
@@ -2329,6 +2333,7 @@ S64 | Coaching release prep: per-dept gates, Met / Rotated / Dismissed, the held
 S65 | Alert reasons: an agent below a threshold over N workdays; callers not called back (Step 5c) | Subsystem: Department Dashboard
 S66 | Queue figures follow their period: My Department queue chips, Overview abandoned chips, Insights idle agents (QD-1, QD-2, IDLE-2) | Subsystem: Department Dashboard
 S67 | Direct Calls report covers only days that exist: the clamp, missing workdays, the int / ext split (D1) | Subsystem: Department Dashboard
+S68 | Exception days: one outage day left out everywhere, said everywhere, and an admin can put it back (#81) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

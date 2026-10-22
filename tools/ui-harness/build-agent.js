@@ -58,6 +58,9 @@ h.ctx.ahFetchDalRows_ = function () {
   }
   return rows;
 };
+// #81: one all-department exception day inside the window, so the app's
+// "Not counted" note renders from the REAL exclusion step (Util.gs).
+h.ctx.getExceptionDays_ = function () { return [{ date: '2026-08-05', depts: [], reason: '8x8 outage' }]; };
 const payload = h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' });
 const latestIso = '2026-08-13';
 

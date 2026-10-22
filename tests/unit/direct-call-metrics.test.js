@@ -671,3 +671,50 @@ test('D2b: an Internal leg is the caller\'s outbound only when it dials an exten
   assert.equal(h.call('dcIsInternalDial_', '5551234', ''), false, 'seven digits is no extension');
   assert.equal(h.call('dcIsInternalDial_', '', ''), false);
 });
+
+// Log hygiene (owner 2026-10-22): Apps Script formats a numeric %s argument as
+// a Java double ("150.0 rows", "talk 182.0s"), and the outbound sample line
+// printed the agent's NAME where its extension belonged.
+function captureLogs(fn) {
+  const logs = [];
+  const real = h.ctx.Logger.log;
+  h.ctx.Logger.log = function () { logs.push(Array.prototype.slice.call(arguments)); };
+  try { fn(); } finally { h.ctx.Logger.log = real; }
+  return logs;
+}
+
+test('logs: dcLog_ fills %s in JS -- Logger.log gets one finished string, numbers without ".0"', function () {
+  const logs = captureLogs(() => h.call('dcLog_', 'runDirectCallBuild: %s rows for %s in %sms', 150, '10/20/2026', 13263));
+  assert.deepEqual(logs, [['runDirectCallBuild: 150 rows for 10/20/2026 in 13263ms']]);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/cdr-import/directCallMetrics.js'), 'utf8');
+  assert.equal((src.match(/Logger\.log\(/g) || []).length, 1, 'every log in the file goes through dcLog_ (its own call is the only one)');
+});
+
+test('logs: an outbound sample names the agent\'s extension, not the agent again', function () {
+  const res = compute(grid([
+    row({ cid: 'OB1', start: D + '10:00:00', dir: 'Outgoing', talk: '0:02:00', callTime: '0:02:00', caller: '101', callee: '+15559990000' }),
+    row({ cid: 'OB2', start: D + '10:05:00', dir: 'Internal', callTime: '0:00:10', caller: '101', callee: '102' }),
+  ]), D2MAPS, { collectSamples: true });
+  const lines = captureLogs(() => h.call('dcLogSamples_', res.meta.samples)).map((a) => a.join(' '));
+  assert.ok(lines.some((l) => /call OB1 \| Anna \(ext\) \| 10:00:00 ext 101 -> …0000 \| talk 120s$/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => /call OB2 \| Anna \(int\) \| 10:05:00 ext 101 -> 102$/.test(l)), lines.join('\n'));
+});
+
+// The live CDR writes a call's CallRecording row under the SAME call id as the
+// call it records. The diagnosis tallied one row per call id, so a recording
+// row that came first hid the dial behind it (2026-10-20: "dials 60" next to
+// internalDial 282). The build was never affected -- it keys events by root.
+test('D0 diagnose: a recording row sharing the dial\'s call id hides nothing -- one tally per leg', function () {
+  const res = compute(grid([
+    row({ cid: 'C1', start: D + '09:00:00', dir: 'Internal', callTime: '0:01:00', caller: '101', callee: 'CallRecording', calleeName: 'N/A', ctx: 'N/A' }),
+    row({ cid: 'C1', start: D + '09:00:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:00', caller: '101', callee: '239', calleeName: 'Sam', ctx: 'N/A', answered: true }),
+    row({ cid: 'C2', start: D + '09:10:00', dir: 'Outgoing', talk: '0:02:00', callTime: '0:02:00', caller: '101', callee: '+15559990000' }),
+    row({ cid: 'C2', start: D + '09:10:00', dir: 'Internal', callTime: '0:02:00', caller: '101', callee: 'CallRecording', calleeName: 'N/A', ctx: 'N/A' }),
+  ]), D2MAPS, { diagnose: true });
+  const d = JSON.parse(JSON.stringify(res.meta.diag));
+  assert.equal(d.internalDial.total, 1);
+  assert.deepEqual([d.internalDialShape.legs, d.internalDialShape.dials], [3, 1], 'the dial behind C1\'s recording row is tallied');
+  const a = rowFor(res, 'Anna');
+  assert.deepEqual([a.ob_int_total, a.ob_ext_total], [1, 1], 'the build: one internal dial, one outside call -- the recording rows add nothing');
+  assert.equal(d.sameRootOut.total, 0, 'a shared call id is one event, never an extra leg');
+});

@@ -809,6 +809,21 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       });
       return;
     }
+    // #81: an exception day is never assessed -- its data is left out of every
+    // figure, so "no data" would be the wrong outcome to log. Not gated on
+    // honorSkipDates: a preview of that day says the same thing.
+    const excDay = (typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(dateIso, entry.department) : null;
+    if (excDay) {
+      pushAndLog({
+        department: entry.department,
+        status: 'skipped',
+        answerRate: null,
+        threshold: entry.threshold,
+        recipients: [],
+        notes: 'Exception day (' + dateIso + '): ' + (excDay.reason || 'excluded') + ' -- not assessed',
+      });
+      return;
+    }
     if (honorSkipDates && isDateInSkipRanges_(dateIso, entry.skipDates)) {
       pushAndLog({
         department: entry.department,

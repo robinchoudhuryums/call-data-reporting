@@ -370,6 +370,9 @@ function countWorkingDays_(fromIso, toIso) {
     // no longer read as a genuine length mismatch (INV-35). Noon-UTC anchor
     // makes the ISO slice date-stable.
     if (isCompanyHoliday_(d.toISOString().slice(0, 10))) continue;
+    // Owner 2026-10-22 (#81): an ALL-department exception day is not a day
+    // the figures count either, so a per-workday average does not divide by it.
+    if (typeof exceptionDayFor_ === 'function' && exceptionDayFor_(d.toISOString().slice(0, 10), null)) continue;
     count++;
   }
   return count;
@@ -510,6 +513,213 @@ function isCompanyHoliday_(dateIso) {
   return isDateInSkipRanges_(dateIso, getCompanyHolidayRanges_());
 }
 
+// ── Exception days (owner 2026-10-22, Operator State #81) ──────────────────
+// Days whose data is REAL but unfair to judge by (the 09/21 8x8 outage). Every
+// windowed figure leaves them out -- counts as well as rates, so the numbers on
+// a screen keep reconciling -- and every report says so. One list, three
+// layers: the per-execution memo, a 5-minute CacheService copy (busted by the
+// editor's save), the `Exception Days` sheet; a FAILED sheet read falls back to
+// the last-good copy in EXCEPTION_DAYS_SHEET_COPY, because a silent "none" would
+// put the outage day back into everyone's numbers.
+var EXCEPTION_DAYS_MEMO_ = null;            // per-execution (tests reset it)
+var EXCEPTION_INCLUDE_MEMO_ = false;        // per-execution: an ADMIN asked to include them
+var EXCEPTION_DAYS_COPY_PROP_ = 'EXCEPTION_DAYS_SHEET_COPY';
+var EXCEPTION_DAYS_CACHE_KEY_ = 'excDays:v1';
+
+/** PURE. One sheet row -> { date, depts, reason } or null (blank / bad date / inactive). */
+function exceptionDayFromRow_(row, tz) {
+  if (!row) return null;
+  const active = row[3];
+  if (active === false || /^(false|no|0)$/i.test(String(active == null ? '' : active).trim())) return null;
+  let cell = row[0];
+  if (cell instanceof Date) {
+    if (isNaN(cell.getTime())) return null;
+    cell = Utilities.formatDate(cell, tz || Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  const date = String(cell == null ? '' : cell).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const rawDepts = String(row[1] == null ? '' : row[1]).trim();
+  const depts = /^(all|\*)?$/i.test(rawDepts) ? []
+    : rawDepts.split(',').map(function (d) { return d.trim(); }).filter(Boolean);
+  return { date: date, depts: depts, reason: String(row[2] == null ? '' : row[2]).trim() };
+}
+
+function sheetReadExceptionDays_() {
+  const out = { days: [], error: false };
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.EXCEPTION_DAYS);
+    if (!sheet) return out;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return out;
+    const width = Math.min(Math.max(sheet.getMaxColumns(), 1), 4);
+    const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    let tz = null;
+    try { tz = ss.getSpreadsheetTimeZone(); } catch (eTz) { tz = null; }
+    rows.forEach(function (r) { const d = exceptionDayFromRow_(r, tz); if (d) out.days.push(d); });
+    out.days.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  } catch (e) {
+    out.error = true;
+    try { Logger.log('[exception-days] sheet read failed: ' + (e && e.message ? e.message : e)); } catch (eL) {}
+  }
+  return out;
+}
+
+/** The active exception days, oldest first -- [{ date, depts ([] = all), reason }]. */
+function getExceptionDays_() {
+  if (EXCEPTION_DAYS_MEMO_) return EXCEPTION_DAYS_MEMO_;
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (eC) { cache = null; }
+  if (cache) {
+    try {
+      const hit = cache.get(EXCEPTION_DAYS_CACHE_KEY_);
+      if (hit) { EXCEPTION_DAYS_MEMO_ = JSON.parse(hit); return EXCEPTION_DAYS_MEMO_; }
+    } catch (eH) { /* a bad cache entry just means a sheet read */ }
+  }
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (eP) { props = null; }
+  let read = sheetReadExceptionDays_();
+  if (read.error) read = sheetReadExceptionDays_();   // one retry (a transient timeout)
+  if (!read.error) {
+    EXCEPTION_DAYS_MEMO_ = read.days;
+    const json = JSON.stringify(read.days);
+    try { if (cache && json.length < 90000) cache.put(EXCEPTION_DAYS_CACHE_KEY_, json, CACHE_TTL_SECONDS); } catch (ePut) {}
+    try {
+      if (props) {
+        const copy = props.getProperty(EXCEPTION_DAYS_COPY_PROP_);
+        if (!read.days.length) { if (copy) props.deleteProperty(EXCEPTION_DAYS_COPY_PROP_); }
+        else if (json !== copy && json.length <= 8000) props.setProperty(EXCEPTION_DAYS_COPY_PROP_, json);
+      }
+    } catch (eW) { /* best-effort: the live read already served */ }
+    return EXCEPTION_DAYS_MEMO_;
+  }
+  let parsed = null;
+  try { parsed = props ? JSON.parse(props.getProperty(EXCEPTION_DAYS_COPY_PROP_) || 'null') : null; } catch (eJ) { parsed = null; }
+  EXCEPTION_DAYS_MEMO_ = Array.isArray(parsed) ? parsed : [];
+  try { Logger.log('[exception-days] sheet unreadable -- using the last-good copy (' + EXCEPTION_DAYS_MEMO_.length + ' day(s))'); } catch (eL2) {}
+  return EXCEPTION_DAYS_MEMO_;
+}
+
+/** The editor's save: the next read anywhere goes back to the sheet. */
+function bustExceptionDaysCache_() {
+  EXCEPTION_DAYS_MEMO_ = null;
+  try { CacheService.getScriptCache().remove(EXCEPTION_DAYS_CACHE_KEY_); } catch (e) {}
+}
+
+/**
+ * The admin-only "include exception days" switch, set once per request by
+ * the report RPCs. A non-admin's flag is ignored -- the exclusion is the
+ * rule; including is an admin's comparison view, never a manager's.
+ */
+function setExceptionIncludeFromReq_(req) {
+  EXCEPTION_INCLUDE_MEMO_ = false;
+  if (!req || !(req.includeExceptionDays === true || req.includeExceptionDays === 'true')) return false;
+  try {
+    const u = resolveUser_();
+    EXCEPTION_INCLUDE_MEMO_ = !!(u && u.role === 'admin');
+  } catch (e) { EXCEPTION_INCLUDE_MEMO_ = false; }
+  return EXCEPTION_INCLUDE_MEMO_;
+}
+function exceptionIncludeOn_() { return EXCEPTION_INCLUDE_MEMO_ === true; }
+
+/**
+ * The exception day covering (iso, dept), or null. `dept` null = a
+ * COMPANY-level figure, which only an all-departments day removes. Always
+ * null while an admin has asked to include them.
+ */
+function exceptionDayFor_(iso, dept) {
+  if (!iso || exceptionIncludeOn_()) return null;
+  const days = getExceptionDays_();
+  for (let i = 0; i < days.length; i++) {
+    const d = days[i];
+    if (d.date !== iso) continue;
+    if (!d.depts.length || (dept != null && d.depts.indexOf(dept) !== -1)) return d;
+  }
+  return null;
+}
+
+/** The exception days inside [from, to] that apply to `dept` (null = company). */
+function exceptionDaysInRange_(from, to, dept) {
+  if (!from || !to || exceptionIncludeOn_()) return [];
+  return getExceptionDays_().filter(function (d) {
+    return d.date >= from && d.date <= to && (!d.depts.length || (dept != null && d.depts.indexOf(dept) !== -1));
+  });
+}
+
+/**
+ * The "not a day to count" test for workday walks (alert reasons, coaching,
+ * comparison windows, per-workday averages): a company holiday OR an
+ * exception day for `dept` (null = all-department days only).
+ */
+function metricsOffDayFn_(dept) {
+  return function (iso) {
+    try { if (isCompanyHoliday_(iso)) return true; } catch (e) { /* holidays unreadable: weekdays count */ }
+    try { return !!exceptionDayFor_(iso, dept); } catch (e2) { return false; }
+  };
+}
+
+/**
+ * Cache-key suffix: '' while no exception day exists (every key is exactly what
+ * it was), else ':x' + a short hash of the list (+ 'i' while an admin includes
+ * them). Folded into reportFreshnessTag_, which every 6 h report key carries
+ * (cache-version-sync's ANCHOR_SPECS), so an edit re-keys every report at once.
+ */
+function exceptionDaysTag_() {
+  let days;
+  try { days = getExceptionDays_(); } catch (e) { return ''; }
+  if (!days || !days.length) return '';
+  let h = '';
+  try {
+    h = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(days))
+      .map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('').slice(0, 10);
+  } catch (eH) { h = String(days.length); }
+  return ':x' + h + (exceptionIncludeOn_() ? 'i' : '');
+}
+
+/**
+ * THE exclusion step for DQE rows (beside applyQueueSplitToRows_ at every
+ * reader; queueSplitNarrowedCopy_ applies it itself). REMOVES, in place, every
+ * row whose date is an exception day for `dept` (null = company: all-dept days
+ * only), and returns what it removed so a report can say so and still draw the
+ * day: { excluded: [{date, reason, rung, answered, missed}], daily: {iso: {answered,
+ * missed}} }. Volume counts only `opts.assessAgents` (the roster) when given.
+ * The DAL hands each caller its own array (the R40 clone), so the in-place
+ * removal never leaks between departments.
+ */
+function applyExceptionDays_(rows, dept, opts) {
+  const info = { excluded: [], daily: {} };
+  if (!rows || !rows.length) return info;
+  let days;
+  try { days = getExceptionDays_(); } catch (e) { return info; }
+  if (!days.length || exceptionIncludeOn_()) return info;
+  const who = (opts && opts.assessAgents) ? {} : null;
+  if (who) opts.assessAgents.forEach(function (n) { who[n] = true; });
+  const byDate = {};
+  let w = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const ex = r && r.dateIso ? exceptionDayFor_(r.dateIso, dept) : null;
+    if (!ex) { rows[w++] = r; continue; }
+    const e = byDate[ex.date] || (byDate[ex.date] = { date: ex.date, reason: ex.reason, rung: 0, answered: 0, missed: 0 });
+    if (!who || who[r.agent]) {
+      e.rung += Number(r.totalRung) || 0;
+      e.answered += Number(r.totalAnswered) || 0;
+      e.missed += Number(r.totalMissed) || 0;
+    }
+  }
+  rows.length = w;
+  Object.keys(byDate).sort().forEach(function (iso) {
+    info.excluded.push(byDate[iso]);
+    info.daily[iso] = { answered: byDate[iso].answered, missed: byDate[iso].missed };
+  });
+  return info;
+}
+
+/** PURE. The payload form: only the days inside [from, to], oldest first. */
+function exceptionDaysMeta_(info, from, to) {
+  return ((info && info.excluded) || []).filter(function (e) { return e.date >= from && e.date <= to; });
+}
+
 /**
  * The previous BUSINESS day before `now`: walks back from yesterday over
  * Sat/Sun AND company holidays (S5). With no holidays configured this is
@@ -605,10 +815,14 @@ function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }
  * key still works, it just loses the auto-bust for that request.
  */
 function reportFreshnessTag_() {
+  // Owner 2026-10-22: + the exception-day list's tag ('' while there is none,
+  // so every key is unchanged until an admin adds a day).
+  var x = '';
+  try { x = (typeof exceptionDaysTag_ === 'function') ? exceptionDaysTag_() : ''; } catch (eX) { x = ''; }
   try {
     var d = (typeof getLatestDataDate === 'function') ? getLatestDataDate() : null;
-    return d ? String(d) : 'na';
-  } catch (e) { return 'na'; }
+    return (d ? String(d) : 'na') + x;
+  } catch (e) { return 'na' + x; }
 }
 
 /**

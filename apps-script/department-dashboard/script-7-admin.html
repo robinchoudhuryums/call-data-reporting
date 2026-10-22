@@ -3356,6 +3356,129 @@
     dismissed: { verb: 'Dismiss', why: 'Dismissed: judged not a real issue for this agent.' },
   };
 
+  // ── Exception days editor (owner 2026-10-22, #81) ─────────────────────────
+  // Admin-only: the menu item is data-admin-only and every server call starts
+  // with assertAdmin_. One row per date; Remove is dsConfirm_-gated because it
+  // puts the day's data back into every report.
+  function initExceptionDays_() {
+    const btn = $('exception-days-btn');
+    const modal = $('exception-days-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      excEditorLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    const all = $('exc-all');
+    if (all) all.addEventListener('change', function () { $('exc-depts').disabled = all.checked; });
+    if ($('exc-save-btn')) $('exc-save-btn').addEventListener('click', excEditorSave_);
+    const tbody = $('exc-tbody');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-exc-remove]') : null;
+      if (b) excEditorRemove_(b.getAttribute('data-exc-remove'));
+    });
+  }
+
+  function excEditorStatus_(kind, text) {
+    const s = $('exc-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+
+  function excEditorRender_(data) {
+    const sel = $('exc-depts');
+    if (sel && data && data.departments) {
+      const chosen = {};
+      Array.prototype.forEach.call(sel.selectedOptions || [], function (o) { chosen[o.value] = true; });
+      sel.innerHTML = data.departments.map(function (d) {
+        return '<option value="' + escapeHtml(d) + '"' + (chosen[d] ? ' selected' : '') + '>' + escapeHtml(d) + '</option>';
+      }).join('');
+    }
+    const days = (data && data.days) || [];
+    $('exc-table').style.display = days.length ? '' : 'none';
+    $('exc-empty').style.display = days.length ? 'none' : '';
+    $('exc-tbody').innerHTML = days.map(function (d) {
+      return '<tr' + (d.active ? '' : ' class="is-muted"') + '>'
+        + '<td>' + escapeHtml(excDateLabel_(d.date)) + ' <span class="al-hint">' + escapeHtml(d.date) + '</span>'
+        + (d.active ? '' : ' <span class="al-hint">(inactive)</span>') + '</td>'
+        + '<td>' + escapeHtml(d.depts && d.depts.length ? d.depts.join(', ') : 'All departments') + '</td>'
+        + '<td>' + escapeHtml(d.reason || '') + '</td>'
+        + '<td class="al-hint">' + escapeHtml(d.addedBy || '') + (d.addedAt ? '<br>' + escapeHtml(String(d.addedAt).slice(0, 10)) : '') + '</td>'
+        + '<td><button type="button" class="link-btn" data-exc-remove="' + escapeHtml(d.date) + '">Remove</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function excEditorLoad_() {
+    excEditorStatus_('', 'Loading…');
+    google.script.run
+      .withSuccessHandler(function (data) { excEditorStatus_('', ''); excEditorRender_(data); })
+      .withFailureHandler(function (err) { excEditorStatus_('error', 'Could not load: ' + ((err && err.message) || err)); })
+      .getExceptionDaysInit();
+  }
+
+  function excEditorSave_() {
+    const date = ($('exc-date') && $('exc-date').value) || '';
+    const reason = (($('exc-reason') && $('exc-reason').value) || '').trim();
+    const all = $('exc-all') && $('exc-all').checked;
+    const depts = all ? [] : Array.prototype.map.call(($('exc-depts') && $('exc-depts').selectedOptions) || [], function (o) { return o.value; });
+    if (!date) { excEditorStatus_('error', 'Choose a date.'); return; }
+    if (!reason) { excEditorStatus_('error', 'Say why the day is excluded -- every report shows it.'); return; }
+    if (!all && !depts.length) { excEditorStatus_('error', 'Pick at least one department, or tick All departments.'); return; }
+    const b = $('exc-save-btn');
+    if (b) b.disabled = true;
+    excEditorStatus_('', 'Saving…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (b) b.disabled = false;
+        excEditorStatus_('', 'Saved. Reports pick it up within a few minutes (refresh a page to see it now).');
+        excEditorRender_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (b) b.disabled = false;
+        excEditorStatus_('error', (err && err.message) || String(err));
+      })
+      .saveExceptionDay({ date: date, reason: reason, departments: depts, active: true });
+  }
+
+  function excEditorRemove_(date) {
+    if (!date) return;
+    dsConfirm_({
+      title: 'Remove the exception day ' + excDateLabel_(date) + '?',
+      message: 'Its calls count again in every report, alert and coaching window.',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    }).then(function (ok) {
+      if (!ok) return;
+      excEditorStatus_('', 'Removing…');
+      google.script.run
+        .withSuccessHandler(function (data) { excEditorStatus_('', 'Removed.'); excEditorRender_(data); })
+        .withFailureHandler(function (err) { excEditorStatus_('error', (err && err.message) || String(err)); })
+        .removeExceptionDay({ date: date });
+    });
+  }
+
   function initCoaching_() {
     const btn = $('coaching-btn');
     const modal = $('coaching-modal');

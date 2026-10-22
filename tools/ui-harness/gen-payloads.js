@@ -184,14 +184,27 @@ days.slice(-90).forEach((dIso, i) => {
 // cols 3/6/7 over the range and is CSR-only). Without this sheet every payload
 // carried `csrTransfer: null`, so the My Department Transfer % tile -- and the
 // R16e Queue-health Transfer % card that mirrors it -- were structurally
-// unreachable from the gate. One row per day is enough: the range rollup sums
-// Total Calls + Transferred and never reads the agent column.
+// unreachable from the gate. Owner 2026-10-22: the rows are PER AGENT (the
+// real sheet's shape), so the agent table's Transfer % column has something to
+// join -- each day's totals split across four CSR roster agents, with Robin
+// Choudhury deliberately absent so the column's "no transfer row" dash renders.
+// The per-day totals (and so the tile) are what they were before the split.
 const CSR_TRANSFER = [['Month Year', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred']];
+const XFER_AGENTS = ['Anna Reyes', 'Ben Ortiz', 'Carla Diaz', 'Dev Patel'];
 days.slice(-90).forEach((dIso) => {
   const total = 90 + Math.round(rnd() * 40);
   const transferred = Math.round(total * (0.08 + rnd() * 0.06));
-  CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, 'CSR team',
-    (transferred / total * 100).toFixed(1) + '%', total, transferred]);
+  // Transfers split 10/20/30/40% and calls 35/30/25/10% (remainders to Dev),
+  // so the agents land on different tiers -- Dev, few calls and many
+  // transfers, reads red. Both still sum to the day's totals.
+  const split = (n, ws) => { const out = ws.map((w) => Math.floor(n * w)); out.push(n - out.reduce((a, b) => a + b, 0)); return out; };
+  const trs = split(transferred, [0.1, 0.2, 0.3]);
+  const cls = split(total, [0.35, 0.3, 0.25]);
+  XFER_AGENTS.forEach((agent, i) => {
+    const calls = cls[i];
+    CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, agent,
+      calls ? (trs[i] / calls * 100).toFixed(1) + '%' : '0%', calls, trs[i]]);
+  });
 });
 
 // Pipeline Health: recent DQE success so the admin staleness banner stays off.
@@ -199,7 +212,16 @@ const PH = [['Timestamp', 'Step', 'Status', 'Rows', 'Duration (ms)', 'Notes']];
 PH.push([new Date(today.getTime() - 3600e3).toISOString(), 'processIntegratedHistory:DQE', 'success', 42, 1200, LATEST]);
 PH.push([new Date(today.getTime() - 3600e3).toISOString(), 'autoImport', 'success', 900, 60000, 'Call_Legs_' + LATEST]);
 
+// #81 (owner 2026-10-22): one ALL-department exception day, 8 workdays back --
+// inside the 30-day window the dept page opens on, outside "last 7" -- so the
+// notes, the striped day bar, the Overview band and the excluded figures are
+// all driven by the REAL server code. EXC_DATE is in meta.json for the drivers.
+const EXC_DATE = days[days.length - 8];
+const EXCEPTION_DAYS = [['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At'],
+  [EXC_DATE, '', '8x8 outage', 'TRUE', 'admin@ums.com', '2026-01-01T00:00:00Z']];
+
 const SHEETS = {
+  'Exception Days': EXCEPTION_DAYS,
   'DO NOT EDIT!': ROSTER,
   'DQE Historical Data': dqeSheet(dqeRows),
   'QCD Historical Data': qcdRows,
@@ -213,7 +235,8 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs',
-          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs'],
+          'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs',
+          'ExceptionDays.gs'],   // #81: the editor's init
 });
 
 function install(email) {
@@ -531,5 +554,7 @@ dump('dept-day-abandons', (function () {
 // Single day = the report's own default (the latest queue day).
 dump('qcd-alldept', h.call('getQcdAllDepartments', { from: LATEST, to: LATEST }));
 
-dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart });
+// #81: the exception-day editor's first paint, from the REAL init.
+dump('exception-init', h.call('getExceptionDaysInit'));
+dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart, excDate: EXC_DATE });
 console.log('LATEST=' + LATEST);

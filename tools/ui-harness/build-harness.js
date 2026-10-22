@@ -267,6 +267,25 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     },
     getDigestsInit: function () { return P['digests-init']; },
     getQueueReportInit: function () { return P['queuereport-init']; },
+    // #81: the exception-day editor -- the REAL init, then an in-memory list
+    // so save / remove round-trip the way the server's do.
+    getExceptionDaysInit: function () {
+      if (!window.__EXC_STATE__) window.__EXC_STATE__ = JSON.parse(JSON.stringify(P['exception-init']));
+      return window.__EXC_STATE__;
+    },
+    saveExceptionDay: function (req) {
+      var st = window.__EXC_STATE__ || (window.__EXC_STATE__ = JSON.parse(JSON.stringify(P['exception-init'])));
+      if (!req || !req.reason) throw new Error('Say why this day is excluded');
+      st.days = st.days.filter(function (d) { return d.date !== req.date; });
+      st.days.unshift({ date: req.date, depts: req.departments || [], reason: req.reason, active: true,
+        addedBy: 'admin@ums.com', addedAt: '2026-10-22T00:00:00Z' });
+      return st;
+    },
+    removeExceptionDay: function (req) {
+      var st = window.__EXC_STATE__ || (window.__EXC_STATE__ = JSON.parse(JSON.stringify(P['exception-init'])));
+      st.days = st.days.filter(function (d) { return d.date !== (req && req.date); });
+      return st;
+    },
     getOrphanFixInit: function () { return P['orphan-init']; },
     getDeptConfigInit: function () { return P['deptconfig-init']; },
     getAccessControlInit: function () { return P['access-init']; },
@@ -744,6 +763,8 @@ html = html.replace('<?!= userJson ?>', JSON.stringify(user));
 html = html.replace('<?!= dashboardUrlJson ?>', JSON.stringify('https://example.test/exec'));
 html = html.replace('<?!= workWindowJson ?>', JSON.stringify({ pst: '6:30 AM - 3:00 PM PST', cst: '8:30 AM - 5:00 PM CST' }));
 html = html.replace('<?!= companyHolidaysJson ?>', JSON.stringify([]));
+// #81: the fixture's all-department exception days, as renderDashboard_ injects them.
+html = html.replace('<?!= exceptionDaysJson ?>', JSON.stringify(((P['exception-init'] || {}).days || []).filter(function (d) { return d.active !== false && !(d.depts || []).length; }).map(function (d) { return d.date; })));
 html = html.replace('<?!= uiFlagsJson ?>', JSON.stringify([]));
 html = html.replace('<?!= answerTargetsJson ?>', JSON.stringify({ global: 80, band: 10 }));
 // R23: the display-standards bundle (per-dept answer targets + amber bands,

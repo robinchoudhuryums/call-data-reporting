@@ -1125,7 +1125,7 @@
         showIrForm();
         irSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getIndividualReport(req);
+      .getIndividualReport(excReq_(req));
   }
 
   /**
@@ -1268,6 +1268,7 @@
     irLastData = data;
     irSyncEmailAgentItem_();   // single-agent gate for "Email to agent…"
     coverageNoteUpsert_('individual-results', 'ir', ($('ir-from') && $('ir-from').value) || null, 'dqe');   // R12-26
+    excNoteUpsert_('individual-results', (data && data.meta && data.meta.exceptionDays) || null);   // #81
     $('ir-results-title').textContent = data.mode === 'comparison'
       ? 'Peer Comparison Report' : 'Individual Performance Report';
     const headerDate = '(' + (data.dateLabel || '')
@@ -1467,7 +1468,7 @@
         if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
         irSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getIndividualReport(req);
+      .getIndividualReport(excReq_(req));
   }
 
   // Single authority for IR chart-panel visibility. Respects the #4

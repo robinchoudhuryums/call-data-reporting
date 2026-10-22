@@ -90,6 +90,17 @@ function dcTimeToSec_(v) {
   return (h * 3600 + m * 60 + x) | 0;
 }
 
+/**
+ * Logger.log with %s placeholders filled in JS. Apps Script formats a
+ * numeric %s argument as a Java double ("150.0 rows", "talk 182.0s"), so the
+ * substitution happens here and Logger.log only ever gets one finished string.
+ */
+function dcLog_(fmt) {
+  const a = arguments;
+  let i = 1;
+  Logger.log(String(fmt).replace(/%s/g, function () { return i < a.length ? String(a[i++]) : '%s'; }));
+}
+
 /** Loose phone check (== isValidPhone). */
 function dcIsPhone_(v) {
   if (typeof v === 'number') return true;
@@ -243,8 +254,13 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // voicemail / forking / a named feature) -- so the rule stays checkable.
   const DGI = { seen: {}, legs: 0, dials: 0, rosterAgent: 0, self: 0, unrosteredExt: 0, outsideNumber: 0, other: 0, talked: 0, callee: {}, ctx: {} };
   function dgiAdd(cid, callerAgent, calleeAgent, callee, calleeName, ctx, talk) {
-    if (!cid || DGI.seen[cid]) return;
-    DGI.seen[cid] = true;
+    // One tally per LEG, not per call id: the live CDR writes a call's
+    // CallRecording row under the SAME call id as the call it records, so a
+    // per-id tally kept whichever row came first and lost the dial behind it
+    // (2026-10-20: 60 dials shown here vs 282 counted).
+    const key = cid + '|' + String(callee == null ? '' : callee).trim() + '|' + String(ctx || '').trim();
+    if (!cid || DGI.seen[key]) return;
+    DGI.seen[key] = true;
     DGI.legs++;
     if (dcIsInternalDial_(callee, ctx)) DGI.dials++;
     const d = dgDigits(callee);
@@ -396,7 +412,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         && !isIncomingCall(cid, parent)) {
       const b = ensure(callerAgent.name, callerAgent.dept);
       let ev = b.ob[root];
-      if (!ev) { ev = b.ob[root] = { intExt: dcOutboundSide_(dir, callee, extToAgent), start: startSec, connected: false, talk: 0, legTalk: {}, legs: {}, callee: callee, root: root, firstCid: cid }; }
+      if (!ev) { ev = b.ob[root] = { intExt: dcOutboundSide_(dir, callee, extToAgent), start: startSec, connected: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid }; }
       ev.legs[cid] = true;   // the call's side stays its FIRST leg's (a later internal transfer leg does not make an outside call internal)
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       if (talk > 0) { ev.connected = true; ev.legTalk[cid] = Math.max(ev.legTalk[cid] || 0, talk); ev.talk = dcSumValues_(ev.legTalk); }
@@ -485,9 +501,9 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       m['ob_' + k + '_total']++;
       if (ev.connected) {
         m['ob_' + k + '_connected']++; m['ob_' + k + '_talk_sec'] += ev.talk;
-        addSample('ob_connected', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start), callee: ev.callee, talkSec: ev.talk });
+        addSample('ob_connected', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start), caller: ev.caller, callee: ev.callee, talkSec: ev.talk });
       } else {
-        addSample('ob_not_connected', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start), callee: ev.callee });
+        addSample('ob_not_connected', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start), caller: ev.caller, callee: ev.callee });
       }
     });
 
@@ -770,7 +786,7 @@ function dcUpsertRows_(conn, rows) {
     seen[k] = r;
   });
   if (order.length !== rows.length) {
-    Logger.log('dcUpsertRows_: dropped %s duplicate-key row(s) (last-write-wins).',
+    dcLog_('dcUpsertRows_: dropped %s duplicate-key row(s) (last-write-wins).',
       rows.length - order.length);
     rows = order.map(function (k) { return seen[k]; });
   }
@@ -783,7 +799,7 @@ function dcUpsertRows_(conn, rows) {
   // value. The CALLER still owns the transaction (no commit here).
   const res = neonInsertInline_(conn, DIRECT_CALL_UPSERT_HEAD_, DIRECT_CALL_UPSERT_TAIL_,
     rows, dcInlineTuple_, dcBoundUpsert_);
-  Logger.log('dcUpsertRows_: wrote %s rows%s.', rows.length, neonInlineNote_(res));
+  dcLog_('dcUpsertRows_: wrote %s rows%s.', rows.length, neonInlineNote_(res));
   return rows.length;
 }
 
@@ -836,7 +852,7 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   // Only skip entirely when there's no date to clear.
   if ((!rows || !rows.length) && !isoDate) return { inserted: 0, skipped: 0 };
   const conn = getReachableNeonConn_();
-  if (!conn) { Logger.log('writeDirectCallRowsToNeon_: Neon unreachable -- skipping %s rows.', rows.length); return { inserted: 0, unreachable: true }; }
+  if (!conn) { dcLog_('writeDirectCallRowsToNeon_: Neon unreachable -- skipping %s rows.', rows.length); return { inserted: 0, unreachable: true }; }
   conn.setAutoCommit(false);
   try {
     dcEnsureNeonTable_(conn);
@@ -859,7 +875,7 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
     return { inserted: n };
   } catch (e) {
     try { conn.rollback(); } catch (rb) {}
-    Logger.log('writeDirectCallRowsToNeon_ failed: ' + (e && e.message ? e.message : e));
+    dcLog_('writeDirectCallRowsToNeon_ failed: ' + (e && e.message ? e.message : e));
     return { inserted: 0, error: String(e && e.message ? e.message : e) };
   } finally {
     try { conn.close(); } catch (ce) {}
@@ -890,7 +906,7 @@ function dcResumeRead_(props, data) {
   let st = null;
   try { st = JSON.parse(raw); } catch (e) { st = null; }
   if (!st || typeof st !== 'object') {
-    Logger.log('DIRECT_UPSERT_RESUME = "%s" is a legacy positional pointer with no row fingerprint '
+    dcLog_('DIRECT_UPSERT_RESUME = "%s" is a legacy positional pointer with no row fingerprint '
       + '-- restarting from 0 so no row can be skipped (IG-2).', raw);
     return 0;
   }
@@ -900,7 +916,7 @@ function dcResumeRead_(props, data) {
   if (st.rowCount !== data.length) why = 'row count changed (' + st.rowCount + ' -> ' + data.length + ')';
   else if (idx < data.length && dcResumeKey_(data[idx]) !== st.key) why = 'the row at index ' + idx + ' changed';
   if (why) {
-    Logger.log('DIRECT_UPSERT_RESUME: the sheet changed since the last run -- %s. Restarting from 0 '
+    dcLog_('DIRECT_UPSERT_RESUME: the sheet changed since the last run -- %s. Restarting from 0 '
       + 'so no row is skipped (IG-2).', why);
     return 0;
   }
@@ -935,21 +951,21 @@ function dcResumeWrite_(props, idx, data) {
 function backfillDirectCallToNeon() {
   const ss = SpreadsheetApp.openById(getTargetSsId_());
   const sheet = ss.getSheetByName(DIRECT_CALL_HISTORY_SHEET);
-  if (!sheet) { Logger.log('Direct upsert: "%s" sheet not found.', DIRECT_CALL_HISTORY_SHEET); return { upserted: 0 }; }
+  if (!sheet) { dcLog_('Direct upsert: "%s" sheet not found.', DIRECT_CALL_HISTORY_SHEET); return { upserted: 0 }; }
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) { Logger.log('Direct upsert: sheet is empty.'); return { upserted: 0 }; }
+  if (lastRow < 2) { dcLog_('Direct upsert: sheet is empty.'); return { upserted: 0 }; }
 
   const data = sheet.getRange(2, 1, lastRow - 1, DIRECT_CALL_HISTORY_HEADERS.length).getDisplayValues();
   const props = PropertiesService.getScriptProperties();
   let startIndex = dcResumeRead_(props, data);   // IG-2
   let sinceFloor = props.getProperty('DIRECT_UPSERT_SINCE');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(sinceFloor || ''))) sinceFloor = null;
-  Logger.log('Direct upsert: starting at index %s of %s%s', startIndex, data.length,
+  dcLog_('Direct upsert: starting at index %s of %s%s', startIndex, data.length,
     sinceFloor ? ' (date floor >= ' + sinceFloor + ')' : '');
-  if (startIndex >= data.length) { Logger.log('Direct upsert complete. Clear DIRECT_UPSERT_RESUME to re-run.'); return { upserted: 0 }; }
+  if (startIndex >= data.length) { dcLog_('Direct upsert complete. Clear DIRECT_UPSERT_RESUME to re-run.'); return { upserted: 0 }; }
 
   const conn = getReachableNeonConn_();
-  if (!conn) { Logger.log('Direct upsert: Neon unreachable (NEON_* Script Properties set?).'); return { upserted: 0, unreachable: true }; }
+  if (!conn) { dcLog_('Direct upsert: Neon unreachable (NEON_* Script Properties set?).'); return { upserted: 0, unreachable: true }; }
   conn.setAutoCommit(false);
 
   const BATCH_SIZE = 50;
@@ -962,7 +978,7 @@ function backfillDirectCallToNeon() {
     while (i < data.length) {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
         dcResumeWrite_(props, i, data);
-        Logger.log('Direct upsert: time limit reached; resume at index %s. Upserted %s. Run again to continue.', i, totalUpserted);
+        dcLog_('Direct upsert: time limit reached; resume at index %s. Upserted %s. Run again to continue.', i, totalUpserted);
         return { upserted: totalUpserted, resumeAt: i };   // finally closes conn
       }
       const batchStartIdx = i;
@@ -994,12 +1010,12 @@ function backfillDirectCallToNeon() {
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
         dcResumeWrite_(props, batchStartIdx, data);
-        Logger.log('Direct upsert batch failed, rolled back. Resume at %s. Error: %s', batchStartIdx, (e && e.message ? e.message : e));
+        dcLog_('Direct upsert batch failed, rolled back. Resume at %s. Error: %s', batchStartIdx, (e && e.message ? e.message : e));
         throw e;
       }
     }
     props.deleteProperty('DIRECT_UPSERT_RESUME');
-    Logger.log('Direct upsert complete. Total upserted into Neon: %s', totalUpserted);
+    dcLog_('Direct upsert complete. Total upserted into Neon: %s', totalUpserted);
     return { upserted: totalUpserted };
   } finally {
     try { conn.close(); } catch (ce) {}
@@ -1094,7 +1110,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
       else strayLegs++;
     }
     if (strayLegs) {
-      Logger.log('buildDirectCallFromRaw_: dropped %s leg(s) dated off %s (carry-over / stray rows).',
+      dcLog_('buildDirectCallFromRaw_: dropped %s leg(s) dated off %s (carry-over / stray rows).',
         strayLegs, isoDate);
     }
   }
@@ -1107,7 +1123,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
     // replacing N existing rows with nothing must never pass silently --
     // callers surface this via `deletedExisting` (failure row on the import
     // paths); this line covers the editor-run caller's log.
-    Logger.log('buildDirectCallFromRaw_: rebuild of %s wrote 0 rows but DELETED %s existing '
+    dcLog_('buildDirectCallFromRaw_: rebuild of %s wrote 0 rows but DELETED %s existing '
       + 'row(s) -- if this date was not expected to drop to zero direct activity, '
       + 'restore via force re-import after fixing the source.', dateStr, sheetRes.deleted);
   }
@@ -1115,7 +1131,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   if (!opts.skipNeon) {
     try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
     catch (e) {
-      Logger.log('buildDirectCallFromRaw_: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e));
+      dcLog_('buildDirectCallFromRaw_: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e));
       neon = { inserted: 0, error: String(e && e.message ? e.message : e) };
     }
   }
@@ -1138,7 +1154,7 @@ function runDirectCallBuild() {
   if (!rawSheet || !configSheet) throw new Error('Raw Data or DO NOT EDIT! sheet missing.');
 
   const raw = rawSheet.getDataRange().getDisplayValues();
-  if (raw.length < 2) { Logger.log('runDirectCallBuild: Raw Data empty.'); return { rows: 0 }; }
+  if (raw.length < 2) { dcLog_('runDirectCallBuild: Raw Data empty.'); return { rows: 0 }; }
 
   const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true });
   dcLogSamples_(r.meta.samples);
@@ -1148,7 +1164,7 @@ function runDirectCallBuild() {
   dcLogPipelineHealth_(ss, 'success', r.wrote, ms,
     'directBuild date=' + r.dateStr + ' agents=' + r.meta.agents +
     ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr);
-  Logger.log('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
+  dcLog_('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
     r.wrote, r.dateStr, r.meta.missedBusyTotal, r.meta.missedFreeTotal, neonStr, ms);
   return { rows: r.wrote, date: r.dateStr, meta: r.meta, neon: r.neon };
 }
@@ -1173,7 +1189,7 @@ function diagnoseDirectCallCounting() {
   const configSheet = ss.getSheetByName('DO NOT EDIT!');
   if (!rawSheet || !configSheet) throw new Error('Raw Data or DO NOT EDIT! sheet missing.');
   const raw = rawSheet.getDataRange().getDisplayValues();
-  if (raw.length < 2) { Logger.log('diagnoseDirectCallCounting: Raw Data empty.'); return { result: 'INCONCLUSIVE (Raw Data empty)' }; }
+  if (raw.length < 2) { dcLog_('diagnoseDirectCallCounting: Raw Data empty.'); return { result: 'INCONCLUSIVE (Raw Data empty)' }; }
   // The build's own day rule: the first dated row's date, legs from other
   // dates dropped (S2C-3).
   const toIso = function (ds) { return (typeof parseDateForNeon === 'function') ? parseDateForNeon(ds) : ds; };
@@ -1192,24 +1208,24 @@ function diagnoseDirectCallCounting() {
   const pct = function (n, of) { return of ? Math.round(n / of * 1000) / 10 + '%' : 'n/a'; };
   const line = function (key, what, of, ofLabel) {
     const c = d[key];
-    Logger.log('[direct-diag] %s: %s (%s of %s) -- %s', key, String(c.total), pct(c.total, of), ofLabel, what);
+    dcLog_('[direct-diag] %s: %s (%s of %s) -- %s', key, String(c.total), pct(c.total, of), ofLabel, what);
     c.agents.slice(0, 5).forEach(function (a) {
-      Logger.log('[direct-diag]   %s: %s  e.g. %s', a.agent, String(a.n), a.samples.join(', '));
+      dcLog_('[direct-diag]   %s: %s  e.g. %s', a.agent, String(a.n), a.samples.join(', '));
     });
   };
-  Logger.log('[direct-diag] %s: %s in-window inbound direct events, %s outbound (the build counts these).', isoDate || dateStr, String(ib), String(ob));
+  dcLog_('[direct-diag] %s: %s in-window inbound direct events, %s outbound (the build counts these).', isoDate || dateStr, String(ib), String(ob));
   line('internalDial', 'coworker dials logged Internal (to an extension) -- since D2 the caller\'s internal outbound call', ob, 'outbound');
   const sh = d.internalDialShape;
   if (sh && sh.legs) {
     const n = sh.legs;
-    Logger.log('[direct-diag]   Internal legs from agents: %s, of which dials to an extension %s (counted above) and %s not dials (recording / voicemail / forking / a named feature -- never counted)',
+    dcLog_('[direct-diag]   Internal legs from agents: %s, of which dials to an extension %s (counted above) and %s not dials (recording / voicemail / forking / a named feature -- never counted)',
       String(n), String(sh.dials), String(n - sh.dials));
-    Logger.log('[direct-diag]   Internal legs reach: a roster agent %s (%s), the caller\'s own extension %s (%s), an unrostered extension %s (%s), '
+    dcLog_('[direct-diag]   Internal legs reach: a roster agent %s (%s), the caller\'s own extension %s (%s), an unrostered extension %s (%s), '
       + 'an outside number %s (%s), blank / a name %s (%s); talked (talk > 0) %s (%s)',
       String(sh.rosterAgent), pct(sh.rosterAgent, n), String(sh.self), pct(sh.self, n), String(sh.unrosteredExt), pct(sh.unrosteredExt, n),
       String(sh.outsideNumber), pct(sh.outsideNumber, n), String(sh.other), pct(sh.other, n), String(sh.talked), pct(sh.talked, n));
-    Logger.log('[direct-diag]   Internal legs top callees: %s', sh.topCallees.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
-    Logger.log('[direct-diag]   Internal legs top contexts: %s', sh.topContexts.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
+    dcLog_('[direct-diag]   Internal legs top callees: %s', sh.topCallees.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
+    dcLog_('[direct-diag]   Internal legs top contexts: %s', sh.topContexts.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
   }
   line('secondExtIn', 'inbound rings on an agent\'s second extension -- counted since D2', ib, 'inbound');
   line('secondExtOut', 'dials from an agent\'s second extension -- counted since D2', ob, 'outbound');
@@ -1221,7 +1237,7 @@ function diagnoseDirectCallCounting() {
     .reduce(function (t, k) { return t + d[k].total; }, 0);
   const out = { result: (ib + ob ? 'OK' : 'INCONCLUSIVE (no in-window direct events)') + ' ' + (isoDate || dateStr)
     + ': ' + total + ' events counted differently since D2, vs ' + (ib + ob) + ' counted -- the size of a re-import of a pre-D2 date like this one', date: isoDate || dateStr, diag: d };
-  Logger.log('[direct-diag] %s', out.result);
+  dcLog_('[direct-diag] %s', out.result);
   return out;
 }
 
@@ -1256,25 +1272,25 @@ function dcLogSamples_(samples) {
     ib_missed_busy: 'INBOUND MISSED (busy -- EXCLUDED, was on another call)',
     ob_connected: 'OUTBOUND CONNECTED', ob_not_connected: 'OUTBOUND NOT CONNECTED (callee no-answer)',
   };
-  Logger.log('--- Direct-call samples (look up CALL_ID in Raw Data to verify) ---');
+  dcLog_('--- Direct-call samples (look up CALL_ID in Raw Data to verify) ---');
   order.forEach(function (cat) {
     const list = samples[cat] || [];
-    Logger.log('[' + label[cat] + '] ' + list.length + ' example(s):');
+    dcLog_('[' + label[cat] + '] ' + list.length + ' example(s):');
     list.forEach(function (s) {
       // F-26: mask phone-like values (callers, outbound callees, and any
       // number embedded in the blocker info) -- call id + ext + last-4 is
       // enough to look the event up in Raw Data and verify.
       if (cat === 'ib_missed_busy') {
-        Logger.log('   call %s | %s (%s) | rang %s-%s from %s -> ext %s | BLOCKED BY call %s [%s] %s',
+        dcLog_('   call %s | %s (%s) | rang %s-%s from %s -> ext %s | BLOCKED BY call %s [%s] %s',
           s.callId, s.agent, s.dir, s.ringStart, s.ringEnd, dcMaskPhone_(s.caller), s.callee, s.blockedByCallId, s.blockerWindow, dcMaskPhonesInText_(s.blockerInfo));
       } else if (cat === 'ib_missed_free') {
-        Logger.log('   call %s | %s (%s) | rang %s from %s -> ext %s', s.callId, s.agent, s.dir, s.ringStart, dcMaskPhone_(s.caller), s.callee);
+        dcLog_('   call %s | %s (%s) | rang %s from %s -> ext %s', s.callId, s.agent, s.dir, s.ringStart, dcMaskPhone_(s.caller), s.callee);
       } else if (cat === 'ib_answered') {
-        Logger.log('   call %s | %s (%s) | %s from %s -> ext %s | talk %ss', s.callId, s.agent, s.dir, s.time, dcMaskPhone_(s.caller), s.callee, s.talkSec);
+        dcLog_('   call %s | %s (%s) | %s from %s -> ext %s | talk %ss', s.callId, s.agent, s.dir, s.time, dcMaskPhone_(s.caller), s.callee, s.talkSec);
       } else if (cat === 'ob_connected') {
-        Logger.log('   call %s | %s (%s) | %s ext %s -> %s | talk %ss', s.callId, s.agent, s.dir, s.time, s.agent, dcMaskPhone_(s.callee), s.talkSec);
+        dcLog_('   call %s | %s (%s) | %s ext %s -> %s | talk %ss', s.callId, s.agent, s.dir, s.time, dcMaskPhone_(s.caller), dcMaskPhone_(s.callee), s.talkSec);
       } else {
-        Logger.log('   call %s | %s (%s) | %s ext %s -> %s', s.callId, s.agent, s.dir, s.time, s.agent, dcMaskPhone_(s.callee));
+        dcLog_('   call %s | %s (%s) | %s ext %s -> %s', s.callId, s.agent, s.dir, s.time, dcMaskPhone_(s.caller), dcMaskPhone_(s.callee));
       }
     });
   });

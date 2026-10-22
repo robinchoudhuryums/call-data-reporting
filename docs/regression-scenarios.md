@@ -149,7 +149,7 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
   Steps:
     - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards (each with their header row + frozen first row; Company Holidays col A and Dashboard Standards col D plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all twelve and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards + Exception Days (each with their header row + frozen first row; Company Holidays col A, Dashboard Standards col D and Exception Days col A plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all thirteen and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click solos the trend line | Subsystem: Department Dashboard
   Steps:
@@ -360,6 +360,7 @@ S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboa
     - Back on CSR, check `Where transfers go`: one bar row per destination queue carrying a real queue NAME read from the sheet header -- never a `Queue 1/2/3` placeholder -- biggest first, with no zero-transfer rows.
     - Check `Who transfers`: one row per agent, busiest transferrer first, each rate tinted on the SAME tier scale as the headline tile (at/below the deep tier reads green; past the amber tier reads red).
     - Add up the per-agent `transferred` numbers and compare against the tile.
+    - (Owner 2026-10-22) The agent table's **Transfer %** column: each CSR agent's rate equals their `Who transfers` row; the totals row equals the tile; an agent with no transfer row shows a dash and stays last when you sort the column either way; with the outbound columns on (admin) the IN / OUT table shows the same figure. Switch to a non-CSR department: no Transfer % column, and its CSV has none.
     - Collapse and re-expand the section.
   Expected: the per-agent transferred values SUM to the tile's transferred figure. Rows are deliberately NOT roster-filtered, so a departed agent may appear with historical volume -- correct, not a bug. When the 11 destination columns do not cover every transfer a note above the lists says so and gives both numbers; when they do, no note appears. Collapsing does not refetch or change any figure.
   Fails if: the section renders for a non-CSR dept; queue labels are placeholders; the per-agent rows do not sum to the tile; or a range whose data was BACKFILLED (imported out of chronological order) shows fewer transfers than the tile -- that last one is the append-only/never-sorted trap the bounded-span read exists to prevent.
@@ -663,3 +664,17 @@ S67 | Direct Calls report covers only days that exist: the clamp, missing workda
     - (D3) My Department, as the ADMIN: under Team Outbound, a collapsed "Team Direct Calls" card reads "open to load" and has sent no request. Open it: its figures equal the report's for that dept and dates (answered / missed / busy, answer %, out calls, the int / ext split, the per-agent rows) and it repeats the coverage note. "Open the Direct Calls report" opens the report on that dept and dates. View as a manager, or as a MANAGER: no card.
   Expected: as described.
   Fails if: a window ending on a not-yet-imported day shows lower totals with no note; a missing workday is not named, or a weekend / holiday is; vs-prior chips show while a window has a gap; or an int / ext pair does not add up to its count.
+
+S68 | Exception days: one outage day left out everywhere, said everywhere, and an admin can put it back (#81) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, Admin ▾ → Exception days: Save with no reason -- refused in place. Add a recent weekday, All departments, reason "8x8 outage". It lists with your address. Re-run `setup()` beforehand on a fresh install (the sheet is also created on save).
+    - Refresh My Department on a 30-day window spanning it: a note under the controls names the day, the reason and the calls left out. Each team card's day bars show that day striped gray at its real height, never tinted; the other bars keep their scale and the target line ignores it; pointing at it reads "Excluded (8x8 outage)". The agent table's numbers for that window are lower by exactly the note's count (spot-check one agent against the window minus that day).
+    - The Insights region and the Individual Report each carry the same note; the Missed Calls section (under the page note) has no missed calls on that day; the comparison's prior window skips the day like a holiday.
+    - Click "Include them": the table, the cards and the missed section re-ask WITH the day; the note says the days are INCLUDED. "Leave them out" returns. View as a manager: no switch. As a real MANAGER: the note, no switch.
+    - Overview: the trend lines bridge the day under a hatched band, its point has no tooltip, and a note under the chart names it. The tiles' figures exclude it.
+    - Agent app (an agent whose window spans it): "Not counted: <day>: 8x8 outage ..." under the header.
+    - The next morning's daily alert run (or Preview on that date) logs the dept rows as `skipped` -- "Exception day (...): 8x8 outage -- not assessed".
+    - Change the day to one department only: that department's figures and its own queue chips drop it; another department's, and the company hero, keep it.
+    - Remove the day (it asks first, in danger tone): within a page refresh every figure is back to including it.
+  Expected: as described.
+  Fails if: any report's numbers drop the day without a note, or show the note while still counting it; the striped bar sets the card's scale; a manager sees or can use the include switch; an alert fires or logs "no data" for the day; removing the day leaves any report excluding it after a refresh.

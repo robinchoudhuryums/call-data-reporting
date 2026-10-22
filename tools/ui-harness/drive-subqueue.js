@@ -382,6 +382,47 @@ async function openDeptThirtyDays(page) {
   // that threw BEFORE the refresh() on the next line, so the selector silently
   // did nothing for every admin. No automated check had ever switched
   // departments, which is exactly why it survived so long.
+  // ---- Transfer % column (owner 2026-10-22) --------------------------------
+  // CSR's table joins each agent's rate from csrTransfer.agents (the tile's own
+  // rows); an agent with no transfer row shows a dash; CSR's subtotal carries
+  // the tile's headline; the CSV gains the column. Sales (below) does not.
+  {
+    const sum30 = require('./payloads/summary-30d.json');
+    const tr = sum30.csrTransfer || {};
+    const xf = await page.evaluate(() => {
+      const heads = Array.from(document.querySelectorAll('#agents-table thead th'));
+      const idx = heads.findIndex((th) => /^Transfer %/.test(th.textContent.trim()));
+      const cellOf = (tr) => (tr && idx >= 0 && tr.cells[idx]) ? tr.cells[idx] : null;
+      const byAgent = {};
+      document.querySelectorAll('#agents-tbody tr[data-agent]').forEach((r) => {
+        const c = cellOf(r);
+        byAgent[r.getAttribute('data-agent')] = c ? { t: c.textContent.trim(), tier: (c.querySelector('.xfer-rate') || {}).className || '' } : null;
+      });
+      const sub = Array.from(document.querySelectorAll('#agents-tbody tr.subq-subtotal'))
+        .find((r) => /^CSR subtotal/.test(r.cells[0].textContent.trim()));
+      return {
+        shown: idx >= 0 && getComputedStyle(heads[idx]).display !== 'none',
+        byAgent: byAgent,
+        sub: sub && cellOf(sub) ? cellOf(sub).textContent.trim() : null,
+      };
+    });
+    const want = {};
+    (tr.agents || []).forEach((a) => { want[a.agent] = a.pct.toFixed(1) + '%'; });
+    const named = Object.keys(want).filter((a) => xf.byAgent[a]);
+    record('Transfer %: the CSR table shows the column', xf.shown, JSON.stringify(xf).slice(0, 160));
+    record('Transfer %: every roster agent with a transfer row shows its own rate',
+      named.length >= 3 && named.every((a) => xf.byAgent[a].t === want[a]),
+      named.map((a) => a + '=' + (xf.byAgent[a] || {}).t + '/' + want[a]).join(' '));
+    record('Transfer %: an agent with no transfer row shows a dash, never 0%',
+      !!xf.byAgent['Robin Choudhury'] && xf.byAgent['Robin Choudhury'].t === '–', JSON.stringify(xf.byAgent['Robin Choudhury']));
+    record('Transfer %: rates carry the tile\'s tier tints, and they differ by agent',
+      named.every((a) => /tf-(deep|light|amber|red)/.test(xf.byAgent[a].tier))
+        && new Set(named.map((a) => xf.byAgent[a].tier)).size > 1, named.map((a) => xf.byAgent[a].tier).join(' | '));
+    record('Transfer %: CSR\'s subtotal is the tile\'s headline', xf.sub === tr.pctStr, xf.sub + ' vs ' + tr.pctStr);
+    const csvC = await exportCsv();
+    record('Transfer %: the CSR CSV carries the column', /(^|,)Transfer %(,|$)/.test(csvC.split('\n')[0] || ''), (csvC.split('\n')[0] || '').slice(0, 120));
+  }
+
   const errsBefore = errors.length;
   await page.selectOption('#dept-selector', 'Sales');
   await page.waitForTimeout(2500);
@@ -413,6 +454,15 @@ async function openDeptThirtyDays(page) {
     csvSingle.length > 0 && !/^Department,/.test(singleHeader), singleHeader.slice(0, 60));
   record('and carries no per-dept subtotal or All-shown rows',
     csvSingle.length > 0 && !/ subtotal/.test(csvSingle) && !/All shown/.test(csvSingle));
+  {
+    const xs = await page.evaluate(() => {
+      const th = Array.from(document.querySelectorAll('#agents-table thead th')).find((t) => /^Transfer %/.test(t.textContent.trim()));
+      return { thShown: !!th && getComputedStyle(th).display !== 'none',
+               cellsShown: Array.from(document.querySelectorAll('#agents-tbody td.col-xfer')).filter((c) => getComputedStyle(c).display !== 'none').length };
+    });
+    record('Transfer %: a non-CSR dept shows no Transfer % column', !xs.thShown && xs.cellsShown === 0, JSON.stringify(xs));
+    record('Transfer %: and its CSV has none (byte-compatible)', !/Transfer %/.test(singleHeader), singleHeader.slice(0, 120));
+  }
 
   await page.selectOption('#dept-selector', 'CSR');
   await page.waitForTimeout(2500);

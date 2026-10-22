@@ -2479,7 +2479,15 @@ stay pinned by INV-39, INV-53 and INV-06.
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; the `answerRate`
-  sort key and the default landing) · Unique ·
+  sort key and the default landing) · **Transfer %** (owner 2026-10-22,
+  `type:'xfer'`, CSR only: each agent's rate from `state.csrTransfer.agents` --
+  the Transfer % tile's own rows -- joined by exact roster name in
+  `deptApplyTransfer_`; the totals row and CSR's own subtotal carry the tile's
+  headline; an agent with no transfer row shows a dash, never 0%, and sinks
+  in either sort direction; tints are the tile's tiers via `xferTierCls_`. The
+  cells carry `.col-xfer` and show only on a table marked `.has-xfer`, so every
+  other dept's table, the Overview mini table and every non-CSR export stay
+  byte-identical; layout B adds the same figure as a sixth column) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
   (owner 2026-10; the figure lives in the bar cell, since summary v23), but the
   CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
@@ -2655,3 +2663,43 @@ stay pinned by INV-39, INV-53 and INV-06.
   button before acting (the F-42 focus-trap discipline). Add a topic = a nav
   `.help-link[data-topic=KEY]` + a `<section id="help-topic-KEY">`; all
   static markup in `dashboard.html`, no server endpoint.
+
+## Exception days on the client (#81, owner 2026-10-22)
+
+The server leaves an exception day out of every figure; the client's job is to
+SAY so, draw the day distinctly, and give an admin a way to compare. Server
+rules: Operator State #81.
+
+- **The note.** `excRenderNote_(el, list, withToggle, fixed)` /
+  `excNoteUpsert_(hostId, list)` (script-1-core) render one `.exc-note` from a
+  payload's `meta.exceptionDays` (`[{date, reason, rung, ...}]`): "1 exception
+  day left out (Mon Sep 21: 8x8 outage) — N calls not counted. Every figure
+  here excludes it." Hosts: `#dept-exc-note` (My Department, with the switch),
+  `#insights-results` / `#individual-results` (upserted as the first child),
+  `#ov-exc-note` under the Overview trend (`fixed`: a surface the switch does
+  not reach, so it never claims the days are INCLUDED). The agent app renders its own
+  (`renderExceptions`, agentApp.html: "Not counted: ..."). An empty list hides
+  the note -- never a blank box.
+- **The admin switch.** The note's `[data-exc-toggle]` button carries
+  `data-admin-only`, so View-as hides it; the server ignores a non-admin's
+  `includeExceptionDays` anyway (`setExceptionIncludeFromReq_`). It flips
+  `EXC_INCLUDE_` and re-runs `refresh()` (+ Insights when generated). Every
+  report RPC goes through `excReq_(req)`, which adds the flag only while it is
+  on -- a NEW report call that skips `excReq_` silently ignores the switch.
+  Included, the note reads "Exception days are INCLUDED in these figures
+  (admin view)".
+- **Day bars.** `totals.dailyExcluded` (and `qcd.range.dailyExcluded`) carry the
+  day's real figures. The bars insert it as an `excluded` bucket drawn
+  `.dts-bar.is-excluded` (gray diagonal stripes, never tinted), at its real
+  height clamped to the card -- but it is NOT in `nums`, so it never sets the
+  scale, the average or the target line; its readout begins "Excluded
+  (reason) · ". It is not a workday for the workday bucketing.
+- **Overview trend.** `ovBridgeExceptions_` nulls the day's points and joins the
+  neighbours (`_bridged`, no hit radius, filtered out of the tooltip); the
+  `ovExceptionBand` plugin hatches the day's column from
+  `options.plugins.ovExceptionBand.idx`. A per-dept line bridges its own
+  department's days; the company line only all-department days. (The owner's
+  "hollow gray point" became the band: a point at the real value would sit on a
+  line that no longer passes through it.)
+- Pinned by `drive-exceptions.js` (note, switch, bars, band, 360 px, manager),
+  `drive-admin.js` (the editor), `drive-smoke.js` (IR note), `drive-agent.js`.

@@ -193,7 +193,9 @@ ships both, and the stamp says `+dirty`) or the branch is not `main`;
   `Queue Report Subscribers`, `Company Holidays` (the H1 closure
   calendar every business-day rule reads) and `Dashboard Standards`
   (the H2 published answer target / band / team-avg excludes that the
-  external team-tools reader consumes) — twelve total, created only if
+  external team-tools reader consumes) and `Exception Days` (#81: days
+  every report leaves out, edited from Admin ▾ → Exception days) —
+  thirteen total, created only if
   missing; `setup()` also REPUBLISHES Dashboard Standards on every run.
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
