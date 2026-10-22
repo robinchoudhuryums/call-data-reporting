@@ -636,7 +636,8 @@ test('D0 diagnose: internalDial says what each Internal leg reaches, masked, wit
     row({ cid: 'B1', start: D + '09:05:00', dir: 'Internal', callTime: '0:00:05', caller: '101', callee: '', calleeName: 'Park' }),
   ]), D2MAPS, { diagnose: true });
   const sh = JSON.parse(JSON.stringify(res.meta.diag.internalDialShape));
-  assert.equal(res.meta.diag.internalDial.total, 6);
+  assert.equal(res.meta.diag.internalDial.total, 4, 'DC-D2b: only the four legs to an extension are dials');
+  assert.deepEqual([sh.legs, sh.dials], [6, 4], 'every Internal leg tallied; the dials named');
   assert.deepEqual([sh.rosterAgent, sh.self, sh.unrosteredExt, sh.outsideNumber, sh.other, sh.talked], [1, 1, 2, 1, 1, 2]);
   assert.deepEqual(sh.topCallees[0], { v: '777 "Voicemail"', n: 2 }, 'the busiest callee first, with its name');
   const labels = sh.topCallees.map((t) => t.v);
@@ -646,4 +647,27 @@ test('D0 diagnose: internalDial says what each Internal leg reaches, masked, wit
   assert.deepEqual(sh.topContexts, [{ v: '(blank)', n: 4 }, { v: 'VM', n: 2 }], 'contexts tallied, busiest first');
   const off = compute(grid([row({ cid: 'R1', start: D + '09:00:00', dir: 'Internal', caller: '101', callee: '102' })]), D2MAPS, {});
   assert.equal(off.meta.diag, undefined, 'still nothing without diagnose');
+});
+
+// DC-D2b (owner 2026-10-22): the live CDR logs a Call Recording leg for
+// nearly every call -- and Voicemail / CallForking legs -- as Internal. The
+// first D2 build counted each as the caller's outbound call (3694 legs, 90% of
+// 2026-10-20's outbound; 92.5% recording legs). Only a DIAL to an extension is.
+test('D2b: an Internal leg is the caller\'s outbound only when it dials an extension -- never a recording, voicemail or forked leg', function () {
+  const res = compute(grid([
+    row({ cid: 'REC1', start: D + '09:00:00', dir: 'Internal', callTime: '0:03:00', caller: '101', callee: 'CallRecording', calleeName: 'N/A', ctx: 'N/A' }),
+    row({ cid: 'REC2', start: D + '09:05:00', dir: 'Internal', callTime: '0:03:00', caller: '101', callee: 'CallRecording (595)', calleeName: 'N/A', ctx: 'N/A' }),
+    row({ cid: 'VM1', start: D + '09:10:00', dir: 'Internal', talk: '0:00:20', callTime: '0:00:20', caller: '101', callee: 'Voicemail (143)', calleeName: 'Anna', ctx: '143', answered: true }),
+    row({ cid: 'FK1', start: D + '09:15:00', dir: 'Internal', callTime: '0:00:10', caller: '101', callee: '239', calleeName: 'Sam', ctx: 'CallForking' }),
+    row({ cid: 'EXT1', start: D + '09:20:00', dir: 'Internal', talk: '0:00:30', callTime: '0:00:30', caller: '101', callee: '239', calleeName: 'Sam', ctx: 'N/A', answered: true }),
+    row({ cid: 'CO1', start: D + '09:25:00', dir: 'Internal', talk: '0:00:40', callTime: '0:00:40', caller: '101', callee: '102', answered: true }),
+  ]), D2MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ob_int_total, 2, 'the unrostered extension and the coworker -- nothing else');
+  assert.equal(a.ob_int_talk_sec, 70);
+  assert.equal(a.ob_ext_total, 0);
+  assert.equal(rowFor(res, 'Bob').ib_int_answered, 1, 'the coworker still has it as inbound');
+  assert.equal(h.call('dcIsInternalDial_', ' 614 ', 'N/A'), true);
+  assert.equal(h.call('dcIsInternalDial_', '5551234', ''), false, 'seven digits is no extension');
+  assert.equal(h.call('dcIsInternalDial_', '', ''), false);
 });

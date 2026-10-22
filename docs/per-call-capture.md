@@ -867,7 +867,9 @@ to a ROSTERED extension; external = everything else, including (for now) a
 dial to an unrostered extension. **D2 (2026-10-21) changed what the build
 counts** -- every roster extension (first beats later), one event per ROOT
 call (talk added per leg), Internal coworker dials credited to the caller as
-internal outbound, anonymous inbound rings kept, extension-length callees
+internal outbound (only a dial to an EXTENSION -- never the Call Recording /
+Voicemail / CallForking legs the CDR also logs Internal, DC-D2b,
+`dcIsInternalDial_`), anonymous inbound rings kept, extension-length callees
 internal (`dcOutboundSide_`); an outside call keeps its first leg's side.
 NOT retroactive: a date built before the deploy keeps the old counts until it
 is re-imported (Operator State #56), so a window spanning the deploy mixes the
