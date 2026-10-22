@@ -3725,6 +3725,8 @@
     // S5: company-holiday ranges ([{from, to}] ISO, from COMPANY_HOLIDAYS)
     // so the CR/Insights form hints' working-day counts match the server's.
     window.__COMPANY_HOLIDAYS__ = <?!= companyHolidaysJson ?>;
+    // #81: ALL-department exception days (ISO dates) -- not working days either.
+    window.__EXCEPTION_DAYS__ = <?!= exceptionDaysJson ?>;
     // R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property; keys from
     // the Config.gs UI_FLAG_SURFACES registry). Applied as body[data-ui-flags].
     window.__UI_FLAGS__ = <?!= uiFlagsJson ?>;

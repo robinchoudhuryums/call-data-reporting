@@ -1508,7 +1508,8 @@
   /**
    * Company-holiday test against the server-injected ranges
    * (window.__COMPANY_HOLIDAYS__, renderDashboard_ -- the same ranges the
-   * server's countWorkingDays_ excludes).
+   * server's countWorkingDays_ excludes), plus (#81) the all-department
+   * exception days (window.__EXCEPTION_DAYS__): "not a working day".
    *
    * The SINGLE client-side reader of that global: script-2-chrome
    * (workingDaysBetween_), script-6-ir (the INV-28 prior window) and
@@ -1526,6 +1527,11 @@
       // the STRONGEST behavior, never the weakest.
       if (r && r.from && r.to && iso >= r.from && iso <= r.to) return true;
     }
+    // #81: an ALL-department exception day is not a working day either -- the
+    // server's countWorkingDays_ / computePriorWindow_ skip it, unless an
+    // admin has switched them back in (then neither side skips it).
+    var exc = (typeof window !== 'undefined' && window.__EXCEPTION_DAYS__) || [];
+    if (exc.length && exc.indexOf(iso) !== -1 && !excIncludeOn_()) return true;
     return false;
   }
 

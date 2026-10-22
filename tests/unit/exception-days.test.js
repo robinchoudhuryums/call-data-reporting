@@ -279,3 +279,31 @@ test('a save busts the list, so the next report read sees it; remove puts the da
     assert.equal(h.call('exceptionDaysTag_'), '');
   } finally { delete h.ctx.logReportUsage_; delete h.ctx.getAllDepartments_; }
 });
+
+// ── The client's working-day mirror ───────────────────────────────────────
+
+test('the client\'s working-day test skips an ALL-department exception day, as the server does (unless included)', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const S1 = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-1-core.html'), 'utf8');
+  const at = S1.search(/function isCompanyHolidayIso_\(/);
+  const open = S1.indexOf('{', at);
+  let depth = 0, end = -1;
+  for (let i = open; i < S1.length; i++) {
+    if (S1[i] === '{') depth++;
+    else if (S1[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  const src = S1.slice(at, end);
+  // eslint-disable-next-line no-new-func
+  const make = (win, included) => new Function('window', 'excIncludeOn_', 'return (' + src + ');')(win, () => included);
+  const win = { __COMPANY_HOLIDAYS__: [{ from: '2026-12-25', to: '2026-12-25' }], __EXCEPTION_DAYS__: ['2026-09-21'] };
+  assert.equal(make(win, false)('2026-09-21'), true);
+  assert.equal(make(win, false)('2026-12-25'), true);
+  assert.equal(make(win, false)('2026-09-22'), false);
+  assert.equal(make(win, true)('2026-09-21'), false, 'an admin who includes them counts the day on both sides');
+  assert.equal(make({ __COMPANY_HOLIDAYS__: [] }, false)('2026-09-21'), false, 'no injection: holidays only');
+  // and the page injects exactly the all-department dates
+  const code = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Code.gs'), 'utf8');
+  assert.match(code, /tmpl\.exceptionDaysJson = JSON\.stringify\(exceptionDates\)/);
+  assert.match(code, /getExceptionDays_\(\)\.filter\(function \(d\) \{ return !d\.depts\.length; \}\)/);
+});

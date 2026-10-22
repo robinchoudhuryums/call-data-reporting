@@ -763,6 +763,8 @@ html = html.replace('<?!= userJson ?>', JSON.stringify(user));
 html = html.replace('<?!= dashboardUrlJson ?>', JSON.stringify('https://example.test/exec'));
 html = html.replace('<?!= workWindowJson ?>', JSON.stringify({ pst: '6:30 AM - 3:00 PM PST', cst: '8:30 AM - 5:00 PM CST' }));
 html = html.replace('<?!= companyHolidaysJson ?>', JSON.stringify([]));
+// #81: the fixture's all-department exception days, as renderDashboard_ injects them.
+html = html.replace('<?!= exceptionDaysJson ?>', JSON.stringify(((P['exception-init'] || {}).days || []).filter(function (d) { return d.active !== false && !(d.depts || []).length; }).map(function (d) { return d.date; })));
 html = html.replace('<?!= uiFlagsJson ?>', JSON.stringify([]));
 html = html.replace('<?!= answerTargetsJson ?>', JSON.stringify({ global: 80, band: 10 }));
 // R23: the display-standards bundle (per-dept answer targets + amber bands,
