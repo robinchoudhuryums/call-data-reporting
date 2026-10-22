@@ -3782,7 +3782,7 @@
     exList.forEach(function (e) { exBy[e.date] = e; });
     var isWeekday = function (iso) {
       var dow = new Date(iso + 'T12:00:00Z').getUTCDay();
-      return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(iso);
+      return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(iso, true);
     };
     var isWorkday = function (iso) { return isWeekday(iso) && !exBy[iso]; };
     var bs = dtsDayBuckets_(isoList, dtsDayMap_(state), isWorkday);

@@ -232,7 +232,7 @@ test('wiring: admin-only, attached on every strip render, one shared selection',
   assert.match(attach, /if \(!dtsBarsActive_\(\)\) return;/, 'managers never get the bars built');
   assert.match(attach, /block\.setAttribute\('data-admin-only', ''\);/, 'and View-as hides them');
   assert.match(attach, /m\.from === m\.to\) return;/, 'a one-day window has nothing to choose between');
-  assert.match(attach, /return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_\(iso\);/,
+  assert.match(attach, /return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_\(iso, true\);/,
     'workdays are the client\'s one holiday calendar, the same one the tiles\' per-workday pace uses');
   const sel = extractFn(S5, 'dtsSelect_');
   assert.match(sel, /strip\.querySelectorAll\('\.dts-daybars'\)\.forEach/, 'a selection paints EVERY card');

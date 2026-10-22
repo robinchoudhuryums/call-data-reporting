@@ -1510,6 +1510,8 @@
    * (window.__COMPANY_HOLIDAYS__, renderDashboard_ -- the same ranges the
    * server's countWorkingDays_ excludes), plus (#81) the all-department
    * exception days (window.__EXCEPTION_DAYS__): "not a working day".
+   * `holidaysOnly` skips the exception days -- for a caller that draws them
+   * itself (the day bars' striped bucket).
    *
    * The SINGLE client-side reader of that global: script-2-chrome
    * (workingDaysBetween_), script-6-ir (the INV-28 prior window) and
@@ -1518,7 +1520,7 @@
    * entries, the others did not. cross-file-pins.test.js fails if a fifth
    * copy appears.
    */
-  function isCompanyHolidayIso_(iso) {
+  function isCompanyHolidayIso_(iso, holidaysOnly) {
     var ranges = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
     for (var i = 0; i < ranges.length; i++) {
       var r = ranges[i];
@@ -1531,7 +1533,7 @@
     // server's countWorkingDays_ / computePriorWindow_ skip it, unless an
     // admin has switched them back in (then neither side skips it).
     var exc = (typeof window !== 'undefined' && window.__EXCEPTION_DAYS__) || [];
-    if (exc.length && exc.indexOf(iso) !== -1 && !excIncludeOn_()) return true;
+    if (!holidaysOnly && exc.length && exc.indexOf(iso) !== -1 && !excIncludeOn_()) return true;
     return false;
   }
 

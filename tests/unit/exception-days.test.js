@@ -301,6 +301,8 @@ test('the client\'s working-day test skips an ALL-department exception day, as t
   assert.equal(make(win, false)('2026-12-25'), true);
   assert.equal(make(win, false)('2026-09-22'), false);
   assert.equal(make(win, true)('2026-09-21'), false, 'an admin who includes them counts the day on both sides');
+  assert.equal(make(win, false)('2026-09-21', true), false, 'holidaysOnly: the day bars draw the day themselves');
+  assert.equal(make(win, false)('2026-12-25', true), true);
   assert.equal(make({ __COMPANY_HOLIDAYS__: [] }, false)('2026-09-21'), false, 'no injection: holidays only');
   // and the page injects exactly the all-department dates
   const code = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Code.gs'), 'utf8');
