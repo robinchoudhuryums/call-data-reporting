@@ -121,6 +121,20 @@ function dcOutboundSide_(dir, callee, extToAgent) {
   return (d.length > 0 && d.length < 7 && d === String(callee).trim()) ? 'int' : 'ext';
 }
 
+/**
+ * DC-D2b (owner 2026-10-22): is an INTERNAL-direction leg a coworker DIAL?
+ * Only when it reaches an EXTENSION (1-6 digits, the callee cell nothing but
+ * digits) and is not a forked ring of another call. The live CDR logs a
+ * Call Recording leg (callee "CallRecording" / "CallRecording (595)") for
+ * nearly every call, plus Voicemail boxes and CallForking legs, all as
+ * Internal -- the first D2 build counted every one as the caller's outbound
+ * call (2026-10-20: 3694 legs, 90% of the day's outbound; 92.5% of them
+ * recording legs, 1.1% with talk).
+ */
+function dcIsInternalDial_(callee, ctx) {
+  return /^\d{1,6}$/.test(String(callee == null ? '' : callee).trim()) && !/CallForking/i.test(String(ctx || ''));
+}
+
 // -- The engine (PURE) --------------------------------------------------------
 
 /**
@@ -224,13 +238,15 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (cid) k[cid] = true;
   }
   function dgDigits(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
-  // What an internalDial leg REACHES (owner 2026-10-21: the first run counted
-  // 90% of a day's outbound here -- far more than coworker dials -- so the
-  // counter says what the callee is before anyone acts on the rule).
-  const DGI = { seen: {}, rosterAgent: 0, self: 0, unrosteredExt: 0, outsideNumber: 0, other: 0, talked: 0, callee: {}, ctx: {} };
+  // What EVERY Internal leg from an agent reaches -- the dials the build
+  // counts (dcIsInternalDial_) and the legs it does not (recording /
+  // voicemail / forking / a named feature) -- so the rule stays checkable.
+  const DGI = { seen: {}, legs: 0, dials: 0, rosterAgent: 0, self: 0, unrosteredExt: 0, outsideNumber: 0, other: 0, talked: 0, callee: {}, ctx: {} };
   function dgiAdd(cid, callerAgent, calleeAgent, callee, calleeName, ctx, talk) {
     if (!cid || DGI.seen[cid]) return;
     DGI.seen[cid] = true;
+    DGI.legs++;
+    if (dcIsInternalDial_(callee, ctx)) DGI.dials++;
     const d = dgDigits(callee);
     if (calleeAgent && calleeAgent.name === callerAgent.name) DGI.self++;
     else if (calleeAgent) DGI.rosterAgent++;
@@ -307,7 +323,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       // a coworker dial logged Internal: D2 credits it to the CALLER as an
       // internal outbound call (pre-D2: only the callee's ib_int saw it).
       if (dir === 'Internal' && callerAgent && !exclusions.has(callerAgent.name) && !isIncomingCall(cid, parent)) {
-        dgAdd('internalDial', callerAgent.name, cid);
+        if (dcIsInternalDial_(callee, r[C.CTX])) dgAdd('internalDial', callerAgent.name, cid);
         dgiAdd(cid, callerAgent, calleeAgent, callee, dcClean_(r[C.CALLEE_NAME]), r[C.CTX], talk);
       }
       // a roster agent's SECOND (or later) extension: counted since D2.
@@ -372,7 +388,11 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     //     (so an Outgoing + Internal pair for one dial stays one call); and
     //     internal / external comes from dcOutboundSide_ (an extension-length
     //     callee is internal even when no roster names it).
-    if (callerAgent && !exclusions.has(callerAgent.name) && (dir === 'Outgoing' || dir === 'Internal')
+    //     DC-D2b: an Internal leg counts only when it is a DIAL to an
+    //     extension (dcIsInternalDial_) -- never a recording / voicemail /
+    //     forking leg.
+    if (callerAgent && !exclusions.has(callerAgent.name)
+        && (dir === 'Outgoing' || (dir === 'Internal' && dcIsInternalDial_(callee, r[C.CTX])))
         && !isIncomingCall(cid, parent)) {
       const b = ensure(callerAgent.name, callerAgent.dept);
       let ev = b.ob[root];
@@ -490,7 +510,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       return Object.keys(o).map(function (k) { return { v: k, n: o[k] }; })
         .sort(function (x, y) { return y.n - x.n || (x.v < y.v ? -1 : 1); }).slice(0, 8);
     };
-    meta.diag.internalDialShape = { rosterAgent: DGI.rosterAgent, self: DGI.self, unrosteredExt: DGI.unrosteredExt,
+    meta.diag.internalDialShape = { legs: DGI.legs, dials: DGI.dials, rosterAgent: DGI.rosterAgent, self: DGI.self, unrosteredExt: DGI.unrosteredExt,
       outsideNumber: DGI.outsideNumber, other: DGI.other, talked: DGI.talked,
       topCallees: top(DGI.callee), topContexts: top(DGI.ctx) };
   }
@@ -1178,16 +1198,18 @@ function diagnoseDirectCallCounting() {
     });
   };
   Logger.log('[direct-diag] %s: %s in-window inbound direct events, %s outbound (the build counts these).', isoDate || dateStr, String(ib), String(ob));
-  line('internalDial', 'coworker dials logged Internal -- since D2 the caller\'s internal outbound call', ob, 'outbound');
+  line('internalDial', 'coworker dials logged Internal (to an extension) -- since D2 the caller\'s internal outbound call', ob, 'outbound');
   const sh = d.internalDialShape;
-  if (sh && d.internalDial.total) {
-    const n = d.internalDial.total;
-    Logger.log('[direct-diag]   internalDial reaches: a roster agent %s (%s), the caller\'s own extension %s (%s), an unrostered extension %s (%s), '
+  if (sh && sh.legs) {
+    const n = sh.legs;
+    Logger.log('[direct-diag]   Internal legs from agents: %s, of which dials to an extension %s (counted above) and %s not dials (recording / voicemail / forking / a named feature -- never counted)',
+      String(n), String(sh.dials), String(n - sh.dials));
+    Logger.log('[direct-diag]   Internal legs reach: a roster agent %s (%s), the caller\'s own extension %s (%s), an unrostered extension %s (%s), '
       + 'an outside number %s (%s), blank / a name %s (%s); talked (talk > 0) %s (%s)',
       String(sh.rosterAgent), pct(sh.rosterAgent, n), String(sh.self), pct(sh.self, n), String(sh.unrosteredExt), pct(sh.unrosteredExt, n),
       String(sh.outsideNumber), pct(sh.outsideNumber, n), String(sh.other), pct(sh.other, n), String(sh.talked), pct(sh.talked, n));
-    Logger.log('[direct-diag]   internalDial top callees: %s', sh.topCallees.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
-    Logger.log('[direct-diag]   internalDial top contexts: %s', sh.topContexts.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
+    Logger.log('[direct-diag]   Internal legs top callees: %s', sh.topCallees.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
+    Logger.log('[direct-diag]   Internal legs top contexts: %s', sh.topContexts.map(function (t) { return t.v + ' x' + t.n; }).join('; '));
   }
   line('secondExtIn', 'inbound rings on an agent\'s second extension -- counted since D2', ib, 'inbound');
   line('secondExtOut', 'dials from an agent\'s second extension -- counted since D2', ob, 'outbound');

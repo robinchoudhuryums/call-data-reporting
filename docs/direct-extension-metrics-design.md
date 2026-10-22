@@ -152,7 +152,11 @@ bucket as **unknown**, excluded (same discipline as queue sentinels).
 > maps to its agent (a FIRST extension always beats another agent's later
 > one); events are one per ROOT call (parent, else the leg's own id), as step
 > 3 below always intended; a coworker dial the CDR logs `Internal` is also the
-> CALLER's internal outbound call; an anonymous / blank inbound caller is kept
+> CALLER's internal outbound call -- **only when it dials an EXTENSION** (DC-D2b,
+> 2026-10-22, `dcIsInternalDial_`: the callee cell is 1-6 digits and the leg is
+> no CallForking ring; the live CDR logs a Call Recording leg for nearly every
+> call, plus Voicemail boxes, as Internal, and the first D2 build counted those
+> as dials -- 90% of a day's outbound); an anonymous / blank inbound caller is kept
 > (external); and an outbound dial to an extension-length (1-6 digit) number
 > no roster names is counted **internal** rather than excluded -- it is still
 > the company's own phone system (a room phone, an unrostered staff line).

@@ -3548,7 +3548,8 @@ When something looks wrong, before assuming a code bug, check:
     2026-10-21; cdr-import, editor-run, read-only).** D2 changed what the
     Direct build counts: every roster extension (not just the first), one
     call per ROOT call (not one per leg), coworker dials logged Internal
-    credited to the caller as internal outbound, anonymous inbound rings
+    credited to the caller as internal outbound (only a dial to an
+    extension -- DC-D2b), anonymous inbound rings
     kept, dials to an unrostered extension counted internal. It is NOT
     retroactive -- a date built before the cdr-import deploy keeps the old
     counts until it is re-imported -- so this tool tells you, for the day
@@ -3556,19 +3557,22 @@ When something looks wrong, before assuming a code bug, check:
     changes: `internalDial`, `secondExtIn` / `secondExtOut`, `anonymousIn`,
     `sameRootIn` / `sameRootOut` (extra legs now folded into one call),
     `unrosteredOut`, each with its share of the day's in-window events, the
-    top agents and sample call ids to look up in Raw Data. `internalDial`
-    also logs what those legs REACH -- a roster agent, the caller's own
-    extension, an unrostered extension, an outside number, blank / a name --
-    with the share that talked and the top callees and contexts (numbers
-    masked; an outside number's name is dropped). **First run (2026-10-20):
-    `internalDial` 2863 = 90% of the day's outbound, every other counter 0.**
-    That is far more than coworker dials, so treat D2's Internal-dial rule as
-    UNCONFIRMED: do not re-import yet; re-run (after the cdr-import push that
-    added the "reaches" lines) and read them. If most legs reach something
-    other than a person (voicemail, a feature code, a dialler bridge), the
-    rule needs narrowing, and the dates built since the D2 deploy then need a
-    re-import. Run it after an import on three or four days. **Then decide
-    the re-import:** shares
+    top agents and sample call ids to look up in Raw Data. It also logs
+    what EVERY Internal leg from an agent reaches -- how many are dials to
+    an extension (counted) and how many are not, then a roster agent / the
+    caller's own extension / an unrostered extension / an outside number /
+    blank or a name, the share that talked, and the top callees and
+    contexts (numbers masked; an outside number's name is dropped).
+    **History (DC-D2b):** the first D2 build counted EVERY Internal leg as a
+    dial -- on 2026-10-20 3694 legs, 90% of the day's outbound, 92.5% of
+    them `CallRecording` legs (1.1% talked). Since the DC-D2b cdr-import push
+    only a dial to an extension counts (`dcIsInternalDial_`). **Repair the
+    dates built between the D2 deploy (2026-10-21) and that push:** their
+    OB-internal counts are inflated ~10x. For the date in `Raw Data`, run
+    `runDirectCallBuild()` (it deletes and rewrites that date's Direct rows,
+    sheet + Neon); for any other, Manual Export it (#56). Pipeline Health's
+    `directBuild` rows name the dates built. Run the tool after an import on
+    three or four days. **Then decide the re-import of older dates:** shares
     under ~1% are not worth one; otherwise re-import the dates the Direct
     Calls report is read over (CDR Tools -> Manual Export per date, #56 --
     the Direct block rebuilds the date's `Direct Call History` rows and its
