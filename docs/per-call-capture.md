@@ -444,6 +444,11 @@ fixture (unlinked, exactly-60 s, synthetic-event and out-of-window cases).
 
 ### Outbound-call capture
 
+> **Known gap (2026-10-23, Operator State #82):** a warm transfer that ends
+> with the customer merged into a NEW call shows up here as the receiving
+> rep's outbound call -- that call has no `Incoming` leg. Sized by
+> `diagnoseOutboundTransfers`; the capture rule waits on its counts.
+
 **Outbound-call capture is Neon-only and rides the daily import (Option
 B -- the per-call outbound twin of the inbound capture).**
 `cdr-import/outboundCalls.js::writeOutboundCallsToNeon` runs right after
