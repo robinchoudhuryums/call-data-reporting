@@ -486,3 +486,176 @@ function backfillOutboundCalls(fromIso, toIso, force) {
            sheetsFound: candidates.length,
            hashless: hashlessDates.length };   // F8: dates written without phone hashes
 }
+
+// ---- Transfer hand-overs counted as outbound (read-only diagnostic) ---------
+//
+// Owner report 2026-10-23: a CSR rep showed an "outbound call" that was really
+// a customer handed to them. 8x8 writes a warm transfer as a NEW call: the
+// employee who has the customer dials a queue / a colleague (Internal legs),
+// talks to them, then merges and drops off -- and the customer reappears in
+// that new call as an `Outgoing` leg from the receiving rep to the customer's
+// number. The new call has no Incoming leg (the customer's Incoming legs stay
+// under the ORIGINAL call id), so buildOutboundCallRecords_ counts it as the
+// rep dialing out. Two signals tie it back:
+//   (A) TRANSFER TARGET -- some leg of ANOTHER call names this call in its
+//       "Transfer To Call ID" column (col P). Parent Call ID only links a
+//       call's own queue legs, never one call to the next.
+//   (B) HAND-OVER -- the dialled number was on a live leg of another call
+//       (talk > 0) at the moment this leg started, within the capture's
+//       concurrent slack (IC_CONCURRENT_SLACK_MS_): a merge, not a dial.
+//       A genuine callback starts after the customer's call has ended.
+// This measures both on the surviving Call_Legs dates before either becomes a
+// rule. READ-ONLY: writes nothing; logs call ids + agent names, never a number.
+var OC_TRANSFER_TO_COL_ = 15;   // Raw Data col P, "Transfer To Call ID"
+var OC_HANDOFF_SAMPLES_ = 5;
+
+/** PURE. Per-call hand-over classification of one day's legs. */
+function ocTransferHandoffs_(rawRows) {
+  var rows = rawRows || [];
+  var records = buildOutboundCallRecords_(rows) || [];
+  var slack = (typeof IC_CONCURRENT_SLACK_MS_ === 'number') ? IC_CONCURRENT_SLACK_MS_ : 5000;
+  var dirOf = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
+  var cell = function (v) { var s = String(v == null ? '' : v).trim(); return (!s || s.toUpperCase() === 'N/A') ? '' : s; };
+
+  // Root of every call id (the capture's grouping: Parent if present, else own).
+  var rootOf = {}, groups = {};
+  rows.forEach(function (r) {
+    var own = cell(r[IC_COL.CALL_ID]);
+    if (!own) return;
+    var root = cell(r[IC_COL.PARENT_CALL_ID]) || own;
+    rootOf[own] = root;
+    (groups[root] = groups[root] || []).push(r);
+  });
+  var hasIncoming = {};
+  Object.keys(groups).forEach(function (g) {
+    hasIncoming[g] = groups[g].some(function (l) { return dirOf(l) === 'Incoming'; });
+  });
+
+  // (A) transfer targets: target root -> the first source root naming it.
+  var sourceOf = {};
+  rows.forEach(function (r) {
+    var own = cell(r[IC_COL.CALL_ID]);
+    var to = cell(r[OC_TRANSFER_TO_COL_]);
+    if (!own || !to) return;
+    var fromRoot = rootOf[own] || own;
+    var toRoot = rootOf[to] || to;
+    if (toRoot === fromRoot) return;   // a queue leg naming its own call
+    if (!sourceOf[toRoot]) sourceOf[toRoot] = fromRoot;
+  });
+  // Did the chain that led here start as a customer's INBOUND call?
+  function chainStartsInbound(root) {
+    for (var hop = 0, r = root; hop < 6 && sourceOf[r]; hop++) {
+      r = sourceOf[r];
+      if (hasIncoming[r]) return true;
+    }
+    return false;
+  }
+
+  // (B) live legs per external number: [start, stop] of talk > 0 legs.
+  var live = {};
+  rows.forEach(function (r) {
+    if (icTimeToSec_(r[IC_COL.TALK]) <= 0) return;
+    var s = icParseTs_(r[IC_COL.START]), e = icParseTs_(r[IC_COL.STOP]);
+    if (isNaN(s) || isNaN(e)) return;
+    var own = cell(r[IC_COL.CALL_ID]);
+    var root = rootOf[own] || own;
+    [icExternalNumber_(r[IC_COL.CALLER]), icExternalNumber_(r[IC_COL.CALLEE])].forEach(function (n) {
+      if (n) (live[n] = live[n] || []).push({ root: root, s: s, e: e });
+    });
+  });
+
+  return records.map(function (rec) {
+    var legs = groups[rec.callId] || [];
+    var first = null;
+    for (var i = 0; i < legs.length; i++) {
+      if (dirOf(legs[i]) === 'Outgoing' && icExternalNumber_(legs[i][IC_COL.CALLEE])) {
+        var t = icParseTs_(legs[i][IC_COL.START]);
+        if (!first || t < first.t) first = { leg: legs[i], t: t };
+      }
+    }
+    var handoverFrom = null;
+    if (first && !isNaN(first.t)) {
+      var n = icExternalNumber_(first.leg[IC_COL.CALLEE]);
+      (live[n] || []).some(function (x) {
+        if (x.root === rec.callId) return false;
+        if (x.s <= first.t + slack && x.e >= first.t - slack) { handoverFrom = x.root; return true; }
+        return false;
+      });
+    }
+    var transferFrom = sourceOf[rec.callId] || null;
+    return {
+      callId: rec.callId, callDate: rec.callDate, callStart: rec.callStart, agent: rec.agentName || '(unnamed)',
+      connected: rec.connected, transferFrom: transferFrom, handoverFrom: handoverFrom,
+      inboundChain: !!(transferFrom && chainStartsInbound(rec.callId)),
+    };
+  });
+}
+
+/** PURE. Counts + per-agent tallies + samples over ocTransferHandoffs_ rows. */
+function ocSummarizeHandoffs_(rows) {
+  var out = { outbound: 0, transferTarget: 0, handover: 0, both: 0, transferOnly: 0, handoverOnly: 0,
+              inboundChain: 0, outboundChain: 0, agents: {}, samples: { both: [], transferOnly: [], handoverOnly: [] } };
+  (rows || []).forEach(function (r) {
+    out.outbound++;
+    var a = !!r.transferFrom, b = !!r.handoverFrom;
+    if (a) { out.transferTarget++; if (r.inboundChain) out.inboundChain++; else out.outboundChain++; }
+    if (b) out.handover++;
+    var kind = a && b ? 'both' : (a ? 'transferOnly' : (b ? 'handoverOnly' : null));
+    if (!kind) return;
+    out[kind]++;
+    out.agents[r.agent] = (out.agents[r.agent] || 0) + 1;
+    if (out.samples[kind].length < OC_HANDOFF_SAMPLES_) {
+      out.samples[kind].push(r.callId + ' (' + r.agent + ', ' + r.callStart + ') <- '
+        + (r.transferFrom || r.handoverFrom) + (r.inboundChain ? ' [inbound chain]' : ''));
+    }
+  });
+  return out;
+}
+
+/**
+ * Editor-run, READ-ONLY. `dateIso` = one Call_Legs date, 'all' = every
+ * surviving date, blank = the latest. Logs, per date and in total, how many
+ * captured outbound calls are transfer hand-overs by each signal.
+ */
+function diagnoseOutboundTransfers(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { Logger.log('[ob-transfer] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
+  try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
+  try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
+
+  var all = [], t0 = Date.now();
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[ob-transfer] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
+    var grid = sheets[i].sheet.getDataRange().getDisplayValues();
+    grid.shift();
+    var rows = ocTransferHandoffs_(grid);
+    var d = ocSummarizeHandoffs_(rows);
+    Logger.log('[ob-transfer] %s: %s outbound calls; transfer target (A) %s, hand-over (B) %s -- both %s, A only %s, B only %s',
+      sheets[i].iso, d.outbound, d.transferTarget, d.handover, d.both, d.transferOnly, d.handoverOnly);
+    all = all.concat(rows);
+  }
+  var s = ocSummarizeHandoffs_(all);
+  var pct = function (n) { return s.outbound ? (Math.round(n / s.outbound * 1000) / 10) + '%' : '0%'; };
+  Logger.log('[ob-transfer] TOTAL %s outbound calls over %s date(s).', s.outbound, sheets.length);
+  Logger.log('[ob-transfer]   (A) a transfer target (another call names it in Transfer To Call ID): %s (%s) -- %s from a customer\'s inbound call, %s from an outbound call',
+    s.transferTarget, pct(s.transferTarget), s.inboundChain, s.outboundChain);
+  Logger.log('[ob-transfer]   (B) the number was live on another call when this leg began: %s (%s)', s.handover, pct(s.handover));
+  Logger.log('[ob-transfer]   both %s, A only %s, B only %s -- a hand-over by either signal: %s (%s)',
+    s.both, s.transferOnly, s.handoverOnly, s.both + s.transferOnly + s.handoverOnly, pct(s.both + s.transferOnly + s.handoverOnly));
+  var top = Object.keys(s.agents).sort(function (x, y) { return s.agents[y] - s.agents[x]; }).slice(0, 10);
+  if (top.length) Logger.log('[ob-transfer]   by agent: %s', top.map(function (a) { return a + ' ' + s.agents[a]; }).join(', '));
+  ['both', 'transferOnly', 'handoverOnly'].forEach(function (k) {
+    if (s.samples[k].length) Logger.log('[ob-transfer]   %s e.g. (call <- the call it came from): %s', k, s.samples[k].join('; '));
+  });
+  return s;
+}
+/** Every surviving Call_Legs date. */
+function diagnoseOutboundTransfersAllDates() { return diagnoseOutboundTransfers('all'); }
