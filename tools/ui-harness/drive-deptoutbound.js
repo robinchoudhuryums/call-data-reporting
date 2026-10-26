@@ -180,6 +180,14 @@ async function openDept(page, meta) {
     const blocks = (sel) => Math.max.apply(null, rows.map((r) => { const l = r.querySelector('td.ans-bar-cell > ' + sel); return l ? l.querySelectorAll('.tly').length : 0; }));
     return { inMax: blocks('.ob-line.ob-dir-in'), outMax: blocks('.ob-line.ob-dir-out') };
   });
+  const wash = await page.evaluate(() => {
+    const r = document.querySelector('#agents-ob-tbody tr[data-agent] td.ob-pair');
+    const bg = (sel) => { const l = r && r.querySelector(':scope > ' + sel); return l ? getComputedStyle(l).backgroundColor : ''; };
+    return { inBg: bg('.ob-line.ob-dir-in'), outBg: bg('.ob-line.ob-dir-out') };
+  });
+  const tinted = (c) => !!c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c);
+  record('layout B: the IN line and the OUT line each carry their own direction tint (owner 2026-10-26)',
+    tinted(wash.inBg) && tinted(wash.outBg) && wash.inBg !== wash.outBg, JSON.stringify(wash));
   record('layout B: IN and OUT bars share one scale (the smaller volume draws shorter)', scale.inMax > 0 && scale.outMax > 0 && scale.outMax * 2 < scale.inMax, JSON.stringify(scale));
   record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
     // 6 cells on CSR: agent, direction, Calls, Rate, Talk + Transfer % (owner 2026-10-22).

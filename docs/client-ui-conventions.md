@@ -2270,8 +2270,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   `answerRate` / `tttSeconds` and `obTotal` / `obConnectRate` / `obTalkSec`;
   `aria-sort` on the `<th>`), and the sort handler matches `[data-ob-sort]` on
   a th OR a button. The direction's hue stays on its line (`.ob-dir-in` /
-  `.ob-dir-out`), not the cell. `drive-deptoutbound.js` pins the shape, the
-  level OUT lines, both sorts and the chips per line.
+  `.ob-dir-out`), not the cell -- including a faint background wash on each
+  line, 35% of `--accent-soft` (IN) / `--dir-out-soft` (OUT) (owner
+  2026-10-26: the IN line got the wash the OUT line had). `drive-deptoutbound.js`
+  pins the shape, the level OUT lines, both sorts, the chips per line and that
+  the two lines carry different tints.
   Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
   Outbound view and stacks under it in Both (natural height there; the aside
   scrolls rather than the two overlapping). Rows open the inline agent panel
