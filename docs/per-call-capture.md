@@ -469,7 +469,8 @@ call_id) DO UPDATE`; authoritative per-date replace + the P-1
 there is NO sheet primary). A leg group is outbound when it has NO
 Incoming leg (an answered inbound queue call carries the agent's own
 'Outgoing' talk leg, so direction alone would misfile it) AND at least
-one Direction='Outgoing' leg to an external (>=10-digit) number.
+one Direction='Outgoing' leg to an external (>=10-digit) number AND no
+other call names it in Transfer To Call ID (OBX-1, the note above).
 Captures: `callee_hash` (HMAC of the canonical `+<digits>` form via
 `cdrHashPhone_` -- the SAME hash space as `inbound_calls.caller_hash` /
 `call_history_phones` / `insurance_numbers`), the dialing agent (name +

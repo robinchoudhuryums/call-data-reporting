@@ -13,8 +13,10 @@
 // answered inbound queue call carries the agent's own 'Outgoing' talk leg,
 // so direction alone is not enough -- the no-Incoming gate excludes those)
 // AND at least one Direction='Outgoing' leg whose CALLEE is an external
-// number (>= 10 digits). Internal-only groups (ext-to-ext, queue transfers)
-// have no external callee and fall out naturally.
+// number (>= 10 digits) AND (OBX-1) no other call names it in Transfer To
+// Call ID -- a warm transfer's continuation is the receiving rep's leg to the
+// customer, not a dial (Operator State #82). Internal-only groups (ext-to-ext,
+// queue transfers) have no external callee and fall out naturally.
 //
 // Captures: callee_hash (deterministic HMAC of the canonical "+<digits>"
 // form via cdrHashPhone_ -- the SAME hash space as inbound_calls.caller_hash
