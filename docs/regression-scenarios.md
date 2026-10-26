@@ -524,7 +524,7 @@ S57 | My Department inbound + outbound together (Batch D; one toggle since Step 
     - View as a manager: the toggle disappears and the page shows the Inbound table. As a real MANAGER: no toggle, Inbound only, even with the columns turned on earlier on that browser.
     - NEGATIVE, as a manager in the console: `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getDeptOutboundSummary({ department: '<your dept>', from: '2026-09-01', to: '2026-09-30' })` -> "The Outbound report is admin-only while it is being vetted."
   Expected: as described; a dialler on no roster of the dept is left out and counted in the note.
-    - (Layout B, owner 2026-10-21) Each agent's row shows an IN line over an OUT line -- Calls (handled / not), Rate (answer % / connect %), Talk -- with one bar scale, so a longer OUT bar means more outbound than inbound calls. Under Calls, Rate and Talk, "in" and "out" each sort the table by that line; the header shows which.
+    - (Layout B, owner 2026-10-21) Each agent's row shows an IN line over an OUT line -- Calls (handled / not), Rate (answer % / connect %), Talk -- with one bar scale, so a longer OUT bar means more outbound than inbound calls. The IN line has a faint blue wash and the OUT line a faint purple one, in light and dark mode. Under Calls, Rate and Talk, "in" and "out" each sort the table by that line; the header shows which.
   Fails if: an agent's outbound figures differ from the Outbound report's; the inbound table shows alongside the combined one; the panels overlap; a manager sees the toggle or the outbound columns; or anything adds inbound and outbound together.
 
 S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, UX-1) | Subsystem: Department Dashboard

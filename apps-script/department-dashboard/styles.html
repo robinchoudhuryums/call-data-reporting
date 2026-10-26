@@ -3754,6 +3754,9 @@
   .agents-ob td.ans-bar-cell .ob-line { justify-content: flex-start; }
   .agents-ob td.ans-bar-cell .ob-line > * { flex: 1 1 auto; min-width: 0; }
   .agents-ob .ob-line + .ob-line { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
+  /* Both lines carry a faint wash of their direction's hue (owner
+     2026-10-26: inbound got the same treatment as outbound). */
+  .agents-ob .ob-line.ob-dir-in { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
   .agents-ob .ob-line.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
   .agents-ob td.ob-dir-col { width: 1%; text-align: left; padding-left: 4px; padding-right: 4px; }
   .agents-ob .ob-dir-tag { justify-content: flex-start; font: 500 10px/1 var(--mono); letter-spacing: 0.12em; }
