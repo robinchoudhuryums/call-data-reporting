@@ -40,6 +40,31 @@
 // / neonWrite.js via the project's flat global scope.
 // ============================================================================
 
+// Raw Data col P, "Transfer To Call ID" -- the only column that links one
+// call to the next (Parent Call ID only joins a call's own queue legs).
+var OC_TRANSFER_TO_COL_ = 15;
+
+/**
+ * PURE (OBX-1). target root -> the first SOURCE root whose leg names it in
+ * Transfer To Call ID. `rootOf` maps every call id to its root (the
+ * capture's grouping); a leg naming its own root (a queue leg) is skipped.
+ */
+function ocTransferSources_(rawRows, rootOf) {
+  var out = {};
+  var cell = function (v) { var t = String(v == null ? '' : v).trim(); return (!t || t.toUpperCase() === 'N/A') ? '' : t; };
+  for (var i = 0; i < (rawRows || []).length; i++) {
+    var r = rawRows[i];
+    var own = cell(r[IC_COL.CALL_ID]);
+    var to = cell(r[OC_TRANSFER_TO_COL_]);
+    if (!own || !to) continue;
+    var fromRoot = rootOf[own] || own;
+    var toRoot = rootOf[to] || to;
+    if (toRoot === fromRoot) continue;
+    if (!out[toRoot]) out[toRoot] = fromRoot;
+  }
+  return out;
+}
+
 /**
  * PURE. rawRows = Raw Data leg rows (arrays indexed per IC_COL). Returns one
  * record per distinct OUTBOUND external call. When a group dials more than
@@ -47,20 +72,32 @@
  * FIRST external callee identifies the call; the journey still shows every
  * leg (masked).
  */
-function buildOutboundCallRecords_(rawRows) {
+function buildOutboundCallRecords_(rawRows, opts) {
   if (!rawRows || !rawRows.length) return [];
+  var keepTransferTargets = !!(opts && opts.keepTransferTargets);
 
   // Group legs by ROOT call id (Parent if present, else own) -- identical to
   // the inbound stitching so a call can never land in both tables.
   var groups = {};
+  var rootOf = {};
   for (var i = 0; i < rawRows.length; i++) {
     var r = rawRows[i];
     var parent = String(r[IC_COL.PARENT_CALL_ID] == null ? '' : r[IC_COL.PARENT_CALL_ID]).trim();
     var own = String(r[IC_COL.CALL_ID] == null ? '' : r[IC_COL.CALL_ID]).trim();
     if (!own) continue;
     var root = (parent && parent.toUpperCase() !== 'N/A') ? parent : own;
+    rootOf[own] = root;
     (groups[root] = groups[root] || []).push(r);
   }
+  // OBX-1 (owner 2026-10-26): a call another call names in "Transfer To Call
+  // ID" is the CONTINUATION of a transfer, not a dial -- 8x8 writes a warm
+  // transfer as a new call in which the customer reappears as an Outgoing leg
+  // from the receiving rep. Measured over 9 days: 4.1% of captured outbound
+  // calls, 99.7% of them also the customer's number live on the source call
+  // (Operator State #82). A call's own queue leg names its own call (Parent
+  // and Transfer To both = its root) and is ignored. An outbound call handed
+  // to a colleague keeps the ORIGINAL agent's call; only the continuation goes.
+  var transferFrom = ocTransferSources_(rawRows, rootOf);
 
   var records = [];
   Object.keys(groups).forEach(function (root) {
@@ -76,6 +113,12 @@ function buildOutboundCallRecords_(rawRows) {
       return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
     });
     if (hasIncoming) return;
+
+    // Gate 1b (OBX-1): a transfer's continuation is not a new outbound call.
+    if (transferFrom[root] && !keepTransferTargets) {
+      records._transferDropped = (records._transferDropped || 0) + 1;
+      return;
+    }
 
     // Gate 2: external Outgoing legs (agent dialing out to a real number).
     var extLegs = legs.filter(function (l) {
@@ -143,7 +186,8 @@ function buildOutboundCallRecords_(rawRows) {
       talkSeconds:  talkSeconds,
       ringSeconds:  ringSeconds,
       attempts:     extLegs.length,
-      journey:      icBuildJourney_(legs)
+      journey:      icBuildJourney_(legs),
+      transferFrom: transferFrom[root] || null   // only ever set with opts.keepTransferTargets
     });
   });
 
@@ -178,6 +222,11 @@ function writeOutboundCallsToNeon(rawRows, opts) {
     // read its counter; the filter below is a belt-and-suspenders second net.
     var built = buildOutboundCallRecords_(rawRows);
     var unparsedDropped = built._unparsedDropped || 0;
+    // OBX-1: transfer continuations the builder left out (not an error).
+    if (built._transferDropped) {
+      Logger.log('writeOutboundCallsToNeon: left out %s transfer continuation(s) -- a customer handed '
+        + 'over by a warm transfer, not a dial (OBX-1, Operator State #82).', String(built._transferDropped));
+    }
     var records = built.filter(function (r) {
       if (r.callDate) return true;
       unparsedDropped++;
@@ -493,26 +542,40 @@ function backfillOutboundCalls(fromIso, toIso, force) {
 // a customer handed to them. 8x8 writes a warm transfer as a NEW call: the
 // employee who has the customer dials a queue / a colleague (Internal legs),
 // talks to them, then merges and drops off -- and the customer reappears in
-// that new call as an `Outgoing` leg from the receiving rep to the customer's
-// number. The new call has no Incoming leg (the customer's Incoming legs stay
-// under the ORIGINAL call id), so buildOutboundCallRecords_ counts it as the
-// rep dialing out. Two signals tie it back:
-//   (A) TRANSFER TARGET -- some leg of ANOTHER call names this call in its
-//       "Transfer To Call ID" column (col P). Parent Call ID only links a
-//       call's own queue legs, never one call to the next.
-//   (B) HAND-OVER -- the dialled number was on a live leg of another call
-//       (talk > 0) at the moment this leg started, within the capture's
-//       concurrent slack (IC_CONCURRENT_SLACK_MS_): a merge, not a dial.
-//       A genuine callback starts after the customer's call has ended.
-// This measures both on the surviving Call_Legs dates before either becomes a
-// rule. READ-ONLY: writes nothing; logs call ids + agent names, never a number.
-var OC_TRANSFER_TO_COL_ = 15;   // Raw Data col P, "Transfer To Call ID"
+// that new call as an `Outgoing` leg from the receiving rep. Two signals:
+//   (A) TRANSFER TARGET -- another call names this one in Transfer To Call ID.
+//       Since OBX-1 the capture LEAVES THESE OUT (buildOutboundCallRecords_);
+//       the diagnostic re-includes them (opts.keepTransferTargets) to say how
+//       many the rule removes.
+//   (B) NUMBER LIVE -- the dialled number was on a live leg of another call
+//       within the concurrent slack when this leg began. The first run
+//       (2026-10-23, 9 days) found 797 B-only calls (2.2%); the owner's
+//       samples were redials after a dropped call -- genuine dials -- so B is
+//       NOT a rule. OBX-1 sorts every B-only call by shape:
+//         untracked hand-over -- this call holds an Internal leg between this
+//             agent and an employee on the other call (the consult signature
+//             of a merge 8x8 did not record as a transfer)
+//         redial              -- the same agent was on the other call, which
+//             had ended by the time this leg began (a dropped call, re-dialled)
+//         duplicate dial      -- the other call is also this agent's outbound
+//             call to the number and was still live (one dial, two call ids)
+//         crossing call       -- the customer was calling IN (another
+//             employee, or no one yet) as the agent dialled out
+//         other               -- none of these; samples to look up
+// READ-ONLY: writes nothing; logs call ids + agent names, never a number.
 var OC_HANDOFF_SAMPLES_ = 5;
+var OC_BONLY_KINDS_ = ['untracked hand-over', 'redial', 'duplicate dial', 'crossing call', 'other'];
+
+/** Digits of an employee extension (1-6 digits), else ''. */
+function ocExtDigits_(v) {
+  var d = String(v == null ? '' : v).replace(/\D/g, '');
+  return (d.length >= 1 && d.length <= 6) ? d : '';
+}
 
 /** PURE. Per-call hand-over classification of one day's legs. */
 function ocTransferHandoffs_(rawRows) {
   var rows = rawRows || [];
-  var records = buildOutboundCallRecords_(rows) || [];
+  var records = buildOutboundCallRecords_(rows, { keepTransferTargets: true }) || [];
   var slack = (typeof IC_CONCURRENT_SLACK_MS_ === 'number') ? IC_CONCURRENT_SLACK_MS_ : 5000;
   var dirOf = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
   var cell = function (v) { var s = String(v == null ? '' : v).trim(); return (!s || s.toUpperCase() === 'N/A') ? '' : s; };
@@ -526,22 +589,18 @@ function ocTransferHandoffs_(rawRows) {
     rootOf[own] = root;
     (groups[root] = groups[root] || []).push(r);
   });
-  var hasIncoming = {};
+  var hasIncoming = {}, extsOf = {};
   Object.keys(groups).forEach(function (g) {
     hasIncoming[g] = groups[g].some(function (l) { return dirOf(l) === 'Incoming'; });
+    var ex = {};
+    groups[g].forEach(function (l) {
+      var a = ocExtDigits_(l[IC_COL.CALLER]), b = ocExtDigits_(l[IC_COL.CALLEE]);
+      if (a) ex[a] = true;
+      if (b) ex[b] = true;
+    });
+    extsOf[g] = ex;
   });
-
-  // (A) transfer targets: target root -> the first source root naming it.
-  var sourceOf = {};
-  rows.forEach(function (r) {
-    var own = cell(r[IC_COL.CALL_ID]);
-    var to = cell(r[OC_TRANSFER_TO_COL_]);
-    if (!own || !to) return;
-    var fromRoot = rootOf[own] || own;
-    var toRoot = rootOf[to] || to;
-    if (toRoot === fromRoot) return;   // a queue leg naming its own call
-    if (!sourceOf[toRoot]) sourceOf[toRoot] = fromRoot;
-  });
+  var sourceOf = ocTransferSources_(rows, rootOf);
   // Did the chain that led here start as a customer's INBOUND call?
   function chainStartsInbound(root) {
     for (var hop = 0, r = root; hop < 6 && sourceOf[r]; hop++) {
@@ -550,6 +609,8 @@ function ocTransferHandoffs_(rawRows) {
     }
     return false;
   }
+  var isOutboundRec = {};
+  records.forEach(function (rec) { isOutboundRec[rec.callId] = true; });
 
   // (B) live legs per external number: [start, stop] of talk > 0 legs.
   var live = {};
@@ -573,49 +634,88 @@ function ocTransferHandoffs_(rawRows) {
         if (!first || t < first.t) first = { leg: legs[i], t: t };
       }
     }
-    var handoverFrom = null;
+    var match = null;
     if (first && !isNaN(first.t)) {
       var n = icExternalNumber_(first.leg[IC_COL.CALLEE]);
       (live[n] || []).some(function (x) {
         if (x.root === rec.callId) return false;
-        if (x.s <= first.t + slack && x.e >= first.t - slack) { handoverFrom = x.root; return true; }
+        if (x.s <= first.t + slack && x.e >= first.t - slack) { match = x; return true; }
         return false;
       });
     }
-    var transferFrom = sourceOf[rec.callId] || null;
-    return {
+    var transferFrom = rec.transferFrom || null;
+    var out = {
       callId: rec.callId, callDate: rec.callDate, callStart: rec.callStart, agent: rec.agentName || '(unnamed)',
-      connected: rec.connected, transferFrom: transferFrom, handoverFrom: handoverFrom,
+      connected: rec.connected, transferFrom: transferFrom, handoverFrom: match ? match.root : null,
       inboundChain: !!(transferFrom && chainStartsInbound(rec.callId)),
+      kind: null, gapSec: null,
     };
+    if (!match || transferFrom) return out;
+
+    // B only: what shape is it?
+    var me = ocExtDigits_(rec.agentExt) || ocExtDigits_(first.leg[IC_COL.CALLER]);
+    var other = extsOf[match.root] || {};
+    var sameAgent = !!(me && other[me]);
+    var ended = match.e <= first.t + 1000;   // the other leg had stopped as this one began
+    out.gapSec = ended ? Math.max(0, Math.round((first.t - match.e) / 1000)) : null;
+    var consult = legs.some(function (l) {
+      if (dirOf(l) !== 'Internal') return false;
+      var a = ocExtDigits_(l[IC_COL.CALLER]), b = ocExtDigits_(l[IC_COL.CALLEE]);
+      if (!me || !a || !b) return false;
+      var peer = a === me ? b : (b === me ? a : '');
+      return !!(peer && peer !== me && other[peer]);
+    });
+    if (consult) out.kind = 'untracked hand-over';
+    else if (sameAgent && ended) out.kind = 'redial';
+    else if (sameAgent && isOutboundRec[match.root]) out.kind = 'duplicate dial';
+    else if (hasIncoming[match.root] && !ended) out.kind = 'crossing call';
+    else out.kind = 'other';
+    return out;
   });
 }
 
 /** PURE. Counts + per-agent tallies + samples over ocTransferHandoffs_ rows. */
 function ocSummarizeHandoffs_(rows) {
   var out = { outbound: 0, transferTarget: 0, handover: 0, both: 0, transferOnly: 0, handoverOnly: 0,
-              inboundChain: 0, outboundChain: 0, agents: {}, samples: { both: [], transferOnly: [], handoverOnly: [] } };
+              inboundChain: 0, outboundChain: 0, agents: {}, kinds: {}, gaps: { s0to1: 0, s2to5: 0, live: 0 },
+              samples: { both: [], transferOnly: [] }, kindSamples: {} };
+  OC_BONLY_KINDS_.forEach(function (k) { out.kinds[k] = 0; out.kindSamples[k] = []; });
   (rows || []).forEach(function (r) {
     out.outbound++;
     var a = !!r.transferFrom, b = !!r.handoverFrom;
-    if (a) { out.transferTarget++; if (r.inboundChain) out.inboundChain++; else out.outboundChain++; }
-    if (b) out.handover++;
-    var kind = a && b ? 'both' : (a ? 'transferOnly' : (b ? 'handoverOnly' : null));
-    if (!kind) return;
-    out[kind]++;
-    out.agents[r.agent] = (out.agents[r.agent] || 0) + 1;
-    if (out.samples[kind].length < OC_HANDOFF_SAMPLES_) {
-      out.samples[kind].push(r.callId + ' (' + r.agent + ', ' + r.callStart + ') <- '
-        + (r.transferFrom || r.handoverFrom) + (r.inboundChain ? ' [inbound chain]' : ''));
+    if (a) {
+      out.transferTarget++;
+      if (r.inboundChain) out.inboundChain++; else out.outboundChain++;
+      out.agents[r.agent] = (out.agents[r.agent] || 0) + 1;
     }
+    if (b) out.handover++;
+    var cls = a && b ? 'both' : (a ? 'transferOnly' : (b ? 'handoverOnly' : null));
+    if (!cls) return;
+    out[cls]++;
+    var line = r.callId + ' (' + r.agent + ', ' + r.callStart + ') <- ' + (r.transferFrom || r.handoverFrom)
+      + (r.inboundChain ? ' [inbound chain]' : '') + (r.gapSec != null ? ' [' + r.gapSec + ' s after]' : '');
+    if (cls !== 'handoverOnly') {
+      if (out.samples[cls].length < OC_HANDOFF_SAMPLES_) out.samples[cls].push(line);
+      return;
+    }
+    var k = r.kind || 'other';
+    out.kinds[k] = (out.kinds[k] || 0) + 1;
+    if (r.gapSec == null) out.gaps.live++;
+    else if (r.gapSec <= 1) out.gaps.s0to1++;
+    else out.gaps.s2to5++;
+    if ((out.kindSamples[k] = out.kindSamples[k] || []).length < OC_HANDOFF_SAMPLES_) out.kindSamples[k].push(line);
   });
   return out;
 }
 
+/** Whole numbers for the log (Logger prints a JS number as "12.0"). */
+function ocN_(n) { return String(Math.round(Number(n) || 0)); }
+
 /**
  * Editor-run, READ-ONLY. `dateIso` = one Call_Legs date, 'all' = every
  * surviving date, blank = the latest. Logs, per date and in total, how many
- * captured outbound calls are transfer hand-overs by each signal.
+ * captured outbound calls the transfer rule (A) now leaves out, and what
+ * shape the number-live-only (B) calls are.
  */
 function diagnoseOutboundTransfers(dateIso) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -631,29 +731,34 @@ function diagnoseOutboundTransfers(dateIso) {
   try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
   try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
 
-  var all = [], t0 = Date.now();
+  var all = [], t0 = Date.now(), done = 0;
   for (var i = 0; i < sheets.length; i++) {
     if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[ob-transfer] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
     var grid = sheets[i].sheet.getDataRange().getDisplayValues();
     grid.shift();
     var rows = ocTransferHandoffs_(grid);
     var d = ocSummarizeHandoffs_(rows);
-    Logger.log('[ob-transfer] %s: %s outbound calls; transfer target (A) %s, hand-over (B) %s -- both %s, A only %s, B only %s',
-      sheets[i].iso, d.outbound, d.transferTarget, d.handover, d.both, d.transferOnly, d.handoverOnly);
+    Logger.log('[ob-transfer] %s: %s outbound calls before the rule; transfer target (A, now left out) %s; number live only (B) %s -- %s',
+      sheets[i].iso, ocN_(d.outbound), ocN_(d.transferTarget), ocN_(d.handoverOnly),
+      OC_BONLY_KINDS_.map(function (k) { return k + ' ' + ocN_(d.kinds[k]); }).join(', '));
     all = all.concat(rows);
+    done++;
   }
   var s = ocSummarizeHandoffs_(all);
   var pct = function (n) { return s.outbound ? (Math.round(n / s.outbound * 1000) / 10) + '%' : '0%'; };
-  Logger.log('[ob-transfer] TOTAL %s outbound calls over %s date(s).', s.outbound, sheets.length);
-  Logger.log('[ob-transfer]   (A) a transfer target (another call names it in Transfer To Call ID): %s (%s) -- %s from a customer\'s inbound call, %s from an outbound call',
-    s.transferTarget, pct(s.transferTarget), s.inboundChain, s.outboundChain);
-  Logger.log('[ob-transfer]   (B) the number was live on another call when this leg began: %s (%s)', s.handover, pct(s.handover));
-  Logger.log('[ob-transfer]   both %s, A only %s, B only %s -- a hand-over by either signal: %s (%s)',
-    s.both, s.transferOnly, s.handoverOnly, s.both + s.transferOnly + s.handoverOnly, pct(s.both + s.transferOnly + s.handoverOnly));
+  Logger.log('[ob-transfer] TOTAL %s outbound calls over %s date(s), before the transfer rule.', ocN_(s.outbound), ocN_(done));
+  Logger.log('[ob-transfer]   (A) transfer continuations, LEFT OUT of the capture since OBX-1: %s (%s) -- %s from a customer\'s inbound call, %s from an outbound call (the original agent\'s call is kept); %s of them also had the number live (B)',
+    ocN_(s.transferTarget), pct(s.transferTarget), ocN_(s.inboundChain), ocN_(s.outboundChain), ocN_(s.both));
   var top = Object.keys(s.agents).sort(function (x, y) { return s.agents[y] - s.agents[x]; }).slice(0, 10);
-  if (top.length) Logger.log('[ob-transfer]   by agent: %s', top.map(function (a) { return a + ' ' + s.agents[a]; }).join(', '));
-  ['both', 'transferOnly', 'handoverOnly'].forEach(function (k) {
+  if (top.length) Logger.log('[ob-transfer]   left out, by agent: %s', top.map(function (a) { return a + ' ' + ocN_(s.agents[a]); }).join(', '));
+  ['both', 'transferOnly'].forEach(function (k) {
     if (s.samples[k].length) Logger.log('[ob-transfer]   %s e.g. (call <- the call it came from): %s', k, s.samples[k].join('; '));
+  });
+  Logger.log('[ob-transfer]   (B) number live on another call, NO transfer link -- still counted: %s (%s); the other call ended 0-1 s before %s, 2-5 s before %s, was still live %s',
+    ocN_(s.handoverOnly), pct(s.handoverOnly), ocN_(s.gaps.s0to1), ocN_(s.gaps.s2to5), ocN_(s.gaps.live));
+  OC_BONLY_KINDS_.forEach(function (k) {
+    Logger.log('[ob-transfer]     %s: %s (%s)%s', k, ocN_(s.kinds[k]), pct(s.kinds[k]),
+      s.kindSamples[k].length ? ' e.g. ' + s.kindSamples[k].join('; ') : '');
   });
   return s;
 }
