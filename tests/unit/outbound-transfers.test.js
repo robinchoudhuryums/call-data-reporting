@@ -187,7 +187,9 @@ test('the log prints whole numbers (Logger shows a JS number as "12.0")', functi
   assert.equal(h.call('ocN_', null), '0');
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'outboundCalls.js'), 'utf8');
   const diag = src.slice(src.indexOf('function diagnoseOutboundTransfers('));
-  for (const m of diag.matchAll(/Logger\.log\(([^;]+)\);/g)) {
+  const calls = [...diag.matchAll(/Logger\.log\(([\s\S]*?)\);\s*\n/g)];
+  assert.ok(calls.length >= 6, 'the log calls were found: ' + calls.length);
+  for (const m of calls) {
     assert.ok(!/,\s*(d|s)\.(outbound|transferTarget|handoverOnly|both|inboundChain|outboundChain)\b/.test(m[1]),
       'a raw count reaches Logger.log: ' + m[1].slice(0, 120));
   }
