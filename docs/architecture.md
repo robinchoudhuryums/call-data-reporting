@@ -353,8 +353,10 @@ Neon Postgres is the long-term archive and the future query backend.
   B — the outbound twin): right after the inbound block,
   `processIntegratedHistory` builds one record per distinct OUTBOUND
   external call (a leg group with NO Incoming leg + at least one
-  Outgoing leg to an external number — the no-Incoming gate keeps an
-  answered inbound call's agent 'Outgoing' talk leg out) and upserts to
+  Outgoing leg to an external number and not named in another call's
+  Transfer To Call ID — the no-Incoming gate keeps an answered inbound
+  call's agent 'Outgoing' talk leg out, the Transfer To gate a warm
+  transfer's continuation, OBX-1 / Operator State #82) and upserts to
   Neon's `outbound_calls` (PK `(call_date, call_id)`, authoritative
   per-date replace + the P-1 expected-date guard; the writer
   auto-creates the table + `idx_outbound_calls_callee_hash`). Captures
