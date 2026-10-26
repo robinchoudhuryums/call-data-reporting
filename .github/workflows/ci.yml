@@ -100,12 +100,19 @@ jobs:
       # to bisect. Bump deliberately (update the version here, watch one green
       # run). chromium-path.js globs the browser revision, so the pin does not
       # couple to a chromium path.
+      # CI-1 (2026-10-26): NO `--with-deps`. That flag apt-installs Chromium's
+      # system libraries plus ~20 MB of font packages, and the runner's apt
+      # mirror was slow enough that this step hit its 10-minute limit three
+      # times in one day (PR #385's main run, PR #388, PR #389's main run) with
+      # no test run. The ubuntu-latest image already carries the libraries
+      # Chromium needs. If a run fails to LAUNCH the browser (a missing
+      # lib*.so), restore `--with-deps` rather than adding packages by hand.
       - name: Install playwright
         working-directory: tools/ui-harness
         timeout-minutes: 10
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-audit --no-fund playwright@1.62.1
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
       - name: Rendered-UI gate (npm run ci:ui)
         run: npm run ci:ui
