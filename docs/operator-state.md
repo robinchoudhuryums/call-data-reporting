@@ -3616,27 +3616,37 @@ When something looks wrong, before assuming a code bug, check:
     `tests/unit/exception-days.test.js`; cross-file-pins fails a DQE reader
     that applies the queue split without the exception step.
 
-82. **Transfer hand-overs counted as outbound -- `diagnoseOutboundTransfers`
-    (cdr-import, owner 2026-10-23; read-only).** 8x8 writes a warm transfer as
-    a NEW call: the employee holding the customer dials a queue or a colleague,
-    talks to them, merges and drops off, and the customer reappears in that new
-    call as an `Outgoing` leg from the receiving rep to the customer's number.
-    That call has no `Incoming` leg (the customer's stay under the original
-    call id), so the outbound capture records it as the rep dialing out -- in
-    the agent panel's Outbound tab, Agent Day, Caller Lookup, Callbacks and the
-    outbound counts built on `outbound_calls`. (The Direct Calls report is not
-    affected: its build drops any call that touched a queue.) The diagnostic
-    measures two signals on the surviving `Call_Legs_*` dates before either
-    becomes a rule: (A) another call names this one in its **Transfer To Call
-    ID** column (col P; `Parent Call ID` only links a call's own queue legs,
-    never one call to the next), and (B) the dialled number was live on another
-    call when the leg began (within the capture's 5 s concurrent slack). Run
-    `diagnoseOutboundTransfers()` for the latest date or
-    `diagnoseOutboundTransfersAllDates()` for every surviving date; it logs
-    per-date and total counts (A, B, both, A only, B only), whether each chain
-    began as a customer's inbound call or an outbound one, the agents most
-    affected and sample call ids (call <- the call it came from) to check in
-    Raw Data. Writes nothing; no phone number is logged. Pinned by
-    `tests/unit/outbound-transfers.test.js`. **Next step:** the counts decide
-    the capture rule; the change is not retroactive, so stored dates keep
-    their hand-overs until re-imported (#56).
+82. **Transfer hand-overs counted as outbound -- the OBX-1 rule and
+    `diagnoseOutboundTransfers` (cdr-import, owner 2026-10-23 / 26).** 8x8
+    writes a warm transfer as a NEW call: the employee holding the customer
+    dials a queue or a colleague, talks to them, merges and drops off, and the
+    customer reappears in that new call as an `Outgoing` leg from the receiving
+    rep. That call has no `Incoming` leg, so the outbound capture used to count
+    it as the rep dialing out (agent panel Outbound tab, Agent Day, Caller
+    Lookup, Callbacks, every outbound count on `outbound_calls`; the Direct
+    Calls report was never affected -- its build drops queue calls). **Since
+    OBX-1 the capture leaves out any call another call names in its Transfer To
+    Call ID column (col P)** -- `Parent Call ID` only joins a call's own queue
+    legs, and a queue leg naming its own call is ignored. An outbound call an
+    agent handed to a colleague keeps the ORIGINAL agent's call; only the
+    continuation goes. First measurement (9 days to 2026-10-22): 1,491 of
+    36,391 captured outbound calls (4.1%), 99.7% of them also the customer's
+    number live on the source call. **Not retroactive:** dates still in
+    `Call_Legs_*` (~14 days) rebuild with `backfillOutboundCalls(from, to,
+    true)`; older stored dates keep their continuations. The import log says
+    how many it left out ("left out N transfer continuation(s)").
+    **`diagnoseOutboundTransfers()` / `diagnoseOutboundTransfersAllDates()`**
+    (read-only; call ids and agent names only, never a number) reports per
+    date and in total what the rule removes (inbound vs outbound chain, by
+    agent) and sorts every call whose number was live on another call WITHOUT
+    a transfer link -- still counted -- by shape: **untracked hand-over** (an
+    Internal consult leg between this agent and an employee on the other call:
+    a merge 8x8 did not record as a transfer), **redial** (the same agent's
+    earlier call to the number had just ended -- a dropped call re-dialled;
+    the owner's first samples), **duplicate dial** (the same agent's other
+    outbound call to the number still live: one dial, two call ids), **crossing
+    call** (the customer calling IN as the agent dials out), **other**, with
+    the gap after the other call and sample ids for each. Only an untracked
+    hand-over would justify a second exclusion rule; a duplicate dial is a
+    separate de-duplication fix; redials and crossing calls are genuine dials.
+    Pinned by `tests/unit/outbound-transfers.test.js`.

@@ -1121,7 +1121,7 @@ function icLoadConfiguredQueueNames_() {
   }
   IC_KNOWN_QUEUE_NAMES_ = set;
   var n = Object.keys(set).length;
-  if (n) Logger.log('icLoadConfiguredQueueNames_: %s configured queue name(s) recognized.', n);
+  if (n) Logger.log('icLoadConfiguredQueueNames_: %s configured queue name(s) recognized.', String(n));
   return set;
 }
 

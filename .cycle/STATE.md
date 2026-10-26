@@ -6,13 +6,17 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-22
+Updated: 2026-10-26
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-26 -- OBX-1 IMPLEMENTED (block 259-obx1-broad-implement).** The outbound capture leaves out a call another call names in "Transfer To Call ID" (a warm-transfer continuation, the receiving rep's leg to the customer); `diagnoseOutboundTransfers` now sorts the number-live-only calls into untracked hand-over / redial / duplicate dial / crossing call / other, in whole numbers. 2676 tests, 7/7 bites. NET 1 - 0 = 1.
+  **Owner-side:** deploy cdr-import; `backfillOutboundCalls(from, to, true)` over the held dates; re-run `diagnoseOutboundTransfersAllDates()` and report the B-only kinds.
+  **Open / owner to decide:** a second rule for the untracked hand-over shape, from the diagnostic.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (branch restarted from main after PR #386); NO PR yet (owner to say).
 - **2026-10-22 -- Exception days phase 1 + the Transfer % column IMPLEMENTED (block 259-exception-days-broad-implement).** An admin-managed `Exception Days` sheet (Admin ▾ → Exception days, INV-01 carve-out); the day is left out of every windowed figure (counts as well as rates) through ONE DQE step beside the queue split (cross-file-pinned) and `readQcdGrid_`'s filter. Every report names it, the day bars stripe it off the scale, the Overview trend bridges it under a hatch, and admins get an include switch. Comparison windows, per-workday averages, alerts, alert reasons and coaching treat it as a non-working day, on the server and in the client mirror. The CSR Transfer % column (28de416..e6b2de3) also went through the broad-implement steps. 2665 tests, 12 bites, ci:ui 703/703. NET 0 - 1 = -1 (until phase 2, the per-call reports and team-tools still count the day).
   **Owner-side:** deploy the dashboard; re-run `setup()`; add 09/21/26 "8x8 outage"; walk S68 and S44.
   **Open / owner to confirm:** the hollow trend point was built as a hatched band; phase 2 (per-call reports, team-tools #68, anomaly suggestions).

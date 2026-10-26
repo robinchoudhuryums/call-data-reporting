@@ -444,10 +444,15 @@ fixture (unlinked, exactly-60 s, synthetic-event and out-of-window cases).
 
 ### Outbound-call capture
 
-> **Known gap (2026-10-23, Operator State #82):** a warm transfer that ends
-> with the customer merged into a NEW call shows up here as the receiving
-> rep's outbound call -- that call has no `Incoming` leg. Sized by
-> `diagnoseOutboundTransfers`; the capture rule waits on its counts.
+> **Transfer continuations are left out (OBX-1, Operator State #82).** A warm
+> transfer that ends with the customer merged into a NEW call has no `Incoming`
+> leg, so it passed the no-Incoming gate as the receiving rep's outbound call.
+> `buildOutboundCallRecords_` now skips any call another call names in its
+> **Transfer To Call ID** (col P; a queue leg naming its own call is ignored),
+> so an outbound call handed to a colleague keeps only the original agent's
+> call. `opts.keepTransferTargets` re-includes them for the diagnostic only.
+> The inbound side's `outboundBusy` index deliberately still counts them -- the
+> agent WAS on the phone. Not retroactive (`backfillOutboundCalls(.., true)`).
 
 **Outbound-call capture is Neon-only and rides the daily import (Option
 B -- the per-call outbound twin of the inbound capture).**

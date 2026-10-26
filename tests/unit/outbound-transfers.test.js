@@ -56,10 +56,12 @@ function ownerExample() {
   ];
 }
 
-test('the capture counts the hand-over as an outbound call today (the bug being measured)', function () {
-  const recs = J(h.call('buildOutboundCallRecords_', ownerExample()));
-  assert.deepEqual(recs.map((r) => r.callId + ':' + r.agentName), ['C:Julienne Inaanuran'],
-    'B has Incoming legs, so only C slips through -- as Julienne dialing the customer');
+test('OBX-1: the capture leaves the transfer continuation out (it used to be Julienne "dialing" the customer)', function () {
+  const built = h.call('buildOutboundCallRecords_', ownerExample());
+  assert.equal(built.length, 0, 'C is the continuation of B\'s transfer, not a dial');
+  assert.equal(built._transferDropped, 1);
+  const kept = J(h.call('buildOutboundCallRecords_', ownerExample(), { keepTransferTargets: true }));
+  assert.deepEqual(kept.map((r) => r.callId + ':' + r.transferFrom), ['C:B'], 'the diagnostic still sees it, with its source');
 });
 
 test('both signals tie the owner\'s example back to the call it came from', function () {
@@ -111,4 +113,84 @@ test('an OUTBOUND call handed to a colleague: the original stays, the hand-over 
   assert.equal(s.outboundChain, 1);
   assert.equal(s.agents['Nicolas (Nitin) Ghonasgi'], 1);
   assert.ok(!JSON.stringify(s).includes(CUST), 'no phone number in the summary');
+  // and the capture itself keeps Camila's original call, drops Nicolas's continuation
+  assert.deepEqual(J(h.call('buildOutboundCallRecords_', rows)).map((r) => r.callId), ['P']);
+});
+
+// -- OBX-1: what shape is a number-live-only (B) call? ------------------------
+
+function bOnly(rows) {
+  const out = J(h.call('ocTransferHandoffs_', rows)).filter((r) => r.handoverFrom && !r.transferFrom);
+  assert.equal(out.length >= 1, true, 'expected a B-only call: ' + JSON.stringify(out));
+  return out;
+}
+
+test('a redial after a dropped call (the owner\'s samples) is a REDIAL, kept as a dial', function () {
+  const rows = [
+    leg({ id: 'R1', leg: 1, start: '11:00:00', conn: '11:00:05', stop: '11:02:00', dir: 'Outgoing', talk: '0:01:55', caller: '304',
+          callerName: 'Camila (Cheshta) Bhutani', callee: CUST, ans: 'Answered' }),
+    leg({ id: 'R2', leg: 1, start: '11:02:02', conn: '11:02:06', stop: '11:05:00', dir: 'Outgoing', talk: '0:02:54', caller: '304',
+          callerName: 'Camila (Cheshta) Bhutani', callee: CUST, ans: 'Answered' }),
+  ];
+  const r = bOnly(rows).filter((x) => x.callId === 'R2')[0];
+  assert.equal(r.kind, 'redial');
+  assert.equal(r.gapSec, 2);
+  assert.equal(J(h.call('buildOutboundCallRecords_', rows)).length, 2, 'both dials stay counted');
+});
+
+test('a merge with no Transfer To link but a consult leg is an UNTRACKED HAND-OVER', function () {
+  const rows = ownerExample().map((r) => { const c = r.slice(); c[15] = 'N/A'; return c; });   // strip every link
+  const r = bOnly(rows).filter((x) => x.callId === 'C')[0];
+  assert.equal(r.kind, 'untracked hand-over', 'Percy (215) consulted Julienne inside C and was on B with the customer');
+});
+
+test('one dial written as two call ids (still live) is a DUPLICATE DIAL', function () {
+  const rows = [
+    leg({ id: 'D1', leg: 1, start: '12:00:00', conn: '12:00:04', stop: '12:03:00', dir: 'Outgoing', talk: '0:02:56', caller: '304',
+          callerName: 'Camila (Cheshta) Bhutani', callee: CUST, ans: 'Answered' }),
+    leg({ id: 'D2', leg: 1, start: '12:00:01', conn: '12:00:04', stop: '12:03:00', dir: 'Outgoing', talk: '0:02:56', caller: '304',
+          callerName: 'Camila (Cheshta) Bhutani', callee: CUST, ans: 'Answered' }),
+  ];
+  const out = bOnly(rows);
+  assert.ok(out.every((x) => x.kind === 'duplicate dial'), JSON.stringify(out));
+});
+
+test('the customer calling IN while the agent dials out is a CROSSING CALL', function () {
+  const rows = [
+    leg({ id: 'X1', leg: 1, start: '13:00:00', conn: '13:00:00', stop: '13:04:00', dir: 'Incoming', talk: '0:04:00', caller: CUST,
+          callee: '9999', calleeName: 'Normal Call Menu - New', ans: 'Answered' }),
+    leg({ id: 'X2', leg: 1, start: '13:01:00', conn: '13:01:05', stop: '13:02:00', dir: 'Outgoing', talk: '0:00:55', caller: '304',
+          callerName: 'Camila (Cheshta) Bhutani', callee: CUST, ans: 'Answered' }),
+  ];
+  const r = bOnly(rows).filter((x) => x.callId === 'X2')[0];
+  assert.equal(r.kind, 'crossing call');
+  assert.equal(r.gapSec, null, 'the other call was still live');
+});
+
+test('the summary counts each B-only shape, buckets the gaps and keeps samples', function () {
+  const s = J(h.call('ocSummarizeHandoffs_', [
+    { callId: '1', agent: 'A', callStart: '09:00:00', handoverFrom: '0', kind: 'redial', gapSec: 1 },
+    { callId: '2', agent: 'A', callStart: '09:10:00', handoverFrom: '0', kind: 'redial', gapSec: 4 },
+    { callId: '3', agent: 'B', callStart: '09:20:00', handoverFrom: '0', kind: 'crossing call', gapSec: null },
+    { callId: '4', agent: 'B', callStart: '09:30:00' },
+  ]));
+  assert.equal(s.outbound, 4);
+  assert.equal(s.handoverOnly, 3);
+  assert.equal(s.kinds.redial, 2);
+  assert.equal(s.kinds['crossing call'], 1);
+  assert.deepEqual(s.gaps, { s0to1: 1, s2to5: 1, live: 1 });
+  assert.match(s.kindSamples.redial[1], /\[4 s after\]/);
+});
+
+test('the log prints whole numbers (Logger shows a JS number as "12.0")', function () {
+  assert.equal(h.call('ocN_', 3962), '3962');
+  assert.equal(h.call('ocN_', null), '0');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'outboundCalls.js'), 'utf8');
+  const diag = src.slice(src.indexOf('function diagnoseOutboundTransfers('));
+  const calls = [...diag.matchAll(/Logger\.log\(([\s\S]*?)\);\s*\n/g)];
+  assert.ok(calls.length >= 6, 'the log calls were found: ' + calls.length);
+  for (const m of calls) {
+    assert.ok(!/,\s*(d|s)\.(outbound|transferTarget|handoverOnly|both|inboundChain|outboundChain)\b/.test(m[1]),
+      'a raw count reaches Logger.log: ' + m[1].slice(0, 120));
+  }
 });
