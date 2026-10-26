@@ -194,3 +194,65 @@ test('the log prints whole numbers (Logger shows a JS number as "12.0")', functi
       'a raw count reaches Logger.log: ' + m[1].slice(0, 120));
   }
 });
+
+// -- OBX-2: the owner checked the "other" samples -------------------------------
+// Two departments independently calling the same insurer / facility, one of
+// them on hold: both are real dials, so it gets its own name, and every
+// B-only call says whether its number is an insurer's line.
+
+const INSURER = '18005550100';
+
+function colleagueRows() {
+  return [
+    leg({ id: 'H1', leg: 1, start: '14:00:00', conn: '14:00:05', stop: '14:20:00', dir: 'Outgoing', talk: '0:19:55', caller: '304',
+          callerName: 'Camila (Cheshta) Bhutani', callee: INSURER, ans: 'Answered' }),
+    leg({ id: 'H2', leg: 1, start: '14:05:00', conn: '14:05:04', stop: '14:09:00', dir: 'Outgoing', talk: '0:03:56', caller: '250',
+          callerName: 'Nicolas (Nitin) Ghonasgi', callee: INSURER, ans: 'Answered' }),
+  ];
+}
+
+test('OBX-2: a colleague dialling a number another employee is on (an insurer, on hold) is COLLEAGUE ON THE SAME NUMBER', function () {
+  const r = bOnly(colleagueRows()).filter((x) => x.callId === 'H2')[0];
+  assert.equal(r.kind, 'colleague on the same number');
+  assert.equal(r.gapSec, null, 'the first call was still live');
+  assert.equal(J(h.call('buildOutboundCallRecords_', colleagueRows())).length, 2, 'both stay counted -- they are real dials');
+});
+
+test('OBX-2: a different agent dialling just AFTER a colleague\'s call ended stays OTHER (not live)', function () {
+  const rows = colleagueRows();
+  rows[1] = leg({ id: 'H2', leg: 1, start: '14:20:03', conn: '14:20:06', stop: '14:24:00', dir: 'Outgoing', talk: '0:03:54', caller: '250',
+                   callerName: 'Nicolas (Nitin) Ghonasgi', callee: INSURER, ans: 'Answered' });
+  const r = bOnly(rows).filter((x) => x.callId === 'H2')[0];
+  assert.equal(r.kind, 'other');
+});
+
+test('OBX-2: B-only calls carry an insurer flag from the injected lookup; no number reaches the output', function () {
+  const seen = [];
+  const isInsurer = (n) => { seen.push(n); return n === '+' + INSURER; };
+  const out = J(h.call('ocTransferHandoffs_', colleagueRows(), { isInsurer }));
+  const h2 = out.filter((x) => x.callId === 'H2')[0];
+  assert.equal(h2.insurer, true);
+  assert.ok(seen.includes('+' + INSURER), 'the lookup is asked in the +digits hash space');
+  const s = J(h.call('ocSummarizeHandoffs_', out));
+  assert.equal(s.insurer, 1);
+  assert.equal(s.kindsInsurer['colleague on the same number'], 1);
+  assert.ok(!JSON.stringify(out).includes(INSURER) && !JSON.stringify(s).includes(INSURER), 'no phone number in the rows or summary');
+  // without a lookup every call is insurer:false and nothing throws
+  assert.ok(J(h.call('ocTransferHandoffs_', colleagueRows())).every((x) => x.insurer === false));
+  // a lookup that throws degrades to false
+  assert.ok(J(h.call('ocTransferHandoffs_', colleagueRows(), { isInsurer: () => { throw new Error('x'); } })).every((x) => x.insurer === false));
+});
+
+test('OBX-2: the insurer lookup turns itself OFF (with the reason) instead of guessing', function () {
+  delete h.state.props.HMAC_SECRET;
+  assert.match(J(h.call('ocInsurerLookup_')).why, /HMAC_SECRET/);
+  h.state.props.HMAC_SECRET = 'test-secret';
+  const real = h.ctx.getReachableNeonConn_;
+  h.ctx.getReachableNeonConn_ = () => null;
+  try {
+    assert.match(J(h.call('ocInsurerLookup_')).why, /unreachable/);
+  } finally {
+    h.ctx.getReachableNeonConn_ = real;
+    delete h.state.props.HMAC_SECRET;
+  }
+});

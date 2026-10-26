@@ -559,12 +559,23 @@ function backfillOutboundCalls(fromIso, toIso, force) {
 //             had ended by the time this leg began (a dropped call, re-dialled)
 //         duplicate dial      -- the other call is also this agent's outbound
 //             call to the number and was still live (one dial, two call ids)
+//         colleague on the same number -- a DIFFERENT employee's outbound
+//             call to the number was still live (OBX-2: the owner's "other"
+//             samples were two departments independently calling the same
+//             insurer / facility, one of them on hold)
 //         crossing call       -- the customer was calling IN (another
 //             employee, or no one yet) as the agent dialled out
 //         other               -- none of these; samples to look up
+// OBX-2 (owner-checked 2026-10-26): every B-only shape is a call someone
+// really placed, so the number-live test must NEVER become a capture rule --
+// a shared business line (an insurer) overlaps with itself by chance. Each
+// B-only call is also flagged when its number is in the insurer reference
+// table (Neon insurance_numbers, matched by hash; Operator State #55 keeps
+// the sheet block single-reader).
 // READ-ONLY: writes nothing; logs call ids + agent names, never a number.
 var OC_HANDOFF_SAMPLES_ = 5;
-var OC_BONLY_KINDS_ = ['untracked hand-over', 'redial', 'duplicate dial', 'crossing call', 'other'];
+var OC_BONLY_KINDS_ = ['untracked hand-over', 'redial', 'duplicate dial', 'colleague on the same number',
+                       'crossing call', 'other'];
 
 /** Digits of an employee extension (1-6 digits), else ''. */
 function ocExtDigits_(v) {
@@ -572,9 +583,14 @@ function ocExtDigits_(v) {
   return (d.length >= 1 && d.length <= 6) ? d : '';
 }
 
-/** PURE. Per-call hand-over classification of one day's legs. */
-function ocTransferHandoffs_(rawRows) {
+/**
+ * PURE. Per-call hand-over classification of one day's legs.
+ * opts.isInsurer(number) -> boolean flags B-only calls to an insurer's line;
+ * the number itself never leaves this function.
+ */
+function ocTransferHandoffs_(rawRows, opts) {
   var rows = rawRows || [];
+  var isInsurer = (opts && typeof opts.isInsurer === 'function') ? opts.isInsurer : null;
   var records = buildOutboundCallRecords_(rows, { keepTransferTargets: true }) || [];
   var slack = (typeof IC_CONCURRENT_SLACK_MS_ === 'number') ? IC_CONCURRENT_SLACK_MS_ : 5000;
   var dirOf = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
@@ -634,9 +650,9 @@ function ocTransferHandoffs_(rawRows) {
         if (!first || t < first.t) first = { leg: legs[i], t: t };
       }
     }
-    var match = null;
+    var match = null, n = null;
     if (first && !isNaN(first.t)) {
-      var n = icExternalNumber_(first.leg[IC_COL.CALLEE]);
+      n = icExternalNumber_(first.leg[IC_COL.CALLEE]);
       (live[n] || []).some(function (x) {
         if (x.root === rec.callId) return false;
         if (x.s <= first.t + slack && x.e >= first.t - slack) { match = x; return true; }
@@ -648,7 +664,7 @@ function ocTransferHandoffs_(rawRows) {
       callId: rec.callId, callDate: rec.callDate, callStart: rec.callStart, agent: rec.agentName || '(unnamed)',
       connected: rec.connected, transferFrom: transferFrom, handoverFrom: match ? match.root : null,
       inboundChain: !!(transferFrom && chainStartsInbound(rec.callId)),
-      kind: null, gapSec: null,
+      kind: null, gapSec: null, insurer: false,
     };
     if (!match || transferFrom) return out;
 
@@ -668,8 +684,10 @@ function ocTransferHandoffs_(rawRows) {
     if (consult) out.kind = 'untracked hand-over';
     else if (sameAgent && ended) out.kind = 'redial';
     else if (sameAgent && isOutboundRec[match.root]) out.kind = 'duplicate dial';
+    else if (!sameAgent && isOutboundRec[match.root] && !ended) out.kind = 'colleague on the same number';
     else if (hasIncoming[match.root] && !ended) out.kind = 'crossing call';
     else out.kind = 'other';
+    if (isInsurer) { try { out.insurer = !!isInsurer(n); } catch (eIns) { out.insurer = false; } }
     return out;
   });
 }
@@ -678,8 +696,8 @@ function ocTransferHandoffs_(rawRows) {
 function ocSummarizeHandoffs_(rows) {
   var out = { outbound: 0, transferTarget: 0, handover: 0, both: 0, transferOnly: 0, handoverOnly: 0,
               inboundChain: 0, outboundChain: 0, agents: {}, kinds: {}, gaps: { s0to1: 0, s2to5: 0, live: 0 },
-              samples: { both: [], transferOnly: [] }, kindSamples: {} };
-  OC_BONLY_KINDS_.forEach(function (k) { out.kinds[k] = 0; out.kindSamples[k] = []; });
+              samples: { both: [], transferOnly: [] }, kindSamples: {}, kindsInsurer: {}, insurer: 0 };
+  OC_BONLY_KINDS_.forEach(function (k) { out.kinds[k] = 0; out.kindSamples[k] = []; out.kindsInsurer[k] = 0; });
   (rows || []).forEach(function (r) {
     out.outbound++;
     var a = !!r.transferFrom, b = !!r.handoverFrom;
@@ -700,12 +718,41 @@ function ocSummarizeHandoffs_(rows) {
     }
     var k = r.kind || 'other';
     out.kinds[k] = (out.kinds[k] || 0) + 1;
+    if (r.insurer) { out.insurer++; out.kindsInsurer[k] = (out.kindsInsurer[k] || 0) + 1; }
     if (r.gapSec == null) out.gaps.live++;
     else if (r.gapSec <= 1) out.gaps.s0to1++;
     else out.gaps.s2to5++;
     if ((out.kindSamples[k] = out.kindSamples[k] || []).length < OC_HANDOFF_SAMPLES_) out.kindSamples[k].push(line);
   });
   return out;
+}
+
+/**
+ * OBX-2: a number -> is-insurer test from Neon's insurance_numbers (hashes
+ * only), or { fn: null, why } when it cannot be built. Read-only.
+ */
+function ocInsurerLookup_() {
+  var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+  if (!secret) return { fn: null, why: 'HMAC_SECRET is not set (Operator State #17)' };
+  var conn = (typeof getReachableNeonConn_ === 'function') ? getReachableNeonConn_() : null;
+  if (!conn) return { fn: null, why: 'Neon unreachable' };
+  var hashes = {}, count = 0;
+  try {
+    var st = conn.createStatement();
+    st.setQueryTimeout(20);
+    var rs = st.executeQuery('SELECT phone_hash FROM insurance_numbers');
+    while (rs.next()) { hashes[rs.getString(1)] = true; count++; }
+    rs.close(); st.close();
+  } catch (e) {
+    return { fn: null, why: 'insurance_numbers unreadable: ' + (e.message || e) };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+  if (!count) return { fn: null, why: 'insurance_numbers is empty (run syncInsuranceNumbersToNeon in cdr-report)' };
+  return {
+    count: count,
+    fn: function (num) { var h = num ? cdrHashPhone_(num, secret) : null; return !!(h && hashes[h]); },
+  };
 }
 
 /** Whole numbers for the log (Logger prints a JS number as "12.0"). */
@@ -730,13 +777,15 @@ function diagnoseOutboundTransfers(dateIso) {
   if (!sheets.length) { Logger.log('[ob-transfer] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
   try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
   try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
+  var ins = ocInsurerLookup_();
+  Logger.log('[ob-transfer] insurer flag: %s', ins.fn ? 'on (' + ocN_(ins.count) + ' insurer numbers)' : 'OFF -- ' + ins.why);
 
   var all = [], t0 = Date.now(), done = 0;
   for (var i = 0; i < sheets.length; i++) {
     if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[ob-transfer] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
     var grid = sheets[i].sheet.getDataRange().getDisplayValues();
     grid.shift();
-    var rows = ocTransferHandoffs_(grid);
+    var rows = ocTransferHandoffs_(grid, { isInsurer: ins.fn });
     var d = ocSummarizeHandoffs_(rows);
     Logger.log('[ob-transfer] %s: %s outbound calls before the rule; transfer target (A, now left out) %s; number live only (B) %s -- %s',
       sheets[i].iso, ocN_(d.outbound), ocN_(d.transferTarget), ocN_(d.handoverOnly),
@@ -756,8 +805,10 @@ function diagnoseOutboundTransfers(dateIso) {
   });
   Logger.log('[ob-transfer]   (B) number live on another call, NO transfer link -- still counted: %s (%s); the other call ended 0-1 s before %s, 2-5 s before %s, was still live %s',
     ocN_(s.handoverOnly), pct(s.handoverOnly), ocN_(s.gaps.s0to1), ocN_(s.gaps.s2to5), ocN_(s.gaps.live));
+  if (ins.fn) Logger.log('[ob-transfer]   of those, to an insurer\'s number: %s', ocN_(s.insurer));
   OC_BONLY_KINDS_.forEach(function (k) {
-    Logger.log('[ob-transfer]     %s: %s (%s)%s', k, ocN_(s.kinds[k]), pct(s.kinds[k]),
+    Logger.log('[ob-transfer]     %s: %s (%s)%s%s', k, ocN_(s.kinds[k]), pct(s.kinds[k]),
+      ins.fn ? ', insurer ' + ocN_(s.kindsInsurer[k]) : '',
       s.kindSamples[k].length ? ' e.g. ' + s.kindSamples[k].join('; ') : '');
   });
   return s;

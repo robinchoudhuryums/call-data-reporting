@@ -453,6 +453,10 @@ fixture (unlinked, exactly-60 s, synthetic-event and out-of-window cases).
 > call. `opts.keepTransferTargets` re-includes them for the diagnostic only.
 > The inbound side's `outboundBusy` index deliberately still counts them -- the
 > agent WAS on the phone. Not retroactive (`backfillOutboundCalls(.., true)`).
+> **The number-live signal is NOT a rule (OBX-2, owner-checked):** a call whose
+> customer number was live on another call but has no Transfer To link is a
+> real dial -- a redial, two employees calling the same insurer, a crossing
+> call -- and stays counted.
 
 **Outbound-call capture is Neon-only and rides the daily import (Option
 B -- the per-call outbound twin of the inbound capture).**

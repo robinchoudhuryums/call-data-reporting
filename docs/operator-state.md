@@ -3645,8 +3645,18 @@ When something looks wrong, before assuming a code bug, check:
     earlier call to the number had just ended -- a dropped call re-dialled;
     the owner's first samples), **duplicate dial** (the same agent's other
     outbound call to the number still live: one dial, two call ids), **crossing
-    call** (the customer calling IN as the agent dials out), **other**, with
-    the gap after the other call and sample ids for each. Only an untracked
-    hand-over would justify a second exclusion rule; a duplicate dial is a
-    separate de-duplication fix; redials and crossing calls are genuine dials.
-    Pinned by `tests/unit/outbound-transfers.test.js`.
+    call** (the customer calling IN as the agent dials out), **colleague on
+    the same number** (OBX-2: a DIFFERENT employee's outbound call to the
+    number still live -- two departments calling the same insurer or
+    facility, one on hold), **other**, with the gap after the other call and
+    sample ids for each, and how many of each went to an INSURER's line (a
+    hash join to Neon `insurance_numbers`; the first log line says "insurer
+    flag: OFF -- <why>" when `HMAC_SECRET` or Neon is missing). **Settled
+    (owner, 2026-10-26, OBX-2): the number-live-only calls are GENUINE calls
+    and stay counted** -- second run, 9 days: 797 (2.2%) = 519 redials, 203
+    "other" (the owner's samples: two departments calling the same insurer /
+    facility), 38 crossing calls, 36 duplicate dials, 1 untracked hand-over.
+    **Never turn the number-live test into a capture rule:** a shared business
+    line overlaps with itself by chance, and only the Transfer To link marks a
+    call 8x8 created for the rep. Pinned by
+    `tests/unit/outbound-transfers.test.js`.
