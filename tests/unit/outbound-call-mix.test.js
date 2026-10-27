@@ -127,3 +127,17 @@ test('probe: unset agents -> the window\'s top diallers; Neon down -> FAILED, no
   h.ctx.getDashboardNeonConn_ = function () { return null; };
   assert.match(J(h.call('probeOutboundCallMix')).result, /^FAILED \(Neon unreachable\)/);
 });
+
+// OXT-1: a colleague the agent consulted DURING an outside call (an appended
+// `transfer:true` event) is not the person the call was placed to.
+test('OXT-1: a consult / attempt / hand-over appended from another call is not "colleague"', function () {
+  const ctx = { companyHashes: {}, roster: ROSTER, briefSec: 8 };
+  const appended = JSON.stringify([
+    { t: '09:00:00', name: 'A.P.', kind: 'answer', talk: 300 },
+    { t: '09:02:00', name: 'Cal', kind: 'leg', missed: true, transfer: true },
+    { t: '09:03:00', name: 'Cal', kind: 'answer', talk: 60, transfer: true, consult: true },
+    { t: '09:04:00', name: 'Cal', kind: 'answer', talk: 90, transfer: true, handover: true },
+  ]);
+  assert.equal(h.ctx.obMixBucket_(row({ journey: appended }), ctx), 'external');
+  assert.equal(h.ctx.agentDayInternalCallee_(appended, 'Ann', ROSTER), null, 'the Agent Day "To" label reads no colleague either');
+});

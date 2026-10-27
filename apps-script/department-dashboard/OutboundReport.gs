@@ -4608,6 +4608,7 @@ var OB_INSTANT_LOPSIDED_ = 1.5;          // ...and this much MORE lopsided than 
 function obInstantDerivedRing_(journeyJson) {
   var ev;
   try { ev = JSON.parse(journeyJson || 'null'); } catch (e) { return null; }
+  ev = obJourneyOwnEvents_(ev);
   if (!ev || !ev.length) return null;
   var i, c;
   // 1. A phone-SHAPED callee name. Never seen on outbound (0 of 1200 sampled
@@ -4662,6 +4663,17 @@ function obJourneyNameClass_(ev) {
   return 'other';
 }
 
+/**
+ * PURE. A journey without its cross-referenced `transfer:true` events (OXT-1:
+ * a consult / attempt / hand-over appended from ANOTHER call -- an internal
+ * leg whose blank name reads '(unknown)', which step 3 above would otherwise
+ * take for the external leg). Non-arrays pass through.
+ */
+function obJourneyOwnEvents_(ev) {
+  if (!Array.isArray(ev)) return ev;
+  return ev.filter(function (e) { return !(e && e.transfer); });
+}
+
 /** PURE. The derived ring for ONE event, or null when it carries no duration. */
 function obJourneyEventRing_(ev) {
   if (!ev || ev.secs == null) return null;
@@ -4689,6 +4701,7 @@ function obJourneyEventRing_(ev) {
  * `journeys` is an array of parsed event arrays. Returns counts + medians only.
  */
 function obJourneyMarkerScores_(journeys) {
+  journeys = (journeys || []).map(obJourneyOwnEvents_);   // OXT-1
   var CLASSES = ['extNumber', 'extCaller', 'initials', 'unknown', 'queue', 'other'];
   var out = {
     rows: journeys.length,

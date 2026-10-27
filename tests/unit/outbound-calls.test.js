@@ -14,7 +14,7 @@ function leg(o) {
   r[0] = o.callId; r[1] = o.legId; r[2] = o.start; r[3] = o.connected || ''; r[4] = o.stop || '';
   r[5] = o.direction; r[6] = o.talk || '0:00:00'; r[7] = o.callTime || '0:00:00';
   r[8] = o.caller; r[9] = o.callerName || ''; r[10] = o.callee; r[11] = o.calleeName || '';
-  r[14] = o.parent || 'N/A'; r[16] = o.dialIn || 'N/A';
+  r[14] = o.parent || 'N/A'; r[15] = o.to || 'N/A'; r[16] = o.dialIn || 'N/A';
   r[23] = o.missed || '-'; r[24] = o.abandoned || '-'; r[25] = o.answered || '-';
   r[32] = o.holdDur || '0:00:00'; r[33] = o.calleeDisc || 'N/A'; r[34] = o.callerDisc || 'N/A';
   r[36] = o.dept || 'N/A';
@@ -401,4 +401,106 @@ test('F8: a backfill whose writes were hashless FAILS its summary row and return
     h.ctx.writeInboundCallsToNeon = saved.iw; h.ctx.writeOutboundCallsToNeon = saved.ow;
     h.ctx.logPipelineHealthWithFallback_ = saved.log;
   }
+});
+
+// ── OXT-1 (owner 2026-10-27): the outbound twin of IXT-1 ─────────────────
+// The owner's IXT-1 legs reshaped as an OUTBOUND call: Daniel (352) dials the
+// patient, tries Nash (242) while on the line -- missed, voicemail -- then
+// reaches him on a forked call named in Transfer To Call ID; Nash takes over.
+const OX_D = '10/26/2026 ';
+const OX_NUM = '12542223333';
+function oxCall(extra) {
+  extra = extra || {};
+  return [leg({ callId: 'OB1', legId: 1, start: OX_D + (extra.start || '9:30:00'), connected: OX_D + (extra.connected || '9:30:10'),
+    stop: OX_D + (extra.stop || '9:41:37'), direction: 'Outgoing', talk: extra.talk || '0:11:27', caller: '352',
+    callerName: 'Daniel (Dishant) Sahani', callee: OX_NUM, answered: 'Answered', to: extra.to || 'T1', dept: 'Customer Success' })];
+}
+function oxAttempt(id, start, calleeExt, calleeName) {
+  const p = start.split(':').map(Number);
+  const t = p[0] * 3600 + p[1] * 60 + p[2] + 16;
+  const end = Math.floor(t / 3600) + ':' + String(Math.floor(t / 60) % 60).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+  return [
+    leg({ callId: id, legId: 1, start: OX_D + start, stop: OX_D + end, direction: 'Internal', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: calleeExt, calleeName: calleeName, missed: 'Missed' }),
+    leg({ callId: id, legId: 2, start: OX_D + end, connected: OX_D + end, stop: OX_D + end, direction: 'Internal', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: 'Voicemail (' + calleeExt + ')', calleeName: calleeName, missed: 'Missed' }),
+  ];
+}
+function oxForked() {
+  return [
+    leg({ callId: 'T1', legId: 1, start: OX_D + '9:37:54', connected: OX_D + '9:37:54', stop: OX_D + '9:46:32', direction: 'Internal', talk: '0:08:37', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: '242', calleeName: 'Nash (Nitin) Parashar', answered: 'Answered' }),
+    leg({ callId: 'T1', legId: 2, start: OX_D + '9:37:55', stop: OX_D + '9:41:38', direction: 'Internal', caller: '242', callerName: 'Nash (Nitin) Parashar', callee: 'CallRecording (595)' }),
+    leg({ callId: 'T1', legId: 3, start: OX_D + '9:41:38', connected: OX_D + '9:41:38', stop: OX_D + '9:46:32', direction: 'Outgoing', talk: '0:04:54', caller: '242', callerName: 'Nash (Nitin) Parashar', callee: OX_NUM, answered: 'Answered' }),
+  ];
+}
+const oxAdded = (r) => JSON.parse(JSON.stringify(r.journey.filter((e) => e.transfer)));
+
+test('OXT-1: an outbound call gains the missed attempt, the consult and the hand-over -- journey only', function () {
+  const alone = build(oxCall({ to: 'N/A' }))[0];
+  const stats = {};
+  const recs = h.call('buildOutboundCallRecords_', oxCall().concat(oxAttempt('A1', '9:34:55', '242', 'Nash (Nitin) Parashar')).concat(oxForked()), { ixtStats: stats });
+  assert.equal(recs.length, 1, 'the continuation stays dropped (OBX-1); the attempt is no record');
+  const r = recs[0];
+  assert.deepEqual(oxAdded(r), [
+    { t: '09:34:55', name: 'Nash (Nitin) Parashar', kind: 'leg', missed: true, transfer: true, secs: 16, voicemail: true },
+    { t: '09:37:54', name: 'Nash (Nitin) Parashar', kind: 'answer', talk: 224, transfer: true, consult: true },
+    { t: '09:41:38', name: 'Nash (Nitin) Parashar', kind: 'answer', talk: 294, transfer: true, handover: true, secs: 294 },
+  ]);
+  ['connected', 'talkSeconds', 'ringSeconds', 'attempts', 'callStart', 'agentName', 'department'].forEach((k) => {
+    assert.deepEqual(r[k], alone[k], k + ' never moves');
+  });
+  assert.equal(stats.linked, 1);
+  assert.equal(stats.timing, 1);
+  assert.equal(stats.sinceConnect['2-10m'], 1, '4m45s after connect');
+  assert.ok(!JSON.stringify(r.journey).includes('2542223333'), 'no number in the journey');
+});
+
+test('OXT-1: an attempt deep into a long call lands in the 30m+ bucket (the hold-wait risk the diagnostic sizes)', function () {
+  const stats = {};
+  const recs = h.call('buildOutboundCallRecords_', oxCall({ to: 'N/A', stop: '10:20:00', talk: '0:49:50' })
+    .concat(oxAttempt('A1', '10:05:00', '242', 'Nash (Nitin) Parashar')), { ixtStats: stats });
+  assert.equal(oxAdded(recs[0]).length, 1);
+  assert.equal(stats.sinceConnect['30m+'], 1);
+});
+
+test('OXT-1: nothing is attached before the outside party connected or after the agent\'s leg ended', function () {
+  const recs = build(oxCall({ to: 'N/A' })
+    .concat(oxAttempt('A0', '9:29:00', '242', 'Nash (Nitin) Parashar'))
+    .concat(oxAttempt('A9', '9:50:00', '242', 'Nash (Nitin) Parashar')));
+  assert.equal(oxAdded(recs[0]).length, 0);
+});
+
+// The agent live on an inbound call AND an outbound call at once: an internal
+// dial then belongs to neither for certain, so BOTH captures leave it out.
+function oxInboundAt() {
+  return [
+    leg({ callId: 'IN1', legId: 1, start: OX_D + '9:31:00', stop: OX_D + '9:31:30', direction: 'Incoming', caller: '12145550001', callee: '103', calleeName: 'A_Q_CSR' }),
+    leg({ callId: 'IN1', legId: 2, start: OX_D + '9:31:30', connected: OX_D + '9:31:30', stop: OX_D + '9:40:00', direction: 'Incoming', talk: '0:08:30', caller: '12145550001', callee: '352', calleeName: 'Daniel (Dishant) Sahani', answered: 'Answered' }),
+  ];
+}
+test('OXT-1: the agent on an inbound AND an outbound call at once -- the attempt goes to neither', function () {
+  const rows = oxCall({ to: 'N/A' }).concat(oxInboundAt()).concat(oxAttempt('A1', '9:34:55', '242', 'Nash (Nitin) Parashar'));
+  const so = {}, si = {};
+  const ob = h.call('buildOutboundCallRecords_', rows, { ixtStats: so });
+  const inb = h.call('buildInboundCallRecords_', rows, { ixtStats: si });
+  assert.equal(oxAdded(ob[0]).length, 0, 'outbound');
+  const inRec = inb.find((r) => r.callId === 'IN1');
+  assert.equal(inRec.journey.filter((e) => e.transfer).length, 0, 'inbound (IXT-1 gains the same check)');
+  assert.equal(so.twoCalls, 1);
+  assert.equal(si.twoCalls, 1);
+});
+
+test('OXT-1: a transfer target named by an inbound call AND an outbound call is claimed by neither', function () {
+  const inbound = oxInboundAt();
+  inbound[1][15] = 'T1';
+  const rows = oxCall().concat(inbound).concat(oxForked());
+  const so = {};
+  const ob = h.call('buildOutboundCallRecords_', rows, { ixtStats: so });
+  const inb = h.call('buildInboundCallRecords_', rows);
+  assert.equal(oxAdded(ob.find((r) => r.callId === 'OB1')).length, 0);
+  assert.equal(inb.find((r) => r.callId === 'IN1').journey.filter((e) => e.transfer).length, 0);
+  assert.equal(so.ambiguous, 1);
+});
+
+test('OXT-1: the OBX diagnostics\' keepTransferTargets build is left as it was', function () {
+  const recs = h.call('buildOutboundCallRecords_', oxCall().concat(oxForked()), { keepTransferTargets: true });
+  recs.forEach((r) => assert.equal(oxAdded(r).length, 0, r.callId));
 });

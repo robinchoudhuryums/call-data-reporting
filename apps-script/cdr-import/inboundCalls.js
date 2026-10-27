@@ -943,7 +943,13 @@ function buildInboundCallRecords_(rawRows, opts) {
   internalPending.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
 
   // IXT-1: consults, attempts and hand-overs to a PERSON (journey-only).
-  icPersonTransferEnrich_(groups, recordByRoot, agentBusy, opts && opts.ixtStats);
+  // OXT-1: the outbound capture's live intervals + calls, for the cross-capture
+  // checks (an agent on an inbound and an outbound call at once; a transfer
+  // target named by one of each).
+  var outboundSources = {};
+  outboundBusy.forEach(function (e) { outboundSources[e.root] = true; });
+  icPersonTransferEnrich_(groups, recordByRoot, agentBusy, opts && opts.ixtStats,
+    { otherBusy: outboundBusy, otherSources: outboundSources });
 
   return records;
 }
@@ -1043,16 +1049,39 @@ function icMergeJourneyEvents_(journey, adds) {
   });
 }
 
+// OXT-1: how long the call had been connected when a timing-only attempt was
+// placed -- the long-hold risk (an attempt 25 minutes into an insurer hold is
+// likelier to be about something else than one a minute in).
+var IC_IXT_SINCE_BUCKETS_ = [['<2m', 120], ['2-10m', 600], ['10-30m', 1800], ['30m+', Infinity]];
+
 /**
- * PURE (mutates the captured records' journeys). `stats` (optional, the
- * diagnostic's) is filled with: linked, timing, ambiguous, outsideSkipped,
+ * PURE (mutates the captured records' journeys). Shared by BOTH captures
+ * (IXT-1 inbound, OXT-1 outbound): `recordByRoot` / `agentBusy` are THIS
+ * capture's records and live intervals; `opts`:
+ *   otherBusy      -- the OTHER capture's live intervals (icBusyIndexes_), so an
+ *                     agent live on an inbound AND an outbound call at once is
+ *                     ambiguous in both (OXT-1 cross-capture check);
+ *   otherSources   -- {root: true} of the other capture's calls, so an internal
+ *                     call named in Transfer To Call ID by two different calls
+ *                     (one per capture) is claimed by neither;
+ *   handoverNumber -- fn(record) -> the outside number the hand-over leg rings
+ *                     (inbound: the caller; outbound: the number dialled).
+ * `stats` (optional, the diagnostic's) is filled with: linked, timing,
+ * ambiguous (of which twoCalls = inbound + outbound at once), outsideSkipped,
  * calls (captured calls that gained an event), attemptsPerCall {1, 2, '3+'}
- * over timing attempts, samples { linked: [...], timing: [...] }.
+ * over timing attempts, sinceConnect {<2m, 2-10m, 10-30m, 30m+} per timing
+ * attempt, samples { linked: [...], timing: [...] }.
  */
-function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats) {
+function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats, opts) {
+  opts = opts || {};
+  var otherBusy = opts.otherBusy || [];
+  var otherSources = opts.otherSources || {};
+  var handNo = opts.handoverNumber || function (rec) { return rec.callerNumber || null; };
   var st = stats || {};
-  ['linked', 'timing', 'ambiguous', 'outsideSkipped', 'calls'].forEach(function (k) { st[k] = st[k] || 0; });
+  ['linked', 'timing', 'ambiguous', 'twoCalls', 'outsideSkipped', 'calls'].forEach(function (k) { st[k] = st[k] || 0; });
   st.attemptsPerCall = st.attemptsPerCall || { 1: 0, 2: 0, '3+': 0 };
+  st.sinceConnect = st.sinceConnect || {};
+  IC_IXT_SINCE_BUCKETS_.forEach(function (b) { st.sinceConnect[b[0]] = st.sinceConnect[b[0]] || 0; });
   st.samples = st.samples || { linked: [], timing: [] };
   var cell = function (v) { var x = String(v == null ? '' : v).trim(); return (!x || x.toUpperCase() === 'N/A') ? '' : x; };
   var dir = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
@@ -1060,9 +1089,10 @@ function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats) {
   Object.keys(groups).forEach(function (root) {
     groups[root].forEach(function (l) { var own = cell(l[IC_COL.CALL_ID]); if (own) rootOf[own] = root; });
   });
-  // Col P: target group -> the ONE captured call naming it.
+  // Col P: target group -> the ONE call naming it -- across BOTH captures, so a
+  // target two calls claim (one inbound, one outbound) goes to neither.
   var linkedTo = {};
-  Object.keys(recordByRoot).forEach(function (r) {
+  Object.keys(recordByRoot).concat(Object.keys(otherSources)).forEach(function (r) {
     (groups[r] || []).forEach(function (l) {
       var t = cell(l[IC_COL.TRANSFER_TO]);
       if (!t) return;
@@ -1080,9 +1110,10 @@ function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats) {
     if (g.some(function (l) { return icIsQueueName_(l[IC_COL.CALLEE_NAME]); })) return;   // R11-N's
     var target = linkedTo[root];
     if (target === '#ambiguous') { st.ambiguous++; return; }
+    if (target && !recordByRoot[target]) return;   // the other capture's
     if (target) {
       var rec = recordByRoot[target];
-      var ge = icIxtGroupEvents_(g, { linked: true, callerNumber: rec.callerNumber || null });
+      var ge = icIxtGroupEvents_(g, { linked: true, callerNumber: handNo(rec) });
       if (!ge) return;
       (adds[target] = adds[target] || []).push.apply(adds[target], ge.events);
       st.linked++;
@@ -1095,12 +1126,23 @@ function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats) {
     }
     var te = icIxtGroupEvents_(g, { linked: false });
     if (!te || !te.agentExt || isNaN(te.firstMs)) return;
-    var roots = icDistinctRoots_(icConcurrentMatches_(agentBusy, te.agentExt, te.firstMs, root));
-    if (roots.length > 1) { st.ambiguous++; return; }
+    var ownM = icConcurrentMatches_(agentBusy, te.agentExt, te.firstMs, root);
+    var roots = icDistinctRoots_(ownM);
+    var others = icDistinctRoots_(icConcurrentMatches_(otherBusy, te.agentExt, te.firstMs, root));
+    if (roots.length + others.length > 1) {
+      st.ambiguous++;
+      if (roots.length && others.length) st.twoCalls++;
+      return;
+    }
     if (roots.length !== 1 || !recordByRoot[roots[0]]) return;
     (adds[roots[0]] = adds[roots[0]] || []).push.apply(adds[roots[0]], te.events);
     timingPer[roots[0]] = (timingPer[roots[0]] || 0) + 1;
     st.timing++;
+    var connAt = Math.min.apply(null, ownM.map(function (m) { return m.startMs; }));
+    var since = Math.max(0, (te.firstMs - connAt) / 1000);
+    for (var bi = 0; bi < IC_IXT_SINCE_BUCKETS_.length; bi++) {
+      if (since < IC_IXT_SINCE_BUCKETS_[bi][1]) { st.sinceConnect[IC_IXT_SINCE_BUCKETS_[bi][0]]++; break; }
+    }
     if (st.samples.timing.length < 5) st.samples.timing.push(roots[0] + ' <- ' + root);
   });
   Object.keys(adds).forEach(function (r) {
@@ -3061,14 +3103,16 @@ function perCallAgentRewrite_(apply) {
 }
 
 /**
- * IXT-1 (owner 2026-10-27; Operator State #84): READ-ONLY. Over the held
- * Call_Legs_* tabs (`dateIso` = one date, 'all' = every held date, blank =
- * the latest), how many captured inbound calls gain a transfer / consult to a
- * person on their journey: linked through Transfer To Call ID, timing-only
- * attempts (and how many calls get 1 / 2 / 3+ of them), ambiguous skips (the
- * agent on two captured calls at once, or one internal call named by two), and
- * internal dials left out because the group also reached an outside number.
- * Same builder as the capture; call ids only, never a number. Writes nothing.
+ * IXT-1 / OXT-1 (owner 2026-10-27; Operator State #84): READ-ONLY. Over the
+ * held Call_Legs_* tabs (`dateIso` = one date, 'all' = every held date, blank =
+ * the latest), for BOTH captures -- inbound (IXT-1) and outbound (OXT-1) -- how
+ * many captured calls gain a transfer / consult to a person on their journey:
+ * linked through Transfer To Call ID, timing-only attempts (and how many calls
+ * get 1 / 2 / 3+ of them, and how long the call had been connected when each
+ * came -- the long-hold risk), ambiguous skips (of which: the agent live on an
+ * inbound AND an outbound call at once), and internal dials left out because
+ * the group also reached an outside number. Same builders as the capture; call
+ * ids only, never a number. Writes nothing.
  */
 function diagnosePersonTransfers(dateIso) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -3083,41 +3127,53 @@ function diagnosePersonTransfers(dateIso) {
   if (!sheets.length) { Logger.log('[ixt] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
   try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
   try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
-  var total = icIxtFoldStats_(null, null);
+  var total = { inbound: icIxtFoldStats_(null, null), outbound: icIxtFoldStats_(null, null) };
   var t0 = Date.now();
   for (var i = 0; i < sheets.length; i++) {
     if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[ixt] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
     var grid = sheets[i].sheet.getDataRange().getDisplayValues();
     grid.shift();
-    var st = {};
-    var recs = buildInboundCallRecords_(grid, { ixtStats: st });
-    var captured = recs.filter(function (r) { return !r.isInternal; }).length;
-    Logger.log('[ixt] %s: %s captured inbound calls; %s gained an event -- linked transfers %s, timing-only attempts %s '
-      + '(calls with 1 / 2 / 3+: %s / %s / %s), ambiguous skipped %s, internal dials left out (group reached an outside number) %s',
-      sheets[i].iso, String(captured), String(st.calls), String(st.linked), String(st.timing),
-      String(st.attemptsPerCall[1]), String(st.attemptsPerCall[2]), String(st.attemptsPerCall['3+']),
-      String(st.ambiguous), String(st.outsideSkipped));
-    total = icIxtFoldStats_(total, st, captured);
+    var st = {}, so = {};
+    var inCaptured = buildInboundCallRecords_(grid, { ixtStats: st }).filter(function (r) { return !r.isInternal; }).length;
+    var obCaptured = (typeof buildOutboundCallRecords_ === 'function')
+      ? buildOutboundCallRecords_(grid, { ixtStats: so }).length : 0;
+    Logger.log('[ixt] %s inbound: %s', sheets[i].iso, icIxtStatsLine_(st, inCaptured));
+    Logger.log('[ixt] %s outbound: %s', sheets[i].iso, icIxtStatsLine_(so, obCaptured));
+    total.inbound = icIxtFoldStats_(total.inbound, st, inCaptured);
+    total.outbound = icIxtFoldStats_(total.outbound, so, obCaptured);
   }
-  Logger.log('[ixt] TOTAL over %s date(s): %s captured calls, %s gained an event; linked %s, timing-only %s '
-    + '(1 / 2 / 3+: %s / %s / %s), ambiguous %s, outside-number skips %s',
-    String(total.days), String(total.captured), String(total.calls), String(total.linked), String(total.timing),
-    String(total.attemptsPerCall[1]), String(total.attemptsPerCall[2]), String(total.attemptsPerCall['3+']),
-    String(total.ambiguous), String(total.outsideSkipped));
-  if (total.samples.linked.length) Logger.log('[ixt]   linked e.g. (customer call <- internal call): %s', total.samples.linked.join('; '));
-  if (total.samples.timing.length) Logger.log('[ixt]   timing-only e.g. (customer call <- internal call): %s', total.samples.timing.join('; '));
+  ['inbound', 'outbound'].forEach(function (k) {
+    var t = total[k];
+    Logger.log('[ixt] TOTAL %s over %s date(s): %s', k, String(t.days), icIxtStatsLine_(t, t.captured));
+    if (t.samples.linked.length) Logger.log('[ixt]   %s linked e.g. (call <- internal call): %s', k, t.samples.linked.join('; '));
+    if (t.samples.timing.length) Logger.log('[ixt]   %s timing-only e.g. (call <- internal call): %s', k, t.samples.timing.join('; '));
+  });
   return total;
 }
 
-/** PURE. Folds one date's IXT-1 stats into the running total (null starts one). */
+/** PURE. One direction's stats as a log line (the diagnostic's per-date and TOTAL rows). */
+function icIxtStatsLine_(st, captured) {
+  var sc = st.sinceConnect || {};
+  return String(captured || 0) + ' captured calls; ' + String(st.calls || 0) + ' gained an event -- linked transfers '
+    + String(st.linked || 0) + ', timing-only attempts ' + String(st.timing || 0)
+    + ' (calls with 1 / 2 / 3+: ' + [1, 2, '3+'].map(function (k) { return String((st.attemptsPerCall || {})[k] || 0); }).join(' / ')
+    + '; placed after the call had been connected ' + IC_IXT_SINCE_BUCKETS_.map(function (b) {
+      return b[0] + ' ' + String(sc[b[0]] || 0); }).join(', ')
+    + '), ambiguous skipped ' + String(st.ambiguous || 0) + ' (agent on an inbound AND an outbound call at once '
+    + String(st.twoCalls || 0) + '), internal dials left out (group reached an outside number) ' + String(st.outsideSkipped || 0);
+}
+
+/** PURE. Folds one date's IXT-1 / OXT-1 stats (one direction) into the running total (null starts one). */
 function icIxtFoldStats_(total, st, captured) {
-  var t = total || { days: 0, captured: 0, calls: 0, linked: 0, timing: 0, ambiguous: 0, outsideSkipped: 0,
-                     attemptsPerCall: { 1: 0, 2: 0, '3+': 0 }, samples: { linked: [], timing: [] } };
+  var t = total || { days: 0, captured: 0, calls: 0, linked: 0, timing: 0, ambiguous: 0, twoCalls: 0, outsideSkipped: 0,
+                     attemptsPerCall: { 1: 0, 2: 0, '3+': 0 }, sinceConnect: {}, samples: { linked: [], timing: [] } };
+  IC_IXT_SINCE_BUCKETS_.forEach(function (b) { t.sinceConnect[b[0]] = t.sinceConnect[b[0]] || 0; });
   if (!st) return t;
   t.days++;
   t.captured += captured || 0;
-  ['calls', 'linked', 'timing', 'ambiguous', 'outsideSkipped'].forEach(function (k) { t[k] += st[k] || 0; });
+  ['calls', 'linked', 'timing', 'ambiguous', 'twoCalls', 'outsideSkipped'].forEach(function (k) { t[k] += st[k] || 0; });
   [1, 2, '3+'].forEach(function (k) { t.attemptsPerCall[k] += (st.attemptsPerCall || {})[k] || 0; });
+  IC_IXT_SINCE_BUCKETS_.forEach(function (b) { t.sinceConnect[b[0]] += (st.sinceConnect || {})[b[0]] || 0; });
   ['linked', 'timing'].forEach(function (k) {
     ((st.samples || {})[k] || []).forEach(function (s) { if (t.samples[k].length < 5) t.samples[k].push(s); });
   });

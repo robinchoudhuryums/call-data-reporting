@@ -360,7 +360,8 @@ function agentDayInboundFrom_(r, ctx) {
  * PURE. The internal colleague an outbound dial reached: the first non-queue
  * journey event whose name is EXACTLY a roster agent other than the dialler.
  * Masked outside legs ('A.P.', '(external caller)', '(unknown)') never match
- * a roster name, so nothing outside can surface here. Null when none.
+ * a roster name, so nothing outside can surface here. Cross-referenced
+ * `transfer:true` events (OXT-1) are skipped. Null when none.
  */
 function agentDayInternalCallee_(journeyJson, agentName, roster) {
   var ev;
@@ -368,7 +369,9 @@ function agentDayInternalCallee_(journeyJson, agentName, roster) {
   if (!ev || !ev.length || !roster) return null;
   for (var i = 0; i < ev.length; i++) {
     var e1 = ev[i];
-    if (!e1 || e1.kind === 'queue') continue;
+    // OXT-1: a consult / attempt / hand-over appended from another call names
+    // a colleague the agent reached DURING the call, not the one dialled.
+    if (!e1 || e1.kind === 'queue' || e1.transfer) continue;
     var n = String(e1.name == null ? '' : e1.name).trim();
     if (n && n !== agentName && roster[n]) return n;
   }
