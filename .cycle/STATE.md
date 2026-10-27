@@ -13,10 +13,13 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-27 (2) -- IXT-1 IMPLEMENTED (block 259-ixt1-broad-implement).** Caller Lookup stopped at the agent who answered when they transferred / consulted a colleague. The capture now appends, journey-only (transfer:true), the Transfer To target (consult + the colleague taking the caller) and every internal dial from the answering agent while live (keyed on the caller, any callee); recording legs left the journey; `diagnosePersonTransfers` (#84). 2699 tests, 10/11 bites. NET 1 - 1 = 0.
+  **Owner-side:** deploy cdr-import AND the dashboard; `backfillInboundCalls(from, to, true)` + Inbound Calls export; run `diagnosePersonTransfers('all')`; walk S38's IXT-1 step on 1783985478661.
+  **Where I left off:** committed on claude/exciting-goodall-7tkygn ON TOP OF DCA-1 (PR #391, open); push after #391 merges (branch restart + this commit), then open its own PR.
 - **2026-10-27 -- DCA-1 IMPLEMENTED (block 259-dca1-broad-implement).** The Direct Call Report credited direct calls by EXTENSION only, so a former employee (kept on DO NOT EDIT! for long-term data) got the calls of whoever 8x8 gave their extension to. The build now credits by extension AND the leg's own name (canonicalized): somebody else -> no one; a blank / non-person name keeps the extension rule until the owner decides from `diagnoseDirectCallAttribution` (Operator State #83). 2689 tests, 8/8 bites. NET 1 - 1 = 0.
   **Owner-side:** deploy cdr-import; run `diagnoseDirectCallAttribution('all')` and send the log; alias any current employee listed under "somebody else"; rebuild held dates / re-import older ones.
   **Open / owner to decide:** the blank-name rule; step 2 (CDR Historical per-agent build, same flaw).
-  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (restarted from main after PR #390); NO PR yet (owner to say).
+  **Where I left off:** PR #391 opened 2026-10-27 (owner asked).
 - **2026-10-26 (2) -- OBX-2 IMPLEMENTED (block 259-obx2-broad-implement).** After OBX-1's deploy the owner checked the "other" number-live-only samples: two departments calling the same insurer / facility, one on hold -- genuine. `diagnoseOutboundTransfers` now names that case "colleague on the same number" and flags insurer lines (Neon `insurance_numbers` hash join, OFF with a reason when unavailable); #82 records that the number-live test must never become a capture rule. 2680 tests, 5/5 bites. NET 0 - 0 = 0.
   **Owner-side:** deploy cdr-import (diagnostic only); optionally re-run `diagnoseOutboundTransfersAllDates()`. OBX-1's backfill is DONE (owner, 2026-10-26).
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (restarted from main after PR #387); NO PR yet (owner to say).
