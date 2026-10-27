@@ -3302,3 +3302,17 @@ test('CE-3: getOutboundDirectRepeats lists 2+-attempt episodes nobody called bac
   assert.equal(h.call('getOutboundDirectRepeats', { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })
     .meta.available, false);
 });
+
+// OXT-1: the ring probes measure the call's OWN external leg -- an appended
+// consult / attempt (`transfer:true`, a blank internal name reads '(unknown)')
+// is never taken for it.
+test('OXT-1: the ring probes skip appended transfer events', function () {
+  const j = JSON.stringify([
+    { t: '09:00:00', name: 'Ann', kind: 'answer', talk: 0 },
+    { t: '09:02:00', name: '(unknown)', kind: 'leg', missed: true, transfer: true, secs: 30 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), null, 'the appended (unknown) is not the external leg');
+  const scores = h.ctx.obJourneyMarkerScores_([JSON.parse(j)]);
+  assert.equal(scores.classEvents.unknown, 0);
+  assert.equal(scores.rowsWithClass.other, 1);
+});

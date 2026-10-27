@@ -1654,8 +1654,9 @@ test('IXT-1: a Transfer To naming the call\'s OWN id is not a transfer', functio
 test('IXT-1: the diagnostic\'s fold sums days and keeps at most five samples', function () {
   let t = h.call('icIxtFoldStats_', null, null);
   for (let i = 0; i < 3; i++) {
-    t = h.call('icIxtFoldStats_', t, { calls: 2, linked: 1, timing: 3, ambiguous: 1, outsideSkipped: 0,
-      attemptsPerCall: { 1: 1, 2: 0, '3+': 1 }, samples: { linked: ['a' + i, 'b' + i], timing: ['c' + i] } }, 10);
+    t = h.call('icIxtFoldStats_', t, { calls: 2, linked: 1, timing: 3, ambiguous: 1, twoCalls: 1, outsideSkipped: 0,
+      attemptsPerCall: { 1: 1, 2: 0, '3+': 1 }, sinceConnect: { '<2m': 2, '30m+': 1 },
+      samples: { linked: ['a' + i, 'b' + i], timing: ['c' + i] } }, 10);
   }
   t = JSON.parse(JSON.stringify(t));
   assert.equal(t.days, 3);
@@ -1663,4 +1664,9 @@ test('IXT-1: the diagnostic\'s fold sums days and keeps at most five samples', f
   assert.equal(t.timing, 9);
   assert.deepEqual(t.attemptsPerCall, { 1: 3, 2: 0, '3+': 3 });
   assert.equal(t.samples.linked.length, 5);
+  assert.equal(t.twoCalls, 3);
+  assert.deepEqual(t.sinceConnect, { '<2m': 6, '2-10m': 0, '10-30m': 0, '30m+': 3 });
+  const line = h.call('icIxtStatsLine_', t, t.captured);
+  assert.match(line, /placed after the call had been connected <2m 6, 2-10m 0, 10-30m 0, 30m\+ 3/);
+  assert.match(line, /agent on an inbound AND an outbound call at once 3/);
 });

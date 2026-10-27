@@ -132,6 +132,19 @@ retention prune keeps a date's tab while its capture is still owed (#43).
 > and the same `callerLookupShapeCall_` payload, the sheet fallback included.
 > Recording legs (`CallRecording (...)`) are no longer journey steps. Not
 > retroactive (`backfillInboundCalls(.., true)` + the Inbound Calls export).
+>
+> **OXT-1 -- the same pass on OUTBOUND calls** (`buildOutboundCallRecords_`
+> calls `icPersonTransferEnrich_` with `handoverNumber` = the number dialled):
+> the Transfer To continuation OBX-1 drops gives the consult + hand-over, and
+> attempts count only while the agent is CONNECTED to the outside party.
+> connected / talk / ring / attempts never move. **Both captures check across
+> each other** (`otherBusy` / `otherSources`): an agent live on an inbound AND
+> an outbound call at once gets an internal dial attached to neither, and a
+> target named by one call of each is claimed by neither. Outbound journey
+> readers skip the added events too: `agentDayInternalCallee_` (the Agent Day
+> "To" label + the call-mix probe's colleague bucket) and the ring probes
+> (`obJourneyOwnEvents_`). Not retroactive (`backfillOutboundCalls(.., true)`
+> + the Outbound Calls export).
 
 **Internal-transfer journey enrichment (R11-N) -- inbound capture.**
 When an agent answers an inbound call and transfers the caller to a queue

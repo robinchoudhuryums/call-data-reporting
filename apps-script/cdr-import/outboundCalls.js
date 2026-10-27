@@ -193,6 +193,36 @@ function buildOutboundCallRecords_(rawRows, opts) {
     });
   });
 
+  // OXT-1 (owner 2026-10-27): transfers / consults / attempts to a PERSON,
+  // journey-only -- the outbound twin of inboundCalls.js's IXT-1 pass, through
+  // the SAME icPersonTransferEnrich_. connected / talk / ring / attempts were
+  // computed above and never move; every added event is `transfer:true`.
+  //   LINKED -- the call this call names in Transfer To Call ID (the
+  //             continuation Gate 1b drops): the consult and the colleague's
+  //             hand-over leg to the number dialled.
+  //   TIMING -- internal dials from the dialling agent's extension while
+  //             connected to the outside party, only when the agent was on
+  //             exactly ONE call then, inbound included (icBusyIndexes_ over
+  //             the Incoming groups is the inbound side's notion of live).
+  // Skipped under keepTransferTargets (the OBX diagnostics read raw records).
+  if (!keepTransferTargets && records.length) {
+    var recordByRoot = {};
+    records.forEach(function (rr) { recordByRoot[rr.callId] = rr; });
+    var inboundRoots = {};
+    Object.keys(groups).forEach(function (root) {
+      if (groups[root].some(function (l) {
+        return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
+      })) inboundRoots[root] = true;
+    });
+    var busy = icBusyIndexes_(groups, inboundRoots);
+    var ownBusy = busy.outboundBusy.filter(function (e) { return recordByRoot[e.root]; });
+    icPersonTransferEnrich_(groups, recordByRoot, ownBusy, opts && opts.ixtStats, {
+      otherBusy: busy.agentBusy,
+      otherSources: inboundRoots,
+      handoverNumber: function (rec) { return rec.calleeNumber || null; }
+    });
+  }
+
   return records;
 }
 
