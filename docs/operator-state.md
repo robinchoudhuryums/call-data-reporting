@@ -3712,3 +3712,24 @@ When something looks wrong, before assuming a code bug, check:
     internal dials left out because the same internal call also reached an
     outside number. Pinned by `tests/unit/inbound-calls.test.js`,
     `agent-home.test.js` and `client-correctness.test.js`.
+
+    **OXT-1 (owner 2026-10-27) -- the OUTBOUND twin.** The same pass now runs
+    on captured outbound calls: the call named in Transfer To Call ID (the
+    continuation OBX-1 drops, #82) adds the consult and the colleague taking
+    over the call; internal dials from the dialling agent's extension while
+    CONNECTED to the outside party add attempts / consults. Connected, talk,
+    ring and attempts never move. **Both directions now check across each
+    other:** an agent live on an inbound AND an outbound call at once gets an
+    internal dial attached to NEITHER, and a transfer target named by one call
+    of each is claimed by neither. **Not retroactive:**
+    `backfillOutboundCalls(from, to, true)`, then the Outbound Calls tab export
+    (#50). `diagnosePersonTransfers` now logs BOTH directions per date, plus
+    "agent on an inbound AND an outbound call at once" and **how long the call
+    had been connected when each timing-only attempt came** (<2m / 2-10m /
+    10-30m / 30m+). Read that last line before trusting outbound timing
+    attempts: outbound calls to insurers often sit on long holds, and an
+    attempt 30 minutes in is likelier to be about something else. If the
+    30m+ share is large and the samples show unrelated calls, say so -- the
+    timing half can be limited without touching the linked half. Pinned by
+    `outbound-calls.test.js`, `outbound-call-mix.test.js`,
+    `outbound-report.test.js`.
