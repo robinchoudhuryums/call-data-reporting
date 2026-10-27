@@ -822,6 +822,20 @@ in the response.
 
 ### Direct-extension call metrics
 
+> **An extension AND the name on the leg (DCA-1, Operator State #83).**
+> Former employees stay on `DO NOT EDIT!` with their old extension, and 8x8
+> reassigns extensions, so the build no longer credits a leg by extension
+> alone: `dcResolveAgent_` takes the name 8x8 put on the agent's side
+> (CALLEE_NAME when the agent is called, CALLER_NAME when they call), runs it
+> through the DQE canonicalizer (`dcRosterCanonicalizer_` ->
+> `canonicalizeAgentNameWith_`, INV-24) and credits the roster cell on that
+> extension with that name -- `dcBuildExtMaps_` now lists EVERY cell per
+> extension (`extCands`) -- or NO ONE when it names somebody else. A blank or
+> non-person name (`dcPersonName_`: N/A, a queue, voicemail, anything with a
+> digit) keeps the extension-only rule unchanged, pending the owner's call on
+> `diagnoseDirectCallAttribution`. Busy time follows the same rule. Not
+> retroactive.
+
 **Direct-extension call metrics are a separate population from the
 DQE/QCD queue metrics, with a "busy" carve-out.** `cdr-import/directCallMetrics.js`
 (cdr-import-only -- NOT an INV-16 byte-identical duplicated file) computes

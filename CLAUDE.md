@@ -2162,6 +2162,7 @@ items for anything it flags or doesn't cover.)
 80. `diagnoseDirectCallCounting` (cdr-import) -- read-only: sizes what re-importing a pre-D2 date changes (D2 is not retroactive), then re-import per #56
 81. Exception days -- the `Exception Days` sheet (Admin ▾ → Exception days): a day left out of every windowed figure (counts too) and named on every report; admin-only include switch; per-call reports + team-tools are phase 2
 82. Warm-transfer continuations are NOT outbound calls (OBX-1: the capture skips a call named in another call's Transfer To Call ID; not retroactive) + `diagnoseOutboundTransfers` (cdr-import, read-only) sorting the number-live-only calls by shape -- owner-checked genuine calls (OBX-2), so the number-live test is never a rule
+83. Direct calls credited by extension AND the leg's name (DCA-1: a former employee's reassigned extension no longer credits them; a blank name keeps the extension rule pending the owner's call; not retroactive) + `diagnoseDirectCallAttribution` (cdr-import, read-only)
 
 ## Cycle Workflow Config
 

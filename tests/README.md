@@ -544,7 +544,16 @@ tests/
                               workdays, the D1b int/ext split, D0's
                               diagnose counters and D2's counting rules --
                               root-keyed events, every roster ext,
-                              Internal dials, anonymous callers),
+                              Internal dials, anonymous callers; DCA-1:
+                              an extension AND the leg's own name -- a
+                              former employee's extension named for its
+                              new owner credits no one (or the roster
+                              cell that names them), a blank / label name
+                              keeps the extension rule, nickname variants
+                              still match, busy follows the person, the
+                              step 0 diagnostic's day fold / shared exts /
+                              contested blank legs / changed rows, whole
+                              numbers and no phone number),
                               heatmap-cell-drill (the R16h dow+slot pair
                               contract), inbound-window-scope (the
                               INBOUND_WORK_WINDOW_PST sweep + its two

@@ -3660,3 +3660,31 @@ When something looks wrong, before assuming a code bug, check:
     line overlaps with itself by chance, and only the Transfer To link marks a
     call 8x8 created for the rep. Pinned by
     `tests/unit/outbound-transfers.test.js`.
+83. **Direct calls credited by extension AND name -- DCA-1 and
+    `diagnoseDirectCallAttribution` (cdr-import, owner 2026-10-27).** Former
+    employees stay on `DO NOT EDIT!` with their old extension (owner: long-term
+    data), and 8x8 gives the extension to someone else, so the Direct Call
+    Report used to credit the new person's direct calls to the one who left
+    (the build looked up the extension only). **Since DCA-1 the build credits a
+    leg only when the name 8x8 put on that side of it** (CALLEE_NAME when the
+    agent is called, CALLER_NAME when they call) **is the roster name on that
+    extension** -- through the DQE canonicalizer, so a nickname variant or an
+    Outlier Fix alias still matches -- or another roster cell listing the same
+    extension; a leg naming **somebody else is credited to no one** (logged by
+    the build: "credited to NO ONE"). **A blank or non-person name** (N/A, a
+    queue, voicemail, a number) **keeps the extension-only rule for now** --
+    the owner decides that case from the diagnostic's numbers. **Not
+    retroactive:** rebuild the dates still in `Call_Legs_*` (~14 days) with a
+    re-import or `runDirectCallBuild`, and older dates by re-importing their
+    source (#56). **`diagnoseDirectCallAttribution(date)` /
+    `diagnoseDirectCallAttribution('all')`** (read-only, held `Call_Legs_*`
+    tabs; employee names and call ids only, never a number) logs per date and
+    in total how many agent-side legs' names match / are blank / are another
+    roster cell / are somebody else; each "somebody else" with its extension,
+    the roster name it used to go to, the 8x8 name, a count and sample call
+    ids; every extension listed in more than one roster cell; the blank-name
+    legs on extensions that also showed somebody else (**the case to decide**);
+    and the Direct report rows that change, before -> since DCA-1. A "somebody
+    else" line naming a CURRENT employee under a spelling the canonicalizer
+    does not join is a missing alias: add it in Outlier Fix, then rebuild.
+    Pinned by `tests/unit/direct-call-metrics.test.js`.
