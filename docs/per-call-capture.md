@@ -111,6 +111,22 @@ retention prune keeps a date's tab while its capture is still owed (#43).
 
 ### Internal-transfer journey enrichment (R11-N)
 
+> **Transfers and consults to a PERSON (IXT-1, Operator State #84).** R11-N
+> follows a transfer into a QUEUE; `icPersonTransferEnrich_` adds the rest,
+> journey-only. (1) The call named in the captured call's **Transfer To Call
+> ID** (col P, a call naming itself ignored): the consult with the colleague
+> (`consult:true`, talk up to the hand-over) and the colleague's leg with the
+> caller (`handover:true`). (2) **Keyed on the CALLER:** every other internal
+> DIAL (both ends bare extensions) from the answering agent's extension while
+> they were live on the call (+/- the concurrent slack), whoever it rang, each
+> its own event -- `missed` (+ `voicemail`) or an answered consult -- only when
+> the agent was on exactly ONE captured call then; a group with an Incoming
+> leg, a queue leg (R11-N's) or, for timing, an outside number is left out.
+> Every added event carries `transfer:true`, which the journey-end / queue-wait
+> SQL, Agent Day and the agent app's wait join all skip -- so no figure moves.
+> Recording legs (`CallRecording (...)`) are no longer journey steps. Not
+> retroactive (`backfillInboundCalls(.., true)` + the Inbound Calls export).
+
 **Internal-transfer journey enrichment (R11-N) -- inbound capture.**
 When an agent answers an inbound call and transfers the caller to a queue
 where they then abandon, `buildInboundCallRecords_` cross-references that

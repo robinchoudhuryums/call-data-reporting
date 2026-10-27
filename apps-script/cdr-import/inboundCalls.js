@@ -36,7 +36,7 @@
 var IC_COL = {
   CALL_ID: 0, LEG_ID: 1, START: 2, CONNECTED: 3, STOP: 4, DIRECTION: 5,
   TALK: 6, CALL_TIME: 7, CALLER: 8, CALLER_NAME: 9, CALLEE: 10, CALLEE_NAME: 11,
-  PARENT_CALL_ID: 14, DIAL_IN: 16, MISSED: 23, ABANDONED: 24, ANSWERED: 25,
+  PARENT_CALL_ID: 14, TRANSFER_TO: 15, DIAL_IN: 16, MISSED: 23, ABANDONED: 24, ANSWERED: 25,
   CALLEE_HOLD_DURATION: 32, CALLEE_DISC_ON_HOLD: 33, CALLER_DISC_ON_HOLD: 34,
   DEPARTMENTS: 36
 };
@@ -277,6 +277,9 @@ function icBuildJourney_(legs) {
   var events = [];
   for (var i = 0; i < legs.length && events.length < IC_JOURNEY_MAX_EVENTS; i++) {
     var l = legs[i];
+    // IXT-1 (owner 2026-10-27): a call-recording leg is not a step of the
+    // call -- it printed as "(unknown)" with the recording's length.
+    if (icIsRecordingLeg_(l)) continue;
     var rawName = String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim();
     var isQueue = icIsQueueName_(rawName);
     var name = rawName;
@@ -313,6 +316,11 @@ function icBuildJourney_(legs) {
     events.push(ev);
   }
   return events;
+}
+
+/** PURE. A call-recording leg ("CallRecording" / "CallRecording (620)"). */
+function icIsRecordingLeg_(leg) {
+  return /^CallRecording\b/i.test(String(leg && leg[IC_COL.CALLEE] == null ? '' : leg[IC_COL.CALLEE]).trim());
 }
 
 // SQL literal builders for the INLINE inbound insert (mirrors the phone-child
@@ -934,7 +942,178 @@ function buildInboundCallRecords_(rawRows, opts) {
   records.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
   internalPending.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
 
+  // IXT-1: consults, attempts and hand-overs to a PERSON (journey-only).
+  icPersonTransferEnrich_(groups, recordByRoot, agentBusy, opts && opts.ixtStats);
+
   return records;
+}
+
+// ---- IXT-1 (owner 2026-10-27): transfers and consults to a PERSON ------------
+// R11-N follows an agent's transfer into a QUEUE. A transfer or consult to a
+// colleague's extension is a separate internal call the capture dropped, so
+// Caller Lookup stopped at the agent who answered. This pass appends, to the
+// captured call's journey, JOURNEY-ONLY (disposition / final dept / wait /
+// counts never move -- every added event carries `transfer:true`, which the
+// journey-end / queue-wait SQL, Agent Day and the agent app all skip):
+//   LINKED  -- the call named in this call's Transfer To Call ID (col P; a
+//              call naming itself ignored, the OBX-1 rule): the consult with
+//              the colleague (`consult:true`, talk up to the hand-over) and
+//              the colleague's leg with the caller (`handover:true`).
+//   TIMING  -- every other internal call DIALLED from the answering agent's
+//              extension while they were live on this call (their answered
+//              leg +/- the concurrent slack), whoever it rang, each its own
+//              event: no answer (`missed`, `voicemail` when it fell to
+//              voicemail) or an answered consult. Only when the agent was on
+//              exactly ONE captured call then (icDistinctRoots_).
+// Excluded: groups with an Incoming leg (a captured call), a queue leg (R11-N's),
+// or -- timing only -- a leg to an outside number (an outbound call; an
+// unlinked hand-over is OBX-2's case). Only DIAL legs count (CALLER and
+// CALLEE both bare extensions): recording / voicemail / forking legs never do.
+function icIsBareExt_(v) { return /^\d{1,6}$/.test(String(v == null ? '' : v).trim()); }
+
+function icIxtName_(raw, ext) {
+  var n = String(raw == null ? '' : raw).trim();
+  if (!n || n.toUpperCase() === 'N/A' || /^\+?[\d\s\-().]{7,}$/.test(n)) n = ext ? 'ext ' + ext : '(unknown)';
+  return n.slice(0, IC_JOURNEY_NAME_MAX);
+}
+
+/** PURE. The journey events one internal group adds, or null when it adds none. */
+function icIxtGroupEvents_(g, opts) {
+  var dir = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
+  var isAns = function (l) {
+    return icTimeToSec_(l[IC_COL.TALK]) > 0
+      && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered';
+  };
+  var legs = g.slice().sort(function (a, b) {
+    return ((icParseTs_(a[IC_COL.START]) || 0) - (icParseTs_(b[IC_COL.START]) || 0))
+      || ((Number(a[IC_COL.LEG_ID]) || 0) - (Number(b[IC_COL.LEG_ID]) || 0));
+  });
+  var dials = legs.filter(function (l) {
+    return dir(l) === 'Internal' && icIsBareExt_(l[IC_COL.CALLER]) && icIsBareExt_(l[IC_COL.CALLEE]);
+  });
+  var handover = null;
+  if (opts.linked) {
+    for (var h = 0; h < legs.length; h++) {
+      if (dir(legs[h]) === 'Outgoing' && icExternalNumber_(legs[h][IC_COL.CALLEE]) && isAns(legs[h])) {
+        if (opts.callerNumber && icExternalNumber_(legs[h][IC_COL.CALLEE]) !== opts.callerNumber) continue;
+        handover = legs[h]; break;
+      }
+    }
+  }
+  var handMs = handover ? (icParseTs_(handover[IC_COL.CONNECTED]) || icParseTs_(handover[IC_COL.START])) : NaN;
+  var voicemail = legs.some(function (l) { return /voice ?mail/i.test(String(l[IC_COL.CALLEE] == null ? '' : l[IC_COL.CALLEE])); });
+  var events = [], consulted = false;
+  dials.forEach(function (l) {
+    var name = icIxtName_(l[IC_COL.CALLEE_NAME], icDigits_(l[IC_COL.CALLEE]));
+    var startMs = icParseTs_(l[IC_COL.START]);
+    if (isAns(l)) {
+      if (consulted) return;   // one consult per call (later answered legs are the same conversation)
+      consulted = true;
+      var connMs = icParseTs_(l[IC_COL.CONNECTED]);
+      if (isNaN(connMs)) connMs = startMs;
+      var talk = icTimeToSec_(l[IC_COL.TALK]);
+      if (!isNaN(handMs) && !isNaN(connMs) && handMs >= connMs) talk = Math.min(talk, Math.round((handMs - connMs) / 1000));
+      events.push({ t: icIsoTime_(connMs), name: name, kind: 'answer', talk: talk, transfer: true, consult: true });
+    } else if (String(l[IC_COL.MISSED] == null ? '' : l[IC_COL.MISSED]).trim() === 'Missed') {
+      var stopMs = icParseTs_(l[IC_COL.STOP]);
+      var ev = { t: icIsoTime_(startMs), name: name, kind: 'leg', missed: true, transfer: true };
+      if (!isNaN(startMs) && !isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - startMs) / 1000));
+      if (voicemail) ev.voicemail = true;
+      events.push(ev);
+    }
+  });
+  if (handover) {
+    var hs = icParseTs_(handover[IC_COL.STOP]);
+    var hev = { t: icIsoTime_(handMs), name: icIxtName_(handover[IC_COL.CALLER_NAME], icDigits_(handover[IC_COL.CALLER])),
+                kind: 'answer', talk: icTimeToSec_(handover[IC_COL.TALK]), transfer: true, handover: true };
+    if (!isNaN(hs) && !isNaN(handMs)) hev.secs = Math.max(0, Math.round((hs - handMs) / 1000));
+    events.push(hev);
+  }
+  return events.length ? { events: events, firstMs: dials.length ? icParseTs_(dials[0][IC_COL.START]) : handMs,
+                           agentExt: dials.length ? icDigits_(dials[0][IC_COL.CALLER]) : '' } : null;
+}
+
+/** Merges `adds` into `journey` by time (ties after the existing event), under the event cap. */
+function icMergeJourneyEvents_(journey, adds) {
+  adds.slice().sort(function (a, b) { return a.t < b.t ? -1 : (a.t > b.t ? 1 : 0); }).forEach(function (ev) {
+    if (journey.length >= IC_JOURNEY_MAX_EVENTS) return;
+    var at = journey.length;
+    for (var i = 0; i < journey.length; i++) { if (journey[i] && journey[i].t > ev.t) { at = i; break; } }
+    journey.splice(at, 0, ev);
+  });
+}
+
+/**
+ * PURE (mutates the captured records' journeys). `stats` (optional, the
+ * diagnostic's) is filled with: linked, timing, ambiguous, outsideSkipped,
+ * calls (captured calls that gained an event), attemptsPerCall {1, 2, '3+'}
+ * over timing attempts, samples { linked: [...], timing: [...] }.
+ */
+function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats) {
+  var st = stats || {};
+  ['linked', 'timing', 'ambiguous', 'outsideSkipped', 'calls'].forEach(function (k) { st[k] = st[k] || 0; });
+  st.attemptsPerCall = st.attemptsPerCall || { 1: 0, 2: 0, '3+': 0 };
+  st.samples = st.samples || { linked: [], timing: [] };
+  var cell = function (v) { var x = String(v == null ? '' : v).trim(); return (!x || x.toUpperCase() === 'N/A') ? '' : x; };
+  var dir = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
+  var rootOf = {};
+  Object.keys(groups).forEach(function (root) {
+    groups[root].forEach(function (l) { var own = cell(l[IC_COL.CALL_ID]); if (own) rootOf[own] = root; });
+  });
+  // Col P: target group -> the ONE captured call naming it.
+  var linkedTo = {};
+  Object.keys(recordByRoot).forEach(function (r) {
+    (groups[r] || []).forEach(function (l) {
+      var t = cell(l[IC_COL.TRANSFER_TO]);
+      if (!t) return;
+      var tr = rootOf[t] || t;
+      if (tr === r || !groups[tr]) return;
+      if (linkedTo[tr] && linkedTo[tr] !== r) linkedTo[tr] = '#ambiguous';
+      else linkedTo[tr] = r;
+    });
+  });
+  var adds = {}, timingPer = {};
+  Object.keys(groups).forEach(function (root) {
+    if (recordByRoot[root]) return;
+    var g = groups[root];
+    if (g.some(function (l) { return dir(l) === 'Incoming'; })) return;
+    if (g.some(function (l) { return icIsQueueName_(l[IC_COL.CALLEE_NAME]); })) return;   // R11-N's
+    var target = linkedTo[root];
+    if (target === '#ambiguous') { st.ambiguous++; return; }
+    if (target) {
+      var rec = recordByRoot[target];
+      var ge = icIxtGroupEvents_(g, { linked: true, callerNumber: rec.callerNumber || null });
+      if (!ge) return;
+      (adds[target] = adds[target] || []).push.apply(adds[target], ge.events);
+      st.linked++;
+      if (st.samples.linked.length < 5) st.samples.linked.push(target + ' <- ' + root);
+      return;
+    }
+    if (g.some(function (l) { return icExternalNumber_(l[IC_COL.CALLEE]) || icExternalNumber_(l[IC_COL.CALLER]); })) {
+      if (g.some(function (l) { return dir(l) === 'Internal' && icIsBareExt_(l[IC_COL.CALLER]) && icIsBareExt_(l[IC_COL.CALLEE]); })) st.outsideSkipped++;
+      return;
+    }
+    var te = icIxtGroupEvents_(g, { linked: false });
+    if (!te || !te.agentExt || isNaN(te.firstMs)) return;
+    var roots = icDistinctRoots_(icConcurrentMatches_(agentBusy, te.agentExt, te.firstMs, root));
+    if (roots.length > 1) { st.ambiguous++; return; }
+    if (roots.length !== 1 || !recordByRoot[roots[0]]) return;
+    (adds[roots[0]] = adds[roots[0]] || []).push.apply(adds[roots[0]], te.events);
+    timingPer[roots[0]] = (timingPer[roots[0]] || 0) + 1;
+    st.timing++;
+    if (st.samples.timing.length < 5) st.samples.timing.push(roots[0] + ' <- ' + root);
+  });
+  Object.keys(adds).forEach(function (r) {
+    var rec = recordByRoot[r];
+    if (!rec.journey) rec.journey = [];
+    icMergeJourneyEvents_(rec.journey, adds[r]);
+    st.calls++;
+  });
+  Object.keys(timingPer).forEach(function (r) {
+    var n = timingPer[r];
+    st.attemptsPerCall[n >= 3 ? '3+' : n]++;
+  });
+  return st;
 }
 
 // ---- Neon mirror (best-effort; reuses neonWrite.js helpers) ------------------
@@ -2879,4 +3058,68 @@ function perCallAgentRewrite_(apply) {
       + r.canonical + '" (' + r.rows + ' row' + (r.rows === 1 ? '' : 's') + ')');
   });
   return out;
+}
+
+/**
+ * IXT-1 (owner 2026-10-27; Operator State #84): READ-ONLY. Over the held
+ * Call_Legs_* tabs (`dateIso` = one date, 'all' = every held date, blank =
+ * the latest), how many captured inbound calls gain a transfer / consult to a
+ * person on their journey: linked through Transfer To Call ID, timing-only
+ * attempts (and how many calls get 1 / 2 / 3+ of them), ambiguous skips (the
+ * agent on two captured calls at once, or one internal call named by two), and
+ * internal dials left out because the group also reached an outside number.
+ * Same builder as the capture; call ids only, never a number. Writes nothing.
+ */
+function diagnosePersonTransfers(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { Logger.log('[ixt] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
+  try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
+  try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
+  var total = icIxtFoldStats_(null, null);
+  var t0 = Date.now();
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[ixt] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
+    var grid = sheets[i].sheet.getDataRange().getDisplayValues();
+    grid.shift();
+    var st = {};
+    var recs = buildInboundCallRecords_(grid, { ixtStats: st });
+    var captured = recs.filter(function (r) { return !r.isInternal; }).length;
+    Logger.log('[ixt] %s: %s captured inbound calls; %s gained an event -- linked transfers %s, timing-only attempts %s '
+      + '(calls with 1 / 2 / 3+: %s / %s / %s), ambiguous skipped %s, internal dials left out (group reached an outside number) %s',
+      sheets[i].iso, String(captured), String(st.calls), String(st.linked), String(st.timing),
+      String(st.attemptsPerCall[1]), String(st.attemptsPerCall[2]), String(st.attemptsPerCall['3+']),
+      String(st.ambiguous), String(st.outsideSkipped));
+    total = icIxtFoldStats_(total, st, captured);
+  }
+  Logger.log('[ixt] TOTAL over %s date(s): %s captured calls, %s gained an event; linked %s, timing-only %s '
+    + '(1 / 2 / 3+: %s / %s / %s), ambiguous %s, outside-number skips %s',
+    String(total.days), String(total.captured), String(total.calls), String(total.linked), String(total.timing),
+    String(total.attemptsPerCall[1]), String(total.attemptsPerCall[2]), String(total.attemptsPerCall['3+']),
+    String(total.ambiguous), String(total.outsideSkipped));
+  if (total.samples.linked.length) Logger.log('[ixt]   linked e.g. (customer call <- internal call): %s', total.samples.linked.join('; '));
+  if (total.samples.timing.length) Logger.log('[ixt]   timing-only e.g. (customer call <- internal call): %s', total.samples.timing.join('; '));
+  return total;
+}
+
+/** PURE. Folds one date's IXT-1 stats into the running total (null starts one). */
+function icIxtFoldStats_(total, st, captured) {
+  var t = total || { days: 0, captured: 0, calls: 0, linked: 0, timing: 0, ambiguous: 0, outsideSkipped: 0,
+                     attemptsPerCall: { 1: 0, 2: 0, '3+': 0 }, samples: { linked: [], timing: [] } };
+  if (!st) return t;
+  t.days++;
+  t.captured += captured || 0;
+  ['calls', 'linked', 'timing', 'ambiguous', 'outsideSkipped'].forEach(function (k) { t[k] += st[k] || 0; });
+  [1, 2, '3+'].forEach(function (k) { t.attemptsPerCall[k] += (st.attemptsPerCall || {})[k] || 0; });
+  ['linked', 'timing'].forEach(function (k) {
+    ((st.samples || {})[k] || []).forEach(function (s) { if (t.samples[k].length < 5) t.samples[k].push(s); });
+  });
+  return t;
 }

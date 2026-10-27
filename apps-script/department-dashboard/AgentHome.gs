@@ -438,6 +438,9 @@ function ahWaitJoin_(agentName, fromIso, toIso) {
       for (var j = 0; j < journey.length; j++) {
         var ev = journey[j];
         if (!ev || ev.name !== agentName || !ev.missed) continue;   // INV-04 exact
+        // IXT-1: a `transfer:true` event is a colleague's consult attempt
+        // cross-referenced onto the caller's journey, not this agent's queue ring.
+        if (ev.transfer) continue;
         var evSec = ahTimeSec_(ev.t);
         if (evSec < 0) continue;
         var key = recs[i].d + '|' + (evSec + 7200);   // PST journey -> CST slot axis

@@ -3688,3 +3688,27 @@ When something looks wrong, before assuming a code bug, check:
     else" line naming a CURRENT employee under a spelling the canonicalizer
     does not join is a missing alias: add it in Outlier Fix, then rebuild.
     Pinned by `tests/unit/direct-call-metrics.test.js`.
+84. **Transfers and consults to a person on the caller's journey -- IXT-1 and
+    `diagnosePersonTransfers` (cdr-import, owner 2026-10-27).** Caller Lookup
+    (and every journey drill) used to stop at the agent who answered when that
+    agent transferred or consulted a COLLEAGUE: 8x8 logs each attempt as a
+    separate internal call, which the inbound capture dropped (R11-N covers a
+    transfer into a QUEUE only). **Since IXT-1 the capture appends, journey
+    only:** the call named in Transfer To Call ID -- the consult as its own
+    event and the colleague taking the caller (the call now "ends" when they
+    hang up) -- and, **keyed on the answering agent's extension**, every other
+    internal dial they placed while live on the call, whoever it rang, each
+    its own event (no answer / voicemail, or an answered consult), only when
+    they were on exactly one captured call then. The call's disposition,
+    department, wait and every count are unchanged (the added events are
+    `transfer:true`, which every metric reader skips). Recording legs no
+    longer show as "(unknown)" rows. **Not retroactive:** rebuild the held
+    dates with `backfillInboundCalls(from, to, true)`, then re-run the Inbound
+    Calls tab export (#49). **`diagnosePersonTransfers(date)` /
+    `diagnosePersonTransfers('all')`** (read-only, the held `Call_Legs_*` tabs;
+    call ids only) logs per date how many captured calls gain an event:
+    linked transfers, timing-only attempts with the calls getting 1 / 2 / 3+
+    of them, ambiguous skips (the agent on two captured calls at once), and
+    internal dials left out because the same internal call also reached an
+    outside number. Pinned by `tests/unit/inbound-calls.test.js`,
+    `agent-home.test.js` and `client-correctness.test.js`.

@@ -398,3 +398,30 @@ test('CL-8: agentWorkWindow_ is the pinned constants, with the CSR family\'s ear
   const harness = fs.readFileSync(path.join(__dirname, '..', '..', 'tools', 'ui-harness', 'build-agent.js'), 'utf8');
   assert.match(harness, /JSON\.stringify\(h\.call\('agentWorkWindow_'\)\)/, 'and so does the harness page');
 });
+
+// IXT-1: a colleague's consult attempt cross-referenced onto a caller's
+// journey (transfer:true) is not that colleague's own missed queue ring.
+test('IXT-1: ahWaitJoin_ skips transfer:true events (a consult attempt is not the agent\'s ring)', function () {
+  const rows = [{ d: '2026-10-26', call_start: '09:31:08', journey: JSON.stringify([
+    { name: 'Nash (Nitin) Parashar', missed: true, transfer: true, t: '09:34:55', secs: 16 },
+    { name: 'Nash (Nitin) Parashar', missed: true, t: '09:20:00', secs: 9 },
+  ]) }];
+  h.ctx.getDashboardNeonConn_ = function () {
+    return {
+      prepareStatement: function () {
+        return { setString: function () {}, close: function () {},
+          executeQuery: function () {
+            let done = false;
+            return { next: function () { if (done) return false; done = true; return true; },
+                     getString: function () { return JSON.stringify(rows); }, close: function () {} };
+          } };
+      },
+      close: function () {},
+    };
+  };
+  try {
+    const j = h.call('ahWaitJoin_', 'Nash (Nitin) Parashar', '2026-10-26', '2026-10-26');
+    assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(j.map))), ['2026-10-26|' + (9 * 3600 + 20 * 60 + 7200)],
+      'only the real ring at 09:20 is joined');
+  } finally { delete h.ctx.getDashboardNeonConn_; }
+});

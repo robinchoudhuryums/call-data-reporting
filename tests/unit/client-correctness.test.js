@@ -427,3 +427,26 @@ test('CL-6: the agent app keeps the window on screen when a load fails, and clam
   assert.match(app, /if \(latestIso && t > latestIso\) \{/);
   assert.match(extractFn(app, 'showHistError_'), /retry\.addEventListener\('click', function \(\) \{ loadHistory_\(\); \}\);/);
 });
+
+test('IXT-1: the Caller Lookup rows say consult / took the caller / voicemail; the chain skips the consult', function () {
+  const esc = src('script-10-escalations.html');
+  const core = src('script-1-core.html');
+  const sb = { String: String, Number: Number };
+  vm.runInNewContext(['pad2', 'fmtDuration', 'escapeHtml'].map((n) => extractFn(core, n)).join('\n')
+    + '\nvar CL_PST_TO_CST_SEC_ = 7200;\n'
+    + ['clHmsToSec_', 'clSecToHms_', 'clCstTime_', 'clJourneyRowHtml_', 'clChainHtml_', 'clJourneyEndRowHtml_'].map((n) => extractFn(esc, n)).join('\n'), sb);
+  const journey = [
+    { t: '09:32:36', name: 'Daniel (Dishant) Sahani', kind: 'answer', talk: 540 },
+    { t: '09:34:55', name: 'Nash (Nitin) Parashar', kind: 'leg', missed: true, transfer: true, secs: 16, voicemail: true },
+    { t: '09:37:54', name: 'Nash (Nitin) Parashar', kind: 'answer', talk: 224, transfer: true, consult: true },
+    { t: '09:41:38', name: 'Nash (Nitin) Parashar', kind: 'answer', talk: 294, transfer: true, handover: true, secs: 294 },
+  ];
+  const rows = journey.map(sb.clJourneyRowHtml_);
+  assert.match(rows[1], /no answer · went to voicemail/);
+  assert.match(rows[2], /consult with the agent/);
+  assert.match(rows[3], /took the caller/);
+  const chain = sb.clChainHtml_(journey);
+  assert.equal((chain.match(/cl-tok-answer/g) || []).length, 2, 'Daniel ✓ and Nash ✓ -- the consult is not a third token: ' + chain);
+  assert.match(chain, /cl-tok-missed/);
+  assert.match(sb.clJourneyEndRowHtml_(journey), /11:46:32/, 'the call ends when Nash hangs up (CST)');
+});
