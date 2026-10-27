@@ -1670,3 +1670,13 @@ test('IXT-1: the diagnostic\'s fold sums days and keeps at most five samples', f
   assert.match(line, /placed after the call had been connected <2m 6, 2-10m 0, 10-30m 0, 30m\+ 3/);
   assert.match(line, /agent on an inbound AND an outbound call at once 3/);
 });
+
+test('IXT-1 / OXT-1: the editor wrapper runs the diagnostic over every held date', function () {
+  const real = h.ctx.diagnosePersonTransfers;
+  let got = null;
+  h.ctx.diagnosePersonTransfers = function (d) { got = d; return 'ok'; };
+  try {
+    assert.equal(h.ctx.diagnosePersonTransfersAllDates(), 'ok');
+    assert.equal(got, 'all');
+  } finally { h.ctx.diagnosePersonTransfers = real; }
+});

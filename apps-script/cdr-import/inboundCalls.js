@@ -3151,6 +3151,9 @@ function diagnosePersonTransfers(dateIso) {
   return total;
 }
 
+/** Editor-run: every held date (the Run picker can't pass 'all'). */
+function diagnosePersonTransfersAllDates() { return diagnosePersonTransfers('all'); }
+
 /** PURE. One direction's stats as a log line (the diagnostic's per-date and TOTAL rows). */
 function icIxtStatsLine_(st, captured) {
   var sc = st.sinceConnect || {};

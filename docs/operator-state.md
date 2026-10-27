@@ -3703,9 +3703,11 @@ When something looks wrong, before assuming a code bug, check:
     department, wait and every count are unchanged (the added events are
     `transfer:true`, which every metric reader skips). Recording legs no
     longer show as "(unknown)" rows. **Not retroactive:** rebuild the held
-    dates with `backfillInboundCalls(from, to, true)`, then re-run the Inbound
+    dates with `backfillInboundCallsForce()` (a bare `backfillInboundCalls()`
+    skips every date already mirrored), then re-run the Inbound
     Calls tab export (#49). **`diagnosePersonTransfers(date)` /
-    `diagnosePersonTransfers('all')`** (read-only, the held `Call_Legs_*` tabs;
+    `diagnosePersonTransfersAllDates()`** (read-only, the held `Call_Legs_*` tabs;
+    run bare from the Run picker it reads the LATEST date only;
     call ids only) logs per date how many captured calls gain an event:
     linked transfers, timing-only attempts with the calls getting 1 / 2 / 3+
     of them, ambiguous skips (the agent on two captured calls at once), and
@@ -3722,7 +3724,7 @@ When something looks wrong, before assuming a code bug, check:
     other:** an agent live on an inbound AND an outbound call at once gets an
     internal dial attached to NEITHER, and a transfer target named by one call
     of each is claimed by neither. **Not retroactive:**
-    `backfillOutboundCalls(from, to, true)`, then the Outbound Calls tab export
+    `backfillOutboundCallsForce()`, then the Outbound Calls tab export
     (#50). `diagnosePersonTransfers` now logs BOTH directions per date, plus
     "agent on an inbound AND an outbound call at once" and **how long the call
     had been connected when each timing-only attempt came** (<2m / 2-10m /
