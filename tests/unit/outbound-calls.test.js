@@ -501,6 +501,16 @@ test('OXT-1: a transfer target named by an inbound call AND an outbound call is 
 });
 
 test('OXT-1: the OBX diagnostics\' keepTransferTargets build is left as it was', function () {
-  const recs = h.call('buildOutboundCallRecords_', oxCall().concat(oxForked()), { keepTransferTargets: true });
+  const recs = h.call('buildOutboundCallRecords_', oxCall().concat(oxForked())
+    .concat(oxAttempt('A1', '9:34:55', '242', 'Nash (Nitin) Parashar')), { keepTransferTargets: true });
+  assert.equal(recs.length, 2, 'the continuation is kept for the diagnostics');
   recs.forEach((r) => assert.equal(oxAdded(r).length, 0, r.callId));
+});
+
+test('OXT-1: a transfer target named only by an INBOUND call is the inbound capture\'s -- the outbound build leaves it', function () {
+  const inbound = oxInboundAt();
+  inbound[1][15] = 'T1';
+  const rows = oxCall({ to: 'N/A', start: '8:00:00', connected: '8:00:10', stop: '8:10:00', talk: '0:09:50' }).concat(inbound).concat(oxForked());
+  const ob = build(rows);
+  assert.equal(oxAdded(ob.find((r) => r.callId === 'OB1')).length, 0);
 });
