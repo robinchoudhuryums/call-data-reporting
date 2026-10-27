@@ -123,7 +123,13 @@ retention prune keeps a date's tab while its capture is still owed (#43).
 > the agent was on exactly ONE captured call then; a group with an Incoming
 > leg, a queue leg (R11-N's) or, for timing, an outside number is left out.
 > Every added event carries `transfer:true`, which the journey-end / queue-wait
-> SQL, Agent Day and the agent app's wait join all skip -- so no figure moves.
+> SQL, Agent Day's role and the agent app's wait join all skip -- so no figure
+> moves. The ONE place they count is Agent Day's "Transferred" (moved on): the
+> hand-over does, a consult or a missed attempt does not (the agent still had
+> the caller; `agentDayTransferredOn_`, agent-day.test.js). Every surface that
+> draws a journey shows them -- Caller Lookup AND the "↳ path" drill (missed
+> rings, abandons, the agent-day rows) share `clChainHtml_` / `clJourneyRowHtml_`
+> and the same `callerLookupShapeCall_` payload, the sheet fallback included.
 > Recording legs (`CallRecording (...)`) are no longer journey steps. Not
 > retroactive (`backfillInboundCalls(.., true)` + the Inbound Calls export).
 
