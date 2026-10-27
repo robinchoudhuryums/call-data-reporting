@@ -111,6 +111,28 @@ retention prune keeps a date's tab while its capture is still owed (#43).
 
 ### Internal-transfer journey enrichment (R11-N)
 
+> **Transfers and consults to a PERSON (IXT-1, Operator State #84).** R11-N
+> follows a transfer into a QUEUE; `icPersonTransferEnrich_` adds the rest,
+> journey-only. (1) The call named in the captured call's **Transfer To Call
+> ID** (col P, a call naming itself ignored): the consult with the colleague
+> (`consult:true`, talk up to the hand-over) and the colleague's leg with the
+> caller (`handover:true`). (2) **Keyed on the CALLER:** every other internal
+> DIAL (both ends bare extensions) from the answering agent's extension while
+> they were live on the call (+/- the concurrent slack), whoever it rang, each
+> its own event -- `missed` (+ `voicemail`) or an answered consult -- only when
+> the agent was on exactly ONE captured call then; a group with an Incoming
+> leg, a queue leg (R11-N's) or, for timing, an outside number is left out.
+> Every added event carries `transfer:true`, which the journey-end / queue-wait
+> SQL, Agent Day's role and the agent app's wait join all skip -- so no figure
+> moves. The ONE place they count is Agent Day's "Transferred" (moved on): the
+> hand-over does, a consult or a missed attempt does not (the agent still had
+> the caller; `agentDayTransferredOn_`, agent-day.test.js). Every surface that
+> draws a journey shows them -- Caller Lookup AND the "↳ path" drill (missed
+> rings, abandons, the agent-day rows) share `clChainHtml_` / `clJourneyRowHtml_`
+> and the same `callerLookupShapeCall_` payload, the sheet fallback included.
+> Recording legs (`CallRecording (...)`) are no longer journey steps. Not
+> retroactive (`backfillInboundCalls(.., true)` + the Inbound Calls export).
+
 **Internal-transfer journey enrichment (R11-N) -- inbound capture.**
 When an agent answers an inbound call and transfers the caller to a queue
 where they then abandon, `buildInboundCallRecords_` cross-references that
@@ -821,6 +843,20 @@ pin). Pinned by tests/unit/heatmap-cell-drill.test.js. No caller identity
 in the response.
 
 ### Direct-extension call metrics
+
+> **An extension AND the name on the leg (DCA-1, Operator State #83).**
+> Former employees stay on `DO NOT EDIT!` with their old extension, and 8x8
+> reassigns extensions, so the build no longer credits a leg by extension
+> alone: `dcResolveAgent_` takes the name 8x8 put on the agent's side
+> (CALLEE_NAME when the agent is called, CALLER_NAME when they call), runs it
+> through the DQE canonicalizer (`dcRosterCanonicalizer_` ->
+> `canonicalizeAgentNameWith_`, INV-24) and credits the roster cell on that
+> extension with that name -- `dcBuildExtMaps_` now lists EVERY cell per
+> extension (`extCands`) -- or NO ONE when it names somebody else. A blank or
+> non-person name (`dcPersonName_`: N/A, a queue, voicemail, anything with a
+> digit) keeps the extension-only rule unchanged, pending the owner's call on
+> `diagnoseDirectCallAttribution`. Busy time follows the same rule. Not
+> retroactive.
 
 **Direct-extension call metrics are a separate population from the
 DQE/QCD queue metrics, with a "busy" carve-out.** `cdr-import/directCallMetrics.js`

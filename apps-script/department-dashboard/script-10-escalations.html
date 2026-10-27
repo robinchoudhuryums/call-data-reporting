@@ -1890,6 +1890,8 @@
     journey.forEach(function (ev) {
       if (ev.kind === 'queue') {
         toks.push({ txt: String(ev.name || '').replace(/^A_Q_/i, ''), cls: 'cl-tok-queue' });
+      } else if (ev.consult) {
+        // IXT-1: the consult is a row of its own below; the chain shows who took the caller.
       } else if (ev.kind === 'answer') {
         toks.push({ txt: (ev.name || '?') + ' ✓' + (ev.talk ? ' ' + fmtDuration(ev.talk) : ''), cls: 'cl-tok-answer' });
       } else if (ev.missed) {
@@ -1916,6 +1918,11 @@
     if (ev.hold)  bits.push('held ' + fmtDuration(ev.hold));
     if (ev.abandoned) bits.push('caller hung up');
     else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
+    // IXT-1: a transfer / consult to a colleague, cross-referenced from the
+    // internal call the agent placed while on this one.
+    if (ev.voicemail) bits.push('went to voicemail');
+    if (ev.consult) bits.push('consult with the agent');
+    if (ev.handover) bits.push('took the caller');
     // Round-17: events reconstructed from the TRANSFERRING call (the origin
     // hop prefixed onto an internal transfer-abandon record) are not legs of
     // this call group -- say so rather than letting them read as literal.

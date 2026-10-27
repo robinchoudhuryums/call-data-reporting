@@ -158,6 +158,51 @@ function dcIsInternalDial_(callee, ctx) {
  * @returns { rows: [ {agent, dept, ...18 metric fields} ],
  *            meta: { agents, droppedNoStart, missedBusyTotal, missedFreeTotal } }
  */
+// ── DCA-1 (owner 2026-10-27): attribution by extension AND name ─────────────
+// Former employees stay on DO NOT EDIT! (long-term data) with their old
+// extension, and 8x8 reassigns extensions -- so an extension alone credited
+// a new hire's direct calls to the person who left. Every leg carries the
+// name 8x8 has for each side (CALLER_NAME / CALLEE_NAME); the build now
+// credits the roster cell on that extension whose name MATCHES it (through
+// the DQE canonicalizer, so nickname variants and alias overrides still
+// match), and NO ONE when it names somebody else. A blank or non-person
+// name (N/A, a queue, voicemail, a number) keeps the extension-only rule
+// UNCHANGED -- the owner decides that case from diagnoseDirectCallAttribution
+// (Operator State #83).
+const DC_NON_PERSON_RE_ = /^(n\/?a|none|unknown|anonymous|restricted|private)$|voice ?mail|recording|\bpark|attendant|\bivr\b|menu|queue|hunt|ring ?group|conference|\bfax\b|paging|intercom|operator|A_Q_|Backup CSR/i;
+
+/** PURE. The leg's name as a PERSON name, or '' for blank / a label / a number. */
+function dcPersonName_(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s || /\d/.test(s) || DC_NON_PERSON_RE_.test(s)) return '';
+  return s;
+}
+
+/**
+ * PURE. Who a leg's extension belongs to on THIS leg: { agent, kind, name }.
+ *   kind 'none'     -- no roster cell has the extension
+ *   'blank'         -- no person name on the leg: the extension-only agent (unchanged)
+ *   'match'         -- the name is the extension's usual agent
+ *   'otherCell'     -- the name is ANOTHER roster cell listing the same extension
+ *   'mismatch'      -- the name is none of them: agent null (credited to no one)
+ */
+function dcResolveAgent_(ext, legName, maps) {
+  const extToAgent = (maps && maps.extToAgent) || {};
+  const base = extToAgent[ext];
+  if (!base) return { agent: null, kind: 'none', name: '' };
+  const nm = dcPersonName_(legName);
+  if (!nm) return { agent: base, kind: 'blank', name: '' };
+  const canon = (maps && typeof maps.canon === 'function') ? maps.canon : function (n) { return n; };
+  let c = nm;
+  try { c = canon(nm) || nm; } catch (e) { c = nm; }
+  if (base.name === c) return { agent: base, kind: 'match', name: nm };
+  const cands = (maps && maps.extCands && maps.extCands[ext]) || [];
+  for (let i = 0; i < cands.length; i++) {
+    if (cands[i].name === c) return { agent: cands[i], kind: 'otherCell', name: nm };
+  }
+  return { agent: null, kind: 'mismatch', name: nm, credited: base };
+}
+
 function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   opts = opts || {};
   const W0   = opts.windowStartSec != null ? opts.windowStartSec : DIRECT_WINDOW_START;
@@ -290,6 +335,27 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
 
   let droppedNoStart = 0;
 
+  // DCA-1: one tally per leg side (call id + side + extension), never a number.
+  const extOnly = !!opts.extOnly;
+  const AT = { seen: {}, match: 0, blank: 0, otherCell: 0, mismatch: 0, mismatches: {}, moved: {}, blankExt: {} };
+  function atNote(cid, side, ext, res) {
+    if (!res || res.kind === 'none') return;
+    const key = cid + '|' + side + '|' + ext;
+    if (AT.seen[key]) return;
+    AT.seen[key] = true;
+    AT[res.kind]++;
+    if (res.kind === 'blank') AT.blankExt[ext] = (AT.blankExt[ext] || 0) + 1;
+    if (res.kind === 'mismatch' || res.kind === 'otherCell') {
+      const bucket = res.kind === 'mismatch' ? AT.mismatches : AT.moved;
+      const from = res.kind === 'mismatch' ? res.credited.name : (extToAgent[ext] ? extToAgent[ext].name : '');
+      const k = ext + '|' + from + '|' + res.name;
+      const e = bucket[k] || (bucket[k] = { ext: ext, rosterName: from, legName: res.name,
+        to: res.kind === 'otherCell' ? res.agent.name : null, n: 0, samples: [] });
+      e.n++;
+      if (e.samples.length < 5 && e.samples.indexOf(cid) === -1) e.samples.push(cid);
+    }
+  }
+
   for (let i = 1; i < rawDisplayData.length; i++) {
     const r = rawDisplayData[i];
     if (!r) continue;
@@ -304,8 +370,13 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     const missed   = String(r[C.MIS]) === 'Missed';
     const answered = String(r[C.ANS]) === 'Answered';
 
-    const callerAgent = extToAgent[caller];
-    const calleeAgent = extToAgent[callee];
+    // DCA-1: the extension's roster agent only when the leg's own name for
+    // that side agrees (opts.extOnly = the pre-DCA-1 rule, for the diagnostic).
+    const callerRes = extOnly ? { agent: extToAgent[caller] || null, kind: 'blank' } : dcResolveAgent_(caller, r[C.CALLER_NAME], maps);
+    const calleeRes = extOnly ? { agent: extToAgent[callee] || null, kind: 'blank' } : dcResolveAgent_(callee, r[C.CALLEE_NAME], maps);
+    if (!extOnly) { atNote(cid, 'caller', caller, callerRes); atNote(cid, 'callee', callee, calleeRes); }
+    const callerAgent = callerRes.agent || undefined;
+    const calleeAgent = calleeRes.agent || undefined;
 
     // (1) OCCUPIED intervals -- any leg the agent was ON (talk>0), INCLUDING
     //     queue legs. Not window-filtered: a pre-window call still in progress
@@ -519,6 +590,11 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   });
 
   const meta = { agents: rows.length, droppedNoStart: droppedNoStart, missedBusyTotal: missedBusyTotal, missedFreeTotal: missedFreeTotal };
+  if (!extOnly) {
+    const list = function (o) { return Object.keys(o).map(function (k) { return o[k]; }).sort(function (x, y) { return y.n - x.n || (x.ext < y.ext ? -1 : 1); }); };
+    meta.attribution = { match: AT.match, blank: AT.blank, otherCell: AT.otherCell, mismatch: AT.mismatch,
+      mismatches: list(AT.mismatches), moved: list(AT.moved), blankExt: AT.blankExt };
+  }
   if (collect) meta.samples = samples;
   if (diagOn) {
     meta.diag = dcDiagSummary_(DG, A, inWindow);
@@ -586,7 +662,15 @@ function dcBuildExtMaps_(configSheet) {
   const queueExtSet = new Set();
   const exclusions = new Set();
   const lastRow = configSheet.getLastRow();
-  if (lastRow < 2) return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions, firstExtToAgent: firstExtToAgent, allExtToAgent: extToAgent };
+  // DCA-1: EVERY roster cell listing an extension (a former employee's cell
+  // keeps an extension 8x8 has since given to someone else).
+  const extCands = {};
+  function addCand(ext, name, dept) {
+    const l = extCands[ext] || (extCands[ext] = []);
+    if (!l.some(function (c) { return c.name === name && c.dept === dept; })) l.push({ name: name, dept: dept });
+  }
+  const canon = dcRosterCanonicalizer_(configSheet);
+  if (lastRow < 2) return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions, firstExtToAgent: firstExtToAgent, allExtToAgent: extToAgent, extCands: extCands, canon: canon };
 
   // Queue map (cols A/B): dept/queue-group | queue ext(s). Col B may be a
   // COMMA-JOINED list of extensions (e.g. "103,108" -- the combined CSR queues
@@ -632,13 +716,14 @@ function dcBuildExtMaps_(configSheet) {
       const name = p[0].trim();
       const ext = p[1].trim();
       const dept = deptHeaders[cIdx] || 'Unassigned';
-      if (ext) firstExtToAgent[ext] = { name: name, dept: dept };
+      if (ext) { firstExtToAgent[ext] = { name: name, dept: dept }; addCand(ext, name, dept); }
       // D2 (owner 2026-10-21): EVERY digit-only extension token (INV-03)
       // maps to the agent -- calls on a second extension used to be
       // invisible. First-seen wins among the later extensions.
       p.slice(2).forEach(function (t) {
         const e = t.trim();
         if (/^\d+$/.test(e) && !laterExtToAgent[e]) laterExtToAgent[e] = { name: name, dept: dept };
+        if (/^\d+$/.test(e)) addCand(e, name, dept);
       });
     });
   });
@@ -650,7 +735,28 @@ function dcBuildExtMaps_(configSheet) {
   // firstExtToAgent = the pre-D2 map, kept for the diagnose mode (what a
   // re-import changes); allExtToAgent = extToAgent (the D0 name).
   return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions,
-           firstExtToAgent: firstExtToAgent, allExtToAgent: extToAgent };
+           firstExtToAgent: firstExtToAgent, allExtToAgent: extToAgent, extCands: extCands, canon: canon };
+}
+
+/**
+ * DCA-1: the DQE build's roster canonicalizer (INV-24: alias overrides, exact
+ * roster name, then a UNIQUE strip / flatten match) over the same workbook as
+ * the roster sheet -- one rule, not a new mirror. Identity when the build
+ * file or the roster is unavailable (a name then has to match exactly).
+ */
+function dcRosterCanonicalizer_(configSheet) {
+  try {
+    if (typeof canonicalizeAgentNameWith_ === 'function' && typeof loadRosterCanonicalNames_ === 'function'
+        && configSheet && typeof configSheet.getParent === 'function') {
+      const rc = loadRosterCanonicalNames_(configSheet);
+      if (rc && (Object.keys(rc.canonicalSet || {}).length || Object.keys(rc.aliasMap || {}).length)) {
+        return function (n) { return n ? canonicalizeAgentNameWith_(rc, n) : n; };
+      }
+    }
+  } catch (e) {
+    dcLog_('dcRosterCanonicalizer_: roster names unavailable, names must match exactly: ' + (e && e.message ? e.message : e));
+  }
+  return function (n) { return n; };
 }
 
 // -- Persistence: sheet -------------------------------------------------------
@@ -1115,6 +1221,12 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
     }
   }
   const result = computeDirectCallMetrics(dayRows, maps, opts);
+  const at = result.meta && result.meta.attribution;
+  if (at && (at.mismatch || at.otherCell)) {
+    dcLog_('buildDirectCallFromRaw_: DCA-1 -- %s leg(s) credited to NO ONE (the 8x8 name is not the roster agent on that extension), '
+      + '%s moved to another roster cell on the same extension; diagnoseDirectCallAttribution() lists them.',
+      String(at.mismatch), String(at.otherCell));
+  }
 
   const sheetRes = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
   if (sheetRes.written === 0 && sheetRes.deleted > 0) {
@@ -1239,6 +1351,137 @@ function diagnoseDirectCallCounting() {
     + ': ' + total + ' events counted differently since D2, vs ' + (ib + ob) + ' counted -- the size of a re-import of a pre-D2 date like this one', date: isoDate || dateStr, diag: d };
   dcLog_('[direct-diag] %s', out.result);
   return out;
+}
+
+/**
+ * DCA-1 step 0 (owner 2026-10-27; Operator State #83): READ-ONLY. For every
+ * leg the Direct build credits to a roster agent by EXTENSION, does the name
+ * 8x8 put on that side of the leg (CALLEE_NAME when the agent is called,
+ * CALLER_NAME when they call) agree? Run over the held Call_Legs_* tabs:
+ * `dateIso` = one date, 'all' = every held date, blank = the latest.
+ * Logs, per date and in total: legs whose name matches / is blank / is another
+ * roster cell on the same extension / is somebody else (credited to NO ONE
+ * since DCA-1); each mismatch with its extension, the roster name it used to
+ * go to, the 8x8 name, a count and sample call ids; every extension listed in
+ * more than one roster cell; the blank-name legs on extensions that also
+ * showed another person's name (the case the owner decides from this); and
+ * the Direct report rows that change (pre-DCA-1 rule vs now). Employee names
+ * and call ids only -- never a phone number. Writes nothing.
+ */
+function diagnoseDirectCallAttribution(dateIso) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheets = [];
+  ss.getSheets().forEach(function (sh) {
+    const m = sh.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: sh });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { dcLog_('[direct-attr] no Call_Legs sheet for %s.', dateIso || '(latest)'); return { result: 'INCONCLUSIVE (no Call_Legs sheet)' }; }
+  const cfg = SpreadsheetApp.openById(getTargetSsId_()).getSheetByName('DO NOT EDIT!');
+  if (!cfg) throw new Error('DO NOT EDIT! sheet missing.');
+  const maps = dcBuildExtMaps_(cfg);
+  const res = dcAttributionAcrossDays_(sheets.map(function (x) {
+    return { iso: x.iso, grid: x.sheet.getDataRange().getDisplayValues() };
+  }), maps);
+  dcLogAttribution_(res);
+  return res;
+}
+
+/** PURE. Runs the build twice per day (now / pre-DCA-1) and folds the results. */
+function dcAttributionAcrossDays_(days, maps) {
+  const toIso = function (ds) {
+    if (typeof parseDateForNeon === 'function') return parseDateForNeon(ds);
+    const m = String(ds || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2) : ds;
+  };
+  const tot = { days: [], match: 0, blank: 0, otherCell: 0, mismatch: 0, mismatches: {}, moved: {}, blankExt: {}, change: {} };
+  const events = function (r) {
+    return r.ib_int_answered + r.ib_int_missed_free + r.ib_int_missed_busy + r.ib_ext_answered + r.ib_ext_missed_free
+      + r.ib_ext_missed_busy + r.ob_int_total + r.ob_ext_total;
+  };
+  const fold = function (into, list) {
+    list.forEach(function (e) {
+      const k = e.ext + '|' + e.rosterName + '|' + e.legName;
+      const t = into[k] || (into[k] = { ext: e.ext, rosterName: e.rosterName, legName: e.legName, to: e.to, n: 0, samples: [] });
+      t.n += e.n;
+      e.samples.forEach(function (c) { if (t.samples.length < 5 && t.samples.indexOf(c) === -1) t.samples.push(c); });
+    });
+  };
+  days.forEach(function (d) {
+    const grid = d.grid || [];
+    // The build's day rule: only legs dated on the tab's date (S2C-3).
+    const rows = [grid[0] || []];
+    for (let i = 1; i < grid.length; i++) {
+      const ds = dcDateStr_(grid[i] && grid[i][2]);
+      if (!ds || toIso(ds) === d.iso) rows.push(grid[i]);
+    }
+    const now = computeDirectCallMetrics(rows, maps, {});
+    const was = computeDirectCallMetrics(rows, maps, { extOnly: true });
+    const at = now.meta.attribution;
+    tot.days.push({ iso: d.iso, match: at.match, blank: at.blank, otherCell: at.otherCell, mismatch: at.mismatch });
+    ['match', 'blank', 'otherCell', 'mismatch'].forEach(function (k) { tot[k] += at[k]; });
+    fold(tot.mismatches, at.mismatches);
+    fold(tot.moved, at.moved);
+    Object.keys(at.blankExt).forEach(function (e) { tot.blankExt[e] = (tot.blankExt[e] || 0) + at.blankExt[e]; });
+    const key = function (r) { return r.agent + ' (' + (r.dept || '?') + ')'; };
+    was.rows.forEach(function (r) { const c = tot.change[key(r)] || (tot.change[key(r)] = { was: 0, now: 0 }); c.was += events(r); });
+    now.rows.forEach(function (r) { const c = tot.change[key(r)] || (tot.change[key(r)] = { was: 0, now: 0 }); c.now += events(r); });
+  });
+  const list = function (o) { return Object.keys(o).map(function (k) { return o[k]; }).sort(function (x, y) { return y.n - x.n || (x.ext < y.ext ? -1 : 1); }); };
+  tot.mismatches = list(tot.mismatches);
+  tot.moved = list(tot.moved);
+  tot.changes = Object.keys(tot.change).filter(function (k) { return tot.change[k].was !== tot.change[k].now; })
+    .map(function (k) { return { agent: k, was: tot.change[k].was, now: tot.change[k].now }; })
+    .sort(function (x, y) { return Math.abs(y.was - y.now) - Math.abs(x.was - x.now) || (x.agent < y.agent ? -1 : 1); });
+  delete tot.change;
+  // Extensions listed in more than one roster cell (distinct names).
+  tot.shared = Object.keys((maps && maps.extCands) || {}).map(function (e) {
+    const names = maps.extCands[e].map(function (c) { return c.name + ' (' + c.dept + ')'; });
+    const distinct = {}; maps.extCands[e].forEach(function (c) { distinct[c.name] = true; });
+    return { ext: e, names: names, people: Object.keys(distinct).length };
+  }).filter(function (x) { return x.people > 1; }).sort(function (x, y) { return x.ext < y.ext ? -1 : 1; });
+  // The blank-name legs the owner's fallback decision affects: on an
+  // extension that ALSO showed another person's name.
+  const contested = {};
+  tot.mismatches.forEach(function (m) { contested[m.ext] = true; });
+  tot.blankOnContested = Object.keys(contested).filter(function (e) { return tot.blankExt[e]; })
+    .map(function (e) { return { ext: e, n: tot.blankExt[e] }; }).sort(function (x, y) { return y.n - x.n; });
+  return tot;
+}
+
+function dcLogAttribution_(t) {
+  const n = function (v) { return String(Math.round(Number(v) || 0)); };
+  const all = t.match + t.blank + t.otherCell + t.mismatch;
+  const pct = function (v) { return all ? (Math.round(v / all * 1000) / 10) + '%' : '0%'; };
+  const nm = function (v) { return dcMaskPhonesInText_(v); };
+  t.days.forEach(function (d) {
+    dcLog_('[direct-attr] %s: name matches %s, no name %s, another roster cell %s, somebody else (credited to no one) %s',
+      d.iso, n(d.match), n(d.blank), n(d.otherCell), n(d.mismatch));
+  });
+  dcLog_('[direct-attr] TOTAL over %s date(s): %s agent-side legs found by extension -- name matches %s (%s), no name %s (%s), '
+    + 'another roster cell on the same extension %s (%s), somebody else %s (%s).',
+    n(t.days.length), n(all), n(t.match), pct(t.match), n(t.blank), pct(t.blank), n(t.otherCell), pct(t.otherCell), n(t.mismatch), pct(t.mismatch));
+  dcLog_('[direct-attr] extensions listed in more than one roster cell: %s', t.shared.length
+    ? t.shared.map(function (x) { return x.ext + ': ' + x.names.map(nm).join(' / '); }).join('; ') : 'none');
+  dcLog_('[direct-attr] SOMEBODY ELSE on the extension (since DCA-1 credited to no one; before, to the roster name): %s', n(t.mismatch));
+  t.mismatches.slice(0, 25).forEach(function (m) {
+    dcLog_('[direct-attr]   ext %s -- roster %s, 8x8 says %s: %s leg(s) e.g. %s', m.ext, nm(m.rosterName), nm(m.legName), n(m.n), m.samples.join(', '));
+  });
+  if (t.moved.length) {
+    dcLog_('[direct-attr] ANOTHER ROSTER CELL on the same extension (since DCA-1 credited to that person): %s', n(t.otherCell));
+    t.moved.slice(0, 15).forEach(function (m) {
+      dcLog_('[direct-attr]   ext %s -- was %s, now %s: %s leg(s) e.g. %s', m.ext, nm(m.rosterName), nm(m.to), n(m.n), m.samples.join(', '));
+    });
+  }
+  dcLog_('[direct-attr] NO NAME on extensions that also showed somebody else (still credited by extension -- the case to decide): %s',
+    t.blankOnContested.length ? t.blankOnContested.map(function (x) { return 'ext ' + x.ext + ' x' + n(x.n); }).join(', ') : 'none');
+  dcLog_('[direct-attr] Direct report rows that change (calls in the work window, before -> since DCA-1): %s',
+    t.changes.length ? n(t.changes.length) + ' row(s)' : 'none');
+  t.changes.slice(0, 25).forEach(function (c) {
+    dcLog_('[direct-attr]   %s: %s -> %s', nm(c.agent), n(c.was), n(c.now));
+  });
 }
 
 /**

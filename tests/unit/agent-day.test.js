@@ -228,6 +228,24 @@ test('an answered call is "transferred on" only when a later leg is someone else
   assert.equal(shaped.transferredOn, true);
 });
 
+// IXT-1: the agent's own attempts to reach a colleague and their consult with
+// one happen WHILE they still have the caller -- only the colleague's hand-over
+// leg means the call moved on.
+test('IXT-1: a consult or a missed attempt is not "transferred on"; the hand-over is', function () {
+  const role = h.ctx.agentDayInboundRole_;
+  const head = [
+    { t: '09:30:00', name: 'A_Q_CSR', kind: 'queue' },
+    { t: '09:30:10', name: 'Daniel Rep', kind: 'answer', talk: 900 },
+    { t: '09:34:55', name: 'Nash Colleague', kind: 'leg', missed: true, transfer: true, secs: 16, voicemail: true },
+    { t: '09:37:54', name: 'Nash Colleague', kind: 'answer', talk: 224, transfer: true, consult: true },
+  ];
+  assert.equal(role(head, 'Daniel Rep').transferredOn, false, 'attempt + consult only: Daniel still had the caller');
+  const handed = head.concat([{ t: '09:41:38', name: 'Nash Colleague', kind: 'answer', talk: 294, secs: 294, transfer: true, handover: true }]);
+  assert.equal(role(handed, 'Daniel Rep').transferredOn, true, 'the hand-over leg is the call moving on');
+  // An R11-N queue-transfer abandon still counts, as before.
+  assert.equal(role([head[0], head[1], { t: '09:40:00', name: 'A_Q_Billing', kind: 'queue', abandoned: true, transfer: true }], 'Daniel Rep').transferredOn, true);
+});
+
 test('outbound reads as "not captured" before capture began, with Neon down, or on a dqe-only day', function () {
   const cap = h.ctx.agentDayOutboundCaptured_;
   assert.equal(cap({ neonAvailable: true, tier: 'full' }, '2026-07-10'), true, 'the first captured day counts');

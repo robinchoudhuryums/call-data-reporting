@@ -718,3 +718,132 @@ test('D0 diagnose: a recording row sharing the dial\'s call id hides nothing -- 
   assert.deepEqual([a.ob_int_total, a.ob_ext_total], [1, 1], 'the build: one internal dial, one outside call -- the recording rows add nothing');
   assert.equal(d.sameRootOut.total, 0, 'a shared call id is one event, never an extra leg');
 });
+
+// ── DCA-1 (owner 2026-10-27): an extension AND the name 8x8 puts on the leg ──
+// Former employees stay on DO NOT EDIT! with their old extension; 8x8 gives
+// the extension to someone else. Anna (CSR) left; ext 101 now rings Nina.
+const J = (x) => JSON.parse(JSON.stringify(x));
+
+test('DCA-1: a call to a former employee\'s extension, named for the new owner, is credited to NO ONE (not the former employee)', function () {
+  const res = compute(grid([
+    row({ cid: 'N1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina New', answered: true }),
+    row({ cid: 'N2', start: D + '10:10:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:05', caller: '101', callerName: 'Nina New', callee: '+15551230001' }),
+  ]), MAPS, {});
+  assert.equal(rowFor(res, 'Anna'), undefined, 'Anna left -- none of Nina\'s calls are hers');
+  const at = J(res.meta.attribution);
+  assert.equal(at.mismatch, 2);
+  assert.deepEqual(at.mismatches.map((m) => [m.ext, m.rosterName, m.legName, m.n]), [['101', 'Anna', 'Nina New', 2]]);
+  assert.ok(!JSON.stringify(at).includes('5551230'), 'no phone number in the tally');
+});
+
+test('DCA-1: when the new owner is ALSO on the roster with that extension, the call goes to them', function () {
+  const maps = { extToAgent: { '101': { name: 'Anna', dept: 'CSR' } }, queueExtSet: new Set(), exclusions: new Set(),
+    extCands: { '101': [{ name: 'Anna', dept: 'CSR' }, { name: 'Nina', dept: 'Sales' }] } };
+  const res = compute(grid([
+    row({ cid: 'M1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina', answered: true }),
+  ]), maps, {});
+  assert.equal(rowFor(res, 'Anna'), undefined);
+  const n = rowFor(res, 'Nina');
+  assert.equal(n.dept, 'Sales');
+  assert.equal(n.ib_ext_answered, 1);
+  assert.equal(res.meta.attribution.otherCell, 1);
+});
+
+test('DCA-1: a blank or non-person name keeps the extension-only rule unchanged (owner decides after step 0)', function () {
+  const res = compute(grid([
+    row({ cid: 'B1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230000', callee: '101', answered: true }),
+    row({ cid: 'B2', start: D + '10:05:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230001', callee: '101', calleeName: 'N/A', answered: true }),
+    row({ cid: 'B3', start: D + '10:10:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230002', callee: '101', calleeName: 'Voicemail', answered: true }),
+    row({ cid: 'B4', start: D + '10:15:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230003', callee: '101', calleeName: '+15551239999', answered: true }),
+  ]), MAPS, {});
+  assert.equal(rowFor(res, 'Anna').ib_ext_answered, 4);
+  assert.equal(res.meta.attribution.blank, 4);
+  assert.equal(res.meta.attribution.mismatch, 0);
+  assert.equal(h.call('dcPersonName_', 'A_Q_CSR'), '');
+  assert.equal(h.call('dcPersonName_', 'CallRecording (595)'), '');
+  assert.equal(h.call('dcPersonName_', 'Nina New'), 'Nina New');
+});
+
+test('DCA-1: the roster canonicalizer still matches a nickname variant (no false "somebody else")', function () {
+  const maps = Object.assign({}, MAPS, { canon: (n) => (n === 'Anna Annie Lee' ? 'Anna' : n) });
+  const res = compute(grid([
+    row({ cid: 'K1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230000', callee: '101', calleeName: 'Anna Annie Lee', answered: true }),
+    row({ cid: 'K2', start: D + '10:05:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230001', callee: '101', calleeName: 'Anna', answered: true }),
+  ]), maps, {});
+  assert.equal(rowFor(res, 'Anna').ib_ext_answered, 2);
+  assert.equal(res.meta.attribution.match, 2);
+});
+
+test('DCA-1: a named leg no longer makes the former employee BUSY (occupancy follows the person too)', function () {
+  // Anna is still here on 101 in this fixture; a leg on 102 named for someone
+  // who is not Bob must not count as Bob's busy time for Bob's missed ring.
+  const res = compute(grid([
+    row({ cid: 'O1', start: D + '10:00:00', connected: D + '10:00:00', stop: D + '10:05:00', dir: 'Outgoing', talk: '0:05:00', callTime: '0:05:00', caller: '102', callerName: 'Zed Other', callee: '+15551230000' }),
+    row({ cid: 'O2', start: D + '10:01:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230001', callee: '102', missed: true }),
+  ]), MAPS, {});
+  const b = rowFor(res, 'Bob');
+  assert.equal(b.ib_ext_missed_free, 1, 'Zed\'s call on 102 is not Bob\'s, so the miss is not excused as busy');
+  assert.equal(b.ob_ext_total, 0);
+});
+
+test('DCA-1: opts.extOnly is the pre-DCA-1 rule (what the diagnostic compares against)', function () {
+  const g = grid([
+    row({ cid: 'E1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina New', answered: true }),
+  ]);
+  assert.equal(rowFor(compute(g, MAPS, { extOnly: true }), 'Anna').ib_ext_answered, 1);
+  assert.equal(compute(g, MAPS, { extOnly: true }).meta.attribution, undefined);
+});
+
+test('DCA-1: dcBuildExtMaps_ lists EVERY roster cell on an extension (the old map still picks one)', function () {
+  const cfg = {
+    getLastRow: () => 3, getLastColumn: () => 7,
+    getRange: function (r, c, nr, nc) {
+      const g = [['', '', '', '', '', 'CSR', 'Sales'], ['A_Q_CSR', '103', '', '', '', 'Anna, 101', 'Nina, 101'], ['', '', '', '', '', 'Bob, 102, 111', '']];
+      return { getValues: () => g.slice(r - 1, r - 1 + nr).map((row2) => row2.slice(c - 1, c - 1 + nc)) };
+    },
+  };
+  const m = h.call('dcBuildExtMaps_', cfg);
+  assert.deepEqual(J(m.extCands['101']), [{ name: 'Anna', dept: 'CSR' }, { name: 'Nina', dept: 'Sales' }]);
+  assert.deepEqual(J(m.extCands['111']), [{ name: 'Bob', dept: 'CSR' }]);
+  assert.equal(m.extToAgent['101'].name, 'Nina', 'the extension-only map is unchanged: the later column wins');
+  assert.equal(typeof m.canon, 'function');
+  assert.equal(m.canon('X Y'), 'X Y', 'no roster workbook -> identity');
+});
+
+test('DCA-1 step 0: the diagnostic folds days, lists shared extensions, the contested blank legs and the rows that change -- no numbers', function () {
+  const maps = { extToAgent: { '101': { name: 'Anna', dept: 'CSR' }, '102': { name: 'Bob', dept: 'CSR' } }, queueExtSet: new Set(), exclusions: new Set(),
+    extCands: { '101': [{ name: 'Anna', dept: 'CSR' }, { name: 'Ann Old', dept: 'Sales' }], '102': [{ name: 'Bob', dept: 'CSR' }] } };
+  const day = (iso, rows) => ({ iso: iso, grid: grid(rows) });
+  const t = J(h.call('dcAttributionAcrossDays_', [
+    day('2026-03-09', [
+      row({ cid: 'A1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina New', answered: true }),
+      row({ cid: 'A2', start: D + '10:05:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230001', callee: '101', answered: true }),
+      row({ cid: 'A3', start: D + '10:10:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230002', callee: '102', calleeName: 'Bob', answered: true }),
+    ]),
+    day('2026-03-10', [
+      row({ cid: 'A4', start: '03/10/2026 10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230003', callee: '101', calleeName: 'Nina New', answered: true }),
+      row({ cid: 'X9', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230004', callee: '101', calleeName: 'Nina New', answered: true }),   // a 03/09 leg on the 03/10 tab: dropped
+    ]),
+  ], maps));
+  assert.deepEqual(t.days.map((d) => [d.iso, d.match, d.blank, d.mismatch]), [['2026-03-09', 1, 1, 1], ['2026-03-10', 0, 0, 1]]);
+  assert.deepEqual(t.mismatches.map((m) => [m.ext, m.rosterName, m.legName, m.n, m.samples]), [['101', 'Anna', 'Nina New', 2, ['A1', 'A4']]]);
+  assert.deepEqual(t.shared.map((x) => x.ext), ['101']);
+  assert.deepEqual(t.blankOnContested, [{ ext: '101', n: 1 }]);
+  assert.deepEqual(t.changes, [{ agent: 'Anna (CSR)', was: 3, now: 1 }]);
+  assert.ok(!JSON.stringify(t).includes('555123'), 'no phone number anywhere in the result');
+});
+
+test('DCA-1 step 0: the log prints whole numbers and masks anything number-shaped', function () {
+  const lines = [];
+  const real = h.ctx.dcLog_;
+  h.ctx.dcLog_ = function () { lines.push(Array.prototype.slice.call(arguments).join(' | ')); };
+  try {
+    h.call('dcLogAttribution_', { days: [{ iso: '2026-03-09', match: 1, blank: 2, otherCell: 0, mismatch: 3 }], match: 1, blank: 2, otherCell: 0, mismatch: 3,
+      mismatches: [{ ext: '101', rosterName: 'Anna', legName: 'Nina New', n: 3, samples: ['A1'] }], moved: [], shared: [], blankOnContested: [], changes: [{ agent: 'Anna (CSR)', was: 4, now: 1 }] });
+  } finally { h.ctx.dcLog_ = real; }
+  const text = lines.join('\n');
+  assert.match(text, /\| 101 \| Anna \| Nina New \| 3 \| A1/);
+  assert.match(text, /rows that change.*\| 1 row\(s\)/);
+  assert.match(text, /Anna \(CSR\) \| 4 \| 1/);
+  assert.ok(!/\d\.0\b/.test(text), 'no ".0" counts: ' + text);
+});

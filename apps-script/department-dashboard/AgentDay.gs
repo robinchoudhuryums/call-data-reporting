@@ -230,6 +230,8 @@ function agentDayInboundRole_(journey, agentName) {
  * from reading as a transfer (the transfer probe's "after someone answered"
  * rule, cdr-import/transferFilter.js). Cross-referenced `transfer:true`
  * events count: the R11-N append records the queue the caller was sent to.
+ * IXT-1's consult and missed attempts do NOT count (the agent still had the
+ * caller); its hand-over leg does.
  * Times are the journey's HH:MM:SS; a leg without one is never counted.
  */
 function agentDayTransferredOn_(journey, agentName, answered) {
@@ -238,6 +240,10 @@ function agentDayTransferredOn_(journey, agentName, answered) {
   for (var i = 0; i < journey.length; i++) {
     var ev = journey[i];
     if (!ev || i === answered.order || ev.name === agentName) continue;
+    // IXT-1: the agent's own consult with a colleague and their unanswered
+    // attempts to reach one are things the agent DID while still on the call
+    // -- not the caller moving on. Only the colleague's hand-over leg is.
+    if (ev.consult || (ev.transfer && ev.missed)) continue;
     var t = agentDayClockSec_(ev.t);
     if (t != null && t > t0 + 1) return true;
   }

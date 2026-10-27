@@ -15,7 +15,7 @@ function leg(o) {
   r[0] = o.callId; r[1] = o.legId; r[2] = o.start; r[3] = o.connected || ''; r[4] = o.stop || '';
   r[5] = o.direction; r[6] = o.talk || '0:00:00'; r[7] = o.callTime || '0:00:00';
   r[8] = o.caller; r[9] = o.callerName || ''; r[10] = o.callee; r[11] = o.calleeName || '';
-  r[14] = o.parent || 'N/A'; r[16] = o.dialIn || 'N/A';
+  r[14] = o.parent || 'N/A'; r[15] = o.to || 'N/A'; r[16] = o.dialIn || 'N/A';
   r[23] = o.missed || '-'; r[24] = o.abandoned || '-'; r[25] = o.answered || '-';
   r[32] = o.holdDur || '0:00:00'; r[33] = o.calleeDisc || 'N/A'; r[34] = o.callerDisc || 'N/A';
   r[36] = o.dept || 'N/A';
@@ -1540,4 +1540,127 @@ test('S2C-1: icAnswerLegAgent_ -- CALLEE normally, CALLER on an external-callee 
   assert.deepEqual(JSON.parse(JSON.stringify(h.call('icAnswerLegAgent_', inc))), { ext: '215', name: 'Ray', viaCallee: true });
   assert.deepEqual(JSON.parse(JSON.stringify(h.call('icAnswerLegAgent_', out))), { ext: '215', name: 'Ray', viaCallee: false });
   assert.equal(h.call('icAnswerLegAgent_', ext2ext), null);
+});
+
+// ── IXT-1 (owner 2026-10-27): a transfer / consult to a PERSON ─────────────
+// The owner's 10/26 legs (customer number swapped by the owner): Daniel (352)
+// answers a CSR call, tries Nash (242) -- missed, voicemail -- then reaches
+// him on a forked call named in Transfer To Call ID; Nash takes the caller.
+const IXT_D = '10/26/2026 ';
+const IXT_CUST = '12542223333';
+function ixtCustomerCall(extra) {
+  return [
+    leg({ callId: '1783985478661', legId: 1, start: IXT_D + '9:31:08', stop: IXT_D + '9:31:25', direction: 'Incoming', caller: IXT_CUST, callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '1783985478661', legId: 2, start: IXT_D + '9:31:25', stop: IXT_D + '9:32:15', direction: 'Incoming', caller: IXT_CUST, callee: '9999', calleeName: 'Normal Call Menu - New', dialIn: '19722281820' }),
+    leg({ callId: '1783985478661', legId: 3, start: IXT_D + '9:32:15', stop: IXT_D + '9:32:36', direction: 'Incoming', caller: IXT_CUST, callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }),
+    leg({ callId: '1783985478661', legId: 4, start: IXT_D + '9:32:36', connected: IXT_D + '9:32:36', stop: IXT_D + '9:41:37', direction: 'Incoming', talk: '0:09:00', callTime: '0:09:00',
+          caller: IXT_CUST, callerName: 'John Doe', callee: '352', calleeName: 'Daniel (Dishant) Sahani', to: (extra && extra.to) || '1783985479687',
+          dialIn: '19722281820', answered: 'Answered', holdDur: '0:06:04', dept: 'Customer Success' }),
+    leg({ callId: '1783985478661', legId: 5, start: IXT_D + '9:32:37', stop: IXT_D + '9:41:35', direction: 'Internal', callTime: '0:08:58', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: 'CallRecording (620)', calleeName: 'N/A', dept: 'Customer Success' }),
+  ];
+}
+function ixtMissedAttempt(id, start, calleeExt, calleeName) {
+  const p = start.split(':').map(Number);
+  const t = p[0] * 3600 + p[1] * 60 + p[2] + 16;
+  const stopFirst = Math.floor(t / 3600) + ':' + String(Math.floor(t / 60) % 60).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+  return [
+    leg({ callId: id, legId: 1, start: IXT_D + start, stop: IXT_D + stopFirst, direction: 'Internal', callTime: '0:00:15', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: calleeExt, calleeName: calleeName, missed: 'Missed', dept: 'Customer Success' }),
+    leg({ callId: id, legId: 2, start: IXT_D + stopFirst, stop: IXT_D + stopFirst, direction: 'Internal', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: calleeExt, calleeName: calleeName, dept: 'Customer Success' }),
+    leg({ callId: id, legId: 3, start: IXT_D + stopFirst, connected: IXT_D + stopFirst, stop: IXT_D + stopFirst, direction: 'Internal', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: 'Voicemail (' + calleeExt + ')', calleeName: calleeName, missed: 'Missed', dept: 'Customer Success' }),
+  ];
+}
+function ixtForkedTransfer() {
+  const id = '1783985479687';
+  return [
+    leg({ callId: id, legId: 1, start: IXT_D + '9:37:45', connected: IXT_D + '9:37:53', stop: IXT_D + '9:37:54', direction: 'Internal', callTime: '0:00:08', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: 'CallForking (242)', calleeName: 'Nash (Nitin) Parashar', dept: 'Customer Success' }),
+    leg({ callId: id, legId: 2, start: IXT_D + '9:37:54', connected: IXT_D + '9:37:54', stop: IXT_D + '9:46:32', direction: 'Internal', talk: '0:08:37', callTime: '0:08:37', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: '242', calleeName: 'Nash (Nitin) Parashar', answered: 'Answered', dept: 'Customer Success' }),
+    leg({ callId: id, legId: 3, start: IXT_D + '9:37:55', stop: IXT_D + '9:41:38', direction: 'Internal', callTime: '0:03:42', caller: '242', callerName: 'Nash (Nitin) Parashar', callee: 'CallRecording (595)', calleeName: 'N/A', dept: 'Customer Success' }),
+    leg({ callId: id, legId: 4, start: IXT_D + '9:41:38', connected: IXT_D + '9:41:38', stop: IXT_D + '9:46:32', direction: 'Outgoing', talk: '0:04:54', callTime: '0:04:54', caller: '242', callerName: 'Nash (Nitin) Parashar', callee: IXT_CUST, answered: 'Answered', dept: 'Customer Success' }),
+    leg({ callId: id, legId: 5, start: IXT_D + '9:41:38', stop: IXT_D + '9:46:32', direction: 'Internal', callTime: '0:04:53', caller: '242', callerName: 'Nash (Nitin) Parashar', callee: 'CallRecording (352)', calleeName: 'N/A', dept: 'Customer Success' }),
+  ];
+}
+const ixtAdded = (r) => JSON.parse(JSON.stringify(r.journey.filter((e) => e.transfer)));
+
+test('IXT-1: the owner\'s call gains the missed attempt, the consult and Nash taking the caller -- in time order, journey only', function () {
+  const alone = rec(build(ixtCustomerCall()), '1783985478661');
+  const stats = {};
+  const recs = h.call('buildInboundCallRecords_', ixtCustomerCall()
+    .concat(ixtMissedAttempt('1783985479241', '9:34:55', '242', 'Nash (Nitin) Parashar'))
+    .concat(ixtForkedTransfer()), { ixtStats: stats });
+  assert.equal(recs.length, 1, 'the internal calls are still not records of their own');
+  const r = rec(recs, '1783985478661');
+  assert.deepEqual(ixtAdded(r), [
+    { t: '09:34:55', name: 'Nash (Nitin) Parashar', kind: 'leg', missed: true, transfer: true, secs: 16, voicemail: true },
+    { t: '09:37:54', name: 'Nash (Nitin) Parashar', kind: 'answer', talk: 224, transfer: true, consult: true },
+    { t: '09:41:38', name: 'Nash (Nitin) Parashar', kind: 'answer', talk: 294, transfer: true, handover: true, secs: 294 },
+  ]);
+  const ts = r.journey.map((e) => e.t);
+  assert.deepEqual(ts, ts.slice().sort(), 'merged in time order');
+  ['disposition', 'finalDept', 'waitSeconds', 'holdSeconds', 'entryQueue', 'numQueues', 'numTransfers', 'firstAgent'].forEach((k) => {
+    assert.deepEqual(r[k], alone[k], k + ' never moves');
+  });
+  assert.equal(stats.linked, 1);
+  assert.equal(stats.timing, 1);
+  assert.equal(stats.calls, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(stats.attemptsPerCall)), { 1: 1, 2: 0, '3+': 0 });
+  assert.ok(!JSON.stringify(r.journey).includes('2542223333'), 'no caller number in the journey');
+});
+
+test('IXT-1: recording legs are no longer journey steps (the "(unknown) 0:08:58" row)', function () {
+  const r = rec(build(ixtCustomerCall()), '1783985478661');
+  assert.ok(!r.journey.some((e) => e.name === '(unknown)'), JSON.stringify(r.journey));
+  assert.equal(r.journey.length, 4);
+});
+
+test('IXT-1: keyed on the CALLER -- a second attempt to another teammate is its own event', function () {
+  const r = rec(build(ixtCustomerCall({ to: 'N/A' })
+    .concat(ixtMissedAttempt('1783985479241', '9:34:55', '242', 'Nash (Nitin) Parashar'))
+    .concat(ixtMissedAttempt('1783985479300', '9:36:10', '250', 'Nicolas (Nitin) Ghonasgi'))), '1783985478661');
+  assert.deepEqual(ixtAdded(r).map((e) => [e.t, e.name, !!e.missed]),
+    [['09:34:55', 'Nash (Nitin) Parashar', true], ['09:36:10', 'Nicolas (Nitin) Ghonasgi', true]]);
+});
+
+test('IXT-1: an unlinked answered consult shows with its whole talk; nothing is added after the agent\'s leg ended', function () {
+  const consult = [leg({ callId: 'C1', legId: 1, start: IXT_D + '9:35:00', connected: IXT_D + '9:35:02', stop: IXT_D + '9:36:02', direction: 'Internal', talk: '0:01:00', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: '250', calleeName: 'Nicolas (Nitin) Ghonasgi', answered: 'Answered' })];
+  const late = ixtMissedAttempt('L1', '9:45:00', '242', 'Nash (Nitin) Parashar');   // Daniel's leg ended 9:41:37
+  const r = rec(build(ixtCustomerCall({ to: 'N/A' }).concat(consult).concat(late)), '1783985478661');
+  assert.deepEqual(ixtAdded(r), [{ t: '09:35:02', name: 'Nicolas (Nitin) Ghonasgi', kind: 'answer', talk: 60, transfer: true, consult: true }]);
+});
+
+test('IXT-1: the agent on TWO captured calls at once is ambiguous -- nothing is guessed', function () {
+  const other = [leg({ callId: '1783985478999', legId: 1, start: IXT_D + '9:33:00', connected: IXT_D + '9:33:00', stop: IXT_D + '9:40:00', direction: 'Incoming', talk: '0:07:00', caller: '12145550001', callee: '352', calleeName: 'Daniel (Dishant) Sahani', answered: 'Answered', dept: 'Customer Success' })];
+  const stats = {};
+  const recs = h.call('buildInboundCallRecords_', ixtCustomerCall({ to: 'N/A' }).concat(other)
+    .concat(ixtMissedAttempt('1783985479241', '9:34:55', '242', 'Nash (Nitin) Parashar')), { ixtStats: stats });
+  recs.forEach((r) => assert.equal(ixtAdded(r).length, 0, r.callId));
+  assert.equal(stats.ambiguous, 1);
+});
+
+test('IXT-1: a group that reached an outside number, or a queue, is not attached by timing', function () {
+  const outside = ixtMissedAttempt('O1', '9:34:55', '242', 'Nash (Nitin) Parashar').concat([
+    leg({ callId: 'O1', legId: 4, start: IXT_D + '9:35:30', connected: IXT_D + '9:35:30', stop: IXT_D + '9:36:00', direction: 'Outgoing', talk: '0:00:30', caller: '352', callee: '18005550100', answered: 'Answered' })]);
+  const queue = [leg({ callId: 'Q1', legId: 1, start: IXT_D + '9:36:30', stop: IXT_D + '9:36:40', direction: 'Internal', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: '138', calleeName: 'A_Q_Spanish' })];
+  const stats = {};
+  const recs = h.call('buildInboundCallRecords_', ixtCustomerCall({ to: 'N/A' }).concat(outside).concat(queue), { ixtStats: stats });
+  assert.equal(ixtAdded(rec(recs, '1783985478661')).length, 0);
+  assert.equal(stats.outsideSkipped, 1);
+});
+
+test('IXT-1: a Transfer To naming the call\'s OWN id is not a transfer', function () {
+  const r = rec(build(ixtCustomerCall({ to: '1783985478661' })), '1783985478661');
+  assert.equal(ixtAdded(r).length, 0);
+});
+
+test('IXT-1: the diagnostic\'s fold sums days and keeps at most five samples', function () {
+  let t = h.call('icIxtFoldStats_', null, null);
+  for (let i = 0; i < 3; i++) {
+    t = h.call('icIxtFoldStats_', t, { calls: 2, linked: 1, timing: 3, ambiguous: 1, outsideSkipped: 0,
+      attemptsPerCall: { 1: 1, 2: 0, '3+': 1 }, samples: { linked: ['a' + i, 'b' + i], timing: ['c' + i] } }, 10);
+  }
+  t = JSON.parse(JSON.stringify(t));
+  assert.equal(t.days, 3);
+  assert.equal(t.captured, 30);
+  assert.equal(t.timing, 9);
+  assert.deepEqual(t.attemptsPerCall, { 1: 3, 2: 0, '3+': 3 });
+  assert.equal(t.samples.linked.length, 5);
 });
