@@ -315,7 +315,32 @@ function icBuildJourney_(legs) {
     }
     events.push(ev);
   }
-  return events;
+  return icQueueFirstWithinSecond_(events);
+}
+
+/**
+ * PURE (QF-1, owner 2026-10-28). A queue and the first agent it rings often
+ * start in the SAME second, and 8x8 can give the ring the lower leg id, so the
+ * time-then-leg-id sort put the ring BEFORE its queue ("Adrian ✗ -> Sales").
+ * Within a run of events sharing one `t`, queue events move ahead of the rest;
+ * every other order is kept (a stable partition, so rings keep their leg-id
+ * order and two same-second queues keep theirs). The dashboard's display
+ * shapers apply the same rule to journeys stored before this
+ * (CallerLookup.gs::clQueueFirstWithinSecond_). Mutates nothing; returns a new
+ * array.
+ */
+function icQueueFirstWithinSecond_(events) {
+  var out = [];
+  for (var i = 0; i < (events || []).length; ) {
+    var j = i;
+    while (j < events.length && events[j] && events[i] && events[j].t === events[i].t) j++;
+    if (j === i) j = i + 1;
+    var run = events.slice(i, j);
+    run.filter(function (e) { return e && e.kind === 'queue'; }).forEach(function (e) { out.push(e); });
+    run.filter(function (e) { return !(e && e.kind === 'queue'); }).forEach(function (e) { out.push(e); });
+    i = j;
+  }
+  return out;
 }
 
 /** PURE. A call-recording leg ("CallRecording" / "CallRecording (620)"). */

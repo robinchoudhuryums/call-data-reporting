@@ -1680,3 +1680,28 @@ test('IXT-1 / OXT-1: the editor wrapper runs the diagnostic over every held date
     assert.equal(got, 'all');
   } finally { h.ctx.diagnosePersonTransfers = real; }
 });
+
+// QF-1 (owner 2026-10-28): the owner's 10/26 call -- the queue and its first
+// ring start in the same second and 8x8 gave the ring the lower leg id.
+test('QF-1: a queue is listed before the agent it rang in the same second', function () {
+  const D = '10/26/2026 ';
+  const recs = build([
+    leg({ callId: 'Q1', legId: 1, start: D + '11:16:59', stop: D + '11:17:15', direction: 'Incoming', caller: '12145550123', callee: '999', calleeName: 'Website Introduction' }),
+    leg({ callId: 'Q1', legId: 2, start: D + '11:17:37', stop: D + '11:17:47', direction: 'Incoming', caller: '12145550123', callee: '231', calleeName: 'Adrian (Ankit) Sharma', missed: 'Missed' }),
+    leg({ callId: 'Q1', legId: 3, start: D + '11:17:37', stop: D + '11:18:04', direction: 'Incoming', caller: '12145550123', callee: '300', calleeName: 'A_Q_Sales' }),
+    leg({ callId: 'Q1', legId: 4, start: D + '11:17:47', stop: D + '11:17:57', direction: 'Incoming', caller: '12145550123', callee: '232', calleeName: 'Alex (Abhijeet) Gujral', missed: 'Missed' }),
+    leg({ callId: 'Q1', legId: 5, start: D + '11:18:04', connected: D + '11:18:04', stop: D + '11:20:57', direction: 'Incoming', talk: '0:02:53', caller: '12145550123', callee: '233', calleeName: 'Jemima John', answered: 'Answered' }),
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rec(recs, 'Q1').journey.map((e) => e.name))),
+    ['Website Introduction', 'A_Q_Sales', 'Adrian (Ankit) Sharma', 'Alex (Abhijeet) Gujral', 'Jemima John']);
+});
+
+test('QF-1: the reorder is a stable partition inside one second only', function () {
+  const ev = (t, name, kind) => ({ t: t, name: name, kind: kind || 'leg' });
+  const out = h.call('icQueueFirstWithinSecond_', [
+    ev('10:00:00', 'IVR'), ev('10:00:05', 'Ann'), ev('10:00:05', 'Bob'), ev('10:00:05', 'A_Q_One', 'queue'),
+    ev('10:00:05', 'A_Q_Two', 'queue'), ev('10:00:09', 'Cal', 'answer'), ev('10:00:09', 'A_Q_Three', 'queue')]);
+  assert.deepEqual(JSON.parse(JSON.stringify(out)).map((e) => e.name),
+    ['IVR', 'A_Q_One', 'A_Q_Two', 'Ann', 'Bob', 'A_Q_Three', 'Cal']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('icQueueFirstWithinSecond_', []))), []);
+});

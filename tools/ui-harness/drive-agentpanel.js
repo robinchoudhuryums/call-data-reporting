@@ -88,6 +88,18 @@ function record(name, pass, detail) {
       note: (p.querySelector('.ap-note') || {}).textContent || '',
       loading: !!p.querySelector('.ap-loading'),
       panels: document.querySelectorAll('#ap-panel').length,
+      // QF-3: the tray frame -- the panel's side edges carry the row's accent.
+      frame: (function () {
+        const ap = p.querySelector('.ap');
+        if (!ap) return null;
+        const cs = getComputedStyle(ap);
+        return { left: cs.borderLeftWidth, right: cs.borderRightWidth,
+          same: cs.borderLeftColor === cs.borderRightColor && cs.borderLeftStyle === 'solid',
+          fitsWrap: (function () {
+            const w = p.closest('.agents-table-wrap');
+            return !w || ap.getBoundingClientRect().right <= w.getBoundingClientRect().right + 1;
+          })() };
+      })(),
     };
   });
 
@@ -112,6 +124,9 @@ function record(name, pass, detail) {
   record('row click opens the panel under that row', st.open && st.under === first,
     JSON.stringify({ under: st.under, want: first }));
   record('the open row says it is expanded', st.expanded === 'true');
+  record('QF-3: the panel is framed as a tray of its row (accent side edges, inside the visible table)',
+    !!st.frame && st.frame.left === '3px' && st.frame.right === '1px' && st.frame.same && st.frame.fitsWrap,
+    JSON.stringify(st.frame));
   record('the strip renders days, one selected',
     st.days > 1 && st.onDays === 1, 'days=' + st.days + ' on=' + st.onDays);
   // Step 1 (owner 2026-10-16): oldest-first left to right; the panel opens on

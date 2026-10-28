@@ -484,6 +484,36 @@ const MODALS = [
     record('Escalations: the worklist renders cards', esc.cards > 0, 'cards=' + esc.cards);
     record('Escalations: an admin gets the dept filter', esc.deptFilter === true);
 
+    // QF-2 (owner 2026-10-28): one action row on a pending card -- Start,
+    // the admin edits and the admin verbs together -- quiet outline buttons
+    // (the old btn-ghost had no rule and rendered solid black), a hover label
+    // on every action button, and no ellipsis on Move.
+    {
+      const qf = await page.evaluate(() => {
+        const card = [...document.querySelectorAll('.esc-card')].find((c) => c.querySelector('.esc-start'));
+        if (!card) return null;
+        const row = card.querySelector('.esc-start').closest('.esc-actions');
+        const ink = getComputedStyle(card.querySelector('.esc-start')).backgroundColor;
+        const move = card.querySelector('.esc-move-toggle');
+        const edit = card.querySelector('.esc-edit');
+        const btns = [...card.querySelectorAll('.esc-actions button')];
+        return {
+          oneRow: !!row && !!row.querySelector('.esc-move-toggle') && !!row.querySelector('.esc-delete')
+            && card.querySelectorAll('.esc-actions').length === 1,
+          quiet: !!edit && getComputedStyle(edit).backgroundColor !== ink,
+          titled: btns.length > 0 && btns.every((b) => (b.getAttribute('title') || '').trim().length > 8),
+          moveText: move ? move.textContent.trim() : null,
+          resolveAfterRow: !!row && !!card.querySelector('.esc-resolve-disc')
+            && !!(row.compareDocumentPosition(card.querySelector('.esc-resolve-disc')) & Node.DOCUMENT_POSITION_FOLLOWING),
+        };
+      });
+      record('QF-2: a pending card has ONE action row with Start, Move and Delete', !!qf && qf.oneRow, JSON.stringify(qf));
+      record('QF-2: the admin edit buttons are quiet, not solid like Start', !!qf && qf.quiet);
+      record('QF-2: every action button has a hover label', !!qf && qf.titled);
+      record('QF-2: Move carries no ellipsis', !!qf && qf.moveText != null && !/…|\.\.\./.test(qf.moveText), qf && qf.moveText);
+      record('QF-2: the resolve form follows the row', !!qf && qf.resolveAfterRow);
+    }
+
     // 2a: the admin Delete control -- rendered (visibly) on the cards, opens
     // the DANGER-tone confirm, Cancel keeps the card, Confirm calls the
     // (mocked) verb and reloads without a page error. Rendered VISIBILITY,

@@ -3665,6 +3665,16 @@
   @media (prefers-reduced-motion: reduce) { .agents .ap-clip { transition: none; } }
   .agents .ap { position: sticky; left: 0; box-sizing: border-box; padding: 14px 18px 16px;
     contain: inline-size; text-align: left; white-space: normal; cursor: default; }
+  /* QF-3 (owner 2026-10-28): the panel reads as a TRAY of the row above it --
+     the open row's 3px accent rail runs on down the panel's left edge, a thin
+     accent line closes its right edge, the existing 2px accent bottom closes
+     it, and a faint tint of the row's own colour sets it apart from the next
+     agent. On .ap (sized to the visible scroll wrapper by apSizeToWrap_), not
+     the full-width td, so the right edge is always in view. */
+  .agents .ap { border-left: 3px solid var(--accent); border-right: 1px solid var(--accent);
+    background: color-mix(in oklab, var(--accent-soft) 45%, var(--paper)); }
+  .agents tbody tr.ap-open > td:last-child { box-shadow: inset -1px 0 0 var(--accent); }
+  .agents tbody tr.ap-open > td:first-child:last-child { box-shadow: inset 3px 0 0 var(--accent), inset -1px 0 0 var(--accent); }
   .agents .ap-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
   .agents .ap-title { font: 500 16px/1.2 var(--display); letter-spacing: -0.2px; color: var(--ink); }
   .agents .ap-sub { font: 500 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); }
@@ -8045,14 +8055,18 @@
   .esc-filter-count { display: block; font: 400 11px var(--mono); color: var(--muted); margin-top: 3px; }
 
   /* §3 admin edit affordance on pending cards */
-  .esc-pending-actions { margin-top: 8px; }
-  .esc-admin-actions { margin-top: 8px; display: flex; justify-content: flex-end; }   /* 2a: admin delete, right-aligned, below the card body */
-  .esc-admin-actions .esc-delete { color: var(--muted); }
-  .esc-admin-actions .esc-delete:hover { color: var(--bad); }
-  /* ESC-L2: link / remove / delete-all sit beside Delete; wrap on narrow cards. */
-  .esc-admin-actions { flex-wrap: wrap; gap: 6px; }
-  .esc-admin-actions .esc-delete-all { color: var(--muted); }
-  .esc-admin-actions .esc-delete-all:hover { color: var(--bad); }
+  /* QF-2 (owner 2026-10-28): ONE action row per card -- Start solid, the
+     admin edits as quiet outline buttons, the admin destructive verbs pushed
+     right as text buttons. `.btn-ghost` had NO rule, so every one of these
+     rendered as the solid black default (and Delete's muted text sat on black,
+     reading as disabled); it is styled here, scoped to the card. */
+  .esc-actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .esc-actions-admin { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .esc-card .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; }
+  .esc-card .btn-ghost:hover { background: var(--paper-2); opacity: 1; }
+  .esc-card .btn-ghost:disabled { background: transparent; color: var(--muted); }
+  .esc-card .esc-delete, .esc-card .esc-delete-all { color: var(--muted); border-color: transparent; }
+  .esc-card .esc-delete:hover, .esc-card .esc-delete-all:hover { color: var(--bad); background: transparent; }
 
   /* §2 reopen affordance on resolved cards */
   .esc-reopen-wrap { margin-top: 8px; }

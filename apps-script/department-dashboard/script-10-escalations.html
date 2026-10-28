@@ -612,6 +612,8 @@
     const isAdmin = !!(escInit_ && escInit_.isAdmin);
 
     let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
+    let adminPlaced = false;   // QF-2: the worklist row carries the admin buttons itself
+    let resolveTail = '';      // QF-2: the resolve form goes after the move / link forms
     body += fieldGrid;
     body += escLinkedLineHtml_(r);   // ESC-L1
 
@@ -623,7 +625,7 @@
       body += '<div class="esc-reopen-wrap">'
         + '<div class="esc-resolve-actions">'
         +   '<button class="btn esc-approve" type="button" data-id="' + idAttr + '">&#10003; Approve into worklist</button>'
-        +   '<button class="btn btn-ghost esc-reject-toggle" type="button" data-id="' + idAttr + '">&#10007; Reject</button>'
+        +   '<button class="btn btn-ghost esc-reject-toggle" type="button" data-id="' + idAttr + '" title="Turn this submission away (a reason is required)">&#10007; Reject</button>'
         +   '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
         + '</div>'
         + '<div class="esc-reject" data-id="' + idAttr + '" style="display:none;">'
@@ -658,7 +660,7 @@
       // The reason is REQUIRED, mirroring the resolve guard -- Reopen stays
       // disabled until typed.
       body += '<div class="esc-reopen-wrap">'
-        + '<button class="btn btn-ghost esc-reopen-toggle" type="button" data-id="' + idAttr + '">&#8635; Reopen</button>'
+        + '<button class="btn btn-ghost esc-reopen-toggle" type="button" data-id="' + idAttr + '" title="Put this resolved escalation back on the worklist (a reason is required)">&#8635; Reopen</button>'
         + '<div class="esc-reopen" data-id="' + idAttr + '" style="display:none;">'
         +   '<label class="esc-resolve-label">Why reopen? <span class="esc-optional">(required)</span>'
         +   '<textarea class="esc-reopen-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
@@ -675,18 +677,30 @@
       // omit both (edit is pending-only; you can't re-start). ESC-R1: BOTH
       // states give an admin "Move…" (managers cannot reassign); it carries
       // data-admin-only so View-as-Manager hides it.
+      // QF-2 (owner 2026-10-28): ONE action row -- the workflow action first
+      // (Start, solid), the admin edits as quiet outline buttons, the admin
+      // destructive verbs pushed to the right (escAdminActionsHtml_) -- and a
+      // hover label on every button.
       const pa = [];
-      if (isAdmin && !inProgress) {
-        pa.push('<button class="btn btn-ghost esc-edit" type="button" data-id="' + idAttr + '">&#9998; Edit</button>');
-      }
       if (!inProgress) {
-        pa.push('<button class="btn btn-ghost esc-start" type="button" data-id="' + idAttr + '">&#9680; Start</button>');
+        pa.push('<button class="btn esc-start" type="button" data-id="' + idAttr
+          + '" title="Mark this escalation as In progress -- someone is working on it">&#9680; Start</button>');
+      }
+      if (isAdmin && !inProgress) {
+        pa.push('<button class="btn btn-ghost esc-edit" type="button" data-admin-only data-id="' + idAttr
+          + '" title="Admin only: edit the reason, caller, patient or Trx (pending escalations only)">&#9998; Edit</button>');
       }
       if (isAdmin) {
         pa.push('<button class="btn btn-ghost esc-move-toggle" type="button" data-admin-only data-id="' + idAttr
-          + '" title="Admin only: move this escalation to another department">&#8644; Move&hellip;</button>');
+          + '" title="Admin only: move this escalation to another department">&#8644; Move</button>');
       }
-      if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
+      const aaRow = isAdmin ? escAdminActionsHtml_(r, idAttr, removed) : [];
+      adminPlaced = true;
+      if (pa.length || aaRow.length) {
+        body += '<div class="esc-actions esc-pending-actions">' + pa.join('')
+          + (aaRow.length ? '<span class="esc-actions-admin" data-admin-only>' + aaRow.join('') + '</span>' : '')
+          + '</div>';
+      }
       if (isAdmin) {
         // ESC-L1: a linked group holds one copy per dept, so a dept that
         // already has a linked copy is not a move target (server re-checks).
@@ -711,7 +725,7 @@
       // pattern) so a multi-card list isn't a wall of repeated empty
       // textareas; all field classes/data-ids are unchanged, so the
       // delegated save/comment handlers are untouched.
-      body += '<details class="esc-resolve-disc">'
+      resolveTail = '<details class="esc-resolve-disc">'
         + '<summary class="esc-resolve-disc-summary">Resolve / comment&hellip;</summary>'
         + '<div class="esc-resolve" data-id="' + idAttr + '">'
         + '<label class="esc-resolve-label">Resolution (what action was taken — required)'
@@ -720,8 +734,8 @@
         + '<textarea class="esc-comments-text" rows="1" data-id="' + idAttr + '"></textarea></label>'
         + '<label class="esc-resolved-check"><input type="checkbox" class="esc-resolved-box" data-id="' + idAttr + '" disabled> Mark resolved</label>'
         + '<div class="esc-resolve-actions">'
-        + '<button class="btn esc-resolve-save" type="button" data-id="' + idAttr + '" disabled>Save resolution</button>'
-        + '<button class="btn btn-ghost esc-comment-save" type="button" data-id="' + idAttr + '">Save comment only</button>'
+        + '<button class="btn esc-resolve-save" type="button" data-id="' + idAttr + '" disabled title="Save what was done; tick Mark resolved to close the escalation">Save resolution</button>'
+        + '<button class="btn btn-ghost esc-comment-save" type="button" data-id="' + idAttr + '" title="Add a progress note without resolving the escalation">Save comment only</button>'
         + '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
         + '</div></div></details>';
     }
@@ -736,29 +750,11 @@
       // an active sibling; Delete all linked when there are siblings. The
       // server re-checks every rule.
       const sibs = Array.isArray(r.linked) ? r.linked : [];
-      const activeSibs = sibs.filter(function (l) { return l && l.status !== 'removed'; });
       const canLink = !removed && ['pending', 'in_progress', 'resolved'].indexOf(r.status) !== -1;
-      const aa = [];
-      if (removed) {   // ESC-L3: undo a removal (a dispute reversed / removed in error)
-        aa.push('<button class="btn btn-ghost esc-restore-dept" type="button" data-id="' + idAttr
-          + '" title="Admin only: put ' + escapeHtml(r.department || '') + ' back on this escalation">&#8634; Restore '
-          + escapeHtml(r.department || 'department') + '&hellip;</button>');
+      if (!adminPlaced) {
+        body += '<div class="esc-actions esc-admin-actions" data-admin-only>'
+          + '<span class="esc-actions-admin">' + escAdminActionsHtml_(r, idAttr, removed).join('') + '</span></div>';
       }
-      if (canLink) {
-        aa.push('<button class="btn btn-ghost esc-link-toggle" type="button" data-id="' + idAttr
-          + '" title="Admin only: also assign this escalation to another department (a linked copy)">&#128279; Link department&hellip;</button>');
-      }
-      if (!removed && activeSibs.length) {
-        aa.push('<button class="btn btn-ghost esc-remove-dept" type="button" data-id="' + idAttr
-          + '" title="Admin only: take ' + escapeHtml(r.department || '') + ' off this escalation (kept in the thread)">&#8854; Remove ' + escapeHtml(r.department || 'department') + '&hellip;</button>');
-      }
-      aa.push('<button class="btn btn-ghost esc-delete" type="button" data-id="' + idAttr
-        + '" title="Admin only: permanently delete this escalation and its activity trail">&#128465; Delete&hellip;</button>');
-      if (sibs.length) {
-        aa.push('<button class="btn btn-ghost esc-delete-all" type="button" data-id="' + idAttr
-          + '" title="Admin only: permanently delete EVERY linked copy and the whole thread">&#128465; Delete all linked&hellip;</button>');
-      }
-      body += '<div class="esc-admin-actions" data-admin-only>' + aa.join('') + '</div>';
       if (canLink) {
         const taken = sibs.map(function (l) { return l && l.department; });
         const linkOpts = ((escInit_ && escInit_.departments) || []).filter(function (d) {
@@ -776,6 +772,8 @@
       }
     }
 
+    body += resolveTail;
+
     // §5: append-only activity trail, collapsed by default (progressive
     // disclosure). Lazy-loaded on first open via getEscalationActivity.
     body += '<details class="esc-activity" data-id="' + idAttr + '">'
@@ -789,6 +787,37 @@
       + '<div class="esc-card-top">' + statusPill + deptTag + sourceTag
       +   (ageBadge ? '<span class="esc-card-top-spacer"></span>' + ageBadge : '') + '</div>'
       + body + '</div>';
+  }
+
+  // ESC-L2 / 2a (QF-2: lifted out of escCardHtml_ so the worklist row can
+  // carry these beside Start / Edit / Move). Admin-only buttons; the server
+  // re-checks every rule. Inline-form toggles carry no ellipsis (they open a
+  // form on the card); the verbs that confirm or ask for a reason keep it.
+  function escAdminActionsHtml_(r, idAttr, removed) {
+    const sibs = Array.isArray(r.linked) ? r.linked : [];
+    const activeSibs = sibs.filter(function (l) { return l && l.status !== 'removed'; });
+    const canLink = !removed && ['pending', 'in_progress', 'resolved'].indexOf(r.status) !== -1;
+    const aa = [];
+    if (removed) {   // ESC-L3: undo a removal (a dispute reversed / removed in error)
+      aa.push('<button class="btn btn-ghost esc-restore-dept" type="button" data-id="' + idAttr
+        + '" title="Admin only: put ' + escapeHtml(r.department || '') + ' back on this escalation">&#8634; Restore '
+        + escapeHtml(r.department || 'department') + '&hellip;</button>');
+    }
+    if (canLink) {
+      aa.push('<button class="btn btn-ghost esc-link-toggle" type="button" data-id="' + idAttr
+        + '" title="Admin only: also assign this escalation to another department (a linked copy)">&#128279; Link department</button>');
+    }
+    if (!removed && activeSibs.length) {
+      aa.push('<button class="btn btn-ghost esc-remove-dept" type="button" data-id="' + idAttr
+        + '" title="Admin only: take ' + escapeHtml(r.department || '') + ' off this escalation (kept in the thread)">&#8854; Remove ' + escapeHtml(r.department || 'department') + '&hellip;</button>');
+    }
+    aa.push('<button class="btn btn-ghost esc-delete" type="button" data-id="' + idAttr
+      + '" title="Admin only: permanently delete this escalation and its activity trail">&#128465; Delete&hellip;</button>');
+    if (sibs.length) {
+      aa.push('<button class="btn btn-ghost esc-delete-all" type="button" data-id="' + idAttr
+        + '" title="Admin only: permanently delete EVERY linked copy and the whole thread">&#128465; Delete all linked&hellip;</button>');
+    }
+    return aa;
   }
 
   // Enable the checkbox + Save only once a resolution note is present; same

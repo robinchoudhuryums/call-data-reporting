@@ -331,3 +331,32 @@ test('caller lookup fallback: no export tabs at all stays honestly unavailable',
     { phone: '2145550123', from: '2026-08-01', to: '2026-08-31' });
   assert.equal(res.meta.available, false, 'never a false "no history found"');
 });
+
+// QF-1 (owner 2026-10-28): a journey stored before the capture fix lists the
+// queue's first ring ahead of the queue; both display shapers put it right.
+test('QF-1: the shapers list a queue before its same-second first ring', function () {
+  const stored = JSON.stringify([
+    { t: '11:17:15', name: 'Website Normal Call Menu', kind: 'leg', secs: 22 },
+    { t: '11:17:37', name: 'Adrian (Ankit) Sharma', kind: 'leg', missed: true, secs: 10 },
+    { t: '11:17:37', name: 'A_Q_Sales', kind: 'queue', secs: 27 },
+    { t: '11:17:47', name: 'Alex (Abhijeet) Gujral', kind: 'leg', missed: true, secs: 10 },
+  ]);
+  const want = ['Website Normal Call Menu', 'A_Q_Sales', 'Adrian (Ankit) Sharma', 'Alex (Abhijeet) Gujral'];
+  const inb = dash.call('callerLookupShapeCall_', { call_id: 'c1', journey: stored });
+  const ob = dash.call('callerLookupShapeOutbound_', { call_id: 'o1', journey: stored });
+  assert.deepEqual(JSON.parse(JSON.stringify(inb.journey.map((e) => e.name))), want);
+  assert.deepEqual(JSON.parse(JSON.stringify(ob.journey.map((e) => e.name))), want);
+});
+
+// QF-1: the rule lives twice (capture + display, two projects); pin that the
+// two copies give the same order on the same input.
+test('QF-1: the capture and display copies of the queue-first rule agree', function () {
+  const cap = loadGas({ project: 'cdr-import', files: ['inboundCalls.js'] });
+  const ev = (t, name, kind) => ({ t: t, name: name, kind: kind || 'leg' });
+  const input = [ev('09:00:00', 'IVR'), ev('09:00:04', 'Ann'), ev('09:00:04', 'A_Q_Sales', 'queue'),
+    ev('09:00:04', 'Bob'), ev('09:00:04', 'A_Q_Two', 'queue'), ev('09:00:09', 'Cal', 'answer'),
+    ev('09:00:09', 'A_Q_CSR', 'queue', true), ev('09:00:12', 'Dee')];
+  const a = JSON.stringify(cap.call('icQueueFirstWithinSecond_', input));
+  const b = JSON.stringify(dash.call('clQueueFirstWithinSecond_', input));
+  assert.equal(a, b);
+});
