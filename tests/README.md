@@ -413,6 +413,11 @@ tests/
                               journey -- the first leg naming the line
                               owner, unknown stays NULL, NULL-only writes,
                               date chunks, preview never writes),
+                              inbound-email (SB-5e: the Inbound report
+                              email shows the rang-out / voicemail part, one
+                              EmailKit split bar whose cells are each part's
+                              share, on hold / unanswered transfers labelled
+                              as not parts, the stages company-wide only),
                               inbound-export (the "Inbound Calls" tab's
                               cols 16-17 + coercion guards feeding that
                               fallback, and FO-2's First Agent / First Ring

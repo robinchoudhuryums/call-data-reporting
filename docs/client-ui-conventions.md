@@ -2456,8 +2456,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   compares (a legend entry's `deltaHtml`, or the quality line). The rang-out
   label's seconds come from the payload's `briefRingSec`, else
   `OB_BRIEF_RING_SEC_DEFAULT_` (pinned to the server's by cross-file-pins).
-  Queue calls (answered / abandoned) is mocked but NOT built (owner held
-  it). Rendered-gated by drive-admin (Agent Day, Inbound, Direct),
+  The Inbound report EMAIL follows the same split (SB-5e,
+  `ekSplitBarHtml_`, the email-safe form). Queue calls (answered /
+  abandoned) was prototyped and SKIPPED by the owner (2026-10-28): the Queue
+  report already draws those bars, and on My Department it would repeat the
+  Abandoned % card. Rendered-gated by drive-admin (Agent Day, Inbound, Direct),
   drive-agentpanel, drive-deptoutbound and drive-outbound-e.
 - **Escalation card actions are ONE row (QF-2, owner 2026-10-28).** Start
   (solid) first, then the admin edits (Edit, Move) as quiet outline buttons,

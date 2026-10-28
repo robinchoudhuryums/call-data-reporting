@@ -129,6 +129,24 @@ function ekTallyHtml_(answered, missed, unit, opts) {
     + '</tr></table>';
 }
 
+/**
+ * SB-5e (owner 2026-10-28): the email form of the dashboard's split bar --
+ * one full-width row of cells, each part's width its share of `total`, so the
+ * parts read as adding up to the whole. `parts` = [{ n, color }]; zero parts
+ * are dropped, a nonzero one keeps at least 1% so it stays visible.
+ * Email-safe: a table of percentage-width cells, no CSS layout.
+ */
+function ekSplitBarHtml_(parts, total) {
+  const t = Number(total) || 0;
+  if (!t) return '';
+  const cells = (parts || []).filter(function (p) { return (Number(p.n) || 0) > 0; }).map(function (p) {
+    const w = Math.max(1, Math.round((Number(p.n) || 0) / t * 1000) / 10);
+    return '<td width="' + w + '%" style="background:' + p.color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>';
+  }).join('');
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>'
+    + cells + '</tr></table>';
+}
+
 /** A table header row in the house style (cols: [{label, align, pad}]). */
 function ekTheadRow_(cols) {
   return '<tr style="background:' + EK_C_.headbg + ';">'
