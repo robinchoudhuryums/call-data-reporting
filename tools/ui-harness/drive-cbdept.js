@@ -60,6 +60,7 @@ function section() {
     segs: Array.from(document.querySelectorAll('#ov-cbdept-kpis .ob-obar-seg')).map((g) => g.getAttribute('data-seg')),
     notCounted: ((document.getElementById('ov-cbdept-notcounted') || {}).textContent || '').trim(),
     ths: document.querySelectorAll('#ov-cbdept-table thead th[data-cbsort]').length,
+    noneSort: (document.querySelector('#ov-cbdept-table th[data-cbsort="none"]') || { getAttribute: () => null }).getAttribute('aria-sort'),
     order: rows.map((r) => r.querySelector('.qcd-expand-toggle').textContent.replace(/[↳▶]/g, '').trim()),
     child: rows.map((r) => r.classList.contains('ob-cbdept-child')),
     total: Array.from(document.querySelectorAll('#ov-cbdept-tfoot tr td')).map((td) => td.textContent.trim()),
@@ -98,7 +99,8 @@ function section() {
   record('the header comes from the shared column list (9 sortable columns)', s.ths === 9, 'ths=' + s.ths);
   record('CB-R2 default order: most not called back first, the sub-queue directly under its parent, unmapped last',
     JSON.stringify(s.order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department'])
-      && JSON.stringify(s.child) === JSON.stringify([false, true, false, false]), JSON.stringify(s.order));
+      && JSON.stringify(s.child) === JSON.stringify([false, true, false, false]) && s.noneSort === 'descending',
+    JSON.stringify({ order: s.order, noneSort: s.noneSort }));
   record('the total row counts each episode once and reconciles with the summary (18 episodes)',
     /^All departments/.test(s.total[0] || '') && s.total[1] === '18', JSON.stringify(s.total));
   record('the header leads with the callers not called back, then the own-team rate (CE-1)',
