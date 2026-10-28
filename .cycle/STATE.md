@@ -6,13 +6,16 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-27
+Updated: 2026-10-28
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-28 (3) -- CB-R1 / CB-R2 / DL-R1 / DL-R2 IMPLEMENTED (block 259-cb-dl-broad-implement).** Owner #5 + #6 from the approved mock: Callbacks by department and Direct lines lead with the callers nobody called back, one bar per base that adds up, a department table (most unreturned first) with drills -- per department (callbacks) and per person (direct lines, the line tried first). After-hours direct callback time is counted from the next work open (`outboundDirect:v4`). Still ADMIN-ONLY; owner: release to managers for their own department after vetting. NET 2 - 0 = 2.
+  **Owner-side:** deploy the dashboard; walk S48 + S60.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (stacked on QF + HOH-0/XB-0); NO PR yet -- owner: "do a PR at the end". Next: HOH-1 / XB-1 once the diagnostic logs arrive.
 - **2026-10-28 (2) -- HOH-0 + XB-0 IMPLEMENTED (block 259-diag-hoh0-xb0-broad-implement).** Read-only diagnostics: `diagnoseHoldHangupsAllDates()` (#85: is a hung-up-on-hold flag a hang-up or a transfer side effect?) and `diagnoseTransferBouncesAllDates()` (#86: calls that came back to the first department, by trio and first sender). Plus the global `.btn-ghost` (owner asked). NET 1 - 0 = 1.
   **Owner-side:** deploy cdr-import + the dashboard; run both diagnostics and send the logs; map any "queues not placed" in Dept Config.
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn with QF-1..3; NO PR yet (owner to say). Next in the agreed order: the #5 + #6 callbacks design mock.
