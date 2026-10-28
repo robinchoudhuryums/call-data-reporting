@@ -3762,33 +3762,37 @@
   .ob-u { color: var(--muted); }
   .ans-seg.ob-conn { background: var(--dir-out); }
   .ans-seg.ob-unconn { background: var(--line); }
-  /* Layout B (owner 2026-10-21): each agent row holds an IN line over an OUT
-     line (obPairCells_); every cell's two lines share one height so they
-     align across the row. The direction keeps its hue (--accent / --dir-out). */
-  .agents-ob td.ob-pair, .agents-ob td.ob-dir-col { padding-top: 4px; padding-bottom: 4px; vertical-align: middle; }
-  .agents-ob .ob-line { min-height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-  .agents-ob td.ans-bar-cell .ob-line { justify-content: flex-start; }
-  .agents-ob td.ans-bar-cell .ob-line > * { flex: 1 1 auto; min-width: 0; }
-  .agents-ob .ob-line + .ob-line { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
-  /* Both lines carry a faint wash of their direction's hue (owner
-     2026-10-26: inbound got the same treatment as outbound). */
-  .agents-ob .ob-line.ob-dir-in { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
-  .agents-ob .ob-line.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
-  .agents-ob td.ob-dir-col { width: 1%; text-align: left; padding-left: 4px; padding-right: 4px; }
-  .agents-ob .ob-dir-tag { justify-content: flex-start; font: 500 10px/1 var(--mono); letter-spacing: 0.12em; }
-  .agents-ob .ob-dir-tag.ob-dir-in { color: var(--accent); }
-  .agents-ob .ob-dir-tag.ob-dir-out { color: var(--dir-out); }
-  .agents-ob th.ob-pair-th { white-space: nowrap; }
-  .agents-ob .ob-pair-label { display: block; }
-  .agents-ob .ob-sort-picks { display: inline-flex; gap: 4px; margin-top: 3px; }
-  .agents-ob .ob-sort-pick { font: inherit; font-size: 0.92em; padding: 1px 6px; border: 1px solid var(--line);
-    border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; }
-  .agents-ob .ob-sort-pick[data-ob-sort="inRung"], .agents-ob .ob-sort-pick[data-ob-sort="answerRate"],
-  .agents-ob .ob-sort-pick[data-ob-sort="tttSeconds"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-  .agents-ob .ob-sort-pick[data-ob-sort="obTotal"], .agents-ob .ob-sort-pick[data-ob-sort="obConnectRate"],
-  .agents-ob .ob-sort-pick[data-ob-sort="obTalkSec"] { border-color: color-mix(in srgb, var(--dir-out) 45%, var(--line)); }
-  .agents-ob .ob-sort-pick.is-on { color: var(--ink); background: var(--paper-2); }
-  .agents-ob .ob-sort-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* LB-2 (owner 2026-10-28, Option B): ONE line per agent -- an inbound bar
+     column and an outbound bar column, each on its own scale, the counts
+     and the per-day pace beside each bar (obInCellHtml_ / obOutCellHtml_).
+     A group row over the headers names each direction with its colour key;
+     it scrolls away while the header row stays sticky. */
+  .agents-ob td.lb-bar-td { text-align: left; min-width: 190px; width: 24%; }
+  .agents-ob td.num { white-space: nowrap; }
+  .lb-n .ans-n { color: var(--good); }
+  .lb-n .miss-n { color: var(--bad); }
+  .agents-ob th.lb-th-bar { text-align: left; }
+  .lb-cell { display: flex; align-items: center; gap: 10px; }
+  .lb-track { flex: 1 1 auto; min-width: 70px; }
+  .lb-nums { display: flex; flex-direction: column; align-items: flex-end; flex: none; min-width: 66px;
+    font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .lb-n { font-weight: 600; white-space: nowrap; }
+  .lb-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .ob-seg-misslite { background: color-mix(in oklab, var(--warn) 40%, var(--paper)); }
+  .ob-seg-oconn { background: var(--dir-out); }
+  .ob-seg-oreal { background: color-mix(in oklab, var(--dir-out) 45%, var(--paper)); }
+  .ob-seg-obrief { background: color-mix(in oklab, var(--dir-out) 20%, var(--paper)); }
+  .agents-ob thead tr.lb-groups th { position: static; cursor: default; padding-top: 10px; padding-bottom: 6px;
+    text-align: left; border-bottom: 0; }
+  .agents-ob thead th.lb-g--in { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+  .agents-ob thead th.lb-g--out { color: var(--dir-out); box-shadow: inset 0 -2px 0 var(--dir-out); }
+  .lb-legend { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; margin-left: 10px; text-transform: none;
+    letter-spacing: 0; font-family: var(--ui); color: var(--muted); }
+  .lb-key { display: inline-flex; align-items: center; gap: 4px; }
+  .lb-key > span { display: inline-block; width: 9px; height: 9px; border-radius: 1px; }
+  .lb-talk { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.3; white-space: nowrap; }
+  .lb-talk-out { color: var(--dir-out); font-size: 12px; }
+  .lb-talk small { color: var(--muted); font-size: 10px; }
   .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
   /* D3: the Team Direct Calls side card -- a collapsed, lazy fold. */
   .dtd-fold > summary.dtd-summary { cursor: pointer; list-style: none; }

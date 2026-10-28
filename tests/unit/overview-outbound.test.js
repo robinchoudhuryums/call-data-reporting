@@ -288,7 +288,7 @@ test('F: the chip -- E5 valence and noise muting for counts, points + thin-windo
   assert.equal(c.obRateChip_(null, 40, 0, 110, ''), '', 'no rate, no chip');
 });
 
-test('F: wiring -- tiles chip Placed + rate, rows chip both counts + rate, totals never', function () {
+test('F / LB-2: wiring -- tiles chip Placed + rate, rows chip the rate (counts in the hover), totals never', function () {
   const fs = require('fs');
   const path = require('path');
   const src = chipFns().src;
@@ -296,13 +296,14 @@ test('F: wiring -- tiles chip Placed + rate, rows chip both counts + rate, total
   const line = ov.slice(ov.indexOf('function ovBuildOutboundLine_'), ov.indexOf('function ovBuildGridTile_'));
   assert.match(line, /obPriorChip_\(ob\.placed - pr\.placed, 'good', WOW_NOISE_THRESHOLD/);
   assert.match(line, /obRateChip_\(ob\.pct, pr\.pct, ob\.placed, pr\.placed, tip\)/);
-  const bar = src.slice(src.indexOf('function obBarHtml_'), src.indexOf('function obBarHtml_') + 3000);
-  assert.match(bar, /obPriorChip_\(c - \(Number\(p\.obConnected\) \|\| 0\), 'good'/);
-  assert.match(bar, /'neutral', WOW_NOISE_THRESHOLD/);
+  // LB-2 (owner 2026-10-28): the row's count changes moved into the bar's
+  // hover text -- the cell draws no chip of its own, and says the change.
+  const cell = src.slice(src.indexOf('function obOutCellHtml_'), src.indexOf('function obInRateChip_'));
+  assert.doesNotMatch(cell, /obPriorChip_/);
+  assert.match(cell, /vs the prior period: connected ' \+ obSignedDelta_\(c, p\.obConnected\)/);
   // Every totals call passes no prior, so Total / subtotal rows carry no chip
-  // (E5's rule). One call site each since the Outbound-only branch was
-  // trimmed (2026-10-21; the Both table is the only one).
-  assert.equal((src.match(/obBarHtml_\(t, 0, true\)/g) || []).length, 1);
+  // (E5's rule). One call site each.
+  assert.equal((src.match(/obOutCellHtml_\(t, 0, null\)/g) || []).length, 1);
   assert.equal((src.match(/obPctHtml_\(t\)/g) || []).length, 1);
   assert.match(src, /var priorOk = !!\(pr && pr\.meta && pr\.meta\.available !== false && sm\.priorFrom\s*&& !\(pr\.meta\.coverageStart && sm\.priorFrom < pr\.meta\.coverageStart\)\);/,
     'the prior window must start on/after capture');

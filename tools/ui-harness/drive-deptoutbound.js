@@ -103,7 +103,7 @@ async function openDept(page, meta) {
       inShown: vis('agents-in-wrap'), obShown: vis('agents-ob-wrap'),
       rings: vis('dept-team-rings'), tob: vis('dept-team-outbound'),
       rows: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
-      heads: Array.from(document.querySelectorAll('#agents-ob-thead th')).map((t) => t.textContent.replace(/[▲▼▽]/g, '').trim()),
+      heads: Array.from(document.querySelectorAll('#agents-ob-thead tr:not(.lb-groups) th')).map((t) => t.textContent.replace(/[▲▼▽]/g, '').trim()),
       total: (document.querySelector('#agents-ob-tfoot tr') || {}).textContent || '',
       note: (document.getElementById('agents-ob-note') || {}).textContent || '',
       tobRows: document.querySelectorAll('#tob-tbody tr.trp-row').length,
@@ -119,22 +119,21 @@ async function openDept(page, meta) {
   record('admin: inbound AND outbound together is the default view (Step 3)',
     v.dir === 'both' && v.obShown && !v.inShown, JSON.stringify(v).slice(0, 120));
   record('the toggle reads "on"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'true');
-  // Layout B (owner 2026-10-21): an IN line over an OUT line in each agent's
-  // row -- Calls / Rate / Talk, each header sorting by either direction.
-  record('layout B: the table shows Calls, Rate and Talk, each with an in / out sort',
-    ['Calls', 'Rate', 'Talk'].every((w) => v.heads.some((h) => h.indexOf(w) === 0 && /in\s*out/.test(h.replace(/\s+/g, ' ')))), v.heads.join(' | '));
+  // LB-2 (owner 2026-10-28): one header per column, each sorting by click.
+  record('LB-2: the headers are Agent, Answered / missed, Ans %, Connected / not, Conn %, Talk, Transfer %',
+    JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Answered / missed', 'Ans %', 'Connected / not', 'Conn %', 'Talk', 'Transfer %']), v.heads.join(' | '));
   {
     // Owner 2026-10-22: layout B carries Transfer % too (CSR), one value per
     // agent, the same figure the classic table shows.
     const sum30 = require('./payloads/summary-30d.json');
     const dev = ((sum30.csrTransfer || {}).agents || []).find((a) => a.agent === 'Dev Patel');
     const xb = await page.evaluate(() => {
-      const heads = Array.from(document.querySelectorAll('#agents-ob-thead th'));
+      const heads = Array.from(document.querySelectorAll('#agents-ob-thead tr:not(.lb-groups) th'));
       const idx = heads.findIndex((th) => /^Transfer %/.test(th.textContent.trim()));
       const row = document.querySelector('#agents-ob-tbody tr[data-agent="Dev Patel"]');
       return { idx: idx, cell: (row && idx >= 0 && row.cells[idx]) ? row.cells[idx].textContent.trim() : null };
     });
-    record('layout B: a Transfer % column shows each agent\'s rate', xb.idx > 0 && !!dev && xb.cell === dev.pct.toFixed(1) + '%',
+    record('a Transfer % column shows each agent\'s rate', xb.idx > 0 && !!dev && xb.cell === dev.pct.toFixed(1) + '%',
       JSON.stringify(xb) + ' want ' + (dev ? dev.pct : '?'));
   }
   {
@@ -142,8 +141,8 @@ async function openDept(page, meta) {
     const missing = ob.agents.map((a) => a.agent).filter((a) => shown.indexOf(a) === -1);
     record('every agent the outbound payload carries has a row', !missing.length, 'missing=' + missing.join(', '));
   }
-  record('the total row shows the payload’s placed / connected totals',
-    v.total.indexOf('(' + ob.totals.obTotal + ')') !== -1 && v.total.indexOf(String(ob.totals.obConnected)) !== -1,
+  record('the total row shows the payload’s connected / not-connected totals',
+    v.total.indexOf(ob.totals.obConnected + '/' + (ob.totals.obTotal - ob.totals.obConnected)) !== -1,
     v.total.slice(0, 120));
   record('the team per-day figure renders on the total row', v.total.indexOf(ob.totals.obPerDay + ' / day') !== -1,
     'want ' + ob.totals.obPerDay);
@@ -163,67 +162,78 @@ async function openDept(page, meta) {
     return { aBottom: Math.round(a.bottom), bTop: Math.round(b.top) };
   });
   record('the two side panels never overlap', overlap.aBottom <= overlap.bTop + 1, JSON.stringify(overlap));
-  const bothRow = await page.evaluate(() => {
+  // LB-2 (owner 2026-10-28, Option B): ONE line per agent -- an inbound bar
+  // column and an outbound bar column, each on its own scale, each bar's
+  // parts adding up to the counts beside it with the per-day pace under them.
+  const lb = await page.evaluate(() => {
+    const num = (x) => parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]);
     const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
-    const r = rows[0];
-    return { cells: r ? r.querySelectorAll('td').length : 0,
-      tags: r ? Array.from(r.querySelectorAll('.ob-dir-tag')).map((t) => t.textContent) : [],
-      paired: rows.every((x) => Array.from(x.querySelectorAll('td.ob-pair')).every((td) =>
-        td.querySelectorAll(':scope > .ob-line.ob-dir-in').length === 1 && td.querySelectorAll(':scope > .ob-line.ob-dir-out').length === 1)),
-      aligned: rows.every((x) => {
-        const tops = Array.from(x.querySelectorAll('td.ob-pair > .ob-line.ob-dir-out, td.ob-dir-col > .ob-line.ob-dir-out')).map((l) => Math.round(l.getBoundingClientRect().top));
-        return tops.length > 1 && Math.max.apply(null, tops) - Math.min.apply(null, tops) <= 2;
-      }) };
+    const cell = (td) => {
+      const bar = td && td.querySelector('.lb-track .ob-obar');
+      const w = bar ? parseFloat(bar.parentElement.style.width) : 0;
+      const n = td && td.querySelector('.lb-n');
+      return { segs: bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':' + num(x)) : [],
+        sum: bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).reduce((a, x) => a + num(x), 0) : 0,
+        nums: n ? n.textContent.split('/').map(Number) : [], per: ((td && td.querySelector('.lb-sub')) || {}).textContent || '',
+        width: w, tip: ((td && td.querySelector('.lb-cell')) || { getAttribute: () => '' }).getAttribute('title') || '' };
+    };
+    return {
+      cells: rows[0] ? rows[0].querySelectorAll(':scope > td').length : 0,
+      lines: document.querySelectorAll('#agents-ob-table .ob-line').length,
+      groups: Array.from(document.querySelectorAll('#agents-ob-thead tr.lb-groups th.lb-g')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+      heads: Array.from(document.querySelectorAll('#agents-ob-thead tr:not(.lb-groups) th[data-ob-sort]')).map((t) => t.getAttribute('data-ob-sort')),
+      rows: rows.map((r) => { const tds = r.querySelectorAll(':scope > td');
+        return { agent: r.getAttribute('data-agent'), inb: cell(tds[1]), out: cell(tds[3]) }; }),
+    };
   });
-  // One scale: a block means the same number of calls on both lines, so the
-  // fixture's far smaller outbound volume draws far shorter OUT bars (on
-  // separate scales both maxima would sit near the cap).
-  const scale = await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'));
-    const blocks = (sel) => Math.max.apply(null, rows.map((r) => { const l = r.querySelector('td.ans-bar-cell > ' + sel); return l ? l.querySelectorAll('.tly').length : 0; }));
-    return { inMax: blocks('.ob-line.ob-dir-in'), outMax: blocks('.ob-line.ob-dir-out') };
-  });
-  const wash = await page.evaluate(() => {
-    const r = document.querySelector('#agents-ob-tbody tr[data-agent] td.ob-pair');
-    const bg = (sel) => { const l = r && r.querySelector(':scope > ' + sel); return l ? getComputedStyle(l).backgroundColor : ''; };
-    return { inBg: bg('.ob-line.ob-dir-in'), outBg: bg('.ob-line.ob-dir-out') };
-  });
-  const tinted = (c) => !!c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c);
-  record('layout B: the IN line and the OUT line each carry their own direction tint (owner 2026-10-26)',
-    tinted(wash.inBg) && tinted(wash.outBg) && wash.inBg !== wash.outBg, JSON.stringify(wash));
-  record('layout B: IN and OUT bars share one scale (the smaller volume draws shorter)', scale.inMax > 0 && scale.outMax > 0 && scale.outMax * 2 < scale.inMax, JSON.stringify(scale));
-  record('layout B: one row per agent, an IN line over an OUT line in every metric cell, the OUT lines level across the row',
-    // 6 cells on CSR: agent, direction, Calls, Rate, Talk + Transfer % (owner 2026-10-22).
-    bothRow.cells === 6 && bothRow.tags.join(',') === 'IN,OUT' && bothRow.paired && bothRow.aligned, JSON.stringify(bothRow));
+  const rowsIn = lb.rows.filter((r) => r.inb.segs.length);
+  const rowsOut = lb.rows.filter((r) => r.out.segs.length);
+  record('LB-2: one line per agent -- 7 cells on CSR (agent, inbound, Ans %, outbound, Conn %, Talk, Transfer %), no IN / OUT lines',
+    lb.cells === 7 && lb.lines === 0 && JSON.stringify(lb.heads) === JSON.stringify(['agent', 'inRung', 'answerRate', 'obTotal', 'obConnectRate', 'talkAll', 'transferPct']),
+    JSON.stringify({ cells: lb.cells, lines: lb.lines, heads: lb.heads }));
+  record('LB-2: a group row names each direction with its colour key',
+    lb.groups.length === 2 && /^Inbound · rings\s*answered\s*missed$/i.test(lb.groups[0])
+      && /^Outbound · placed\s*connected\s*rang out\s*brief ring\s*not recorded$/i.test(lb.groups[1]),
+    JSON.stringify(lb.groups));
+  record('LB-2: every inbound bar adds up to its answered / missed, with ans/day under it',
+    rowsIn.length > 0 && rowsIn.every((r) => r.inb.sum === r.inb.nums[0] + r.inb.nums[1] && /ans\/day$/.test(r.inb.per)),
+    JSON.stringify(rowsIn.slice(0, 2).map((r) => r.inb)));
+  record('LB-2: every outbound bar is connected / rang out / brief / unknown adding up to connected + not, with / day under it',
+    rowsOut.length > 0 && rowsOut.every((r) => r.out.sum === r.out.nums[0] + r.out.nums[1] && / \/ day$/.test(r.out.per)
+      && r.out.segs.every((x) => /^(oconn|oreal|obrief|unk):/.test(x)) && /^oconn:/.test(r.out.segs[0])),
+    JSON.stringify(rowsOut.slice(0, 2).map((r) => r.out.segs)));
+  const maxW = (list, k) => Math.max.apply(null, list.map((r) => r[k].width));
+  record('LB-2: each direction on its OWN scale -- the largest inbound and the largest outbound bar both fill the column',
+    maxW(rowsIn, 'inb') === 100 && maxW(rowsOut, 'out') === 100, JSON.stringify({ in: maxW(rowsIn, 'inb'), out: maxW(rowsOut, 'out') }));
 
-  // Batch F: prior-period chips -- the SAME INV-28 window the inbound E5 chips use.
+  // Batch F / LB-2: the rates carry the chips; the count changes are in the
+  // bar's hover text, from the SAME INV-28 window the inbound E5 chips use.
   {
     const sum30 = require('./payloads/summary-30d.json');
     const pri = (require('./payloads/dept-outbound-windows.json'))[sum30.meta.priorFrom + '|' + sum30.meta.priorTo];
     const c = await page.evaluate(() => {
-      // Rows with an outbound record (an inbound-only agent has no outbound chips).
       const rows = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]')).filter((r) => r.querySelector('.ob-c'));
       return {
-        perRow: rows.map((r) => r.querySelectorAll('.ob-line.ob-dir-out .wow-chip').length),
-        notConnMuted: rows.every((r) => { const u = r.querySelector('.ob-u'); const ch = u && u.nextElementSibling; return !!ch && ch.classList.contains('wow-chip-muted'); }),
+        perRow: rows.map((r) => r.querySelectorAll('.wow-chip').length),
+        inBar: rows.map((r) => r.querySelectorAll('td.lb-bar-td .wow-chip').length).reduce((a, b) => a + b, 0),
         first: rows[0] ? { agent: rows[0].getAttribute('data-agent'), conn: Number(rows[0].querySelector('.ob-c').textContent),
-          chip: (rows[0].querySelector('.ob-c').nextElementSibling || {}).textContent || '' } : null,
-        totals: document.querySelectorAll('#agents-ob-tfoot .ob-line.ob-dir-out .wow-chip, #agents-ob-tbody tr.subq-subtotal .ob-line.ob-dir-out .wow-chip').length,
+          tip: rows[0].querySelector('.lb-cell--out').getAttribute('title') } : null,
+        totals: document.querySelectorAll('#agents-ob-tfoot .wow-chip, #agents-ob-tbody tr.subq-subtotal .wow-chip').length,
       };
     });
     record('Batch F: the prior window is captured for this view', !!pri, sum30.meta.priorFrom + '|' + sum30.meta.priorTo);
-    record('Batch F: every outbound row carries three chips (connected, not connected, connect %)',
-      c.perRow.length > 0 && c.perRow.every((n) => n === 3), c.perRow.join(','));
-    record('Batch F: the not-connected chip is always neutral', c.notConnMuted);
+    record('LB-2: each row chips its two rates (answered %, connected %) and no count', c.perRow.length > 0
+      && c.perRow.every((n) => n === 2) && c.inBar === 0, JSON.stringify({ perRow: c.perRow, inBar: c.inBar }));
     const pa = pri && c.first && pri.agents.filter((a) => a.agent === c.first.agent)[0];
     const want = pa ? c.first.conn - pa.obConnected : NaN;
-    const got = c.first ? Number(c.first.chip.replace(/[^0-9+\u2212-]/g, '').replace('\u2212', '-')) : NaN;
-    record('Batch F: the connected chip is current minus prior for that agent', pa && got === want,
-      (c.first && c.first.chip) + ' want ' + want);
-    record('Batch F: Total and subtotal rows carry no outbound chips', c.totals === 0, 'chips=' + c.totals);
+    const m = c.first && /vs the prior period: connected ([+−±])(\d+)/.exec(c.first.tip);
+    const got = m ? (m[1] === '−' ? -Number(m[2]) : Number(m[2])) : NaN;
+    record('LB-2: the outbound bar’s hover gives the connected change (current minus prior for that agent)',
+      pa && got === want, (c.first && c.first.tip.slice(0, 160)) + ' want ' + want);
+    record('Batch F: Total and subtotal rows carry no chips', c.totals === 0, 'chips=' + c.totals);
   }
 
-  // Layout B: each metric header sorts by the IN line or the OUT line.
+  // LB-2: every header sorts by click and by keyboard.
   {
     const order = () => page.evaluate(() => {
       const out = [];
@@ -233,25 +243,36 @@ async function openDept(page, meta) {
       }
       return out;
     });
+    const mono = (vals) => vals.every((x, i) => i === 0 || (vals[i - 1] - x) * (vals[0] - vals[vals.length - 1] >= 0 ? 1 : -1) >= 0);
     const byAgent = {};
     ob.agents.forEach((a) => { byAgent[a.agent] = a.obTotal; });
-    await page.click('#agents-ob-thead [data-ob-sort="obTotal"]');
+    await page.click('#agents-ob-thead th[data-ob-sort="obTotal"]');
     await page.waitForTimeout(300);
-    let o1 = await order();
-    if (await page.getAttribute('#agents-ob-thead [data-ob-sort="obTotal"]', 'class').then((c) => !/is-on/.test(c || ''))) {
-      await page.click('#agents-ob-thead [data-ob-sort="obTotal"]'); await page.waitForTimeout(300); o1 = await order();
-    }
+    const o1 = await order();
     const placed = o1.map((a) => byAgent[a] || 0);
-    const mono = placed.every((x, i) => i === 0 || (placed[i - 1] - x) * (placed[0] - placed[placed.length - 1] >= 0 ? 1 : -1) >= 0);
-    const ariaOut = await page.evaluate(() => { const b = document.querySelector('#agents-ob-thead [data-ob-sort="obTotal"]'); return b && b.closest('th').getAttribute('aria-sort'); });
-    record('layout B: "out" under Calls sorts the group by outbound placed, and the header says so',
-      o1.length > 1 && mono && /ascending|descending/.test(ariaOut || ''), JSON.stringify({ order: o1, placed: placed, aria: ariaOut }));
-    await page.focus('#agents-ob-thead [data-ob-sort="inRung"]');
+    const ariaOut = await page.getAttribute('#agents-ob-thead th[data-ob-sort="obTotal"]', 'aria-sort');
+    record('LB-2: the outbound header sorts the group by placed, and says so',
+      o1.length > 1 && mono(placed) && /ascending|descending/.test(ariaOut || ''), JSON.stringify({ order: o1, placed: placed, aria: ariaOut }));
+    await page.focus('#agents-ob-thead th[data-ob-sort="inRung"]');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(300);
-    const kb = await page.evaluate(() => ({ on: !!document.querySelector('#agents-ob-thead [data-ob-sort="inRung"].is-on'),
+    const kb = await page.evaluate(() => ({ aria: (document.querySelector('#agents-ob-thead th[data-ob-sort="inRung"]') || { getAttribute: () => null }).getAttribute('aria-sort'),
       focus: !!document.activeElement && document.activeElement.getAttribute('data-ob-sort') === 'inRung' }));
-    record('layout B: "in" sorts by keyboard too and keeps the focus on the button', kb.on && kb.focus, JSON.stringify(kb));
+    record('LB-2: the inbound header sorts by keyboard too and keeps the focus', /ascending|descending/.test(kb.aria || '') && kb.focus, JSON.stringify(kb));
+    await page.click('#agents-ob-thead th[data-ob-sort="talkAll"]');
+    await page.waitForTimeout(300);
+    const talk = await page.evaluate(() => {
+      const hms = (t) => { const p = (t || '').trim().split(':').map(Number); return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : 0; };
+      const out = [];
+      for (const r of Array.from(document.querySelectorAll('#agents-ob-tbody tr'))) {
+        if (r.classList.contains('subq-subtotal')) break;
+        if (!r.hasAttribute('data-agent')) continue;
+        const i = r.querySelector('.lb-talk-in'), o = r.querySelector('.lb-talk-out');
+        out.push(hms(i ? i.firstChild.textContent : '') + hms(o ? o.firstChild.textContent : ''));
+      }
+      return out;
+    });
+    record('LB-2: Talk sorts by inbound + outbound talk together', talk.length > 1 && mono(talk), JSON.stringify(talk));
   }
 
   // Sorting by a column re-renders and keeps the rows.

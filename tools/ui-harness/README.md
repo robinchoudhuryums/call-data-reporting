@@ -94,9 +94,11 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
   manager email (Step 5b); the alert reasons' sentences and Preview rows
   (Step 5c).
-- `drive-deptoutbound.js` — (since 2026-10-21 also layout B -- an IN line
-  over an OUT line per agent, level lines, per-line sorts, a distinct tint
-  on each line -- and the D3 Team
+- `drive-deptoutbound.js` — (since LB-2, 2026-10-28, the one-line agent
+  table: 7 cells on CSR, the group row with its keys, every inbound and
+  outbound bar adding up to its counts with the per-day pace under them, the
+  two scales, two rate chips per row and the count changes in the hover, and
+  every header's sort -- and the D3 Team
   Direct Calls card: lazy, one request per window, the coverage note, the
   report button, absent for a manager) the My Department **outbound columns** toggle (on
   by default since Step 3; it replaced the Inbound | Outbound | Both switch)

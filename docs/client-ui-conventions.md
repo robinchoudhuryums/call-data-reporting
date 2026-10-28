@@ -2260,21 +2260,22 @@ stay pinned by INV-39, INV-53 and INV-06.
   Connect %, talk, average talk per connected call, attempts; per-dept groups
   and subtotals on a parent dept. Both: the inbound bar + Answer % and the
   outbound bar + Connect % + talk on ONE row per agent, never added together.
-  **Layout B (owner 2026-10-21):** in Both, each agent's row stacks an IN line
-  over an OUT line inside every metric cell (`obPairCells_`: Calls · handled /
-  not, Rate, Talk -- In's talk is TTT) behind a direction tag column, still
-  ONE `<tr>` per agent, so sort, the agent panel, subtotals and exports keep
-  their shape. The two bar units are unified (`max(inUnit, obUnit)`, one
-  ladder) so in vs out volume compares by length. Each metric header sorts by
-  either line (`obThPairHtml_`: two real buttons, `data-ob-sort` = `inRung` /
-  `answerRate` / `tttSeconds` and `obTotal` / `obConnectRate` / `obTalkSec`;
-  `aria-sort` on the `<th>`), and the sort handler matches `[data-ob-sort]` on
-  a th OR a button. The direction's hue stays on its line (`.ob-dir-in` /
-  `.ob-dir-out`), not the cell -- including a faint background wash on each
-  line, 35% of `--accent-soft` (IN) / `--dir-out-soft` (OUT) (owner
-  2026-10-26: the IN line got the wash the OUT line had). `drive-deptoutbound.js`
-  pins the shape, the level OUT lines, both sorts, the chips per line and that
-  the two lines carry different tints.
+  **LB-2 (owner 2026-10-28; replaced layout B):** ONE line per agent --
+  an inbound bar column (`obInCellHtml_`: answered / missed, the R10-4
+  lighter missed part on a row that passes its standard) and an outbound bar
+  column (`obOutCellHtml_`: connected / rang out / brief ring / not recorded,
+  `obOutParts_` over the shared `obPlacedParts_`), EACH ON ITS OWN SCALE (the
+  agents' largest rung / largest placed; totals and subtotals full width), the
+  two counts beside each bar and the per-day pace under them. A group row over
+  the headers names each direction with its colour key and is NOT sticky; the
+  header row is. Ans % and Conn % carry the change chips (`obInRateChip_`,
+  points, the connect-rate rule); the count changes are in each bar's hover
+  text, never a chip; Talk shows inbound over outbound and sorts by their sum
+  (`talkAll` -- time on the phone, the one sum that means something); every
+  header sorts by click and keyboard (`obThHtml_`). Still ONE `<tr>` per
+  agent, so the agent panel, subtotals and exports keep their shape.
+  `drive-deptoutbound.js` pins the cells, the group row, that every bar adds
+  up, the two scales, the chips and the sorts.
   Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
   Outbound view and stacks under it in Both (natural height there; the aside
   scrolls rather than the two overlapping). Rows open the inline agent panel
@@ -2556,7 +2557,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   in either sort direction; tints are the tile's tiers via `xferTierCls_`. The
   cells carry `.col-xfer` and show only on a table marked `.has-xfer`, so every
   other dept's table, the Overview mini table and every non-CSR export stay
-  byte-identical; layout B adds the same figure as a sixth column) · Unique ·
+  byte-identical; the combined table (LB-2) adds the same figure as its last column) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
   (owner 2026-10; the figure lives in the bar cell, since summary v23), but the
   CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
