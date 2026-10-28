@@ -3179,6 +3179,137 @@ function diagnosePersonTransfers(dateIso) {
 /** Editor-run: every held date (the Run picker can't pass 'all'). */
 function diagnosePersonTransfersAllDates() { return diagnosePersonTransfers('all'); }
 
+// ---- HOH-0 (owner 2026-10-28): is "hung up on hold" a hang-up? -------------
+// A captured call is flagged abandoned_on_hold when ANY of the caller's legs
+// carries 8x8's Caller Disconnect On Hold = TRUE. The owner's 10/19 call was
+// flagged although the caller then talked to the CSR agent for 4:26: the only
+// hold was on the TRANSFERRING agent's leg, so the flag most likely marks the
+// caller leaving that leg during the transfer. This READ-ONLY pass sizes it:
+// for every flagged call, where does its (last) flagged leg sit?
+//   final           -- nothing of the call outlasts the flagged leg: a real
+//                      hang-up while on hold;
+//   answeredAfter   -- someone answered and talked to the caller after it
+//                      (the transfer side effect);
+//   unansweredAfter -- the call went on (a queue, a ring) but nobody answered
+//                      (the caller hung up in the NEXT step, not on hold).
+var IC_HOH_SLACK_MS_ = 2000;
+
+/** PURE. The HOH-0 shape of one call's legs, or null when no caller leg is flagged. */
+function icHoldHangupShape_(legs) {
+  var dir = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
+  var stop = function (l) { var t = icParseTs_(l[IC_COL.STOP]); return isNaN(t) ? -Infinity : t; };
+  var flagged = (legs || []).filter(function (l) { return dir(l) === 'Incoming' && icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD]); });
+  if (!flagged.length) return null;
+  var f = flagged.reduce(function (a, b) { return stop(b) > stop(a) ? b : a; });
+  var fStop = stop(f);
+  var after = legs.filter(function (l) {
+    return l !== f && !icIsRecordingLeg_(l) && stop(l) > fStop + IC_HOH_SLACK_MS_;
+  });
+  var answered = function (l) {
+    return icTimeToSec_(l[IC_COL.TALK]) > 0
+      && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered';
+  };
+  return {
+    cls: !after.length ? 'final' : (after.some(answered) ? 'answeredAfter' : 'unansweredAfter'),
+    flaggedLegHeld: icTimeToSec_(f[IC_COL.CALLEE_HOLD_DURATION]) > 0,
+    flaggedLegAnswered: answered(f),
+    flaggedLegs: flagged.length
+  };
+}
+
+/** PURE. Folds one call's shape into a stats object (HOH-0's per-date and TOTAL rows). */
+function icHoldHangupFold_(st, shape, rec) {
+  st.flagged = (st.flagged || 0) + 1;
+  st.byClass = st.byClass || { final: 0, answeredAfter: 0, unansweredAfter: 0 };
+  st.byClass[shape.cls]++;
+  st.byDisp = st.byDisp || {};
+  var k = shape.cls + ':' + ((rec && rec.disposition) || 'unknown');
+  st.byDisp[k] = (st.byDisp[k] || 0) + 1;
+  if (shape.flaggedLegHeld) st.flaggedLegHeld = (st.flaggedLegHeld || 0) + 1;
+  st.samples = st.samples || { final: [], answeredAfter: [], unansweredAfter: [] };
+  if (rec && rec.callId && st.samples[shape.cls].length < 5) st.samples[shape.cls].push(rec.callId);
+  return st;
+}
+
+/**
+ * HOH-0 (owner 2026-10-28): READ-ONLY. Over the held Call_Legs_* tabs
+ * (`dateIso` = one date, 'all' = every held date, blank = the latest), every
+ * captured EXTERNAL call flagged "hung up on hold", sorted by where its flagged
+ * leg sits (final / answered after / unanswered after), with the dispositions
+ * and call-id samples to check in Caller Lookup. Call ids only, never a number.
+ * Writes nothing.
+ */
+function diagnoseHoldHangups(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { Logger.log('[hoh] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
+  try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
+  try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
+  var total = { days: 0, captured: 0 };
+  var t0 = Date.now();
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[hoh] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
+    var grid = sheets[i].sheet.getDataRange().getDisplayValues();
+    grid.shift();
+    var st = icHoldHangupsForGrid_(grid);
+    Logger.log('[hoh] %s: %s', sheets[i].iso, icHoldHangupLine_(st));
+    total.days++;
+    total.captured += st.captured;
+    ['flagged', 'flaggedLegHeld', 'answeredFlagged'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    total.byClass = total.byClass || { final: 0, answeredAfter: 0, unansweredAfter: 0 };
+    Object.keys(st.byClass || {}).forEach(function (k) { total.byClass[k] += st.byClass[k]; });
+    total.byDisp = total.byDisp || {};
+    Object.keys(st.byDisp || {}).forEach(function (k) { total.byDisp[k] = (total.byDisp[k] || 0) + st.byDisp[k]; });
+    total.samples = total.samples || { final: [], answeredAfter: [], unansweredAfter: [] };
+    Object.keys(st.samples || {}).forEach(function (k) {
+      st.samples[k].forEach(function (id) { if (total.samples[k].length < 5) total.samples[k].push(id); });
+    });
+  }
+  Logger.log('[hoh] TOTAL over %s date(s): %s', String(total.days), icHoldHangupLine_(total));
+  Object.keys(total.byDisp || {}).sort().forEach(function (k) {
+    Logger.log('[hoh]   %s: %s', k.replace(':', ' / '), String(total.byDisp[k]));
+  });
+  ['final', 'answeredAfter', 'unansweredAfter'].forEach(function (k) {
+    if (total.samples && total.samples[k].length) Logger.log('[hoh]   %s e.g.: %s', k, total.samples[k].join(', '));
+  });
+  return total;
+}
+
+/** Editor-run: every held date (the Run picker can't pass 'all'). */
+function diagnoseHoldHangupsAllDates() { return diagnoseHoldHangups('all'); }
+
+/** PURE over one grid (testable): the capture's records + the legs behind them. */
+function icHoldHangupsForGrid_(grid) {
+  var recs = buildInboundCallRecords_(grid).filter(function (r) { return !r.isInternal; });
+  var groups = icGroupLegsByRoot_(grid);
+  var st = { captured: recs.length, flagged: 0, answeredFlagged: 0 };
+  recs.forEach(function (r) {
+    if (!r.abandonedOnHold) return;
+    var shape = icHoldHangupShape_(groups[r.callId] || []);
+    if (!shape) return;
+    icHoldHangupFold_(st, shape, r);
+    if (r.disposition === 'answered') st.answeredFlagged++;
+  });
+  return st;
+}
+
+/** PURE. HOH-0's log line. */
+function icHoldHangupLine_(st) {
+  var c = st.byClass || {};
+  return String(st.captured || 0) + ' captured outside calls; ' + String(st.flagged || 0) + ' flagged "hung up on hold" ('
+    + String(st.answeredFlagged || 0) + ' of them answered) -- the flagged leg was the call\'s LAST '
+    + String(c.final || 0) + ' (a real hang-up on hold), someone ANSWERED after it ' + String(c.answeredAfter || 0)
+    + ' (a transfer side effect), the call went on unanswered ' + String(c.unansweredAfter || 0)
+    + '; the flagged leg itself carried hold time on ' + String(st.flaggedLegHeld || 0);
+}
+
 /** PURE. One direction's stats as a log line (the diagnostic's per-date and TOTAL rows). */
 function icIxtStatsLine_(st, captured) {
   var sc = st.sinceConnect || {};

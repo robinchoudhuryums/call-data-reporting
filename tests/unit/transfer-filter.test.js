@@ -440,3 +440,90 @@ test('dialog: a range of tabs combines into one result -- sums, every row dated,
   [0, 1].forEach(i => assert.equal(one.sections[i].total, p4.sections[i].total));
   assert.equal(one.header.legs, p4.header.legs);
 });
+
+// ── XB-0 (owner 2026-10-28): transfers that came back ────────────────────
+const XB_ROSTER = h.call('tfRosterFromGrid_', ['Sales', 'CSR'], [
+  ['Peter (Praneeth) Gummadi, 231', 'Daniel (Dishant) Sahani, 352'],
+  ['Adrian (Ankit) Sharma, 233', 'Camila (Cheshta) Bhutani, 240'],
+  ['Una Both, 250', 'Una Both, 250'],
+]);
+const XB_CFG = [['Sales', 'A_Q_Sales', '', '', '', true, '', '', '', ''], ['CSR', 'A_Q_CustomerSuccess', '', '', '', true, '', '', '', 'A_Q_CSR=A_Q_CustomerSuccess']];
+const XB = h.call('tfBounceLookups_', XB_ROSTER, XB_CFG, null);
+const xbOf = (j) => JSON.parse(JSON.stringify(h.call('tfBounceOfJourney_', j, XB.deptsOfQueue, XB.deptsOfAgent)));
+const q = (t, name) => ({ t, name, kind: 'queue' });
+const ans = (t, name, talk, x) => Object.assign({ t, name, kind: 'answer', talk: talk || 60 }, x || {});
+const ring = (t, name) => ({ t, name, kind: 'leg', missed: true });
+
+test('XB-0: the owner\'s 10/22 call -- Sales -> CSR -> Sales, sent out by the Sales rep, sent back by CSR', function () {
+  const b = xbOf([q('12:45:39', 'A_Q_Sales'), ring('12:45:39', 'Diana Johnson'), ans('12:46:26', 'Peter (Praneeth) Gummadi', 85),
+    q('12:47:51', 'A_Q_CSR'), ans('12:48:13', 'Daniel (Dishant) Sahani', 150), ans('12:49:56', 'Adrian (Ankit) Sharma', 48),
+    ans('12:50:44', 'Adrian (Ankit) Sharma', 311)]);
+  assert.deepEqual(b.bounce, { from: 'Sales', to: 'CSR', sender: 'Peter (Praneeth) Gummadi', returner: 'Daniel (Dishant) Sahani', kind: 'sentBack' });
+  assert.equal(b.interDept, true);
+  assert.equal(b.skipped.unknownAgent, 0, 'a missed ring is not a step');
+});
+
+test('XB-0: a plain transfer that stayed is no bounce; nor is a consult that ended with the first agent', function () {
+  assert.equal(xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), q('3', 'A_Q_CSR'), ans('4', 'Camila (Cheshta) Bhutani')]).bounce, null);
+  const consult = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'),
+    { t: '3', name: 'Daniel (Dishant) Sahani', kind: 'leg', missed: true, transfer: true },
+    ans('4', 'Daniel (Dishant) Sahani', 40, { transfer: true, consult: true })]);
+  assert.equal(consult.bounce, null);
+  assert.equal(consult.interDept, false, 'the caller never moved');
+});
+
+test('XB-0: back before anyone in the other department answered -- returnedUnanswered', function () {
+  const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), q('3', 'A_Q_CSR'), q('4', 'A_Q_Sales'), ans('5', 'Adrian (Ankit) Sharma')]);
+  assert.equal(b.bounce.kind, 'returnedUnanswered');
+  assert.equal(b.bounce.returner, null);
+  assert.equal(b.bounce.sender, 'Peter (Praneeth) Gummadi');
+});
+
+test('XB-0: a two-roster agent and an unmapped queue are skipped and counted, never guessed', function () {
+  const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), ans('3', 'Una Both'), q('4', 'A_Q_Mystery'), ans('5', 'Adrian (Ankit) Sharma')]);
+  assert.equal(b.bounce, null, 'Sales all along once the unknowns are skipped');
+  assert.equal(b.skipped.twoRosterAgent, 1);
+  assert.equal(b.skipped.unmappedQueue, 1);
+  assert.deepEqual(b.unmappedQueues, ['A_Q_Mystery']);
+  // A colleague's hand-over (IXT-1) IS a step: the caller moved to them.
+  const h2 = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'),
+    ans('3', 'Daniel (Dishant) Sahani', 60, { transfer: true, handover: true }), q('4', 'A_Q_Sales'), ans('5', 'Adrian (Ankit) Sharma')]);
+  assert.equal(h2.bounce.kind, 'sentBack');
+});
+
+test('XB-0: the canonicalizer places an agent whose journey name is a feed variant', function () {
+  const lk = h.call('tfBounceLookups_', XB_ROSTER, XB_CFG, (n) => (n === 'Peter Gummadi' ? 'Peter (Praneeth) Gummadi' : n));
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfAgent('Peter Gummadi'))), ['Sales']);
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfQueue('a_q_csr'))), ['CSR'], 'queues match case-insensitively, the raw alias side too');
+});
+
+test('XB-0: the fold counts pairs and senders, keeps samples, and the line carries no number', function () {
+  let st = {};
+  const j = [q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), q('3', 'A_Q_CSR'), ans('4', 'Daniel (Dishant) Sahani'), ans('5', 'Adrian (Ankit) Sharma')];
+  st = h.call('tfBounceFold_', st, h.call('tfBounceOfJourney_', j, XB.deptsOfQueue, XB.deptsOfAgent), 'C1');
+  st = h.call('tfBounceFold_', st, h.call('tfBounceOfJourney_', j.slice(0, 2), XB.deptsOfQueue, XB.deptsOfAgent), 'C2');
+  st = JSON.parse(JSON.stringify(st));
+  st.captured = 2;
+  assert.equal(st.sentBack, 1);
+  assert.deepEqual(st.pairs, { 'Sales -> CSR -> Sales': 1 });
+  assert.deepEqual(st.senders, { 'Peter (Praneeth) Gummadi (Sales)': 1 });
+  assert.equal(st.samples[0], 'C1 Sales -> CSR -> Sales, sent back by Daniel (Dishant) Sahani');
+  assert.match(h.call('tfBounceLine_', st), /CAME BACK to the first department 1 \(sent back by the other department 1/);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('tfTopCounts_', { a: 1, b: 3, c: 3 }, 2))), ['b: 3', 'c: 3']);
+});
+
+test('XB-0: over a grid it reads the capture\'s own journeys (outside calls only)', function () {
+  const D2 = '10/22/2026 ';
+  const id = 'X1';
+  const rows = [
+    leg({ callId: id, legId: 1, start: D2 + '12:45:39', stop: D2 + '12:46:26', direction: 'Incoming', caller: '12145550123', callee: '300', calleeName: 'A_Q_Sales' }),
+    leg({ callId: id, legId: 2, start: D2 + '12:46:26', connected: D2 + '12:46:26', stop: D2 + '12:47:52', direction: 'Incoming', talk: '0:01:25', caller: '12145550123', callee: '231', calleeName: 'Peter (Praneeth) Gummadi', answered: 'Answered' }),
+    leg({ callId: id, legId: 3, start: D2 + '12:47:51', stop: D2 + '12:48:13', direction: 'Incoming', caller: '12145550123', callee: '103', calleeName: 'A_Q_CSR' }),
+    leg({ callId: id, legId: 4, start: D2 + '12:48:13', connected: D2 + '12:48:13', stop: D2 + '12:50:43', direction: 'Incoming', talk: '0:02:30', caller: '12145550123', callee: '352', calleeName: 'Daniel (Dishant) Sahani', answered: 'Answered' }),
+    leg({ callId: id, legId: 5, start: D2 + '12:50:44', connected: D2 + '12:50:44', stop: D2 + '12:55:55', direction: 'Incoming', talk: '0:05:11', caller: '12145550123', callee: '233', calleeName: 'Adrian (Ankit) Sharma', answered: 'Answered' }),
+  ];
+  const st = JSON.parse(JSON.stringify(h.call('tfBouncesForGrid_', rows, XB)));
+  assert.equal(st.captured, 1);
+  assert.equal(st.sentBack, 1);
+  assert.deepEqual(st.pairs, { 'Sales -> CSR -> Sales': 1 });
+});

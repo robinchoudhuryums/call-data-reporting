@@ -629,3 +629,199 @@ function tfDialogRun(req) {
   if (r.error) throw new Error(r.error);
   return tfDialogPayload_(r.res, r.meta);
 }
+
+// ---- XB-0 (owner 2026-10-28): transfers that came back ---------------------
+// The owner's 10/22 Sales call: a Sales rep sent the caller to CSR by mistake
+// and the CSR rep sent them back to Sales. The path shows it -- answered in
+// one department, moved to another, then returned to the first -- and the
+// mistake belongs to the FIRST transfer (the sender), the return is the fix.
+// This READ-ONLY pass sizes it over the held Call_Legs_* tabs, from the SAME
+// journeys the capture stores (IXT-1's person transfers included). Steps:
+//   * a queue the caller entered -> its department (the Dept Config rows; a
+//     queue with no row, or on two depts' rows, is skipped and counted);
+//   * an agent who answered (talk > 0) -> their roster department (an agent
+//     on two rosters is skipped and counted -- owner proposal 2026-10-28);
+//   * NOT a missed ring, an attempt or a consult (IXT-1): the caller did not
+//     move, so a consult that ends with the original agent is no transfer.
+// Consecutive steps in one department are one stint; a BOUNCE is a stint A
+// in which an agent answered, later followed by A again with another
+// department in between. "Sent back" = an agent of the middle department
+// answered and sent the caller back; "came back unanswered" = it returned
+// before anyone there answered (an overflow, or A pulling the call back).
+
+/**
+ * PURE. The XB-0 reading of one journey. `deptsOfQueue(name)` /
+ * `deptsOfAgent(name)` return arrays of department names.
+ * Returns { stints, interDept, bounce: null | {from, to, sender, returner,
+ * kind: 'sentBack'|'returnedUnanswered'}, skipped: {unmappedQueue,
+ * twoDeptQueue, unknownAgent, twoRosterAgent}, unmappedQueues: [names] }.
+ */
+function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
+  var out = { stints: [], interDept: false, bounce: null,
+    skipped: { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 }, unmappedQueues: [] };
+  (journey || []).forEach(function (ev) {
+    if (!ev || ev.origin) return;
+    if (ev.transfer && (ev.missed || ev.consult)) return;   // the caller did not move
+    var isQ = ev.kind === 'queue';
+    var isAns = ev.kind === 'answer' && (Number(ev.talk) || 0) > 0;
+    if (!isQ && !isAns) return;
+    var name = String(ev.name == null ? '' : ev.name).trim();
+    var ds = (isQ ? deptsOfQueue(name) : deptsOfAgent(name)) || [];
+    if (!ds.length) {
+      if (isQ) { out.skipped.unmappedQueue++; if (out.unmappedQueues.indexOf(name) === -1) out.unmappedQueues.push(name); }
+      else out.skipped.unknownAgent++;
+      return;
+    }
+    if (ds.length > 1) { out.skipped[isQ ? 'twoDeptQueue' : 'twoRosterAgent']++; return; }
+    var last = out.stints[out.stints.length - 1];
+    if (!last || last.dept !== ds[0]) out.stints.push(last = { dept: ds[0], agents: [] });
+    if (isAns && last.agents[last.agents.length - 1] !== name) last.agents.push(name);
+  });
+  var st = out.stints;
+  for (var i = 0; i < st.length && !out.bounce; i++) {
+    if (!st[i].agents.length) continue;
+    if (i + 1 < st.length) out.interDept = true;
+    for (var k = i + 2; k < st.length; k++) {
+      if (st[k].dept !== st[i].dept) continue;
+      var middle = st.slice(i + 1, k);
+      var midAgents = [];
+      middle.forEach(function (m) { midAgents = midAgents.concat(m.agents); });
+      out.bounce = {
+        from: st[i].dept, to: middle[0].dept,
+        sender: st[i].agents[st[i].agents.length - 1],
+        returner: midAgents.length ? midAgents[midAgents.length - 1] : null,
+        kind: midAgents.length ? 'sentBack' : 'returnedUnanswered'
+      };
+      break;
+    }
+  }
+  return out;
+}
+
+/** PURE. Department lookups from the roster (tfRosterFromGrid_) + the Dept Config rows. */
+function tfBounceLookups_(roster, configRows, canon) {
+  var agentDepts = {};
+  (roster.depts || []).forEach(function (d) {
+    Object.keys((roster.byDept[d] || {}).names || {}).forEach(function (n) {
+      (agentDepts[n] = agentDepts[n] || []).push(d);
+    });
+  });
+  var queueDepts = {};
+  (roster.depts || []).forEach(function (d) {
+    tfDeptQueuesFromConfig_(d, configRows).forEach(function (q) {
+      var key = q.toLowerCase();
+      var list = queueDepts[key] = queueDepts[key] || [];
+      if (list.indexOf(d) === -1) list.push(d);
+    });
+  });
+  var c = canon || function (n) { return n; };
+  return {
+    deptsOfAgent: function (n) { return agentDepts[n] || agentDepts[c(n)] || []; },
+    deptsOfQueue: function (q) { return queueDepts[String(q || '').toLowerCase()] || []; }
+  };
+}
+
+/** PURE. Folds one call's XB-0 reading into a stats object. */
+function tfBounceFold_(st, b, callId) {
+  st.calls = (st.calls || 0) + 1;
+  if (b.interDept) st.interDept = (st.interDept || 0) + 1;
+  st.skipped = st.skipped || { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 };
+  Object.keys(b.skipped).forEach(function (k) { st.skipped[k] += b.skipped[k]; });
+  st.unmappedQueues = st.unmappedQueues || {};
+  b.unmappedQueues.forEach(function (q) { st.unmappedQueues[q] = (st.unmappedQueues[q] || 0) + 1; });
+  st.sentBack = st.sentBack || 0; st.returnedUnanswered = st.returnedUnanswered || 0;
+  st.pairs = st.pairs || {}; st.senders = st.senders || {}; st.samples = st.samples || [];
+  if (!b.bounce) return st;
+  st[b.bounce.kind]++;
+  var pair = b.bounce.from + ' -> ' + b.bounce.to + ' -> ' + b.bounce.from;
+  st.pairs[pair] = (st.pairs[pair] || 0) + 1;
+  var who = b.bounce.sender + ' (' + b.bounce.from + ')';
+  st.senders[who] = (st.senders[who] || 0) + 1;
+  if (st.samples.length < 8) st.samples.push(callId + ' ' + pair + (b.bounce.returner ? ', sent back by ' + b.bounce.returner : ', came back unanswered'));
+  return st;
+}
+
+/** PURE. Top-N "key: n" list of a count map. */
+function tfTopCounts_(map, n) {
+  return Object.keys(map || {}).sort(function (a, b) { return (map[b] - map[a]) || (a < b ? -1 : 1); })
+    .slice(0, n).map(function (k) { return k + ': ' + map[k]; });
+}
+
+/** PURE over one grid (testable): XB-0 over the capture's own outside-call records. */
+function tfBouncesForGrid_(grid, lookups) {
+  var st = { captured: 0 };
+  buildInboundCallRecords_(grid).forEach(function (r) {
+    if (r.isInternal) return;
+    st.captured++;
+    tfBounceFold_(st, tfBounceOfJourney_(r.journey || [], lookups.deptsOfQueue, lookups.deptsOfAgent), r.callId);
+  });
+  return st;
+}
+
+/** PURE. XB-0's per-date / TOTAL line. */
+function tfBounceLine_(st) {
+  var sk = st.skipped || {};
+  return String(st.captured || 0) + ' captured outside calls; moved to another department after being answered '
+    + String(st.interDept || 0) + '; CAME BACK to the first department ' + String((st.sentBack || 0) + (st.returnedUnanswered || 0))
+    + ' (sent back by the other department ' + String(st.sentBack || 0) + ', came back before anyone there answered '
+    + String(st.returnedUnanswered || 0) + '); steps skipped -- queue on no Dept Config row ' + String(sk.unmappedQueue || 0)
+    + ', queue on two depts\' rows ' + String(sk.twoDeptQueue || 0) + ', answerer not on the roster ' + String(sk.unknownAgent || 0)
+    + ', answerer on two rosters ' + String(sk.twoRosterAgent || 0);
+}
+
+/**
+ * XB-0 (owner 2026-10-28): READ-ONLY. Over the held Call_Legs_* tabs
+ * (`dateIso` = one date, 'all' = every held date, blank = the latest): how
+ * many outside calls were moved to another department after being answered,
+ * how many CAME BACK to the first one, by department trio and by the agent who
+ * sent them out first, with call-id samples for Caller Lookup and the queues
+ * the pass could not place (map them in Dept Config to count them). Employee
+ * and queue names and call ids only, never a number. Writes nothing.
+ */
+function diagnoseTransferBounces(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { Logger.log('[xb] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
+  var target = SpreadsheetApp.openById(getTargetSsId_());
+  var cfg = target.getSheetByName('DO NOT EDIT!');
+  if (!cfg) { Logger.log('[xb] "DO NOT EDIT!" not found in the CDR Report spreadsheet.'); return null; }
+  icResetConfigMemos_();
+  icLoadConfiguredQueueNames_();
+  var lookups = tfBounceLookups_(tfReadRoster_(cfg), icDeptConfigActiveRows_(), icAgentCanonicalizer_());
+  var total = { captured: 0, days: 0 };
+  var t0 = Date.now();
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[xb] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
+    var grid = sheets[i].sheet.getDataRange().getDisplayValues();
+    grid.shift();
+    var st = tfBouncesForGrid_(grid, lookups);
+    Logger.log('[xb] %s: %s', sheets[i].iso, tfBounceLine_(st));
+    total.days++;
+    total.captured += st.captured;
+    ['calls', 'interDept', 'sentBack', 'returnedUnanswered'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    total.skipped = total.skipped || { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 };
+    Object.keys(st.skipped || {}).forEach(function (k) { total.skipped[k] += st.skipped[k]; });
+    ['pairs', 'senders', 'unmappedQueues'].forEach(function (k) {
+      total[k] = total[k] || {};
+      Object.keys(st[k] || {}).forEach(function (x) { total[k][x] = (total[k][x] || 0) + st[k][x]; });
+    });
+    total.samples = (total.samples || []).concat((st.samples || [])).slice(0, 8);
+  }
+  Logger.log('[xb] TOTAL over %s date(s): %s', String(total.days), tfBounceLine_(total));
+  var pairs = tfTopCounts_(total.pairs, 10), senders = tfTopCounts_(total.senders, 10), unq = tfTopCounts_(total.unmappedQueues, 8);
+  if (pairs.length) Logger.log('[xb]   by department: %s', pairs.join('; '));
+  if (senders.length) Logger.log('[xb]   by the agent who sent the caller out first: %s', senders.join('; '));
+  if (total.samples && total.samples.length) Logger.log('[xb]   e.g.: %s', total.samples.join('; '));
+  if (unq.length) Logger.log('[xb]   queues not placed (no Dept Config row -- calls entering them): %s', unq.join('; '));
+  return total;
+}
+
+/** Editor-run: every held date (the Run picker can't pass 'all'). */
+function diagnoseTransferBouncesAllDates() { return diagnoseTransferBounces('all'); }
