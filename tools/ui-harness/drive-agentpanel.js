@@ -83,6 +83,8 @@ function record(name, pass, detail) {
       obNum: ((p.querySelector('.ap-kpis .ob-split--out .ob-sum-num') || {}).textContent || '').trim(),
       obSum: Array.from(p.querySelectorAll('.ap-kpis .ob-split--out .ob-obar-seg'))
         .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0),
+      obSegs: Array.from(p.querySelectorAll('.ap-kpis .ob-split--out .ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':'
+        + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0])),
       tabs: Array.from(p.querySelectorAll('.ap-tab')).map((t) => t.getAttribute('data-ap-tab')),
       onTab: (p.querySelector('.ap-tab.is-on') || { getAttribute: () => null }).getAttribute('data-ap-tab'),
       callRows: p.querySelectorAll('.ap-calls tbody tr').length,
@@ -154,7 +156,9 @@ function record(name, pass, detail) {
     badRate ? JSON.stringify(badRate) : rates.length + ' boxes');
   record('the strip says what it shows', /days? with activity/.test(st.note), st.note.slice(0, 90));
   record('the selected day renders its inbound tiles and the outbound split bar (SB-1: its parts add up to Placed)',
-    st.tiles === 6 && st.obNum === '2' && st.obSum === 2, JSON.stringify({ tiles: st.tiles, obNum: st.obNum, obSum: st.obSum }));
+    // The fixture's day: 1 connected, 1 rang out (no brief, no unknown).
+    st.tiles === 6 && st.obNum === '2' && st.obSum === 2 && JSON.stringify(st.obSegs) === JSON.stringify(['good:1', 'bad:1']),
+    JSON.stringify({ tiles: st.tiles, obNum: st.obNum, obSum: st.obSum, obSegs: st.obSegs }));
   // Step 2 1b (owner 2026-10-16): who was on the other end, as labels.
   record('inbound calls name the caller: insurer + line, an outside caller, a colleague',
     st.heads[1] === 'From'
