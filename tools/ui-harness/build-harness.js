@@ -718,6 +718,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           var args = [].slice.call(arguments);
           window.__HARNESS__.calls.push({ fn: name, args: args });
           var h = handlers[name];
+          // A driver can hold a reply back (window.__HARNESS__.delay[name] ms)
+          // to look at the page while a call is in flight.
+          var dl = (window.__HARNESS__.delay && window.__HARNESS__.delay[name]) || 0;
           setTimeout(function () {
             var fx = window.__HARNESS__.failOnce;
             if (fx && fx[name] > 0) {
@@ -737,7 +740,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
               console.warn('[harness] unmocked RPC: ' + name);
               fail && fail(new Error('harness: unmocked RPC ' + name));
             }
-          }, 60 + Math.random() * 120);   // realistic latency
+          }, dl + 60 + Math.random() * 120);   // realistic latency (+ a driver's hold)
         };
       },
     });

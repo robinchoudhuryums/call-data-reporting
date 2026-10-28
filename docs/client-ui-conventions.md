@@ -2655,7 +2655,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   Step 3).** `#ins-brief` sits on My Department directly UNDER the team cards
   (`#dept-team-strip`) and ABOVE the agent table (Step 3, owner 2026-10-16;
   it used to open the Insights region): a top line and one row per section, most
-  urgent first (`insBriefRank_`: red, amber, green, grey; ties Queue ->
+  urgent first (`insBriefRank_`: red, amber, fade, green, grey; ties Queue ->
   Agents -> Outbound -> Callbacks -> Team detail -> Trend). **Each row is a
   disclosure button** (`aria-expanded` / `aria-controls`) that opens ITS
   section in place beneath it: the section's EXISTING element is MOVED into
@@ -2687,7 +2687,14 @@ stay pinned by INV-39, INV-53 and INV-06.
   self-contained functions in script-8 (`insBriefTopTier_` / `insBriefQueue_`
   / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
   `insights-brief.test.js` -- keep their thresholds as literals inside them,
-  or the extraction breaks. The queue-wait verdict is server-side
+  or the extraction breaks. **Owner 2026-10-28:** Queue health's worst
+  queue with 1-3 violation days is `fade` (a lighter green, "Mostly on
+  track", never counted as "needs a look"), 4+ is amber; a manager on the
+  dept's team-average exclusion list is never the agent the Team detail text
+  quotes (`insBriefTopShare_` skips `insIsExempt_`); and a run for another
+  dept or window frosts the brief ("Loading <dept>…", `insBriefLoading_`,
+  `data-brief-dept`) until the next render or a failure lifts it
+  (drive-crossstate pins it with a held reply, `__HARNESS__.delay`). The queue-wait verdict is server-side
   (`queueHealth.perQueue[].wait`, InsightsReport.gs). Each tier renders as an
   ICON (Step 1, owner 2026-10-16: `insBriefTierIconHtml_` -- green thumbs-up,
   amber exclamation mark, red flag, grey circle-with-dash), aria-hidden, with

@@ -669,8 +669,8 @@ Insights ranked brief + one-line sections (Agents the only section open):
 1. **Urgency rule** -- colour a row ONLY where a standard already exists: the
    top line against the dept answer target + its amber band
    (`getAnswerStandardFor_`; default 80/10, CSR 92/2), Queue health against
-   `ABANDON_STANDARD_PCT` (4.00%+ over the window = red; under 4% with a
-   violation day = amber), Agents against the cards' behind-team tier
+   `ABANDON_STANDARD_PCT` (4.00%+ over the window = red; under 4% with 4+
+   violation days = amber, 1-3 = a lighter green since owner 2026-10-28), Agents against the cards' behind-team tier
    (`INS_PEER_GAP_PTS` 5, `INS_MIN_VOL` 5; behind AND slipping = red, behind
    or slipping-while-on-par = amber). Callbacks, Team detail and the 12-month
    trend stay grey until a standard exists. Tie order Queue -> Agents ->

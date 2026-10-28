@@ -58,16 +58,49 @@ test('top line: the answer-target tier classes map to the brief colours', functi
   assert.equal(topTier(''), 'grey');
 });
 
-test('queue health: 4.00% is red, a violation day or a slow queue is amber, else green', function () {
+test('owner 2026-10-28: a manager (team-average excluded) is never the agent the Team detail text quotes', function () {
+  const exempt = extractFn(F, 'insIsExempt_');
+  const src = fs.readFileSync(path.join(DIR, F), 'utf8');
+  const i = src.indexOf('function insBriefTopShare_(');
+  let depth = 0, end = -1;
+  for (let k = src.indexOf('{', i); k < src.length; k++) {
+    if (src[k] === '{') depth++; else if (src[k] === '}') { depth--; if (depth === 0) { end = k + 1; break; } }
+  }
+  // eslint-disable-next-line no-new-func
+  const topShare = new Function('insIsExempt_', 'return (' + src.slice(i, end) + ');')(exempt);
+  const card = (name, a, ex) => ({ name: name, excludedFromTeamAvg: !!ex, metrics: { answered: { val: a } } });
+  const data = { meta: { answeredDeptTotal: 1000 }, agentData: [card('Mia Manager', 500, true), card('Ann', 300), card('Bob', 200)] };
+  assert.deepEqual(JSON.parse(JSON.stringify(topShare(data))), { name: 'Ann', pct: 30 }, 'the manager is skipped; the share stays of the whole dept');
+  data.agentData[0].excludedFromTeamAvg = false;
+  assert.equal(topShare(data).name, 'Mia Manager');
+});
+
+test('queue health (owner 2026-10-28): 1 to 3 violation days is a lighter green, 4 or more amber', function () {
+  const q = function (name, pct, viol) { return { queue: name, totalCalls: 100, abandonedPct: pct, violations: viol, wait: null }; };
+  assert.equal(queueV({ perQueue: [q('A_Q_A', 2, 0)] }, 4).tier, 'green');
+  for (const n of [1, 2, 3]) {
+    const v = queueV({ perQueue: [q('A_Q_A', 2, n), q('A_Q_B', 1, 0)] }, 4);
+    assert.equal(v.tier, 'fade', n + ' violation day(s)');
+    assert.match(v.text, new RegExp('A_Q_A had ' + n + ' violation day'));
+  }
+  assert.equal(queueV({ perQueue: [q('A_Q_A', 3, 4)] }, 4).tier, 'amber', '4 violation days');
+  assert.equal(queueV({ perQueue: [q('A_Q_A', 3, 2), q('A_Q_B', 3, 5)] }, 4).tier, 'amber', 'judged by the worst queue');
+  assert.equal(queueV({ perQueue: [q('A_Q_A', 3, 2)].map((x) => Object.assign(x, { wait: { flagged: true, ratio: 1.6, avgAnswerSec: 40, ownMedianSec: 25 } })) }, 4).tier,
+    'amber', 'a slow queue stays amber whatever its violation days');
+  assert.deepEqual(rank([{ key: 'trend', tier: 'green' }, { key: 'queue', tier: 'fade' }, { key: 'agents', tier: 'amber' }]).map((r) => r.key),
+    ['agents', 'queue', 'trend'], 'fade ranks between amber and green');
+});
+
+test('queue health: 4.00% is red, 4+ violation days or a slow queue is amber, else green', function () {
   const q = function (name, pct, viol, wait) {
     return { queue: name, totalCalls: 100, abandonedPct: pct, violations: viol, wait: wait || null };
   };
   let v = queueV({ perQueue: [q('A_Q_A', 4.0, 1), q('A_Q_B', 6.1, 2)] }, 4);
   assert.equal(v.tier, 'red', 'exactly 4.00% breaks the standard (QO-2)');
   assert.match(v.text, /A_Q_B abandoned 6\.1% \(limit 4%\) \(\+1 more\)/, 'worst queue named first');
-  v = queueV({ perQueue: [q('A_Q_A', 3.99, 2)] }, 4);
+  v = queueV({ perQueue: [q('A_Q_A', 3.99, 4)] }, 4);
   assert.equal(v.tier, 'amber');
-  assert.match(v.text, /A_Q_A had 2 violation days/);
+  assert.match(v.text, /A_Q_A had 4 violation days/);
   v = queueV({ perQueue: [q('A_Q_A', 1, 0, { flagged: true, ratio: 1.6, avgAnswerSec: 40, ownMedianSec: 25 })] }, 4);
   assert.equal(v.tier, 'amber', 'a queue answering 1.5x+ slower than its own norm');
   assert.match(v.text, /40s on average, 1\.6x its usual 25s/);

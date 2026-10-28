@@ -304,6 +304,7 @@
       insAutoRunPending_ = true;
       launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
         'Insights for ' + dept);
+      insBriefLoading_(dept);
       insEnsureRoster();
       return;
     }
@@ -1073,6 +1074,7 @@
         // loading pane; on a roster failure, cancel the pending auto-run
         // and fall back to the form so the loader error is visible instead
         // of an eternal loading pane (the IR #1-Part-B pattern).
+        dsFrostHide_($('ins-brief'));   // no run is coming: lift the brief's loading frost
         if (insLauncherAutoRun_ || insAutoRunPending_) {
           insLauncherAutoRun_ = false;
           insAutoRunPending_ = false;
@@ -1372,6 +1374,7 @@
     const __insUseFrost = !!(__insFrostHost && __insFrostHost.style.display !== 'none'
                              && __insFrostHost.childElementCount > 0);
     if (__insUseFrost) dsFrostShow_(__insFrostHost, 'Refreshing report…');
+    insBriefLoading_(req.department);
     // Repaint path shared by live data / SWR / fail-fallback; clears the
     // results-status line so the SWR "refreshing" note can't outlive the
     // response it announced.
@@ -1410,6 +1413,7 @@
           reportClientIssue_('load-failure', 'Insights load failed: ' + (err && err.message ? err.message : String(err)));
         }
         if (__insFrostHost) dsFrostHide_(__insFrostHost);   // R7 (I-3)
+        dsFrostHide_($('ins-brief'));
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
         // R8-A7: no render is coming -- disarm the one-shot chip scroll so it
@@ -1624,9 +1628,11 @@
   }
 
   // Queue health: red when a queue's window abandon rate breaks the standard
-  // (4.00% or more); amber when none does but a queue had a violation DAY, or
-  // its avg answer ran 1.5x its own prior-3-month median (the server's
-  // perQueue[].wait verdict, judged only at 5+ calls a day); green otherwise.
+  // (4.00% or more); amber when none does but a queue had 4 or more violation
+  // DAYS, or its avg answer ran 1.5x its own prior-3-month median (the
+  // server's perQueue[].wait verdict, judged only at 5+ calls a day); 'fade'
+  // (a lighter green, owner 2026-10-28) when the worst queue had 1 to 3
+  // violation days; green otherwise.
   function insBriefQueue_(qh, abandonStd) {
     var std = Number(abandonStd) || 4;
     if (!qh) return { tier: 'grey', text: 'No queue data for this department' };
@@ -1655,7 +1661,9 @@
       parts.push(slow[0].queue + ' answered in ' + slow[0].wait.avgAnswerSec + 's on average, '
         + slow[0].wait.ratio + 'x its usual ' + slow[0].wait.ownMedianSec + 's' + more(slow.length - 1));
     }
-    if (parts.length) return { tier: 'amber', text: parts.join('; ') };
+    var worstViol = viol.length ? Number(viol[0].violations) : 0;
+    if (slow.length || worstViol >= 4) return { tier: 'amber', text: parts.join('; ') };
+    if (worstViol > 0) return { tier: 'fade', text: parts.join('; ') };
     return { tier: 'green', text: 'Every queue under ' + std + '% abandoned, with no violation days' };
   }
 
@@ -1808,7 +1816,7 @@
 
   // Most urgent first; within a colour the fixed section order.
   function insBriefRank_(rows) {
-    var tierOrder = { red: 0, amber: 1, green: 2, grey: 3 };
+    var tierOrder = { red: 0, amber: 1, fade: 2, green: 3, grey: 4 };
     var keyOrder = { queue: 0, agents: 1, outbound: 2, callbacks: 3, detail: 4, trend: 5 };
     return (rows || []).slice().sort(function (a, b) {
       var t = (tierOrder[a.tier] != null ? tierOrder[a.tier] : 9) - (tierOrder[b.tier] != null ? tierOrder[b.tier] : 9);
@@ -1821,9 +1829,12 @@
   // green a thumbs-up, amber an exclamation mark, red a flag, grey (no signal)
   // a circle with a dash. The word stays for screen readers (.sr-only) and the
   // icon is aria-hidden, so a colour is never the only carrier of the verdict.
-  var INS_BRIEF_WORD_ = { red: 'Needs attention', amber: 'Watch', green: 'On track', grey: 'No signal' };
+  // 'fade' (owner 2026-10-28): on track, with a little to watch -- a lighter
+  // green, the same thumbs-up, and never counted as "needs a look".
+  var INS_BRIEF_WORD_ = { red: 'Needs attention', amber: 'Watch', fade: 'Mostly on track', green: 'On track', grey: 'No signal' };
   var INS_BRIEF_ICON_PATH_ = {
     green: '<path fill="currentColor" d="M2 10h4v11H2zM8 21h9.3a2 2 0 0 0 2-1.6l1.6-7.5A2 2 0 0 0 19 9.5h-5.4l.9-4.2a1.6 1.6 0 0 0-2.8-1.3L8 9.2z"/>',
+    fade:  '<path fill="currentColor" d="M2 10h4v11H2zM8 21h9.3a2 2 0 0 0 2-1.6l1.6-7.5A2 2 0 0 0 19 9.5h-5.4l.9-4.2a1.6 1.6 0 0 0-2.8-1.3L8 9.2z"/>',
     amber: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path style="fill:var(--paper-card)" d="M11 6h2v8h-2zM11 16h2v2h-2z"/>',
     red:   '<path fill="currentColor" d="M5 2h2v20H5zM8 3h10l-2.5 4.5L18 12H8z"/>',
     grey:  '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M7 11h10v2H7z"/>',
@@ -1897,6 +1908,9 @@
     if (!total || cards.length < 2) return null;
     var best = null;
     cards.forEach(function (c) {
+      // Owner 2026-10-28: a manager (on the dept's team-average exclusion
+      // list, R18) is never the agent the brief quotes.
+      if (insIsExempt_(c)) return;
       var a = Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0);
       if (!best || a > best.a) best = { name: c.name, a: a };
     });
@@ -1940,8 +1954,18 @@
     return !!(qh && (qh.error || qh.unmapped || qh.totals));
   }
 
+  // Owner 2026-10-28 (testing): a dept switch or a re-run left the brief
+  // showing the PREVIOUS department's rows until the new payload landed. It
+  // frosts with a loading label from the moment the run starts; the next
+  // render (or a failure) lifts it.
+  function insBriefLoading_(dept) {
+    var box = $('ins-brief');
+    if (!box || box.style.display === 'none' || !box.childElementCount) return;
+    dsFrostShow_(box, (dept && dept !== box.getAttribute('data-brief-dept')) ? 'Loading ' + dept + '…' : 'Refreshing…');
+  }
   function insRenderBrief_(data) {
     var box = $('ins-brief');
+    if (box) dsFrostHide_(box);
     var res = $('insights-results');
     // Step 3: the sections live inside the brief while it shows; put every one
     // back home BEFORE the rows are rebuilt (or the brief is hidden), so a
@@ -2016,6 +2040,7 @@
           + '<div class="ins-brief-slot" id="' + slotId + '" data-brief-slot="' + r.key + '" hidden></div></li>';
       }).join('') + '</ul>';
     box.style.display = '';
+    box.setAttribute('data-brief-dept', dept || '');   // which dept these rows are (insBriefLoading_)
     if (res) res.classList.add('ins-has-brief');
     insBriefMountAll_();
     if (!box.__briefWired) {

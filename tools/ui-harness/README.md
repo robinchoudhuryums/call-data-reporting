@@ -118,7 +118,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   dept, View-as in and out (brief + switch hide, the direction falls back to
   Inbound and returns, the brief comes back WITH its Callbacks row), and the
   Callbacks jump changing direction only from Inbound (F24). The Insights mock
-  routes by dept and serves real CSR and Sales captures.
+  routes by dept and serves real CSR and Sales captures. Since BR-1 it holds
+  the new dept's Insights reply back (`__HARNESS__.delay`, a per-call hold the
+  harness stub honours) to check the brief reads "Loading <dept>…" meanwhile.
 - `drive-outbound-e.js` — the Overview tiles' outbound line per card window
   and the **Outbound summary** under the outbound table on My Department
   (Batch E; moved out of Insights by UX-1): two-window deltas, shown only on
