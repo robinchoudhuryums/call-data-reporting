@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-28 (6) -- BR-1/2/3 (owner testing notes).** The brief frosts "Loading <dept>…" on a dept switch / re-run; managers (team-average excluded) never quoted in Team detail; Queue health 1-3 violation days = lighter green (`fade`), 4+ amber. Bites 4/4.
+  **Open / owner to decide:** merge the Agents + Team detail rows?; what a day bar in the team cards should click through to.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
 - **2026-10-28 (5) -- LB-2 IMPLEMENTED (block 259-lb2-broad-implement).** The combined agent table is one line per agent: an inbound bar + an outbound bar (with the rang out / brief / not recorded split), each on its own scale, per-day under the counts, chips on the two rates, count changes in the hover (owner Option B). NET 0 - 0 = 0.
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
 - **2026-10-28 (4) -- SB-1/2/3/5/6 IMPLEMENTED (block 259-sb-broad-implement).** Split bars wherever counts add up exactly to one total: Agent Day outbound, Direct Calls (+ card), outbound Placed (summary, Team Outbound, Overview tile line), the Inbound report (its hidden "missed" now shown; admin-only), the CSR Transfer detail (sorted by transfers). NET 2 - 0 = 2.
