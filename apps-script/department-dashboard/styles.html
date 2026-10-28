@@ -3648,7 +3648,6 @@
   .ad-kpi-group .ad-dir--in  { background: var(--accent-soft); color: var(--accent); }
   .ad-kpi-group .ad-dir--out { background: var(--dir-out-soft); color: var(--dir-out); }
   .ad-kpi-row--in .ds-kpi  { border-top: 3px solid var(--accent); }
-  .ad-kpi-row--out .ds-kpi { border-top: 3px solid var(--dir-out); }
 
   /* Batch B: the inline agent panel under a My Department agent row
      (apToggleFromRow_, script-10). The panel is a <tr> inside .agents, so
@@ -6360,6 +6359,8 @@
     font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
   .ov-dept-ob-pct { color: var(--dir-out); font-weight: 600; }
   .ov-dept-ob-since, .ov-dept-ob-none { color: var(--muted); font-size: 11px; }
+  .ov-dept-ob-bar { margin: 2px 0 4px; }   /* SB-3: connected / did not connect */
+  .ov-dept-ob-bar .ob-obar--thin { height: 6px; }
   /* Batch E1: the Insights Outbound fold (admin-only until 6c). */
   #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   #ins-ob-fold .ins-ob-scroll { overflow-x: auto; max-width: 100%; margin-top: 4px; }
@@ -7078,30 +7079,23 @@
     font-family: var(--ui); font-size: 13px; font-weight: 600; color: var(--ink);
   }
   .dept-transfer-sub { font-size: 12px; color: var(--muted); }
+  /* SB-6: one column -- two full-width split bars read better than halves. */
   .dept-transfer-body {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px;
     padding: 4px 14px 14px;
   }
-  @media (max-width: 860px) { .dept-transfer-body { grid-template-columns: 1fr; } }
+  .dept-transfer-body .ob-legend { margin-top: 8px; }
+  .dept-transfer-hint { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
+  .dtf-rows { display: grid; grid-template-columns: minmax(90px, 160px) minmax(0, 1fr) auto; gap: 6px 12px;
+    align-items: center; font-size: 12px; }
+  .dtf-track { min-width: 0; }
   .dept-transfer-h {
     font-family: var(--ui); font-size: 11px; font-weight: 600;
     letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
     margin: 0 0 7px;
   }
   .dept-transfer .ds-note { margin: 0 14px 10px; }
-  .dtf-row {
-    display: grid; grid-template-columns: minmax(80px, 1.1fr) 2fr auto;
-    align-items: center; gap: 9px; padding: 3px 0;
-    font-size: 12px; color: var(--ink);
-  }
   .dtf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dtf-bar {
-    height: 7px; background: var(--accent-soft);
-    border-radius: 999px; overflow: hidden;
-  }
-  .dtf-bar > span {
-    display: block; height: 100%; background: var(--accent); border-radius: 999px;
-  }
   .dtf-num { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
   .dtf-pct { color: var(--muted); }
   /* Same tier vocabulary as the headline Transfer % tile (R23), so one
@@ -8472,4 +8466,52 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
 .ob-dl-table .ob-dl-person td:first-child { padding-left: 22px; }
 .ob-dl-person-name { color: var(--ink-muted, var(--muted)); }
 .ob-dl-drill > td { background: var(--paper-2); }
+/* SB-1..6 (owner 2026-10-28): the split summary every other report shares --
+   one bar per total whose parts add up to it (obSplitSummaryHtml_). Generic
+   segment colours: handled / lost / a softer loss / not known. */
+.ob-split .ob-sum-num { color: var(--ink); }
+.ob-split .ob-sum-num.is-warn { color: var(--warn); }
+.ob-seg-good { background: var(--good); color: var(--on-good, #fff); }
+.ob-seg-bad { background: var(--warn); color: var(--on-warn, #fff); }
+.ob-seg-bad2 { background: color-mix(in oklab, var(--warn) 70%, black); color: var(--on-warn, #fff); }
+.ob-seg-soft { background: color-mix(in oklab, var(--warn) 42%, var(--paper)); color: var(--ink); }
+.ob-seg-unk { background: color-mix(in oklab, var(--muted) 35%, var(--paper)); color: var(--ink); }
+.ob-seg-kept { background: color-mix(in oklab, var(--muted) 18%, var(--paper)); color: var(--ink); }
+.ob-seg-cat1 { background: color-mix(in oklab, var(--accent) 80%, black); color: #fff; }
+.ob-seg-cat2 { background: var(--accent); color: #fff; }
+.ob-seg-cat3 { background: color-mix(in oklab, var(--accent) 45%, var(--paper)); color: var(--ink); }
+.ob-seg-cat4 { background: var(--dir-out); color: #fff; }
+.ob-seg-cat5 { background: color-mix(in oklab, var(--dir-out) 45%, var(--paper)); color: var(--ink); }
+.ob-seg-hatch { background: repeating-linear-gradient(45deg, color-mix(in oklab, var(--muted) 55%, var(--paper)) 0 4px,
+  color-mix(in oklab, var(--muted) 22%, var(--paper)) 4px 8px); color: var(--ink); }
+.ob-seg-tf-deep { background: var(--good); }
+.ob-seg-tf-light { background: color-mix(in oklab, var(--good) 55%, var(--paper)); }
+.ob-seg-tf-amber { background: var(--warn); }
+.ob-seg-tf-red { background: var(--bad); }
+.ob-obar--thin { height: 10px; }
+.ob-obar--mid { height: 14px; }
+.ob-split-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ob-split-sub-h { font-weight: 600; font-size: 13px; color: var(--ink); }
+.ob-split-rows { display: grid; grid-template-columns: minmax(110px, 170px) minmax(0, 1fr) auto; gap: 6px 12px; align-items: center;
+  font-size: 13px; }
+.ob-split-rows .ob-obar { min-width: 0; }
+.ob-split-mini { display: flex; flex-direction: column; gap: 6px; }
+.ob-split-mini-cap { font-size: 12px; color: var(--ink-muted, var(--muted)); }
+.ob-leg-x { margin-left: 4px; }
+/* SB-2: the Direct Calls report pairs the lines-rung summary with the
+   dialed one; a side card (Team Direct Calls, Team Outbound) gets the slim
+   form, spanning the card's two-column tile grid. */
+.ob-split-pair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .ob-split-pair { grid-template-columns: minmax(0, 1fr); } }
+.ob-split--compact .ob-sum-num { font-size: 30px; }
+.ob-split-rows .num { text-align: right; font-variant-numeric: tabular-nums; }
+.trp-tiles > .tdc-split, .trp-tiles > .tob-split { grid-column: 1 / -1; }
+.tdc-split, .tob-split { display: flex; flex-direction: column; gap: 6px; }
+.tdc-split-head { display: flex; align-items: baseline; gap: 6px; }
+.tdc-split-head--out { margin-top: 6px; }
+.tdc-split-num { font: 700 20px/1.1 var(--sans); color: var(--ink); }
+.tdc-split-of { font-size: 12px; color: var(--ink-muted, var(--muted)); }
+/* An outbound summary keeps the direction hue its tiles carried (Agent Day,
+   the Outbound summary). */
+.ob-split--out { border-top: 3px solid var(--dir-out); margin-bottom: 12px; }
 </style>

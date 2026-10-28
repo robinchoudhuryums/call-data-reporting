@@ -108,6 +108,8 @@ async function openDept(page, meta) {
       note: (document.getElementById('agents-ob-note') || {}).textContent || '',
       tobRows: document.querySelectorAll('#tob-tbody tr.trp-row').length,
       tobTiles: (document.getElementById('tob-tiles') || {}).textContent || '',
+      tobBar: Array.from(document.querySelectorAll('#tob-tiles .ob-obar-seg'))
+        .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0),
     };
   });
 
@@ -151,7 +153,8 @@ async function openDept(page, meta) {
     && !(await page.locator('#agents-ob-tbody tr[data-agent="Off Roster Dialler"]').count()));
   record('Team Rings stays and Team Outbound shows beside it', v.rings && v.tob && v.tobRows === ob.agents.length,
     JSON.stringify({ tob: v.tob, rings: v.rings, rows: v.tobRows }));
-  record('Team Outbound tiles show the payload totals', v.tobTiles.indexOf(String(ob.totals.obTotal)) !== -1, v.tobTiles.slice(0, 60));
+  record('Team Outbound shows the payload total as a slim bar whose parts add up to it (SB-3)',
+    v.tobTiles.indexOf(String(ob.totals.obTotal)) !== -1 && v.tobBar === ob.totals.obTotal, JSON.stringify({ text: v.tobTiles.slice(0, 60), bar: v.tobBar }));
   record('a parent view groups the rows with per-dept subtotals',
     (await page.locator('#agents-ob-tbody tr.subq-subtotal').count()) === (ob.deptGroups ? ob.deptGroups.length : 0));
   const overlap = await page.evaluate(() => {
@@ -330,14 +333,14 @@ async function openDept(page, meta) {
       sent.forEach((k) => { per[k] = (per[k] || 0) + 1; });
       const both = await pr.evaluate(() => ({
         table: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
-        fold: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
+        fold: document.querySelectorAll('#ins-ob-kpis .ob-obar').length,   // SB-3: one split bar
       }));
       // Step 3: the brief's Outbound row loads both windows with the page, so
       // turning the columns on reads them from the same store -- at most one
       // ask per window (an explicit Refresh clears the store by design, and
       // the driver's own date-change load can land before its Refresh click).
       record('turning the columns on asks for each window at most once, and both render',
-        Object.keys(per).every((k) => per[k] === 1) && both.table > 0 && both.fold === 5,
+        Object.keys(per).every((k) => per[k] === 1) && both.table > 0 && both.fold === 1,
         JSON.stringify({ per: per, both: both }));
     }
     for (let round = 1; round <= 2; round++) {
@@ -374,14 +377,20 @@ async function openDept(page, meta) {
                head: (document.getElementById('tdc-head') || {}).textContent || '',
                note: (document.getElementById('tdc-note') || {}).textContent || '',
                tiles: document.querySelectorAll('#tdc-tiles .ds-kpi').length,
+               // SB-2: two slim bars (lines rung, calls dialed), each adding up.
+               bars: Array.from(document.querySelectorAll('#tdc-tiles .ob-obar')).map((b) => Array.from(b.querySelectorAll('.ob-obar-seg'))
+                 .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0)),
                rows: document.querySelectorAll('#tdc-tbody tr.trp-row').length };
     });
     const c0 = after.calls[0] || {};
     record('D3: opening it asks ONCE, for this dept over the page\'s dates, and shows the report\'s figures',
       after.calls.length === 1 && c0.department === 'CSR' && c0.from === after.page.from && c0.to === after.page.to
-        && after.tiles === 2 && after.rows === d30.agents.length
+        && after.tiles === 0 && after.rows === d30.agents.length
+        && after.bars.length === 2
+        && after.bars[0] === d30.kpis.ibAnswered + d30.kpis.ibMissedFree + d30.kpis.ibMissedBusy
+        && after.bars[1] === d30.kpis.obTotal
         && after.head.indexOf(String(d30.kpis.ibAnswered)) === 0,
-      JSON.stringify({ calls: after.calls, head: after.head, tiles: after.tiles, rows: after.rows, want: d30.agents.length }));
+      JSON.stringify({ calls: after.calls, head: after.head, tiles: after.tiles, bars: after.bars, rows: after.rows, want: d30.agents.length }));
     record('D3: the card says when the data stops early and names the gap', /not imported/.test(after.note) && /1 workday/.test(after.note), after.note);
     await page.click('#dept-team-direct > summary'); await page.waitForTimeout(200);
     await page.click('#dept-team-direct > summary'); await page.waitForTimeout(400);
@@ -394,6 +403,40 @@ async function openDept(page, meta) {
       dept: (document.getElementById('direct-call-dept') || {}).value }));
     record('D3: "Open the Direct Calls report" opens the report on the same dept, run', modal.open && modal.results && modal.dept === 'CSR', JSON.stringify(modal));
     await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+  }
+
+  // SB-6 (owner 2026-10-28): the CSR Transfer detail as two split bars --
+  // where the transfers went (the destinations, the rest of the tracked list,
+  // and the untracked part hatched) adds up to the transfers; each agent's bar
+  // is their calls handled, the transferred part tier-coloured; sorted by
+  // transfers (owner).
+  {
+    await page.evaluate(() => { const s = document.getElementById('dept-transfer-section'); if (s) s.open = true; });
+    await page.waitForTimeout(300);
+    const tf = await page.evaluate(() => {
+      const num = (x) => parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]);
+      const sub = (document.getElementById('dept-transfer-sub') || {}).textContent || '';
+      const m = /^([\d,]+) transfers? of ([\d,]+) calls/.exec(sub);
+      const dest = Array.from(document.querySelectorAll('#dept-transfer-queues .ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':' + num(x));
+      const agents = Array.from(document.querySelectorAll('#dept-transfer-agents .dtf-track .ob-obar')).map((b) =>
+        Array.from(b.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':' + num(x)));
+      const nums = Array.from(document.querySelectorAll('#dept-transfer-agents .dtf-num strong')).map((x) => Number(x.textContent.replace(/,/g, '')));
+      return { shown: getComputedStyle(document.getElementById('dept-transfer-section')).display !== 'none',
+        transferred: m ? Number(m[1].replace(/,/g, '')) : -1, calls: m ? Number(m[2].replace(/,/g, '')) : -1,
+        dest: dest, agents: agents, nums: nums,
+        note: (document.getElementById('dept-transfer-note') || {}).textContent || '' };
+    });
+    const destSum = tf.dest.reduce((a, x) => a + Number(x.split(':')[1]), 0);
+    const agentTr = tf.agents.reduce((a, segs) => a + segs.filter((x) => /^tf-|^unk/.test(x)).reduce((b, x) => b + Number(x.split(':')[1]), 0), 0);
+    const agentCalls = tf.agents.reduce((a, segs) => a + segs.reduce((b, x) => b + Number(x.split(':')[1]), 0), 0);
+    record('SB-6: where the transfers went is one bar that adds up to the transfers, the untracked part hatched and named',
+      tf.shown && tf.transferred > 0 && destSum === tf.transferred && tf.dest.some((x) => /^hatch:/.test(x)) && /hatched part/.test(tf.note)
+        && tf.dest.filter((x) => /^cat\d:/.test(x)).length === 5 && tf.dest.some((x) => /^unk:/.test(x)),
+      JSON.stringify({ dest: tf.dest, transferred: tf.transferred, note: tf.note }));
+    record('SB-6: each agent\'s bar is their calls handled with the transferred part coloured, adding up to the section totals; sorted by transfers',
+      agentTr === tf.transferred && agentCalls === tf.calls && tf.agents.every((segs) => /^tf-(deep|light|amber|red):/.test(segs[0]))
+        && tf.nums.every((n, i) => i === 0 || tf.nums[i - 1] >= n),
+      JSON.stringify({ agents: tf.agents, nums: tf.nums, calls: tf.calls }));
   }
 
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));

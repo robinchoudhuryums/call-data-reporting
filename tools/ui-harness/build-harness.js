@@ -172,6 +172,25 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     // D1: the Direct Calls report -- a dept run is clamped + gappy, the
     // company run is clean (its prior chips render).
     getDirectCallReport: function (req) { return P[(req && req.department) ? 'direct-30d' : 'direct-all-clean']; },
+    // SB-5 (owner 2026-10-28): the Inbound report had no mock, so no gate ever
+    // rendered it. Company view and a dept view, each with total = answered +
+    // abandoned + missed (the three dispositions), and the company view's
+    // abandon stages (queue / phone menu / person's line).
+    getInboundReport: function (req) {
+      const dept = (req && req.department) || '';
+      const kp = function (t, a, ab, mi, ivr, dir, hold, xu) {
+        return { total: t, answered: a, abandoned: ab, missed: mi, abandonedOnHold: hold,
+          onHoldTransferIn: dept ? 0 : 4, onHoldTransferOut: 0, xferUnanswered: xu, xferUnansweredLinked: Math.floor(xu / 2),
+          abandonedIvr: ivr, abandonedDirect: dir, anonymous: 55, avgWaitSec: 48, avgHoldSec: 112,
+          abandonRate: Math.round(ab / t * 1000) / 10, answerRate: Math.round(a / t * 1000) / 10 };
+      };
+      const k = dept ? kp(1200, 1050, 90, 60, 0, 0, 22, 5) : kp(4120, 3410, 402, 308, 120, 38, 61, 14);
+      const p = dept ? kp(1150, 1001, 95, 54, 0, 0, 20, 6) : kp(3990, 3300, 410, 280, 118, 36, 58, 12);
+      return { meta: { from: (req && req.from) || '2026-09-28', to: (req && req.to) || '2026-10-27', department: dept || null,
+          companyView: !dept, available: true, unmapped: false, priorFrom: '2026-08-28', priorTo: '2026-09-25' },
+        kpis: k, kpisPrior: p, byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [],
+        outsideWindow: { calls: 0, abandoned: 0, answered: 0, abandonedPct: 0, beforeCalls: 0, beforeAbandoned: 0, afterCalls: 0, afterAbandoned: 0 } };
+    },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },
     getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1, linked: 1 }; },   // ESC-L1: one open linked copy

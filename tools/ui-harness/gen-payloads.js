@@ -189,8 +189,21 @@ days.slice(-90).forEach((dIso, i) => {
 // join -- each day's totals split across four CSR roster agents, with Robin
 // Choudhury deliberately absent so the column's "no transfer row" dash renders.
 // The per-day totals (and so the tile) are what they were before the split.
-const CSR_TRANSFER = [['Month Year', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred']];
+// SB-6: the 11 destination columns (H..R, labels in the header row) too, so
+// the Transfer detail's "where the transfers went" bar has data. Each
+// transfer takes the next slot of a fixed 20-step pattern (7 named queues, one
+// step left OUTSIDE them), so the shares are stable and the untracked part of
+// the bar renders as well.
+const XFER_DESTS = ['A_Q_Sales', 'A_Q_Billing', 'A_Q_Intake', 'A_Q_PAP', 'A_Q_Spanish', 'A_Q_Supplies', 'A_Q_Returns', '', '', '', ''];
+const XFER_PATTERN = [0, 1, 0, 2, 0, 3, 1, 0, 2, 4, 0, 1, 5, 0, 2, 6, 0, 1, 3, -1];
+let xferStep = 0;
+const CSR_TRANSFER = [['Month Year', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred'].concat(XFER_DESTS)];
 const XFER_AGENTS = ['Anna Reyes', 'Ben Ortiz', 'Carla Diaz', 'Dev Patel'];
+const xferDests = (n) => {
+  const out = XFER_DESTS.map(() => 0);
+  for (let j = 0; j < n; j++) { const q = XFER_PATTERN[xferStep++ % XFER_PATTERN.length]; if (q >= 0) out[q]++; }
+  return out;
+};
 days.slice(-90).forEach((dIso) => {
   const total = 90 + Math.round(rnd() * 40);
   const transferred = Math.round(total * (0.08 + rnd() * 0.06));
@@ -203,7 +216,8 @@ days.slice(-90).forEach((dIso) => {
   XFER_AGENTS.forEach((agent, i) => {
     const calls = cls[i];
     CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, agent,
-      calls ? (trs[i] / calls * 100).toFixed(1) + '%' : '0%', calls, trs[i]]);
+      calls ? (trs[i] / calls * 100).toFixed(1) + '%' : '0%', calls, trs[i]]
+      .concat(xferDests(trs[i])));
   });
 });
 

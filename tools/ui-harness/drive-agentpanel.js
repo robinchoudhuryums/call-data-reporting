@@ -9,7 +9,7 @@
  * a DOM row living inside a table that re-renders on every sort, which is
  * exactly the shape that renders in review and breaks on a real click.
  *
- * Walk: open by click -> strip + day tiles + tabs render -> switch day ->
+ * Walk: open by click -> strip + day tiles / outbound bar + tabs render -> switch day ->
  * switch tab -> re-sort keeps it open under the same agent -> Individual
  * report button opens the modal -> Escape / Collapse close it and return
  * focus -> keyboard open -> a second agent replaces the first -> the panel
@@ -79,6 +79,10 @@ function record(name, pass, detail) {
         return r.left >= b.left - 1 && r.right <= b.right + 1;
       })(),
       tiles: p.querySelectorAll('.ap-kpis .ds-kpi').length,
+      // SB-1: outbound is one split bar (placed = connected + rang out + brief + unknown).
+      obNum: ((p.querySelector('.ap-kpis .ob-split--out .ob-sum-num') || {}).textContent || '').trim(),
+      obSum: Array.from(p.querySelectorAll('.ap-kpis .ob-split--out .ob-obar-seg'))
+        .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0),
       tabs: Array.from(p.querySelectorAll('.ap-tab')).map((t) => t.getAttribute('data-ap-tab')),
       onTab: (p.querySelector('.ap-tab.is-on') || { getAttribute: () => null }).getAttribute('data-ap-tab'),
       callRows: p.querySelectorAll('.ap-calls tbody tr').length,
@@ -149,7 +153,8 @@ function record(name, pass, detail) {
   record('every day box shows its answer rate (Answer % formula, tinted)', rates.length > 0 && !badRate,
     badRate ? JSON.stringify(badRate) : rates.length + ' boxes');
   record('the strip says what it shows', /days? with activity/.test(st.note), st.note.slice(0, 90));
-  record('the selected day renders its tile rows', st.tiles >= 10, 'tiles=' + st.tiles);
+  record('the selected day renders its inbound tiles and the outbound split bar (SB-1: its parts add up to Placed)',
+    st.tiles === 6 && st.obNum === '2' && st.obSum === 2, JSON.stringify({ tiles: st.tiles, obNum: st.obNum, obSum: st.obSum }));
   // Step 2 1b (owner 2026-10-16): who was on the other end, as labels.
   record('inbound calls name the caller: insurer + line, an outside caller, a colleague',
     st.heads[1] === 'From'
@@ -166,7 +171,7 @@ function record(name, pass, detail) {
   await page.waitForTimeout(700);
   st = await panelState();
   record('picking another day selects it and reloads the day view',
-    st.onDays === 1 && st.onDate !== firstDate && st.tiles >= 10 && !st.loading,
+    st.onDays === 1 && st.onDate !== firstDate && st.tiles === 6 && st.obNum === '2' && !st.loading,
     firstDate + ' -> ' + st.onDate);
   await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').click();
   await page.waitForTimeout(300);

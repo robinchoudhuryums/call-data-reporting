@@ -2361,20 +2361,28 @@
     }
     html += group('Outbound', 'calls this agent placed', 'out');
     if (meta.outboundCaptured) {
+      // SB-1 (owner 2026-10-28): one bar instead of five tiles -- every call
+      // placed lands in exactly one of connected / rang out / brief / unknown
+      // (AgentDay.gs buckets each unconnected call once), so the parts add up
+      // to Placed. Talk time and attempts (redials included) sit on other
+      // bases, so they go on the line underneath.
       const placed = Number(c.outboundTotal) || 0, conn = Number(c.outboundConnected) || 0;
-      const unconn = placed - conn;
-      const split = [];
-      if (c.outboundUnconnectedBrief) split.push(c.outboundUnconnectedBrief + ' brief');
-      if (c.outboundUnconnectedReal) split.push(c.outboundUnconnectedReal + ' rang out');
-      if (c.outboundUnconnectedUnknown) split.push(c.outboundUnconnectedUnknown + ' ring unknown');
-      html += '<div class="pr-kpi-row ad-kpi-row--out">'
-        + inboundKpiTile_('Placed', fmtNumber(placed), 'external calls', '')
-        + inboundKpiTile_('Connected', fmtNumber(conn), placed ? Math.round(conn / placed * 100) + '% · talk > 0' : 'talk > 0', '')
-        + inboundKpiTile_('Talk time', fmtDuration(c.outboundTalkSec || 0),
-            conn ? 'avg ' + fmtDuration(Math.round((c.outboundTalkSec || 0) / conn)) + ' connected' : 'no connected calls', '')
-        + inboundKpiTile_('Unconnected', fmtNumber(unconn), split.length ? split.join(' · ') : 'none', '')
-        + inboundKpiTile_('Attempts', fmtNumber(c.outboundAttempts || 0), 'incl. redials', '')
-        + '</div>';
+      const t = { obTotal: placed, obConnected: conn, obUnconnectedBrief: c.outboundUnconnectedBrief || 0,
+                  obUnconnectedReal: c.outboundUnconnectedReal || 0 };
+      const attempts = Number(c.outboundAttempts) || 0;
+      const redials = Math.max(0, attempts - placed);
+      html += obSplitSummaryHtml_({
+        cls: 'ob-split--out', num: fmtNumber(placed), lead: 'calls placed',
+        subHtml: placed ? escapeHtml(fmtNumber(conn) + ' connected (' + Math.round(conn / placed * 100) + '%) · '
+          + fmtNumber(placed - conn) + ' did not connect') : 'no external calls placed',
+        total: placed, parts: obPlacedParts_(t), aria: obPlacedAria_(t),
+        quality: [
+          'Talk time <strong>' + escapeHtml(fmtDuration(c.outboundTalkSec || 0)) + '</strong>'
+            + (conn ? ' · avg ' + escapeHtml(fmtDuration(Math.round((c.outboundTalkSec || 0) / conn))) + ' per connected call' : ''),
+          '<strong>' + escapeHtml(fmtNumber(attempts)) + '</strong> dial attempts'
+            + (redials ? ' (' + escapeHtml(fmtNumber(redials)) + ' redial' + (redials === 1 ? '' : 's') + ' of a number already dialed)' : ''),
+        ],
+      });
     } else {
       const why = !meta.neonAvailable ? 'the call tables could not be read just now'
         : ((meta.outboundCaptureStart && String(meta.date || '') < meta.outboundCaptureStart)

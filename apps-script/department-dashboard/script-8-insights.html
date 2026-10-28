@@ -2771,21 +2771,31 @@
     if (head) head.textContent = insObHeadText_(t, cur.scope);
     insBriefRowFromHead_('outbound');   // Step 3: in place, never a rebuild
     if (kp) {
-      kp.innerHTML = [
-        insQhKpiTileHtml_('Placed', fmtNumber(t.obTotal || 0), 'outbound calls',
-          pt ? insObDelta_(t.obTotal || 0, pt.obTotal || 0, 'volume', 'neu', meta, 'volume') : ''),
-        insQhKpiTileHtml_('Connected', fmtNumber(t.obConnected || 0), 'the far end answered',
-          pt ? insObDelta_(t.obConnected || 0, pt.obConnected || 0, 'volume', 'neu', meta, 'volume') : ''),
-        insQhKpiTileHtml_('Connect rate', t.obConnectRate != null ? escapeHtml(Number(t.obConnectRate).toFixed(1) + '%') : '–',
-          'connected ÷ placed',
-          (pt && t.obConnectRate != null && pt.obConnectRate != null)
-            ? insObDelta_(t.obConnectRate, pt.obConnectRate, 'pctPoints', 'pos', meta) : ''),
-        insQhKpiTileHtml_('Per agent-day', t.obPerDay != null ? escapeHtml(String(t.obPerDay)) : '–',
-          'placed per day an agent dialed',
-          (pt && t.obPerDay != null && pt.obPerDay != null) ? insObDelta_(t.obPerDay, pt.obPerDay, 'volume', 'neu', meta) : ''),
-        insQhKpiTileHtml_('Avg talk', escapeHtml(fmtDuration(t.obAttSec || 0)), 'per connected call',
-          (pt && t.obConnected && pt.obConnected) ? insObDelta_(t.obAttSec || 0, pt.obAttSec || 0, 'volume', 'neu', meta) : ''),
-      ].join('');
+      // SB-3 (owner 2026-10-28): Placed as one bar -- connected / rang out /
+      // brief / unknown add up to it (deptObTotals_ sums the per-agent
+      // buckets, unknown the remainder). Per agent-day and Avg talk are on
+      // other bases, so they go on the line underneath with their chips.
+      var parts = obPlacedParts_(t);
+      if (pt) {
+        parts[0].deltaHtml = insObDelta_(t.obConnected || 0, pt.obConnected || 0, 'volume', 'neu', meta, 'volume');
+      }
+      var placed = Number(t.obTotal) || 0, conn = Number(t.obConnected) || 0;
+      kp.innerHTML = obSplitSummaryHtml_({
+        cls: 'ob-split--out', num: fmtNumber(placed), lead: 'calls placed',
+        subHtml: (placed ? escapeHtml(fmtNumber(conn) + ' connected (' + Number(t.obConnectRate || 0).toFixed(1) + '%) · '
+            + fmtNumber(placed - conn) + ' did not connect') : 'no outbound calls')
+          + (pt ? ' ' + insObDelta_(placed, pt.obTotal || 0, 'volume', 'neu', meta, 'volume') : ''),
+        total: placed, parts: parts, aria: obPlacedAria_(t),
+        quality: [
+          'Connect rate <strong>' + (t.obConnectRate != null ? escapeHtml(Number(t.obConnectRate).toFixed(1) + '%') : '–') + '</strong>'
+            + ((pt && t.obConnectRate != null && pt.obConnectRate != null)
+              ? ' ' + insObDelta_(t.obConnectRate, pt.obConnectRate, 'pctPoints', 'pos', meta) : ''),
+          '<strong>' + (t.obPerDay != null ? escapeHtml(String(t.obPerDay)) : '–') + '</strong> calls per agent-day'
+            + ((pt && t.obPerDay != null && pt.obPerDay != null) ? ' ' + insObDelta_(t.obPerDay, pt.obPerDay, 'volume', 'neu', meta) : ''),
+          'Average talk <strong>' + escapeHtml(fmtDuration(t.obAttSec || 0)) + '</strong> per connected call'
+            + ((pt && t.obConnected && pt.obConnected) ? ' ' + insObDelta_(t.obAttSec || 0, pt.obAttSec || 0, 'volume', 'neu', meta) : ''),
+        ],
+      });
     }
     // UX-1: no agent table here -- the outbound agent table directly above is it.
     var notes = [];

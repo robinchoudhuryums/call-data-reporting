@@ -77,7 +77,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   (Batch B): open, day / tab switch, survives a re-sort, the IR button,
   Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
   Since 2026-10-21 also the open / close slide (settled = unclipped, a
-  closing panel detached at once) and the admin-only outbound call ids.
+  closing panel detached at once) and the admin-only outbound call ids;
+  since SB-1 the day's outbound split bar adding up to Placed.
 - `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
@@ -103,6 +104,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   View-as fall back to Inbound, panels never overlap, prior-period chips on
   agent rows only, and one request per window (a Refresh never re-sends one
   in flight; the table and the Outbound summary share one store, FO-3).
+  Since SB-2/3/6 also the Team Direct Calls and Team Outbound slim bars
+  adding up to their totals, and the CSR Transfer detail's two split bars
+  (destinations incl. the hatched untracked part, and calls handled per
+  agent with the transferred part tier-coloured, sorted by transfers).
 - `drive-crossstate.js` — **cross-state sequences** on My Department (E5 /
   ST4), the manager-release readiness check for UX-2 and 6c: a dept switch
   with the brief open (it follows the new dept's payload, tier and default-
@@ -119,7 +124,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   abandoned chips and the sub-queue strip's Abd follow the card window, with
   tooltips, and (QD-3) the "viol MTD" chip's 0 green / 1-3 amber / 4+ red tiers
   (the amber colour on a probe chip, since whether the fixture holds a 1-3
-  month depends on the run date).
+  month depends on the run date). Since SB-3 the tiles' slim connected /
+  did-not-connect bar and the summary's one Placed bar (parts add up, five
+  vs-prior chips).
 - `drive-callbacks.js` — the **Callbacks** section under the outbound table on
   My Department (G1; moved out of Insights by UX-1): lazy (one
   fetch, on open), the shared renderers incl. a drawn chart after a reopen,
@@ -145,7 +152,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   call id and an OUTBOUND path drill that opens; and, since D1, the Direct
   Calls report -- a clean company run with its chips, then a clamped + gappy
   dept run: the coverage note, the corrected End date, no chips, the int / ext
-  split; the Outbound modal is retired, G3) and the **Escalations
+  split; the Outbound modal is retired, G3; since SB-1/2/5 the Agent Day
+  outbound bar, the Direct Calls split summaries adding up to their
+  headlines, and the Inbound report -- mocked for the first time -- as one
+  answered / rang out / hung up bar plus where the hang-ups happened) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and

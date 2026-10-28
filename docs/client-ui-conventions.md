@@ -2435,6 +2435,30 @@ stay pinned by INV-39, INV-53 and INV-06.
   Explanations sit in a closed `<details class="ob-howto">`. Still
   ADMIN-ONLY while vetted (managers get their own department after). Pinned
   by `drive-callbacks.js` and `drive-cbdept.js`.
+- **Split summaries everywhere a total has parts (SB-1..SB-6, owner
+  2026-10-28).** The callback rule above, generalised: where several counts
+  add up EXACTLY to one total, draw ONE bar of them (`obSplitSummaryHtml_`,
+  or `obSplitMiniHtml_` for a side card, both in script-9 on
+  `obOutcomeBarHtml_` + `obOutcomeLegendHtml_`) and put every figure on
+  another base -- a rate that leaves something out, an average, attempts
+  that count redials, a flag that sits inside another part -- on the line
+  underneath, labelled. Live on: Agent Day outbound (SB-1, modal + panel),
+  the Direct Calls report and the Team Direct Calls card (SB-2), the
+  Outbound summary, the Team Outbound panel and the Overview tile's
+  outbound line (SB-3), the Inbound report (SB-5) and the CSR Transfer
+  detail (SB-6). Segment colours are generic (`ob-seg-good` handled,
+  `-bad` lost, `-soft` a softer loss, `-unk` not known, `-cat1..5` +
+  `-hatch` for destinations, `-tf-*` the R23 transfer tiers). Three rules:
+  (1) never put a NEAR partition in a bar -- DQE rung is close to
+  answered + missed but not equal, so those surfaces keep their tiles;
+  (2) a remainder the parts do not explain is drawn grey (`unk`), never
+  absorbed into a named part; (3) a vs-prior chip rides on the figure it
+  compares (a legend entry's `deltaHtml`, or the quality line). The rang-out
+  label's seconds come from the payload's `briefRingSec`, else
+  `OB_BRIEF_RING_SEC_DEFAULT_` (pinned to the server's by cross-file-pins).
+  Queue calls (answered / abandoned) is mocked but NOT built (owner held
+  it). Rendered-gated by drive-admin (Agent Day, Inbound, Direct),
+  drive-agentpanel, drive-deptoutbound and drive-outbound-e.
 - **Escalation card actions are ONE row (QF-2, owner 2026-10-28).** Start
   (solid) first, then the admin edits (Edit, Move) as quiet outline buttons,
   then the admin verbs pushed right (`escAdminActionsHtml_`: Restore / Link

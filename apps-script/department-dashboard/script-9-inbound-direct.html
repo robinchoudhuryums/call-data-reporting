@@ -182,6 +182,73 @@
   }
 
   /**
+   * SB-5 (owner 2026-10-28): the Inbound report's figures as ONE split.
+   * disposition has three values, so total = answered + abandoned + missed
+   * exactly -- the tiles never showed `missed` (rang out / voicemail), so
+   * Answered % + Abandoned % fell short of 100. A remainder (a row with no
+   * disposition) is drawn grey rather than absorbed. Where the hang-ups
+   * happened is a second bar (company view: the queue / phone-menu /
+   * person's-line stages; a dept view's are all queue). "Abandoned on hold"
+   * is mostly ANSWERED calls (and S2C-2 moves it between depts) and
+   * "Transfers not answered" counts agents' transfer attempts, so neither is
+   * a slice of this bar: they go on the line underneath, labelled.
+   */
+  function inboundSummaryHtml_(k, p, meta) {
+    k = k || {}; p = p || {}; meta = meta || {};
+    const total = Number(k.total) || 0, ans = Number(k.answered) || 0;
+    const abd = Number(k.abandoned) || 0, mis = Number(k.missed) || 0;
+    const other = Math.max(0, total - ans - abd - mis);
+    const parts = [
+      { cls: 'good', n: ans, label: 'answered', deltaHtml: inboundDelta_(k.answered, p.answered, 'pos', false) },
+      { cls: 'soft', n: mis, label: 'rang out or went to voicemail', deltaHtml: inboundDelta_(k.missed, p.missed, 'neg', false) },
+      { cls: 'bad', n: abd, label: 'hung up before anyone answered', deltaHtml: inboundDelta_(k.abandoned, p.abandoned, 'neg', false) },
+    ];
+    if (other) parts.push({ cls: 'unk', n: other, label: 'no outcome recorded' });
+    const aria = fmtNumber(total) + ' inbound calls: ' + parts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', ');
+    const rateCls = benchValueCls_('Answered', (k.answerRate || 0) + '%', true, 'inbound');
+    let where = '';
+    const ivr = Number(k.abandonedIvr) || 0, dir = Number(k.abandonedDirect) || 0;
+    if (meta.companyView && abd && (ivr || dir)) {
+      const wp = [
+        { cls: 'bad', n: Math.max(0, abd - ivr - dir), label: 'in a queue' },
+        { cls: 'bad2', n: ivr, label: 'in the phone menu' },
+        { cls: 'soft', n: dir, label: 'ringing a person\u2019s line' },
+      ];
+      where = '<div class="ob-split-sub"><div class="ob-split-sub-h">Where the ' + fmtNumber(abd) + ' hung up</div>'
+        + obOutcomeBarHtml_(wp, abd, fmtNumber(abd) + ' hang-ups: ' + wp.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '), 'mid')
+        + obOutcomeLegendHtml_(wp.map(function (x) {
+          return { cls: x.cls, value: fmtNumber(x.n), label: x.label,
+                   extraHtml: x.cls === 'bad2' ? inboundDelta_(k.abandonedIvr, p.abandonedIvr, 'neg', false)
+                     : (x.cls === 'soft' ? inboundDelta_(k.abandonedDirect, p.abandonedDirect, 'neg', false) : '') };
+        }))
+        + '</div>';
+    }
+    const hold = 'caller hung up while on hold'
+      + (Number(k.onHoldTransferIn)
+        ? ' · ' + fmtNumber(k.onHoldTransferIn)
+          + (meta.companyView ? ' hung up in a transfer target queue' : ' while being transferred here') : '')
+      + (Number(k.onHoldTransferOut) ? ' · ' + fmtNumber(k.onHoldTransferOut) + ' moved to the transfer target' : '');
+    return obSplitSummaryHtml_({
+      num: fmtNumber(total), lead: 'inbound calls',
+      subHtml: '<span class="' + escapeHtml(String(rateCls || '').trim()) + '">' + escapeHtml(fmtNumber(ans) + ' answered (' + (k.answerRate || 0) + '%)') + '</span>'
+        + escapeHtml(' · ' + fmtNumber(total - ans) + ' not answered: ' + fmtNumber(abd) + ' hung up, '
+          + fmtNumber(mis) + ' rang out or went to voicemail'
+          + (k.anonymous ? ' · ' + fmtNumber(k.anonymous) + ' anonymous' : ''))
+        + ' ' + inboundDelta_(k.total, p.total, 'neu', false),
+      total: total, parts: parts, aria: aria, subBlocksHtml: where,
+      quality: [
+        '<strong>' + escapeHtml(fmtNumber(k.abandonedOnHold)) + '</strong> hung up on hold <span class="ob-q-why">— after an agent answered, so inside Answered (' + escapeHtml(hold) + ')</span> '
+          + inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false),
+        '<strong>' + escapeHtml(fmtNumber(k.xferUnanswered)) + '</strong> transfers nobody picked up <span class="ob-q-why">— an agent\u2019s transfer attempt dropped after 1+ min in the queue'
+          + (Number(k.xferUnanswered) ? ', ' + escapeHtml(fmtNumber(k.xferUnansweredLinked)) + ' tied to a customer call' : '') + '</span> '
+          + inboundDelta_(k.xferUnanswered, p.xferUnanswered, 'neg', false),
+        'Average wait <strong>' + escapeHtml(fmtDuration(k.avgWaitSec)) + '</strong> ' + inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false),
+        'Average hold <strong>' + escapeHtml(fmtDuration(k.avgHoldSec)) + '</strong> when held ' + inboundDelta_(k.avgHoldSec, p.avgHoldSec, 'neu', false),
+      ],
+    });
+  }
+
+  /**
    * Delta badge for an inbound KPI vs the prior window. `isPp` =
    * already-percent metrics (answer/abandon rate) compare as point
    * differences; everything else as relative % (deltaBlock_ semantics:
@@ -602,54 +669,7 @@
 
     const k = data.kpis || {};
     const p = data.kpisPrior || {};
-    const tiles = [
-      inboundKpiTile_('Inbound calls', fmtNumber(k.total),
-        (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : ''),
-        inboundDelta_(k.total, p.total, 'neu', false)),
-      inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%',
-        inboundDelta_(k.answered, p.answered, 'pos', false), '', 'inbound'),
-      inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
-        inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
-      // S2C-2: a caller who hung up during a transfer the target never
-      // answered -- on hold, or after being put through to the target queue -- counts
-      // for the TARGET dept. The foot says so in both directions so the move
-      // is never silent; company-wide only the target-queue ones are new.
-      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold),
-        'caller hung up held'
-          + (Number(k.onHoldTransferIn)
-            ? ' · ' + fmtNumber(k.onHoldTransferIn)
-              + (meta.companyView ? ' hung up in a transfer target queue' : ' while being transferred here') : '')
-          + (Number(k.onHoldTransferOut) ? ' · ' + fmtNumber(k.onHoldTransferOut) + ' moved to the transfer target' : ''),
-        inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
-      // S2C-6: transfer ATTEMPTS into these queues nobody answered, counted
-      // the way QCD counts them (abandoned after more than a minute in the
-      // queue, tied to a customer call or not). Separate from the tile above,
-      // which counts callers who hung up -- a transfer the caller hung
-      // up on appears in both, by design.
-      inboundKpiTile_('Transfers not answered', fmtNumber(k.xferUnanswered),
-        'dropped after 1+ min in queue'
-          + (Number(k.xferUnanswered)
-            ? ' · ' + fmtNumber(k.xferUnansweredLinked) + ' tied to a customer call' : ''),
-        inboundDelta_(k.xferUnanswered, p.xferUnanswered, 'neg', false)),
-      inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon',
-        inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
-      inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held',
-        inboundDelta_(k.avgHoldSec, p.avgHoldSec, 'neu', false)),
-    ];
-    // IVR abandons never reached a queue, so they're unattributable to any
-    // dept -- the bucket only renders on the company-wide view (decision C).
-    if (meta.companyView) {
-      tiles.push(inboundKpiTile_('Abandoned in IVR', fmtNumber(k.abandonedIvr),
-        'hung up in the menus — no queue, no agent',
-        inboundDelta_(k.abandonedIvr, p.abandonedIvr, 'neg', false)));
-      // R5: abandoned DIRECT calls (rang a person's line, no queue) were
-      // split out of the IVR bucket at capture -- old rows keep stage=ivr
-      // until re-imported, so this tile grows as history heals.
-      tiles.push(inboundKpiTile_('Abandoned direct', fmtNumber(k.abandonedDirect),
-        'rang an agent’s line — no queue',
-        inboundDelta_(k.abandonedDirect, p.abandonedDirect, 'neg', false)));
-    }
-    $('inbound-kpi-row').innerHTML = tiles.join('');
+    $('inbound-kpi-row').innerHTML = inboundSummaryHtml_(k, p, meta);
 
     inboundRenderInsurerTable_(data.byInsurer);
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
@@ -1504,22 +1524,14 @@
     const p = (data && data.kpisPrior) || null;
     const rateDelta = (p && k.ibAnswerRate != null && p.ibAnswerRate != null)
       ? inboundDelta_(k.ibAnswerRate, p.ibAnswerRate, 'pos', true) : '';
-    const tiles = [
-      inboundKpiTile_('Agents', fmtNumber(k.agents), 'with direct activity', ''),
-      inboundKpiTile_('IB answered', fmtNumber(k.ibAnswered),
-        fmtNumber(k.ibMissedFree) + ' missed (free)' + directSplitText_(k.split, 'ibAnswered', ' · '),
-        p ? inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false) : ''),
-      inboundKpiTile_('IB answer rate', k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—',
-        'busy misses excluded', rateDelta,
-        k.ibAnswerRate != null ? benchValueCls_('% answered', k.ibAnswerRate + '%', true, 'direct') : '', 'direct'),
-      inboundKpiTile_('IB missed (busy)', fmtNumber(k.ibMissedBusy), 'excused — on another call', ''),
-      inboundKpiTile_('IB ATT', fmtDuration(k.ibAttSec), 'avg talk per answered', ''),
-      inboundKpiTile_('OB calls', fmtNumber(k.obTotal),
-        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec) + directSplitText_(k.split, 'obTotal', ' · '),
-        p ? inboundDelta_(k.obTotal, p.obTotal, 'pos', false) : ''),
-    ];
+    // SB-2 (owner 2026-10-28): the calls that rang a person's own line add
+    // up exactly -- answered + missed while free + missed while on another
+    // call -- so they are one bar; the answer rate leaves busy out, so it
+    // sits on the line underneath with the averages. Placed calls are their
+    // own bar (connected / did not connect). The R11-M vs-prior chips ride on
+    // the figures they compare.
     const kpiRow = $('direct-call-kpi-row');
-    if (kpiRow) kpiRow.innerHTML = tiles.join('');
+    if (kpiRow) kpiRow.innerHTML = directSummaryHtml_(k, p, 'report');
 
     // R11-C5: COMPANY view (admin, All departments) renders DEPT CARDS --
     // the same per-agent rows grouped by r.dept, each card expanding into
@@ -1555,6 +1567,86 @@
     if (!v || !(Number(v.int) + Number(v.ext))) return '';
     return '<div class="dc-split" title="Internal (a coworker) / external">'
       + fmtNumber(v.int) + ' int · ' + fmtNumber(v.ext) + ' ext</div>';
+  }
+  /**
+   * SB-2: the Direct Calls split summary, shared by the report ('report') and
+   * the My Department Team Direct Calls card ('card', the slim version).
+   * `k` = the payload kpis, `p` = kpisPrior (or null: no chips).
+   */
+  function directIbParts_(k) {
+    return [
+      { cls: 'good', n: Number(k.ibAnswered) || 0, label: 'answered' },
+      { cls: 'bad', n: Number(k.ibMissedFree) || 0, label: 'missed while free' },
+      { cls: 'soft', n: Number(k.ibMissedBusy) || 0, label: 'missed while on another call' },
+    ];
+  }
+  function directSummaryHtml_(k, p, mode) {
+    k = k || {};
+    const ibParts = directIbParts_(k);
+    const rung = ibParts.reduce(function (a, x) { return a + x.n; }, 0);
+    const notAns = rung - ibParts[0].n;
+    const aria = fmtNumber(rung) + ' calls rang a person\u2019s line: ' + ibParts.map(function (x) {
+      return fmtNumber(x.n) + ' ' + x.label; }).join(', ');
+    const obTotal = Number(k.obTotal) || 0, obConn = Number(k.obConnected) || 0;
+    const obParts = [{ cls: 'good', n: obConn, label: 'connected' },
+                     { cls: 'bad', n: Math.max(0, obTotal - obConn), label: 'did not connect' }];
+    const obAria = fmtNumber(obTotal) + ' calls dialed: ' + fmtNumber(obConn) + ' connected, '
+      + fmtNumber(Math.max(0, obTotal - obConn)) + ' did not connect';
+    const rateTxt = k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—';
+    if (mode === 'card') {
+      return '<div class="tdc-split">'
+        + '<div class="tdc-split-head"><span class="tdc-split-num">' + fmtNumber(ibParts[0].n) + '</span>'
+        + ' <span class="tdc-split-of">of ' + fmtNumber(rung) + ' answered</span></div>'
+        + obSplitMiniHtml_(ibParts, rung, aria, escapeHtml(fmtNumber(ibParts[1].n) + ' missed while free · '
+            + fmtNumber(ibParts[2].n) + ' while busy · ' + rateTxt + ' when free'))
+        + '<div class="tdc-split-head tdc-split-head--out"><span class="tdc-split-num">' + fmtNumber(obTotal) + '</span>'
+        + ' <span class="tdc-split-of">dialed</span></div>'
+        + obSplitMiniHtml_(obParts, obTotal, obAria, escapeHtml(fmtNumber(obConn) + ' connected'
+            + (obTotal ? ' (' + Math.round(obConn / obTotal * 100) + '%)' : '')))
+        + '</div>';
+    }
+    const sp = k.split || {};
+    const g = function (key, side) { const v = sp[key]; return v ? (Number(v[side]) || 0) : 0; };
+    let rows = '';
+    if (sp.ibAnswered) {
+      const row = function (label, side) {
+        const parts = [
+          { cls: 'good', n: g('ibAnswered', side), label: 'answered' },
+          { cls: 'bad', n: g('ibMissedFree', side), label: 'missed while free' },
+          { cls: 'soft', n: g('ibMissedBusy', side), label: 'missed while on another call' },
+        ];
+        const n = parts.reduce(function (a, x) { return a + x.n; }, 0);
+        const w = rung ? Math.max(n ? 2 : 0, Math.round(n / rung * 1000) / 10) : 0;
+        return '<span>' + escapeHtml(label) + '</span>'
+          + '<div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, n, label + ': ' + fmtNumber(n) + ' calls, '
+              + parts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '), 'mid') + '</div>'
+          + '<span class="num"><strong>' + fmtNumber(n) + '</strong></span>';
+      };
+      rows = '<div class="ob-split-sub"><div class="ob-split-rows dc-split-rows">'
+        + row('From colleagues', 'int') + row('From outside callers', 'ext') + '</div></div>';
+    }
+    if (p) ibParts[0].deltaHtml = inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false);
+    const rateCls = k.ibAnswerRate != null ? benchValueCls_('% answered', k.ibAnswerRate + '%', true, 'direct') : '';
+    const inSum = obSplitSummaryHtml_({
+      num: fmtNumber(rung), lead: 'calls rang a person\u2019s own line',
+      subHtml: escapeHtml(fmtNumber(k.agents || 0) + ' agent' + (Number(k.agents) === 1 ? '' : 's') + ' · '
+        + fmtNumber(notAns) + ' not answered (' + fmtNumber(ibParts[1].n) + ' while free, '
+        + fmtNumber(ibParts[2].n) + ' while on another call)'),
+      total: rung, parts: ibParts, aria: aria, subBlocksHtml: rows,
+      quality: [
+        'Answered <strong class="' + escapeHtml(rateCls || '') + '">' + escapeHtml(rateTxt) + '</strong> of the calls that rang while they were free'
+          + ((p && k.ibAnswerRate != null && p.ibAnswerRate != null) ? ' ' + inboundDelta_(k.ibAnswerRate, p.ibAnswerRate, 'pos', true) : ''),
+        'Average talk <strong>' + escapeHtml(fmtDuration(k.ibAttSec)) + '</strong>',
+      ],
+    });
+    const outSum = obSplitSummaryHtml_({
+      cls: 'ob-split--compact', num: fmtNumber(obTotal), lead: 'direct calls dialed',
+      subHtml: p ? inboundDelta_(k.obTotal, p.obTotal, 'pos', false) : '',
+      total: obTotal, parts: obParts, aria: obAria,
+      quality: ['Average talk <strong>' + escapeHtml(fmtDuration(k.obAttSec)) + '</strong> per connected call'
+        + directSplitText_(sp, 'obTotal', ' · ')],
+    });
+    return '<div class="ob-split-pair">' + inSum + outSum + '</div>';
   }
   function directSplitText_(split, key, lead) {
     const v = split && split[key];
@@ -1813,16 +1905,19 @@
   // summary below AND the Direct lines block (DL-R2). `parts` =
   // [{ cls, n, label }]; `ariaLabel` describes the whole bar for a reader.
   var OB_BAR_LABEL_MIN_SHARE_ = 0.08;
-  function obOutcomeBarHtml_(parts, total, ariaLabel) {
+  // `size` (SB): 'thin' / 'mid' draw a slimmer bar with no counts inside, for
+  // cards and table rows; omitted, the full bar.
+  function obOutcomeBarHtml_(parts, total, ariaLabel, size) {
     const t = Number(total) || 0;
     if (!t) return '';
-    return '<div class="ob-obar" role="img" aria-label="' + escapeHtml(ariaLabel || '') + '">'
+    const slim = size === 'thin' || size === 'mid';
+    return '<div class="ob-obar' + (slim ? ' ob-obar--' + size : '') + '" role="img" aria-label="' + escapeHtml(ariaLabel || '') + '">'
       + parts.map(function (p) {
         const n = Number(p.n) || 0;
         if (!n) return '';
         return '<span class="ob-obar-seg ob-seg-' + p.cls + '" data-seg="' + p.cls + '" style="flex:' + n + ' 0 0"'
           + ' title="' + escapeHtml(fmtNumber(n) + ' ' + p.label) + '">'
-          + (n / t >= OB_BAR_LABEL_MIN_SHARE_ ? escapeHtml(fmtNumber(n)) : '') + '</span>';
+          + (!slim && n / t >= OB_BAR_LABEL_MIN_SHARE_ ? escapeHtml(fmtNumber(n)) : '') + '</span>';
       }).join('')
       + '</div>';
   }
@@ -1831,11 +1926,71 @@
   function obOutcomeLegendHtml_(items) {
     return '<div class="ob-legend">' + items.map(function (it) {
       return '<div class="ob-leg" data-seg="' + it.cls + '"><span class="ob-leg-key ob-seg-' + it.cls + '" aria-hidden="true"></span>'
-        + '<div><div class="ob-leg-n' + (it.emph ? ' ob-leg-emph' : '') + '">' + escapeHtml(it.value) + '</div>'
+        + '<div><div class="ob-leg-n' + (it.emph ? ' ob-leg-emph' : '') + '">' + escapeHtml(it.value)
+        + (it.extraHtml ? '<span class="ob-leg-x">' + it.extraHtml + '</span>' : '') + '</div>'
         + '<div class="ob-leg-t">' + escapeHtml(it.label) + '</div></div></div>';
     }).join('') + '</div>';
   }
   function obSharePct_(n, d) { return d ? Math.round((Number(n) || 0) * 1000 / d) / 10 : null; }
+
+  /**
+   * SB-1..6 (owner 2026-10-28, from the approved mock): the split summary the
+   * rest of the app shares with the callback summary. A headline, ONE bar whose
+   * parts add up to `total`, a legend ("n · pct%"), then the figures that sit
+   * on a different base (a rate that leaves something out, an average, a
+   * count of attempts) on a line underneath -- never inside the bar.
+   *   o = { num, numWarn, lead, subHtml, total, parts: [{cls, n, label, deltaHtml}],
+   *         aria, subBlocksHtml, quality: [html], fine, cls }
+   * subHtml / quality / subBlocksHtml / deltaHtml are TRUSTED html (callers
+   * escape what they put in); every other string is escaped here.
+   */
+  function obSplitSummaryHtml_(o) {
+    const total = Number(o.total) || 0;
+    const parts = o.parts || [];
+    let html = '<div class="ob-sum ob-split' + (o.cls ? ' ' + o.cls : '') + '">'
+      + '<div class="ob-sum-head"><div class="ob-sum-big">'
+      + '<span class="ob-sum-num' + (o.numWarn ? ' is-warn' : '') + '">' + escapeHtml(String(o.num)) + '</span>'
+      + '<span class="ob-sum-lead">' + escapeHtml(o.lead || '') + '</span></div>'
+      + (o.subHtml ? '<div class="ob-sum-sub">' + o.subHtml + '</div>' : '')
+      + '</div>';
+    if (total > 0) {
+      html += obOutcomeBarHtml_(parts, total, o.aria || '')
+        + obOutcomeLegendHtml_(parts.map(function (p) {
+          return { cls: p.cls, value: fmtNumber(Number(p.n) || 0) + ' · ' + (obSharePct_(p.n, total) || 0) + '%',
+                   label: p.label, emph: !!p.emph, extraHtml: p.deltaHtml || '' };
+        }));
+    }
+    if (o.subBlocksHtml) html += o.subBlocksHtml;
+    const q = (o.quality || []).filter(Boolean);
+    if (q.length) html += '<div class="ob-sum-quality">' + q.map(function (x) { return '<span>' + x + '</span>'; }).join('') + '</div>';
+    if (o.fine) html += '<div class="ob-sum-fine">' + escapeHtml(o.fine) + '</div>';
+    return html + '</div>';
+  }
+  /** SB: a labelled slim bar for a card / side panel -- the bar plus one caption line (trusted html). */
+  function obSplitMiniHtml_(parts, total, aria, captionHtml) {
+    return '<div class="ob-split-mini">' + obOutcomeBarHtml_(parts, total, aria, 'thin')
+      + (captionHtml ? '<div class="ob-split-mini-cap">' + captionHtml + '</div>' : '') + '</div>';
+  }
+  /** SB: the outbound outcome parts (placed = connected + rang out + brief + unknown). */
+  function obPlacedParts_(t) {
+    const placed = Number(t.obTotal) || 0, conn = Number(t.obConnected) || 0;
+    const brief = Number(t.obUnconnectedBrief) || 0, real = Number(t.obUnconnectedReal) || 0;
+    const unk = Math.max(0, placed - conn - brief - real);
+    return [
+      { cls: 'good', n: conn, label: 'connected' },
+      { cls: 'bad', n: real, label: 'rang out (' + (Number(t.briefRingSec) || OB_BRIEF_RING_SEC_DEFAULT_) + ' s or longer)' },
+      { cls: 'soft', n: brief, label: 'brief ring (likely a misdial)' },
+      { cls: 'unk', n: unk, label: 'ring length not recorded' },
+    ];
+  }
+  // The server's OUTBOUND_BRIEF_RING_SEC_, for payloads that do not carry it
+  // (the My Department totals); the Outbound report's kpis do (briefRingSec).
+  var OB_BRIEF_RING_SEC_DEFAULT_ = 8;
+  function obPlacedAria_(t) {
+    const p = obPlacedParts_(t);
+    return fmtNumber(Number(t.obTotal) || 0) + ' calls placed: ' + p.map(function (x) {
+      return fmtNumber(x.n) + ' ' + x.label; }).join(', ');
+  }
 
   /**
    * CB-R1 (owner 2026-10-28; replaces CE-1's seven-tile row): the callback

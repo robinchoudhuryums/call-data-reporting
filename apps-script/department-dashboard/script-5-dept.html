@@ -4292,73 +4292,72 @@
         + ' calls · ' + (tr.pctStr || '');
     }
 
-    // Bars are proportional to the LARGEST row in each list, so the shape is
-    // readable without a scale; the numbers carry the absolute truth.
-    const barRow = function (label, value, pctText, max, title) {
-      const w = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
-      return '<div class="dtf-row" title="' + escapeHtml(title || '') + '">'
-        +   '<div class="dtf-name">' + escapeHtml(label) + '</div>'
-        +   '<div class="dtf-bar"><span style="width:' + w + '%"></span></div>'
-        +   '<div class="dtf-num">' + escapeHtml(fmtNumber(value))
-        +     (pctText ? ' <span class="dtf-pct">' + escapeHtml(pctText) + '</span>' : '')
-        +   '</div>'
-        + '</div>';
-    };
-
+    // SB-6 (owner 2026-10-28): both lists are SPLIT bars now. Where the
+    // transfers went is one bar whose parts are the destinations -- the five
+    // biggest by name, the rest of the tracked list together, and the
+    // transfers to anywhere outside the 11 fixed columns (queueUnaccounted)
+    // hatched -- so it adds up to the transfers. Who transfers gives each agent
+    // a bar as long as their calls handled, the part they transferred coloured
+    // by the transfer standard (R23 tiers, as on the headline tile), so volume
+    // and rate read in one row. Sorted by transfers (owner), the server order.
     const qEl = $('dept-transfer-queues');
     if (qEl) {
-      const qMax = queues.length ? queues[0].transferred : 0;
-      qEl.innerHTML = queues.length
-        ? queues.map(function (q) {
-            return barRow(q.queue, q.transferred,
-              q.share == null ? '' : (q.share + '%'), qMax,
-              q.queue + ': ' + fmtNumber(q.transferred) + ' of ' + fmtNumber(tr.transferred)
-              + ' transfers in this range');
-          }).join('')
+      const un = Math.max(0, Number(tr.queueUnaccounted) || 0);
+      const parts = queues.slice(0, 5).map(function (q, i) {
+        return { cls: 'cat' + (i + 1), n: q.transferred, label: q.queue };
+      });
+      const rest = queues.slice(5);
+      if (rest.length) {
+        parts.push({ cls: 'unk', n: rest.reduce(function (a, q) { return a + q.transferred; }, 0),
+                     label: rest.length + ' other tracked queue' + (rest.length === 1 ? '' : 's') });
+      }
+      if (un > 0) parts.push({ cls: 'hatch', n: un, label: 'outside the tracked destinations' });
+      const base = parts.reduce(function (a, x) { return a + x.n; }, 0);
+      qEl.innerHTML = base
+        ? obOutcomeBarHtml_(parts, base, fmtNumber(base) + ' transfers: ' + parts.map(function (x) {
+            return fmtNumber(x.n) + ' to ' + x.label; }).join(', '))
+          + obOutcomeLegendHtml_(parts.map(function (x) {
+            return { cls: x.cls, value: fmtNumber(x.n) + ' · ' + (obSharePct_(x.n, base) || 0) + '%', label: x.label };
+          }))
         : '<div class="ds-note">No destination detail for this range.</div>';
     }
 
     const aEl = $('dept-transfer-agents');
     if (aEl) {
-      // Sorted busiest-transferrer first (server order). The RATE gets the
-      // same tiered tint as the headline tile so one agent's 45% reads the
-      // same way in both places (R23 standards, admin-tunable).
       const tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
-      const aMax = agents.length ? agents[0].transferred : 0;
+      const tier = function (pct) {
+        if (pct == null || !isFinite(Number(pct))) return '';
+        const v = Number(pct);
+        return v <= tt.deep ? 'tf-deep' : (v < tt.light ? 'tf-light' : (v < tt.amber ? 'tf-amber' : 'tf-red'));
+      };
+      const maxCalls = agents.reduce(function (m, a) { return Math.max(m, Number(a.totalCalls) || 0); }, 0);
       aEl.innerHTML = agents.length
-        ? agents.map(function (a) {
-            let cls = '';
-            if (a.pct != null && isFinite(Number(a.pct))) {
-              const p = Number(a.pct);
-              cls = p <= tt.deep ? ' tf-deep' : (p < tt.light ? ' tf-light'
-                  : (p < tt.amber ? ' tf-amber' : ' tf-red'));
-            }
-            return '<div class="dtf-row" title="' + escapeHtml(a.agent + ': '
-                + fmtNumber(a.transferred) + ' transferred of ' + fmtNumber(a.totalCalls)
-                + ' calls handled') + '">'
-              +   '<div class="dtf-name">' + escapeHtml(a.agent) + '</div>'
-              +   '<div class="dtf-bar"><span style="width:'
-              +     (aMax > 0 ? Math.max(2, Math.round((a.transferred / aMax) * 100)) : 0)
-              +     '%"></span></div>'
-              +   '<div class="dtf-num">' + escapeHtml(fmtNumber(a.transferred))
-              +     (a.pct == null ? '' : ' <span class="dtf-pct' + cls + '">' + a.pct + '%</span>')
-              +   '</div>'
-              + '</div>';
-          }).join('')
+        ? '<div class="dtf-rows">' + agents.map(function (a) {
+            const calls = Number(a.totalCalls) || 0, trn = Number(a.transferred) || 0;
+            const tc = tier(a.pct);
+            const w = maxCalls ? Math.max(calls ? 2 : 0, Math.round(calls / maxCalls * 1000) / 10) : 0;
+            const label = a.agent + ': ' + fmtNumber(trn) + ' transferred of ' + fmtNumber(calls) + ' calls handled';
+            return '<div class="dtf-name" title="' + escapeHtml(a.agent) + '">' + escapeHtml(a.agent) + '</div>'
+              + '<div class="dtf-track"><div style="width:' + w + '%">'
+              +   obOutcomeBarHtml_([{ cls: tc ? 'tf-' + tc.slice(3) : 'unk', n: trn, label: 'transferred' },
+                                     { cls: 'kept', n: Math.max(0, calls - trn), label: 'kept' }],
+                                    Math.max(calls, trn), label, 'mid')
+              + '</div></div>'
+              + '<div class="dtf-num"><strong>' + escapeHtml(fmtNumber(trn)) + '</strong> of ' + escapeHtml(fmtNumber(calls))
+              +   (a.pct == null ? '' : ' · <span class="dtf-pct ' + tc + '">' + a.pct + '%</span>') + '</div>';
+          }).join('') + '</div>'
         : '<div class="ds-note">No per-agent detail for this range.</div>';
     }
 
-    // The 11 destination columns are a FIXED set, so transfers to anywhere
-    // else fall outside them. Say so rather than letting the two lists
-    // quietly disagree with the headline (the reconciliation rule).
+    // The 11 destination columns are a FIXED set: say what the hatched part
+    // of the bar is, so it never reads as a destination of its own.
     const note = $('dept-transfer-note');
     if (note) {
       const un = Number(tr.queueUnaccounted) || 0;
       if (un > 0) {
         note.textContent = fmtNumber(un) + ' transfer' + (un === 1 ? '' : 's')
           + ' went somewhere outside the ' + queues.length + ' tracked destination'
-          + (queues.length === 1 ? '' : 's') + ', so the destination list sums to '
-          + fmtNumber(tr.queueSum) + ', not ' + fmtNumber(tr.transferred) + '.';
+          + (queues.length === 1 ? '' : 's') + ' (the hatched part of the bar).';
         note.style.display = '';
       } else {
         note.style.display = 'none';
@@ -4614,22 +4613,9 @@
     else if (m.clampedTo) parts.push('Through ' + m.dataThrough + ' (later days not imported yet).');
     if (m.missingCount) parts.push(m.missingCount + ' workday' + (m.missingCount === 1 ? '' : 's') + ' with no data, left out.');
     if (note) { note.textContent = parts.join(' '); note.style.display = parts.length ? '' : 'none'; }
-    var sp = k.split || {};
-    var splitTxt = function (key) {
-      var v = sp[key];
-      return (v && (Number(v.int) + Number(v.ext))) ? fmtNumber(v.int) + ' int · ' + fmtNumber(v.ext) + ' ext' : '';
-    };
-    if (tiles) {
-      tiles.innerHTML =
-          '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Answered</span></div>'
-        + '<div class="ds-kpi__value">' + fmtNumber(k.ibAnswered || 0) + '</div>'
-        + '<div class="ds-kpi__foot">' + fmtNumber(k.ibMissedFree || 0) + ' missed · ' + fmtNumber(k.ibMissedBusy || 0) + ' busy'
-        +   (splitTxt('ibAnswered') ? '<br>' + splitTxt('ibAnswered') : '') + '</div></div>'
-        + '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Answer %</span></div>'
-        + '<div class="ds-kpi__value">' + (k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '–') + '</div>'
-        + '<div class="ds-kpi__foot">busy excluded · ' + fmtNumber(k.obTotal || 0) + ' out'
-        +   (splitTxt('obTotal') ? '<br>' + splitTxt('obTotal') : '') + '</div></div>';
-    }
+    // SB-2: the same split as the Direct Calls report, slim (one bar for the
+    // calls that rang their lines, one for the calls they dialed).
+    if (tiles) tiles.innerHTML = directSummaryHtml_(k, null, 'card');
     var agents = ((d && d.agents) || []).slice().sort(function (x, y) {
       var ax = (Number(x.ibAnswered) || 0) + (Number(x.ibMissedFree) || 0), ay = (Number(y.ibAnswered) || 0) + (Number(y.ibMissedFree) || 0);
       return ay - ax || String(x.agent).localeCompare(String(y.agent));
@@ -5010,15 +4996,16 @@
     if (dateEl) dateEl.textContent = data.meta.from === data.meta.to ? data.meta.from : (data.meta.from + ' – ' + data.meta.to);
     var tiles = $('tob-tiles');
     if (tiles) {
-      tiles.innerHTML =
-          '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Placed</span></div>'
-        + '<div class="ds-kpi__value">' + fmtNumber(t.obTotal || 0) + '</div>'
-        + '<div class="ds-kpi__foot">' + fmtNumber(t.obConnected || 0) + ' connected · '
-        +   (t.obPerDay != null ? t.obPerDay + ' / agent-day' : '–') + '</div></div>'
-        + '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Connect %</span></div>'
-        + '<div class="ds-kpi__value">' + (t.obConnectRate != null ? Math.round(t.obConnectRate) + '%' : '–') + '</div>'
-        + '<div class="ds-kpi__foot" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">talk &gt; 0 · avg '
-        +   fmtDuration(t.obAttSec || 0) + '</div></div>';
+      // SB-3: Placed as one slim bar (connected / rang out / brief / unknown).
+      var placed = Number(t.obTotal) || 0;
+      var pp = obPlacedParts_(t);
+      tiles.innerHTML = '<div class="tob-split">'
+        + '<div class="tdc-split-head"><span class="tdc-split-num">' + fmtNumber(placed) + '</span>'
+        + ' <span class="tdc-split-of">placed · ' + (t.obConnectRate != null ? Math.round(t.obConnectRate) + '%' : '–') + ' connected</span></div>'
+        + obSplitMiniHtml_(pp, placed, obPlacedAria_(t), escapeHtml(fmtNumber(pp[1].n) + ' rang out · ' + fmtNumber(pp[2].n) + ' brief · '
+            + fmtNumber(pp[3].n) + ' unknown · ' + (t.obPerDay != null ? t.obPerDay + ' / agent-day' : '–'))
+            + ' · <span title="' + escapeHtml(OB_CONNECTED_DEF_) + '">avg talk ' + escapeHtml(fmtDuration(t.obAttSec || 0)) + '</span>')
+        + '</div>';
     }
     var unit = obTallyUnitFor_(agents, 12);
     var row = function (a) {

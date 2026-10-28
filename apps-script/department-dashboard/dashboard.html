@@ -652,7 +652,7 @@
             <span class="ins-fold-head" id="ins-ob-fold-head"></span>
           </summary>
           <div class="ins-fold-body">
-            <div id="ins-ob-kpis" class="pr-kpi-row ad-kpi-row--out"></div>
+            <div id="ins-ob-kpis" class="ob-sum-host"></div>
             <div id="ins-ob-note" class="ds-note" style="display:none;"></div>
           </div>
         </details>
@@ -857,11 +857,11 @@
         <div class="ds-note" id="dept-transfer-note" style="display:none;"></div>
         <div class="dept-transfer-body">
           <div class="dept-transfer-col">
-            <div class="dept-transfer-h">Where transfers go</div>
+            <div class="dept-transfer-h">Where the transfers went</div>
             <div id="dept-transfer-queues"></div>
           </div>
           <div class="dept-transfer-col">
-            <div class="dept-transfer-h">Who transfers</div>
+            <div class="dept-transfer-h">Who transfers <span class="dept-transfer-hint">each bar is that agent’s calls handled; the coloured part, the ones they transferred</span></div>
             <div id="dept-transfer-agents"></div>
           </div>
         </div>
@@ -2357,7 +2357,7 @@
 
         <div id="inbound-body">
           <div class="ins-rollup-cap" id="inbound-window-note">Scoped to the 8:30&nbsp;AM&nbsp;&ndash;&nbsp;5:00&nbsp;PM&nbsp;CST work window, matching every other department metric. Calls outside it are summarized separately at the bottom.</div>
-          <div id="inbound-kpi-row" class="pr-kpi-row"></div>
+          <div id="inbound-kpi-row" class="ob-sum-host"></div>
 
           <div class="al-section">
             <h3 class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only &middot; click a row for its daily trend)</span></h3>
@@ -2485,7 +2485,7 @@
         </div>
 
         <div id="direct-call-body">
-          <div id="direct-call-kpi-row" class="pr-kpi-row"></div>
+          <div id="direct-call-kpi-row" class="ob-sum-host"></div>
 
           <!-- R11-C5: company view (All departments) hides this flat table and
                renders per-dept cards into #direct-call-dept-cards instead;

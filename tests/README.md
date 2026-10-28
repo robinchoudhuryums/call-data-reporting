@@ -567,7 +567,8 @@ tests/
                               cross-file-pins (the cross-project literal
                               pins: R20 row-40, JDBC timeout-param absence,
                               the B-2/S4 DQE-reader tripwire, the S1 INV-06
-                              window cross-pin),
+                              window cross-pin, the SB client brief-ring
+                              fallback = the server's),
                               csr-transfer (computeCsrTransferRange_ +
                               guardForceRebuildLoss_ + the bulk-flow
                               harness), dept-summary-email,

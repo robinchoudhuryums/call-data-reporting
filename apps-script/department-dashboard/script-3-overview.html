@@ -1038,9 +1038,18 @@
         + (pr ? obRateChip_(ob.pct, pr.pct, ob.placed, pr.placed, tip) : '') + '</span>'
       : '<span class="ov-dept-ob-none">no outbound calls</span>'
         + (pr && pr.placed ? obPriorChip_(-pr.placed, 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '');
+    // SB-3: a slim connected / did-not-connect bar under the line. Only the
+    // two parts: the tile's block carries no ring split, and the two add up.
+    var obBar = ob.placed > 0
+      ? '<div class="ov-dept-ob-bar">' + obOutcomeBarHtml_([
+          { cls: 'good', n: ob.connected, label: 'connected' },
+          { cls: 'bad', n: Math.max(0, ob.placed - ob.connected), label: 'did not connect' },
+        ], ob.placed, fmtNumber(ob.placed) + ' outbound calls placed: ' + fmtNumber(ob.connected) + ' connected, '
+          + fmtNumber(Math.max(0, ob.placed - ob.connected)) + ' did not connect', 'thin') + '</div>'
+      : '';
     return '<div class="ov-dept-tile-row ov-dept-ob" title="' + escapeHtml('Outbound calls placed by this department\u2019s roster agents in the selected window. ' + OB_CONNECTED_DEF_) + '">'
       +   '<span class="ov-dir-pill">Outbound</span>' + body + since
-      + '</div>';
+      + '</div>' + obBar;
   }
 
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
