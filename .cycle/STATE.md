@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-28 (4) -- SB-1/2/3/5/6 IMPLEMENTED (block 259-sb-broad-implement).** Split bars wherever counts add up exactly to one total: Agent Day outbound, Direct Calls (+ card), outbound Placed (summary, Team Outbound, Overview tile line), the Inbound report (its hidden "missed" now shown; admin-only), the CSR Transfer detail (sorted by transfers). NET 1 - 0 = 1.
+  **Held:** SB-4 Queue calls -- owner wants a full-page before / after first (canvas boards added).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
 - **2026-10-28 (3) -- CB-R1 / CB-R2 / DL-R1 / DL-R2 IMPLEMENTED (block 259-cb-dl-broad-implement).** Owner #5 + #6 from the approved mock: Callbacks by department and Direct lines lead with the callers nobody called back, one bar per base that adds up, a department table (most unreturned first) with drills -- per department (callbacks) and per person (direct lines, the line tried first). After-hours direct callback time is counted from the next work open (`outboundDirect:v4`). Still ADMIN-ONLY; owner: release to managers for their own department after vetting. NET 2 - 0 = 2.
   **Owner-side:** deploy the dashboard; walk S48 + S60.
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (stacked on QF + HOH-0/XB-0); NO PR yet -- owner: "do a PR at the end". Next: HOH-1 / XB-1 once the diagnostic logs arrive.
