@@ -494,7 +494,7 @@ test('XB-0: a two-roster agent and an unmapped queue are skipped and counted, ne
 test('XB-0: the canonicalizer places an agent whose journey name is a feed variant', function () {
   const lk = h.call('tfBounceLookups_', XB_ROSTER, XB_CFG, (n) => (n === 'Peter Gummadi' ? 'Peter (Praneeth) Gummadi' : n));
   assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfAgent('Peter Gummadi'))), ['Sales']);
-  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfQueue('a_q_csr'))), ['CSR'], 'queues match case-insensitively, the raw alias side too');
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfQueue('A_Q_Csr'))), ['CSR'], 'queues match case-insensitively, the raw alias side too');
 });
 
 test('XB-0: the fold counts pairs and senders, keeps samples, and the line carries no number', function () {
