@@ -7,10 +7,13 @@
  * What only a browser shows: the section revealed for an admin only (never a
  * manager, never View-as), nothing fetched on the Overview landing, ONE
  * company-view fetch when it is opened (for its own window, which the shared
- * preset resolver sets), the shared renderers painting the tiles and the
+ * preset resolver sets), the shared renderers painting the summary (CB-R1:
+ * the unreturned callers first, one bar that adds up) and the
  * grouped table into it (a sub-queue under its parent whatever the sort, the
  * unmapped row last, the total row), keyboard and click sorting,
- * keyboard expand, a window switch re-fetching once, CSV bytes, and no
+ * keyboard expand, a row's own unreturned-caller list (CB-R2), the Direct
+ * lines summary + department table (DL-R2), a window switch re-fetching
+ * once, CSV bytes, and no
  * sideways page scroll at 360 px.
  *
  * Run: node drive-cbdept.js   (after gen-payloads + build-harness)
@@ -53,6 +56,9 @@ function section() {
     head: ((document.getElementById('ov-cbdept-head') || {}).textContent || '').trim(),
     dates: ((document.getElementById('ov-cbdept-dates') || {}).textContent || '').trim(),
     tiles: document.querySelectorAll('#ov-cbdept-kpis .ds-kpi').length,
+    num: ((document.querySelector('#ov-cbdept-kpis .ob-sum-num') || {}).textContent || '').trim(),
+    segs: Array.from(document.querySelectorAll('#ov-cbdept-kpis .ob-obar-seg')).map((g) => g.getAttribute('data-seg')),
+    notCounted: ((document.getElementById('ov-cbdept-notcounted') || {}).textContent || '').trim(),
     ths: document.querySelectorAll('#ov-cbdept-table thead th[data-cbsort]').length,
     order: rows.map((r) => r.querySelector('.qcd-expand-toggle').textContent.replace(/[↳▶]/g, '').trim()),
     child: rows.map((r) => r.classList.contains('ob-cbdept-child')),
@@ -84,15 +90,19 @@ function section() {
   record('opening it fetches the COMPANY view once, for the window it shows (Last 30 days)',
     calls.length === 1 && calls[0].department === '' && !!m && calls[0].from === m[1] && calls[0].to === m[2]
       && span >= 28 && span <= 31, JSON.stringify({ calls: calls, dates: s.dates, span: span }));
-  record('the company episode tiles render, the no-queue hang-ups counted in their own tile', s.tiles === 8, 'tiles=' + s.tiles);
+  record('CB-R1: one summary replaces the tiles -- the unreturned callers first, one bar that adds up',
+    s.tiles === 0 && s.num === '2' && JSON.stringify(s.segs) === JSON.stringify(['own', 'other', 'through', 'pending', 'none']),
+    JSON.stringify({ tiles: s.tiles, num: s.num, segs: s.segs }));
+  record('CB-R1: the hang-ups no queue owns are said under "How this is counted", not in a tile',
+    /52 hang-ups/.test(s.notCounted) && /phone menu/.test(s.notCounted), s.notCounted);
   record('the header comes from the shared column list (9 sortable columns)', s.ths === 9, 'ths=' + s.ths);
-  record('default order: worst own-rate first, the sub-queue directly under its parent, unmapped last',
+  record('CB-R2 default order: most not called back first, the sub-queue directly under its parent, unmapped last',
     JSON.stringify(s.order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department'])
       && JSON.stringify(s.child) === JSON.stringify([false, true, false, false]), JSON.stringify(s.order));
-  record('the total row counts each episode once and reconciles with the tiles (18 episodes)',
+  record('the total row counts each episode once and reconciles with the summary (18 episodes)',
     /^All departments/.test(s.total[0] || '') && s.total[1] === '18', JSON.stringify(s.total));
-  record('the headline is the own-team rate over MAPPED episodes (CE-1)',
-    /66\.7% called back by the owning department/.test(s.head) && /15 contact episodes on mapped queues/.test(s.head), s.head);
+  record('the header leads with the callers not called back, then the own-team rate (CE-1)',
+    /^2 of 18 callers not called back · 55\.6% called back by their own team/.test(s.head), s.head);
 
   // Sort by Median time: Sales (40:00) before CSR, Spanish stays under CSR.
   await page.click('#ov-cbdept-table th[data-cbsort="medianCallbackSec"]');
@@ -119,6 +129,38 @@ function section() {
       && /own team/.test(ex.text),
     JSON.stringify({ e: ex.expanded, v: ex.visible }));
 
+  // CB-R2: a row with callers nobody called back lists them on demand, for
+  // its own department and the section's window.
+  const csrIdx = s.order.indexOf('CSR');
+  await page.evaluate((i) => {
+    const btn = document.querySelectorAll('#ov-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle')[i];
+    if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
+  }, csrIdx);
+  await page.waitForTimeout(300);
+  const ubLabel = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('#ov-cbdept-tbody .ob-cbdept-uncalled-btn'))
+      .filter((x) => x.offsetParent !== null)[0];
+    return b ? b.textContent.trim() + '|' + b.getAttribute('data-dept') : '';
+  });
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('#ov-cbdept-tbody .ob-cbdept-uncalled-btn'))
+      .filter((x) => x.offsetParent !== null)[0];
+    if (b) b.click();
+  });
+  await page.waitForTimeout(1000);
+  const un = await page.evaluate(() => ({
+    calls: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getOutboundUncalled')
+      .map((c) => (c.args && c.args[0]) || null),
+    eps: Array.from(document.querySelectorAll('#ov-cbdept-tbody .ob-cbdept-uncalled-list'))
+      .filter((l) => l.style.display !== 'none').map((l) => l.querySelectorAll('.ob-ep').length),
+  }));
+  const dm = /^(\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})$/.exec(s.dates);
+  record('CB-R2: a department\'s "List the N callers nobody called back" loads ITS list for the section window',
+    /^List the 1 caller nobody called back\|CSR$/.test(ubLabel) && un.calls.length === 1
+      && un.calls[0].department === 'CSR' && !!dm && un.calls[0].from === dm[1] && un.calls[0].to === dm[2]
+      && JSON.stringify(un.eps) === '[2]',
+    JSON.stringify({ label: ubLabel, calls: un.calls, eps: un.eps }));
+
   // CSV.
   await page.click('#ov-cbdept-csv-btn');
   await page.waitForTimeout(800);
@@ -138,8 +180,8 @@ function section() {
   const dlc = await page.evaluate(() => (window.__HARNESS__.calls || [])
     .filter((c) => c.fn === 'getOutboundDirectCallbacks').map((c) => (c.args && c.args[0]) || null));
   const dlt = await page.evaluate(() => ({
-    work: document.querySelectorAll('#ov-dl-work .ds-kpi').length,
-    after: document.querySelectorAll('#ov-dl-after .ds-kpi').length,
+    bars: document.querySelectorAll('#ov-dl-sum .ob-obar').length,
+    depts: document.querySelectorAll('#ov-dl-table tr.ob-dl-dept').length,
     note: (function () { const n = document.getElementById('ov-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })() }));
   await page.click('#ov-dl-rep-btn');
   await page.waitForTimeout(1200);
@@ -148,7 +190,7 @@ function section() {
       .map((c) => (c.args && c.args[0]) || null),
     eps: document.querySelectorAll('#ov-dl-rep-list .ob-ep').length }));
   record('CE-3: the Overview Direct lines block reads the COMPANY view, once, with its repeat list',
-    dlc.length === 1 && dlc[0].department === '' && dlt.work === 7 && dlt.after === 7
+    dlc.length === 1 && dlc[0].department === '' && dlt.bars === 2 && dlt.depts === 2
       && drep.calls.length === 1 && drep.calls[0].department === '' && drep.eps === 1,
     JSON.stringify({ dlc: dlc, dlt: dlt, drep: drep }));
   record('FO-2: a spreadsheet-served payload says so, how far the copy reaches, and from when it names the line rung',

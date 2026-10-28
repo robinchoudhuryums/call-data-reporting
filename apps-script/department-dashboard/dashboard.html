@@ -324,20 +324,10 @@
             </div>
             <div id="ov-cbdept-state" class="ds-note" style="display:none;"></div>
             <div id="ov-cbdept-content" style="display:none;">
-              <div id="ov-cbdept-kpis" class="pr-kpi-row"></div>
+              <div id="ov-cbdept-kpis" class="ob-sum-host"></div>
               <div class="al-section" id="ov-cbdept-section" style="display:none;">
-                <p class="al-hint">
-                  Each department is responsible for calling back its own abandoned callers,
-                  counted in <strong>contact episodes</strong> (one caller trying to reach one
-                  team, however many times they tried). &ldquo;Own team&rdquo; = a dial by the
-                  department&rsquo;s own agents (a parent includes its sub-queues&rsquo; queues and
-                  agents); &ldquo;Another team&rdquo; is kept apart because it may be unrelated.
-                  Phone-menu hang-ups and hang-ups on a person&rsquo;s line reached no queue, so
-                  no team owns them: they are counted above the table, never in a rate. Times run
-                  from the first attempt and include any internal handoff. Expand a row to see who
-                  made the callbacks. The rows do not sum to the total: a parent includes its
-                  sub-queues, and a queue shared by two departments is in both.
-                </p>
+                <p class="al-hint ob-table-lead">By department &mdash; most callers not called back first.
+                  Open a row for who made the callbacks and the list of callers nobody called back.</p>
                 <div class="ov-cbdept-scroll">
                   <table class="al-config-table ob-cbdept-table" id="ov-cbdept-table">
                     <thead></thead>
@@ -346,6 +336,23 @@
                   </table>
                 </div>
               </div>
+              <!-- CB-R1: the counting rules, collapsed (they used to sit above the table). -->
+              <details class="ob-howto" id="ov-cbdept-howto">
+                <summary>How this is counted</summary>
+                <div class="ob-howto-body">
+                  <p>Each department is responsible for calling back its own abandoned callers,
+                    counted in <strong>contact episodes</strong> (one caller trying to reach one
+                    team, however many times they tried while the callback window stayed open).
+                    &ldquo;Own team&rdquo; = a dial by the department&rsquo;s own agents (a parent
+                    includes its sub-queues&rsquo; queues and agents); &ldquo;another team&rdquo; is
+                    kept apart because it may be unrelated; &ldquo;got through&rdquo; = the caller
+                    reached the team on a later call first. Every share is of the same total. Times
+                    run from the first attempt and include any internal handoff. The rows do not sum
+                    to the total: a parent includes its sub-queues, and a queue shared by two
+                    departments is in both.</p>
+                  <p id="ov-cbdept-notcounted" style="display:none;"></p>
+                </div>
+              </details>
               <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
                    getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
               <details id="ov-dl-fold" class="ob-dl-fold">
@@ -356,28 +363,33 @@
                 <div class="ob-dl-body">
                   <div id="ov-dl-state" class="ds-note" style="display:none;"></div>
                   <div id="ov-dl-content" style="display:none;">
-                    <p class="al-hint" id="ov-dl-counts"></p>
-                    <div id="ov-dl-note" class="ds-note" style="display:none;"></div>
-                    <div class="al-section-subtitle">Work hours</div>
-                    <div id="ov-dl-work" class="pr-kpi-row"></div>
-                    <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
-                    <div id="ov-dl-after" class="pr-kpi-row"></div>
-                    <p class="al-hint">
-                      External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
-                      answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
-                      the two apart) or the caller hung up while it rang. Counted in contact episodes; the
-                      team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
-                      Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
-                      them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
-                      of the caller&rsquo;s FIRST attempt. A call that rang the person for under 8 seconds
-                      is counted as a misdial and left out of the rates (a call with no recorded ring
-                      length stays in).
-                    </p>
+                    <!-- DL-R2 (owner 2026-10-28): a neutral note (fallback / data lag), the
+                         summary (headline + two bars + one legend), the dept -> line-owner
+                         table, the repeat list, and the counting rules folded away. -->
+                    <p id="ov-dl-note" class="al-hint ob-dl-note" style="display:none;"></p>
+                    <div id="ov-dl-sum" class="ob-sum-host"></div>
+                    <div id="ov-dl-table"></div>
                     <div class="esc-resolve-actions">
                       <button class="btn btn-secondary" id="ov-dl-rep-btn" type="button">List repeat unreturned callers</button>
                       <span id="ov-dl-rep-status" class="al-hint"></span>
                     </div>
                     <div id="ov-dl-rep-list" style="display:none;"></div>
+                    <details class="ob-howto">
+                      <summary>How this is counted</summary>
+                      <div class="ob-howto-body">
+                        <p>External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
+                          answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
+                          the two apart) or the caller hung up while it rang. Counted in contact episodes; the
+                          team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
+                          Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
+                          them back; &ldquo;by a teammate&rdquo; = someone else on their team did. A caller counts
+                          in work or after hours by their FIRST attempt; an after-hours callback is timed from
+                          the next work day&rsquo;s open. The table files a caller under the line they tried
+                          first. A call that rang the person for under 8 seconds is counted as a misdial and
+                          left out of the rates (a call with no recorded ring length stays in).</p>
+                        <p id="ov-dl-counts"></p>
+                      </div>
+                    </details>
                   </div>
                 </div>
               </details>
@@ -663,7 +675,7 @@
           <div class="ins-fold-body" id="ins-cb-body">
             <div id="ins-cb-state" class="ds-note" style="display:none;"></div>
             <div id="ins-cb-content" style="display:none;">
-              <div id="ins-cb-kpis" class="pr-kpi-row"></div>
+              <div id="ins-cb-kpis" class="ob-sum-host"></div>
               <div id="ins-cb-delay-strip" style="display:none;"></div>
               <p class="al-hint">
                 Counted in <strong>contact episodes</strong>: one caller trying to reach this
@@ -705,28 +717,33 @@
                 <div class="ob-dl-body">
                   <div id="ins-dl-state" class="ds-note" style="display:none;"></div>
                   <div id="ins-dl-content" style="display:none;">
-                    <p class="al-hint" id="ins-dl-counts"></p>
-                    <div id="ins-dl-note" class="ds-note" style="display:none;"></div>
-                    <div class="al-section-subtitle">Work hours</div>
-                    <div id="ins-dl-work" class="pr-kpi-row"></div>
-                    <div class="al-section-subtitle">After hours (incl. weekends &amp; holidays)</div>
-                    <div id="ins-dl-after" class="pr-kpi-row"></div>
-                    <p class="al-hint">
-                      External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
-                      answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
-                      the two apart) or the caller hung up while it rang. Counted in contact episodes; the
-                      team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
-                      Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
-                      them back; &ldquo;by their team&rdquo; = a teammate did. A row splits by the hours
-                      of the caller&rsquo;s FIRST attempt. A call that rang the person for under 8 seconds
-                      is counted as a misdial and left out of the rates (a call with no recorded ring
-                      length stays in).
-                    </p>
+                    <!-- DL-R2 (owner 2026-10-28): a neutral note (fallback / data lag), the
+                         summary (headline + two bars + one legend), the dept -> line-owner
+                         table, the repeat list, and the counting rules folded away. -->
+                    <p id="ins-dl-note" class="al-hint ob-dl-note" style="display:none;"></p>
+                    <div id="ins-dl-sum" class="ob-sum-host"></div>
+                    <div id="ins-dl-table"></div>
                     <div class="esc-resolve-actions">
                       <button class="btn btn-secondary" id="ins-dl-rep-btn" type="button">List repeat unreturned callers</button>
                       <span id="ins-dl-rep-status" class="al-hint"></span>
                     </div>
                     <div id="ins-dl-rep-list" style="display:none;"></div>
+                    <details class="ob-howto">
+                      <summary>How this is counted</summary>
+                      <div class="ob-howto-body">
+                        <p>External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
+                          answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
+                          the two apart) or the caller hung up while it rang. Counted in contact episodes; the
+                          team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
+                          Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
+                          them back; &ldquo;by a teammate&rdquo; = someone else on their team did. A caller counts
+                          in work or after hours by their FIRST attempt; an after-hours callback is timed from
+                          the next work day&rsquo;s open. The table files a caller under the line they tried
+                          first. A call that rang the person for under 8 seconds is counted as a misdial and
+                          left out of the rates (a call with no recorded ring length stays in).</p>
+                        <p id="ins-dl-counts"></p>
+                      </div>
+                    </details>
                   </div>
                 </div>
               </details>

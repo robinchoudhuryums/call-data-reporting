@@ -128,11 +128,15 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   CE-2/CE-3 also both drill lists (episode grouping, the outbound "callback
   path") and the lazy Direct lines block with its repeat-callers list; since
   the follow-ons, the misdial count line (FO-1) and the deep link holding the
-  fold at the TOP of the screen while the page settles (FO-3).
+  fold at the TOP of the screen while the page settles (FO-3); since
+  CB-R1/DL-R2 the callback summary's bar and legend (one base, adding up) and
+  the Direct lines summary + department table with its person drill.
 - `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
   admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
   keyboard expand and sort, CSV bytes, and (CE-3) the company Direct lines
-  block, including its spreadsheet-served note (FO-2).
+  block, including its spreadsheet-served note (FO-2); since CB-R1/CB-R2 the
+  summary that leads with the unreturned callers and its one-base bar, the
+  most-not-called-back default order, and a row's own unreturned-caller list.
 - `drive-admin.js` — ten **modals** (Alerts, Outlier Fix, Dept Config,
   Access Control, System Health, Caller Lookup, Coaching, Exception Days --
   since #81 its list, the in-place refusal of a missing reason, save, and a

@@ -669,7 +669,9 @@ tests/
                               owner's team, an answered call to a family
                               person's line as got-through, the Sales
                               voicemail box, after hours, the by-person /
-                              by-team split and the counts),
+                              by-team split and the counts; DL-R1: the next
+                              work open, the after-hours median from it, and
+                              the by-department / line-owner breakdown),
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
                               in the target queue -- counts for the transfer

@@ -1759,7 +1759,7 @@ function getOutboundCalledBack(req) {
 //     OUTBOUND_BRIEF_RING_SEC_ (inbound_calls.first_ring_seconds, captured by
 //     cdr-import) is counted and kept OUT of the episodes; an unknown ring
 //     (rows captured before the column) stays in.
-//   * Lazy + separately cached (`outboundDirect:v3`), so the Callbacks
+//   * Lazy + separately cached (`outboundDirect:v4`), so the Callbacks
 //     figures never pay for it. Neon first; when it is unreachable the export
 //     tabs stand in (FO-2, obDirectEventsFromGrids_ mirrors the SQL), never
 //     cached and disclosed -- and with neither, unavailable, never zero.
@@ -1781,8 +1781,10 @@ function obDirectSharedLine_(n) {
 }
 
 // v2 (FO-1): misdials leave the rate. v3 (B1): the window-edge episode rules
-// (PC-1) and pending vs the loaded calls (PC-2).
-const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v3:';
+// (PC-1) and pending vs the loaded calls (PC-2). v4 (DL-R1, owner 2026-10-28):
+// the per-department / per-line-owner breakdown `byDept` and the after-hours
+// callback time counted from the next work-window open.
+const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v4:';
 var OUTBOUND_DIRECT_REPEATS_MAX = 200;   // episodes on the repeat list
 
 /** PURE. A line owner's (or dialer's) homes: the roster, else a shared mailbox's dept. */
@@ -2098,6 +2100,100 @@ function obDirectSummary_(eps) {
   return s;
 }
 
+/**
+ * PURE (DL-R1, owner 2026-10-28). When the work day after a call opens, as an
+ * obOrdinal_: the same day's window start when the call came before it on a
+ * business day, the call itself when it came inside the window, else the
+ * next business day's start (weekends and company holidays skipped). Raw
+ * PST throughout, like call_start. A missing start reads as midnight.
+ */
+function obNextWorkOpenOrd_(iso, hms) {
+  var start = INBOUND_WORK_WINDOW_PST.start, end = INBOUND_WORK_WINDOW_PST.end;
+  var t = /^\d{2}:\d{2}:\d{2}$/.test(String(hms || '')) ? String(hms) : '00:00:00';
+  var isBiz = function (d) {
+    var dow = new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10))).getUTCDay();
+    if (dow === 0 || dow === 6) return false;
+    if (typeof isCompanyHoliday_ === 'function') {
+      try { if (isCompanyHoliday_(d)) return false; } catch (e) { /* holiday read failed: weekdays only */ }
+    }
+    return true;
+  };
+  if (isBiz(iso)) {
+    if (t < start) return obOrdinal_(iso, start);
+    if (t < end) return obOrdinal_(iso, t);
+  }
+  var d = obDaysAfterIso_(iso, 1);
+  for (var i = 0; i < 14 && !isBiz(d); i++) d = obDaysAfterIso_(d, 1);
+  return obOrdinal_(d, start);
+}
+
+/**
+ * PURE (DL-R1). The median own-team callback time for AFTER-HOURS episodes,
+ * counted from when the next work day opened rather than from the call (a 7 PM
+ * caller is naturally called back the next morning; from the call, the median
+ * read 16 hours). A callback placed before the window opened counts as 0.
+ */
+function obDirectMedianFromOpen_(eps) {
+  var delays = [];
+  (eps || []).forEach(function (ep) {
+    if (ep.outcome !== 'own' || ep.delaySec == null || !ep.firstIso) return;
+    var first = obOrdinal_(ep.firstIso, ep.firstHms);
+    var open = obNextWorkOpenOrd_(ep.firstIso, ep.firstHms);
+    delays.push(Math.max(0, first + ep.delaySec - open));
+  });
+  var med = obMedianNonNeg_(delays);
+  return med == null ? null : Math.round(med);
+}
+
+/** PURE (DL-R1). The line an episode is about: its FIRST attempt's owner (the person the caller tried first). */
+function obDirectEpOwner_(ep) {
+  var a = (ep && ep.attempts) || [];
+  for (var i = 0; i < a.length; i++) if (a[i].owner) return a[i].owner;
+  return null;
+}
+
+/** PURE (DL-R1). One breakdown row's figures (the bar's segments, on one base). */
+function obDirectRowFigures_(eps) {
+  var s = obDirectSummary_(eps);
+  return { episodes: s.episodes, none: s.none, own: s.own, ownByPerson: s.ownByPerson, ownByTeam: s.ownByTeam,
+           other: s.other, gotThrough: s.gotThrough, pending: s.pending };
+}
+
+/**
+ * PURE (DL-R1, owner 2026-10-28): the episodes by department and, inside each,
+ * by the LINE OWNER the caller tried first -- "whose line has the unreturned
+ * callers". A department row covers every episode whose team includes it (an
+ * owner on two rosters is under both, so the rows do not sum to the total,
+ * like the callback table); an episode with no roster team sits on the "No
+ * roster team" row. Sorted most not-called-back first, people likewise.
+ */
+function obDirectByDept_(eps) {
+  var depts = {};
+  (eps || []).forEach(function (ep) {
+    var teams = (ep.teams && ep.teams.length) ? ep.teams : ['No roster team'];
+    var owner = obDirectEpOwner_(ep) || '(line not recorded)';
+    teams.forEach(function (t) {
+      var d = depts[t] = depts[t] || { eps: [], people: {} };
+      d.eps.push(ep);
+      (d.people[owner] = d.people[owner] || []).push(ep);
+    });
+  });
+  var byNone = function (a, b) { return (b.none - a.none) || (b.episodes - a.episodes) || (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0)); };
+  return Object.keys(depts).map(function (name) {
+    var d = depts[name];
+    var row = obDirectRowFigures_(d.eps);
+    row.name = name;
+    row.noTeam = name === 'No roster team';
+    row.people = Object.keys(d.people).map(function (o) {
+      var pr = obDirectRowFigures_(d.people[o]);
+      pr.name = o;
+      pr.voicemailBox = obDirectIsVoicemailLine_(o);
+      return pr;
+    }).sort(byNone);
+    return row;
+  }).sort(function (a, b) { return (a.noTeam - b.noTeam) || byNone(a, b); });
+}
+
 /** PURE. The raw unanswered-call counts (dlCounts rows) -> the context figures. */
 function obDirectCounts_(rows, homesOf) {
   var c = { calls: 0, anonymous: 0, trackable: 0, missed: 0, abandoned: 0, voicemailBox: 0,
@@ -2154,6 +2250,7 @@ function getOutboundDirectCallbacks(req) {
     },
     counts: obDirectCounts_([], function () { return []; }),
     all: obDirectSummary_([]), work: obDirectSummary_([]), after: obDirectSummary_([]),
+    byDept: [],
   };
   let src = null;
   try {
@@ -2167,6 +2264,9 @@ function getOutboundDirectCallbacks(req) {
     out.all = obDirectSummary_(d.eps);
     out.work = obDirectSummary_(d.eps.filter(function (ep) { return !isAfter(ep); }));
     out.after = obDirectSummary_(d.eps.filter(isAfter));
+    // DL-R1 (owner 2026-10-28): after hours is timed from the next work day.
+    out.after.medianFromOpenSec = obDirectMedianFromOpen_(d.eps.filter(isAfter));
+    out.byDept = obDirectByDept_(d.eps);
     if (src.fallbackSource) {
       // FO-2: the export tabs answered -- disclosed, and never cached (the
       // CE-1 fallback rule), so the next request tries Neon again.
@@ -2201,12 +2301,18 @@ function getOutboundDirectCallbacks(req) {
 function getOutboundDirectRepeats(req) {
   const scope = outboundResolveRequest_(req);
   assertReportRangeCap_(scope.from, scope.to);   // SEC-1
+  // DL-R1 (owner 2026-10-28): the same list for ONE line owner -- the person
+  // row's drill -- with every unreturned caller (1+ attempts), not only the
+  // repeats. `owner` is matched exactly against the episode's first-tried
+  // line; a name that matches nothing returns nothing.
+  const owner = (req && typeof req.owner === 'string') ? req.owner.trim().slice(0, 120) : '';
+  const minAttempts = (req && Number(req.minAttempts) === 1) ? 1 : 2;
   const out = {
     meta: {
       from: scope.from, to: scope.to, available: true,
       department: scope.dept || null, companyView: scope.companyView,
       truncated: false, tzLabel: 'CST', callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
-      lateHorizonDays: OUTBOUND_LATE_HORIZON_DAYS, minAttempts: 2, episodes: 0,
+      lateHorizonDays: OUTBOUND_LATE_HORIZON_DAYS, minAttempts: minAttempts, owner: owner || null, episodes: 0,
     },
     episodes: [],
   };
@@ -2221,7 +2327,10 @@ function getOutboundDirectRepeats(req) {
       out.meta.fallbackCoverageStart = src.fallbackCoverageStart || null;
     }
     let eps = d.eps
-      .filter(function (ep) { return ep.outcome === 'none' && ep.attempts.length >= 2; })
+      .filter(function (ep) {
+        return ep.outcome === 'none' && ep.attempts.length >= minAttempts
+          && (!owner || obDirectEpOwner_(ep) === owner);
+      })
       .sort(obEpNewestFirst_);
     out.meta.episodes = eps.length;
     if (eps.length > OUTBOUND_DIRECT_REPEATS_MAX) {

@@ -2628,7 +2628,7 @@
   // read runs only while the fold is OPEN, for its own window (the shared
   // date-preset resolver, so it ends yesterday), one fetch per window; the
   // 5-minute auto-refresh never calls it. Drawn by the modal's own renderers
-  // (outboundCallbackTilesHtml_ + outboundRenderCbDept_ with an Overview view)
+  // (outboundCallbackSummaryHtml_ + outboundRenderCbDept_ with an Overview view)
   // so the two cannot disagree while both exist.
   var OV_CBDEPT_ = { preset: 'last30', key: null, seq: 0, data: null, error: null, inFlight: false, view: null };
 
@@ -2705,17 +2705,31 @@
     if (content) content.style.display = '';
     var tot = t.total || {};
     if (head) {
-      // CE-1: the headline is the own-team rate over MAPPED episodes -- no
-      // team can own a callback on a queue it was never mapped to.
-      head.textContent = (tot.mappedOwnPct != null
-          ? tot.mappedOwnPct + '% called back by the owning department' : 'callbacks by department')
-        + ' · ' + fmtNumber(tot.mappedEpisodes || 0) + ' contact episodes on mapped queues'
-        // The tiles below count EVERY episode, so say what the headline leaves out.
-        + (((tot.episodes || 0) - (tot.mappedEpisodes || 0)) > 0
-          ? ' (' + fmtNumber((tot.episodes || 0) - (tot.mappedEpisodes || 0)) + ' on unmapped queues left out)' : '');
+      // CB-R1 (owner 2026-10-28): the folded line says what needs doing, on
+      // the SAME base as the bar below (every episode) -- the mapped-only rate
+      // read differently from the tile beside it (6.9% vs 6.6%). The
+      // unmapped-queue episodes are named in "How this is counted".
+      head.textContent = fmtNumber(cb.none || 0) + ' of ' + fmtNumber(cb.episodes || 0)
+        + ' callers not called back · ' + (cb.ownPct != null ? cb.ownPct + '% called back by their own team' : 'no own-team callbacks');
     }
     var kp = $('ov-cbdept-kpis');
-    if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
+    if (kp) kp.innerHTML = outboundCallbackSummaryHtml_(cb, (data && data.callbackPrior) || null,
+      { scope: '', windowDays: meta.callbackWindowDays });
+    // The hang-ups no team can call back, and the unmapped-queue episodes the
+    // department rows leave out: counted, never in a rate (ruling 1).
+    var nc = $('ov-cbdept-notcounted');
+    if (nc) {
+      var unm = (tot.episodes || 0) - (tot.mappedEpisodes || 0);
+      var bits = [];
+      if (cb.phoneMenuAbandons || cb.directLineAbandons) {
+        bits.push(fmtNumber((cb.phoneMenuAbandons || 0) + (cb.directLineAbandons || 0)) + ' hang-ups reached no queue, so no team can call them back ('
+          + fmtNumber(cb.phoneMenuAbandons || 0) + ' in the phone menu, ' + fmtNumber(cb.directLineAbandons || 0)
+          + ' on a person’s line — those are in Direct lines below).');
+      }
+      if (unm > 0) bits.push(fmtNumber(unm) + ' of the ' + fmtNumber(tot.episodes || 0) + ' callers hung up on queues mapped to no department; they are in the totals and on the “unmapped” row, and no department owns them.');
+      nc.textContent = bits.join(' ');
+      nc.style.display = bits.length ? '' : 'none';
+    }
     outboundRenderCbDept_(t, meta, ovCbDeptView_());
     obDlSync_('ov-dl', ovCbDeptWindow_());   // CE-3: lazy, follows the section's window
   }

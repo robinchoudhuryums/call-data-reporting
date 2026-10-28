@@ -2985,7 +2985,8 @@
     // the user just opened.
     insBriefRowFromHead_('callbacks');
     var kp = $('ins-cb-kpis');
-    if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
+    if (kp) kp.innerHTML = outboundCallbackSummaryHtml_(cb, (data && data.callbackPrior) || null,
+      { scope: meta.department || '', windowDays: meta.callbackWindowDays });
     var win = $('ins-cb-window');
     if (win) win.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
     outboundRenderDelayStrip_(cb, $('ins-cb-delay-strip'));

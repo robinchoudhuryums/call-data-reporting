@@ -7401,6 +7401,9 @@
   .ob-cbdept-indent { color: var(--muted); }
   .ob-cbdept-unmapped td:first-child { font-style: italic; color: var(--muted); }
   .ob-cbdept-total td { border-top: 2px solid var(--line); font-weight: 600; }
+  /* CB-R2: the ranked column -- what needs doing. */
+  .ob-cbdept-none strong { color: var(--warn); }
+  .ob-cbdept-uncalled { margin: 4px 0 8px; }
   .ob-cbdept-detail { margin: 6px 0; }
 
   /* G2: the Overview's Callbacks by department section (admin-only). A
@@ -8423,4 +8426,50 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
 .ob-dl-summary .ds-zone-label { white-space: normal; min-width: 0; }
 .ob-dl-head { color: var(--muted); font-size: 12px; }
 .ob-dl-body { margin-top: 8px; }
+/* CB-R1 / DL-R2 (owner 2026-10-28): the callback SUMMARY -- the actionable
+   count as the headline, ONE bar whose segments add up to the whole, a legend
+   on the same base, a quiet quality line. Shared by the Overview's Callbacks by
+   department, the Insights Callbacks fold and both Direct lines blocks. The
+   segment colours: called back = greens (own darkest), got through = accent,
+   still in the window = neutral, NOT called back = --warn, the one to act on;
+   they also differ in lightness, not hue alone. */
+.ob-sum-host { margin-bottom: 14px; }
+.ob-sum { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border: 1px solid var(--line);
+  background: var(--paper-card); }
+.ob-sum-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px; }
+.ob-sum-big { display: flex; flex-direction: column; gap: 4px; }
+.ob-sum-num { font: 700 40px/1 var(--sans); color: var(--warn); letter-spacing: -0.5px; }
+.ob-sum-lead { font-weight: 600; font-size: 15px; color: var(--ink); }
+.ob-sum-sub { color: var(--ink-muted, var(--muted)); font-size: 13px; padding-bottom: 2px; min-width: 0; }
+.ob-sum-quality { display: flex; flex-wrap: wrap; gap: 6px 22px; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: 13px; color: var(--ink-muted, var(--muted)); }
+.ob-sum-quality strong { color: var(--ink); }
+.ob-sum-fine { font-size: 12px; color: var(--muted); }
+.ob-obar { display: flex; height: 26px; width: 100%; border-radius: var(--r, 2px); overflow: hidden; background: var(--paper-2); }
+.ob-obar-seg { display: flex; align-items: center; padding-left: 8px; min-width: 2px; overflow: hidden;
+  font: 600 12px/1 var(--sans); white-space: nowrap; }
+.ob-seg-own { background: color-mix(in oklab, var(--good) 88%, black); color: var(--on-good, #fff); }
+.ob-seg-team { background: var(--good); color: var(--on-good, #fff); }
+.ob-seg-other { background: color-mix(in oklab, var(--good) 40%, var(--paper)); color: var(--ink); }
+.ob-seg-through { background: color-mix(in oklab, var(--accent) 75%, var(--paper)); color: var(--ink); }
+.ob-seg-pending { background: color-mix(in oklab, var(--muted) 35%, var(--paper)); color: var(--ink); }
+.ob-seg-none { background: var(--warn); color: var(--on-warn, #fff); }
+.ob-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 14px; }
+.ob-leg { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.ob-leg-key { width: 11px; height: 11px; flex: none; margin-top: 3px; border-radius: 1px; }
+.ob-leg-n { font-weight: 600; font-size: 14px; color: var(--ink); }
+.ob-leg-emph { color: var(--warn); }
+.ob-leg-t { font-size: 12px; color: var(--ink-muted, var(--muted)); }
+.ob-table-lead { margin: 4px 0 8px; }
+.ob-howto { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ob-howto > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.ob-howto-body { font-size: 13px; color: var(--ink-muted, var(--muted)); }
+.ob-howto-body p { margin: 8px 0 0; }
+.ob-dl-group { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
+.ob-dl-group-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+.ob-dl-group-n { font-size: 12px; color: var(--muted); }
+.ob-dl-note { margin: 0 0 8px; }
+.ob-dl-table .ob-dl-person td:first-child { padding-left: 22px; }
+.ob-dl-person-name { color: var(--ink-muted, var(--muted)); }
+.ob-dl-drill > td { background: var(--paper-2); }
 </style>

@@ -2352,10 +2352,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   CE-3 "Direct lines" block (a nested lazy `<details>`, `#ins-dl-fold`, shared
   with the Overview section's `#ov-dl-fold` through one prefix-keyed view --
   `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: work-
-  and after-hours tile rows, the repeat-unreturned-callers drill; it follows
+  and after-hours bars and the department / person table since DL-R2, the
+  repeat-unreturned-callers drill; it follows
   its host's window and fetches only while open) and CSV / email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
-  elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
+  elements -- `outboundCallbackSummaryHtml_` (CB-R1; the tile row it replaced), `outboundRenderDelayStrip_` /
   `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one
   chart per canvas), `outboundLoadUncalledInto_` (each surface passes its own
   stale-drill counter, UI-5), `outboundDownloadCsv_(data)` and
@@ -2400,17 +2401,40 @@ stay pinned by INV-39, INV-53 and INV-06.
   (Last 7 days / Last 30 days / Last 3 months via `datePresetRange_`, so it
   ends yesterday), once per window; `ovLoad_` -- the landing and the 5-minute
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
-  episode tiles (plus a "Not counted (no queue reached)" tile for the
-  phone-menu and person's-line hang-ups) above the table, both drawn by the
-  shared renderers. Its headline is the own-team rate over MAPPED episodes
-  (`total.mappedOwnPct`, CE-1):
-  `outboundCallbackTilesHtml_` and `outboundRenderCbDept_(t, meta, view)` with
+  callback summary (CB-R1, next bullet) above the table, both drawn by the
+  shared renderers; the phone-menu and person's-line hang-ups and the unmapped
+  queues are said in `#ov-cbdept-notcounted` under "How this is counted":
+  `outboundCallbackSummaryHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The
   column definitions are ONE list (`OB_CBDEPT_COLS_` / `obCbDeptTheadHtml_`)
   that builds both tables' header row. The CSV is the company report in the
   section's on-screen order (`outboundDownloadCsv_(data, sort)`). Rendered-gated
   by `drive-cbdept.js`.
+- **Callback summaries: the unreturned callers first, one bar that adds up
+  (CB-R1 / CB-R2 / DL-R2, owner 2026-10-28).** The Callbacks figures (Overview
+  `#ov-cbdept-kpis`, the Insights fold `#ins-cb-kpis`) and Direct lines
+  (`#ov-dl-sum`, `#ins-dl-sum`) render through ONE family of renderers in
+  script-9: `obOutcomeBarHtml_` + `obOutcomeLegendHtml_` inside
+  `outboundCallbackSummaryHtml_` / `outboundDirectSummaryHtml_`. Rules: the
+  headline is the NOT-called-back count (`.ob-sum-num`, `--warn`); every
+  segment of a bar is a share of the SAME base (the callers who hung up), so
+  own / another team / got through / pending / not called back sum to it --
+  never put a figure on a different base into the bar (a rate of connected
+  callbacks, a median) -- those go on the quality line below it; Direct lines
+  splits own into "by the person" and "by their team" and draws a work-hours
+  and an after-hours bar, the after-hours median counted from the next work
+  open (DL-R1). The CE-1 ruling still holds: own team, another team and got
+  through stay separate segments. The Overview department table sorts most
+  not called back first (`OB_CBDEPT_DEFAULT_SORT_`), and a row with any opens
+  "List the N callers nobody called back" (`getOutboundUncalled` for that
+  department and the section window, a per-BUTTON sequence so two rows can
+  load at once). The Direct lines table (`obDlTableHtml_` + the delegated
+  `obDlWireTable_`) nests people under their department; a person with
+  unreturned callers loads `getOutboundDirectRepeats({owner, minAttempts:1})`.
+  Explanations sit in a closed `<details class="ob-howto">`. Still
+  ADMIN-ONLY while vetted (managers get their own department after). Pinned
+  by `drive-callbacks.js` and `drive-cbdept.js`.
 - **Escalation card actions are ONE row (QF-2, owner 2026-10-28).** Start
   (solid) first, then the admin edits (Edit, Move) as quiet outline buttons,
   then the admin verbs pushed right (`escAdminActionsHtml_`: Restore / Link

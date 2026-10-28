@@ -731,7 +731,7 @@ the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
 number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
 for -- are a SEPARATE, lazy, separately cached endpoint
-(`getOutboundDirectCallbacks`, `outboundDirect:v3`: dept + window + freshness
+(`getOutboundDirectCallbacks`, `outboundDirect:v4`: dept + window + freshness
 tag + roster hash) so the Callbacks figures never pay for it. Population:
 external calls whose first leg rang a PERSON (no entry queue, `first_agent`
 set) and that nobody answered, `missed` (rang out / that person's voicemail --
@@ -747,7 +747,16 @@ family queue) is "got through", and own-team callbacks split into "by the
 person whose line was tried" and "by their team". `getOutboundDirectRepeats`
 is the repeat-unreturned-callers list (owner ruling: 2+ unanswered attempts
 in the window, no callback): first / last attempt, the lines tried, the team,
-voicemail, CE-2's late tags, every attempt's detail. **Misdials (FO-1, owner
+voicemail, CE-2's late tags, every attempt's detail. **By department and
+line owner (DL-R1, owner 2026-10-28):** the payload's `byDept` groups the
+episodes by team and, inside each, by the line the caller tried FIRST
+(`obDirectEpOwner_`), on the same five-outcome base as the bars (an owner on
+two rosters is under both, so rows do not sum to the total; no roster team ->
+the "No roster team" row); `getOutboundDirectRepeats({owner, minAttempts:1})`
+lists that person's unreturned callers (exact owner match, any attempt count).
+After hours, the callback median is ALSO given from the next work-window open
+(`after.medianFromOpenSec`, `obNextWorkOpenOrd_`: weekends + company holidays
+skipped), since from the call it measured the night. **Misdials (FO-1, owner
 2026-10-09):** a call whose ring to the line owner lasted under
 `OUTBOUND_BRIEF_RING_SEC_` (8 s, strict -- the outbound brief-ring line) is
 COUNTED (`counts.misdials`) and kept OUT of the episodes and every rate. The

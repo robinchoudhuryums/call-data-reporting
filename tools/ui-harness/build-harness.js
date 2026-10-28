@@ -563,17 +563,34 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         const cov = new Date(from + 'T12:00:00Z'); cov.setUTCDate(cov.getUTCDate() + 3);
         meta.fallbackCoverageStart = cov.toISOString().slice(0, 10);   // 3 days into the window
       }
+      // DL-R1: the after-hours time from the next work day's open, and the
+      // department -> line-owner breakdown (most not called back first).
+      const after = sum(10, 3, 2, 1, 0, 0, 6, 2, 50400);
+      after.medianFromOpenSec = 2700;
+      const row = function (name, eps, none, byP, byT, other, got, pending, extra) {
+        return Object.assign({ name: name, episodes: eps, none: none, own: byP + byT, ownByPerson: byP, ownByTeam: byT,
+          other: other, gotThrough: got, pending: pending }, extra || {});
+      };
       return { meta: meta,
         counts: { calls: 49, anonymous: 4, trackable: 42, missed: 38, abandoned: 11, voicemailBox: 6, unownedLines: 1, misdials: 3 },
         all: sum(30, 14, 9, 3, 2, 1, 10, 6, 5400),
         work: sum(20, 11, 7, 2, 2, 1, 4, 4, 3600),
-        after: sum(10, 3, 2, 1, 0, 0, 6, 2, 50400) };
+        after: after,
+        byDept: [
+          Object.assign(row('Sales', 18, 7, 5, 3, 2, 1, 0), { noTeam: false, people: [
+            row('Sam Seller', 11, 5, 4, 1, 1, 0, 0, { voicemailBox: false }),
+            row('Sales Voicemails', 7, 2, 1, 2, 1, 1, 0, { voicemailBox: true }),
+          ] }),
+          Object.assign(row('CSR', 12, 3, 4, 2, 1, 1, 1), { noTeam: false, people: [
+            row('Ann Agent', 12, 3, 4, 2, 1, 1, 1, { voicemailBox: false }),
+          ] }),
+        ] };
     },
     getOutboundDirectRepeats: function (req) {
       return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || null, companyView: !(req && req.department),
           available: true, truncated: false, tzLabel: 'CST', callbackWindowDays: 3, lateHorizonDays: 14,
-          minAttempts: 2, episodes: 1 },
+          minAttempts: (req && Number(req.minAttempts) === 1) ? 1 : 2, owner: (req && req.owner) || null, episodes: 1 },
         episodes: [
           { firstIso: '2026-08-11', firstHms: '07:02:00', lastIso: '2026-08-12', team: 'Sales', lines: ['Sam Seller', 'Sales Voicemails'],
             voicemail: true,
