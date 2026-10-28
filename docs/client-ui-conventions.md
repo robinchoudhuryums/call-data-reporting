@@ -2411,6 +2411,18 @@ stay pinned by INV-39, INV-53 and INV-06.
   that builds both tables' header row. The CSV is the company report in the
   section's on-screen order (`outboundDownloadCsv_(data, sort)`). Rendered-gated
   by `drive-cbdept.js`.
+- **Escalation card actions are ONE row (QF-2, owner 2026-10-28).** Start
+  (solid) first, then the admin edits (Edit, Move) as quiet outline buttons,
+  then the admin verbs pushed right (`escAdminActionsHtml_`: Restore / Link
+  department / Remove / Delete / Delete all linked -- Delete as muted text that
+  turns `--bad` on hover). Every action button carries a `title`. Inline-form
+  toggles (Move, Link department) have no ellipsis; the verbs that confirm or
+  ask for a reason keep it. The move / link forms sit directly under the row
+  and the "Resolve / comment" disclosure after them. `.btn-ghost` is styled
+  ONLY under `.esc-card` -- it had no rule at all, so these rendered as the
+  solid default and Delete's muted text sat on black; the coaching Dismissed
+  button and the tour's Skip / Back still use the unstyled class. Pinned by
+  drive-admin.js (QF-2).
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's
@@ -2426,7 +2438,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   agent's row, re-opens it on a changed window, and closes it when the agent
   is gone (dept switch, a collapsed sub-queue group). The inner `.ap` is
   sticky-left, sized to `.agents-table-wrap` by JS and `contain: inline-size`,
-  so it never widens the table; its CSS is scoped under `.agents` AFTER the
+  so it never widens the table (QF-3: it is framed as a TRAY of the open row --
+  the row's 3px accent rail continues down its left edge, a 1px accent line
+  closes its right, a faint accent tint -- on `.ap`, so the right edge stays in
+  view; drive-agentpanel.js pins it); its CSS is scoped under `.agents` AFTER the
   table's rules so `.agents td`'s right-align and the sticky thead do not bleed
   into the nested call tables. Exports read `state.rows`, never the DOM.
   Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:

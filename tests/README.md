@@ -191,7 +191,10 @@ tests/
                               builders), a target named by one call of each
                               claimed by neither, a target named only by an
                               inbound call left alone, the OBX diagnostics'
-                              keepTransferTargets build untouched),
+                              keepTransferTargets build untouched; QF-1: a
+                              queue listed before the agent it rang in the
+                              same second, a stable partition inside one
+                              second only),
                               abandoned-filter (AF-1: the "Filter abandoned
                               calls…" dialog -- every preset leaves EXACTLY its
                               old item's rows, the OLD engine run against a
@@ -315,7 +318,10 @@ tests/
                               the one verdict every key-by-key flip gate
                               reaches -- duplicates, `compared`, empty =
                               INCONCLUSIVE -- plus the compare*Sources sweep),
-                              caller-lookup, answer-targets
+                              caller-lookup (QF-1: both shapers list a queue
+                              before its same-second first ring, and the
+                              capture and display copies of that rule agree),
+                              answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
                               digest-freshness-gate (R31/R32: every cadence

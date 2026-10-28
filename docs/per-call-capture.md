@@ -268,6 +268,16 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 
 ### Per-call journey drill-through
 
+> **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
+> first agent it rings often start in the same second, and 8x8 can give the
+> ring the lower leg id, so the time-then-leg-id sort listed the ring ahead of
+> its queue. Within one second, queue events now go first -- a stable
+> partition, nothing else moves -- at capture (`icQueueFirstWithinSecond_`)
+> AND in both display shapers (`CallerLookup.gs::clQueueFirstWithinSecond_`,
+> run by `callerLookupShapeCall_` / `callerLookupShapeOutbound_`), so every
+> journey already stored reads right without a rebuild. Two copies in two
+> projects: `caller-lookup.test.js` pins that they agree.
+
 **Per-call journey drill-through (inbound capture).**
 `InboundReport.gs::getCallJourney({callId, date, department})` returns ONE
 call's journey for the "↳ path" affordance on abandoned rings in the Missed
