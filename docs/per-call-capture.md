@@ -268,6 +268,15 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 
 ### Per-call journey drill-through
 
+> **Two read-only call-path diagnostics (owner 2026-10-28).**
+> `diagnoseHoldHangups` (HOH-0, Operator State #85) asks whether a
+> `abandoned_on_hold` flag is a real hang-up -- it is set when ANY caller leg
+> carries Caller Disconnect On Hold, including the transferring agent's leg in a
+> transfer. `diagnoseTransferBounces` (XB-0, #86, in `transferFilter.js`) reads
+> the stored journeys as department stints and counts calls that came back to
+> the department that first answered them. Neither changes a figure; both size
+> a decision first.
+
 > **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
 > first agent it rings often start in the same second, and 8x8 can give the
 > ring the lower leg id, so the time-then-leg-id sort listed the ring ahead of

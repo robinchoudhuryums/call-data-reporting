@@ -2164,6 +2164,8 @@ items for anything it flags or doesn't cover.)
 82. Warm-transfer continuations are NOT outbound calls (OBX-1: the capture skips a call named in another call's Transfer To Call ID; not retroactive) + `diagnoseOutboundTransfers` (cdr-import, read-only) sorting the number-live-only calls by shape -- owner-checked genuine calls (OBX-2), so the number-live test is never a rule
 83. Direct calls credited by extension AND the leg's name (DCA-1: a former employee's reassigned extension no longer credits them; a blank name keeps the extension rule pending the owner's call; not retroactive) + `diagnoseDirectCallAttribution` (cdr-import, read-only)
 84. Transfers / consults to a person on the caller's journey (IXT-1: the Transfer To call plus every internal dial from the answering agent while live, journey-only; not retroactive), the outbound twin (OXT-1: an agent on an inbound AND an outbound call at once gets neither) + `diagnosePersonTransfers` (cdr-import, read-only, both directions + time since connect)
+85. `diagnoseHoldHangups` (HOH-0, cdr-import, read-only): is a "hung up on hold" flag a real hang-up (the call's last leg) or a transfer side effect (someone answered after it)?
+86. `diagnoseTransferBounces` (XB-0, cdr-import, read-only): calls sent to another department after being answered that CAME BACK, by department trio and first sender
 
 ## Cycle Workflow Config
 

@@ -191,7 +191,12 @@ tests/
                               builders), a target named by one call of each
                               claimed by neither, a target named only by an
                               inbound call left alone, the OBX diagnostics'
-                              keepTransferTargets build untouched; QF-1: a
+                              keepTransferTargets build untouched; HOH-0: the
+                              hung-up-on-hold diagnostic on the owner's 10/19
+                              call -- the flag on the transferring agent's leg
+                              then an answer is answeredAfter, the last
+                              flagged leg decides, unanswered continuations,
+                              no number in the line; QF-1: a
                               queue listed before the agent it rang in the
                               same second, a stable partition inside one
                               second only),
@@ -205,7 +210,14 @@ tests/
                               the on-tab check (afRunCheck_) end to end, CLEAN
                               / MISMATCH / INCONCLUSIVE; validation, the page's
                               server calls and no HTML injection),
-                              transfer-filter (the read-only transfer-shape
+                              transfer-filter (XB-0: transfers that came back,
+                              on the owner's 10/22 Sales -> CSR -> Sales call
+                              -- sender / returner, a consult or a stayed
+                              transfer is no bounce, came back unanswered,
+                              two-roster agents and unmapped queues skipped
+                              and counted, a hand-over IS a step, the
+                              canonicalizer and case-insensitive queues, the
+                              fold and the grid pass; the read-only transfer-shape
                               probe: queue vs direct transfers, the customer
                               link by the capture's own concurrency index,
                               queue deliveries never read as employees, the

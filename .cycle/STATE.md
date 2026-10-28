@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-28 (2) -- HOH-0 + XB-0 IMPLEMENTED (block 259-diag-hoh0-xb0-broad-implement).** Read-only diagnostics: `diagnoseHoldHangupsAllDates()` (#85: is a hung-up-on-hold flag a hang-up or a transfer side effect?) and `diagnoseTransferBouncesAllDates()` (#86: calls that came back to the first department, by trio and first sender). Plus the global `.btn-ghost` (owner asked). NET 1 - 0 = 1.
+  **Owner-side:** deploy cdr-import + the dashboard; run both diagnostics and send the logs; map any "queues not placed" in Dept Config.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn with QF-1..3; NO PR yet (owner to say). Next in the agreed order: the #5 + #6 callbacks design mock.
 - **2026-10-28 -- QF-1..3 IMPLEMENTED (block 259-qf-broad-implement).** Owner screenshot round, the quick fixes: a queue listed before its same-second first ring (capture + both display shapers); the escalation card's one action row with hover labels (`.btn-ghost` had no rule); the agent panel framed as a tray of its row. NET 3 - 1 = 2.
   **Owner plan (2026-10-28, order agreed):** (1) these quick fixes; (2) read-only diagnostics for #1 ("hung up on hold" set on a transferring agent's leg) and #3 (misrouted transfers that bounce back, e.g. Sales -> CSR -> Sales); (3) a design mock for #5 + #6 (Callbacks by department + Direct Lines: one summing bar, "not called back" as the headline, a dept -> person table with a caller drill; after-hours callbacks timed from the next work day); (4) #1(b) count only a final-leg hang-up + mark it on the row, #3(b,c) a stored bounce record + report.
   **Open / owner to decide:** #3 -- a consult that ends with the original agent is not a bounce?; a two-roster agent skipped?; #6 -- may managers see the per-person rows?

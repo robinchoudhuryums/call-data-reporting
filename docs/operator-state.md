@@ -3735,3 +3735,37 @@ When something looks wrong, before assuming a code bug, check:
     timing half can be limited without touching the linked half. Pinned by
     `outbound-calls.test.js`, `outbound-call-mix.test.js`,
     `outbound-report.test.js`.
+
+85. **Is "hung up on hold" really a hang-up? -- `diagnoseHoldHangups`
+    (HOH-0, cdr-import, read-only, owner 2026-10-28).** A captured call is
+    flagged "hung up on hold" (Caller Lookup's chip, the Inbound report's
+    on-hold figures and the transfer-abandon counts) when ANY of the caller's
+    legs carries 8x8's Caller Disconnect On Hold. The owner's 10/19 call was
+    flagged although the caller then talked to CSR for 4:26 -- the flag and the
+    only hold sat on the TRANSFERRING agent's leg. Run
+    **`diagnoseHoldHangupsAllDates()`** (or `diagnoseHoldHangups('YYYY-MM-DD')`;
+    bare = the latest held date) and read the TOTAL line: every flagged outside
+    call is sorted by where its last flagged leg sits -- the call's LAST leg (a
+    real hang-up on hold), someone ANSWERED after it (the transfer side
+    effect), or the call went on unanswered (the caller hung up in the next
+    step) -- with the dispositions and call-id samples for Caller Lookup.
+    Writes nothing; call ids only. Its result decides HOH-1 (count only a
+    final-leg hang-up, and mark it on that leg's row), which moves reported
+    figures and so waits on the owner. Pinned by `inbound-calls.test.js`.
+
+86. **Transfers that came back -- `diagnoseTransferBounces` (XB-0, cdr-import,
+    read-only, owner 2026-10-28).** A caller answered in one department, moved
+    to another, then returned to the first (the owner's 10/22 call: Sales ->
+    CSR -> Sales). Run **`diagnoseTransferBouncesAllDates()`** (or
+    `diagnoseTransferBounces('YYYY-MM-DD')`; bare = the latest held date) over
+    the held `Call_Legs_*` tabs. Per date and in TOTAL: calls moved to another
+    department after being answered, how many CAME BACK (sent back by the
+    other department / came back before anyone there answered), the top
+    department trios and the agents who sent the caller out first, call-id
+    samples, and the steps it could not place. A queue counts only through its
+    Dept Config row (QCD Queues + Inbound queue aliases), so a queue listed
+    under "queues not placed" needs a row there to be counted; an agent on two
+    rosters and a consult that ended with the first agent are deliberately
+    skipped (owner proposal, to confirm). Writes nothing; employee / queue
+    names and call ids only. Its result shapes XB-1 (a stored record + a
+    report). Pinned by `transfer-filter.test.js`.
