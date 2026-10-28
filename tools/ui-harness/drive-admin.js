@@ -512,6 +512,20 @@ const MODALS = [
       record('QF-2: every action button has a hover label', !!qf && qf.titled);
       record('QF-2: Move carries no ellipsis', !!qf && qf.moveText != null && !/…|\.\.\./.test(qf.moveText), qf && qf.moveText);
       record('QF-2: the resolve form follows the row', !!qf && qf.resolveAfterRow);
+      // The quiet style is GLOBAL (the coaching Dismissed button and the
+      // tour's Skip / Back use it too): a bare `btn btn-ghost` anywhere on the
+      // page is not the solid default.
+      const ghost = await page.evaluate(() => {
+        const solid = document.createElement('button'); solid.className = 'btn';
+        const quiet = document.createElement('button'); quiet.className = 'btn btn-ghost';
+        document.body.appendChild(solid); document.body.appendChild(quiet);
+        const out = { solid: getComputedStyle(solid).backgroundColor, quiet: getComputedStyle(quiet).backgroundColor,
+          border: getComputedStyle(quiet).borderTopStyle };
+        solid.remove(); quiet.remove();
+        return out;
+      });
+      record('QF-2: a btn-ghost anywhere on the page is quiet, not the solid default',
+        ghost.quiet !== ghost.solid && ghost.border === 'solid', JSON.stringify(ghost));
     }
 
     // 2a: the admin Delete control -- rendered (visibly) on the cards, opens

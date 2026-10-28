@@ -9,7 +9,7 @@ QF-2 | script-10-escalations.html, styles.html | One action row on a worklist ca
 QF-3 | styles.html | The panel's `.ap` gets a 3px accent left border (continuing the open row's rail), a 1px accent right border and a faint accent tint; the open row's last cell gets the matching right edge.
 
 TEST RESULTS: passed -- `TZ=America/Chicago node --test` 2714 pass / 0 fail (+4); lint:gas clean; INV-16 guard clean; module-deps regenerated (+1 symbol) and clean; claude-md-split 11/11; ci:ui all stages passed (QF-2 x5 + QF-3 checks green). Bites: QF-1 5/5 (capture call, same-second grouping, both shapers, the two-copy agreement pin); QF-2 / QF-3 2/2 (removing the card's .btn-ghost rule fails "admin edit buttons are quiet"; removing the .ap borders fails the tray-frame check -- each on a rebuilt harness site).
-REGRESSION RISKS: (1) QF-1 moves a ring that legitimately belongs to an EARLIER queue behind a second queue that starts in the same second (an overflow at the exact second) -- cosmetic, and rarer than the case fixed. (2) The rule lives in two projects; caller-lookup.test.js pins that the copies agree. (3) QF-2 changes the escalation card DOM order (row, forms, then resolve); the drivers select by class, and the delegated handlers are unchanged. Edit is now hidden in View-as-Manager like the other admin buttons. (4) `.btn-ghost` stays unstyled outside the escalation card (the coaching Dismissed button, the tour's Skip / Back) -- left as is, noted below.
+REGRESSION RISKS: (1) QF-1 moves a ring that legitimately belongs to an EARLIER queue behind a second queue that starts in the same second (an overflow at the exact second) -- cosmetic, and rarer than the case fixed. (2) The rule lives in two projects; caller-lookup.test.js pins that the copies agree. (3) QF-2 changes the escalation card DOM order (row, forms, then resolve); the drivers select by class, and the delegated handlers are unchanged. Edit is now hidden in View-as-Manager like the other admin buttons. (4) `.btn-ghost` is a global rule (owner follow-up): the coaching Dismissed button and the tour's Skip / Back turn quiet too, which is the intent of the class.
 INVARIANTS AT RISK: None -- QF-1 reorders journey events only (no count, disposition, wait or time moves; the journey-end / queue-wait SQL reads times, not order); QF-2 / QF-3 are client-only; no new public endpoint, no write path.
 NET SCORE: 3 − 1 = 2 (all three fire today; new failure mode: QF-1's same-second overflow reorder, cosmetic)
 
@@ -22,7 +22,7 @@ Deploy: CDR Import: `cd apps-script/cdr-import && clasp push -f`
 (Not complete in production until blocking operator actions are done AND the deploy step is confirmed.)
 
 FOLLOW-ON ITEMS:
-- `.btn-ghost` is unstyled outside the escalation card: the coaching worklist's Dismissed button (script-7-admin) and the tour's Skip / Back (script-10) still render solid. A global rule would fix them; left out of scope.
+- (DONE 2026-10-28, owner asked) `.btn-ghost` is now a global rule, so the coaching worklist's Dismissed button and the tour's Skip / Back are quiet too; drive-admin.js pins it.
 - The owner's remaining plan items: #1 / #3 read-only diagnostics (next), the #5 + #6 callbacks mock, then #1(b) / #3(b,c).
 
 DOCUMENTATION UPDATES NEEDED:

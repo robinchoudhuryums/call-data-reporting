@@ -748,6 +748,13 @@
     border: 1px solid var(--line);
   }
   .btn-secondary:hover { background: var(--paper-2); color: var(--ink); }
+  /* QF-2 (owner 2026-10-28): the QUIET button -- outline, no fill. It had no
+     rule at all, so every `btn btn-ghost` (the escalation card actions, the
+     coaching worklist's Dismissed, the tour's Skip / Back) rendered as the
+     solid default. */
+  .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; }
+  .btn-ghost:hover { background: var(--paper-2); opacity: 1; }
+  .btn-ghost:disabled { background: transparent; color: var(--muted); }
   /* M4: compact icon-only button (Refresh / Download CSV on My Department).
      Square, glyph-centered; the accessible label lives in title/aria-label. */
   .btn-icon {
@@ -8059,12 +8066,10 @@
      admin edits as quiet outline buttons, the admin destructive verbs pushed
      right as text buttons. `.btn-ghost` had NO rule, so every one of these
      rendered as the solid black default (and Delete's muted text sat on black,
-     reading as disabled); it is styled here, scoped to the card. */
+     reading as disabled). The quiet style itself is global (next to
+     .btn-secondary); only the card's layout + danger text live here. */
   .esc-actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .esc-actions-admin { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px; }
-  .esc-card .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; }
-  .esc-card .btn-ghost:hover { background: var(--paper-2); opacity: 1; }
-  .esc-card .btn-ghost:disabled { background: transparent; color: var(--muted); }
   .esc-card .esc-delete, .esc-card .esc-delete-all { color: var(--muted); border-color: transparent; }
   .esc-card .esc-delete:hover, .esc-card .esc-delete-all:hover { color: var(--bad); background: transparent; }
 
