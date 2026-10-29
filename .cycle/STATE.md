@@ -13,6 +13,8 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-29 (3) -- QV-3 IMPLEMENTED (addendum in block 259-qv2-broad-implement).** The day quick view's loading states: skeletons shaped like the table / chart / agent day on a fresh open (no height jump), frost relabelled for the day on screen when stepping, none for a prefetched day. Bites 4/4.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet. Still pending from the owner: the HOH-0 / XB-0 logs, the PR go-ahead, the day bars + quick view release decision.
 - **2026-10-29 (2) -- QV-2 IMPLEMENTED (block 259-qv2-broad-implement).** The day quick view's reads are ONE request (`getDayQuickView`, DayQuickView.gs, wrapping the three endpoints in one execution): opening a day = 2 requests (the day, then both neighbours), each step = 1. Inner usage rows suppressed for one `dayView` row, none for a prefetch. 2746 tests, ci:ui EXIT 0, bites 7/7. NET 1 - 0 = 1.
   **Owner-side:** deploy (new server file); after it, read `meta.partMs` on a cold open (the parts now run in sequence).
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
