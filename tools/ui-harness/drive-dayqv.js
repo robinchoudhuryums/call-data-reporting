@@ -151,10 +151,16 @@ function rpcDays(page, fns) {
     JSON.stringify({ cards: s.cards.map((c) => c.big), readouts }));
   const rc = await rpcDays(page, ['getDepartmentSummary', 'getMissedCallsReport', 'getDeptOutboundSummary']);
   const calls = { sum: rc.getDepartmentSummary, missed: rc.getMissedCallsReport, ob: rc.getDeptOutboundSummary };
-  record('it reads ONE day: the summary, the missed calls and (admin) outbound for that date only',
-    calls.sum.length === 1 && calls.sum[0] === iso + '..' + iso && calls.missed.length === 1 && calls.missed[0] === iso + '..' + iso
-      && calls.ob.indexOf(iso + '..' + iso) !== -1,
-    JSON.stringify(calls));
+  // QV-1b: the open day goes out FIRST, each read a single day; once it has
+  // landed the workday either side follows -- and nothing else.
+  const one = (d) => d + '..' + d;
+  const wantSet = [one(days[idx - 1]), one(iso), one(days[idx + 1])].sort().join(',');
+  const obDays = calls.ob.filter((x) => { const p = x.split('..'); return p[0] === p[1]; });
+  record('it reads the open day first (summary, missed calls, admin outbound -- one day each), then only its two neighbours',
+    calls.sum[0] === one(iso) && calls.missed[0] === one(iso)
+      && calls.sum.slice().sort().join(',') === wantSet && calls.missed.slice().sort().join(',') === wantSet
+      && obDays.slice().sort().join(',') === wantSet,
+    JSON.stringify({ calls, want: wantSet }));
   record('the agent table: one line per agent with a bar, a total row, and the outbound column for an admin',
     s.rows > 0 && s.rowBars >= s.rows && s.total && s.heads.indexOf('Connected / not') !== -1 && s.heads.indexOf('Ans %') !== -1,
     JSON.stringify({ rows: s.rows, bars: s.rowBars, total: s.total, heads: s.heads }));
@@ -182,9 +188,27 @@ function rpcDays(page, fns) {
   await page.waitForTimeout(200);
   record('a second click closes it', await page.evaluate(() => !document.querySelector('#day-qv-agents tr.dqv-ad-row')));
 
-  // Next / prev step the bars' workdays.
+  // QV-1b: the next day was prefetched, so stepping to it paints at once with
+  // NO new request -- held back replies (2 s) would otherwise show a loader --
+  // and the step queues the day after it.
+  await page.evaluate(() => {
+    window.__HARNESS__.calls.length = 0;
+    window.__HARNESS__.delay = { getDepartmentSummary: 2000, getMissedCallsReport: 2000, getDeptOutboundSummary: 2000 };
+  });
   await page.click('#day-qv-next');
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(250);
+  const pf = await page.evaluate(qvState);
+  const pfCalls = await rpcDays(page, ['getDepartmentSummary', 'getMissedCallsReport', 'getDeptOutboundSummary']);
+  const allPf = [].concat(pfCalls.getDepartmentSummary, pfCalls.getMissedCallsReport, pfCalls.getDeptOutboundSummary);
+  record('prefetch: stepping to the next day paints at once, with no new request for it',
+    pf.open && !pf.loading && pf.rows > 0 && pf.mcols === 18 && allPf.indexOf(one(days[idx + 1])) === -1,
+    JSON.stringify({ loading: pf.loading, rows: pf.rows, mcols: pf.mcols, calls: pfCalls }));
+  record('prefetch: the step queues the day after it, and the day just left (already held) is not asked again',
+    pfCalls.getDepartmentSummary.indexOf(one(days[idx + 2])) !== -1 && pfCalls.getMissedCallsReport.indexOf(one(days[idx + 2])) !== -1
+      && pfCalls.getDeptOutboundSummary.indexOf(one(days[idx + 2])) !== -1 && allPf.indexOf(one(iso)) === -1,
+    JSON.stringify(pfCalls));
+  await page.waitForTimeout(2300);
+  await page.evaluate(() => { window.__HARNESS__.delay = {}; });
   s = await page.evaluate(qvState);
   const nextLbl = await page.evaluate((d) => {
     const p = d.split('-');

@@ -3962,7 +3962,11 @@
   var DQV_STORE_ORDER_ = [];
   var DQV_STORE_MAX_ = 18;
   function dqvActive_() { return dtsBarsActive_(); }
-  function dqvStoreClear_() { DQV_STORE_ = {}; DQV_STORE_ORDER_ = []; }
+  var DQV_OB_STORE_ = { entries: {}, order: [], cap: 18 };   // its single-day outbound reads (obSummaryFetch_)
+  function dqvStoreClear_() {
+    DQV_STORE_ = {}; DQV_STORE_ORDER_ = [];
+    DQV_OB_STORE_.entries = {}; DQV_OB_STORE_.order = [];
+  }
   // One store for the pop-up's reads: a request already out is joined, a held
   // answer replays asynchronously, a FAILED read is never kept.
   function dqvFetch_(kind, req, ok, fail) {
@@ -4081,32 +4085,63 @@
     $('day-qv-agents').innerHTML = dqvLoadingHtml_('Loading the agents…');
     $('day-qv-missed').innerHTML = dqvLoadingHtml_('Loading missed calls…');
     var tok = ++DQV_.seq;
-    var req = function () {
-      var r = { department: DQV_.dept, from: iso, to: iso };
-      if (b.excluded || excIncludeOn_()) r.includeExceptionDays = true;
-      return r;
+    var got = { sum: undefined, ob: showOb ? undefined : null, missed: false };
+    // QV-1b: once this day has landed (or failed), load the days either side.
+    var settled = function () {
+      if (tok === DQV_.seq && got.sum !== undefined && got.ob !== undefined && got.missed) dqvPrefetch_(i);
     };
-    var got = { sum: undefined, ob: showOb ? undefined : null };
     var paintAgents = function () {
       if (tok !== DQV_.seq || got.sum === undefined || got.ob === undefined) return;
-      $('day-qv-agents').innerHTML = dqvAgentsHtml_(got.sum, got.ob, showOb);
+      if (got.sum !== false) $('day-qv-agents').innerHTML = dqvAgentsHtml_(got.sum, got.ob, showOb);   // false = failed, its note stays
+      settled();
     };
-    var failed = function (where, id) {
+    var failed = function (where, id, done) {
       return function (err) {
+        done();
         if (tok !== DQV_.seq) return;
         $(id).innerHTML = '<div class="ds-note">Could not load ' + where + ': '
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+        settled();
       };
     };
-    dqvFetch_('summary', req(), function (d) { got.sum = d; paintAgents(); }, failed('the agents', 'day-qv-agents'));
+    dqvFetch_('summary', dqvReq_(b), function (d) { got.sum = d; paintAgents(); },
+      failed('the agents', 'day-qv-agents', function () { got.sum = false; }));
     if (showOb) {
       obSummaryFetch_({ department: DQV_.dept, from: iso, to: iso },
-        function (d) { got.ob = d; paintAgents(); }, function () { got.ob = null; paintAgents(); });
+        function (d) { got.ob = d; paintAgents(); }, function () { got.ob = null; paintAgents(); }, DQV_OB_STORE_);
     }
-    dqvFetch_('missed', req(), function (d) {
+    dqvFetch_('missed', dqvReq_(b), function (d) {
+      got.missed = true;
       if (tok !== DQV_.seq) return;
       $('day-qv-missed').innerHTML = dqvMissedHtml_(d, iso);
-    }, failed('missed calls', 'day-qv-missed'));
+      settled();
+    }, failed('missed calls', 'day-qv-missed', function () { got.missed = true; }));
+  }
+  // One request shape per day bucket (an exception day is read with its figures).
+  function dqvReq_(b) {
+    var r = { department: DQV_.dept, from: b.from, to: b.from };
+    if (b.excluded || excIncludeOn_()) r.includeExceptionDays = true;
+    return r;
+  }
+  // QV-1b (owner 2026-10-29): NEIGHBOUR PREFETCH. Once the open day has
+  // landed, the workday either side loads quietly through the same stores, so
+  // the next arrow step paints from data already here and queues the one
+  // after it. Only the two neighbours -- never the whole range, which would
+  // queue dozens of reads ahead of the day on screen -- and only while the
+  // pop-up still shows the day that asked (a fast stepper's skipped days are
+  // never fetched). A day already held or in flight is joined, not re-sent.
+  function dqvPrefetch_(i) {
+    var st = DQV_.strip && DQV_.strip.__dts;
+    if (!DQV_.open || !st || DQV_.i !== i) return;
+    var showOb = obAllowed_();
+    [i - 1, i + 1].forEach(function (j) {
+      var b = st.bs[j];
+      if (!b) return;
+      var noop = function () {};
+      dqvFetch_('summary', dqvReq_(b), noop, null);
+      dqvFetch_('missed', dqvReq_(b), noop, null);
+      if (showOb) obSummaryFetch_({ department: DQV_.dept, from: b.from, to: b.from }, noop, null, DQV_OB_STORE_);
+    });
   }
 
   /**
@@ -4921,8 +4956,11 @@
   // the next sync retries; an explicit Refresh clears it (refresh()).
   var OB_SUMMARY_STORE_ = { entries: {}, order: [], cap: 8 };
   function obSummaryStoreClear_() { OB_SUMMARY_STORE_.entries = {}; OB_SUMMARY_STORE_.order = []; }
-  function obSummaryFetch_(req, onOk, onErr) {
-    var st = OB_SUMMARY_STORE_;
+  // QV-1b: `store` (optional) is a separate store of the same shape -- the day
+  // quick view keeps its single days in its own, so stepping (and its neighbour
+  // prefetch) can never push the page's own windows out of this one.
+  function obSummaryFetch_(req, onOk, onErr, store) {
+    var st = store || OB_SUMMARY_STORE_;
     var k = [req.department, req.from, req.to].join('|');
     var e = st.entries[k];
     if (e && e.done) { setTimeout(function () { onOk(e.data); }, 0); return; }
