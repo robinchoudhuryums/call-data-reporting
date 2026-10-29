@@ -88,7 +88,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   day; its cards equal the bars' own readouts beside the range figure; it
   reads that day in ONE getDayQuickView request, then both neighbours in ONE
   prefetch (QV-2; no per-report RPC at all), and a step to the next day
-  paints with no new request and sends one for the day after; the condensed
+  paints with no new request and sends one for the day after; the QV-3
+  loading states (skeletons on a fresh open, the frost relabelled when
+  stepping, none for a prefetched day, the agent-day skeleton); the condensed
   agent table with its total row and outbound column; the 18-slot missed
   chart, ring times and "↳ path"; a name opening that agent's day; the
   arrows stepping workdays (ends disabled) and the arrow keys; Escape and

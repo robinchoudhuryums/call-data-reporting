@@ -1470,7 +1470,14 @@ behind the removed button.
   are not kept, cleared by `refresh()`). **QV-1b: once the open day has
   settled, `dqvPrefetch_` asks for BOTH neighbours in one prefetch request**
   -- only those two, only while that day is still on screen -- so an arrow
-  step paints at once and queues the next neighbour (one request per step). The
+  step paints at once and queues the next neighbour (one request per step).
+  **QV-3: loading states** -- a fresh open shows SKELETONS shaped like what
+  arrives (`dqvSkeletonHtml_`: six table rows with the outbound column when
+  shown, the 18-slot chart, an agent's KPI tiles), labelled live statuses
+  with `aria-busy`, so the pop-up opens near its final size; stepping to a
+  day not yet here FROSTS the current content (`dqvBusy_` -> `dsFrostShow_`,
+  relabelled for the day now on screen); a held day paints with neither;
+  `dqvPaint_` lifts both. The
   agent table is the LB-2 cells condensed (agents with no call that day are
   counted, not listed); a name opens that agent's day beneath it through the
   agent panel's `apPreDay_` store, its outbound half cut when `!obAllowed_()`.
