@@ -639,8 +639,12 @@ function tfDialogRun(req) {
 // journeys the capture stores (IXT-1's person transfers included). Steps:
 //   * a queue the caller entered -> its department (the Dept Config rows; a
 //     queue with no row, or on two depts' rows, is skipped and counted);
-//   * an agent who answered (talk > 0) -> their roster department (an agent
-//     on two rosters is skipped and counted -- owner proposal 2026-10-28);
+//   * an agent who answered (talk > 0) -> their roster department. An agent
+//     on two rosters (XB-0b, after the first run skipped 676 such steps) goes
+//     to the department of the QUEUE that just rang them when it is one of
+//     theirs, else stays in the department the call is already in when that
+//     is one of theirs (which can never make a move), else is skipped and
+//     counted;
 //   * NOT a missed ring, an attempt or a consult (IXT-1): the caller did not
 //     move, so a consult that ends with the original agent is no transfer.
 // Consecutive steps in one department are one stint; a BOUNCE is a stint A
@@ -654,11 +658,15 @@ function tfDialogRun(req) {
  * `deptsOfAgent(name)` return arrays of department names.
  * Returns { stints, interDept, bounce: null | {from, to, sender, returner,
  * kind: 'sentBack'|'returnedUnanswered'}, skipped: {unmappedQueue,
- * twoDeptQueue, unknownAgent, twoRosterAgent}, unmappedQueues: [names] }.
+ * twoDeptQueue, unknownAgent, twoRosterAgent}, unmappedQueues: [names],
+ * unknownAgents: [names; a 7+-digit one as '(a number)'],
+ * resolved: {byQueue, byStint} (XB-0b's two-roster placements) }.
  */
 function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
   var out = { stints: [], interDept: false, bounce: null,
-    skipped: { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 }, unmappedQueues: [] };
+    skipped: { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 }, unmappedQueues: [],
+    unknownAgents: [], resolved: { byQueue: 0, byStint: 0 } };
+  var ringingDept = null;   // the department of the queue that rang the next answerer
   (journey || []).forEach(function (ev) {
     if (!ev || ev.origin) return;
     if (ev.transfer && (ev.missed || ev.consult)) return;   // the caller did not move
@@ -667,14 +675,27 @@ function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
     if (!isQ && !isAns) return;
     var name = String(ev.name == null ? '' : ev.name).trim();
     var ds = (isQ ? deptsOfQueue(name) : deptsOfAgent(name)) || [];
+    var rang = ringingDept;
+    if (isQ) ringingDept = ds.length === 1 ? ds[0] : null;
+    else ringingDept = null;   // an answer consumes the ring; a later direct hand-over has no queue
     if (!ds.length) {
       if (isQ) { out.skipped.unmappedQueue++; if (out.unmappedQueues.indexOf(name) === -1) out.unmappedQueues.push(name); }
-      else out.skipped.unknownAgent++;
+      else {
+        out.skipped.unknownAgent++;
+        var shown = /\d{7,}/.test(name.replace(/\D/g, '')) ? '(a number)' : name;   // never log a phone number
+        if (out.unknownAgents.indexOf(shown) === -1) out.unknownAgents.push(shown);
+      }
       return;
     }
-    if (ds.length > 1) { out.skipped[isQ ? 'twoDeptQueue' : 'twoRosterAgent']++; return; }
     var last = out.stints[out.stints.length - 1];
-    if (!last || last.dept !== ds[0]) out.stints.push(last = { dept: ds[0], agents: [] });
+    var dept = ds[0];
+    if (ds.length > 1) {
+      if (isQ) { out.skipped.twoDeptQueue++; return; }
+      if (rang && ds.indexOf(rang) !== -1) { dept = rang; out.resolved.byQueue++; }
+      else if (last && ds.indexOf(last.dept) !== -1) { dept = last.dept; out.resolved.byStint++; }
+      else { out.skipped.twoRosterAgent++; return; }
+    }
+    if (!last || last.dept !== dept) out.stints.push(last = { dept: dept, agents: [] });
     if (isAns && last.agents[last.agents.length - 1] !== name) last.agents.push(name);
   });
   var st = out.stints;
@@ -729,6 +750,11 @@ function tfBounceFold_(st, b, callId) {
   Object.keys(b.skipped).forEach(function (k) { st.skipped[k] += b.skipped[k]; });
   st.unmappedQueues = st.unmappedQueues || {};
   b.unmappedQueues.forEach(function (q) { st.unmappedQueues[q] = (st.unmappedQueues[q] || 0) + 1; });
+  st.unknownAgents = st.unknownAgents || {};
+  (b.unknownAgents || []).forEach(function (n) { st.unknownAgents[n] = (st.unknownAgents[n] || 0) + 1; });
+  st.resolved = st.resolved || { byQueue: 0, byStint: 0 };
+  Object.keys(b.resolved || {}).forEach(function (k) { st.resolved[k] += b.resolved[k]; });
+  if (Object.keys(b.skipped).some(function (k) { return b.skipped[k] > 0; })) st.callsWithSkip = (st.callsWithSkip || 0) + 1;
   st.sentBack = st.sentBack || 0; st.returnedUnanswered = st.returnedUnanswered || 0;
   st.pairs = st.pairs || {}; st.senders = st.senders || {}; st.samples = st.samples || [];
   if (!b.bounce) return st;
@@ -766,7 +792,9 @@ function tfBounceLine_(st) {
     + ' (sent back by the other department ' + String(st.sentBack || 0) + ', came back before anyone there answered '
     + String(st.returnedUnanswered || 0) + '); steps skipped -- queue on no Dept Config row ' + String(sk.unmappedQueue || 0)
     + ', queue on two depts\' rows ' + String(sk.twoDeptQueue || 0) + ', answerer not on the roster ' + String(sk.unknownAgent || 0)
-    + ', answerer on two rosters ' + String(sk.twoRosterAgent || 0);
+    + ', answerer on two rosters ' + String(sk.twoRosterAgent || 0)
+    + ' (calls with any step skipped ' + String(st.callsWithSkip || 0) + '); two-roster answerers placed -- by the queue that rang them '
+    + String((st.resolved || {}).byQueue || 0) + ', in the department the call was already in ' + String((st.resolved || {}).byStint || 0);
 }
 
 /**
@@ -805,10 +833,12 @@ function diagnoseTransferBounces(dateIso) {
     Logger.log('[xb] %s: %s', sheets[i].iso, tfBounceLine_(st));
     total.days++;
     total.captured += st.captured;
-    ['calls', 'interDept', 'sentBack', 'returnedUnanswered'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    ['calls', 'interDept', 'sentBack', 'returnedUnanswered', 'callsWithSkip'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    total.resolved = total.resolved || { byQueue: 0, byStint: 0 };
+    Object.keys(st.resolved || {}).forEach(function (k) { total.resolved[k] += st.resolved[k]; });
     total.skipped = total.skipped || { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 };
     Object.keys(st.skipped || {}).forEach(function (k) { total.skipped[k] += st.skipped[k]; });
-    ['pairs', 'senders', 'unmappedQueues'].forEach(function (k) {
+    ['pairs', 'senders', 'unmappedQueues', 'unknownAgents'].forEach(function (k) {
       total[k] = total[k] || {};
       Object.keys(st[k] || {}).forEach(function (x) { total[k][x] = (total[k][x] || 0) + st[k][x]; });
     });
@@ -820,6 +850,8 @@ function diagnoseTransferBounces(dateIso) {
   if (senders.length) Logger.log('[xb]   by the agent who sent the caller out first: %s', senders.join('; '));
   if (total.samples && total.samples.length) Logger.log('[xb]   e.g.: %s', total.samples.join('; '));
   if (unq.length) Logger.log('[xb]   queues not placed (no Dept Config row -- calls entering them): %s', unq.join('; '));
+  var unk = tfTopCounts_(total.unknownAgents, 10);
+  if (unk.length) Logger.log('[xb]   answerers not on any roster (calls they answered): %s', unk.join('; '));
   return total;
 }
 

@@ -275,7 +275,11 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 > transfer. `diagnoseTransferBounces` (XB-0, #86, in `transferFilter.js`) reads
 > the stored journeys as department stints and counts calls that came back to
 > the department that first answered them. Neither changes a figure; both size
-> a decision first.
+> a decision first. **A warm transfer leaves the caller's call tree** (HOH-0b):
+> it continues under the call the transferring leg names in Transfer To Call
+> ID (col P), so any reader asking "what happened after this leg" must follow
+> col P, not just the Parent-Call-ID group -- the first HOH-0 run did not and
+> read every flag as a hang-up.
 
 > **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
 > first agent it rings often start in the same second, and 8x8 can give the

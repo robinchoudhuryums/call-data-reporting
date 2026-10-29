@@ -3752,6 +3752,16 @@ When something looks wrong, before assuming a code bug, check:
     Writes nothing; call ids only. Its result decides HOH-1 (count only a
     final-leg hang-up, and mark it on that leg's row), which moves reported
     figures and so waits on the owner. Pinned by `inbound-calls.test.js`.
+    **HOH-0b (2026-10-29): the first run is VOID** -- it read 135 of 135
+    flags as `final`, the owner's own 10/19 counter-example included, because
+    a WARM transfer carries on under the call the transferring leg names in
+    Transfer To Call ID (col P), which a Parent-Call-ID group cannot see. The
+    pass now follows col P (chained, 3 hops) and counts the colleague's
+    hand-over leg to the caller's number there; a colleague-to-colleague
+    consult leg never counts. The line also gives, per flag, whether the
+    flagged leg itself named a Transfer To call and ended with Cause =
+    Transfer, and how many classes were decided through the link. Re-run it
+    after the cdr-import push before reading anything into the split.
 
 86. **Transfers that came back -- `diagnoseTransferBounces` (XB-0, cdr-import,
     read-only, owner 2026-10-28).** A caller answered in one department, moved
@@ -3769,3 +3779,14 @@ When something looks wrong, before assuming a code bug, check:
     skipped (owner proposal, to confirm). Writes nothing; employee / queue
     names and call ids only. Its result shapes XB-1 (a stored record + a
     report). Pinned by `transfer-filter.test.js`.
+    **XB-0b (2026-10-29): the first run found 3 bounces in 338 moves, but
+    skipped 676 two-roster answerer steps, 495 unknown answerers and 212
+    unmapped-queue steps, so 3 was a floor.** An agent on two rosters is now
+    placed by the queue that just rang them when it is one of theirs, else
+    kept in the department the call is already in (which can never make a
+    move), else skipped; the line adds both placements and the number of
+    CALLS with any step still skipped, and the log lists the answerers on no
+    roster by name (a 7+-digit one as "(a number)"). Still owner-side: a Dept
+    Config row (or an owner call) for each "queue not placed" -- the
+    sub-queues A_Q_PAP / A_Q_Spanish / A_Q_PAK ride only the dashboard's seed
+    constants, which cdr-import cannot read -- then re-run.

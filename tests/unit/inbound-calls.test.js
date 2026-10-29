@@ -1750,8 +1750,73 @@ test('HOH-0: the call went on but nobody answered -- unansweredAfter', function 
   assert.equal(h.call('icHoldHangupShape_', hohCall().map((r) => { const c = r.slice(); c[34] = 'N/A'; return c; })), null, 'no flag, no shape');
 });
 
+// HOH-0b (the owner's first run read 135 of 135 `final`): a WARM transfer
+// continues under the call the transferring leg names in Transfer To (col P)
+// -- the owner's 10/22 shape: the caller's leg to the Sales agent is flagged
+// and points at call W, where the agent consults a colleague and the
+// colleague's Outgoing leg to the caller's number is the hand-over.
+function hohWarm(o) {
+  o = o || {};
+  const D = '10/22/2026 ';
+  const C = '18115550123';
+  const rows = [
+    leg({ callId: 'R1', legId: 1, start: D + '08:56:20', stop: D + '08:56:27', direction: 'Incoming', caller: C, callee: '173', calleeName: 'A_Q_Sales' }),
+    leg({ callId: 'R1', legId: 2, start: D + '08:56:27', connected: D + '08:56:27', stop: D + '08:58:25', direction: 'Incoming', talk: '0:01:57',
+          caller: C, callee: '215', calleeName: 'Percy (Praveen) Shukla', answered: 'Answered', holdDur: '0:00:54', callerDisc: 'TRUE',
+          to: o.noLink ? 'N/A' : 'W1' }),
+    leg({ callId: 'W1', legId: 1, start: D + '08:57:16', connected: D + '08:57:16', stop: D + '09:00:16', direction: 'Internal', talk: '0:02:59',
+          caller: '215', callerName: 'Percy (Praveen) Shukla', callee: '297', calleeName: 'Julienne Inaanuran', answered: 'Answered' }),
+  ];
+  if (!o.consultOnly) {
+    rows.push(leg({ callId: 'W1', legId: 2, start: D + '08:58:26', connected: D + '08:58:26', stop: D + '09:00:16', direction: 'Outgoing',
+      talk: o.handTalk || '0:01:50', caller: '297', callerName: 'Julienne Inaanuran', callee: C, answered: o.handTalk === '0:00:00' ? '-' : 'Answered' }));
+  }
+  rows.push(leg({ callId: 'W1', legId: 3, start: D + '08:58:27', stop: D + '09:00:16', direction: 'Internal', caller: '297', callee: 'CallRecording (215)' }));
+  return rows;
+}
+
+test('HOH-0b: a warm transfer continues under the Transfer To call -- answeredAfter, decided through the link', function () {
+  const st = JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohWarm())));
+  assert.equal(st.flagged, 1);
+  assert.deepEqual(st.byClass, { final: 0, answeredAfter: 1, unansweredAfter: 0 });
+  assert.equal(st.linkedCalls, 1);
+  assert.deepEqual(st.viaLink, { answeredAfter: 1 });
+  assert.equal(st.flaggedLegTransferTo, 1, 'the flagged leg itself names the Transfer To call');
+  // The same legs without col P are what HOH-0 saw: final.
+  const blind = JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohWarm({ noLink: true }))));
+  assert.deepEqual(blind.byClass, { final: 1, answeredAfter: 0, unansweredAfter: 0 });
+  assert.equal(blind.linkedCalls || 0, 0);
+});
+
+test('HOH-0b: a consult that never reached the caller is not a hand-over; a hand-over nobody talked on is unansweredAfter', function () {
+  const consult = JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohWarm({ consultOnly: true }))));
+  assert.deepEqual(consult.byClass, { final: 1, answeredAfter: 0, unansweredAfter: 0 },
+    'the colleague-to-colleague leg outlasting the flag is the consult, not the caller');
+  assert.equal(consult.linkedCalls, 1);
+  const noTalk = JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohWarm({ handTalk: '0:00:00' }))));
+  assert.deepEqual(noTalk.byClass, { final: 0, answeredAfter: 0, unansweredAfter: 1 });
+  assert.deepEqual(noTalk.viaLink, { unansweredAfter: 1 });
+});
+
+test('HOH-0b: col P chains (a transfer of a transfer) up to the hop cap, without looping', function () {
+  const D = '10/22/2026 ';
+  const C = '18115550123';
+  const rows = hohWarm({ consultOnly: true }).map((r) => r.slice());
+  // W1's consult leg names W2, which holds the hand-over; W2 names R1 back (a loop).
+  rows.filter((r) => r[0] === 'W1' && r[1] === 1)[0][15] = 'W2';
+  rows.push(leg({ callId: 'W2', legId: 1, start: D + '08:59:00', connected: D + '08:59:00', stop: D + '09:03:00', direction: 'Outgoing',
+    talk: '0:04:00', caller: '298', callee: C, answered: 'Answered', to: 'R1' }));
+  const st = JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', rows)));
+  assert.deepEqual(st.byClass, { final: 0, answeredAfter: 1, unansweredAfter: 0 });
+  const linked = h.call('icHoldHangupLinkedLegs_', h.call('icGroupLegsByRoot_', rows), { R1: 'R1', W1: 'W1', W2: 'W2' }, 'R1');
+  assert.equal(linked.length, 3, 'W1 (consult + recording) + W2 (1), R1 never re-added');
+});
+
 test('HOH-0: the log line names every class and no number', function () {
   const line = h.call('icHoldHangupLine_', JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohCall()))));
   assert.match(line, /LAST 0 .*ANSWERED after it 1 .*unanswered 0/);
   assert.ok(!/2145550123/.test(line));
+  const warm = h.call('icHoldHangupLine_', JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohWarm()))));
+  assert.match(warm, /named a Transfer To call on 1, ended with Cause = Transfer on 0; flagged calls with a Transfer To link 1 \(decided through the link: answered after 1, unanswered after 0\)/);
+  assert.ok(!/8115550123/.test(warm), 'no caller number in the line');
 });
