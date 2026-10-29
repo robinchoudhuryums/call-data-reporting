@@ -35,7 +35,7 @@ Files modified: apps-script/department-dashboard/script-5-dept.html, apps-script
 CHANGES:
 QV-3 | script-5-dept.html, styles.html | `dqvSkeletonHtml_` (six table rows, the outbound column when shown; the 18-slot chart + ring lines; an agent's KPI tiles + call lines; a labelled `role="status"`), `dqvBusy_` (skeleton when the section holds nothing of this visit, else `dsFrostShow_` over the current content, relabelled for the day on screen) and `dqvPaint_` (lifts either, clears `aria-busy`); a held (prefetched) day shows no busy state; a fresh open resets the "filled" marker so it never frosts the last visit's day. Replaces the one-line "Loading…" (the pop-up opened ~450 px tall and jumped to ~920; now ~765).
 Two bugs caught on the way, both fixed and pinned: a second quick step kept the first day's frost label (`dsFrostShow_` keeps an overlay that is already up); inline skeleton lines had no width (`display: block`).
-TEST RESULTS: `node --test` 2747 pass / 0 fail; lint clean; drive-dayqv 32/32 (seven new loading checks with held replies); full ci:ui -- see STATE. Bites 4/4: unit -- the held-day skip, the relabel, the fresh-open reset; UI -- skeleton-instead-of-frost turns the stepping check red.
+TEST RESULTS: `node --test` 2747 pass / 0 fail; lint clean; drive-dayqv 32/32 (seven new loading checks with held replies); full `CI=true TZ=America/Chicago npm run ci:ui` EXIT 0 (all 18 stages). Bites 4/4: unit -- the held-day skip, the relabel, the fresh-open reset; UI -- skeleton-instead-of-frost turns the stepping check red.
 REGRESSION RISKS: None found (client-only, the pop-up's own sections).
 INVARIANTS AT RISK: None.
 NET SCORE: 0 − 0 = 0 (a polish item on an admin-trial surface)
