@@ -618,7 +618,7 @@ S62 | Team cards: linked day bars and the day quick view (Step 4, QV-1) | Subsys
     - (QV-1b) Wait a second after the day loads, then press ›: the next day appears at once, with no loading state (it was loaded in the background).
     - Press › / ‹ (or the Right / Left keys): the next / previous WORKDAY -- a Friday steps to Monday, a company holiday is skipped -- and the arrows disable at the range's first and last day. Escape closes; focus returns to the bars. Tab to a bar row, move with the arrows and press Enter: that day opens.
     - "Open this day on the page": the pop-up closes and the page loads that one day.
-    - Year to date (monthly bars) or a weekly range: clicking a bar opens nothing.
+    - (QV-4) Year to date (monthly bars) or a 2-6 month range (weekly bars): the bars' line says "click it for its first day"; clicking a bar opens the quick view on that month's or week's FIRST workday (a holiday on the 1st is skipped), and › then steps to the next workday, not the next month.
     - View as a manager, and sign in as a MANAGER: no bars.
     - On a phone-width window: the cards go two-up, the bars stay inside them and the page does not scroll sideways; the quick view fits the screen.
   Expected: as described; for a parent dept (CSR, Sales, Power) the % Answered bars cover the combined view, crossover agents counted once, so they add up to the card. Weekend or holiday calls stay in the card total but get no bar.

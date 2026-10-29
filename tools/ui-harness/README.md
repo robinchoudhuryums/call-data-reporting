@@ -94,8 +94,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   agent table with its total row and outbound column; the 18-slot missed
   chart, ring times and "↳ path"; a name opening that agent's day; the
   arrows stepping workdays (ends disabled) and the arrow keys; Escape and
-  focus return; Enter on a selected bar; "Open this day on the page"; month
-  bars not opening it; a manager without it; 360 px.
+  focus return; Enter on a selected bar; "Open this day on the page"; a month
+  bar opening its first workday and then stepping by day (QV-4); a manager
+  without it; 360 px.
 - `drive-exceptions.js` — **exception days** (Operator State #81): the
   disclosure note on My Department, Insights and the Overview (day, reason,
   calls left out), one striped untinted bar per day-bar card with an

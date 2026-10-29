@@ -18,7 +18,7 @@
  * times, queue hang-ups with "↳ path" -> a name opens its day -> next / prev
  * step workdays, the ends disable -> the arrow keys step -> Escape closes and
  * focus returns -> keyboard Enter on a bar opens -> "Open this day on the page"
- * -> month (or week) bars do not open it -> a manager has no bars and no pop-up ->
+ * -> a month (or week) bar opens its first workday and steps by day -> a manager has no bars and no pop-up ->
  * 360 px: no sideways scroll.
  *
  * Run: node drive-dayqv.js   (after gen-payloads + build-harness)
@@ -274,24 +274,47 @@ function rpcDays(page, fns) {
   record('"Open this day on the page" closes the pop-up and loads that one day',
     !op.open && op.from === days[3] && op.to === days[3] && op.sum.indexOf(days[3] + '..' + days[3]) !== -1, JSON.stringify(op));
 
-  // Week / month bars do not open it (the harness's year-to-date payload
-  // draws monthly bars; a weekly one takes the same dqvDaily_ branch).
-  const wFrom = meta.ytdStart;
-  await openDept(page, wFrom, meta.latest);
+  // QV-4 (owner 2026-10-29): a week / month bar opens its FIRST WORKDAY,
+  // and the arrows then walk day by day (the harness's year-to-date payload
+  // draws monthly bars; a weekly bar takes the same dqvDayIndex_ path).
+  await openDept(page, meta.ytdStart, meta.latest);
   const wb = page.locator('#dept-team-strip [data-dts-metric="rate"] .dts-bars');
   if (await wb.count()) {
-    const wbox = await wb.boundingBox();
-    await page.mouse.click(wbox.x + wbox.width / 2, wbox.y + wbox.height / 2);
-    await page.waitForTimeout(500);
-    const wk = await page.evaluate(() => ({ open: getComputedStyle(document.getElementById('day-qv-modal')).display !== 'none',
-      day: ((document.querySelector('#dept-team-strip .dts-readout-d') || {}).textContent || '') }));
     await page.mouse.move(5, 5);
     await page.waitForTimeout(200);
-    wk.idle = await page.evaluate(() => ((document.querySelector('#dept-team-strip .dts-readout') || {}).textContent || ''));
-    record('week / month bars do not open the day view (and do not invite a click)',
-      !wk.open && /^[A-Z][a-z]{2} \d{4} \(/.test(wk.day) && /^Monthly/.test(wk.idle) && !/click it/.test(wk.idle), JSON.stringify(wk));
+    const idle = await page.evaluate(() => ((document.querySelector('#dept-team-strip .dts-readout') || {}).textContent || ''));
+    const wbox = await wb.boundingBox();
+    const nBars = await page.evaluate(() => document.querySelector('#dept-team-strip [data-dts-metric="rate"] .dts-bars').children.length);
+    const pick = 1;   // the second month
+    await page.mouse.click(wbox.x + wbox.width * (pick + 0.5) / nBars, wbox.y + wbox.height / 2);
+    await page.waitForTimeout(1000);
+    const wk = await page.evaluate((k) => {
+      const st = document.getElementById('dept-team-strip').__dts;
+      const first = st.bs[k].from;
+      const qi = st.qv.bs.findIndex(function (b) { return b.from === first; });
+      return { open: getComputedStyle(document.getElementById('day-qv-modal')).display !== 'none',
+               title: (document.getElementById('day-qv-title') || {}).textContent || '',
+               first: first, next: (st.qv.bs[qi + 1] || {}).from || '', monthly: !!st.bs[k].monthly,
+               rows: document.querySelectorAll('#day-qv-agents tr[data-dqv-row]').length,
+               cards: document.querySelectorAll('#day-qv-cards .dqv-card').length };
+    }, pick);
+    const lbl = (d) => {
+      const p = d.split('-');
+      return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12)).getUTCDay()] + ' '
+        + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+p[1] - 1] + ' ' + (+p[2]) + ', ' + p[0];
+    };
+    record('QV-4: a month bar invites a click and opens on that month\'s FIRST workday, with its cards and agents',
+      /click it for its first day/.test(idle) && wk.monthly && wk.open && wk.title === lbl(wk.first) && wk.cards >= 4 && wk.rows > 0,
+      JSON.stringify(Object.assign({ idle: idle }, wk)));
+    await page.click('#day-qv-next');
+    await page.waitForTimeout(800);
+    const t2 = await page.evaluate(() => (document.getElementById('day-qv-title') || {}).textContent || '');
+    record('QV-4: from there the arrows step DAY by day (the next workday, not the next month)', !!wk.next && t2 === lbl(wk.next),
+      t2 + ' want ' + wk.next);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
   } else {
-    record('week / month bars do not open the day view', false, 'no bars for the year-to-date window');
+    record('QV-4: a month bar opens its first workday', false, 'no bars for the year-to-date window');
   }
   // QV-3 (owner 2026-10-29): LOADING STATES. A first open shows skeletons
   // shaped like what arrives (so the pop-up opens near its final size);

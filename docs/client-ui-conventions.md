@@ -1486,7 +1486,10 @@ behind the removed button.
   queue hang-ups. The arrows (and ← / →) step `st.bs`, the bars' own days, so
   a weekend or a company holiday is never a stop and an exception day is (its
   reads carry `includeExceptionDays`, a note says so); the ends disable.
-  Week / month bars do not open it. "Open this day on the page" sets From =
+  **QV-4: a week / month bar opens its FIRST workday** (`dqvDayIndex_`), and the
+  arrows then step day by day through `strip.__dts.qv` -- the bars' own
+  buckets on a daily view, one per workday (exception days their own stop) on
+  a weekly / monthly one (`dtsQuickViewDays_`). "Open this day on the page" sets From =
   To = that day and refreshes (the Overview point drill's order). Gate:
   `dqvActive_()` IS `dtsBarsActive_()`; the modal must NOT carry
   `[data-admin-only]` (that rule would un-hide it). Pinned by

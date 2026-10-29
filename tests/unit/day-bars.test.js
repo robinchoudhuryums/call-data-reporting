@@ -311,7 +311,7 @@ test('QV-1: each card\'s day figure comes from the bars\' own day sums, tinted w
 
 test('QV-1: released WITH the day bars; outbound behind obAllowed_; day bars only; two single-day reads', function () {
   assert.match(extractFn(S5, 'dqvActive_'), /return dtsBarsActive_\(\);/, 'one gate: the pop-up ships to managers when the bars do');
-  assert.match(extractFn(S5, 'dqvDaily_'), /!st\.bs\[0\]\.weekly && !st\.bs\[0\]\.monthly/, 'a week or month bar never opens it');
+  assert.match(extractFn(S5, 'dqvOpen_'), /var i = dqvDayIndex_\(st, barIdx\);\s*if \(i < 0\) return;/, 'QV-4: any bar opens a DAY (a week / month bar its first workday)');
   const show = extractFn(S5, 'dqvShow_');
   assert.match(show, /var showOb = obAllowed_\(\);/, 'the outbound column stays admin-only after the release');
   assert.match(show, /dqvFetchDays_\(\[b\], showOb, false,/, 'QV-2: the open day is ONE request, outbound only where the viewer sees it');
@@ -323,8 +323,8 @@ test('QV-1: released WITH the day bars; outbound behind obAllowed_; day bars onl
   assert.match(show, /var prev = st\.bs\[i - 1\], next = st\.bs\[i \+ 1\];/, 'the arrows step the bars\' days: weekends and holidays are never a stop');
   assert.match(extractFn(S5, 'dqvAgentDayHtml_'), /if \(!showOb\) kpis = kpis\.split\(/, 'the agent-day drill drops its outbound half too');
   const wire = extractFn(S5, 'dtsWire_');
-  assert.match(wire, /if \(e\.pointerType === 'mouse' \|\| \(st\.held && st\.sel === idx\)\) \{\s*if \(dqvDaily_\(st\)\) dqvOpen_\(strip, idx\);/);
-  assert.match(wire, /\(e\.key === 'Enter' \|\| e\.key === ' '\) && dqvDaily_\(st\)/);
+  assert.match(wire, /if \(e\.pointerType === 'mouse' \|\| \(st\.held && st\.sel === idx\)\) \{\s*dqvOpen_\(strip, idx\);/);
+  assert.match(wire, /\(e\.key === 'Enter' \|\| e\.key === ' '\) && st\.qv\)/);
   assert.match(extractFn(S5, 'refresh'), /obSummaryStoreClear_\(\);[^\n]*\n\s*dqvStoreClear_\(\);/, 'an explicit Refresh drops the held days');
   const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'dashboard.html'), 'utf8');
   const m = html.match(/<div id="day-qv-modal"[^>]*>/);
@@ -366,4 +366,40 @@ test('QV-3: loading states -- skeletons on a fresh open, frost when stepping, no
   const sk = extractFn(S5, 'dqvSkeletonHtml_');
   assert.match(sk, /role="status"><span class="sr-only">' \+ escapeHtml\(label\)/, 'the skeleton is a labelled live status');
   assert.match(extractFn(S5, 'dqvToggleAgent_'), /dqvSkeletonHtml_\('day', 'Loading ' \+ agent/);
+});
+
+test('QV-4: a week or month bar opens its FIRST workday, and the quick view steps day by day from there', function () {
+  // eslint-disable-next-line no-new-func
+  const model = new Function('dtsDayMap_', 'dtsExcludedDayMap_', 'dtsSum_', 'return (' + extractFn(S5, 'dtsQuickViewDays_') + ');')(
+    function () { return { '2026-06-02': { ans: 5, miss: 1 }, '2026-06-09': { ans: 7, miss: 0 } }; },
+    function () { return { '2026-06-03': { ans: 2, miss: 2 } }; },
+    function (b) { return { n: b.days.length }; });
+  // eslint-disable-next-line no-new-func
+  const dayIdx = new Function('return (' + extractFn(S5, 'dqvDayIndex_') + ');')();
+  const iso = ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-06', '2026-06-07',
+    '2026-06-08', '2026-06-09', '2026-06-10'];
+  const weekday = function (d) { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w !== 0 && w !== 6 && d !== '2026-06-01'; };   // 06-01 a holiday
+  const ex = [{ date: '2026-06-03', reason: 'outage' }];
+  const workday = function (d) { return weekday(d) && d !== '2026-06-03'; };
+  const weekly = [
+    { key: '2026-06-01', from: '2026-06-02', to: '2026-06-05', n: 3, weekly: true, monthly: false, days: [] },
+    { key: '2026-06-08', from: '2026-06-08', to: '2026-06-10', n: 3, weekly: true, monthly: false, days: [] },
+  ];
+  const state = { meta: { from: '2026-06-01', to: '2026-06-10' } };
+  const qv = model(state, weekly, [{}, {}], iso, workday, weekday, ex);
+  assert.deepEqual(qv.bs.map(function (b) { return b.from; }),
+    ['2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08', '2026-06-09', '2026-06-10'],
+    'one stop per workday: no weekend, no holiday; the exception day is its own stop');
+  assert.equal(qv.bs[1].excluded.reason, 'outage');
+  assert.ok(qv.bs.every(function (b) { return !b.weekly && !b.monthly && b.n === 1; }));
+  assert.equal(qv.sums.length, qv.bs.length);
+  const st = { bs: weekly, qv: qv };
+  assert.equal(dayIdx(st, 0), 0, 'week 1 opens on its first WORKDAY (06-02; 06-01 is a holiday)');
+  assert.equal(dayIdx(st, 1), 4, 'week 2 opens on 06-08');
+  assert.equal(dayIdx(st, 2), -1, 'no such bar');
+  // A daily view keeps the bars' own buckets, and a day bar opens itself.
+  const daily = [{ key: 'a', from: '2026-06-02', to: '2026-06-02', weekly: false, monthly: false, days: [] }];
+  const same = model(state, daily, ['s'], iso, workday, weekday, ex);
+  assert.equal(same.bs, daily);
+  assert.equal(dayIdx({ bs: daily, qv: same }, 0), 0);
 });

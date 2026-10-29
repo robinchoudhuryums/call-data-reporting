@@ -3801,9 +3801,12 @@
     var dept = getRequestedDept();
     var weekly = bs[0].weekly;
     var period = bs[0].monthly ? 'month' : (weekly ? 'week' : 'day');
-    // QV-1: a DAY bar opens the day quick view (dqvOpen_), so the idle line says so.
-    var idle = bs[0].monthly ? 'Monthly &middot; point at a bar' : (weekly ? 'Weekly &middot; point at a bar'
-      : (dqvActive_() ? 'Point at a bar &middot; click it for that day' : 'Point at a bar'));
+    // QV-1: a bar opens the day quick view (dqvOpen_) -- a day bar on its day,
+    // a week / month bar on its first workday (QV-4) -- so the idle line says so.
+    var qvOn = dqvActive_();
+    var idle = bs[0].monthly ? 'Monthly &middot; point at a bar' + (qvOn ? ' &middot; click it for its first day' : '')
+      : (weekly ? 'Weekly &middot; point at a bar' + (qvOn ? ' &middot; click it for its first day' : '')
+      : (qvOn ? 'Point at a bar &middot; click it for that day' : 'Point at a bar'));
     var built = 0;
     strip.querySelectorAll('[data-dts-metric]').forEach(function (tile) {
       var key = tile.getAttribute('data-dts-metric');
@@ -3854,8 +3857,44 @@
       built++;
     });
     if (!built) return;
-    strip.__dts = { bs: bs, sums: sums, sel: null, held: false, idle: idle };
+    strip.__dts = { bs: bs, sums: sums, sel: null, held: false, idle: idle, qv: dtsQuickViewDays_(state, bs, sums, isoList, isWorkday, isWeekday, exList) };
     dtsWire_(strip);
+  }
+
+  /**
+   * QV-4 (owner 2026-10-29): the day quick view always steps DAYS. On a daily
+   * view that is the bars' own buckets; on a weekly / monthly view it is one
+   * bucket per workday of the range built the same way the daily view would
+   * (weekends and company holidays are never a stop; an exception day is its
+   * own stop, read with its figures) -- so a week or month bar can open its
+   * first workday and the arrows walk day by day from there.
+   */
+  function dtsQuickViewDays_(state, bs, sums, isoList, isWorkday, isWeekday, exList) {
+    if (!bs[0].weekly && !bs[0].monthly) return { bs: bs, sums: sums };
+    var dm = dtsDayMap_(state);
+    var days = isoList.filter(isWorkday).map(function (iso) {
+      return { key: iso, from: iso, to: iso, n: 1, weekly: false, monthly: false, days: dm[iso] ? [dm[iso]] : [] };
+    });
+    var m = state.meta || {};
+    if ((exList || []).length) {
+      var exMap = dtsExcludedDayMap_(state);
+      exList.forEach(function (e) {
+        if (e.date < m.from || e.date > m.to || !isWeekday(e.date)) return;
+        days.push({ key: e.date, from: e.date, to: e.date, n: 1, weekly: false, monthly: false,
+                    days: exMap[e.date] ? [exMap[e.date]] : [], excluded: e });
+      });
+      days.sort(function (a, b) { return a.from < b.from ? -1 : (a.from > b.from ? 1 : 0); });
+    }
+    return { bs: days, sums: days.map(dtsSum_) };
+  }
+  // QV-4: the quick-view day a bar opens -- itself on a daily view, its
+  // bucket's FIRST workday (the bucket's own `from`) on a weekly / monthly one.
+  function dqvDayIndex_(st, barIdx) {
+    var b = st && st.bs && st.bs[barIdx];
+    if (!b || !st.qv) return -1;
+    if (!b.weekly && !b.monthly) return barIdx;
+    for (var j = 0; j < st.qv.bs.length; j++) if (st.qv.bs[j].from === b.from) return j;
+    return -1;
   }
 
   function dtsSelect_(strip, i) {
@@ -3914,7 +3953,7 @@
       if (!barsEl) { if (st.held) { st.held = false; dtsSelect_(strip, null); } return; }
       var idx = dtsIndexAt_(strip, barsEl, e.clientX);
       if (e.pointerType === 'mouse' || (st.held && st.sel === idx)) {
-        if (dqvDaily_(st)) dqvOpen_(strip, idx);
+        dqvOpen_(strip, idx);
         return;
       }
       st.held = true;
@@ -3929,7 +3968,7 @@
       else if (e.key === 'Home') i = 0;
       else if (e.key === 'End') i = n - 1;
       else if (e.key === 'Escape') { st.held = false; dtsSelect_(strip, null); return; }
-      else if ((e.key === 'Enter' || e.key === ' ') && dqvDaily_(st)) { e.preventDefault(); dqvOpen_(strip, i); return; }   // QV-1
+      else if ((e.key === 'Enter' || e.key === ' ') && st.qv) { e.preventDefault(); dqvOpen_(strip, i); return; }   // QV-1 / QV-4
       else return;
       e.preventDefault();
       st.held = true;
@@ -3954,7 +3993,8 @@
   // three existing endpoints run in one execution. The arrows step through the bars' days, so they
   // skip weekends and company holidays exactly as the bars do (an exception
   // day is its own striped bar, so it is a stop too, read with its figures
-  // included). Weekly / monthly bars do not open it. ADMIN-ONLY while
+  // included). A week / month bar opens its first workday and the arrows then
+  // step day by day (QV-4, dtsQuickViewDays_). ADMIN-ONLY while
   // trialled: it is released with the day bars (dqvActive_ IS
   // dtsBarsActive_), and the outbound column stays behind obAllowed_ after.
   var DQV_ = { strip: null, i: null, dept: '', seq: 0, open: false, opener: null, agentKey: null };
@@ -4009,8 +4049,11 @@
         .getDayQuickView(req);
     });
   }
-  function dqvDaily_(st) {
-    return !!(st && st.bs && st.bs.length && !st.bs[0].weekly && !st.bs[0].monthly);
+  // QV-4: the quick view's per-DAY model (strip.__dts.qv -- the bars' own
+  // buckets on a daily view, one per workday on a weekly / monthly one).
+  function dqvModel_() {
+    var st = DQV_.strip && DQV_.strip.__dts;
+    return (st && st.qv) || null;
   }
   function dqvYearLabel_(b) {
     return dtsBucketLabel_(b) + ', ' + String(b.from).slice(0, 4);
@@ -4127,7 +4170,7 @@
   }
 
   function dqvShow_(i) {
-    var strip = DQV_.strip, st = strip && strip.__dts;
+    var st = dqvModel_();
     if (!st || i == null || i < 0 || i >= st.bs.length) return;
     DQV_.i = i;
     DQV_.agentKey = null;
@@ -4182,7 +4225,7 @@
   // pop-up still shows the day that asked (a fast stepper's skipped days are
   // never fetched). A day already held or in flight is joined, not re-sent.
   function dqvPrefetch_(i) {
-    var st = DQV_.strip && DQV_.strip.__dts;
+    var st = dqvModel_();
     if (!DQV_.open || !st || DQV_.i !== i) return;
     var near = [st.bs[i - 1], st.bs[i + 1]].filter(Boolean);
     if (near.length) dqvFetchDays_(near, obAllowed_(), true, function () {}, null);
@@ -4271,7 +4314,7 @@
     row.innerHTML = '<td colspan="' + tr.children.length + '"><div class="dqv-ad" aria-busy="true">'
       + dqvSkeletonHtml_('day', 'Loading ' + agent + '’s day…') + '</div></td>';
     tr.parentNode.insertBefore(row, tr.nextSibling);
-    var st = DQV_.strip && DQV_.strip.__dts, iso = st && st.bs[DQV_.i] && st.bs[DQV_.i].from;
+    var st = dqvModel_(), iso = st && st.bs[DQV_.i] && st.bs[DQV_.i].from;
     var tok = DQV_.seq, myKey = DQV_.agentKey;
     var box = row.querySelector('.dqv-ad');
     apPreDay_(agent, iso, dept, function (data) {
@@ -4363,9 +4406,12 @@
     if (e.key === 'ArrowLeft' && !$('day-qv-prev').disabled) { e.preventDefault(); dqvShow_(DQV_.i - 1); }
     else if (e.key === 'ArrowRight' && !$('day-qv-next').disabled) { e.preventDefault(); dqvShow_(DQV_.i + 1); }
   }
-  function dqvOpen_(strip, i) {
+  // `barIdx` is the BAR clicked; dqvDayIndex_ turns it into the day to open.
+  function dqvOpen_(strip, barIdx) {
     var st = strip && strip.__dts, modal = $('day-qv-modal');
-    if (!modal || !dqvActive_() || !dqvDaily_(st) || i == null) return;
+    if (!modal || !dqvActive_() || !st || !st.qv || barIdx == null) return;
+    var i = dqvDayIndex_(st, barIdx);
+    if (i < 0) return;
     DQV_.strip = strip;
     DQV_.dept = getRequestedDept();
     if (!DQV_.open) {
@@ -4414,7 +4460,7 @@
   // "Open this day on the page": the page's window becomes that one day (the
   // Overview point drill's order -- dates first, then one refresh).
   function dqvOpenOnPage_() {
-    var st = DQV_.strip && DQV_.strip.__dts;
+    var st = dqvModel_();
     var b = st && st.bs[DQV_.i];
     if (!b) return;
     dqvClose_();
