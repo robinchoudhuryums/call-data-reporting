@@ -42,3 +42,16 @@ NET SCORE: 0 − 0 = 0 (a polish item on an admin-trial surface)
 OPERATOR ACTIONS / DEPLOY: deploy the dashboard; walk S62's QV-3 step | BLOCKS DEPLOY: N
 FOLLOW-ON ITEMS: None new.
 ---END ADDENDUM---
+
+---BROAD SCAN IMPLEMENTATION SUMMARY (addendum, 2026-10-29: QV-4)---
+Findings implemented: QV-4 (owner 2026-10-29) -- a week / month day bar opens the quick view on its first workday; the arrows then step by day.
+Files modified: apps-script/department-dashboard/script-5-dept.html, tests/unit/day-bars.test.js, tools/ui-harness/drive-dayqv.js, tools/ui-harness/README.md, tests/README.md, docs/client-ui-conventions.md, docs/fix-history.md, docs/regression-scenarios.md
+CHANGES:
+QV-4 | script-5-dept.html | `strip.__dts.qv`, the quick view's per-DAY model (`dtsQuickViewDays_`: the bars' own buckets on a daily view; one per workday on a weekly / monthly one, built like the daily view -- weekends and holidays never a stop, an exception day its own stop with its figures); `dqvDayIndex_` maps a clicked bar to its day (itself, or its bucket's first workday = the bucket's own `from`); every dqv function reads the model through `dqvModel_`; `dqvDaily_` removed; the weekly / monthly idle line invites the click.
+TEST RESULTS: `node --test` 2748 pass / 0 fail; lint clean; drive-dayqv 33/33, drive-daybars 24/24; full ci:ui -- see STATE. Bites 3/3: unit -- the first-workday mapping, the per-day model; UI -- a bar index used as a day index turns two drive-dayqv checks red.
+REGRESSION RISKS: a click on a week / month bar used to do nothing; it now opens the pop-up (Escape closes). A year-to-date range builds ~210 day stops (cheap: client-side sums over the payload's existing daily tuples).
+INVARIANTS AT RISK: None.
+NET SCORE: 0 − 0 = 0 (new capability on an admin-trial surface)
+OPERATOR ACTIONS / DEPLOY: deploy the dashboard; walk S62's QV-4 step | BLOCKS DEPLOY: N
+FOLLOW-ON ITEMS: None.
+---END ADDENDUM---
