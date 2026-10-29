@@ -6,15 +6,18 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-28
+Updated: 2026-10-29
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-29 -- QV-1 + BR-4 IMPLEMENTED (block 259-qv1-br4-broad-implement).** BR-4: the brief's Agents + Team detail are one Team row (agents verdict · talk time per call; opens the cards then the team detail). QV-1: a click on a day bar opens that day's quick view (cards for the day beside the range, a condensed agent table -- outbound behind obAllowed_ -- the day's missed calls, workday arrows, "Open this day on the page"); admin-only, released with the day bars. Bites 5/5 unit + 1 UI. NET 0 - 0 = 0.
+  **Owner-side:** deploy the dashboard; walk S61 (Team row) + S62 (quick view).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end"). Still waiting: the HOH-0 / XB-0 diagnostic logs.
 - **2026-10-28 (6) -- BR-1/2/3 (owner testing notes).** The brief frosts "Loading <dept>…" on a dept switch / re-run; managers (team-average excluded) never quoted in Team detail; Queue health 1-3 violation days = lighter green (`fade`), 4+ amber. Bites 4/4.
-  **Open / owner to decide:** merge the Agents + Team detail rows?; what a day bar in the team cards should click through to.
+  **Decided 2026-10-29:** merge the rows (BR-4); a day bar opens a day quick view (QV-1).
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
 - **2026-10-28 (5) -- LB-2 IMPLEMENTED (block 259-lb2-broad-implement).** The combined agent table is one line per agent: an inbound bar + an outbound bar (with the rang out / brief / not recorded split), each on its own scale, per-day under the counts, chips on the two rates, count changes in the hover (owner Option B). NET 0 - 0 = 0.
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
