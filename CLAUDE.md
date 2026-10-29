@@ -140,7 +140,7 @@ npm run lint:gas
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~130 suites pin the invariants, the report
+# Non-zero exit on failure. ~160 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -1776,12 +1776,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bound. Its key carries the freshness tag AND a `hashAgents_` of the dept
   ROSTER, because the tag does not move when the roster is edited and a stale
   ext set silently changes which floaters are recognized (INV-53). Only the
-  SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
-  (Batch 6) the `summary:v24` and `individual_active:v2` keys carry the same
-  roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
-  reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:` (and since DATA-1/2/10 `companyOverview`, `insights`, the agent app's blobs and `agentHist:v1`; DATA-3 `outboundReport`),
+  SET is cached; the grid is ~128k cells, past the per-value cap. For the same
+  reason every report key that lists roster agents carries the roster hash as
+  a SUFFIX (the CORE-3 pattern, no version bump; D-7, DL-5, DATA-1/2/3/10),
   and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /
-  `rosterAllDeptsHash_`, Data.gs; pinned by `cache-key.test.js`).
+  `rosterAllDeptsHash_`, Data.gs; pinned per key by `cache-key.test.js`).
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope
