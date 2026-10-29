@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-29 (7) -- HOH-0b + XB-0b (block 259-hoh0b-xb0b-broad-implement).** The owner's first runs: HOH-0 read 135/135 flags `final` (void: a warm transfer continues under the col P call, outside the Parent-Call-ID group -- now followed, 3 hops, hand-over legs to the caller only); XB-0 found 3 bounces in 338 moves with 676 two-roster steps skipped (a floor -- two-roster answerers now placed by the ringing queue, else the current dept). 2753 tests, bites 6/6.
+  **Owner-side:** push cdr-import, re-run both, send logs; map or name the 8 "queues not placed" (PAP / Spanish / PAK have no Dept Config rows of their own).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
 - **2026-10-29 (6) -- SHIPPED: [PR #395](https://github.com/robinchoudhuryums/call-data-reporting/pull/395) merged on green CI (test / lint / ui-harness), merge 123f81b.** Branch restarted from main. Carries everything from the 10-28/29 owner rounds (QF-1..3, HOH-0, XB-0, CB-R1/R2, DL-R1/R2, SB-*, LB-2, BR-1..4, QV-1..4, the /sync-docs pass).
   **Owner-side:** deploy the dashboard (`clasp push -f` uploads the new DayQuickView.gs + a new deployment version) and cdr-import (the two diagnostics); walk S61, S62, S48, S60, S57; run `diagnoseHoldHangupsAllDates` / `diagnoseTransferBouncesAllDates` and send the logs + the two XB answers; decide the day bars + quick view release; read `meta.partMs` on a cold open.
   **Where I left off:** nothing open on the branch; waiting on the owner items above.
