@@ -1321,6 +1321,7 @@ test('SEC-1: every public DQE/QCD report RPC caps its client window', function (
     'AgentHome.gs': ['getAgentHome'],
     'AgentDay.gs': ['getAgentDayStrip'],
     'OutboundReport.gs': ['getDeptOutboundSummary', 'getOutboundDirectCallbacks', 'getOutboundDirectRepeats'],
+    'DayQuickView.gs': ['getDayQuickView'],   // QV-2: caps its date list; each part re-checks its own day
   };
   const missing = [];
   Object.keys(RPCS).forEach(function (f) {

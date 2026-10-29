@@ -1459,15 +1459,18 @@ behind the removed button.
   (`strip.__dts`, PURE `dqvCardFigure_`, tinted `is-bad` / `is-watch` like the
   bars; CSR's Transfer % from `csrTransfer.daily`) with the card's range
   figure under each, so they open instantly and always equal the bar's
-  readout. Then two single-day reads go out in parallel -- `getDepartmentSummary`
-  and `getMissedCallsReport` for that date (`dqvFetch_`, a per-page-load
-  store, joined / replayed / failures not kept, cleared by `refresh()`) --
-  plus that day's outbound through `obSummaryFetch_` in the pop-up's OWN store
-  (`DQV_OB_STORE_`, so stepping never evicts the page's windows) when
-  `obAllowed_()`. **QV-1b: once all of the open day's reads have settled,
-  `dqvPrefetch_` loads the workday either side through the same stores** --
-  only those two, only while that day is still on screen -- so an arrow step
-  paints at once and queues the next neighbour. The
+  readout. **Then ONE request (QV-2, `getDayQuickView`, DayQuickView.gs)**
+  returns the rest: the existing `getDepartmentSummary` /
+  `getMissedCallsReport` / (when `obAllowed_()`) `getDeptOutboundSummary` for
+  that one day, run in one execution -- every gate, cache key and payload is
+  theirs; a failing part comes back in that day's `errors` while the others
+  render; the inner usage rows are suppressed and the request logs ONE
+  `dayView` row (none for a prefetch). The client keeps one per-DAY store
+  (`dqvFetchDays_`: held days replay, in-flight days are joined, failures
+  are not kept, cleared by `refresh()`). **QV-1b: once the open day has
+  settled, `dqvPrefetch_` asks for BOTH neighbours in one prefetch request**
+  -- only those two, only while that day is still on screen -- so an arrow
+  step paints at once and queues the next neighbour (one request per step). The
   agent table is the LB-2 cells condensed (agents with no call that day are
   counted, not listed); a name opens that agent's day beneath it through the
   agent panel's `apPreDay_` store, its outbound half cut when `!obAllowed_()`.

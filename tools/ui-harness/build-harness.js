@@ -156,6 +156,18 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getMissedCallsReport: function (req) {
       return spanDays(req) <= 2 ? P['missed-day'] : P['missed-30d'];
     },
+    // QV-2: the day quick view's ONE request -- composed from the three
+    // endpoints' own mocks, exactly as DayQuickView.gs composes the real ones
+    // (each part a one-day window; outbound only when asked for).
+    getDayQuickView: function (req) {
+      var days = {};
+      ((req && req.dates) || []).forEach(function (d) {
+        var r = { department: req.department, from: d, to: d };
+        days[d] = { summary: handlers.getDepartmentSummary(r), missed: handlers.getMissedCallsReport(r),
+                    outbound: req.outbound ? handlers.getDeptOutboundSummary(r) : null, errors: {} };
+      });
+      return { meta: { department: req.department, dates: (req && req.dates) || [], computeMs: 9, partMs: {} }, days: days };
+    },
     getIndividualReportInit: function () { return P['ir-init']; },
     getIndividualReport: function () { return P['ir-report']; },
     getInsightsReportInit: function () { return P['insights-init']; },

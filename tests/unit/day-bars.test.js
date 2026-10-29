@@ -314,11 +314,12 @@ test('QV-1: released WITH the day bars; outbound behind obAllowed_; day bars onl
   assert.match(extractFn(S5, 'dqvDaily_'), /!st\.bs\[0\]\.weekly && !st\.bs\[0\]\.monthly/, 'a week or month bar never opens it');
   const show = extractFn(S5, 'dqvShow_');
   assert.match(show, /var showOb = obAllowed_\(\);/, 'the outbound column stays admin-only after the release');
-  assert.match(show, /if \(showOb\) \{\s*obSummaryFetch_\(\{ department: DQV_\.dept, from: iso, to: iso \}[\s\S]*?, DQV_OB_STORE_\);/,
-    'outbound through obSummaryFetch_, in the pop-up\'s OWN store');
-  assert.match(show, /dqvFetch_\('summary', dqvReq_\(b\)/);
-  assert.match(show, /dqvFetch_\('missed', dqvReq_\(b\)/);
-  assert.match(extractFn(S5, 'dqvReq_'), /var r = \{ department: DQV_\.dept, from: b\.from, to: b\.from \};/, 'each read is that one day');
+  assert.match(show, /dqvFetchDays_\(\[b\], showOb, false,/, 'QV-2: the open day is ONE request, outbound only where the viewer sees it');
+  assert.match(show, /dqvAgentsHtml_\(day\.summary, \(showOb && !e\.outbound\) \? day\.outbound : null, showOb\)/,
+    'a failed outbound part leaves the column on dashes');
+  assert.match(extractFn(S5, 'dqvFetchDays_'), /var req = \{ department: DQV_\.dept, dates: list\.map\(function \(x\) \{ return x\.b\.from; \}\), outbound: !!ob \};/,
+    'each day of the request is one bucket\'s own date');
+  assert.match(extractFn(S5, 'dqvFetchDays_'), /\.getDayQuickView\(req\);/);
   assert.match(show, /var prev = st\.bs\[i - 1\], next = st\.bs\[i \+ 1\];/, 'the arrows step the bars\' days: weekends and holidays are never a stop');
   assert.match(extractFn(S5, 'dqvAgentDayHtml_'), /if \(!showOb\) kpis = kpis\.split\(/, 'the agent-day drill drops its outbound half too');
   const wire = extractFn(S5, 'dtsWire_');
@@ -332,18 +333,19 @@ test('QV-1: released WITH the day bars; outbound behind obAllowed_; day bars onl
   assert.match(m[0], /style="display:none;"/);
 });
 
-test('QV-1b: neighbour prefetch -- the days either side, once the open day has landed, through the same stores', function () {
+test('QV-1b / QV-2: neighbour prefetch -- both neighbours in ONE request, once the open day has landed, through the one store', function () {
   const show = extractFn(S5, 'dqvShow_');
-  assert.match(show, /var settled = function \(\) \{\s*if \(tok === DQV_\.seq && got\.sum !== undefined && got\.ob !== undefined && got\.missed\) dqvPrefetch_\(i\);/,
-    'only after all of the open day\'s reads have settled (landed or failed), and only for the day still on screen');
+  assert.equal((show.match(/dqvPrefetch_\(i\);/g) || []).length, 2, 'after the open day lands AND after it fails');
   const pre = extractFn(S5, 'dqvPrefetch_');
   assert.match(pre, /if \(!DQV_\.open \|\| !st \|\| DQV_\.i !== i\) return;/, 'a closed pop-up or a day stepped past prefetches nothing');
-  assert.match(pre, /\[i - 1, i \+ 1\]\.forEach/, 'the two neighbours only, never the whole range');
-  assert.match(pre, /dqvFetch_\('summary', dqvReq_\(b\), noop, null\);/);
-  assert.match(pre, /dqvFetch_\('missed', dqvReq_\(b\), noop, null\);/);
-  assert.match(pre, /if \(showOb\) obSummaryFetch_\(\{ department: DQV_\.dept, from: b\.from, to: b\.from \}, noop, null, DQV_OB_STORE_\);/,
-    'outbound only where the viewer sees it, in the pop-up\'s own store');
-  assert.match(extractFn(S5, 'obSummaryFetch_'), /var st = store \|\| OB_SUMMARY_STORE_;/, 'the page\'s FO-3 store stays the default');
-  assert.match(extractFn(S5, 'dqvStoreClear_'), /DQV_OB_STORE_\.entries = \{\}; DQV_OB_STORE_\.order = \[\];/, 'Refresh drops the pop-up\'s outbound days too');
-  assert.match(extractFn(S5, 'dqvFetch_'), /if \(e\) \{ e\.w\.push\(/, 'a prefetch still in flight is joined by the step, never re-sent');
+  assert.match(pre, /var near = \[st\.bs\[i - 1\], st\.bs\[i \+ 1\]\]\.filter\(Boolean\);/, 'the two neighbours only, never the whole range');
+  assert.match(pre, /if \(near\.length\) dqvFetchDays_\(near, obAllowed_\(\), true,/, 'ONE prefetch request (prefetch: true -> no usage row)');
+  const fd = extractFn(S5, 'dqvFetchDays_');
+  assert.match(fd, /if \(e && e\.done\) \{ setTimeout\(function \(\) \{ ok\(e\.data, b\); \}, 0\); return; \}/, 'a held day replays asynchronously');
+  assert.match(fd, /if \(e\) \{ e\.w\.push\(/, 'a day in flight (a prefetch) is joined by the step, never re-sent');
+  assert.match(fd, /if \(DQV_STORE_\[x\.k\] === x\.e\) delete DQV_STORE_\[x\.k\];/, 'a failed request is never kept');
+  assert.match(fd, /send\[dqvInc_\(b\) \? 1 : 0\]\.push/, 'days split only by their exception-day flag');
+  assert.match(extractFn(S5, 'dqvKey_'), /\[DQV_\.dept, b\.from, ob \? 1 : 0, dqvInc_\(b\) \? 1 : 0\]/);
+  assert.doesNotMatch(S5.slice(S5.indexOf('function dqvFetchDays_('), S5.indexOf('function dqvAgentsHtml_(')),
+    /getDepartmentSummary|getMissedCallsReport|obSummaryFetch_/, 'the pop-up reads nothing outside the one request');
 });
