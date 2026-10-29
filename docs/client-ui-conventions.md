@@ -1462,7 +1462,12 @@ behind the removed button.
   readout. Then two single-day reads go out in parallel -- `getDepartmentSummary`
   and `getMissedCallsReport` for that date (`dqvFetch_`, a per-page-load
   store, joined / replayed / failures not kept, cleared by `refresh()`) --
-  plus that day's outbound through the FO-3 store when `obAllowed_()`. The
+  plus that day's outbound through `obSummaryFetch_` in the pop-up's OWN store
+  (`DQV_OB_STORE_`, so stepping never evicts the page's windows) when
+  `obAllowed_()`. **QV-1b: once all of the open day's reads have settled,
+  `dqvPrefetch_` loads the workday either side through the same stores** --
+  only those two, only while that day is still on screen -- so an arrow step
+  paints at once and queues the next neighbour. The
   agent table is the LB-2 cells condensed (agents with no call that day are
   counted, not listed); a name opens that agent's day beneath it through the
   agent panel's `apPreDay_` store, its outbound half cut when `!obAllowed_()`.

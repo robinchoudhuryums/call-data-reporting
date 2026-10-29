@@ -32,3 +32,16 @@ FOLLOW-ON ITEMS:
 DOCUMENTATION UPDATES NEEDED:
 - None beyond this commit (client-ui-conventions "The DAY QUICK VIEW" + the brief bullet, fix-history BR-4 / QV-1, S61 / S62, tests/README, harness README, CLAUDE.md's asserting-stage count + S62 title).
 ---END BROAD SCAN IMPLEMENTATION SUMMARY---
+
+---BROAD SCAN IMPLEMENTATION SUMMARY (addendum, 2026-10-29: QV-1b)---
+Findings implemented: QV-1b (owner 2026-10-29) -- the day quick view prefetches the workday either side once the open day has landed.
+Files modified: apps-script/department-dashboard/script-5-dept.html, tests/unit/day-bars.test.js, tools/ui-harness/drive-dayqv.js, tools/ui-harness/README.md, tests/README.md, docs/client-ui-conventions.md, docs/fix-history.md, docs/regression-scenarios.md
+CHANGES:
+QV-1b | script-5-dept.html | `dqvPrefetch_(i)` runs once all the open day's reads settle (landed or failed) and only while that day is still on screen; it fetches days i-1 and i+1 (summary + missed, outbound when `obAllowed_()`) through the same join / replay stores; `dqvReq_(b)` is the one request shape; `obSummaryFetch_` takes an optional `store` and the pop-up uses `DQV_OB_STORE_` (cap 18, cleared on Refresh), so stepping no longer evicts the page's own outbound window from the FO-3 store (cap 8).
+TEST RESULTS: `node --test` 2740 pass / 0 fail; lint clean; drive-dayqv 24/24 (two new prefetch checks with 2 s held replies). Bites 4/4: unit -- the prefetch call, the own outbound store, neighbours only; UI -- a prefetch that never runs turns 3 drive-dayqv checks red.
+REGRESSION RISKS: about twice the single-day reads per day viewed (each read cached 6 h server-side). The page's FO-3 store keeps serving the page's windows; only the pop-up's days moved.
+INVARIANTS AT RISK: None (client-only; no RPC, cache key or payload changed).
+NET SCORE: 0 − 0 = 0 (a speed-up; the store separation closes a latent eviction QV-1 introduced, which re-read the table's outbound and gave wrong numbers nowhere)
+OPERATOR ACTIONS / DEPLOY: deploy the dashboard; walk S62's QV-1b step | BLOCKS DEPLOY: N
+FOLLOW-ON ITEMS: fewer requests per day -- one combined single-day endpoint (summary + missed + outbound), optionally taking several dates -- offered to the owner, not built.
+---END ADDENDUM---

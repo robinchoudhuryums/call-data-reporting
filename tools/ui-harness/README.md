@@ -86,7 +86,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-dayqv.js` — the **day quick view** (QV-1, owner 2026-10-29;
   admin-only, released with the day bars): a click on a day bar opens THAT
   day; its cards equal the bars' own readouts beside the range figure; it
-  reads only that day (summary, missed calls, admin outbound); the condensed
+  reads that day first, then only its two neighbours (QV-1b prefetch: a step
+  to the next day paints with no new request and queues the one after); the condensed
   agent table with its total row and outbound column; the 18-slot missed
   chart, ring times and "↳ path"; a name opening that agent's day; the
   arrows stepping workdays (ends disabled) and the arrow keys; Escape and
