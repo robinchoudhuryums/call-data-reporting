@@ -202,8 +202,11 @@ function rpcDays(page, fns) {
     window.__HARNESS__.delay = { getDayQuickView: 2000 };
   });
   await page.click('#day-qv-next');
+  const noBusy = await page.evaluate(() => !document.querySelector('#day-qv-modal .dqv-skel, #day-qv-modal [aria-busy="true"]')
+    && !document.querySelector('#day-qv-agents > .ds-frost:not([style*="none"])'));
   await page.waitForTimeout(250);
   const pf = await page.evaluate(qvState);
+  record('loading: a prefetched day shows no skeleton or frost at all (it is already here)', noBusy);
   const pfCalls = await qvCalls(page);
   record('prefetch: stepping to the next day paints at once, with no new request for it',
     pf.open && !pf.loading && pf.rows > 0 && pf.mcols === 18 && !pfCalls.some((c) => c.dates.indexOf(days[idx + 1]) !== -1),
@@ -290,6 +293,72 @@ function rpcDays(page, fns) {
   } else {
     record('week / month bars do not open the day view', false, 'no bars for the year-to-date window');
   }
+  // QV-3 (owner 2026-10-29): LOADING STATES. A first open shows skeletons
+  // shaped like what arrives (so the pop-up opens near its final size);
+  // stepping to a day not yet here frosts the current content, labelled with
+  // the day now on screen; a prefetched day paints with no busy state at all.
+  await openDept(page, meta.from30, meta.latest);
+  await page.evaluate(() => { window.__HARNESS__.delay = { getDayQuickView: 2500, getAgentDay: 2500 }; });
+  await mouseOpen(page, 'rate', 6, days.length);
+  // (mouseOpen waited 1 s -- still inside the 2.5 s hold.)
+  const sk = await page.evaluate(() => {
+    const ag = document.getElementById('day-qv-agents'), ms = document.getElementById('day-qv-missed');
+    const st = ag && ag.querySelector('.dqv-skel[role="status"] .sr-only');
+    return { agentsSkel: ag ? ag.querySelectorAll('.dqv-skel--agents .dqv-skel-row').length : 0,
+             obCols: !!(ag && ag.querySelector('.dqv-skel-row--ob')),
+             chart: ms ? ms.querySelectorAll('.dqv-skel--missed .dqv-skel-chart .skeleton-line').length : 0,
+             busy: !!(ag && ag.getAttribute('aria-busy') === 'true' && ms && ms.getAttribute('aria-busy') === 'true'),
+             status: st ? st.textContent : '', title: (document.getElementById('day-qv-title') || {}).textContent || '',
+             h: document.querySelector('#day-qv-modal .modal-panel').getBoundingClientRect().height };
+  });
+  record('loading: a first open shows skeletons shaped like the table (with the outbound column) and the 18-slot chart, busy and labelled',
+    sk.agentsSkel === 6 && sk.obCols && sk.chart === 18 && sk.busy && sk.status.indexOf(sk.title.split(',')[0]) !== -1,
+    JSON.stringify(sk));
+  await page.waitForTimeout(2300);
+  const done = await page.evaluate(() => ({
+    h: document.querySelector('#day-qv-modal .modal-panel').getBoundingClientRect().height,
+    busy: !!document.querySelector('#day-qv-modal [aria-busy="true"]'),
+    skel: !!document.querySelector('#day-qv-modal .dqv-skel'),
+    rows: document.querySelectorAll('#day-qv-agents tr[data-dqv-row]').length }));
+  record('loading: the reply replaces the skeletons (no busy flags left), and the pop-up opened at three-quarters of its final height or more',
+    !done.busy && !done.skel && done.rows > 0 && sk.h >= done.h * 0.75, JSON.stringify({ loading: sk.h, loaded: done.h, rows: done.rows }));
+  // Two quick steps: the first lands on a day still in flight (the prefetch),
+  // the second on one never asked for -- both frost, and the label follows.
+  await page.click('#day-qv-next');
+  await page.click('#day-qv-next');
+  await page.waitForTimeout(300);
+  const fr = await page.evaluate(() => {
+    const ag = document.getElementById('day-qv-agents');
+    const ov = ag && ag.querySelector(':scope > .ds-frost');
+    return { frost: !!(ov && ov.style.display !== 'none'), label: ov ? (ov.textContent || '').trim() : '',
+             kept: ag ? ag.querySelectorAll('tr[data-dqv-row]').length : 0, skel: !!(ag && ag.querySelector('.dqv-skel')),
+             title: (document.getElementById('day-qv-title') || {}).textContent || '' };
+  });
+  record('loading: stepping to days not yet here frosts the current table (nothing collapses), labelled with the day now on screen',
+    fr.frost && fr.kept > 0 && !fr.skel && fr.label.indexOf(fr.title.split(',')[0]) !== -1, JSON.stringify(fr));
+  await page.waitForTimeout(2800);
+  const af = await page.evaluate(() => ({ frost: !!document.querySelector('#day-qv-agents > .ds-frost:not([style*="none"])'),
+    busy: !!document.querySelector('#day-qv-modal [aria-busy="true"]') }));
+  record('loading: the frost lifts when the day lands', !af.frost && !af.busy, JSON.stringify(af));
+  // A name: the agent's day shows its own skeleton (KPI tiles + call lines).
+  await page.locator('#day-qv-agents .dqv-agent').first().click();
+  await page.waitForTimeout(300);
+  const ads = await page.evaluate(() => {
+    const row = document.querySelector('#day-qv-agents tr.dqv-ad-row');
+    return { tiles: row ? row.querySelectorAll('.dqv-skel--day .dqv-skel-kpis .skeleton-line').length : 0,
+             lines: row ? Array.from(row.querySelectorAll('.dqv-skel--day > .skeleton-line')).filter(function (l) { return l.getBoundingClientRect().width > 50; }).length : 0,
+             busy: !!(row && row.querySelector('.dqv-ad[aria-busy="true"]')) };
+  });
+  record('loading: an agent\'s day shows its own skeleton (four KPI tiles and visible call lines) while it loads',
+    ads.tiles === 4 && ads.lines === 3 && ads.busy, JSON.stringify(ads));
+  await page.waitForTimeout(2600);
+  record('loading: the agent\'s day replaces its skeleton', await page.evaluate(() => {
+    const row = document.querySelector('#day-qv-agents tr.dqv-ad-row');
+    return !!(row && !row.querySelector('.dqv-skel') && row.querySelector('.ap-kpis') && !row.querySelector('[aria-busy="true"]'));
+  }));
+  await page.evaluate(() => { window.__HARNESS__.delay = {}; });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
   const unmocked = await page.evaluate(() => ((window.__HARNESS__ || {}).unmocked || [])
     .filter((n) => ['getInboundHeatmap', 'logReportUsage'].indexOf(n) === -1));
   record('no unmocked server calls', !unmocked.length, unmocked.join(', '));

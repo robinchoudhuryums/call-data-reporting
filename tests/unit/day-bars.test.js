@@ -349,3 +349,21 @@ test('QV-1b / QV-2: neighbour prefetch -- both neighbours in ONE request, once t
   assert.doesNotMatch(S5.slice(S5.indexOf('function dqvFetchDays_('), S5.indexOf('function dqvAgentsHtml_(')),
     /getDepartmentSummary|getMissedCallsReport|obSummaryFetch_/, 'the pop-up reads nothing outside the one request');
 });
+
+test('QV-3: loading states -- skeletons on a fresh open, frost when stepping, none for a held day, the label follows the day', function () {
+  const show = extractFn(S5, 'dqvShow_');
+  assert.match(show, /var held = DQV_STORE_\[dqvKey_\(b, showOb\)\];\s*if \(!\(held && held\.done\)\) \{/, 'a prefetched day paints with no busy state');
+  assert.match(show, /dqvBusy_\(agentsEl, 'agents', lbl, showOb\);\s*dqvBusy_\(missedEl, 'missed', lbl\);/);
+  assert.equal((show.match(/dqvPaint_\(/g) || []).length, 4, 'every outcome (data or error, both sections) lifts the busy state');
+  const busy = extractFn(S5, 'dqvBusy_');
+  assert.match(busy, /el\.setAttribute\('aria-busy', 'true'\);/);
+  assert.match(busy, /if \(el\.__dqvFilled\) \{\s*dsFrostShow_\(el, label\);/, 'content already shown is frosted, never collapsed');
+  assert.match(busy, /if \(lab\) lab\.textContent = label;/, 'a second quick step relabels the frost already up');
+  assert.match(busy, /else \{\s*el\.innerHTML = dqvSkeletonHtml_\(kind, label, ob\);/);
+  const paint = extractFn(S5, 'dqvPaint_');
+  assert.match(paint, /el\.classList\.remove\('ds-frost-host'\);\s*el\.removeAttribute\('aria-busy'\);\s*el\.__dqvFilled = true;/);
+  assert.match(extractFn(S5, 'dqvOpen_'), /el\.__dqvFilled = false;/, 'a fresh open never frosts the last visit\'s content');
+  const sk = extractFn(S5, 'dqvSkeletonHtml_');
+  assert.match(sk, /role="status"><span class="sr-only">' \+ escapeHtml\(label\)/, 'the skeleton is a labelled live status');
+  assert.match(extractFn(S5, 'dqvToggleAgent_'), /dqvSkeletonHtml_\('day', 'Loading ' \+ agent/);
+});

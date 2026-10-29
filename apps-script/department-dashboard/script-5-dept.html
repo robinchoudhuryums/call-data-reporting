@@ -4078,8 +4078,52 @@
     return html;
   }
 
-  function dqvLoadingHtml_(label) {
-    return '<div class="ap-loading">' + DS_EQ_HTML_ + escapeHtml(label) + '</div>';
+  // QV-3 (owner 2026-10-29): LOADING STATES shaped like what arrives, so the
+  // pop-up opens at about its final size instead of growing when the reply
+  // lands. `kind` 'agents' (table rows; the outbound column when shown),
+  // 'missed' (the half-hour chart + ring lines) or 'day' (an agent's day:
+  // KPI tiles + call lines). The label is a live status for screen readers;
+  // the shimmer is .skeleton-line's (static under reduced motion).
+  function dqvSkeletonHtml_(kind, label, ob) {
+    var line = function (cls) { return '<span class="skeleton-line' + (cls ? ' ' + cls : '') + '"></span>'; };
+    var html = '<div class="dqv-skel dqv-skel--' + kind + '" role="status"><span class="sr-only">' + escapeHtml(label) + '</span>';
+    if (kind === 'agents') {
+      for (var r = 0; r < 6; r++) {
+        html += '<div class="dqv-skel-row' + (ob ? ' dqv-skel-row--ob' : '') + '">' + line('dqv-skel-name') + line('dqv-skel-bar')
+          + line('dqv-skel-num') + (ob ? line('dqv-skel-bar') : '') + line('dqv-skel-num') + '</div>';
+      }
+    } else if (kind === 'missed') {
+      var hs = [30, 55, 80, 45, 65, 35, 50, 70, 40, 25, 60, 45, 30, 50, 35, 20, 40, 25];
+      html += line('dqv-skel-head') + '<div class="dqv-skel-chart">'
+        + hs.map(function (h) { return '<span class="skeleton-line" style="height:' + h + '%"></span>'; }).join('') + '</div>';
+      for (var m = 0; m < 3; m++) html += '<div class="dqv-skel-mrow">' + line('dqv-skel-name') + line() + '</div>';
+    } else {
+      html += '<div class="dqv-skel-kpis">' + line() + line() + line() + line() + '</div>' + line() + line() + line();
+    }
+    return html + '</div>';
+  }
+  // A section about to load: a skeleton when it holds nothing of this
+  // pop-up's yet, else the page's frost over what it shows (stepping days),
+  // so nothing collapses while the next day loads. dqvPaint_ lifts either.
+  function dqvBusy_(el, kind, label, ob) {
+    if (!el) return;
+    el.setAttribute('aria-busy', 'true');
+    if (el.__dqvFilled) {
+      dsFrostShow_(el, label);
+      // dsFrostShow_ keeps an overlay that is already up, label and all -- a
+      // second quick step must name the day now on screen, not the last one.
+      var lab = el.querySelector(':scope > .ds-frost .ds-loader-block-label');
+      if (lab) lab.textContent = label;
+    } else {
+      el.innerHTML = dqvSkeletonHtml_(kind, label, ob);
+    }
+  }
+  function dqvPaint_(el, html) {
+    if (!el) return;
+    el.innerHTML = html;
+    el.classList.remove('ds-frost-host');
+    el.removeAttribute('aria-busy');
+    el.__dqvFilled = true;
   }
 
   function dqvShow_(i) {
@@ -4100,8 +4144,15 @@
       ? 'An exception day (' + (b.excluded.reason || 'left out of the figures') + '): the page leaves it out; shown here with its own figures.' : '';
     $('day-qv-cards').innerHTML = dqvCardsHtml_(st, i);
     var showOb = obAllowed_();
-    $('day-qv-agents').innerHTML = dqvLoadingHtml_('Loading the agents…');
-    $('day-qv-missed').innerHTML = dqvLoadingHtml_('Loading missed calls…');
+    var agentsEl = $('day-qv-agents'), missedEl = $('day-qv-missed');
+    // QV-3: a day already held (prefetched) paints at once, so no busy state
+    // flickers in for one frame; anything else shows its loading state now.
+    var held = DQV_STORE_[dqvKey_(b, showOb)];
+    if (!(held && held.done)) {
+      var lbl = 'Loading ' + dtsBucketLabel_(b) + '…';
+      dqvBusy_(agentsEl, 'agents', lbl, showOb);
+      dqvBusy_(missedEl, 'missed', lbl);
+    }
     var tok = ++DQV_.seq;
     var errNote = function (where, msg) {
       return '<div class="ds-note">Could not load ' + where + ': ' + escapeHtml(String(msg)) + '</div>';
@@ -4110,15 +4161,15 @@
       if (tok !== DQV_.seq) return;
       var e = day.errors || {};
       // An outbound part that failed leaves the column on dashes, as before.
-      $('day-qv-agents').innerHTML = e.summary ? errNote('the agents', e.summary)
-        : dqvAgentsHtml_(day.summary, (showOb && !e.outbound) ? day.outbound : null, showOb);
-      $('day-qv-missed').innerHTML = e.missed ? errNote('missed calls', e.missed) : dqvMissedHtml_(day.missed, iso);
+      dqvPaint_(agentsEl, e.summary ? errNote('the agents', e.summary)
+        : dqvAgentsHtml_(day.summary, (showOb && !e.outbound) ? day.outbound : null, showOb));
+      dqvPaint_(missedEl, e.missed ? errNote('missed calls', e.missed) : dqvMissedHtml_(day.missed, iso));
       dqvPrefetch_(i);   // QV-1b: once this day has landed, load the days either side
     }, function (err) {
       if (tok !== DQV_.seq) return;
       var msg = err && err.message ? err.message : String(err);
-      $('day-qv-agents').innerHTML = errNote('the agents', msg);
-      $('day-qv-missed').innerHTML = errNote('missed calls', msg);
+      dqvPaint_(agentsEl, errNote('the agents', msg));
+      dqvPaint_(missedEl, errNote('missed calls', msg));
       dqvPrefetch_(i);
     });
   }
@@ -4217,7 +4268,8 @@
     btn.setAttribute('aria-expanded', 'true');
     var row = document.createElement('tr');
     row.className = 'dqv-ad-row';
-    row.innerHTML = '<td colspan="' + tr.children.length + '"><div class="dqv-ad">' + dqvLoadingHtml_('Loading ' + agent + '’s day…') + '</div></td>';
+    row.innerHTML = '<td colspan="' + tr.children.length + '"><div class="dqv-ad" aria-busy="true">'
+      + dqvSkeletonHtml_('day', 'Loading ' + agent + '’s day…') + '</div></td>';
     tr.parentNode.insertBefore(row, tr.nextSibling);
     var st = DQV_.strip && DQV_.strip.__dts, iso = st && st.bs[DQV_.i] && st.bs[DQV_.i].from;
     var tok = DQV_.seq, myKey = DQV_.agentKey;
@@ -4225,9 +4277,11 @@
     apPreDay_(agent, iso, dept, function (data) {
       if (tok !== DQV_.seq || DQV_.agentKey !== myKey) return;
       box.innerHTML = dqvAgentDayHtml_(data, obAllowed_());
+      box.removeAttribute('aria-busy');
     }, function (err) {
       if (tok !== DQV_.seq || DQV_.agentKey !== myKey) return;
       box.innerHTML = '<div class="ds-note">Could not load this agent’s day: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      box.removeAttribute('aria-busy');
     });
   }
   function dqvAgentDayHtml_(data, showOb) {
@@ -4324,6 +4378,9 @@
       initModalDragResize_(modal.querySelector('.modal-panel'));
       document.addEventListener('keydown', dqvKeyDown_);
       if (!modal.__dqvWired) dqvWireModal_(modal);
+      // QV-3: a fresh open starts from skeletons -- frosting the last visit's
+      // content would show another day (or department) under the loader.
+      ['day-qv-agents', 'day-qv-missed'].forEach(function (id) { var el = $(id); if (el) el.__dqvFilled = false; });
     }
     dqvShow_(i);
   }
