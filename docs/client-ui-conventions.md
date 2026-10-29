@@ -1452,6 +1452,30 @@ behind the removed button.
   Admin-only: built only when `dtsBarsActive_()` (admin, not View-as) and the
   block carries `data-admin-only`. Pinned by `day-bars.test.js` (server sums,
   crossover days, bucketing) and rendered by `drive-daybars.js`.
+- **The DAY QUICK VIEW (QV-1, owner 2026-10-29; admin trial, released WITH
+  the day bars).** A mouse click on a DAY bar (touch: a second tap on the held
+  day; keyboard: Enter / Space on the slider) opens `#day-qv-modal`
+  (`dqvOpen_`, script-5). Its cards come from the page's own day sums
+  (`strip.__dts`, PURE `dqvCardFigure_`, tinted `is-bad` / `is-watch` like the
+  bars; CSR's Transfer % from `csrTransfer.daily`) with the card's range
+  figure under each, so they open instantly and always equal the bar's
+  readout. Then two single-day reads go out in parallel -- `getDepartmentSummary`
+  and `getMissedCallsReport` for that date (`dqvFetch_`, a per-page-load
+  store, joined / replayed / failures not kept, cleared by `refresh()`) --
+  plus that day's outbound through the FO-3 store when `obAllowed_()`. The
+  agent table is the LB-2 cells condensed (agents with no call that day are
+  counted, not listed); a name opens that agent's day beneath it through the
+  agent panel's `apPreDay_` store, its outbound half cut when `!obAllowed_()`.
+  The missed calls are plain CSS bars (no Chart.js), ring times grouped per
+  call (`groupConsecutiveByCall_`) with `parentIdBadge`'s "↳ path", and the
+  queue hang-ups. The arrows (and ← / →) step `st.bs`, the bars' own days, so
+  a weekend or a company holiday is never a stop and an exception day is (its
+  reads carry `includeExceptionDays`, a note says so); the ends disable.
+  Week / month bars do not open it. "Open this day on the page" sets From =
+  To = that day and refreshes (the Overview point drill's order). Gate:
+  `dqvActive_()` IS `dtsBarsActive_()`; the modal must NOT carry
+  `[data-admin-only]` (that rule would un-hide it). Pinned by
+  `day-bars.test.js` and `drive-dayqv.js`.
 - **Notifications page (Step 5; admin trial).** The Alerts modal (still
   `#alerts-modal`, route `/admin/alerts`) is titled Notifications and renders
   each Alert Config row as a SENTENCE card in `#al-rules` (PURE
@@ -2656,7 +2680,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   (`#dept-team-strip`) and ABOVE the agent table (Step 3, owner 2026-10-16;
   it used to open the Insights region): a top line and one row per section, most
   urgent first (`insBriefRank_`: red, amber, fade, green, grey; ties Queue ->
-  Agents -> Outbound -> Callbacks -> Team detail -> Trend). **Each row is a
+  Team -> Outbound -> Callbacks -> Trend). **Each row is a
   disclosure button** (`aria-expanded` / `aria-controls`) that opens ITS
   section in place beneath it: the section's EXISTING element is MOVED into
   the row's `.ins-brief-slot` (`insBriefMountAll_`, a hidden
@@ -2694,7 +2718,14 @@ stay pinned by INV-39, INV-53 and INV-06.
   quotes (`insBriefTopShare_` skips `insIsExempt_`); and a run for another
   dept or window frosts the brief ("Loading <dept>…", `insBriefLoading_`,
   `data-brief-dept`) until the next render or a failure lifts it
-  (drive-crossstate pins it with a held reply, `__HARNESS__.delay`). The queue-wait verdict is server-side
+  (drive-crossstate pins it with a held reply, `__HARNESS__.delay`). **BR-4
+  (owner 2026-10-29):** Agents and Team detail are ONE row, key `agents`,
+  label "Team": the Agents tier, text "<agents verdict> · talk time <ATT> per
+  call" (PURE `insBriefTeamText_`); it mounts BOTH sections, the agent cards
+  then the team detail (`INS_BRIEF_TARGET_` entries carry an `ids` list, and
+  mount / unmount / apply / restore / `insOpenSection_` walk it); in the slot
+  the second section's `<summary>` stays as a plain, non-clickable
+  sub-heading. The queue-wait verdict is server-side
   (`queueHealth.perQueue[].wait`, InsightsReport.gs). Each tier renders as an
   ICON (Step 1, owner 2026-10-16: `insBriefTierIconHtml_` -- green thumbs-up,
   amber exclamation mark, red flag, grey circle-with-dash), aria-hidden, with

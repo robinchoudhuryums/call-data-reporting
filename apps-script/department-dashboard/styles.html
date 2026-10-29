@@ -7831,6 +7831,67 @@
   @media (prefers-reduced-motion: reduce) { .dts-bar { transition: none; } }
   @media print { .dts-daybars { display: none; } }
 
+  /* QV-1 (owner 2026-10-29): the DAY QUICK VIEW (#day-qv-modal, dqvOpen_ in
+     script-5). Cards tint the way the bars do (is-bad / is-watch / tf-*);
+     the condensed agent table reuses the LB-2 cells; the missed chart is
+     plain CSS bars (no Chart.js, so it draws at once and never needs
+     safeChart_). */
+  .dts-daybars .dts-bars { cursor: pointer; }
+  .dqv-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dqv-nav h2 { margin: 0; min-width: 11ch; }
+  .dqv-step { width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); color: var(--ink); font: 600 18px/1 var(--ui); cursor: pointer; }
+  .dqv-step:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .dqv-step:disabled { opacity: 0.35; cursor: default; }
+  .dqv-open { margin-left: auto; }
+  .dqv-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 4px 0 14px; }
+  .dqv-card { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--r);
+    background: var(--paper-card); padding: 8px 10px; min-width: 0; }
+  .dqv-card.is-watch { border-left-color: var(--caution); }
+  .dqv-card.is-watch .dqv-card-big { color: var(--caution); }
+  .dqv-card.is-bad { border-left-color: var(--warn); }
+  .dqv-card.is-bad .dqv-card-big { color: var(--warn); }
+  .dqv-card-label { font: 500 10.5px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .dqv-card-big { font: 600 22px/1.2 var(--ui); font-variant-numeric: tabular-nums; color: var(--ink); margin-top: 2px; }
+  .dqv-card-sub { font: 400 12px/1.35 var(--ui); color: var(--ink-muted); }
+  .dqv-card-range { font: 400 11px/1.35 var(--mono); color: var(--muted); border-top: 1px dashed var(--line);
+    margin-top: 5px; padding-top: 3px; }
+  .dqv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .dqv-table th { text-align: left; font: 500 10.5px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  .dqv-table td { padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .dqv-table th.num, .dqv-table td.num { text-align: right; white-space: nowrap; }
+  .dqv-table .lb-bar-td { min-width: 150px; width: 32%; }
+  .dqv-table tfoot td { font-weight: 600; background: var(--paper); border-bottom: 0; }
+  .dqv-agent { all: unset; cursor: pointer; color: var(--accent); font-weight: 500; }
+  .dqv-agent:hover { text-decoration: underline; }
+  .dqv-agent:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  .dqv-agent[aria-expanded="true"] { text-decoration: underline; }
+  .dqv-dept { font: 400 10.5px var(--mono); color: var(--muted); }
+  .dqv-ad-row > td { background: var(--paper); padding: 8px 10px 12px; }
+  .dqv-ad-h { font: 600 12px/1.3 var(--ui); margin: 10px 0 4px; }
+  .dqv-foot-note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .dqv-missed-head { margin: 0 0 6px; font-size: 13px; }
+  .dqv-mchart { display: flex; align-items: flex-end; gap: 3px; height: 70px; border-bottom: 1px solid var(--line); }
+  .dqv-mcol { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+  .dqv-mbar { width: 100%; background: var(--warn); opacity: 0.45; border-radius: 1px 1px 0 0;
+    display: flex; align-items: flex-end; }
+  .dqv-mbar-abd { width: 100%; background: var(--warn); opacity: 1; }
+  .dqv-maxis { display: flex; justify-content: space-between; font: 400 10px/1.4 var(--mono); color: var(--muted); margin-bottom: 8px; }
+  .dqv-msub { font: 600 12px/1.3 var(--ui); margin: 10px 0 4px; }
+  .dqv-mlist { list-style: none; margin: 0; padding: 0; }
+  .dqv-mlist > li { display: grid; grid-template-columns: minmax(120px, 200px) 34px minmax(0, 1fr); gap: 8px;
+    padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; align-items: baseline; }
+  .dqv-mn { font-variant-numeric: tabular-nums; text-align: right; color: var(--warn); font-weight: 600; }
+  .dqv-mtimes { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .dqv-ring { display: inline-block; margin: 0 8px 2px 0; }
+  .dqv-ring.is-abd { color: var(--warn); }
+  @media (max-width: 600px) {
+    .dqv-open { margin-left: 0; width: 100%; }
+    .dqv-mlist > li { grid-template-columns: minmax(0, 1fr) 34px; }
+    .dqv-mtimes { grid-column: 1 / -1; }
+  }
+
   /* (Round-16, owner: the .dept-insights-strip / .dis-* Insights teaser CSS
      is retired with the strip -- the lens switcher is the route now.) */
 

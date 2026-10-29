@@ -83,6 +83,15 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
   it also checks the Queue calls and Abandoned % cards' vs-prior chips.
+- `drive-dayqv.js` — the **day quick view** (QV-1, owner 2026-10-29;
+  admin-only, released with the day bars): a click on a day bar opens THAT
+  day; its cards equal the bars' own readouts beside the range figure; it
+  reads only that day (summary, missed calls, admin outbound); the condensed
+  agent table with its total row and outbound column; the 18-slot missed
+  chart, ring times and "↳ path"; a name opening that agent's day; the
+  arrows stepping workdays (ends disabled) and the arrow keys; Escape and
+  focus return; Enter on a selected bar; "Open this day on the page"; month
+  bars not opening it; a manager without it; 360 px.
 - `drive-exceptions.js` — **exception days** (Operator State #81): the
   disclosure note on My Department, Insights and the Overview (day, reason,
   calls left out), one striped untinted bar per day-bar card with an

@@ -285,3 +285,48 @@ test('target line: no standard (or no data) -> no scale; the card keeps min-to-m
   assert.match(metrics, /t: function \(dept\) \{ return answerStdFor_\(dept\)\.target; \}/, '% Ans: the dept\'s own answer standard');
   assert.match(metrics, /t: function \(\) \{ return ABANDON_STANDARD_; \}/, 'Abandoned %: the 4% standard');
 });
+
+// ── QV-1 (owner 2026-10-29): the day quick view ──────────────────────────
+const dqvCardFigure = new Function('answerTierCls_', 'fmtNumber', 'fmtDuration', 'ABANDON_STANDARD_',
+  'return (' + extractFn(S5, 'dqvCardFigure_') + ');')(
+  function (pct) { return pct < 80 ? ' bm-bad' : (pct < 90 ? ' bm-watch' : ' bm-target'); },
+  function (n) { return String(n); },
+  function (s) { return '0:00:' + String(Math.round(s)).padStart(2, '0'); },
+  4);
+
+test('QV-1: each card\'s day figure comes from the bars\' own day sums, tinted where a standard broke', function () {
+  const t = { ans: 85, miss: 15, q: 100, qans: 95, abd: 5, avgW: 30 * 95, avgN: 95 };
+  assert.deepEqual(dqvCardFigure('rate', t, 'CSR'), { big: '85.0%', sub: '85 of 100 rings', cls: 'is-watch' });
+  assert.equal(dqvCardFigure('rate', Object.assign({}, t, { ans: 70, miss: 30 }), 'CSR').cls, 'is-bad');
+  assert.equal(dqvCardFigure('rate', Object.assign({}, t, { ans: 95, miss: 5 }), 'CSR').cls, '');
+  assert.deepEqual(dqvCardFigure('rate', Object.assign({}, t, { ans: 0, miss: 0 }), 'CSR'), { big: '–', sub: 'no rings', cls: '' });
+  assert.deepEqual(dqvCardFigure('qcalls', t), { big: '100', sub: '95 answered · 5 abandoned', cls: '' });
+  assert.deepEqual(dqvCardFigure('qabd', t), { big: '5.00%', sub: '5 abandoned', cls: 'is-bad' }, '4.00% or more breaks the standard');
+  assert.equal(dqvCardFigure('qabd', Object.assign({}, t, { abd: 3 })).cls, '');
+  assert.deepEqual(dqvCardFigure('qavg', t), { big: '0:00:30', sub: 'avg answer', cls: '' });
+  assert.equal(dqvCardFigure('qavg', Object.assign({}, t, { avgN: 0 })).big, '–');
+  assert.equal(dqvCardFigure('answered', t).big, '85');
+  assert.equal(dqvCardFigure('nope', t), null);
+});
+
+test('QV-1: released WITH the day bars; outbound behind obAllowed_; day bars only; two single-day reads', function () {
+  assert.match(extractFn(S5, 'dqvActive_'), /return dtsBarsActive_\(\);/, 'one gate: the pop-up ships to managers when the bars do');
+  assert.match(extractFn(S5, 'dqvDaily_'), /!st\.bs\[0\]\.weekly && !st\.bs\[0\]\.monthly/, 'a week or month bar never opens it');
+  const show = extractFn(S5, 'dqvShow_');
+  assert.match(show, /var showOb = obAllowed_\(\);/, 'the outbound column stays admin-only after the release');
+  assert.match(show, /if \(showOb\) \{\s*obSummaryFetch_\(\{ department: DQV_\.dept, from: iso, to: iso \}/, 'outbound through the shared FO-3 store');
+  assert.match(show, /dqvFetch_\('summary', req\(\)/);
+  assert.match(show, /dqvFetch_\('missed', req\(\)/);
+  assert.match(show, /var r = \{ department: DQV_\.dept, from: iso, to: iso \};/, 'each read is that one day');
+  assert.match(show, /var prev = st\.bs\[i - 1\], next = st\.bs\[i \+ 1\];/, 'the arrows step the bars\' days: weekends and holidays are never a stop');
+  assert.match(extractFn(S5, 'dqvAgentDayHtml_'), /if \(!showOb\) kpis = kpis\.split\(/, 'the agent-day drill drops its outbound half too');
+  const wire = extractFn(S5, 'dtsWire_');
+  assert.match(wire, /if \(e\.pointerType === 'mouse' \|\| \(st\.held && st\.sel === idx\)\) \{\s*if \(dqvDaily_\(st\)\) dqvOpen_\(strip, idx\);/);
+  assert.match(wire, /\(e\.key === 'Enter' \|\| e\.key === ' '\) && dqvDaily_\(st\)/);
+  assert.match(extractFn(S5, 'refresh'), /obSummaryStoreClear_\(\);[^\n]*\n\s*dqvStoreClear_\(\);/, 'an explicit Refresh drops the held days');
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'dashboard.html'), 'utf8');
+  const m = html.match(/<div id="day-qv-modal"[^>]*>/);
+  assert.ok(m, 'the modal exists');
+  assert.doesNotMatch(m[0], /data-admin-only/, 'never [data-admin-only]: that rule would un-hide it on load');
+  assert.match(m[0], /style="display:none;"/);
+});

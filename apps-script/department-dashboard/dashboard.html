@@ -2841,6 +2841,38 @@
     </div>
   </div>
 
+  <!-- QV-1 (owner 2026-10-29): the DAY QUICK VIEW, opened by clicking a day
+       bar on a My Department team card (script-5-dept, dqvOpen_). Admin-only (gated in dqvActive_, not [data-admin-only], which would un-hide it)
+       while trialled -- released with the day bars. No route: it is a view of
+       the page's own loaded range, so a deep link would have no range. -->
+  <div id="day-qv-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="day-qv-title" aria-hidden="true" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="day-qv-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Day quick view</div>
+        <div class="dqv-nav">
+          <button type="button" class="dqv-step" id="day-qv-prev" aria-label="Previous workday">&#8249;</button>
+          <h2 id="day-qv-title">Day</h2>
+          <button type="button" class="dqv-step" id="day-qv-next" aria-label="Next workday">&#8250;</button>
+          <button type="button" class="btn btn-secondary dqv-open" id="day-qv-open">Open this day on the page</button>
+        </div>
+      </div>
+      <div class="modal-panel-body">
+        <div id="day-qv-note" class="ds-note" style="display:none;"></div>
+        <div id="day-qv-cards" class="dqv-cards"></div>
+        <div class="al-section">
+          <h3 class="al-section-title">Agents</h3>
+          <div id="day-qv-agents"></div>
+        </div>
+        <div class="al-section">
+          <h3 class="al-section-title">Missed calls</h3>
+          <div id="day-qv-missed"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="alerts-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="alerts-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">

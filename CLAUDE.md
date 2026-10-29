@@ -228,7 +228,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# SEVENTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
+# EIGHTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
 # in tools/ui-harness/README.md "Asserting drivers" -- the per-driver list
 # lives there, not here). Two pins ride on them: `cross-file-pins.test.js`
 # fails when a `kind:'modal'` route in script-4-nav.html is neither driven by
@@ -2332,7 +2332,7 @@ S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, 
 S59 | Callbacks under the outbound table on My Department (Batch G1, UX-1) | Subsystem: Department Dashboard
 S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard
 S61 | Insights ranked brief as an accordion, and one-line sections (UX-2, Step 3) | Subsystem: Department Dashboard
-S62 | Team cards: linked day bars (Step 4) | Subsystem: Department Dashboard
+S62 | Team cards: linked day bars and the day quick view (Step 4, QV-1) | Subsystem: Department Dashboard
 S63 | Notifications: sentence rules, history, test send, the manager layer (Step 5a) | Subsystem: Department Dashboard
 S64 | Coaching release prep: per-dept gates, Met / Rotated / Dismissed, the held manager email (Step 5b) | Subsystem: Department Dashboard
 S65 | Alert reasons: an agent below a threshold over N workdays; callers not called back (Step 5c) | Subsystem: Department Dashboard

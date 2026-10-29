@@ -58,6 +58,10 @@ const STAGES = [
   // selection across four cards, workday / monthly bucketing, keyboard and
   // touch, admin-only, and no sideways scroll at 360 px.
   ['node', ['drive-daybars.js'], 'team cards: linked day bars (Step 4)'],
+  // QV-1 (owner 2026-10-29): a day bar opens that day's quick view -- the
+  // cards equal the bars' readouts, single-day reads, workday stepping, the
+  // agent-day drill, keyboard, "Open this day on the page", admin-only, 360 px.
+  ['node', ['drive-dayqv.js'], 'team cards: day quick view (QV-1)'],
   // Exception days (owner 2026-10-22, #81): every report says which day it
   // leaves out, the day bars stripe the day off the scale, the include switch
   // is an admin's alone and really re-asks, the Overview bridges + shades it.
