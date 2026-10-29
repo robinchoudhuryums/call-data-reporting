@@ -32,3 +32,7 @@ FOLLOW-ON ITEMS:
 DOCUMENTATION UPDATES NEEDED:
 - None (Operator State #85 / #86 / #87, CLAUDE.md #87, fix-history, per-call-capture, S38, tests/README updated in this change)
 ---END BROAD SCAN IMPLEMENTATION SUMMARY---
+
+---ADDENDUM (gate)---
+`CI=true TZ=America/Chicago npm run ci:ui`: EXIT 0, all stages passed (drive-admin's Inbound quality line pinned to the new "hung up while on hold" wording). Client bites 4/4: the answered-call chip, the stamp winning over position, placeholders / initials skipped, the map-index trap (only the hold row is marked). Total bites 13/13.
+---END ADDENDUM---
