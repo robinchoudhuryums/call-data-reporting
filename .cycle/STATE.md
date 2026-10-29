@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-29 (6) -- SHIPPED: [PR #395](https://github.com/robinchoudhuryums/call-data-reporting/pull/395) merged on green CI (test / lint / ui-harness), merge 123f81b.** Branch restarted from main. Carries everything from the 10-28/29 owner rounds (QF-1..3, HOH-0, XB-0, CB-R1/R2, DL-R1/R2, SB-*, LB-2, BR-1..4, QV-1..4, the /sync-docs pass).
+  **Owner-side:** deploy the dashboard (`clasp push -f` uploads the new DayQuickView.gs + a new deployment version) and cdr-import (the two diagnostics); walk S61, S62, S48, S60, S57; run `diagnoseHoldHangupsAllDates` / `diagnoseTransferBouncesAllDates` and send the logs + the two XB answers; decide the day bars + quick view release; read `meta.partMs` on a cold open.
+  **Where I left off:** nothing open on the branch; waiting on the owner items above.
 - **2026-10-29 (5) -- /sync-docs over the 54 commits since 7f322b6.** Drift was small (each round updated its own docs): CLAUDE.md "~130 suites" -> "~160"; the KDD CacheService-tiers bullet (59 B under its 4 KB cap) trimmed to one roster-hash sentence pinned by cache-key.test.js (every code kept); docs/architecture.md gained DayQuickView.gs + the getDayQuickView row; docs/next-steps.md gained rows for exception days, the outbound / direct / journey attribution round and the 10-28/29 owner rounds. Subsystems clean; no undocumented operator state. CLAUDE.md 176.6 KB of 200 KB.
 - **2026-10-29 (4) -- QV-4 IMPLEMENTED (addendum in block 259-qv2-broad-implement).** A week / month day bar opens the quick view on its first workday; the arrows then step by day (`strip.__dts.qv`). Bites 3/3. Then /sync-docs.
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
