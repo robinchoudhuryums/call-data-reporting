@@ -2165,6 +2165,7 @@ items for anything it flags or doesn't cover.)
 84. Transfers / consults to a person on the caller's journey (IXT-1: the Transfer To call plus every internal dial from the answering agent while live, journey-only; not retroactive), the outbound twin (OXT-1: an agent on an inbound AND an outbound call at once gets neither) + `diagnosePersonTransfers` (cdr-import, read-only, both directions + time since connect)
 85. `diagnoseHoldHangups` (HOH-0, cdr-import, read-only): is a "hung up on hold" flag a real hang-up (the call's last leg) or a transfer side effect (someone answered after it)?
 86. `diagnoseTransferBounces` (XB-0, cdr-import, read-only): calls sent to another department after being answered that CAME BACK, by department trio and first sender
+87. `diagnoseOutsideNumberLegs` (NX-0, cdr-import, read-only): is a leg to an outside number (the old "N." step) a real step or an 8x8 artifact, and which figures depend on it?
 
 ## Cycle Workflow Config
 

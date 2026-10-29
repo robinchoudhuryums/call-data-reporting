@@ -279,7 +279,17 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 > it continues under the call the transferring leg names in Transfer To Call
 > ID (col P), so any reader asking "what happened after this leg" must follow
 > col P, not just the Parent-Call-ID group -- the first HOH-0 run did not and
-> read every flag as a hang-up.
+> read every flag as a hang-up. (It made no difference in the end: the re-run
+> found the flag on the call's last leg in 149 of 149 cases, so HOH-1 changed
+> only the wording and stamps the step `holdHangup` in the journey.)
+>
+> **Journey names for an outside-number leg (NX-1).** A leg whose callee is an
+> outside number reads "(caller)" when it is the caller's own number (the
+> agent's leg to the caller, which 8x8 records beside the answer leg and
+> across a warm transfer -- `diagnoseOutsideNumberLegs`, #87, sizes whether
+> it is ever more than that), the masked CNAM for another named number, and
+> "(external number)" for a blank one. The old "N." was "N/A" put through the
+> initials mask.
 
 > **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
 > first agent it rings often start in the same second, and 8x8 can give the

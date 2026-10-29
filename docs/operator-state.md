@@ -3790,3 +3790,34 @@ When something looks wrong, before assuming a code bug, check:
     Config row (or an owner call) for each "queue not placed" -- the
     sub-queues A_Q_PAP / A_Q_Spanish / A_Q_PAK ride only the dashboard's seed
     constants, which cdr-import cannot read -- then re-run.
+    **XB-0c (2026-10-29, owner: "PAP is a part of Sales"; "MWC is Sales"):**
+    a sub-queue folds into the department its Dept Config row names as
+    Overview Parent (one level, as INV-38 nests it), so Sales <-> PAP is no
+    move and a Sales + PAP agent is one department -- which needs ACTIVE Dept
+    Config rows for PAP (Overview Parent Sales), Spanish (CSR) and PAK
+    (Power) with their queue, matching the seeds so no dashboard figure moves;
+    A_Q_Sales_MWC goes in Sales' "Inbound queue aliases". The sister-brand
+    main lines (UDC_A_Q_Main, UUC_A_Q_Main) and A_Q_AfterHours are entry
+    queues, ignored and counted (`TF_BOUNCE_ENTRY_QUEUES_`). The log's first
+    lines say which sub-queues were folded.
+
+87. **Is the "N." step a real leg? -- `diagnoseOutsideNumberLegs` (NX-0,
+    cdr-import, read-only, owner 2026-10-29).** The path's "N." bubble was a
+    leg to an OUTSIDE number whose name cell was N/A (the initials mask made
+    "N/A" an initial; NX-1 now labels it "(caller)" when the number is the
+    caller's own, else "(external number)" -- for newly captured / re-imported
+    dates). The owner suspects an 8x8 artifact. Run
+    **`diagnoseOutsideNumberLegsAllDates()`** (or one date) and read the TOTAL
+    line: every leg to an outside number on a captured outside call, sorted
+    into a second record of the agent's own answer (it overlaps their
+    Incoming answer leg: an artifact), a leg spanning a warm transfer to the
+    call's end while the next agent talks inside it (an artifact -- its talk
+    counts the next agent's too, the owner's 10/22 call 1783985355961), the
+    only record of that talk, or a different outside number (a real forward).
+    The line also says how many sit on a transfer-target call, share a SIP id
+    with another leg, and -- what matters for any figure -- how many calls
+    count as answered ONLY through such a leg and how many take their final
+    department from it. Writes nothing; call ids only. Its result decides
+    whether the capture should drop the artifact legs from the path (and from
+    the answered / department tests), which moves figures and waits on the
+    owner. Pinned by `inbound-calls.test.js`.
