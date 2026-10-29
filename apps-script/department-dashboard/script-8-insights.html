@@ -1817,7 +1817,7 @@
   // Most urgent first; within a colour the fixed section order.
   function insBriefRank_(rows) {
     var tierOrder = { red: 0, amber: 1, fade: 2, green: 3, grey: 4 };
-    var keyOrder = { queue: 0, agents: 1, outbound: 2, callbacks: 3, detail: 4, trend: 5 };
+    var keyOrder = { queue: 0, agents: 1, outbound: 2, callbacks: 3, trend: 4 };
     return (rows || []).slice().sort(function (a, b) {
       var t = (tierOrder[a.tier] != null ? tierOrder[a.tier] : 9) - (tierOrder[b.tier] != null ? tierOrder[b.tier] : 9);
       if (t) return t;
@@ -1844,14 +1844,25 @@
     return '<svg class="ins-brief-ico" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">'
       + INS_BRIEF_ICON_PATH_[t] + '</svg><span class="sr-only">' + escapeHtml(INS_BRIEF_WORD_[t]) + '</span>';
   }
+  // BR-4 (owner 2026-10-29): one Team row holds BOTH the agent cards and the
+  // team detail, in that order -- a row may mount several sections (`ids`).
   var INS_BRIEF_TARGET_ = {
-    queue:     { id: 'ins-qh-fold',      label: 'Queue health' },
-    agents:    { id: 'ins-agents-fold',  label: 'Agents' },
-    outbound:  { id: 'ins-ob-fold',      label: 'Outbound' },      // Step 3
-    callbacks: { id: 'ins-cb-fold',      label: 'Callbacks' },
-    detail:    { id: 'ins-team-detail',  label: 'Team detail' },
-    trend:     { id: 'ins-trend-fold',   label: 'Trend' },
+    queue:     { ids: ['ins-qh-fold'],                        label: 'Queue health' },
+    agents:    { ids: ['ins-agents-fold', 'ins-team-detail'], label: 'Team' },
+    outbound:  { ids: ['ins-ob-fold'],                        label: 'Outbound' },      // Step 3
+    callbacks: { ids: ['ins-cb-fold'],                        label: 'Callbacks' },
+    trend:     { ids: ['ins-trend-fold'],                     label: 'Trend' },
   };
+  // BR-4: PURE. The Team row's text -- the agents verdict, then the team's
+  // talk time per call when there is one.
+  function insBriefTeamText_(agentsText, ts) {
+    var att = ts && ts.att;
+    return String(agentsText || '')
+      + (att && att.formatted && Number(att.val) > 0 ? ' · talk time ' + att.formatted + ' per call' : '');
+  }
+  function insBriefTargetKey_(id) {
+    return Object.keys(INS_BRIEF_TARGET_).filter(function (k) { return INS_BRIEF_TARGET_[k].ids.indexOf(id) >= 0; })[0] || null;
+  }
 
   function insBriefAgentRows_(data) {
     var cards = (data && data.agentData) || [];
@@ -1991,14 +2002,7 @@
     var topTier = hasCalls ? insBriefTopTier_(answerTierCls_(pct, dept)) : 'grey';
     var targetNote = insBriefTargetNote_(answerStdFor_(dept), hasCalls);   // G2
     var rows = [
-      { key: 'agents', tier: agentsV.tier, text: agentsV.text },
-      { key: 'detail', tier: 'grey', text: (function () {
-          var parts = [];
-          if (ts.att && ts.att.formatted && Number(ts.att.val) > 0) parts.push('Talk time ' + ts.att.formatted + ' per call');
-          var top = insBriefTopShare_(data);
-          if (top) parts.push(top.name + ' took ' + top.pct + '% of answered calls');
-          return parts.length ? parts.join('; ') : 'No team detail for this window';
-        })() },
+      { key: 'agents', tier: agentsV.tier, text: insBriefTeamText_(agentsV.text, ts) },   // BR-4
       { key: 'trend', tier: trendV.tier, text: trendV.text },
     ];
     if (insBriefQueueVisible_(data.queueHealth)) {   // F28
@@ -2062,7 +2066,7 @@
   // only: every section starts collapsed, and nothing here writes the
   // per-user fold store (insFoldSet_ skips a mounted section).
   var INS_BRIEF_OPEN_ = {};      // brief key -> open, this page load
-  var INS_BRIEF_MOUNTED_ = {};   // brief key -> the mounted element's id
+  var INS_BRIEF_MOUNTED_ = {};   // brief key -> the mounted elements' ids (BR-4: a row may hold several)
   function insBriefActive_() {
     return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
       && document.body.getAttribute('data-view-as') !== 'manager';
@@ -2086,11 +2090,13 @@
   }
   function insBriefUnmountAll_() {
     Object.keys(INS_BRIEF_MOUNTED_).forEach(function (key) {
-      var el = $(INS_BRIEF_MOUNTED_[key]);
-      if (!el) return;
-      var ph = document.querySelector('[data-ins-home="' + el.id + '"]');
-      if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph.nextSibling);
-      el.classList.remove('ins-brief-mounted');
+      INS_BRIEF_MOUNTED_[key].forEach(function (id) {
+        var el = $(id);
+        if (!el) return;
+        var ph = document.querySelector('[data-ins-home="' + el.id + '"]');
+        if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph.nextSibling);
+        el.classList.remove('ins-brief-mounted');
+      });
     });
     INS_BRIEF_MOUNTED_ = {};
   }
@@ -2099,10 +2105,12 @@
   function insBriefRestoreFolds_() {
     var f = insFoldsLoad_();
     Object.keys(INS_BRIEF_TARGET_).forEach(function (key) {
-      var el = $(INS_BRIEF_TARGET_[key].id);
-      var fk = el && el.getAttribute('data-fold');
-      if (!fk || insBriefMounted_(el) || !document.querySelector('[data-ins-home="' + el.id + '"]')) return;
-      if (el.open !== !!f[fk]) el.open = !!f[fk];
+      INS_BRIEF_TARGET_[key].ids.forEach(function (id) {
+        var el = $(id);
+        var fk = el && el.getAttribute('data-fold');
+        if (!fk || insBriefMounted_(el) || !document.querySelector('[data-ins-home="' + el.id + '"]')) return;
+        if (el.open !== !!f[fk]) el.open = !!f[fk];
+      });
     });
   }
   function insBriefMountAll_() {
@@ -2111,18 +2119,21 @@
     box.querySelectorAll('[data-brief-slot]').forEach(function (slot) {
       var key = slot.getAttribute('data-brief-slot');
       var t = INS_BRIEF_TARGET_[key];
-      var el = t && $(t.id);
-      if (!el || insBriefMounted_(el)) return;
-      // The placeholder marks the section's own home the first time it moves.
-      if (!document.querySelector('[data-ins-home="' + el.id + '"]') && el.parentNode) {
-        var ph = document.createElement('span');
-        ph.hidden = true;
-        ph.setAttribute('data-ins-home', el.id);
-        el.parentNode.insertBefore(ph, el);
-      }
-      slot.appendChild(el);
-      el.classList.add('ins-brief-mounted');
-      INS_BRIEF_MOUNTED_[key] = el.id;
+      if (!t) return;
+      t.ids.forEach(function (id) {
+        var el = $(id);
+        if (!el || insBriefMounted_(el)) return;
+        // The placeholder marks the section's own home the first time it moves.
+        if (!document.querySelector('[data-ins-home="' + el.id + '"]') && el.parentNode) {
+          var ph = document.createElement('span');
+          ph.hidden = true;
+          ph.setAttribute('data-ins-home', el.id);
+          el.parentNode.insertBefore(ph, el);
+        }
+        slot.appendChild(el);
+        el.classList.add('ins-brief-mounted');
+        (INS_BRIEF_MOUNTED_[key] = INS_BRIEF_MOUNTED_[key] || []).push(el.id);
+      });
       insBriefApply_(key);
     });
   }
@@ -2135,11 +2146,13 @@
     if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (slot) slot.hidden = !open;
     var t = INS_BRIEF_TARGET_[key];
-    var el = t && $(t.id);
     // Setting `open` fires the section's own toggle listener: the trend chart,
     // the team-detail canvases, the agents chart and the Callbacks payload all
     // draw on open exactly as they did when the section was opened in place.
-    if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
+    (t ? t.ids : []).forEach(function (id) {
+      var el = $(id);
+      if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
+    });
   }
   function insBriefToggle_(key, force) {
     INS_BRIEF_OPEN_[key] = (force === undefined) ? !INS_BRIEF_OPEN_[key] : !!force;
@@ -2153,7 +2166,7 @@
     var el = $(id);
     if (!el) return;
     if (insBriefMounted_(el)) {
-      var key = Object.keys(INS_BRIEF_TARGET_).filter(function (k) { return INS_BRIEF_TARGET_[k].id === id; })[0];
+      var key = insBriefTargetKey_(id);
       if (key) { insBriefToggle_(key, true); return; }
     }
     if (!el.open) el.open = true;

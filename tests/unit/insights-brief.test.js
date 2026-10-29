@@ -11,7 +11,8 @@
 //     while on par; "slipping" is ignored on windows more than 7 days apart;
 //   - trend: the latest WHOLE month vs the average of the 3 before it -- red
 //     at 12+ points down, amber 8 to 12 down, green 8+ up;
-//   - callbacks / team detail: always grey (no standard yet);
+//   - callbacks: always grey (no standard yet); team detail rides the Team
+//     row with the agents since BR-4;
 //   - ranking: red, amber, green, grey; ties in the fixed section order.
 // The client rules are PURE functions lifted out of script-8-insights.html
 // (the date-presets.test.js technique); the queue-wait verdict is server-side
@@ -169,10 +170,23 @@ test('trend shading: neutral within 2 points, full colour at 15', function () {
 
 test('ranking: red, amber, green, grey; ties in the fixed section order', function () {
   const out = rank([
-    { key: 'trend', tier: 'grey' }, { key: 'detail', tier: 'grey' }, { key: 'agents', tier: 'amber' },
+    { key: 'trend', tier: 'grey' }, { key: 'outbound', tier: 'grey' }, { key: 'agents', tier: 'amber' },
     { key: 'queue', tier: 'amber' }, { key: 'callbacks', tier: 'grey' }, { key: 'x', tier: 'red' },
   ]).map(function (r) { return r.key; });
-  assert.deepEqual(out, ['x', 'queue', 'agents', 'callbacks', 'detail', 'trend']);
+  assert.deepEqual(out, ['x', 'queue', 'agents', 'outbound', 'callbacks', 'trend']);
+});
+
+test('BR-4: one Team row -- the agents verdict, then talk time per call; it mounts the agent cards, then the team detail', function () {
+  const teamText = extractFn(F, 'insBriefTeamText_');
+  assert.equal(teamText('Nobody is behind the team average', { att: { val: 181, formatted: '0:03:01' } }),
+    'Nobody is behind the team average · talk time 0:03:01 per call');
+  assert.equal(teamText('Ann (behind)', { att: { val: 0, formatted: '0:00:00' } }), 'Ann (behind)');
+  assert.equal(teamText('Ann (behind)', {}), 'Ann (behind)');
+  const src = fs.readFileSync(path.join(DIR, F), 'utf8');
+  const tgt = src.slice(src.indexOf('var INS_BRIEF_TARGET_ = {'), src.indexOf('};', src.indexOf('var INS_BRIEF_TARGET_ = {')));
+  assert.match(tgt, /agents:\s*\{\s*ids:\s*\['ins-agents-fold',\s*'ins-team-detail'\],\s*label:\s*'Team'\s*\}/);
+  assert.doesNotMatch(tgt, /\bdetail:/, 'no separate Team detail row');
+  assert.doesNotMatch(src, /key:\s*'detail'/, 'the brief builds no detail row');
 });
 
 test('--caution (the brief amber) is defined at every site --stale is, with the same values', function () {

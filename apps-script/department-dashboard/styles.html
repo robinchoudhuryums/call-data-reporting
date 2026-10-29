@@ -1075,6 +1075,14 @@
     background: var(--paper-card); padding: 8px 12px 10px; min-width: 0; }
   .ins-brief-slot > .ins-brief-mounted { margin: 0; border: 0; padding: 0; background: none; box-shadow: none; }
   .ins-brief-slot > details.ins-brief-mounted > summary { display: none; }
+  /* BR-4: a row holding two sections (Team = agent cards, then team detail)
+     keeps the SECOND one's summary as a plain sub-heading -- the row opens and
+     closes both, so the heading itself is not a toggle. */
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted > summary { display: block; list-style: none; pointer-events: none;
+    font-weight: 600; margin-bottom: 6px; }
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted > summary::-webkit-details-marker { display: none; }
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted > summary::before { content: none; }
   @media (prefers-reduced-motion: reduce) { .ins-brief-chev { transition: none; } }
   @media (max-width: 600px) {
     .ins-brief-row { flex-wrap: wrap; }
