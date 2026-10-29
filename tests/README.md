@@ -196,7 +196,11 @@ tests/
                               call -- the flag on the transferring agent's leg
                               then an answer is answeredAfter, the last
                               flagged leg decides, unanswered continuations,
-                              no number in the line; QF-1: a
+                              no number in the line; HOH-0b: a warm transfer
+                              followed through col P to the colleague's
+                              hand-over (answeredAfter via the link), a
+                              consult-only continuation stays final, chained
+                              links without looping; QF-1: a
                               queue listed before the agent it rang in the
                               same second, a stable partition inside one
                               second only),
@@ -215,7 +219,10 @@ tests/
                               -- sender / returner, a consult or a stayed
                               transfer is no bounce, came back unanswered,
                               two-roster agents and unmapped queues skipped
-                              and counted, a hand-over IS a step, the
+                              and counted, a hand-over IS a step, XB-0b's
+                              two-roster placement (the ringing queue, else
+                              the current department) and off-roster names
+                              never a number, the
                               canonicalizer and case-insensitive queues, the
                               fold and the grid pass; the read-only transfer-shape
                               probe: queue vs direct transfers, the customer

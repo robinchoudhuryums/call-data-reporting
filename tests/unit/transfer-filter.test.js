@@ -479,16 +479,48 @@ test('XB-0: back before anyone in the other department answered -- returnedUnans
   assert.equal(b.bounce.sender, 'Peter (Praneeth) Gummadi');
 });
 
-test('XB-0: a two-roster agent and an unmapped queue are skipped and counted, never guessed', function () {
+test('XB-0: an unmapped queue is skipped and counted, never guessed; a two-roster agent with nothing to place them is too', function () {
   const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), ans('3', 'Una Both'), q('4', 'A_Q_Mystery'), ans('5', 'Adrian (Ankit) Sharma')]);
   assert.equal(b.bounce, null, 'Sales all along once the unknowns are skipped');
-  assert.equal(b.skipped.twoRosterAgent, 1);
+  assert.equal(b.skipped.twoRosterAgent, 0, 'XB-0b: Una stays in Sales, the department the call is already in');
+  assert.deepEqual(b.resolved, { byQueue: 0, byStint: 1 });
+  const first = xbOf([ans('1', 'Una Both'), q('2', 'A_Q_Mystery')]);
+  assert.equal(first.skipped.twoRosterAgent, 1, 'no queue rang them and no stint yet -- skipped');
   assert.equal(b.skipped.unmappedQueue, 1);
   assert.deepEqual(b.unmappedQueues, ['A_Q_Mystery']);
   // A colleague's hand-over (IXT-1) IS a step: the caller moved to them.
   const h2 = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'),
     ans('3', 'Daniel (Dishant) Sahani', 60, { transfer: true, handover: true }), q('4', 'A_Q_Sales'), ans('5', 'Adrian (Ankit) Sharma')]);
   assert.equal(h2.bounce.kind, 'sentBack');
+});
+
+test('XB-0b: a two-roster agent goes to the department of the queue that rang them -- a bounce through them is seen', function () {
+  // Sales -> A_Q_CSR -> Una (on both rosters) -> back to Sales: XB-0 skipped Una
+  // and saw Sales -> CSR(queue) -> Sales as a return before anyone answered.
+  const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), q('3', 'A_Q_CSR'), ans('4', 'Una Both', 90),
+    q('5', 'A_Q_Sales'), ans('6', 'Daniel (Dishant) Sahani')]);
+  assert.deepEqual(b.bounce, { from: 'Sales', to: 'CSR', sender: 'Peter (Praneeth) Gummadi', returner: 'Una Both', kind: 'sentBack' });
+  assert.deepEqual(b.resolved, { byQueue: 1, byStint: 0 });
+  // The ring is consumed by the answer: a later direct hand-over to Una is
+  // placed by the stint she joins, never by the old queue.
+  const h3 = xbOf([q('1', 'A_Q_CSR'), ans('2', 'Camila (Cheshta) Bhutani'), ans('3', 'Una Both', 60, { transfer: true, handover: true })]);
+  assert.deepEqual(h3.resolved, { byQueue: 0, byStint: 1 });
+  assert.equal(h3.interDept, false);
+});
+
+test('XB-0b: answerers on no roster are listed by name, a number never', function () {
+  const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'New Hire'), ans('3', '12145550123'), ans('4', '+1 (214) 555-0199')]);
+  assert.equal(b.skipped.unknownAgent, 3);
+  assert.deepEqual(b.unknownAgents, ['New Hire', '(a number)']);
+  let st = h.call('tfBounceFold_', {}, h.call('tfBounceOfJourney_', [q('1', 'A_Q_Sales'), ans('2', 'New Hire')], XB.deptsOfQueue, XB.deptsOfAgent), 'C1');
+  st = h.call('tfBounceFold_', st, h.call('tfBounceOfJourney_', [q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi')], XB.deptsOfQueue, XB.deptsOfAgent), 'C2');
+  st = JSON.parse(JSON.stringify(st));
+  assert.deepEqual(st.unknownAgents, { 'New Hire': 1 });
+  assert.equal(st.callsWithSkip, 1, 'one of the two calls had a step skipped');
+  st.captured = 2;
+  const line = h.call('tfBounceLine_', st);
+  assert.match(line, /\(calls with any step skipped 1\); two-roster answerers placed -- by the queue that rang them 0, in the department the call was already in 0/);
+  assert.ok(!/555/.test(line));
 });
 
 test('XB-0: the canonicalizer places an agent whose journey name is a feed variant', function () {

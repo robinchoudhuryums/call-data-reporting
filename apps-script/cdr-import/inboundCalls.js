@@ -37,7 +37,7 @@ var IC_COL = {
   CALL_ID: 0, LEG_ID: 1, START: 2, CONNECTED: 3, STOP: 4, DIRECTION: 5,
   TALK: 6, CALL_TIME: 7, CALLER: 8, CALLER_NAME: 9, CALLEE: 10, CALLEE_NAME: 11,
   PARENT_CALL_ID: 14, TRANSFER_TO: 15, DIAL_IN: 16, MISSED: 23, ABANDONED: 24, ANSWERED: 25,
-  CALLEE_HOLD_DURATION: 32, CALLEE_DISC_ON_HOLD: 33, CALLER_DISC_ON_HOLD: 34,
+  CAUSE: 26, CALLEE_HOLD_DURATION: 32, CALLEE_DISC_ON_HOLD: 33, CALLER_DISC_ON_HOLD: 34,
   DEPARTMENTS: 36
 };
 
@@ -3192,12 +3192,29 @@ function diagnosePersonTransfersAllDates() { return diagnosePersonTransfers('all
 //                      (the transfer side effect);
 //   unansweredAfter -- the call went on (a queue, a ring) but nobody answered
 //                      (the caller hung up in the NEXT step, not on hold).
+// HOH-0b (owner's first run, 2026-10-29: 135 of 135 read `final`, the 10/19
+// call included): a WARM transfer continues under ANOTHER Call ID -- the one
+// the transferring leg names in Transfer To Call ID (col P), where the
+// colleague's Outgoing leg to the caller's number is the hand-over (the owner's
+// 10/22 legs). Grouping by Parent Call ID cannot see it, so the pass now
+// follows col P (chained, IC_HOH_LINK_DEPTH_ hops) and reads a hand-over leg
+// there that outlasts the flag as `answeredAfter` / `unansweredAfter`, and
+// says per class how many were decided through a link. Two direct signals on
+// the flagged leg itself ride along: col P set, and Cause = Transfer.
 var IC_HOH_SLACK_MS_ = 2000;
+var IC_HOH_LINK_DEPTH_ = 3;
 
-/** PURE. The HOH-0 shape of one call's legs, or null when no caller leg is flagged. */
-function icHoldHangupShape_(legs) {
+/**
+ * PURE. The HOH-0 shape of one call's legs, or null when no caller leg is flagged.
+ * `opts.linked` (HOH-0b): the legs of the calls reachable through col P;
+ * `opts.callerNumber`: the caller's number (icExternalNumber_ form), which
+ * picks the hand-over legs there (never logged).
+ */
+function icHoldHangupShape_(legs, opts) {
+  opts = opts || {};
   var dir = function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim(); };
   var stop = function (l) { var t = icParseTs_(l[IC_COL.STOP]); return isNaN(t) ? -Infinity : t; };
+  var cell = function (v) { var x = String(v == null ? '' : v).trim(); return (!x || x.toUpperCase() === 'N/A') ? '' : x; };
   var flagged = (legs || []).filter(function (l) { return dir(l) === 'Incoming' && icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD]); });
   if (!flagged.length) return null;
   var f = flagged.reduce(function (a, b) { return stop(b) > stop(a) ? b : a; });
@@ -3209,12 +3226,55 @@ function icHoldHangupShape_(legs) {
     return icTimeToSec_(l[IC_COL.TALK]) > 0
       && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered';
   };
+  // A hand-over leg in a linked call: the caller's own number on an Outgoing
+  // (colleague -> caller) or Incoming leg. A colleague-to-colleague leg there
+  // is the consult, not the caller, so it never counts.
+  var cn = opts.callerNumber || null;
+  var linkedAfter = !cn ? [] : (opts.linked || []).filter(function (l) {
+    if (icIsRecordingLeg_(l) || stop(l) <= fStop + IC_HOH_SLACK_MS_) return false;
+    var d = dir(l);
+    return (d === 'Outgoing' && icExternalNumber_(l[IC_COL.CALLEE]) === cn)
+      || (d === 'Incoming' && icExternalNumber_(l[IC_COL.CALLER]) === cn);
+  });
+  var cls = after.some(answered) ? 'answeredAfter'
+    : (linkedAfter.some(answered) ? 'answeredAfter'
+      : ((after.length || linkedAfter.length) ? 'unansweredAfter' : 'final'));
   return {
-    cls: !after.length ? 'final' : (after.some(answered) ? 'answeredAfter' : 'unansweredAfter'),
+    cls: cls,
+    viaLink: cls !== 'final' && !(cls === 'answeredAfter' ? after.some(answered) : after.length),
+    linked: (opts.linked || []).length > 0,
     flaggedLegHeld: icTimeToSec_(f[IC_COL.CALLEE_HOLD_DURATION]) > 0,
     flaggedLegAnswered: answered(f),
+    flaggedLegTransferTo: !!cell(f[IC_COL.TRANSFER_TO]),
+    flaggedLegCauseTransfer: String(f[IC_COL.CAUSE] == null ? '' : f[IC_COL.CAUSE]).trim() === 'Transfer',
     flaggedLegs: flagged.length
   };
+}
+
+/**
+ * PURE (HOH-0b). The legs of every call reachable from `root`'s group through
+ * col P (Transfer To Call ID), chained up to IC_HOH_LINK_DEPTH_ hops; `rootOf`
+ * maps a call id to its group root (icGroupLegsByRoot_'s keys).
+ */
+function icHoldHangupLinkedLegs_(groups, rootOf, root) {
+  var seen = {}; seen[root] = true;
+  var out = [], frontier = [root];
+  for (var hop = 0; hop < IC_HOH_LINK_DEPTH_ && frontier.length; hop++) {
+    var next = [];
+    frontier.forEach(function (r) {
+      (groups[r] || []).forEach(function (l) {
+        var t = String(l[IC_COL.TRANSFER_TO] == null ? '' : l[IC_COL.TRANSFER_TO]).trim();
+        if (!t || t.toUpperCase() === 'N/A') return;
+        var tr = rootOf[t] || t;
+        if (seen[tr] || !groups[tr]) return;
+        seen[tr] = true;
+        next.push(tr);
+        out.push.apply(out, groups[tr]);
+      });
+    });
+    frontier = next;
+  }
+  return out;
 }
 
 /** PURE. Folds one call's shape into a stats object (HOH-0's per-date and TOTAL rows). */
@@ -3226,6 +3286,10 @@ function icHoldHangupFold_(st, shape, rec) {
   var k = shape.cls + ':' + ((rec && rec.disposition) || 'unknown');
   st.byDisp[k] = (st.byDisp[k] || 0) + 1;
   if (shape.flaggedLegHeld) st.flaggedLegHeld = (st.flaggedLegHeld || 0) + 1;
+  if (shape.linked) st.linkedCalls = (st.linkedCalls || 0) + 1;
+  if (shape.viaLink) { st.viaLink = st.viaLink || {}; st.viaLink[shape.cls] = (st.viaLink[shape.cls] || 0) + 1; }
+  if (shape.flaggedLegTransferTo) st.flaggedLegTransferTo = (st.flaggedLegTransferTo || 0) + 1;
+  if (shape.flaggedLegCauseTransfer) st.flaggedLegCauseTransfer = (st.flaggedLegCauseTransfer || 0) + 1;
   st.samples = st.samples || { final: [], answeredAfter: [], unansweredAfter: [] };
   if (rec && rec.callId && st.samples[shape.cls].length < 5) st.samples[shape.cls].push(rec.callId);
   return st;
@@ -3262,7 +3326,10 @@ function diagnoseHoldHangups(dateIso) {
     Logger.log('[hoh] %s: %s', sheets[i].iso, icHoldHangupLine_(st));
     total.days++;
     total.captured += st.captured;
-    ['flagged', 'flaggedLegHeld', 'answeredFlagged'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    ['flagged', 'flaggedLegHeld', 'answeredFlagged', 'linkedCalls', 'flaggedLegTransferTo', 'flaggedLegCauseTransfer']
+      .forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    total.viaLink = total.viaLink || {};
+    Object.keys(st.viaLink || {}).forEach(function (k) { total.viaLink[k] = (total.viaLink[k] || 0) + st.viaLink[k]; });
     total.byClass = total.byClass || { final: 0, answeredAfter: 0, unansweredAfter: 0 };
     Object.keys(st.byClass || {}).forEach(function (k) { total.byClass[k] += st.byClass[k]; });
     total.byDisp = total.byDisp || {};
@@ -3289,10 +3356,18 @@ function diagnoseHoldHangupsAllDates() { return diagnoseHoldHangups('all'); }
 function icHoldHangupsForGrid_(grid) {
   var recs = buildInboundCallRecords_(grid).filter(function (r) { return !r.isInternal; });
   var groups = icGroupLegsByRoot_(grid);
+  var rootOf = {};
+  Object.keys(groups).forEach(function (root) {
+    groups[root].forEach(function (l) {
+      var own = String(l[IC_COL.CALL_ID] == null ? '' : l[IC_COL.CALL_ID]).trim();
+      if (own) rootOf[own] = root;
+    });
+  });
   var st = { captured: recs.length, flagged: 0, answeredFlagged: 0 };
   recs.forEach(function (r) {
     if (!r.abandonedOnHold) return;
-    var shape = icHoldHangupShape_(groups[r.callId] || []);
+    var shape = icHoldHangupShape_(groups[r.callId] || [],
+      { linked: icHoldHangupLinkedLegs_(groups, rootOf, r.callId), callerNumber: r.callerNumber });
     if (!shape) return;
     icHoldHangupFold_(st, shape, r);
     if (r.disposition === 'answered') st.answeredFlagged++;
@@ -3307,7 +3382,12 @@ function icHoldHangupLine_(st) {
     + String(st.answeredFlagged || 0) + ' of them answered) -- the flagged leg was the call\'s LAST '
     + String(c.final || 0) + ' (a real hang-up on hold), someone ANSWERED after it ' + String(c.answeredAfter || 0)
     + ' (a transfer side effect), the call went on unanswered ' + String(c.unansweredAfter || 0)
-    + '; the flagged leg itself carried hold time on ' + String(st.flaggedLegHeld || 0);
+    + '; the flagged leg itself carried hold time on ' + String(st.flaggedLegHeld || 0)
+    + ', named a Transfer To call on ' + String(st.flaggedLegTransferTo || 0)
+    + ', ended with Cause = Transfer on ' + String(st.flaggedLegCauseTransfer || 0)
+    + '; flagged calls with a Transfer To link ' + String(st.linkedCalls || 0)
+    + ' (decided through the link: answered after ' + String((st.viaLink || {}).answeredAfter || 0)
+    + ', unanswered after ' + String((st.viaLink || {}).unansweredAfter || 0) + ')';
 }
 
 /** PURE. One direction's stats as a log line (the diagnostic's per-date and TOTAL rows). */
