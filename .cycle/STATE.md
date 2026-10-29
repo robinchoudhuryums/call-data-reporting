@@ -13,7 +13,7 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
-- **2026-10-29 (2) -- QV-2 IMPLEMENTED (block 259-qv2-broad-implement).** The day quick view's reads are ONE request (`getDayQuickView`, DayQuickView.gs, wrapping the three endpoints in one execution): opening a day = 2 requests (the day, then both neighbours), each step = 1. Inner usage rows suppressed for one `dayView` row, none for a prefetch. 2746 tests, bites 7/7. NET 1 - 0 = 1.
+- **2026-10-29 (2) -- QV-2 IMPLEMENTED (block 259-qv2-broad-implement).** The day quick view's reads are ONE request (`getDayQuickView`, DayQuickView.gs, wrapping the three endpoints in one execution): opening a day = 2 requests (the day, then both neighbours), each step = 1. Inner usage rows suppressed for one `dayView` row, none for a prefetch. 2746 tests, ci:ui EXIT 0, bites 7/7. NET 1 - 0 = 1.
   **Owner-side:** deploy (new server file); after it, read `meta.partMs` on a cold open (the parts now run in sequence).
   **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
 - **2026-10-29 -- QV-1 + BR-4 IMPLEMENTED (block 259-qv1-br4-broad-implement).** BR-4: the brief's Agents + Team detail are one Team row (agents verdict · talk time per call; opens the cards then the team detail). QV-1: a click on a day bar opens that day's quick view (cards for the day beside the range, a condensed agent table -- outbound behind obAllowed_ -- the day's missed calls, workday arrows, "Open this day on the page"); admin-only, released with the day bars. 2739 tests, ci:ui EXIT 0, bites 6/6 (5 unit + 1 UI). NET 0 - 0 = 0.
