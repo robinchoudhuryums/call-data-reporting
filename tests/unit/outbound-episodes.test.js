@@ -449,6 +449,67 @@ test('CE-3: the direct summary splits own-team callbacks into "by the person" an
   assert.equal(s.ownByPerson + s.ownByTeam, s.own);
 });
 
+test('DL-R1: the next work open -- same day before the window, the call itself inside it, else the next business day', function () {
+  const realHol = h.ctx.isCompanyHoliday_;
+  h.ctx.isCompanyHoliday_ = function (iso) { return iso === '2026-09-07'; };
+  try {
+    const o = h.ctx.obOrdinal_;
+    const f = h.ctx.obNextWorkOpenOrd_;
+    assert.equal(f('2026-09-08', '05:00:00'), o('2026-09-08', '06:30:00'), 'a Tuesday before the window');
+    assert.equal(f('2026-09-08', '10:00:00'), o('2026-09-08', '10:00:00'), 'inside the window: the call itself');
+    assert.equal(f('2026-09-08', '15:00:00'), o('2026-09-09', '06:30:00'), 'the window end is exclusive');
+    assert.equal(f('2026-09-11', '20:00:00'), o('2026-09-14', '06:30:00'), 'Friday evening -> Monday');
+    assert.equal(f('2026-09-05', '10:00:00'), o('2026-09-08', '06:30:00'), 'Saturday -> past the Monday holiday to Tuesday');
+    assert.equal(f('2026-09-08', null), o('2026-09-08', '06:30:00'), 'no start reads as midnight');
+  } finally { h.ctx.isCompanyHoliday_ = realHol; }
+});
+
+test('DL-R1: the after-hours median is timed from the next work open; only own-team callbacks count', function () {
+  const realHol = h.ctx.isCompanyHoliday_;
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  try {
+    const eps = [
+      // Tuesday 20:00, called back Wednesday 07:00 -> 30 min after the 06:30 open.
+      { outcome: 'own', firstIso: '2026-09-08', firstHms: '20:00:00', delaySec: 11 * 3600 },
+      // Friday 18:00, called back Monday 08:30 -> 2 h after the open.
+      { outcome: 'own', firstIso: '2026-09-11', firstHms: '18:00:00', delaySec: (2 * 24 + 14) * 3600 + 30 * 60 },
+      // Called back at 21:00 the same evening, before the open -> 0.
+      { outcome: 'own', firstIso: '2026-09-08', firstHms: '20:00:00', delaySec: 3600 },
+      { outcome: 'other', firstIso: '2026-09-08', firstHms: '20:00:00', delaySec: 60 },
+      { outcome: 'none', firstIso: '2026-09-08', firstHms: '20:00:00', delaySec: null },
+    ];
+    assert.equal(h.ctx.obDirectMedianFromOpen_(eps), 1800);
+    assert.equal(h.ctx.obDirectMedianFromOpen_([]), null);
+  } finally { h.ctx.isCompanyHoliday_ = realHol; }
+});
+
+test('DL-R1: by department and line owner -- the first-tried line, both rosters, no team, most unreturned first', function () {
+  const ep = (outcome, teams, owners) => ({ outcome: outcome, teams: teams, delaySec: outcome === 'own' ? 60 : null,
+    attempts: owners.map((o) => ({ owner: o })) });
+  const rows = JSON.parse(JSON.stringify(h.ctx.obDirectByDept_([
+    ep('own', ['CSR'], ['Cara']),
+    ep('none', ['CSR'], ['Cara', 'Dana']),
+    ep('none', ['CSR'], ['Dana']),
+    ep('none', ['CSR'], ['Dana']),
+    ep('none', ['Sales'], ['Sales Voicemails']),
+    ep('none', ['CSR', 'Sales'], ['Casey']),
+    ep('none', [], ['Stranger']),
+    ep('none', [], [null]),
+  ])));
+  assert.deepEqual(rows.map((r) => [r.name, r.episodes, r.none, r.noTeam]),
+    [['CSR', 5, 4, false], ['Sales', 2, 2, false], ['No roster team', 2, 2, true]],
+    'sorted most not-called-back first; the no-team row last whatever its count');
+  assert.deepEqual(rows[0].people.map((p) => [p.name, p.episodes, p.none]),
+    [['Dana', 2, 2], ['Cara', 2, 1], ['Casey', 1, 1]], 'an episode belongs to the line tried FIRST');
+  assert.deepEqual(rows[1].people.map((p) => [p.name, p.voicemailBox]), [['Casey', false], ['Sales Voicemails', true]],
+    'a two-roster owner sits under both departments');
+  assert.deepEqual(rows[2].people.map((p) => p.name).sort(), ['(line not recorded)', 'Stranger']);
+  const r = rows[0];
+  assert.equal(r.own + r.other + r.gotThrough + r.pending + r.none, r.episodes, 'the bar adds up');
+  assert.equal(r.ownByPerson + r.ownByTeam, r.own);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.ctx.obDirectByDept_([]))), []);
+});
+
 test('CE-3: the counts split missed / abandoned, anonymous, the voicemail box and lines on no roster', function () {
   const c = JSON.parse(JSON.stringify(h.ctx.obDirectCounts_([
     { disp: 'missed', anon: false, who: 'Cara', n: 10 },

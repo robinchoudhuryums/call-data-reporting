@@ -3254,6 +3254,11 @@ test('CE-3: getOutboundDirectCallbacks -- the dept’s line owners only, work / 
   assert.equal(out.meta.misdialSec, 8);
   assert.deepEqual([out.all.episodes, out.all.own, out.all.ownByPerson, out.all.none], [3, 1, 1, 2]);
   assert.deepEqual([out.work.episodes, out.after.episodes], [2, 1], 'k2 first tried at 20:00 PST');
+  // DL-R1: the breakdown by department and line owner, on the same base.
+  assert.deepEqual(out.byDept.map(function (d) { return [d.name, d.episodes, d.none, d.own]; }), [['CSR', 3, 2, 1]]);
+  assert.deepEqual(out.byDept[0].people.map(function (p) { return [p.name, p.episodes, p.none, p.voicemailBox]; }),
+    [['Ann', 3, 2, false]]);
+  assert.equal(out.after.medianFromOpenSec, null, 'the after-hours caller was never called back');
   assert.equal(out.meta.cacheHit, false);
   // Cached on the freshness tag (+ roster): a second call does not touch Neon.
   h.ctx.getDashboardNeonConn_ = function () { throw new Error('should be cached'); };
@@ -3301,6 +3306,32 @@ test('CE-3: getOutboundDirectRepeats lists 2+-attempt episodes nobody called bac
   h.ctx.getDashboardNeonConn_ = function () { return null; };
   assert.equal(h.call('getOutboundDirectRepeats', { from: '2026-08-17', to: '2026-08-18', department: 'CSR' })
     .meta.available, false);
+});
+
+test('DL-R1: getOutboundDirectRepeats for ONE line owner lists every unreturned caller (1+ attempts)', function () {
+  installDl_();
+  const detail = JSON.stringify([
+    Object.assign(uncalledRow_('d2', '2026-08-18'), { disposition: 'missed', abandon_stage: null, wait_seconds: null }),
+    Object.assign(uncalledRow_('d4', '2026-08-17'), { disposition: 'missed', abandon_stage: null, wait_seconds: null }),
+    Object.assign(uncalledRow_('d4b', '2026-08-18'), { disposition: 'abandoned' })]);
+  const conn = makeSeqConn_([JSON.stringify(DL_EVENTS_), detail]);
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const out = JSON.parse(JSON.stringify(h.call('getOutboundDirectRepeats',
+    { from: '2026-08-17', to: '2026-08-18', department: 'CSR', owner: '  Ann ', minAttempts: 1 })));
+  assert.deepEqual([out.meta.owner, out.meta.minAttempts, out.meta.episodes], ['Ann', 1, 2],
+    'k2 (one attempt, after hours) and k4 (two); k1 was called back');
+  assert.deepEqual(out.episodes.map(function (ep) { return ep.attempts.length; }).sort(), [1, 2]);
+  // Another owner's name matches nothing; an absent minAttempts keeps the 2+ list.
+  const conn2 = makeSeqConn_([JSON.stringify(DL_EVENTS_), '[]']);
+  h.ctx.getDashboardNeonConn_ = function () { return conn2; };
+  const none = h.call('getOutboundDirectRepeats', { from: '2026-08-17', to: '2026-08-18', department: 'CSR', owner: 'Casey', minAttempts: 1 });
+  assert.equal(none.meta.episodes, 0);
+  const conn3 = makeSeqConn_([JSON.stringify(DL_EVENTS_), detail]);
+  h.ctx.getDashboardNeonConn_ = function () { return conn3; };
+  const rep = h.call('getOutboundDirectRepeats', { from: '2026-08-17', to: '2026-08-18', department: 'CSR', minAttempts: 5 });
+  assert.deepEqual([rep.meta.minAttempts, rep.meta.owner, rep.meta.episodes], [2, null, 1], 'only 1 or the default 2');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  h.state.testUser = null;
 });
 
 // OXT-1: the ring probes measure the call's OWN external leg -- an appended

@@ -304,6 +304,7 @@
       insAutoRunPending_ = true;
       launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
         'Insights for ' + dept);
+      insBriefLoading_(dept);
       insEnsureRoster();
       return;
     }
@@ -1073,6 +1074,7 @@
         // loading pane; on a roster failure, cancel the pending auto-run
         // and fall back to the form so the loader error is visible instead
         // of an eternal loading pane (the IR #1-Part-B pattern).
+        dsFrostHide_($('ins-brief'));   // no run is coming: lift the brief's loading frost
         if (insLauncherAutoRun_ || insAutoRunPending_) {
           insLauncherAutoRun_ = false;
           insAutoRunPending_ = false;
@@ -1372,6 +1374,7 @@
     const __insUseFrost = !!(__insFrostHost && __insFrostHost.style.display !== 'none'
                              && __insFrostHost.childElementCount > 0);
     if (__insUseFrost) dsFrostShow_(__insFrostHost, 'Refreshing report…');
+    insBriefLoading_(req.department);
     // Repaint path shared by live data / SWR / fail-fallback; clears the
     // results-status line so the SWR "refreshing" note can't outlive the
     // response it announced.
@@ -1410,6 +1413,7 @@
           reportClientIssue_('load-failure', 'Insights load failed: ' + (err && err.message ? err.message : String(err)));
         }
         if (__insFrostHost) dsFrostHide_(__insFrostHost);   // R7 (I-3)
+        dsFrostHide_($('ins-brief'));
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
         // R8-A7: no render is coming -- disarm the one-shot chip scroll so it
@@ -1624,9 +1628,11 @@
   }
 
   // Queue health: red when a queue's window abandon rate breaks the standard
-  // (4.00% or more); amber when none does but a queue had a violation DAY, or
-  // its avg answer ran 1.5x its own prior-3-month median (the server's
-  // perQueue[].wait verdict, judged only at 5+ calls a day); green otherwise.
+  // (4.00% or more); amber when none does but a queue had 4 or more violation
+  // DAYS, or its avg answer ran 1.5x its own prior-3-month median (the
+  // server's perQueue[].wait verdict, judged only at 5+ calls a day); 'fade'
+  // (a lighter green, owner 2026-10-28) when the worst queue had 1 to 3
+  // violation days; green otherwise.
   function insBriefQueue_(qh, abandonStd) {
     var std = Number(abandonStd) || 4;
     if (!qh) return { tier: 'grey', text: 'No queue data for this department' };
@@ -1655,7 +1661,9 @@
       parts.push(slow[0].queue + ' answered in ' + slow[0].wait.avgAnswerSec + 's on average, '
         + slow[0].wait.ratio + 'x its usual ' + slow[0].wait.ownMedianSec + 's' + more(slow.length - 1));
     }
-    if (parts.length) return { tier: 'amber', text: parts.join('; ') };
+    var worstViol = viol.length ? Number(viol[0].violations) : 0;
+    if (slow.length || worstViol >= 4) return { tier: 'amber', text: parts.join('; ') };
+    if (worstViol > 0) return { tier: 'fade', text: parts.join('; ') };
     return { tier: 'green', text: 'Every queue under ' + std + '% abandoned, with no violation days' };
   }
 
@@ -1808,8 +1816,8 @@
 
   // Most urgent first; within a colour the fixed section order.
   function insBriefRank_(rows) {
-    var tierOrder = { red: 0, amber: 1, green: 2, grey: 3 };
-    var keyOrder = { queue: 0, agents: 1, outbound: 2, callbacks: 3, detail: 4, trend: 5 };
+    var tierOrder = { red: 0, amber: 1, fade: 2, green: 3, grey: 4 };
+    var keyOrder = { queue: 0, agents: 1, outbound: 2, callbacks: 3, trend: 4 };
     return (rows || []).slice().sort(function (a, b) {
       var t = (tierOrder[a.tier] != null ? tierOrder[a.tier] : 9) - (tierOrder[b.tier] != null ? tierOrder[b.tier] : 9);
       if (t) return t;
@@ -1821,9 +1829,12 @@
   // green a thumbs-up, amber an exclamation mark, red a flag, grey (no signal)
   // a circle with a dash. The word stays for screen readers (.sr-only) and the
   // icon is aria-hidden, so a colour is never the only carrier of the verdict.
-  var INS_BRIEF_WORD_ = { red: 'Needs attention', amber: 'Watch', green: 'On track', grey: 'No signal' };
+  // 'fade' (owner 2026-10-28): on track, with a little to watch -- a lighter
+  // green, the same thumbs-up, and never counted as "needs a look".
+  var INS_BRIEF_WORD_ = { red: 'Needs attention', amber: 'Watch', fade: 'Mostly on track', green: 'On track', grey: 'No signal' };
   var INS_BRIEF_ICON_PATH_ = {
     green: '<path fill="currentColor" d="M2 10h4v11H2zM8 21h9.3a2 2 0 0 0 2-1.6l1.6-7.5A2 2 0 0 0 19 9.5h-5.4l.9-4.2a1.6 1.6 0 0 0-2.8-1.3L8 9.2z"/>',
+    fade:  '<path fill="currentColor" d="M2 10h4v11H2zM8 21h9.3a2 2 0 0 0 2-1.6l1.6-7.5A2 2 0 0 0 19 9.5h-5.4l.9-4.2a1.6 1.6 0 0 0-2.8-1.3L8 9.2z"/>',
     amber: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path style="fill:var(--paper-card)" d="M11 6h2v8h-2zM11 16h2v2h-2z"/>',
     red:   '<path fill="currentColor" d="M5 2h2v20H5zM8 3h10l-2.5 4.5L18 12H8z"/>',
     grey:  '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M7 11h10v2H7z"/>',
@@ -1833,14 +1844,25 @@
     return '<svg class="ins-brief-ico" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">'
       + INS_BRIEF_ICON_PATH_[t] + '</svg><span class="sr-only">' + escapeHtml(INS_BRIEF_WORD_[t]) + '</span>';
   }
+  // BR-4 (owner 2026-10-29): one Team row holds BOTH the agent cards and the
+  // team detail, in that order -- a row may mount several sections (`ids`).
   var INS_BRIEF_TARGET_ = {
-    queue:     { id: 'ins-qh-fold',      label: 'Queue health' },
-    agents:    { id: 'ins-agents-fold',  label: 'Agents' },
-    outbound:  { id: 'ins-ob-fold',      label: 'Outbound' },      // Step 3
-    callbacks: { id: 'ins-cb-fold',      label: 'Callbacks' },
-    detail:    { id: 'ins-team-detail',  label: 'Team detail' },
-    trend:     { id: 'ins-trend-fold',   label: 'Trend' },
+    queue:     { ids: ['ins-qh-fold'],                        label: 'Queue health' },
+    agents:    { ids: ['ins-agents-fold', 'ins-team-detail'], label: 'Team' },
+    outbound:  { ids: ['ins-ob-fold'],                        label: 'Outbound' },      // Step 3
+    callbacks: { ids: ['ins-cb-fold'],                        label: 'Callbacks' },
+    trend:     { ids: ['ins-trend-fold'],                     label: 'Trend' },
   };
+  // BR-4: PURE. The Team row's text -- the agents verdict, then the team's
+  // talk time per call when there is one.
+  function insBriefTeamText_(agentsText, ts) {
+    var att = ts && ts.att;
+    return String(agentsText || '')
+      + (att && att.formatted && Number(att.val) > 0 ? ' · talk time ' + att.formatted + ' per call' : '');
+  }
+  function insBriefTargetKey_(id) {
+    return Object.keys(INS_BRIEF_TARGET_).filter(function (k) { return INS_BRIEF_TARGET_[k].ids.indexOf(id) >= 0; })[0] || null;
+  }
 
   function insBriefAgentRows_(data) {
     var cards = (data && data.agentData) || [];
@@ -1897,6 +1919,9 @@
     if (!total || cards.length < 2) return null;
     var best = null;
     cards.forEach(function (c) {
+      // Owner 2026-10-28: a manager (on the dept's team-average exclusion
+      // list, R18) is never the agent the brief quotes.
+      if (insIsExempt_(c)) return;
       var a = Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0);
       if (!best || a > best.a) best = { name: c.name, a: a };
     });
@@ -1940,8 +1965,18 @@
     return !!(qh && (qh.error || qh.unmapped || qh.totals));
   }
 
+  // Owner 2026-10-28 (testing): a dept switch or a re-run left the brief
+  // showing the PREVIOUS department's rows until the new payload landed. It
+  // frosts with a loading label from the moment the run starts; the next
+  // render (or a failure) lifts it.
+  function insBriefLoading_(dept) {
+    var box = $('ins-brief');
+    if (!box || box.style.display === 'none' || !box.childElementCount) return;
+    dsFrostShow_(box, (dept && dept !== box.getAttribute('data-brief-dept')) ? 'Loading ' + dept + '…' : 'Refreshing…');
+  }
   function insRenderBrief_(data) {
     var box = $('ins-brief');
+    if (box) dsFrostHide_(box);
     var res = $('insights-results');
     // Step 3: the sections live inside the brief while it shows; put every one
     // back home BEFORE the rows are rebuilt (or the brief is hidden), so a
@@ -1967,14 +2002,7 @@
     var topTier = hasCalls ? insBriefTopTier_(answerTierCls_(pct, dept)) : 'grey';
     var targetNote = insBriefTargetNote_(answerStdFor_(dept), hasCalls);   // G2
     var rows = [
-      { key: 'agents', tier: agentsV.tier, text: agentsV.text },
-      { key: 'detail', tier: 'grey', text: (function () {
-          var parts = [];
-          if (ts.att && ts.att.formatted && Number(ts.att.val) > 0) parts.push('Talk time ' + ts.att.formatted + ' per call');
-          var top = insBriefTopShare_(data);
-          if (top) parts.push(top.name + ' took ' + top.pct + '% of answered calls');
-          return parts.length ? parts.join('; ') : 'No team detail for this window';
-        })() },
+      { key: 'agents', tier: agentsV.tier, text: insBriefTeamText_(agentsV.text, ts) },   // BR-4
       { key: 'trend', tier: trendV.tier, text: trendV.text },
     ];
     if (insBriefQueueVisible_(data.queueHealth)) {   // F28
@@ -2016,6 +2044,7 @@
           + '<div class="ins-brief-slot" id="' + slotId + '" data-brief-slot="' + r.key + '" hidden></div></li>';
       }).join('') + '</ul>';
     box.style.display = '';
+    box.setAttribute('data-brief-dept', dept || '');   // which dept these rows are (insBriefLoading_)
     if (res) res.classList.add('ins-has-brief');
     insBriefMountAll_();
     if (!box.__briefWired) {
@@ -2037,7 +2066,7 @@
   // only: every section starts collapsed, and nothing here writes the
   // per-user fold store (insFoldSet_ skips a mounted section).
   var INS_BRIEF_OPEN_ = {};      // brief key -> open, this page load
-  var INS_BRIEF_MOUNTED_ = {};   // brief key -> the mounted element's id
+  var INS_BRIEF_MOUNTED_ = {};   // brief key -> the mounted elements' ids (BR-4: a row may hold several)
   function insBriefActive_() {
     return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
       && document.body.getAttribute('data-view-as') !== 'manager';
@@ -2061,11 +2090,13 @@
   }
   function insBriefUnmountAll_() {
     Object.keys(INS_BRIEF_MOUNTED_).forEach(function (key) {
-      var el = $(INS_BRIEF_MOUNTED_[key]);
-      if (!el) return;
-      var ph = document.querySelector('[data-ins-home="' + el.id + '"]');
-      if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph.nextSibling);
-      el.classList.remove('ins-brief-mounted');
+      INS_BRIEF_MOUNTED_[key].forEach(function (id) {
+        var el = $(id);
+        if (!el) return;
+        var ph = document.querySelector('[data-ins-home="' + el.id + '"]');
+        if (ph && ph.parentNode) ph.parentNode.insertBefore(el, ph.nextSibling);
+        el.classList.remove('ins-brief-mounted');
+      });
     });
     INS_BRIEF_MOUNTED_ = {};
   }
@@ -2074,10 +2105,12 @@
   function insBriefRestoreFolds_() {
     var f = insFoldsLoad_();
     Object.keys(INS_BRIEF_TARGET_).forEach(function (key) {
-      var el = $(INS_BRIEF_TARGET_[key].id);
-      var fk = el && el.getAttribute('data-fold');
-      if (!fk || insBriefMounted_(el) || !document.querySelector('[data-ins-home="' + el.id + '"]')) return;
-      if (el.open !== !!f[fk]) el.open = !!f[fk];
+      INS_BRIEF_TARGET_[key].ids.forEach(function (id) {
+        var el = $(id);
+        var fk = el && el.getAttribute('data-fold');
+        if (!fk || insBriefMounted_(el) || !document.querySelector('[data-ins-home="' + el.id + '"]')) return;
+        if (el.open !== !!f[fk]) el.open = !!f[fk];
+      });
     });
   }
   function insBriefMountAll_() {
@@ -2086,18 +2119,21 @@
     box.querySelectorAll('[data-brief-slot]').forEach(function (slot) {
       var key = slot.getAttribute('data-brief-slot');
       var t = INS_BRIEF_TARGET_[key];
-      var el = t && $(t.id);
-      if (!el || insBriefMounted_(el)) return;
-      // The placeholder marks the section's own home the first time it moves.
-      if (!document.querySelector('[data-ins-home="' + el.id + '"]') && el.parentNode) {
-        var ph = document.createElement('span');
-        ph.hidden = true;
-        ph.setAttribute('data-ins-home', el.id);
-        el.parentNode.insertBefore(ph, el);
-      }
-      slot.appendChild(el);
-      el.classList.add('ins-brief-mounted');
-      INS_BRIEF_MOUNTED_[key] = el.id;
+      if (!t) return;
+      t.ids.forEach(function (id) {
+        var el = $(id);
+        if (!el || insBriefMounted_(el)) return;
+        // The placeholder marks the section's own home the first time it moves.
+        if (!document.querySelector('[data-ins-home="' + el.id + '"]') && el.parentNode) {
+          var ph = document.createElement('span');
+          ph.hidden = true;
+          ph.setAttribute('data-ins-home', el.id);
+          el.parentNode.insertBefore(ph, el);
+        }
+        slot.appendChild(el);
+        el.classList.add('ins-brief-mounted');
+        (INS_BRIEF_MOUNTED_[key] = INS_BRIEF_MOUNTED_[key] || []).push(el.id);
+      });
       insBriefApply_(key);
     });
   }
@@ -2110,11 +2146,13 @@
     if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (slot) slot.hidden = !open;
     var t = INS_BRIEF_TARGET_[key];
-    var el = t && $(t.id);
     // Setting `open` fires the section's own toggle listener: the trend chart,
     // the team-detail canvases, the agents chart and the Callbacks payload all
     // draw on open exactly as they did when the section was opened in place.
-    if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
+    (t ? t.ids : []).forEach(function (id) {
+      var el = $(id);
+      if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
+    });
   }
   function insBriefToggle_(key, force) {
     INS_BRIEF_OPEN_[key] = (force === undefined) ? !INS_BRIEF_OPEN_[key] : !!force;
@@ -2128,7 +2166,7 @@
     var el = $(id);
     if (!el) return;
     if (insBriefMounted_(el)) {
-      var key = Object.keys(INS_BRIEF_TARGET_).filter(function (k) { return INS_BRIEF_TARGET_[k].id === id; })[0];
+      var key = insBriefTargetKey_(id);
       if (key) { insBriefToggle_(key, true); return; }
     }
     if (!el.open) el.open = true;
@@ -2771,21 +2809,31 @@
     if (head) head.textContent = insObHeadText_(t, cur.scope);
     insBriefRowFromHead_('outbound');   // Step 3: in place, never a rebuild
     if (kp) {
-      kp.innerHTML = [
-        insQhKpiTileHtml_('Placed', fmtNumber(t.obTotal || 0), 'outbound calls',
-          pt ? insObDelta_(t.obTotal || 0, pt.obTotal || 0, 'volume', 'neu', meta, 'volume') : ''),
-        insQhKpiTileHtml_('Connected', fmtNumber(t.obConnected || 0), 'the far end answered',
-          pt ? insObDelta_(t.obConnected || 0, pt.obConnected || 0, 'volume', 'neu', meta, 'volume') : ''),
-        insQhKpiTileHtml_('Connect rate', t.obConnectRate != null ? escapeHtml(Number(t.obConnectRate).toFixed(1) + '%') : '–',
-          'connected ÷ placed',
-          (pt && t.obConnectRate != null && pt.obConnectRate != null)
-            ? insObDelta_(t.obConnectRate, pt.obConnectRate, 'pctPoints', 'pos', meta) : ''),
-        insQhKpiTileHtml_('Per agent-day', t.obPerDay != null ? escapeHtml(String(t.obPerDay)) : '–',
-          'placed per day an agent dialed',
-          (pt && t.obPerDay != null && pt.obPerDay != null) ? insObDelta_(t.obPerDay, pt.obPerDay, 'volume', 'neu', meta) : ''),
-        insQhKpiTileHtml_('Avg talk', escapeHtml(fmtDuration(t.obAttSec || 0)), 'per connected call',
-          (pt && t.obConnected && pt.obConnected) ? insObDelta_(t.obAttSec || 0, pt.obAttSec || 0, 'volume', 'neu', meta) : ''),
-      ].join('');
+      // SB-3 (owner 2026-10-28): Placed as one bar -- connected / rang out /
+      // brief / unknown add up to it (deptObTotals_ sums the per-agent
+      // buckets, unknown the remainder). Per agent-day and Avg talk are on
+      // other bases, so they go on the line underneath with their chips.
+      var parts = obPlacedParts_(t);
+      if (pt) {
+        parts[0].deltaHtml = insObDelta_(t.obConnected || 0, pt.obConnected || 0, 'volume', 'neu', meta, 'volume');
+      }
+      var placed = Number(t.obTotal) || 0, conn = Number(t.obConnected) || 0;
+      kp.innerHTML = obSplitSummaryHtml_({
+        cls: 'ob-split--out', num: fmtNumber(placed), lead: 'calls placed',
+        subHtml: (placed ? escapeHtml(fmtNumber(conn) + ' connected (' + Number(t.obConnectRate || 0).toFixed(1) + '%) · '
+            + fmtNumber(placed - conn) + ' did not connect') : 'no outbound calls')
+          + (pt ? ' ' + insObDelta_(placed, pt.obTotal || 0, 'volume', 'neu', meta, 'volume') : ''),
+        total: placed, parts: parts, aria: obPlacedAria_(t),
+        quality: [
+          'Connect rate <strong>' + (t.obConnectRate != null ? escapeHtml(Number(t.obConnectRate).toFixed(1) + '%') : '–') + '</strong>'
+            + ((pt && t.obConnectRate != null && pt.obConnectRate != null)
+              ? ' ' + insObDelta_(t.obConnectRate, pt.obConnectRate, 'pctPoints', 'pos', meta) : ''),
+          '<strong>' + (t.obPerDay != null ? escapeHtml(String(t.obPerDay)) : '–') + '</strong> calls per agent-day'
+            + ((pt && t.obPerDay != null && pt.obPerDay != null) ? ' ' + insObDelta_(t.obPerDay, pt.obPerDay, 'volume', 'neu', meta) : ''),
+          'Average talk <strong>' + escapeHtml(fmtDuration(t.obAttSec || 0)) + '</strong> per connected call'
+            + ((pt && t.obConnected && pt.obConnected) ? ' ' + insObDelta_(t.obAttSec || 0, pt.obAttSec || 0, 'volume', 'neu', meta) : ''),
+        ],
+      });
     }
     // UX-1: no agent table here -- the outbound agent table directly above is it.
     var notes = [];
@@ -2985,7 +3033,8 @@
     // the user just opened.
     insBriefRowFromHead_('callbacks');
     var kp = $('ins-cb-kpis');
-    if (kp) kp.innerHTML = outboundCallbackTilesHtml_(cb, (data && data.callbackPrior) || null);
+    if (kp) kp.innerHTML = outboundCallbackSummaryHtml_(cb, (data && data.callbackPrior) || null,
+      { scope: meta.department || '', windowDays: meta.callbackWindowDays });
     var win = $('ins-cb-window');
     if (win) win.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
     outboundRenderDelayStrip_(cb, $('ins-cb-delay-strip'));

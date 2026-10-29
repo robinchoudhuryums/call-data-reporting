@@ -116,17 +116,44 @@ const MODALS = [
     menu: '#reports-menu-btn',
     run: { click: '#ad-run-btn', wait: 2000, expect: [
       ['#ad-day-kpis .ds-kpi', 'daily-total KPI tiles'],
+      ['#ad-day-kpis .ob-split--out .ob-obar-seg[data-seg="good"]', 'the outbound split bar (SB-1)'],
       ['#ad-inbound-list .cl-call-card', 'inbound call cards'],
       ['#ad-outbound-list .cl-call-card', 'outbound call cards'],
       ['#ad-tier-note[style*="none"]', 'NO tier banner on a full-fidelity day'],
     ] } },
+  // SB-5 (owner 2026-10-28): the Inbound report's figures as one split --
+  // total = answered + rang out / voicemail + hung up, the part the tiles
+  // never showed -- and, company-wide, where the hang-ups happened.
+  { name: 'Inbound',        btn: '#inbound-report-btn',    sel: '#inbound-modal',
+    menu: '#reports-menu-btn',
+    run: { click: '#inbound-generate-btn', wait: 1500, expect: [
+      ['#inbound-kpi-row .ob-split .ob-obar-seg[data-seg="soft"]', 'the split summary with the rang-out / voicemail part (SB-5)'],
+    ], probe: async function (page, record) {
+      const v = await page.evaluate(() => {
+        const sm = document.querySelector('#inbound-kpi-row .ob-split');
+        const seg = (bar) => bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':'
+          + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0])) : [];
+        return { num: ((sm && sm.querySelector('.ob-sum-num')) || {}).textContent || '',
+          bar: seg(sm && sm.querySelector(':scope > .ob-obar')),
+          where: seg(sm && sm.querySelector('.ob-split-sub .ob-obar')),
+          quality: ((sm && sm.querySelector('.ob-sum-quality')) || {}).textContent || '',
+          deltas: document.querySelectorAll('#inbound-kpi-row .pr-delta').length };
+      });
+      record('Inbound (SB-5): one bar of answered / rang out or voicemail / hung up that adds up to the calls',
+        v.num === '4,120' && JSON.stringify(v.bar) === JSON.stringify(['good:3410', 'soft:308', 'bad:402']), JSON.stringify(v.bar));
+      record('Inbound (SB-5): company-wide, where the 402 hung up (queue / phone menu / person\u2019s line) adds up to them',
+        JSON.stringify(v.where) === JSON.stringify(['bad:244', 'bad2:120', 'soft:38']), JSON.stringify(v.where));
+      record('Inbound (SB-5): on hold and unanswered transfers are labelled under the bar, not in it; every figure keeps its vs-prior chip',
+        /61 hung up on hold — after an agent answered, so inside Answered/.test(v.quality) && /14 transfers nobody picked up/.test(v.quality)
+          && v.deltas >= 10, JSON.stringify({ q: v.quality.slice(0, 160), deltas: v.deltas }));
+    } } },
   // D1 (owner 2026-10-21): the Direct Calls report. The company run is clean
   // (full coverage); the probe then runs CSR, whose fixture data stops a
   // workday before the asked end and skips one workday mid-window.
   { name: 'Direct Calls',   btn: '#direct-call-report-btn', sel: '#direct-call-modal',
     menu: '#reports-menu-btn',
     run: { click: '#direct-call-generate-btn', wait: 1500, expect: [
-      ['#direct-call-kpi-row .ds-kpi', 'KPI tiles'],
+      ['#direct-call-kpi-row .ob-split .ob-obar-seg[data-seg="good"]', 'the split summary (SB-2)'],
       ['#direct-call-dept-cards .al-section-title', 'per-department cards (company view)'],
     ], probe: async function (page, record) {
       const meta = require('./payloads/direct-meta.json');
@@ -134,6 +161,21 @@ const MODALS = [
       const clean = await page.evaluate(() => { const n = document.getElementById('direct-call-coverage-note');
         return { none: !n || n.style.display === 'none', chips: document.querySelectorAll('#direct-call-kpi-row .pr-delta').length }; });
       record('Direct: a fully covered window carries no coverage note and keeps its vs-prior chips', clean.none && clean.chips > 0, JSON.stringify(clean));
+      // SB-2: the calls that rang a person's line are ONE bar that adds up to
+      // its headline (answered + missed while free + missed while busy), with
+      // the colleague / outside-caller rows under it; dialed calls are a second.
+      const sb = await page.evaluate(() => {
+        const sums = Array.from(document.querySelectorAll('#direct-call-kpi-row .ob-split')).map((sm) => {
+          const bar = sm.querySelector(':scope > .ob-obar');
+          return { num: Number(((sm.querySelector('.ob-sum-num') || {}).textContent || '').replace(/,/g, '')),
+            sum: bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0) : -1,
+            legend: sm.querySelectorAll(':scope > .ob-legend .ob-leg').length };
+        });
+        return { sums: sums, rows: document.querySelectorAll('#direct-call-kpi-row .dc-split-rows .ob-obar').length };
+      });
+      record('Direct (SB-2): two split bars that add up to their headlines, the inbound one with its three parts and the int / ext rows',
+        sb.sums.length === 2 && sb.sums.every((x) => x.num > 0 && x.num === x.sum) && sb.sums[0].legend === 3 && sb.sums[1].legend === 2 && sb.rows === 2,
+        JSON.stringify(sb));
       await page.click('#direct-call-back-btn'); await page.waitForTimeout(300);
       await page.selectOption('#direct-call-dept', 'CSR');
       await page.fill('#direct-call-to', meta.asked.to);
@@ -483,6 +525,50 @@ const MODALS = [
     record('Escalations: the page becomes active', esc.page === 'escalations', 'data-page=' + esc.page);
     record('Escalations: the worklist renders cards', esc.cards > 0, 'cards=' + esc.cards);
     record('Escalations: an admin gets the dept filter', esc.deptFilter === true);
+
+    // QF-2 (owner 2026-10-28): one action row on a pending card -- Start,
+    // the admin edits and the admin verbs together -- quiet outline buttons
+    // (the old btn-ghost had no rule and rendered solid black), a hover label
+    // on every action button, and no ellipsis on Move.
+    {
+      const qf = await page.evaluate(() => {
+        const card = [...document.querySelectorAll('.esc-card')].find((c) => c.querySelector('.esc-start'));
+        if (!card) return null;
+        const row = card.querySelector('.esc-start').closest('.esc-actions');
+        const ink = getComputedStyle(card.querySelector('.esc-start')).backgroundColor;
+        const move = card.querySelector('.esc-move-toggle');
+        const edit = card.querySelector('.esc-edit');
+        const btns = [...card.querySelectorAll('.esc-actions button')];
+        return {
+          oneRow: !!row && !!row.querySelector('.esc-move-toggle') && !!row.querySelector('.esc-delete')
+            && card.querySelectorAll('.esc-actions').length === 1,
+          quiet: !!edit && getComputedStyle(edit).backgroundColor !== ink,
+          titled: btns.length > 0 && btns.every((b) => (b.getAttribute('title') || '').trim().length > 8),
+          moveText: move ? move.textContent.trim() : null,
+          resolveAfterRow: !!row && !!card.querySelector('.esc-resolve-disc')
+            && !!(row.compareDocumentPosition(card.querySelector('.esc-resolve-disc')) & Node.DOCUMENT_POSITION_FOLLOWING),
+        };
+      });
+      record('QF-2: a pending card has ONE action row with Start, Move and Delete', !!qf && qf.oneRow, JSON.stringify(qf));
+      record('QF-2: the admin edit buttons are quiet, not solid like Start', !!qf && qf.quiet);
+      record('QF-2: every action button has a hover label', !!qf && qf.titled);
+      record('QF-2: Move carries no ellipsis', !!qf && qf.moveText != null && !/…|\.\.\./.test(qf.moveText), qf && qf.moveText);
+      record('QF-2: the resolve form follows the row', !!qf && qf.resolveAfterRow);
+      // The quiet style is GLOBAL (the coaching Dismissed button and the
+      // tour's Skip / Back use it too): a bare `btn btn-ghost` anywhere on the
+      // page is not the solid default.
+      const ghost = await page.evaluate(() => {
+        const solid = document.createElement('button'); solid.className = 'btn';
+        const quiet = document.createElement('button'); quiet.className = 'btn btn-ghost';
+        document.body.appendChild(solid); document.body.appendChild(quiet);
+        const out = { solid: getComputedStyle(solid).backgroundColor, quiet: getComputedStyle(quiet).backgroundColor,
+          border: getComputedStyle(quiet).borderTopStyle };
+        solid.remove(); quiet.remove();
+        return out;
+      });
+      record('QF-2: a btn-ghost anywhere on the page is quiet, not the solid default',
+        ghost.quiet !== ghost.solid && ghost.border === 'solid', JSON.stringify(ghost));
+    }
 
     // 2a: the admin Delete control -- rendered (visibly) on the cards, opens
     // the DANGER-tone confirm, Cancel keeps the card, Confirm calls the

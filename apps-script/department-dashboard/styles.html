@@ -748,6 +748,13 @@
     border: 1px solid var(--line);
   }
   .btn-secondary:hover { background: var(--paper-2); color: var(--ink); }
+  /* QF-2 (owner 2026-10-28): the QUIET button -- outline, no fill. It had no
+     rule at all, so every `btn btn-ghost` (the escalation card actions, the
+     coaching worklist's Dismissed, the tour's Skip / Back) rendered as the
+     solid default. */
+  .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; }
+  .btn-ghost:hover { background: var(--paper-2); opacity: 1; }
+  .btn-ghost:disabled { background: transparent; color: var(--muted); }
   /* M4: compact icon-only button (Refresh / Download CSV on My Department).
      Square, glyph-centered; the accessible label lives in title/aria-label. */
   .btn-icon {
@@ -1048,6 +1055,8 @@
   .ins-brief--amber { border-left-color: var(--caution); }
   .ins-brief--amber .ins-brief-sev, .ins-brief-top-tier.ins-brief--amber { color: var(--caution); }
   .ins-brief-top-tier.ins-brief--amber { background: var(--caution-soft); }
+  .ins-brief--fade { border-left-color: color-mix(in oklab, var(--good) 45%, var(--paper)); }
+  .ins-brief--fade .ins-brief-sev { color: color-mix(in oklab, var(--good) 60%, var(--paper)); }
   .ins-brief--green { border-left-color: var(--good); }
   .ins-brief--green .ins-brief-sev, .ins-brief-top-tier.ins-brief--green { color: var(--good); }
   .ins-brief-top-tier.ins-brief--green { background: var(--good-soft); }
@@ -1066,6 +1075,14 @@
     background: var(--paper-card); padding: 8px 12px 10px; min-width: 0; }
   .ins-brief-slot > .ins-brief-mounted { margin: 0; border: 0; padding: 0; background: none; box-shadow: none; }
   .ins-brief-slot > details.ins-brief-mounted > summary { display: none; }
+  /* BR-4: a row holding two sections (Team = agent cards, then team detail)
+     keeps the SECOND one's summary as a plain sub-heading -- the row opens and
+     closes both, so the heading itself is not a toggle. */
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted > summary { display: block; list-style: none; pointer-events: none;
+    font-weight: 600; margin-bottom: 6px; }
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted > summary::-webkit-details-marker { display: none; }
+  .ins-brief-slot > .ins-brief-mounted + details.ins-brief-mounted > summary::before { content: none; }
   @media (prefers-reduced-motion: reduce) { .ins-brief-chev { transition: none; } }
   @media (max-width: 600px) {
     .ins-brief-row { flex-wrap: wrap; }
@@ -3641,7 +3658,6 @@
   .ad-kpi-group .ad-dir--in  { background: var(--accent-soft); color: var(--accent); }
   .ad-kpi-group .ad-dir--out { background: var(--dir-out-soft); color: var(--dir-out); }
   .ad-kpi-row--in .ds-kpi  { border-top: 3px solid var(--accent); }
-  .ad-kpi-row--out .ds-kpi { border-top: 3px solid var(--dir-out); }
 
   /* Batch B: the inline agent panel under a My Department agent row
      (apToggleFromRow_, script-10). The panel is a <tr> inside .agents, so
@@ -3665,6 +3681,16 @@
   @media (prefers-reduced-motion: reduce) { .agents .ap-clip { transition: none; } }
   .agents .ap { position: sticky; left: 0; box-sizing: border-box; padding: 14px 18px 16px;
     contain: inline-size; text-align: left; white-space: normal; cursor: default; }
+  /* QF-3 (owner 2026-10-28): the panel reads as a TRAY of the row above it --
+     the open row's 3px accent rail runs on down the panel's left edge, a thin
+     accent line closes its right edge, the existing 2px accent bottom closes
+     it, and a faint tint of the row's own colour sets it apart from the next
+     agent. On .ap (sized to the visible scroll wrapper by apSizeToWrap_), not
+     the full-width td, so the right edge is always in view. */
+  .agents .ap { border-left: 3px solid var(--accent); border-right: 1px solid var(--accent);
+    background: color-mix(in oklab, var(--accent-soft) 45%, var(--paper)); }
+  .agents tbody tr.ap-open > td:last-child { box-shadow: inset -1px 0 0 var(--accent); }
+  .agents tbody tr.ap-open > td:first-child:last-child { box-shadow: inset 3px 0 0 var(--accent), inset -1px 0 0 var(--accent); }
   .agents .ap-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
   .agents .ap-title { font: 500 16px/1.2 var(--display); letter-spacing: -0.2px; color: var(--ink); }
   .agents .ap-sub { font: 500 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); }
@@ -3746,33 +3772,37 @@
   .ob-u { color: var(--muted); }
   .ans-seg.ob-conn { background: var(--dir-out); }
   .ans-seg.ob-unconn { background: var(--line); }
-  /* Layout B (owner 2026-10-21): each agent row holds an IN line over an OUT
-     line (obPairCells_); every cell's two lines share one height so they
-     align across the row. The direction keeps its hue (--accent / --dir-out). */
-  .agents-ob td.ob-pair, .agents-ob td.ob-dir-col { padding-top: 4px; padding-bottom: 4px; vertical-align: middle; }
-  .agents-ob .ob-line { min-height: 30px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-  .agents-ob td.ans-bar-cell .ob-line { justify-content: flex-start; }
-  .agents-ob td.ans-bar-cell .ob-line > * { flex: 1 1 auto; min-width: 0; }
-  .agents-ob .ob-line + .ob-line { border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
-  /* Both lines carry a faint wash of their direction's hue (owner
-     2026-10-26: inbound got the same treatment as outbound). */
-  .agents-ob .ob-line.ob-dir-in { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
-  .agents-ob .ob-line.ob-dir-out { background: color-mix(in srgb, var(--dir-out-soft) 35%, transparent); }
-  .agents-ob td.ob-dir-col { width: 1%; text-align: left; padding-left: 4px; padding-right: 4px; }
-  .agents-ob .ob-dir-tag { justify-content: flex-start; font: 500 10px/1 var(--mono); letter-spacing: 0.12em; }
-  .agents-ob .ob-dir-tag.ob-dir-in { color: var(--accent); }
-  .agents-ob .ob-dir-tag.ob-dir-out { color: var(--dir-out); }
-  .agents-ob th.ob-pair-th { white-space: nowrap; }
-  .agents-ob .ob-pair-label { display: block; }
-  .agents-ob .ob-sort-picks { display: inline-flex; gap: 4px; margin-top: 3px; }
-  .agents-ob .ob-sort-pick { font: inherit; font-size: 0.92em; padding: 1px 6px; border: 1px solid var(--line);
-    border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; }
-  .agents-ob .ob-sort-pick[data-ob-sort="inRung"], .agents-ob .ob-sort-pick[data-ob-sort="answerRate"],
-  .agents-ob .ob-sort-pick[data-ob-sort="tttSeconds"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-  .agents-ob .ob-sort-pick[data-ob-sort="obTotal"], .agents-ob .ob-sort-pick[data-ob-sort="obConnectRate"],
-  .agents-ob .ob-sort-pick[data-ob-sort="obTalkSec"] { border-color: color-mix(in srgb, var(--dir-out) 45%, var(--line)); }
-  .agents-ob .ob-sort-pick.is-on { color: var(--ink); background: var(--paper-2); }
-  .agents-ob .ob-sort-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* LB-2 (owner 2026-10-28, Option B): ONE line per agent -- an inbound bar
+     column and an outbound bar column, each on its own scale, the counts
+     and the per-day pace beside each bar (obInCellHtml_ / obOutCellHtml_).
+     A group row over the headers names each direction with its colour key;
+     it scrolls away while the header row stays sticky. */
+  .agents-ob td.lb-bar-td { text-align: left; min-width: 190px; width: 24%; }
+  .agents-ob td.num { white-space: nowrap; }
+  .lb-n .ans-n { color: var(--good); }
+  .lb-n .miss-n { color: var(--bad); }
+  .agents-ob th.lb-th-bar { text-align: left; }
+  .lb-cell { display: flex; align-items: center; gap: 10px; }
+  .lb-track { flex: 1 1 auto; min-width: 70px; }
+  .lb-nums { display: flex; flex-direction: column; align-items: flex-end; flex: none; min-width: 66px;
+    font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .lb-n { font-weight: 600; white-space: nowrap; }
+  .lb-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .ob-seg-misslite { background: color-mix(in oklab, var(--warn) 40%, var(--paper)); }
+  .ob-seg-oconn { background: var(--dir-out); }
+  .ob-seg-oreal { background: color-mix(in oklab, var(--dir-out) 45%, var(--paper)); }
+  .ob-seg-obrief { background: color-mix(in oklab, var(--dir-out) 20%, var(--paper)); }
+  .agents-ob thead tr.lb-groups th { position: static; cursor: default; padding-top: 10px; padding-bottom: 6px;
+    text-align: left; border-bottom: 0; }
+  .agents-ob thead th.lb-g--in { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+  .agents-ob thead th.lb-g--out { color: var(--dir-out); box-shadow: inset 0 -2px 0 var(--dir-out); }
+  .lb-legend { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; margin-left: 10px; text-transform: none;
+    letter-spacing: 0; font-family: var(--ui); color: var(--muted); }
+  .lb-key { display: inline-flex; align-items: center; gap: 4px; }
+  .lb-key > span { display: inline-block; width: 9px; height: 9px; border-radius: 1px; }
+  .lb-talk { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.3; white-space: nowrap; }
+  .lb-talk-out { color: var(--dir-out); font-size: 12px; }
+  .lb-talk small { color: var(--muted); font-size: 10px; }
   .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
   /* D3: the Team Direct Calls side card -- a collapsed, lazy fold. */
   .dtd-fold > summary.dtd-summary { cursor: pointer; list-style: none; }
@@ -6343,6 +6373,8 @@
     font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
   .ov-dept-ob-pct { color: var(--dir-out); font-weight: 600; }
   .ov-dept-ob-since, .ov-dept-ob-none { color: var(--muted); font-size: 11px; }
+  .ov-dept-ob-bar { margin: 2px 0 4px; }   /* SB-3: connected / did not connect */
+  .ov-dept-ob-bar .ob-obar--thin { height: 6px; }
   /* Batch E1: the Insights Outbound fold (admin-only until 6c). */
   #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   #ins-ob-fold .ins-ob-scroll { overflow-x: auto; max-width: 100%; margin-top: 4px; }
@@ -7061,30 +7093,23 @@
     font-family: var(--ui); font-size: 13px; font-weight: 600; color: var(--ink);
   }
   .dept-transfer-sub { font-size: 12px; color: var(--muted); }
+  /* SB-6: one column -- two full-width split bars read better than halves. */
   .dept-transfer-body {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px;
     padding: 4px 14px 14px;
   }
-  @media (max-width: 860px) { .dept-transfer-body { grid-template-columns: 1fr; } }
+  .dept-transfer-body .ob-legend { margin-top: 8px; }
+  .dept-transfer-hint { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
+  .dtf-rows { display: grid; grid-template-columns: minmax(90px, 160px) minmax(0, 1fr) auto; gap: 6px 12px;
+    align-items: center; font-size: 12px; }
+  .dtf-track { min-width: 0; }
   .dept-transfer-h {
     font-family: var(--ui); font-size: 11px; font-weight: 600;
     letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
     margin: 0 0 7px;
   }
   .dept-transfer .ds-note { margin: 0 14px 10px; }
-  .dtf-row {
-    display: grid; grid-template-columns: minmax(80px, 1.1fr) 2fr auto;
-    align-items: center; gap: 9px; padding: 3px 0;
-    font-size: 12px; color: var(--ink);
-  }
   .dtf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dtf-bar {
-    height: 7px; background: var(--accent-soft);
-    border-radius: 999px; overflow: hidden;
-  }
-  .dtf-bar > span {
-    display: block; height: 100%; background: var(--accent); border-radius: 999px;
-  }
   .dtf-num { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
   .dtf-pct { color: var(--muted); }
   /* Same tier vocabulary as the headline Transfer % tile (R23), so one
@@ -7384,6 +7409,9 @@
   .ob-cbdept-indent { color: var(--muted); }
   .ob-cbdept-unmapped td:first-child { font-style: italic; color: var(--muted); }
   .ob-cbdept-total td { border-top: 2px solid var(--line); font-weight: 600; }
+  /* CB-R2: the ranked column -- what needs doing. */
+  .ob-cbdept-none strong { color: var(--warn); }
+  .ob-cbdept-uncalled { margin: 4px 0 8px; }
   .ob-cbdept-detail { margin: 6px 0; }
 
   /* G2: the Overview's Callbacks by department section (admin-only). A
@@ -7803,6 +7831,88 @@
   @media (prefers-reduced-motion: reduce) { .dts-bar { transition: none; } }
   @media print { .dts-daybars { display: none; } }
 
+  /* QV-1 (owner 2026-10-29): the DAY QUICK VIEW (#day-qv-modal, dqvOpen_ in
+     script-5). Cards tint the way the bars do (is-bad / is-watch / tf-*);
+     the condensed agent table reuses the LB-2 cells; the missed chart is
+     plain CSS bars (no Chart.js, so it draws at once and never needs
+     safeChart_). */
+  .dts-daybars .dts-bars { cursor: pointer; }
+  .dqv-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dqv-nav h2 { margin: 0; min-width: 11ch; }
+  .dqv-step { width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); color: var(--ink); font: 600 18px/1 var(--ui); cursor: pointer; }
+  .dqv-step:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .dqv-step:disabled { opacity: 0.35; cursor: default; }
+  .dqv-open { margin-left: auto; }
+  .dqv-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 4px 0 14px; }
+  .dqv-card { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--r);
+    background: var(--paper-card); padding: 8px 10px; min-width: 0; }
+  .dqv-card.is-watch { border-left-color: var(--caution); }
+  .dqv-card.is-watch .dqv-card-big { color: var(--caution); }
+  .dqv-card.is-bad { border-left-color: var(--warn); }
+  .dqv-card.is-bad .dqv-card-big { color: var(--warn); }
+  .dqv-card-label { font: 500 10.5px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .dqv-card-big { font: 600 22px/1.2 var(--ui); font-variant-numeric: tabular-nums; color: var(--ink); margin-top: 2px; }
+  .dqv-card-sub { font: 400 12px/1.35 var(--ui); color: var(--ink-muted); }
+  .dqv-card-range { font: 400 11px/1.35 var(--mono); color: var(--muted); border-top: 1px dashed var(--line);
+    margin-top: 5px; padding-top: 3px; }
+  .dqv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .dqv-table th { text-align: left; font: 500 10.5px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  .dqv-table td { padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .dqv-table th.num, .dqv-table td.num { text-align: right; white-space: nowrap; }
+  .dqv-table .lb-bar-td { min-width: 150px; width: 32%; }
+  .dqv-table tfoot td { font-weight: 600; background: var(--paper); border-bottom: 0; }
+  .dqv-agent { all: unset; cursor: pointer; color: var(--accent); font-weight: 500; }
+  .dqv-agent:hover { text-decoration: underline; }
+  .dqv-agent:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  .dqv-agent[aria-expanded="true"] { text-decoration: underline; }
+  .dqv-dept { font: 400 10.5px var(--mono); color: var(--muted); }
+  .dqv-ad-row > td { background: var(--paper); padding: 8px 10px 12px; }
+  .dqv-ad-h { font: 600 12px/1.3 var(--ui); margin: 10px 0 4px; }
+  .dqv-foot-note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .dqv-missed-head { margin: 0 0 6px; font-size: 13px; }
+  /* QV-3: loading states shaped like what arrives (dqvSkeletonHtml_) -- six
+     table rows, the 18-slot chart, an agent's KPI tiles -- so the pop-up opens
+     at about its final size. Stepping between days frosts the current content
+     instead (dsFrostShow_), so nothing collapses. */
+  .dqv-skel .skeleton-line { display: block; height: 12px; }
+  .dqv-skel-row { display: grid; grid-template-columns: minmax(100px, 1.2fr) 2fr 60px 90px; gap: 14px;
+    align-items: center; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+  .dqv-skel-row--ob { grid-template-columns: minmax(100px, 1.2fr) 2fr 60px 2fr 90px; }
+  .dqv-skel-row .dqv-skel-bar { height: 10px; }
+  .dqv-skel-row:first-child .skeleton-line { opacity: 0.6; }
+  .dqv-skel .dqv-skel-head { width: 40%; margin-bottom: 8px; }
+  .dqv-skel-chart { display: flex; align-items: flex-end; gap: 3px; height: 70px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+  .dqv-skel-chart .skeleton-line { flex: 1 1 0; border-radius: 1px 1px 0 0; }
+  .dqv-skel-mrow { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr); gap: 8px; padding: 6px 0; }
+  .dqv-skel-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+  .dqv-skel-kpis .skeleton-line { height: 54px; }
+  .dqv-skel--day > .skeleton-line { margin: 8px 0; }
+  .dqv-skel-name { max-width: 160px; }
+  .dqv-skel-num { max-width: 60px; justify-self: end; width: 100%; }
+  #day-qv-agents, #day-qv-missed { position: relative; min-height: 40px; }
+  @media (prefers-reduced-motion: reduce) { .dqv-skel .skeleton-line { animation: none; } }
+  .dqv-mchart { display: flex; align-items: flex-end; gap: 3px; height: 70px; border-bottom: 1px solid var(--line); }
+  .dqv-mcol { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+  .dqv-mbar { width: 100%; background: var(--warn); opacity: 0.45; border-radius: 1px 1px 0 0;
+    display: flex; align-items: flex-end; }
+  .dqv-mbar-abd { width: 100%; background: var(--warn); opacity: 1; }
+  .dqv-maxis { display: flex; justify-content: space-between; font: 400 10px/1.4 var(--mono); color: var(--muted); margin-bottom: 8px; }
+  .dqv-msub { font: 600 12px/1.3 var(--ui); margin: 10px 0 4px; }
+  .dqv-mlist { list-style: none; margin: 0; padding: 0; }
+  .dqv-mlist > li { display: grid; grid-template-columns: minmax(120px, 200px) 34px minmax(0, 1fr); gap: 8px;
+    padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; align-items: baseline; }
+  .dqv-mn { font-variant-numeric: tabular-nums; text-align: right; color: var(--warn); font-weight: 600; }
+  .dqv-mtimes { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .dqv-ring { display: inline-block; margin: 0 8px 2px 0; }
+  .dqv-ring.is-abd { color: var(--warn); }
+  @media (max-width: 600px) {
+    .dqv-open { margin-left: 0; width: 100%; }
+    .dqv-mlist > li { grid-template-columns: minmax(0, 1fr) 34px; }
+    .dqv-mtimes { grid-column: 1 / -1; }
+  }
+
   /* (Round-16, owner: the .dept-insights-strip / .dis-* Insights teaser CSS
      is retired with the strip -- the lens switcher is the route now.) */
 
@@ -8045,14 +8155,16 @@
   .esc-filter-count { display: block; font: 400 11px var(--mono); color: var(--muted); margin-top: 3px; }
 
   /* §3 admin edit affordance on pending cards */
-  .esc-pending-actions { margin-top: 8px; }
-  .esc-admin-actions { margin-top: 8px; display: flex; justify-content: flex-end; }   /* 2a: admin delete, right-aligned, below the card body */
-  .esc-admin-actions .esc-delete { color: var(--muted); }
-  .esc-admin-actions .esc-delete:hover { color: var(--bad); }
-  /* ESC-L2: link / remove / delete-all sit beside Delete; wrap on narrow cards. */
-  .esc-admin-actions { flex-wrap: wrap; gap: 6px; }
-  .esc-admin-actions .esc-delete-all { color: var(--muted); }
-  .esc-admin-actions .esc-delete-all:hover { color: var(--bad); }
+  /* QF-2 (owner 2026-10-28): ONE action row per card -- Start solid, the
+     admin edits as quiet outline buttons, the admin destructive verbs pushed
+     right as text buttons. `.btn-ghost` had NO rule, so every one of these
+     rendered as the solid black default (and Delete's muted text sat on black,
+     reading as disabled). The quiet style itself is global (next to
+     .btn-secondary); only the card's layout + danger text live here. */
+  .esc-actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .esc-actions-admin { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .esc-card .esc-delete, .esc-card .esc-delete-all { color: var(--muted); border-color: transparent; }
+  .esc-card .esc-delete:hover, .esc-card .esc-delete-all:hover { color: var(--bad); background: transparent; }
 
   /* §2 reopen affordance on resolved cards */
   .esc-reopen-wrap { margin-top: 8px; }
@@ -8404,4 +8516,98 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
 .ob-dl-summary .ds-zone-label { white-space: normal; min-width: 0; }
 .ob-dl-head { color: var(--muted); font-size: 12px; }
 .ob-dl-body { margin-top: 8px; }
+/* CB-R1 / DL-R2 (owner 2026-10-28): the callback SUMMARY -- the actionable
+   count as the headline, ONE bar whose segments add up to the whole, a legend
+   on the same base, a quiet quality line. Shared by the Overview's Callbacks by
+   department, the Insights Callbacks fold and both Direct lines blocks. The
+   segment colours: called back = greens (own darkest), got through = accent,
+   still in the window = neutral, NOT called back = --warn, the one to act on;
+   they also differ in lightness, not hue alone. */
+.ob-sum-host { margin-bottom: 14px; }
+.ob-sum { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border: 1px solid var(--line);
+  background: var(--paper-card); }
+.ob-sum-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 22px; }
+.ob-sum-big { display: flex; flex-direction: column; gap: 4px; }
+.ob-sum-num { font: 700 40px/1 var(--sans); color: var(--warn); letter-spacing: -0.5px; }
+.ob-sum-lead { font-weight: 600; font-size: 15px; color: var(--ink); }
+.ob-sum-sub { color: var(--ink-muted, var(--muted)); font-size: 13px; padding-bottom: 2px; min-width: 0; }
+.ob-sum-quality { display: flex; flex-wrap: wrap; gap: 6px 22px; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: 13px; color: var(--ink-muted, var(--muted)); }
+.ob-sum-quality strong { color: var(--ink); }
+.ob-sum-fine { font-size: 12px; color: var(--muted); }
+.ob-obar { display: flex; height: 26px; width: 100%; border-radius: var(--r, 2px); overflow: hidden; background: var(--paper-2); }
+.ob-obar-seg { display: flex; align-items: center; padding-left: 8px; min-width: 2px; overflow: hidden;
+  font: 600 12px/1 var(--sans); white-space: nowrap; }
+.ob-seg-own { background: color-mix(in oklab, var(--good) 88%, black); color: var(--on-good, #fff); }
+.ob-seg-team { background: var(--good); color: var(--on-good, #fff); }
+.ob-seg-other { background: color-mix(in oklab, var(--good) 40%, var(--paper)); color: var(--ink); }
+.ob-seg-through { background: color-mix(in oklab, var(--accent) 75%, var(--paper)); color: var(--ink); }
+.ob-seg-pending { background: color-mix(in oklab, var(--muted) 35%, var(--paper)); color: var(--ink); }
+.ob-seg-none { background: var(--warn); color: var(--on-warn, #fff); }
+.ob-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 14px; }
+.ob-leg { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.ob-leg-key { width: 11px; height: 11px; flex: none; margin-top: 3px; border-radius: 1px; }
+.ob-leg-n { font-weight: 600; font-size: 14px; color: var(--ink); }
+.ob-leg-emph { color: var(--warn); }
+.ob-leg-t { font-size: 12px; color: var(--ink-muted, var(--muted)); }
+.ob-table-lead { margin: 4px 0 8px; }
+.ob-howto { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ob-howto > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.ob-howto-body { font-size: 13px; color: var(--ink-muted, var(--muted)); }
+.ob-howto-body p { margin: 8px 0 0; }
+.ob-dl-group { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
+.ob-dl-group-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+.ob-dl-group-n { font-size: 12px; color: var(--muted); }
+.ob-dl-note { margin: 0 0 8px; }
+.ob-dl-table .ob-dl-person td:first-child { padding-left: 22px; }
+.ob-dl-person-name { color: var(--ink-muted, var(--muted)); }
+.ob-dl-drill > td { background: var(--paper-2); }
+/* SB-1..6 (owner 2026-10-28): the split summary every other report shares --
+   one bar per total whose parts add up to it (obSplitSummaryHtml_). Generic
+   segment colours: handled / lost / a softer loss / not known. */
+.ob-split .ob-sum-num { color: var(--ink); }
+.ob-split .ob-sum-num.is-warn { color: var(--warn); }
+.ob-seg-good { background: var(--good); color: var(--on-good, #fff); }
+.ob-seg-bad { background: var(--warn); color: var(--on-warn, #fff); }
+.ob-seg-bad2 { background: color-mix(in oklab, var(--warn) 70%, black); color: var(--on-warn, #fff); }
+.ob-seg-soft { background: color-mix(in oklab, var(--warn) 42%, var(--paper)); color: var(--ink); }
+.ob-seg-unk { background: color-mix(in oklab, var(--muted) 35%, var(--paper)); color: var(--ink); }
+.ob-seg-kept { background: color-mix(in oklab, var(--muted) 18%, var(--paper)); color: var(--ink); }
+.ob-seg-cat1 { background: color-mix(in oklab, var(--accent) 80%, black); color: #fff; }
+.ob-seg-cat2 { background: var(--accent); color: #fff; }
+.ob-seg-cat3 { background: color-mix(in oklab, var(--accent) 45%, var(--paper)); color: var(--ink); }
+.ob-seg-cat4 { background: var(--dir-out); color: #fff; }
+.ob-seg-cat5 { background: color-mix(in oklab, var(--dir-out) 45%, var(--paper)); color: var(--ink); }
+.ob-seg-hatch { background: repeating-linear-gradient(45deg, color-mix(in oklab, var(--muted) 55%, var(--paper)) 0 4px,
+  color-mix(in oklab, var(--muted) 22%, var(--paper)) 4px 8px); color: var(--ink); }
+.ob-seg-tf-deep { background: var(--good); }
+.ob-seg-tf-light { background: color-mix(in oklab, var(--good) 55%, var(--paper)); }
+.ob-seg-tf-amber { background: var(--warn); }
+.ob-seg-tf-red { background: var(--bad); }
+.ob-obar--thin { height: 10px; }
+.ob-obar--mid { height: 14px; }
+.ob-split-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ob-split-sub-h { font-weight: 600; font-size: 13px; color: var(--ink); }
+.ob-split-rows { display: grid; grid-template-columns: minmax(110px, 170px) minmax(0, 1fr) auto; gap: 6px 12px; align-items: center;
+  font-size: 13px; }
+.ob-split-rows .ob-obar { min-width: 0; }
+.ob-split-mini { display: flex; flex-direction: column; gap: 6px; }
+.ob-split-mini-cap { font-size: 12px; color: var(--ink-muted, var(--muted)); }
+.ob-leg-x { margin-left: 4px; }
+/* SB-2: the Direct Calls report pairs the lines-rung summary with the
+   dialed one; a side card (Team Direct Calls, Team Outbound) gets the slim
+   form, spanning the card's two-column tile grid. */
+.ob-split-pair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .ob-split-pair { grid-template-columns: minmax(0, 1fr); } }
+.ob-split--compact .ob-sum-num { font-size: 30px; }
+.ob-split-rows .num { text-align: right; font-variant-numeric: tabular-nums; }
+.trp-tiles > .tdc-split, .trp-tiles > .tob-split { grid-column: 1 / -1; }
+.tdc-split, .tob-split { display: flex; flex-direction: column; gap: 6px; }
+.tdc-split-head { display: flex; align-items: baseline; gap: 6px; }
+.tdc-split-head--out { margin-top: 6px; }
+.tdc-split-num { font: 700 20px/1.1 var(--sans); color: var(--ink); }
+.tdc-split-of { font-size: 12px; color: var(--ink-muted, var(--muted)); }
+/* An outbound summary keeps the direction hue its tiles carried (Agent Day,
+   the Outbound summary). */
+.ob-split--out { border-top: 3px solid var(--dir-out); margin-bottom: 12px; }
 </style>

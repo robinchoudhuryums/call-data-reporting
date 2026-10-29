@@ -100,8 +100,24 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
   record('setup: CSR loads with the brief on its own payload', s.dept === 'CSR' && s.briefShown && s.top.indexOf(RATE.CSR) !== -1,
     JSON.stringify({ dept: s.dept, top: s.top.slice(0, 70) }));
   record('CSR has its own answer target: no default-target label', s.defaultLabel === '', s.defaultLabel);
-  await switchDept('Sales');
+  // Owner 2026-10-28 (testing): while the new dept's Insights run is in
+  // flight, the brief says it is loading -- never the previous dept's rows.
+  await page.evaluate(() => { window.__HARNESS__.delay = { getInsightsReport: 2500 }; });
+  await page.selectOption('#dept-selector', 'Sales');
+  await page.waitForTimeout(1200);
+  const mid = await page.evaluate(() => {
+    const b = document.getElementById('ins-brief');
+    const f = b && b.querySelector(':scope > .ds-frost');
+    return { frost: !!f && getComputedStyle(f).display !== 'none', label: f ? f.textContent.trim() : '' };
+  });
+  record('dept switch: the brief frosts with "Loading Sales…" while the new run is in flight',
+    mid.frost && /Loading Sales/.test(mid.label), JSON.stringify(mid));
+  await page.evaluate(() => { window.__HARNESS__.delay = null; });
+  await page.waitForTimeout(3500);
   s = await state();
+  const after = await page.evaluate(() => { const b = document.getElementById('ins-brief');
+    const f = b && b.querySelector(':scope > .ds-frost'); return { frost: !!f && getComputedStyle(f).display !== 'none', host: b.classList.contains('ds-frost-host') }; });
+  record('dept switch: the frost lifts when the new brief renders', !after.frost && !after.host, JSON.stringify(after));
   record('dept switch: the brief follows the new dept\'s payload (no previous-dept rate left)',
     s.dept === 'Sales' && s.top.indexOf(RATE.Sales) !== -1 && s.top.indexOf(RATE.CSR) === -1,
     JSON.stringify({ dept: s.dept, top: s.top.slice(0, 70), want: RATE.Sales }));

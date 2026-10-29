@@ -77,11 +77,26 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   (Batch B): open, day / tab switch, survives a re-sort, the IR button,
   Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
   Since 2026-10-21 also the open / close slide (settled = unclipped, a
-  closing panel detached at once) and the admin-only outbound call ids.
+  closing panel detached at once) and the admin-only outbound call ids;
+  since SB-1 the day's outbound split bar adding up to Placed.
 - `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
   it also checks the Queue calls and Abandoned % cards' vs-prior chips.
+- `drive-dayqv.js` — the **day quick view** (QV-1, owner 2026-10-29;
+  admin-only, released with the day bars): a click on a day bar opens THAT
+  day; its cards equal the bars' own readouts beside the range figure; it
+  reads that day in ONE getDayQuickView request, then both neighbours in ONE
+  prefetch (QV-2; no per-report RPC at all), and a step to the next day
+  paints with no new request and sends one for the day after; the QV-3
+  loading states (skeletons on a fresh open, the frost relabelled when
+  stepping, none for a prefetched day, the agent-day skeleton); the condensed
+  agent table with its total row and outbound column; the 18-slot missed
+  chart, ring times and "↳ path"; a name opening that agent's day; the
+  arrows stepping workdays (ends disabled) and the arrow keys; Escape and
+  focus return; Enter on a selected bar; "Open this day on the page"; a month
+  bar opening its first workday and then stepping by day (QV-4); a manager
+  without it; 360 px.
 - `drive-exceptions.js` — **exception days** (Operator State #81): the
   disclosure note on My Department, Insights and the Overview (day, reason,
   calls left out), one striped untinted bar per day-bar card with an
@@ -93,9 +108,11 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
   manager email (Step 5b); the alert reasons' sentences and Preview rows
   (Step 5c).
-- `drive-deptoutbound.js` — (since 2026-10-21 also layout B -- an IN line
-  over an OUT line per agent, level lines, per-line sorts, a distinct tint
-  on each line -- and the D3 Team
+- `drive-deptoutbound.js` — (since LB-2, 2026-10-28, the one-line agent
+  table: 7 cells on CSR, the group row with its keys, every inbound and
+  outbound bar adding up to its counts with the per-day pace under them, the
+  two scales, two rate chips per row and the count changes in the hover, and
+  every header's sort -- and the D3 Team
   Direct Calls card: lazy, one request per window, the coverage note, the
   report button, absent for a manager) the My Department **outbound columns** toggle (on
   by default since Step 3; it replaced the Inbound | Outbound | Both switch)
@@ -103,6 +120,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   View-as fall back to Inbound, panels never overlap, prior-period chips on
   agent rows only, and one request per window (a Refresh never re-sends one
   in flight; the table and the Outbound summary share one store, FO-3).
+  Since SB-2/3/6 also the Team Direct Calls and Team Outbound slim bars
+  adding up to their totals, and the CSR Transfer detail's two split bars
+  (destinations incl. the hatched untracked part, and calls handled per
+  agent with the transferred part tier-coloured, sorted by transfers).
 - `drive-crossstate.js` — **cross-state sequences** on My Department (E5 /
   ST4), the manager-release readiness check for UX-2 and 6c: a dept switch
   with the brief open (it follows the new dept's payload, tier and default-
@@ -111,7 +132,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   dept, View-as in and out (brief + switch hide, the direction falls back to
   Inbound and returns, the brief comes back WITH its Callbacks row), and the
   Callbacks jump changing direction only from Inbound (F24). The Insights mock
-  routes by dept and serves real CSR and Sales captures.
+  routes by dept and serves real CSR and Sales captures. Since BR-1 it holds
+  the new dept's Insights reply back (`__HARNESS__.delay`, a per-call hold the
+  harness stub honours) to check the brief reads "Loading <dept>…" meanwhile.
 - `drive-outbound-e.js` — the Overview tiles' outbound line per card window
   and the **Outbound summary** under the outbound table on My Department
   (Batch E; moved out of Insights by UX-1): two-window deltas, shown only on
@@ -119,7 +142,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   abandoned chips and the sub-queue strip's Abd follow the card window, with
   tooltips, and (QD-3) the "viol MTD" chip's 0 green / 1-3 amber / 4+ red tiers
   (the amber colour on a probe chip, since whether the fixture holds a 1-3
-  month depends on the run date).
+  month depends on the run date). Since SB-3 the tiles' slim connected /
+  did-not-connect bar and the summary's one Placed bar (parts add up, five
+  vs-prior chips).
 - `drive-callbacks.js` — the **Callbacks** section under the outbound table on
   My Department (G1; moved out of Insights by UX-1): lazy (one
   fetch, on open), the shared renderers incl. a drawn chart after a reopen,
@@ -128,11 +153,15 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   CE-2/CE-3 also both drill lists (episode grouping, the outbound "callback
   path") and the lazy Direct lines block with its repeat-callers list; since
   the follow-ons, the misdial count line (FO-1) and the deep link holding the
-  fold at the TOP of the screen while the page settles (FO-3).
+  fold at the TOP of the screen while the page settles (FO-3); since
+  CB-R1/DL-R2 the callback summary's bar and legend (one base, adding up) and
+  the Direct lines summary + department table with its person drill.
 - `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
   admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
   keyboard expand and sort, CSV bytes, and (CE-3) the company Direct lines
-  block, including its spreadsheet-served note (FO-2).
+  block, including its spreadsheet-served note (FO-2); since CB-R1/CB-R2 the
+  summary that leads with the unreturned callers and its one-base bar, the
+  most-not-called-back default order, and a row's own unreturned-caller list.
 - `drive-admin.js` — ten **modals** (Alerts, Outlier Fix, Dept Config,
   Access Control, System Health, Caller Lookup, Coaching, Exception Days --
   since #81 its list, the in-place refusal of a missing reason, save, and a
@@ -141,7 +170,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   call id and an OUTBOUND path drill that opens; and, since D1, the Direct
   Calls report -- a clean company run with its chips, then a clamped + gappy
   dept run: the coverage note, the corrected End date, no chips, the int / ext
-  split; the Outbound modal is retired, G3) and the **Escalations
+  split; the Outbound modal is retired, G3; since SB-1/2/5 the Agent Day
+  outbound bar, the Direct Calls split summaries adding up to their
+  headlines, and the Inbound report -- mocked for the first time -- as one
+  answered / rang out / hung up bar plus where the hang-ups happened) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and

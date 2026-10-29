@@ -1321,6 +1321,7 @@ test('SEC-1: every public DQE/QCD report RPC caps its client window', function (
     'AgentHome.gs': ['getAgentHome'],
     'AgentDay.gs': ['getAgentDayStrip'],
     'OutboundReport.gs': ['getDeptOutboundSummary', 'getOutboundDirectCallbacks', 'getOutboundDirectRepeats'],
+    'DayQuickView.gs': ['getDayQuickView'],   // QV-2: caps its date list; each part re-checks its own day
   };
   const missing = [];
   Object.keys(RPCS).forEach(function (f) {
@@ -1405,4 +1406,16 @@ test('F38: lint-gas rejects an advanced service the project\'s manifest does not
     assert.doesNotMatch(r.out, /'Drive' is not defined/);
     assert.match(r.out, /'Blob' is not defined/);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// SB-1..3 (owner 2026-10-28): the split bars label "rang out (N s or longer)"
+// from the payload's briefRingSec, falling back to a client copy where the
+// payload (the My Department totals, Agent Day) does not carry it. The copy
+// must equal the server's line, or the legend names a different threshold
+// than the one that bucketed the calls.
+test('SB: the client brief-ring fallback equals the server OUTBOUND_BRIEF_RING_SEC_', function () {
+  const srv = /var OUTBOUND_BRIEF_RING_SEC_ = (\d+);/.exec(read('OutboundReport.gs', DASH));
+  const cli = /var OB_BRIEF_RING_SEC_DEFAULT_ = (\d+);/.exec(read('script-9-inbound-direct.html', DASH));
+  assert.ok(srv && cli, 'both constants found');
+  assert.equal(cli[1], srv[1]);
 });

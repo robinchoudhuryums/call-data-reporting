@@ -6,13 +6,43 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-27
+Updated: 2026-10-29
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-29 (5) -- /sync-docs over the 54 commits since 7f322b6.** Drift was small (each round updated its own docs): CLAUDE.md "~130 suites" -> "~160"; the KDD CacheService-tiers bullet (59 B under its 4 KB cap) trimmed to one roster-hash sentence pinned by cache-key.test.js (every code kept); docs/architecture.md gained DayQuickView.gs + the getDayQuickView row; docs/next-steps.md gained rows for exception days, the outbound / direct / journey attribution round and the 10-28/29 owner rounds. Subsystems clean; no undocumented operator state. CLAUDE.md 176.6 KB of 200 KB.
+- **2026-10-29 (4) -- QV-4 IMPLEMENTED (addendum in block 259-qv2-broad-implement).** A week / month day bar opens the quick view on its first workday; the arrows then step by day (`strip.__dts.qv`). Bites 3/3. Then /sync-docs.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-29 (3) -- QV-3 IMPLEMENTED (addendum in block 259-qv2-broad-implement).** The day quick view's loading states: skeletons shaped like the table / chart / agent day on a fresh open (no height jump), frost relabelled for the day on screen when stepping, none for a prefetched day. Bites 4/4.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet. Still pending from the owner: the HOH-0 / XB-0 logs, the PR go-ahead, the day bars + quick view release decision.
+- **2026-10-29 (2) -- QV-2 IMPLEMENTED (block 259-qv2-broad-implement).** The day quick view's reads are ONE request (`getDayQuickView`, DayQuickView.gs, wrapping the three endpoints in one execution): opening a day = 2 requests (the day, then both neighbours), each step = 1. Inner usage rows suppressed for one `dayView` row, none for a prefetch. 2746 tests, ci:ui EXIT 0, bites 7/7. NET 1 - 0 = 1.
+  **Owner-side:** deploy (new server file); after it, read `meta.partMs` on a cold open (the parts now run in sequence).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-29 -- QV-1 + BR-4 IMPLEMENTED (block 259-qv1-br4-broad-implement).** BR-4: the brief's Agents + Team detail are one Team row (agents verdict · talk time per call; opens the cards then the team detail). QV-1: a click on a day bar opens that day's quick view (cards for the day beside the range, a condensed agent table -- outbound behind obAllowed_ -- the day's missed calls, workday arrows, "Open this day on the page"); admin-only, released with the day bars. 2739 tests, ci:ui EXIT 0, bites 6/6 (5 unit + 1 UI). NET 0 - 0 = 0.
+  **Owner-side:** deploy the dashboard; walk S61 (Team row) + S62 (quick view).
+  **QV-1b (same day):** neighbour prefetch -- the workday either side loads once the open day lands; the pop-up's outbound days in their own store. Bites 4/4. **Built as QV-2** (see above).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end"). Still waiting: the HOH-0 / XB-0 diagnostic logs.
+- **2026-10-28 (6) -- BR-1/2/3 (owner testing notes).** The brief frosts "Loading <dept>…" on a dept switch / re-run; managers (team-average excluded) never quoted in Team detail; Queue health 1-3 violation days = lighter green (`fade`), 4+ amber. Bites 4/4.
+  **Decided 2026-10-29:** merge the rows (BR-4); a day bar opens a day quick view (QV-1).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-28 (5) -- LB-2 IMPLEMENTED (block 259-lb2-broad-implement).** The combined agent table is one line per agent: an inbound bar + an outbound bar (with the rang out / brief / not recorded split), each on its own scale, per-day under the counts, chips on the two rates, count changes in the hover (owner Option B). NET 0 - 0 = 0.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
+- **2026-10-28 (4) -- SB-1/2/3/5/6 IMPLEMENTED (block 259-sb-broad-implement).** Split bars wherever counts add up exactly to one total: Agent Day outbound, Direct Calls (+ card), outbound Placed (summary, Team Outbound, Overview tile line), the Inbound report (its hidden "missed" now shown; admin-only), the CSR Transfer detail (sorted by transfers). NET 2 - 0 = 2.
+  **SB-5e:** the Inbound report email fixed the same way (owner). **SB-4 Queue calls SKIPPED** by the owner after the real before / after (the Queue report already has the bars; on My Department it repeats the Abandoned % card).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
+- **2026-10-28 (3) -- CB-R1 / CB-R2 / DL-R1 / DL-R2 IMPLEMENTED (block 259-cb-dl-broad-implement).** Owner #5 + #6 from the approved mock: Callbacks by department and Direct lines lead with the callers nobody called back, one bar per base that adds up, a department table (most unreturned first) with drills -- per department (callbacks) and per person (direct lines, the line tried first). After-hours direct callback time is counted from the next work open (`outboundDirect:v4`). Still ADMIN-ONLY; owner: release to managers for their own department after vetting. NET 2 - 0 = 2.
+  **Owner-side:** deploy the dashboard; walk S48 + S60.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (stacked on QF + HOH-0/XB-0); NO PR yet -- owner: "do a PR at the end". Next: HOH-1 / XB-1 once the diagnostic logs arrive.
+- **2026-10-28 (2) -- HOH-0 + XB-0 IMPLEMENTED (block 259-diag-hoh0-xb0-broad-implement).** Read-only diagnostics: `diagnoseHoldHangupsAllDates()` (#85: is a hung-up-on-hold flag a hang-up or a transfer side effect?) and `diagnoseTransferBouncesAllDates()` (#86: calls that came back to the first department, by trio and first sender). Plus the global `.btn-ghost` (owner asked). NET 1 - 0 = 1.
+  **Owner-side:** deploy cdr-import + the dashboard; run both diagnostics and send the logs; map any "queues not placed" in Dept Config.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn with QF-1..3; NO PR yet (owner to say). Next in the agreed order: the #5 + #6 callbacks design mock.
+- **2026-10-28 -- QF-1..3 IMPLEMENTED (block 259-qf-broad-implement).** Owner screenshot round, the quick fixes: a queue listed before its same-second first ring (capture + both display shapers); the escalation card's one action row with hover labels (`.btn-ghost` had no rule); the agent panel framed as a tray of its row. NET 3 - 1 = 2.
+  **Owner plan (2026-10-28, order agreed):** (1) these quick fixes; (2) read-only diagnostics for #1 ("hung up on hold" set on a transferring agent's leg) and #3 (misrouted transfers that bounce back, e.g. Sales -> CSR -> Sales); (3) a design mock for #5 + #6 (Callbacks by department + Direct Lines: one summing bar, "not called back" as the headline, a dept -> person table with a caller drill; after-hours callbacks timed from the next work day); (4) #1(b) count only a final-leg hang-up + mark it on the row, #3(b,c) a stored bounce record + report.
+  **Open / owner to decide:** #3 -- a consult that ends with the original agent is not a bounce?; a two-roster agent skipped?; #6 -- may managers see the per-person rows?
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner to say).
 - **2026-10-27 (3) -- OXT-1 IMPLEMENTED (block 259-oxt1-broad-implement).** The outbound counterpart of IXT-1: the Transfer To continuation (consult + hand-over) and internal dials while CONNECTED to the outside party, journey-only; both captures now check across each other (an agent on an inbound AND an outbound call at once gets neither; a target named by one call of each is claimed by neither). `diagnosePersonTransfers` covers both directions + time since connect. Outbound readers (Agent Day To label, call-mix colleague, ring probes) skip the added events. 2709 tests, 14/14 bites. NET 1 - 1 = 0.
   **Owner-side:** deploy cdr-import AND the dashboard; `diagnosePersonTransfers('all')` (send the outbound lines, esp. the 30m+ bucket); `backfillOutboundCalls(from, to, true)` + Outbound Calls export; walk S38's OXT-1 step.
   **Open / owner to decide:** whether outbound timing attempts need a time-since-connect cap, from the diagnostic. team-tools link (rep + time + phone hash) -- other repo.

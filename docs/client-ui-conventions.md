@@ -1452,6 +1452,48 @@ behind the removed button.
   Admin-only: built only when `dtsBarsActive_()` (admin, not View-as) and the
   block carries `data-admin-only`. Pinned by `day-bars.test.js` (server sums,
   crossover days, bucketing) and rendered by `drive-daybars.js`.
+- **The DAY QUICK VIEW (QV-1, owner 2026-10-29; admin trial, released WITH
+  the day bars).** A mouse click on a DAY bar (touch: a second tap on the held
+  day; keyboard: Enter / Space on the slider) opens `#day-qv-modal`
+  (`dqvOpen_`, script-5). Its cards come from the page's own day sums
+  (`strip.__dts`, PURE `dqvCardFigure_`, tinted `is-bad` / `is-watch` like the
+  bars; CSR's Transfer % from `csrTransfer.daily`) with the card's range
+  figure under each, so they open instantly and always equal the bar's
+  readout. **Then ONE request (QV-2, `getDayQuickView`, DayQuickView.gs)**
+  returns the rest: the existing `getDepartmentSummary` /
+  `getMissedCallsReport` / (when `obAllowed_()`) `getDeptOutboundSummary` for
+  that one day, run in one execution -- every gate, cache key and payload is
+  theirs; a failing part comes back in that day's `errors` while the others
+  render; the inner usage rows are suppressed and the request logs ONE
+  `dayView` row (none for a prefetch). The client keeps one per-DAY store
+  (`dqvFetchDays_`: held days replay, in-flight days are joined, failures
+  are not kept, cleared by `refresh()`). **QV-1b: once the open day has
+  settled, `dqvPrefetch_` asks for BOTH neighbours in one prefetch request**
+  -- only those two, only while that day is still on screen -- so an arrow
+  step paints at once and queues the next neighbour (one request per step).
+  **QV-3: loading states** -- a fresh open shows SKELETONS shaped like what
+  arrives (`dqvSkeletonHtml_`: six table rows with the outbound column when
+  shown, the 18-slot chart, an agent's KPI tiles), labelled live statuses
+  with `aria-busy`, so the pop-up opens near its final size; stepping to a
+  day not yet here FROSTS the current content (`dqvBusy_` -> `dsFrostShow_`,
+  relabelled for the day now on screen); a held day paints with neither;
+  `dqvPaint_` lifts both. The
+  agent table is the LB-2 cells condensed (agents with no call that day are
+  counted, not listed); a name opens that agent's day beneath it through the
+  agent panel's `apPreDay_` store, its outbound half cut when `!obAllowed_()`.
+  The missed calls are plain CSS bars (no Chart.js), ring times grouped per
+  call (`groupConsecutiveByCall_`) with `parentIdBadge`'s "↳ path", and the
+  queue hang-ups. The arrows (and ← / →) step `st.bs`, the bars' own days, so
+  a weekend or a company holiday is never a stop and an exception day is (its
+  reads carry `includeExceptionDays`, a note says so); the ends disable.
+  **QV-4: a week / month bar opens its FIRST workday** (`dqvDayIndex_`), and the
+  arrows then step day by day through `strip.__dts.qv` -- the bars' own
+  buckets on a daily view, one per workday (exception days their own stop) on
+  a weekly / monthly one (`dtsQuickViewDays_`). "Open this day on the page" sets From =
+  To = that day and refreshes (the Overview point drill's order). Gate:
+  `dqvActive_()` IS `dtsBarsActive_()`; the modal must NOT carry
+  `[data-admin-only]` (that rule would un-hide it). Pinned by
+  `day-bars.test.js` and `drive-dayqv.js`.
 - **Notifications page (Step 5; admin trial).** The Alerts modal (still
   `#alerts-modal`, route `/admin/alerts`) is titled Notifications and renders
   each Alert Config row as a SENTENCE card in `#al-rules` (PURE
@@ -2260,21 +2302,22 @@ stay pinned by INV-39, INV-53 and INV-06.
   Connect %, talk, average talk per connected call, attempts; per-dept groups
   and subtotals on a parent dept. Both: the inbound bar + Answer % and the
   outbound bar + Connect % + talk on ONE row per agent, never added together.
-  **Layout B (owner 2026-10-21):** in Both, each agent's row stacks an IN line
-  over an OUT line inside every metric cell (`obPairCells_`: Calls · handled /
-  not, Rate, Talk -- In's talk is TTT) behind a direction tag column, still
-  ONE `<tr>` per agent, so sort, the agent panel, subtotals and exports keep
-  their shape. The two bar units are unified (`max(inUnit, obUnit)`, one
-  ladder) so in vs out volume compares by length. Each metric header sorts by
-  either line (`obThPairHtml_`: two real buttons, `data-ob-sort` = `inRung` /
-  `answerRate` / `tttSeconds` and `obTotal` / `obConnectRate` / `obTalkSec`;
-  `aria-sort` on the `<th>`), and the sort handler matches `[data-ob-sort]` on
-  a th OR a button. The direction's hue stays on its line (`.ob-dir-in` /
-  `.ob-dir-out`), not the cell -- including a faint background wash on each
-  line, 35% of `--accent-soft` (IN) / `--dir-out-soft` (OUT) (owner
-  2026-10-26: the IN line got the wash the OUT line had). `drive-deptoutbound.js`
-  pins the shape, the level OUT lines, both sorts, the chips per line and that
-  the two lines carry different tints.
+  **LB-2 (owner 2026-10-28; replaced layout B):** ONE line per agent --
+  an inbound bar column (`obInCellHtml_`: answered / missed, the R10-4
+  lighter missed part on a row that passes its standard) and an outbound bar
+  column (`obOutCellHtml_`: connected / rang out / brief ring / not recorded,
+  `obOutParts_` over the shared `obPlacedParts_`), EACH ON ITS OWN SCALE (the
+  agents' largest rung / largest placed; totals and subtotals full width), the
+  two counts beside each bar and the per-day pace under them. A group row over
+  the headers names each direction with its colour key and is NOT sticky; the
+  header row is. Ans % and Conn % carry the change chips (`obInRateChip_`,
+  points, the connect-rate rule); the count changes are in each bar's hover
+  text, never a chip; Talk shows inbound over outbound and sorts by their sum
+  (`talkAll` -- time on the phone, the one sum that means something); every
+  header sorts by click and keyboard (`obThHtml_`). Still ONE `<tr>` per
+  agent, so the agent panel, subtotals and exports keep their shape.
+  `drive-deptoutbound.js` pins the cells, the group row, that every bar adds
+  up, the two scales, the chips and the sorts.
   Team Outbound Data (`#dept-team-outbound`) takes Team Rings' place in the
   Outbound view and stacks under it in Both (natural height there; the aside
   scrolls rather than the two overlapping). Rows open the inline agent panel
@@ -2352,10 +2395,11 @@ stay pinned by INV-39, INV-53 and INV-06.
   CE-3 "Direct lines" block (a nested lazy `<details>`, `#ins-dl-fold`, shared
   with the Overview section's `#ov-dl-fold` through one prefix-keyed view --
   `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: work-
-  and after-hours tile rows, the repeat-unreturned-callers drill; it follows
+  and after-hours bars and the department / person table since DL-R2, the
+  repeat-unreturned-callers drill; it follows
   its host's window and fetches only while open) and CSV / email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
-  elements -- `outboundCallbackTilesHtml_`, `outboundRenderDelayStrip_` /
+  elements -- `outboundCallbackSummaryHtml_` (CB-R1; the tile row it replaced), `outboundRenderDelayStrip_` /
   `outboundRenderHourStrip_` (optional target), `outboundRenderCbChart_` (one
   chart per canvas), `outboundLoadUncalledInto_` (each surface passes its own
   stale-drill counter, UI-5), `outboundDownloadCsv_(data)` and
@@ -2400,17 +2444,79 @@ stay pinned by INV-39, INV-53 and INV-06.
   (Last 7 days / Last 30 days / Last 3 months via `datePresetRange_`, so it
   ends yesterday), once per window; `ovLoad_` -- the landing and the 5-minute
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
-  episode tiles (plus a "Not counted (no queue reached)" tile for the
-  phone-menu and person's-line hang-ups) above the table, both drawn by the
-  shared renderers. Its headline is the own-team rate over MAPPED episodes
-  (`total.mappedOwnPct`, CE-1):
-  `outboundCallbackTilesHtml_` and `outboundRenderCbDept_(t, meta, view)` with
+  callback summary (CB-R1, next bullet) above the table, both drawn by the
+  shared renderers; the phone-menu and person's-line hang-ups and the unmapped
+  queues are said in `#ov-cbdept-notcounted` under "How this is counted":
+  `outboundCallbackSummaryHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The
   column definitions are ONE list (`OB_CBDEPT_COLS_` / `obCbDeptTheadHtml_`)
   that builds both tables' header row. The CSV is the company report in the
   section's on-screen order (`outboundDownloadCsv_(data, sort)`). Rendered-gated
   by `drive-cbdept.js`.
+- **Callback summaries: the unreturned callers first, one bar that adds up
+  (CB-R1 / CB-R2 / DL-R2, owner 2026-10-28).** The Callbacks figures (Overview
+  `#ov-cbdept-kpis`, the Insights fold `#ins-cb-kpis`) and Direct lines
+  (`#ov-dl-sum`, `#ins-dl-sum`) render through ONE family of renderers in
+  script-9: `obOutcomeBarHtml_` + `obOutcomeLegendHtml_` inside
+  `outboundCallbackSummaryHtml_` / `outboundDirectSummaryHtml_`. Rules: the
+  headline is the NOT-called-back count (`.ob-sum-num`, `--warn`); every
+  segment of a bar is a share of the SAME base (the callers who hung up), so
+  own / another team / got through / pending / not called back sum to it --
+  never put a figure on a different base into the bar (a rate of connected
+  callbacks, a median) -- those go on the quality line below it; Direct lines
+  splits own into "by the person" and "by their team" and draws a work-hours
+  and an after-hours bar, the after-hours median counted from the next work
+  open (DL-R1). The CE-1 ruling still holds: own team, another team and got
+  through stay separate segments. The Overview department table sorts most
+  not called back first (`OB_CBDEPT_DEFAULT_SORT_`), and a row with any opens
+  "List the N callers nobody called back" (`getOutboundUncalled` for that
+  department and the section window, a per-BUTTON sequence so two rows can
+  load at once). The Direct lines table (`obDlTableHtml_` + the delegated
+  `obDlWireTable_`) nests people under their department; a person with
+  unreturned callers loads `getOutboundDirectRepeats({owner, minAttempts:1})`.
+  Explanations sit in a closed `<details class="ob-howto">`. Still
+  ADMIN-ONLY while vetted (managers get their own department after). Pinned
+  by `drive-callbacks.js` and `drive-cbdept.js`.
+- **Split summaries everywhere a total has parts (SB-1..SB-6, owner
+  2026-10-28).** The callback rule above, generalised: where several counts
+  add up EXACTLY to one total, draw ONE bar of them (`obSplitSummaryHtml_`,
+  or `obSplitMiniHtml_` for a side card, both in script-9 on
+  `obOutcomeBarHtml_` + `obOutcomeLegendHtml_`) and put every figure on
+  another base -- a rate that leaves something out, an average, attempts
+  that count redials, a flag that sits inside another part -- on the line
+  underneath, labelled. Live on: Agent Day outbound (SB-1, modal + panel),
+  the Direct Calls report and the Team Direct Calls card (SB-2), the
+  Outbound summary, the Team Outbound panel and the Overview tile's
+  outbound line (SB-3), the Inbound report (SB-5) and the CSR Transfer
+  detail (SB-6). Segment colours are generic (`ob-seg-good` handled,
+  `-bad` lost, `-soft` a softer loss, `-unk` not known, `-cat1..5` +
+  `-hatch` for destinations, `-tf-*` the R23 transfer tiers). Three rules:
+  (1) never put a NEAR partition in a bar -- DQE rung is close to
+  answered + missed but not equal, so those surfaces keep their tiles;
+  (2) a remainder the parts do not explain is drawn grey (`unk`), never
+  absorbed into a named part; (3) a vs-prior chip rides on the figure it
+  compares (a legend entry's `deltaHtml`, or the quality line). The rang-out
+  label's seconds come from the payload's `briefRingSec`, else
+  `OB_BRIEF_RING_SEC_DEFAULT_` (pinned to the server's by cross-file-pins).
+  The Inbound report EMAIL follows the same split (SB-5e,
+  `ekSplitBarHtml_`, the email-safe form). Queue calls (answered /
+  abandoned) was prototyped and SKIPPED by the owner (2026-10-28): the Queue
+  report already draws those bars, and on My Department it would repeat the
+  Abandoned % card. Rendered-gated by drive-admin (Agent Day, Inbound, Direct),
+  drive-agentpanel, drive-deptoutbound and drive-outbound-e.
+- **Escalation card actions are ONE row (QF-2, owner 2026-10-28).** Start
+  (solid) first, then the admin edits (Edit, Move) as quiet outline buttons,
+  then the admin verbs pushed right (`escAdminActionsHtml_`: Restore / Link
+  department / Remove / Delete / Delete all linked -- Delete as muted text that
+  turns `--bad` on hover). Every action button carries a `title`. Inline-form
+  toggles (Move, Link department) have no ellipsis; the verbs that confirm or
+  ask for a reason keep it. The move / link forms sit directly under the row
+  and the "Resolve / comment" disclosure after them. `.btn-ghost` (the QUIET
+  button: outline, no fill) is a GLOBAL rule next to `.btn-secondary` -- it had
+  no rule at all, so every ghost button (these, the coaching worklist's
+  Dismissed, the tour's Skip / Back) rendered as the solid default and
+  Delete's muted text sat on black. Pinned by drive-admin.js (QF-2).
 - **Agent rows open the inline agent panel (owner 2026-10, Batch B).** A
   click / Enter / Space anywhere on a `tr[data-agent]` toggles a panel `<tr>`
   (`#ap-panel`, `apToggleFromRow_` in script-10) directly below it: the agent's
@@ -2426,7 +2532,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   agent's row, re-opens it on a changed window, and closes it when the agent
   is gone (dept switch, a collapsed sub-queue group). The inner `.ap` is
   sticky-left, sized to `.agents-table-wrap` by JS and `contain: inline-size`,
-  so it never widens the table; its CSS is scoped under `.agents` AFTER the
+  so it never widens the table (QF-3: it is framed as a TRAY of the open row --
+  the row's 3px accent rail continues down its left edge, a 1px accent line
+  closes its right, a faint accent tint -- on `.ap`, so the right edge stays in
+  view; drive-agentpanel.js pins it); its CSS is scoped under `.agents` AFTER the
   table's rules so `.agents td`'s right-align and the sticky thead do not bleed
   into the nested call tables. Exports read `state.rows`, never the DOM.
   Each strip box shows the day's inbound answer rate top-right (`apDayRateHtml_`:
@@ -2490,7 +2599,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   in either sort direction; tints are the tile's tiers via `xferTierCls_`. The
   cells carry `.col-xfer` and show only on a table marked `.has-xfer`, so every
   other dept's table, the Overview mini table and every non-CSR export stay
-  byte-identical; layout B adds the same figure as a sixth column) · Unique ·
+  byte-identical; the combined table (LB-2) adds the same figure as its last column) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The Ans / day COLUMN is gone
   (owner 2026-10; the figure lives in the bar cell, since summary v23), but the
   CSV/TSV keeps an "Ans / day" column right after Answer %. The five `hideable:true`
@@ -2588,8 +2697,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   Step 3).** `#ins-brief` sits on My Department directly UNDER the team cards
   (`#dept-team-strip`) and ABOVE the agent table (Step 3, owner 2026-10-16;
   it used to open the Insights region): a top line and one row per section, most
-  urgent first (`insBriefRank_`: red, amber, green, grey; ties Queue ->
-  Agents -> Outbound -> Callbacks -> Team detail -> Trend). **Each row is a
+  urgent first (`insBriefRank_`: red, amber, fade, green, grey; ties Queue ->
+  Team -> Outbound -> Callbacks -> Trend). **Each row is a
   disclosure button** (`aria-expanded` / `aria-controls`) that opens ITS
   section in place beneath it: the section's EXISTING element is MOVED into
   the row's `.ins-brief-slot` (`insBriefMountAll_`, a hidden
@@ -2620,7 +2729,21 @@ stay pinned by INV-39, INV-53 and INV-06.
   self-contained functions in script-8 (`insBriefTopTier_` / `insBriefQueue_`
   / `insBriefAgents_` / `insBriefTrend_` / `insTrendShade_`) lifted by
   `insights-brief.test.js` -- keep their thresholds as literals inside them,
-  or the extraction breaks. The queue-wait verdict is server-side
+  or the extraction breaks. **Owner 2026-10-28:** Queue health's worst
+  queue with 1-3 violation days is `fade` (a lighter green, "Mostly on
+  track", never counted as "needs a look"), 4+ is amber; a manager on the
+  dept's team-average exclusion list is never the agent the Team detail text
+  quotes (`insBriefTopShare_` skips `insIsExempt_`); and a run for another
+  dept or window frosts the brief ("Loading <dept>…", `insBriefLoading_`,
+  `data-brief-dept`) until the next render or a failure lifts it
+  (drive-crossstate pins it with a held reply, `__HARNESS__.delay`). **BR-4
+  (owner 2026-10-29):** Agents and Team detail are ONE row, key `agents`,
+  label "Team": the Agents tier, text "<agents verdict> · talk time <ATT> per
+  call" (PURE `insBriefTeamText_`); it mounts BOTH sections, the agent cards
+  then the team detail (`INS_BRIEF_TARGET_` entries carry an `ids` list, and
+  mount / unmount / apply / restore / `insOpenSection_` walk it); in the slot
+  the second section's `<summary>` stays as a plain, non-clickable
+  sub-heading. The queue-wait verdict is server-side
   (`queueHealth.perQueue[].wait`, InsightsReport.gs). Each tier renders as an
   ICON (Step 1, owner 2026-10-16: `insBriefTierIconHtml_` -- green thumbs-up,
   amber exclamation mark, red flag, grey circle-with-dash), aria-hidden, with

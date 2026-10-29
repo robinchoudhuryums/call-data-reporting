@@ -1213,6 +1213,33 @@ async function visibleErrorTones(page) {
           JSON.stringify({ collapsed: ux2.allCollapsed, mounted: ux2.mounted }));
         record('admin: Step 3 Outbound and Callbacks are their own rows', /outbound/.test(ux2.keys) && /callbacks/.test(ux2.keys),
           'keys=' + ux2.keys);
+        // BR-4 (owner 2026-10-29): Agents and Team detail are ONE Team row --
+        // the agents verdict then talk time per call; opening it shows the
+        // agent cards, then the team detail under a plain sub-heading.
+        {
+          const teamRow = page.locator('#ins-brief .ins-brief-row[data-brief-key="agents"]');
+          const before = await page.evaluate(function () {
+            const b = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="agents"]');
+            return { label: b ? ((b.querySelector('.ins-brief-go') || {}).textContent || '').trim() : '',
+                     text: b ? ((b.querySelector('.ins-brief-text') || {}).textContent || '') : '',
+                     noDetailRow: !document.querySelector('#ins-brief [data-brief-key="detail"]') };
+          });
+          if (await teamRow.count()) { await teamRow.click(); await page.waitForTimeout(900); }
+          const tm = await page.evaluate(function () {
+            const slot = document.getElementById('ins-brief-slot-agents');
+            const a = document.getElementById('ins-agents-fold'), d = document.getElementById('ins-team-detail');
+            const sum = d && d.querySelector(':scope > summary');
+            return { inSlot: !!(slot && a && d && slot.contains(a) && slot.contains(d)),
+                     order: !!(a && d && (a.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING)),
+                     bothOpen: !!(a && d && a.open && d.open), slotShown: !!(slot && !slot.hidden),
+                     subHead: !!(sum && sum.offsetHeight > 0 && getComputedStyle(sum).pointerEvents === 'none') };
+          });
+          record('admin: BR-4 one Team row (agents verdict, then talk time per call) opens the agent cards, then the team detail',
+            before.label === 'Team' && before.noDetailRow && /talk time \d+:\d{2}:\d{2} per call/.test(before.text)
+              && tm.inSlot && tm.order && tm.bothOpen && tm.slotShown && tm.subHead,
+            JSON.stringify(Object.assign({}, before, tm)));
+          if (await teamRow.count()) { await teamRow.click(); await page.waitForTimeout(400); }
+        }
         // A row opens its section IN PLACE, under the row, and draws its chart.
         const trendRow = page.locator('#ins-brief .ins-brief-row[data-brief-key="trend"]');
         if (await trendRow.count()) {

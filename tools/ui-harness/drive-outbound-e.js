@@ -46,8 +46,12 @@ async function openDept(page, meta) {
 function tileLines() {
   return Array.from(document.querySelectorAll('.ov-dept-tile')).map((t) => {
     const ob = t.querySelector('.ov-dept-ob');
+    // SB-3: the slim connected / did-not-connect bar under the line.
+    const bar = t.querySelector('.ov-dept-ob-bar .ob-obar');
     return { dept: t.getAttribute('data-dept'), text: ob ? ob.textContent.replace(/\s+/g, ' ').trim() : null,
-      shown: !!ob && getComputedStyle(ob).display !== 'none' };
+      shown: !!ob && getComputedStyle(ob).display !== 'none',
+      bar: bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':'
+        + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0])) : null };
   });
 }
 
@@ -78,6 +82,10 @@ function tileLines() {
     !!firstLine && firstLine.text.indexOf('Placed ' + fmt(first.outbound.yesterday.placed)) !== -1
       && firstLine.text.indexOf(first.outbound.yesterday.pct.toFixed(1) + '%') !== -1,
     first.name + ': ' + (firstLine && firstLine.text));
+  const y = first.outbound.yesterday;
+  record('admin (SB-3): under the line, a slim bar of connected and did-not-connect that adds up to Placed',
+    !!firstLine && JSON.stringify(firstLine.bar) === JSON.stringify(['good:' + y.connected].concat(y.placed > y.connected ? ['bad:' + (y.placed - y.connected)] : [])),
+    first.name + ': ' + JSON.stringify(firstLine && firstLine.bar));
   // Batch F1: the tile line's prior-period chips (Yesterday vs the business day before).
   {
     const pr = first.outbound.yesterday.prior;
@@ -236,6 +244,11 @@ function tileLines() {
       shown: !!f && f.style.display !== 'none',
       head: (document.getElementById('ins-ob-fold-head') || {}).textContent || '',
       tiles: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
+      // SB-3: Placed as one split bar (connected / rang out / brief / unknown).
+      num: Number(((document.querySelector('#ins-ob-kpis .ob-sum-num') || {}).textContent || '').replace(/,/g, '')),
+      segSum: Array.from(document.querySelectorAll('#ins-ob-kpis .ob-obar-seg'))
+        .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0),
+      legend: document.querySelectorAll('#ins-ob-kpis .ob-leg').length,
       deltas: document.querySelectorAll('#ins-ob-kpis .pr-delta').length,
       agentTable: !!document.querySelector('#ins-ob-fold table'),
       note: ((document.getElementById('ins-ob-note') || {}).textContent || ''),
@@ -259,8 +272,9 @@ function tileLines() {
   record('admin: it asks for the current AND the prior window',
     ins.calls.indexOf(insMeta.from + '|' + insMeta.to) !== -1 && ins.calls.indexOf(insMeta.priorFrom + '|' + insMeta.priorTo) !== -1,
     ins.calls.join(', '));
-  record('admin: five KPI tiles, each compared with the prior window', ins.tiles === 5 && ins.deltas === 5,
-    'tiles=' + ins.tiles + ' deltas=' + ins.deltas);
+  record('admin (SB-3): Placed is one bar whose parts add up to it, five figures compared with the prior window',
+    ins.tiles === 0 && cur && ins.num === cur.totals.obTotal && ins.segSum === ins.num && ins.legend === 4 && ins.deltas === 5,
+    JSON.stringify({ tiles: ins.tiles, num: ins.num, want: cur && cur.totals.obTotal, segSum: ins.segSum, legend: ins.legend, deltas: ins.deltas }));
   // UX-1: no agent table of its own (the outbound table above is it), and the
   // own-group count is LABELLED when the table also holds sub-queue agents.
   record('UX-1: the summary has no agent table of its own', !ins.agentTable);
@@ -295,13 +309,13 @@ function tileLines() {
     dir: document.body.getAttribute('data-dir'),
     table: document.querySelectorAll('#agents-ob-tbody tr[data-agent]').length,
     shown: document.getElementById('ins-ob-fold').style.display !== 'none',
-    tiles: document.querySelectorAll('#ins-ob-kpis .ds-kpi').length,
+    bar: document.querySelectorAll('#ins-ob-kpis .ob-obar').length,
   }));
   const insCalls = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary')
     .map((c) => c.args && c.args[0] ? c.args[0].from + '|' + c.args[0].to : '?'))).slice(nBefore)
     .filter((k) => k === insMeta.from + '|' + insMeta.to || k === insMeta.priorFrom + '|' + insMeta.priorTo);
   record('turning the columns on asks for each window at most once, and leaves the Outbound section as it was',
-    both.dir === 'both' && both.table > 0 && both.shown && both.tiles === 5 && new Set(insCalls).size === insCalls.length,
+    both.dir === 'both' && both.table > 0 && both.shown && both.bar === 1 && new Set(insCalls).size === insCalls.length,
     JSON.stringify({ both: both, refetch: insCalls }));
 
   // View-as hides the fold, and the Overview served to View-as has no line.

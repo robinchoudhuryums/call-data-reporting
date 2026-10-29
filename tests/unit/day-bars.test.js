@@ -285,3 +285,121 @@ test('target line: no standard (or no data) -> no scale; the card keeps min-to-m
   assert.match(metrics, /t: function \(dept\) \{ return answerStdFor_\(dept\)\.target; \}/, '% Ans: the dept\'s own answer standard');
   assert.match(metrics, /t: function \(\) \{ return ABANDON_STANDARD_; \}/, 'Abandoned %: the 4% standard');
 });
+
+// ── QV-1 (owner 2026-10-29): the day quick view ──────────────────────────
+const dqvCardFigure = new Function('answerTierCls_', 'fmtNumber', 'fmtDuration', 'ABANDON_STANDARD_',
+  'return (' + extractFn(S5, 'dqvCardFigure_') + ');')(
+  function (pct) { return pct < 80 ? ' bm-bad' : (pct < 90 ? ' bm-watch' : ' bm-target'); },
+  function (n) { return String(n); },
+  function (s) { return '0:00:' + String(Math.round(s)).padStart(2, '0'); },
+  4);
+
+test('QV-1: each card\'s day figure comes from the bars\' own day sums, tinted where a standard broke', function () {
+  const t = { ans: 85, miss: 15, q: 100, qans: 95, abd: 5, avgW: 30 * 95, avgN: 95 };
+  assert.deepEqual(dqvCardFigure('rate', t, 'CSR'), { big: '85.0%', sub: '85 of 100 rings', cls: 'is-watch' });
+  assert.equal(dqvCardFigure('rate', Object.assign({}, t, { ans: 70, miss: 30 }), 'CSR').cls, 'is-bad');
+  assert.equal(dqvCardFigure('rate', Object.assign({}, t, { ans: 95, miss: 5 }), 'CSR').cls, '');
+  assert.deepEqual(dqvCardFigure('rate', Object.assign({}, t, { ans: 0, miss: 0 }), 'CSR'), { big: '–', sub: 'no rings', cls: '' });
+  assert.deepEqual(dqvCardFigure('qcalls', t), { big: '100', sub: '95 answered · 5 abandoned', cls: '' });
+  assert.deepEqual(dqvCardFigure('qabd', t), { big: '5.00%', sub: '5 abandoned', cls: 'is-bad' }, '4.00% or more breaks the standard');
+  assert.equal(dqvCardFigure('qabd', Object.assign({}, t, { abd: 3 })).cls, '');
+  assert.deepEqual(dqvCardFigure('qavg', t), { big: '0:00:30', sub: 'avg answer', cls: '' });
+  assert.equal(dqvCardFigure('qavg', Object.assign({}, t, { avgN: 0 })).big, '–');
+  assert.equal(dqvCardFigure('answered', t).big, '85');
+  assert.equal(dqvCardFigure('nope', t), null);
+});
+
+test('QV-1: released WITH the day bars; outbound behind obAllowed_; day bars only; two single-day reads', function () {
+  assert.match(extractFn(S5, 'dqvActive_'), /return dtsBarsActive_\(\);/, 'one gate: the pop-up ships to managers when the bars do');
+  assert.match(extractFn(S5, 'dqvOpen_'), /var i = dqvDayIndex_\(st, barIdx\);\s*if \(i < 0\) return;/, 'QV-4: any bar opens a DAY (a week / month bar its first workday)');
+  const show = extractFn(S5, 'dqvShow_');
+  assert.match(show, /var showOb = obAllowed_\(\);/, 'the outbound column stays admin-only after the release');
+  assert.match(show, /dqvFetchDays_\(\[b\], showOb, false,/, 'QV-2: the open day is ONE request, outbound only where the viewer sees it');
+  assert.match(show, /dqvAgentsHtml_\(day\.summary, \(showOb && !e\.outbound\) \? day\.outbound : null, showOb\)/,
+    'a failed outbound part leaves the column on dashes');
+  assert.match(extractFn(S5, 'dqvFetchDays_'), /var req = \{ department: DQV_\.dept, dates: list\.map\(function \(x\) \{ return x\.b\.from; \}\), outbound: !!ob \};/,
+    'each day of the request is one bucket\'s own date');
+  assert.match(extractFn(S5, 'dqvFetchDays_'), /\.getDayQuickView\(req\);/);
+  assert.match(show, /var prev = st\.bs\[i - 1\], next = st\.bs\[i \+ 1\];/, 'the arrows step the bars\' days: weekends and holidays are never a stop');
+  assert.match(extractFn(S5, 'dqvAgentDayHtml_'), /if \(!showOb\) kpis = kpis\.split\(/, 'the agent-day drill drops its outbound half too');
+  const wire = extractFn(S5, 'dtsWire_');
+  assert.match(wire, /if \(e\.pointerType === 'mouse' \|\| \(st\.held && st\.sel === idx\)\) \{\s*dqvOpen_\(strip, idx\);/);
+  assert.match(wire, /\(e\.key === 'Enter' \|\| e\.key === ' '\) && st\.qv\)/);
+  assert.match(extractFn(S5, 'refresh'), /obSummaryStoreClear_\(\);[^\n]*\n\s*dqvStoreClear_\(\);/, 'an explicit Refresh drops the held days');
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'dashboard.html'), 'utf8');
+  const m = html.match(/<div id="day-qv-modal"[^>]*>/);
+  assert.ok(m, 'the modal exists');
+  assert.doesNotMatch(m[0], /data-admin-only/, 'never [data-admin-only]: that rule would un-hide it on load');
+  assert.match(m[0], /style="display:none;"/);
+});
+
+test('QV-1b / QV-2: neighbour prefetch -- both neighbours in ONE request, once the open day has landed, through the one store', function () {
+  const show = extractFn(S5, 'dqvShow_');
+  assert.equal((show.match(/dqvPrefetch_\(i\);/g) || []).length, 2, 'after the open day lands AND after it fails');
+  const pre = extractFn(S5, 'dqvPrefetch_');
+  assert.match(pre, /if \(!DQV_\.open \|\| !st \|\| DQV_\.i !== i\) return;/, 'a closed pop-up or a day stepped past prefetches nothing');
+  assert.match(pre, /var near = \[st\.bs\[i - 1\], st\.bs\[i \+ 1\]\]\.filter\(Boolean\);/, 'the two neighbours only, never the whole range');
+  assert.match(pre, /if \(near\.length\) dqvFetchDays_\(near, obAllowed_\(\), true,/, 'ONE prefetch request (prefetch: true -> no usage row)');
+  const fd = extractFn(S5, 'dqvFetchDays_');
+  assert.match(fd, /if \(e && e\.done\) \{ setTimeout\(function \(\) \{ ok\(e\.data, b\); \}, 0\); return; \}/, 'a held day replays asynchronously');
+  assert.match(fd, /if \(e\) \{ e\.w\.push\(/, 'a day in flight (a prefetch) is joined by the step, never re-sent');
+  assert.match(fd, /if \(DQV_STORE_\[x\.k\] === x\.e\) delete DQV_STORE_\[x\.k\];/, 'a failed request is never kept');
+  assert.match(fd, /send\[dqvInc_\(b\) \? 1 : 0\]\.push/, 'days split only by their exception-day flag');
+  assert.match(extractFn(S5, 'dqvKey_'), /\[DQV_\.dept, b\.from, ob \? 1 : 0, dqvInc_\(b\) \? 1 : 0\]/);
+  assert.doesNotMatch(S5.slice(S5.indexOf('function dqvFetchDays_('), S5.indexOf('function dqvAgentsHtml_(')),
+    /getDepartmentSummary|getMissedCallsReport|obSummaryFetch_/, 'the pop-up reads nothing outside the one request');
+});
+
+test('QV-3: loading states -- skeletons on a fresh open, frost when stepping, none for a held day, the label follows the day', function () {
+  const show = extractFn(S5, 'dqvShow_');
+  assert.match(show, /var held = DQV_STORE_\[dqvKey_\(b, showOb\)\];\s*if \(!\(held && held\.done\)\) \{/, 'a prefetched day paints with no busy state');
+  assert.match(show, /dqvBusy_\(agentsEl, 'agents', lbl, showOb\);\s*dqvBusy_\(missedEl, 'missed', lbl\);/);
+  assert.equal((show.match(/dqvPaint_\(/g) || []).length, 4, 'every outcome (data or error, both sections) lifts the busy state');
+  const busy = extractFn(S5, 'dqvBusy_');
+  assert.match(busy, /el\.setAttribute\('aria-busy', 'true'\);/);
+  assert.match(busy, /if \(el\.__dqvFilled\) \{\s*dsFrostShow_\(el, label\);/, 'content already shown is frosted, never collapsed');
+  assert.match(busy, /if \(lab\) lab\.textContent = label;/, 'a second quick step relabels the frost already up');
+  assert.match(busy, /else \{\s*el\.innerHTML = dqvSkeletonHtml_\(kind, label, ob\);/);
+  const paint = extractFn(S5, 'dqvPaint_');
+  assert.match(paint, /el\.classList\.remove\('ds-frost-host'\);\s*el\.removeAttribute\('aria-busy'\);\s*el\.__dqvFilled = true;/);
+  assert.match(extractFn(S5, 'dqvOpen_'), /el\.__dqvFilled = false;/, 'a fresh open never frosts the last visit\'s content');
+  const sk = extractFn(S5, 'dqvSkeletonHtml_');
+  assert.match(sk, /role="status"><span class="sr-only">' \+ escapeHtml\(label\)/, 'the skeleton is a labelled live status');
+  assert.match(extractFn(S5, 'dqvToggleAgent_'), /dqvSkeletonHtml_\('day', 'Loading ' \+ agent/);
+});
+
+test('QV-4: a week or month bar opens its FIRST workday, and the quick view steps day by day from there', function () {
+  // eslint-disable-next-line no-new-func
+  const model = new Function('dtsDayMap_', 'dtsExcludedDayMap_', 'dtsSum_', 'return (' + extractFn(S5, 'dtsQuickViewDays_') + ');')(
+    function () { return { '2026-06-02': { ans: 5, miss: 1 }, '2026-06-09': { ans: 7, miss: 0 } }; },
+    function () { return { '2026-06-03': { ans: 2, miss: 2 } }; },
+    function (b) { return { n: b.days.length }; });
+  // eslint-disable-next-line no-new-func
+  const dayIdx = new Function('return (' + extractFn(S5, 'dqvDayIndex_') + ');')();
+  const iso = ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-06', '2026-06-07',
+    '2026-06-08', '2026-06-09', '2026-06-10'];
+  const weekday = function (d) { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w !== 0 && w !== 6 && d !== '2026-06-01'; };   // 06-01 a holiday
+  const ex = [{ date: '2026-06-03', reason: 'outage' }];
+  const workday = function (d) { return weekday(d) && d !== '2026-06-03'; };
+  const weekly = [
+    { key: '2026-06-01', from: '2026-06-02', to: '2026-06-05', n: 3, weekly: true, monthly: false, days: [] },
+    { key: '2026-06-08', from: '2026-06-08', to: '2026-06-10', n: 3, weekly: true, monthly: false, days: [] },
+  ];
+  const state = { meta: { from: '2026-06-01', to: '2026-06-10' } };
+  const qv = model(state, weekly, [{}, {}], iso, workday, weekday, ex);
+  assert.deepEqual(qv.bs.map(function (b) { return b.from; }),
+    ['2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-08', '2026-06-09', '2026-06-10'],
+    'one stop per workday: no weekend, no holiday; the exception day is its own stop');
+  assert.equal(qv.bs[1].excluded.reason, 'outage');
+  assert.ok(qv.bs.every(function (b) { return !b.weekly && !b.monthly && b.n === 1; }));
+  assert.equal(qv.sums.length, qv.bs.length);
+  const st = { bs: weekly, qv: qv };
+  assert.equal(dayIdx(st, 0), 0, 'week 1 opens on its first WORKDAY (06-02; 06-01 is a holiday)');
+  assert.equal(dayIdx(st, 1), 4, 'week 2 opens on 06-08');
+  assert.equal(dayIdx(st, 2), -1, 'no such bar');
+  // A daily view keeps the bars' own buckets, and a day bar opens itself.
+  const daily = [{ key: 'a', from: '2026-06-02', to: '2026-06-02', weekly: false, monthly: false, days: [] }];
+  const same = model(state, daily, ['s'], iso, workday, weekday, ex);
+  assert.equal(same.bs, daily);
+  assert.equal(dayIdx({ bs: daily, qv: same }, 0), 0);
+});

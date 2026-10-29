@@ -133,7 +133,13 @@ async function toggleColumns(page) {
 
   const r = await page.evaluate(() => ({
     head: (document.getElementById('ins-cb-fold-head') || {}).textContent || '',
-    tiles: Array.from(document.querySelectorAll('#ins-cb-kpis .ds-kpi')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+    // CB-R1: the summary -- headline, one bar that adds up, its legend.
+    num: (document.querySelector('#ins-cb-kpis .ob-sum-num') || {}).textContent || '',
+    sub: (document.querySelector('#ins-cb-kpis .ob-sum-sub') || {}).textContent || '',
+    segs: Array.from(document.querySelectorAll('#ins-cb-kpis .ob-obar-seg')).map((x) => ({ seg: x.getAttribute('data-seg'),
+      n: parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]) })),
+    legend: Array.from(document.querySelectorAll('#ins-cb-kpis .ob-leg')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+    tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
     deltas: document.querySelectorAll('#ins-cb-kpis .pr-delta').length,
     delaySegs: document.querySelectorAll('#ins-cb-delay-strip .ob-delay-seg').length,
     hourCells: document.querySelectorAll('#ins-cb-hour-strip .ob-hour-cell').length,
@@ -141,12 +147,15 @@ async function toggleColumns(page) {
   }));
   record('the headline answers the question closed: own-team rate, episodes, median (CE-1)',
     /55\.6% called back by the team/.test(r.head) && /18 contact episodes/.test(r.head) && /median/.test(r.head), r.head);
-  record('the seven episode tiles render, own team and another team kept apart',
-    r.tiles.length === 7 && /^Contact episodes/.test(r.tiles[0]) && r.tiles[0].indexOf('18') !== -1
-      && /^Called back by own team/.test(r.tiles[1]) && r.tiles[1].indexOf('55.6%') !== -1
-      && r.tiles.some((t) => /^Contacted by another team/.test(t) && /may be unrelated/.test(t))
-      && r.tiles.some((t) => /^Caller got through/.test(t)), r.tiles.join(' | '));
-  record('the two own-team rate tiles carry prior-window deltas', r.deltas === 2, 'deltas=' + r.deltas);
+  record('CB-R1: the headline is the callers NOT called back, out of every episode',
+    r.num === '2' && /of 18 callers who hung up/.test(r.sub) && r.tiles === 0, JSON.stringify({ num: r.num, sub: r.sub, tiles: r.tiles }));
+  record('CB-R1: ONE bar whose segments add up to the episodes, own team and another team kept apart',
+    r.segs.map((x) => x.seg).join(',') === 'own,other,through,pending,none'
+      && r.segs.reduce((a, x) => a + x.n, 0) === 18, JSON.stringify(r.segs));
+  record('CB-R1: the legend carries every segment on the same base',
+    r.legend.length === 5 && /^10 · 55\.6%/.test(r.legend[0]) && /may be unrelated/.test(r.legend[1])
+      && /^2 · 11\.1%.*not called back/.test(r.legend[4]), r.legend.join(' | '));
+  record('CB-R1: the own-team rate carries its prior-window delta', r.deltas === 1, 'deltas=' + r.deltas);
   record('the "how fast" strip and the by-hour strip both render',
     r.delaySegs === 4 && r.hourCells === 4, 'segs=' + r.delaySegs + ' cells=' + r.hourCells);
   record('the callback window in the caption comes from the payload', r.windowDays === '3', r.windowDays);
@@ -240,26 +249,38 @@ async function toggleColumns(page) {
   record('CE-3 / Step 3: the Direct lines block is closed and already loaded, once',
     onScreen(await calls(page, 'getOutboundDirectCallbacks')).length === 1
       && await page.evaluate(() => !document.getElementById('ins-dl-fold').open
-        && /called back by the team/.test(document.getElementById('ins-dl-head').textContent)));
+        && /not called back/.test(document.getElementById('ins-dl-head').textContent)));
   await page.click('#ins-dl-fold > summary');
   await page.waitForTimeout(1200);
   const dlc = onScreen(await calls(page, 'getOutboundDirectCallbacks'));
   const dl = await page.evaluate(() => ({
     head: document.getElementById('ins-dl-head').textContent,
     counts: document.getElementById('ins-dl-counts').textContent,
-    work: Array.from(document.querySelectorAll('#ins-dl-work .ds-kpi')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
-    after: document.querySelectorAll('#ins-dl-after .ds-kpi').length,
+    // DL-R2: the summary (headline, a bar per hours group, one legend) + the table.
+    num: (document.querySelector('#ins-dl-sum .ob-sum-num') || {}).textContent || '',
+    bars: Array.from(document.querySelectorAll('#ins-dl-sum .ob-obar')).map((b) => Array.from(b.querySelectorAll('.ob-obar-seg'))
+      .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0)),
+    legend: Array.from(document.querySelectorAll('#ins-dl-sum .ob-leg')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+    quality: (document.querySelector('#ins-dl-sum .ob-sum-quality') || {}).textContent || '',
+    depts: Array.from(document.querySelectorAll('#ins-dl-table tr.ob-dl-dept')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+    tiles: document.querySelectorAll('#ins-dl-content .ds-kpi').length,
     note: (function () { const n = document.getElementById('ins-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })(),
   }));
   record('CE-3: opening it sends nothing new -- the ONE fetch was for the fold’s window and dept',
     dlc.length === 1 && dlc[0].from === insMeta.from && dlc[0].to === insMeta.to && dlc[0].department === insMeta.department,
     JSON.stringify(dlc));
-  record('CE-3: work-hours and after-hours rows, "by the person" and "by their team" apart',
-    dl.work.length === 7 && dl.after === 7
-      && /^Called back by the person ?35%/.test(dl.work[1]) && /^Called back by their team ?20%/.test(dl.work[2])
-      && /46\.7% called back by the team · 30 contact episodes · 10 not called back/.test(dl.head)
-      && /6 to the Sales voicemail box/.test(dl.counts) && /38 rang out or went to voicemail/.test(dl.counts),
-    JSON.stringify(dl));
+  record('DL-R2: the headline is the callers not called back; one bar per hours group, each adding up',
+    dl.num === '10' && dl.tiles === 0 && dl.bars.length === 2 && dl.bars[0] === 20 && dl.bars[1] === 10
+      && /10 of 30 callers not called back/.test(dl.head), JSON.stringify(dl));
+  record('DL-R2: one legend carries work · after, "by the person" and "by a teammate" apart',
+    dl.legend.length === 6 && /^7 · 2\s*called back by the person/.test(dl.legend[0]) && /^4 · 1\s*by a teammate/.test(dl.legend[1])
+      && /^4 · 6\s*not called back/.test(dl.legend[5]), dl.legend.join(' | '));
+  record('DL-R2: after hours is timed from the next work day (8:30 CST open)',
+    /1:00:00.* work hours .*0:45:00.* after hours, counted from 8:30 the next work day/.test(dl.quality), dl.quality);
+  record('DL-R2: the department table, most not called back first',
+    dl.depts.length === 2 && /^Sales/.test(dl.depts[0]) && /^CSR/.test(dl.depts[1]), dl.depts.join(' | '));
+  record('CE-3: the counting context is kept (in "How this is counted")',
+    /6 to the Sales voicemail box/.test(dl.counts) && /38 rang out or went to voicemail/.test(dl.counts), dl.counts);
   record('FO-1: misdials are counted in the context line and named as left out of the rates; a Neon payload shows no copy note',
     /3 misdials \(rang under 8 s, left out of the rates\)/.test(dl.counts) && /49 unanswered calls/.test(dl.counts)
       && dl.note === null, JSON.stringify({ counts: dl.counts, note: dl.note }));
@@ -280,6 +301,24 @@ async function toggleColumns(page) {
       && /Called back late · day 7 · own team/.test(rl.head) && rl.rows.length === 2
       && /not answered/.test(rl.rows[0]) && /rang Sam Seller/.test(rl.rows[0])
       && /after hours/.test(rl.rows[1]) && rl.ids === 2, JSON.stringify({ rep: rep, rl: rl }));
+  // DL-R2: a department opens its people; a person opens THEIR unreturned callers.
+  await page.click('#ins-dl-table .ob-dl-toggle[data-dl-dept="0"]');
+  await page.waitForTimeout(300);
+  const ppl = await page.evaluate(() => Array.from(document.querySelectorAll('#ins-dl-table tr.ob-dl-person'))
+    .filter((t) => getComputedStyle(t).display !== 'none').map((t) => t.textContent.replace(/\s+/g, ' ').trim()));
+  record('DL-R2: opening a department shows its line owners, the voicemail box named',
+    ppl.length === 2 && /^Sam Seller/.test(ppl[0]) && /Sales Voicemails \(voicemail box\)/.test(ppl[1]), ppl.join(' | '));
+  await page.click('#ins-dl-table .ob-dl-person-btn[data-owner="Sam Seller"]');
+  await page.waitForTimeout(1200);
+  const pr = (await calls(page, 'getOutboundDirectRepeats')).slice(-1)[0] || {};
+  const pl = await page.evaluate(() => {
+    const d = document.querySelector('#ins-dl-table tr.ob-dl-drill');
+    return { shown: !!d && getComputedStyle(d).display !== 'none',
+      head: ((d && d.querySelector('.heat-drill-head')) || {}).textContent || '' };
+  });
+  record('DL-R2: a person row lists THEIR unreturned callers (owner + 1+ attempts asked)',
+    pr.owner === 'Sam Seller' && pr.minAttempts === 1 && pl.shown && /Not called back · Sam Seller’s line/.test(pl.head),
+    JSON.stringify({ pr: pr, pl: pl }));
   await page.click('#ins-dl-fold > summary');
   await page.waitForTimeout(300);
   await page.click('#ins-dl-fold > summary');
@@ -346,7 +385,7 @@ async function toggleColumns(page) {
       const r = f ? f.getBoundingClientRect() : null;
       return { page: document.body.getAttribute('data-page'), dir: document.body.getAttribute('data-dir'),
         shown: !!f && getComputedStyle(f).display !== 'none', open: !!f && f.open,
-        tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
+        sum: ((document.querySelector('#ins-cb-kpis .ob-sum-num') || {}).textContent || '').trim(),
         // At the TOP of the screen, not merely visible: the scroll holds while
         // the sections above it finish loading (FO-3).
         inView: !!r && r.top > -2 && r.top < 120,
@@ -354,7 +393,7 @@ async function toggleColumns(page) {
         modal: !!document.getElementById('outbound-modal') };
     });
     record('G3: #/report/outbound lands on My Department with the Callbacks row open, loaded and held at the top of the screen -- the saved columns choice untouched',
-      dl.page === 'dept' && dl.dir === 'in' && dl.shown && dl.open && dl.tiles === 7 && dl.inView && !dl.modal,
+      dl.page === 'dept' && dl.dir === 'in' && dl.shown && dl.open && dl.sum === '2' && dl.inView && !dl.modal,
       JSON.stringify(dl));
     await pd.close();
   }
@@ -383,11 +422,11 @@ async function toggleColumns(page) {
     await toggleCb(pn);
     await pn.waitForTimeout(2000);
     const n = await pn.evaluate(() => ({
-      tiles: document.querySelectorAll('#ins-cb-kpis .ds-kpi').length,
+      sum: ((document.querySelector('#ins-cb-kpis .ob-sum-num') || {}).textContent || '').trim(),
       sw: document.documentElement.scrollWidth, vw: window.innerWidth,
     }));
     record('360 px: the open fold renders without a sideways page scroll',
-      n.tiles === 7 && n.sw <= n.vw + 1, JSON.stringify(n));
+      n.sum === '2' && n.sw <= n.vw + 1, JSON.stringify(n));
     await pn.close();
   }
 

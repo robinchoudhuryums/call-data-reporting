@@ -248,11 +248,12 @@ test('call direction hues: --dir-out is defined wherever --accent is, and both d
   assert.equal((css.match(/^\s*--dir-out:\s/gm) || []).length, accentSites,
     '--dir-out defined at every site --accent is (' + accentSites + ')');
   assert.equal((css.match(/^\s*--dir-out-soft:\s/gm) || []).length, accentSites);
-  assert.match(css, /\.ad-kpi-row--out \.ds-kpi \{ border-top: 3px solid var\(--dir-out\); \}/);
+  // SB-1: outbound is a split summary now, not a tile row; it keeps the hue.
+  assert.match(css, /\.ob-split--out \{ border-top: 3px solid var\(--dir-out\);/);
   assert.match(css, /\.ad-kpi-row--in \.ds-kpi\s+\{ border-top: 3px solid var\(--accent\); \}/);
   const js = fs.readFileSync(path.join(DIR, 'script-10-escalations.html'), 'utf8');
   assert.match(js, /pr-kpi-row ad-kpi-row--in/);
-  assert.match(js, /pr-kpi-row ad-kpi-row--out/);
+  assert.match(js, /cls: 'ob-split--out'/);
   assert.match(js, /class="ap-tab ap-tab--' \+ key/);
 });
 

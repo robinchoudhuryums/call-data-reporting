@@ -1664,6 +1664,7 @@
     trpFetched_ = {};
     OB_VIEW_.key = null;   // Batch D: an explicit Refresh refetches the outbound view too
     obSummaryStoreClear_();   // FO-3: ...from the server, not the shared client store
+    dqvStoreClear_();         // QV-1: ...and the day quick view's held days
     // Sub-queue: the client no longer sends `subScope` at all. The scope
     // switcher is retired -- collapsing a group in the combined table gives
     // every view it offered, instantly and without a round trip -- so the
@@ -3800,7 +3801,12 @@
     var dept = getRequestedDept();
     var weekly = bs[0].weekly;
     var period = bs[0].monthly ? 'month' : (weekly ? 'week' : 'day');
-    var idle = bs[0].monthly ? 'Monthly &middot; point at a bar' : (weekly ? 'Weekly &middot; point at a bar' : 'Point at a bar');
+    // QV-1: a bar opens the day quick view (dqvOpen_) -- a day bar on its day,
+    // a week / month bar on its first workday (QV-4) -- so the idle line says so.
+    var qvOn = dqvActive_();
+    var idle = bs[0].monthly ? 'Monthly &middot; point at a bar' + (qvOn ? ' &middot; click it for its first day' : '')
+      : (weekly ? 'Weekly &middot; point at a bar' + (qvOn ? ' &middot; click it for its first day' : '')
+      : (qvOn ? 'Point at a bar &middot; click it for that day' : 'Point at a bar'));
     var built = 0;
     strip.querySelectorAll('[data-dts-metric]').forEach(function (tile) {
       var key = tile.getAttribute('data-dts-metric');
@@ -3851,8 +3857,44 @@
       built++;
     });
     if (!built) return;
-    strip.__dts = { bs: bs, sums: sums, sel: null, held: false, idle: idle };
+    strip.__dts = { bs: bs, sums: sums, sel: null, held: false, idle: idle, qv: dtsQuickViewDays_(state, bs, sums, isoList, isWorkday, isWeekday, exList) };
     dtsWire_(strip);
+  }
+
+  /**
+   * QV-4 (owner 2026-10-29): the day quick view always steps DAYS. On a daily
+   * view that is the bars' own buckets; on a weekly / monthly view it is one
+   * bucket per workday of the range built the same way the daily view would
+   * (weekends and company holidays are never a stop; an exception day is its
+   * own stop, read with its figures) -- so a week or month bar can open its
+   * first workday and the arrows walk day by day from there.
+   */
+  function dtsQuickViewDays_(state, bs, sums, isoList, isWorkday, isWeekday, exList) {
+    if (!bs[0].weekly && !bs[0].monthly) return { bs: bs, sums: sums };
+    var dm = dtsDayMap_(state);
+    var days = isoList.filter(isWorkday).map(function (iso) {
+      return { key: iso, from: iso, to: iso, n: 1, weekly: false, monthly: false, days: dm[iso] ? [dm[iso]] : [] };
+    });
+    var m = state.meta || {};
+    if ((exList || []).length) {
+      var exMap = dtsExcludedDayMap_(state);
+      exList.forEach(function (e) {
+        if (e.date < m.from || e.date > m.to || !isWeekday(e.date)) return;
+        days.push({ key: e.date, from: e.date, to: e.date, n: 1, weekly: false, monthly: false,
+                    days: exMap[e.date] ? [exMap[e.date]] : [], excluded: e });
+      });
+      days.sort(function (a, b) { return a.from < b.from ? -1 : (a.from > b.from ? 1 : 0); });
+    }
+    return { bs: days, sums: days.map(dtsSum_) };
+  }
+  // QV-4: the quick-view day a bar opens -- itself on a daily view, its
+  // bucket's FIRST workday (the bucket's own `from`) on a weekly / monthly one.
+  function dqvDayIndex_(st, barIdx) {
+    var b = st && st.bs && st.bs[barIdx];
+    if (!b || !st.qv) return -1;
+    if (!b.weekly && !b.monthly) return barIdx;
+    for (var j = 0; j < st.qv.bs.length; j++) if (st.qv.bs[j].from === b.from) return j;
+    return -1;
   }
 
   function dtsSelect_(strip, i) {
@@ -3902,15 +3944,20 @@
       if (st && !st.held) dtsSelect_(strip, null);
     });
     // Touch / pen: a tap HOLDS a day (hover does not exist); a tap anywhere
-    // else in the strip lets go. A mouse click does nothing extra.
+    // else in the strip lets go. QV-1: a mouse click on a DAY bar opens that
+    // day's quick view; on touch, a second tap on the held day does.
     strip.addEventListener('click', function (e) {
       var st = strip.__dts;
       if (!st) return;
       var barsEl = e.target.closest && e.target.closest('.dts-bars');
       if (!barsEl) { if (st.held) { st.held = false; dtsSelect_(strip, null); } return; }
-      if (e.pointerType === 'mouse') return;
+      var idx = dtsIndexAt_(strip, barsEl, e.clientX);
+      if (e.pointerType === 'mouse' || (st.held && st.sel === idx)) {
+        dqvOpen_(strip, idx);
+        return;
+      }
       st.held = true;
-      dtsSelect_(strip, dtsIndexAt_(strip, barsEl, e.clientX));
+      dtsSelect_(strip, idx);
     });
     strip.addEventListener('keydown', function (e) {
       var st = strip.__dts;
@@ -3921,6 +3968,7 @@
       else if (e.key === 'Home') i = 0;
       else if (e.key === 'End') i = n - 1;
       else if (e.key === 'Escape') { st.held = false; dtsSelect_(strip, null); return; }
+      else if ((e.key === 'Enter' || e.key === ' ') && st.qv) { e.preventDefault(); dqvOpen_(strip, i); return; }   // QV-1 / QV-4
       else return;
       e.preventDefault();
       st.held = true;
@@ -3934,6 +3982,493 @@
       var st = strip.__dts;
       if (st && !(e.relatedTarget && strip.contains(e.relatedTarget))) { st.held = false; dtsSelect_(strip, null); }
     });
+  }
+
+  // ── QV-1 (owner 2026-10-29): the DAY QUICK VIEW ───────────────────────────
+  // A click on a DAY bar in any team card opens one day in a pop-up, without
+  // re-running the page: the cards' figures for that day straight from the
+  // page payload (instant), then ONE request for the rest (QV-2,
+  // getDayQuickView, DayQuickView.gs): the agent table, the missed calls and,
+  // for a viewer who sees outbound (obAllowed_), that day's outbound -- the
+  // three existing endpoints run in one execution. The arrows step through the bars' days, so they
+  // skip weekends and company holidays exactly as the bars do (an exception
+  // day is its own striped bar, so it is a stop too, read with its figures
+  // included). A week / month bar opens its first workday and the arrows then
+  // step day by day (QV-4, dtsQuickViewDays_). ADMIN-ONLY while
+  // trialled: it is released with the day bars (dqvActive_ IS
+  // dtsBarsActive_), and the outbound column stays behind obAllowed_ after.
+  var DQV_ = { strip: null, i: null, dept: '', seq: 0, open: false, opener: null, agentKey: null };
+  var DQV_STORE_ = {};          // dept|iso|ob|inc -> one day's held reply, this page load
+  var DQV_STORE_ORDER_ = [];
+  var DQV_STORE_MAX_ = 18;
+  function dqvActive_() { return dtsBarsActive_(); }
+  function dqvStoreClear_() { DQV_STORE_ = {}; DQV_STORE_ORDER_ = []; }
+  function dqvInc_(b) { return !!(b.excluded || excIncludeOn_()); }   // an exception day is read with its figures
+  function dqvKey_(b, ob) { return [DQV_.dept, b.from, ob ? 1 : 0, dqvInc_(b) ? 1 : 0].join('|'); }
+  /**
+   * QV-2: the pop-up's ONE store, per DAY. `bs` = day buckets; `ok(day, b)`
+   * runs for each (asynchronously when already held), `fail(err, b)` on a
+   * failed request. Days already held or in flight are served / joined; the
+   * rest go out in ONE getDayQuickView request (split only if their
+   * exception-day flag differs). A failed request is never kept.
+   */
+  function dqvFetchDays_(bs, ob, prefetch, ok, fail) {
+    var send = { 0: [], 1: [] };
+    bs.forEach(function (b) {
+      var k = dqvKey_(b, ob), e = DQV_STORE_[k];
+      if (e && e.done) { setTimeout(function () { ok(e.data, b); }, 0); return; }
+      if (e) { e.w.push({ ok: ok, fail: fail, b: b }); return; }
+      e = DQV_STORE_[k] = { done: false, data: null, w: [{ ok: ok, fail: fail, b: b }] };
+      DQV_STORE_ORDER_.push(k);
+      while (DQV_STORE_ORDER_.length > DQV_STORE_MAX_) delete DQV_STORE_[DQV_STORE_ORDER_.shift()];
+      send[dqvInc_(b) ? 1 : 0].push({ b: b, k: k, e: e });
+    });
+    [0, 1].forEach(function (inc) {
+      var list = send[inc];
+      if (!list.length) return;
+      var req = { department: DQV_.dept, dates: list.map(function (x) { return x.b.from; }), outbound: !!ob };
+      if (inc) req.includeExceptionDays = true;
+      if (prefetch) req.prefetch = true;
+      google.script.run
+        .withSuccessHandler(function (res) {
+          var days = (res && res.days) || {};
+          list.forEach(function (x) {
+            x.e.done = true;
+            x.e.data = days[x.b.from] || { summary: null, missed: null, outbound: null, errors: { summary: 'No reply for this day.' } };
+            var w = x.e.w; x.e.w = [];
+            w.forEach(function (y) { y.ok(x.e.data, y.b); });
+          });
+        })
+        .withFailureHandler(function (err) {
+          list.forEach(function (x) {
+            if (DQV_STORE_[x.k] === x.e) delete DQV_STORE_[x.k];
+            var w = x.e.w; x.e.w = [];
+            w.forEach(function (y) { if (y.fail) y.fail(err, y.b); });
+          });
+        })
+        .getDayQuickView(req);
+    });
+  }
+  // QV-4: the quick view's per-DAY model (strip.__dts.qv -- the bars' own
+  // buckets on a daily view, one per workday on a weekly / monthly one).
+  function dqvModel_() {
+    var st = DQV_.strip && DQV_.strip.__dts;
+    return (st && st.qv) || null;
+  }
+  function dqvYearLabel_(b) {
+    return dtsBucketLabel_(b) + ', ' + String(b.from).slice(0, 4);
+  }
+
+  /**
+   * PURE. Each card's figure for ONE day bucket: { big, sub, cls } from the
+   * same day sums the bars draw (dtsSum_), so the pop-up's cards always
+   * agree with the bar it was opened from. `cls` is the standard's tint --
+   * the answer target's red / amber, the abandon standard's red.
+   */
+  function dqvCardFigure_(key, t, dept) {
+    if (key === 'rate') {
+      var den = t.ans + t.miss;
+      if (!den) return { big: '–', sub: 'no rings', cls: '' };
+      var c = answerTierCls_(t.ans / den * 100, dept);
+      return { big: (t.ans / den * 100).toFixed(1) + '%', sub: fmtNumber(t.ans) + ' of ' + fmtNumber(den) + ' rings',
+               cls: c === ' bm-bad' ? 'is-bad' : (c === ' bm-watch' ? 'is-watch' : '') };
+    }
+    if (key === 'answered') return { big: fmtNumber(t.ans), sub: 'answered', cls: '' };
+    if (key === 'qcalls') {
+      return { big: fmtNumber(t.q), sub: fmtNumber(t.qans) + ' answered · ' + fmtNumber(t.abd) + ' abandoned', cls: '' };
+    }
+    if (key === 'qabd') {
+      if (!t.q) return { big: '–', sub: 'no queue calls', cls: '' };
+      var p = t.abd / t.q * 100;
+      return { big: p.toFixed(2) + '%', sub: fmtNumber(t.abd) + ' abandoned', cls: p >= ABANDON_STANDARD_ ? 'is-bad' : '' };
+    }
+    if (key === 'qavg') {
+      return t.avgN ? { big: fmtDuration(t.avgW / t.avgN), sub: 'avg answer', cls: '' }
+                    : { big: '–', sub: 'no answered queue calls', cls: '' };
+    }
+    return null;
+  }
+
+  function dqvCardsHtml_(st, i) {
+    var strip = DQV_.strip;
+    var b = st.bs[i], t = st.sums[i];
+    var dept = DQV_.dept;
+    var html = '';
+    strip.querySelectorAll('.dts-tile').forEach(function (tile) {
+      var key = tile.getAttribute('data-dts-metric');
+      var label = String(((tile.querySelector('.dts-label') || {}).textContent) || '').replace(/\s+this range$|\s+queue$/i, '').trim();
+      var range = String(((tile.querySelector('.dts-value') || {}).textContent) || '').replace(/\s+/g, ' ').trim();
+      var f = key ? dqvCardFigure_(key, t, dept) : null;
+      if (!f && /^Transfer/.test(label)) {
+        // CSR's Transfer % card: that day from csrTransfer.daily (no day bars).
+        var tr = state.csrTransfer, d = null;
+        ((tr && tr.daily) || []).forEach(function (x) { if (x && x.date === b.from) d = x; });
+        var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
+        f = (d && d.totalCalls)
+          ? { big: (Math.round(Number(d.pct) * 10) / 10) + '%', sub: fmtNumber(d.transferred) + ' of ' + fmtNumber(d.totalCalls) + ' calls',
+              cls: Number(d.pct) <= tt.deep ? 'tf-deep' : (Number(d.pct) < tt.light ? 'tf-light' : (Number(d.pct) < tt.amber ? 'tf-amber' : 'tf-red')) }
+          : { big: '–', sub: 'no CSR calls', cls: '' };
+      }
+      if (!f) return;
+      var tf = /^tf-/.test(f.cls);   // the transfer tiers tint the figure, the standards the card
+      html += '<div class="dqv-card' + (f.cls && !tf ? ' ' + f.cls : '') + '" data-dqv-card="' + escapeHtml(key || 'transfer') + '">'
+        + '<div class="dqv-card-label">' + escapeHtml(label) + '</div>'
+        + '<div class="dqv-card-big' + (tf ? ' ' + f.cls : '') + '">' + escapeHtml(f.big) + '</div>'
+        + '<div class="dqv-card-sub">' + escapeHtml(f.sub) + '</div>'
+        + '<div class="dqv-card-range" title="The card on the page, for the whole range">Range ' + escapeHtml(range) + '</div>'
+        + '</div>';
+    });
+    return html;
+  }
+
+  // QV-3 (owner 2026-10-29): LOADING STATES shaped like what arrives, so the
+  // pop-up opens at about its final size instead of growing when the reply
+  // lands. `kind` 'agents' (table rows; the outbound column when shown),
+  // 'missed' (the half-hour chart + ring lines) or 'day' (an agent's day:
+  // KPI tiles + call lines). The label is a live status for screen readers;
+  // the shimmer is .skeleton-line's (static under reduced motion).
+  function dqvSkeletonHtml_(kind, label, ob) {
+    var line = function (cls) { return '<span class="skeleton-line' + (cls ? ' ' + cls : '') + '"></span>'; };
+    var html = '<div class="dqv-skel dqv-skel--' + kind + '" role="status"><span class="sr-only">' + escapeHtml(label) + '</span>';
+    if (kind === 'agents') {
+      for (var r = 0; r < 6; r++) {
+        html += '<div class="dqv-skel-row' + (ob ? ' dqv-skel-row--ob' : '') + '">' + line('dqv-skel-name') + line('dqv-skel-bar')
+          + line('dqv-skel-num') + (ob ? line('dqv-skel-bar') : '') + line('dqv-skel-num') + '</div>';
+      }
+    } else if (kind === 'missed') {
+      var hs = [30, 55, 80, 45, 65, 35, 50, 70, 40, 25, 60, 45, 30, 50, 35, 20, 40, 25];
+      html += line('dqv-skel-head') + '<div class="dqv-skel-chart">'
+        + hs.map(function (h) { return '<span class="skeleton-line" style="height:' + h + '%"></span>'; }).join('') + '</div>';
+      for (var m = 0; m < 3; m++) html += '<div class="dqv-skel-mrow">' + line('dqv-skel-name') + line() + '</div>';
+    } else {
+      html += '<div class="dqv-skel-kpis">' + line() + line() + line() + line() + '</div>' + line() + line() + line();
+    }
+    return html + '</div>';
+  }
+  // A section about to load: a skeleton when it holds nothing of this
+  // pop-up's yet, else the page's frost over what it shows (stepping days),
+  // so nothing collapses while the next day loads. dqvPaint_ lifts either.
+  function dqvBusy_(el, kind, label, ob) {
+    if (!el) return;
+    el.setAttribute('aria-busy', 'true');
+    if (el.__dqvFilled) {
+      dsFrostShow_(el, label);
+      // dsFrostShow_ keeps an overlay that is already up, label and all -- a
+      // second quick step must name the day now on screen, not the last one.
+      var lab = el.querySelector(':scope > .ds-frost .ds-loader-block-label');
+      if (lab) lab.textContent = label;
+    } else {
+      el.innerHTML = dqvSkeletonHtml_(kind, label, ob);
+    }
+  }
+  function dqvPaint_(el, html) {
+    if (!el) return;
+    el.innerHTML = html;
+    el.classList.remove('ds-frost-host');
+    el.removeAttribute('aria-busy');
+    el.__dqvFilled = true;
+  }
+
+  function dqvShow_(i) {
+    var st = dqvModel_();
+    if (!st || i == null || i < 0 || i >= st.bs.length) return;
+    DQV_.i = i;
+    DQV_.agentKey = null;
+    var b = st.bs[i], iso = b.from;
+    var prev = st.bs[i - 1], next = st.bs[i + 1];
+    $('day-qv-title').textContent = dqvYearLabel_(b);
+    var pb = $('day-qv-prev'), nb = $('day-qv-next');
+    pb.disabled = !prev; nb.disabled = !next;
+    pb.title = prev ? 'Previous workday: ' + dtsBucketLabel_(prev) : 'The first day of the range';
+    nb.title = next ? 'Next workday: ' + dtsBucketLabel_(next) : 'The last day of the range';
+    var note = $('day-qv-note');
+    note.style.display = b.excluded ? '' : 'none';
+    note.textContent = b.excluded
+      ? 'An exception day (' + (b.excluded.reason || 'left out of the figures') + '): the page leaves it out; shown here with its own figures.' : '';
+    $('day-qv-cards').innerHTML = dqvCardsHtml_(st, i);
+    var showOb = obAllowed_();
+    var agentsEl = $('day-qv-agents'), missedEl = $('day-qv-missed');
+    // QV-3: a day already held (prefetched) paints at once, so no busy state
+    // flickers in for one frame; anything else shows its loading state now.
+    var held = DQV_STORE_[dqvKey_(b, showOb)];
+    if (!(held && held.done)) {
+      var lbl = 'Loading ' + dtsBucketLabel_(b) + '…';
+      dqvBusy_(agentsEl, 'agents', lbl, showOb);
+      dqvBusy_(missedEl, 'missed', lbl);
+    }
+    var tok = ++DQV_.seq;
+    var errNote = function (where, msg) {
+      return '<div class="ds-note">Could not load ' + where + ': ' + escapeHtml(String(msg)) + '</div>';
+    };
+    dqvFetchDays_([b], showOb, false, function (day) {
+      if (tok !== DQV_.seq) return;
+      var e = day.errors || {};
+      // An outbound part that failed leaves the column on dashes, as before.
+      dqvPaint_(agentsEl, e.summary ? errNote('the agents', e.summary)
+        : dqvAgentsHtml_(day.summary, (showOb && !e.outbound) ? day.outbound : null, showOb));
+      dqvPaint_(missedEl, e.missed ? errNote('missed calls', e.missed) : dqvMissedHtml_(day.missed, iso));
+      dqvPrefetch_(i);   // QV-1b: once this day has landed, load the days either side
+    }, function (err) {
+      if (tok !== DQV_.seq) return;
+      var msg = err && err.message ? err.message : String(err);
+      dqvPaint_(agentsEl, errNote('the agents', msg));
+      dqvPaint_(missedEl, errNote('missed calls', msg));
+      dqvPrefetch_(i);
+    });
+  }
+  // QV-1b (owner 2026-10-29): NEIGHBOUR PREFETCH. Once the open day has
+  // landed, the workday either side loads quietly through the same store --
+  // both in ONE request (QV-2) -- so the next arrow step paints from data
+  // already here and queues the one
+  // after it. Only the two neighbours -- never the whole range, which would
+  // queue dozens of reads ahead of the day on screen -- and only while the
+  // pop-up still shows the day that asked (a fast stepper's skipped days are
+  // never fetched). A day already held or in flight is joined, not re-sent.
+  function dqvPrefetch_(i) {
+    var st = dqvModel_();
+    if (!DQV_.open || !st || DQV_.i !== i) return;
+    var near = [st.bs[i - 1], st.bs[i + 1]].filter(Boolean);
+    if (near.length) dqvFetchDays_(near, obAllowed_(), true, function () {}, null);
+  }
+
+  /**
+   * The condensed agent table for the day: one line per agent who rang or
+   * placed a call -- answered / missed bar, Ans %, (outbound) connected /
+   * not, talk -- and the total row. A name opens that agent's day under it.
+   */
+  function dqvAgentsHtml_(sum, ob, showOb) {
+    var rows = (sum && sum.rows) || [];
+    var multi = !!(sum && sum.deptGroups && sum.deptGroups.length > 1);
+    var key = function (d, a) { return (multi ? (d || '') : '') + '|' + a; };
+    var obBy = {};
+    if (showOb && ob) (ob.agents || []).forEach(function (a) { obBy[key(a.scopeDept, a.agent)] = a; });
+    var seen = {}, list = [], idle = 0;
+    rows.forEach(function (r) {
+      var k = key(r.dept, r.agent);
+      seen[k] = true;
+      var rung = (Number(r.totalAnswered) || 0) + (Number(r.totalMissed) || 0);
+      var o = obBy[k] || null;
+      if (!rung && !(o && Number(o.obTotal) > 0)) { idle++; return; }
+      list.push({ agent: r.agent, dept: r.dept || '', inb: Object.assign({}, r, { ansPerDay: null }), ob: o, rung: rung });
+    });
+    if (showOb && ob) {
+      (ob.agents || []).forEach(function (a) {
+        if (seen[key(a.scopeDept, a.agent)] || !(Number(a.obTotal) > 0)) return;
+        list.push({ agent: a.agent, dept: a.scopeDept || '', inb: null, ob: a, rung: 0 });
+      });
+    }
+    if (!list.length) return '<div class="ds-note">No agent rang or placed a call this day.</div>';
+    list.sort(function (x, y) { return y.rung - x.rung || String(x.agent).localeCompare(String(y.agent)); });
+    var inMax = 0, outMax = 0;
+    list.forEach(function (e) {
+      if (e.rung > inMax) inMax = e.rung;
+      var pl = e.ob ? Number(e.ob.obTotal) || 0 : 0;
+      if (pl > outMax) outMax = pl;
+    });
+    var pctCol = COLUMNS.find(function (c) { return c.type === 'pct'; });
+    var cols = showOb ? 5 : 4;
+    var head = '<tr><th>Agent</th><th class="lb-th-bar">Answered / missed</th><th class="num">Ans %</th>'
+      + (showOb ? '<th class="lb-th-bar">Connected / not</th>' : '') + '<th class="num">Talk</th></tr>';
+    var body = list.map(function (e) {
+      return '<tr data-dqv-row="' + escapeHtml(e.agent) + '">'
+        + '<td class="agent-name"><button type="button" class="dqv-agent" data-dqv-agent="' + escapeHtml(e.agent) + '"'
+        +   ' data-dqv-dept="' + escapeHtml(e.dept) + '" aria-expanded="false" title="Open ' + escapeHtml(e.agent) + '’s day">'
+        +   escapeHtml(e.agent) + '</button>' + (multi && e.dept ? ' <span class="dqv-dept">' + escapeHtml(e.dept) + '</span>' : '') + '</td>'
+        + '<td class="lb-bar-td">' + (e.inb ? obInCellHtml_(e.inb, inMax) : zeroCell_('–')) + '</td>'
+        + '<td class="num">' + (e.inb && e.rung ? fmtCell(pctCol, e.inb) : zeroCell_('–')) + '</td>'
+        + (showOb ? '<td class="lb-bar-td">' + obOutCellHtml_(e.ob, outMax, null) + '</td>' : '')
+        + '<td class="num">' + (showOb ? obTalkCellHtml_(e.inb && e.inb.tttSeconds, e.ob && e.ob.obTalkSec)
+                                       : ((e.inb && Number(e.inb.tttSeconds) > 0) ? fmtDuration(e.inb.tttSeconds) : zeroCell_('–'))) + '</td>'
+        + '</tr>';
+    }).join('');
+    var t = (sum && sum.totals) || null, ot = (showOb && ob && ob.totals) || null;
+    var foot = '<tr class="dqv-total"><td class="agents-total-label">Total</td>'
+      + '<td class="lb-bar-td">' + (t ? obInCellHtml_(Object.assign({}, t, { ansPerDay: null }), 0) : '') + '</td>'
+      + '<td class="num">' + (t ? fmtCell(pctCol, t) : '') + '</td>'
+      + (showOb ? '<td class="lb-bar-td">' + (ot ? obOutCellHtml_(ot, 0, null) : '') + '</td>' : '')
+      + '<td class="num">' + (showOb ? obTalkCellHtml_(t && t.tttSeconds, ot && ot.obTalkSec)
+                                     : (t && Number(t.tttSeconds) > 0 ? fmtDuration(t.tttSeconds) : '')) + '</td></tr>';
+    return '<table class="dqv-table" data-cols="' + cols + '"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>'
+      + (idle ? '<p class="dqv-foot-note">' + idle + ' roster agent' + (idle === 1 ? '' : 's') + ' had no calls this day.</p>' : '');
+  }
+
+  // A name opens that agent's day in a row beneath it (one at a time), read
+  // through the agent panel's own prefetch store (apPreDay_), so a day the
+  // panel already holds opens instantly. The outbound half stays behind
+  // obAllowed_, like the table's outbound column.
+  function dqvToggleAgent_(btn) {
+    var tr = btn.closest('tr');
+    var agent = btn.getAttribute('data-dqv-agent'), dept = btn.getAttribute('data-dqv-dept') || DQV_.dept;
+    var tbody = tr && tr.parentNode;
+    if (!tbody) return;
+    var old = tbody.querySelector('tr.dqv-ad-row');
+    var was = DQV_.agentKey;
+    if (old) old.parentNode.removeChild(old);
+    tbody.querySelectorAll('.dqv-agent[aria-expanded="true"]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+    DQV_.agentKey = null;
+    if (was === agent + '|' + dept) return;   // the open one closes
+    DQV_.agentKey = agent + '|' + dept;
+    btn.setAttribute('aria-expanded', 'true');
+    var row = document.createElement('tr');
+    row.className = 'dqv-ad-row';
+    row.innerHTML = '<td colspan="' + tr.children.length + '"><div class="dqv-ad" aria-busy="true">'
+      + dqvSkeletonHtml_('day', 'Loading ' + agent + '’s day…') + '</div></td>';
+    tr.parentNode.insertBefore(row, tr.nextSibling);
+    var st = dqvModel_(), iso = st && st.bs[DQV_.i] && st.bs[DQV_.i].from;
+    var tok = DQV_.seq, myKey = DQV_.agentKey;
+    var box = row.querySelector('.dqv-ad');
+    apPreDay_(agent, iso, dept, function (data) {
+      if (tok !== DQV_.seq || DQV_.agentKey !== myKey) return;
+      box.innerHTML = dqvAgentDayHtml_(data, obAllowed_());
+      box.removeAttribute('aria-busy');
+    }, function (err) {
+      if (tok !== DQV_.seq || DQV_.agentKey !== myKey) return;
+      box.innerHTML = '<div class="ds-note">Could not load this agent’s day: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      box.removeAttribute('aria-busy');
+    });
+  }
+  function dqvAgentDayHtml_(data, showOb) {
+    var meta = (data && data.meta) || {};
+    var tier = adTierNote_(meta);
+    var kpis = adKpiRowsHtml_(meta, (data && data.day) || null, (data && data.counts) || {});
+    // The Agent Day view's outbound half starts at its "Outbound" group head.
+    if (!showOb) kpis = kpis.split('<div class="ad-kpi-group"><span class="ad-dir ad-dir--out">')[0];
+    var inbound = (data && data.inbound) || [], outbound = (data && data.outbound) || [];
+    return (tier ? '<div class="ds-note">' + tier + '</div>' : '')
+      + '<div class="ap-kpis">' + kpis + '</div>'
+      + '<div class="dqv-ad-h">Inbound calls <span class="ap-tab-n">' + fmtNumber(inbound.length) + '</span></div>'
+      + apInboundTableHtml_(inbound)
+      + (showOb ? '<div class="dqv-ad-h">Outbound calls <span class="ap-tab-n">' + fmtNumber(outbound.length) + '</span></div>'
+          + apOutboundTableHtml_(outbound, meta.date) : '');
+  }
+
+  /**
+   * The day's missed calls: a half-hour chart (missed rings, the abandoned
+   * part darker), each agent's missed ring times (an abandoned call's id and
+   * "↳ path" once per call), and the queue hang-ups nobody was rung for.
+   */
+  function dqvMissedHtml_(data, iso) {
+    var m = (data && data.meta) || {};
+    var ch = (data && data.chart) || {};
+    var labels = ch.labels || [], counts = ch.counts || [], abd = ch.abandoned || [];
+    var agents = ((data && data.agents) || []).filter(function (a) { return (a.total || 0) > 0; })
+      .sort(function (x, y) { return (y.total || 0) - (x.total || 0) || String(x.name).localeCompare(String(y.name)); });
+    var queueOnly = (data && data.queueOnly) || [];
+    var missed = Number(m.totalMissed) || 0, hung = Number(m.abandonedCallCount) || 0;
+    if (!missed && !queueOnly.length) return '<div class="ds-note">No missed calls this day.</div>';
+    var head = '<p class="dqv-missed-head"><strong>' + fmtNumber(missed) + '</strong> missed ring' + (missed === 1 ? '' : 's')
+      + ' · <strong>' + fmtNumber(hung) + '</strong> abandoned call' + (hung === 1 ? '' : 's')
+      + (Number(m.noRingAbandonCount) > 0 ? ' · ' + fmtNumber(m.noRingAbandonCount) + ' hung up before any agent rang' : '') + '</p>';
+    var max = Math.max.apply(null, [1].concat(counts.map(function (n) { return Number(n) || 0; })));
+    var aria = labels.map(function (l, k) { return l + ' ' + (Number(counts[k]) || 0); }).join(', ');
+    var chart = labels.length
+      ? '<div class="dqv-mchart" role="img" aria-label="Missed rings by half-hour: ' + escapeHtml(aria) + '">'
+        + labels.map(function (l, k) {
+            var n = Number(counts[k]) || 0, a = Math.min(n, Number(abd[k]) || 0);
+            return '<span class="dqv-mcol" title="' + escapeHtml(l + ': ' + n + ' missed' + (a ? ' (' + a + ' abandoned)' : '')) + '">'
+              + '<span class="dqv-mbar" style="height:' + (n ? Math.max(4, Math.round(n / max * 100)) : 0) + '%">'
+              + (a ? '<span class="dqv-mbar-abd" style="height:' + Math.round(a / n * 100) + '%"></span>' : '') + '</span></span>';
+          }).join('')
+        + '</div><div class="dqv-maxis"><span>' + escapeHtml(labels[0] || '') + '</span><span>'
+        + escapeHtml(labels[Math.floor(labels.length / 2)] || '') + '</span><span>' + escapeHtml(labels[labels.length - 1] || '') + '</span></div>'
+      : '';
+    var ringHtml = function (times) {
+      return groupConsecutiveByCall_(times).map(function (run) {
+        var g = times.slice(run.start, run.end), last = g[g.length - 1];
+        return '<span class="dqv-ring' + (last.abandoned ? ' is-abd' : '') + '"'
+          + (run.isRun ? ' title="Same call, rang ' + run.length + '× before the caller hung up"' : '') + '>'
+          + g.map(function (x) { return escapeHtml(x.label); }).join(', ')
+          + (last.abandoned ? ' 🚨' + parentIdBadge(last.parentId, last.date || iso) : '') + '</span>';
+      }).join(' ');
+    };
+    var agentHtml = agents.length
+      ? '<div class="dqv-msub">Missed rings by agent</div><ul class="dqv-mlist">' + agents.map(function (a) {
+          return '<li><span class="dqv-mname">' + escapeHtml(a.name) + '</span><span class="dqv-mn">' + a.total + '</span>'
+            + '<span class="dqv-mtimes">' + ringHtml(a.missedTimes || []) + '</span></li>';
+        }).join('') + '</ul>' : '';
+    var qoHtml = queueOnly.length
+      ? '<div class="dqv-msub">Hung up in the queue, no agent rang</div><ul class="dqv-mlist">' + queueOnly.map(function (q) {
+          return '<li><span class="dqv-mname">' + escapeHtml(q.queue) + '</span><span class="dqv-mn">' + q.total + '</span>'
+            + '<span class="dqv-mtimes">' + (q.entries || []).map(function (x) {
+                return '<span class="dqv-ring is-abd">' + escapeHtml(x.label) + ' 🚨'
+                  + (x.waitSec != null ? ' <span class="qo-facts">waited ' + escapeHtml(crFormatSecondsShort_(x.waitSec)) + '</span>' : '')
+                  + parentIdBadge(x.parentId, x.date || iso) + '</span>';
+              }).join(' ') + '</span></li>';
+        }).join('') + '</ul>' : '';
+    return head + chart + agentHtml + qoHtml;
+  }
+
+  function dqvKeyDown_(e) {
+    if (!DQV_.open) return;
+    if (e.key === 'Escape') { e.preventDefault(); dqvClose_(); return; }
+    var tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.key === 'ArrowLeft' && !$('day-qv-prev').disabled) { e.preventDefault(); dqvShow_(DQV_.i - 1); }
+    else if (e.key === 'ArrowRight' && !$('day-qv-next').disabled) { e.preventDefault(); dqvShow_(DQV_.i + 1); }
+  }
+  // `barIdx` is the BAR clicked; dqvDayIndex_ turns it into the day to open.
+  function dqvOpen_(strip, barIdx) {
+    var st = strip && strip.__dts, modal = $('day-qv-modal');
+    if (!modal || !dqvActive_() || !st || !st.qv || barIdx == null) return;
+    var i = dqvDayIndex_(st, barIdx);
+    if (i < 0) return;
+    DQV_.strip = strip;
+    DQV_.dept = getRequestedDept();
+    if (!DQV_.open) {
+      DQV_.open = true;
+      DQV_.opener = document.activeElement;
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', dqvKeyDown_);
+      if (!modal.__dqvWired) dqvWireModal_(modal);
+      // QV-3: a fresh open starts from skeletons -- frosting the last visit's
+      // content would show another day (or department) under the loader.
+      ['day-qv-agents', 'day-qv-missed'].forEach(function (id) { var el = $(id); if (el) el.__dqvFilled = false; });
+    }
+    dqvShow_(i);
+  }
+  function dqvClose_() {
+    var modal = $('day-qv-modal');
+    if (!modal || !DQV_.open) return;
+    DQV_.open = false;
+    DQV_.seq++;   // any reply still out lands nowhere
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    releaseFocus_();
+    resetModalTransform_(modal.querySelector('.modal-panel'));
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', dqvKeyDown_);
+    var o = DQV_.opener;
+    DQV_.opener = null;
+    if (o && o.focus && document.contains(o)) { try { o.focus({ preventScroll: true }); } catch (eF) { /* best-effort */ } }
+  }
+  function dqvWireModal_(modal) {
+    modal.__dqvWired = true;
+    modal.addEventListener('click', function (e) {
+      var t = e.target;
+      if (t.closest('[data-close]') || t.closest('#day-qv-close')) { dqvClose_(); return; }
+      if (t.closest('#day-qv-prev')) { dqvShow_(DQV_.i - 1); return; }
+      if (t.closest('#day-qv-next')) { dqvShow_(DQV_.i + 1); return; }
+      if (t.closest('#day-qv-open')) { dqvOpenOnPage_(); return; }
+      var ab = t.closest('.dqv-agent');
+      if (ab) dqvToggleAgent_(ab);
+    });
+  }
+  // "Open this day on the page": the page's window becomes that one day (the
+  // Overview point drill's order -- dates first, then one refresh).
+  function dqvOpenOnPage_() {
+    var st = dqvModel_();
+    var b = st && st.bs[DQV_.i];
+    if (!b) return;
+    dqvClose_();
+    $('from-date').value = b.from;
+    $('to-date').value = b.from;
+    datesTouched_ = true;
+    clearActivePreset_();
+    refresh();
   }
 
   // (Round-16, owner: renderDeptInsightsStrip_/wireDeptInsightsStrip_ -- the
@@ -4292,73 +4827,72 @@
         + ' calls · ' + (tr.pctStr || '');
     }
 
-    // Bars are proportional to the LARGEST row in each list, so the shape is
-    // readable without a scale; the numbers carry the absolute truth.
-    const barRow = function (label, value, pctText, max, title) {
-      const w = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
-      return '<div class="dtf-row" title="' + escapeHtml(title || '') + '">'
-        +   '<div class="dtf-name">' + escapeHtml(label) + '</div>'
-        +   '<div class="dtf-bar"><span style="width:' + w + '%"></span></div>'
-        +   '<div class="dtf-num">' + escapeHtml(fmtNumber(value))
-        +     (pctText ? ' <span class="dtf-pct">' + escapeHtml(pctText) + '</span>' : '')
-        +   '</div>'
-        + '</div>';
-    };
-
+    // SB-6 (owner 2026-10-28): both lists are SPLIT bars now. Where the
+    // transfers went is one bar whose parts are the destinations -- the five
+    // biggest by name, the rest of the tracked list together, and the
+    // transfers to anywhere outside the 11 fixed columns (queueUnaccounted)
+    // hatched -- so it adds up to the transfers. Who transfers gives each agent
+    // a bar as long as their calls handled, the part they transferred coloured
+    // by the transfer standard (R23 tiers, as on the headline tile), so volume
+    // and rate read in one row. Sorted by transfers (owner), the server order.
     const qEl = $('dept-transfer-queues');
     if (qEl) {
-      const qMax = queues.length ? queues[0].transferred : 0;
-      qEl.innerHTML = queues.length
-        ? queues.map(function (q) {
-            return barRow(q.queue, q.transferred,
-              q.share == null ? '' : (q.share + '%'), qMax,
-              q.queue + ': ' + fmtNumber(q.transferred) + ' of ' + fmtNumber(tr.transferred)
-              + ' transfers in this range');
-          }).join('')
+      const un = Math.max(0, Number(tr.queueUnaccounted) || 0);
+      const parts = queues.slice(0, 5).map(function (q, i) {
+        return { cls: 'cat' + (i + 1), n: q.transferred, label: q.queue };
+      });
+      const rest = queues.slice(5);
+      if (rest.length) {
+        parts.push({ cls: 'unk', n: rest.reduce(function (a, q) { return a + q.transferred; }, 0),
+                     label: rest.length + ' other tracked queue' + (rest.length === 1 ? '' : 's') });
+      }
+      if (un > 0) parts.push({ cls: 'hatch', n: un, label: 'outside the tracked destinations' });
+      const base = parts.reduce(function (a, x) { return a + x.n; }, 0);
+      qEl.innerHTML = base
+        ? obOutcomeBarHtml_(parts, base, fmtNumber(base) + ' transfers: ' + parts.map(function (x) {
+            return fmtNumber(x.n) + ' to ' + x.label; }).join(', '))
+          + obOutcomeLegendHtml_(parts.map(function (x) {
+            return { cls: x.cls, value: fmtNumber(x.n) + ' · ' + (obSharePct_(x.n, base) || 0) + '%', label: x.label };
+          }))
         : '<div class="ds-note">No destination detail for this range.</div>';
     }
 
     const aEl = $('dept-transfer-agents');
     if (aEl) {
-      // Sorted busiest-transferrer first (server order). The RATE gets the
-      // same tiered tint as the headline tile so one agent's 45% reads the
-      // same way in both places (R23 standards, admin-tunable).
       const tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
-      const aMax = agents.length ? agents[0].transferred : 0;
+      const tier = function (pct) {
+        if (pct == null || !isFinite(Number(pct))) return '';
+        const v = Number(pct);
+        return v <= tt.deep ? 'tf-deep' : (v < tt.light ? 'tf-light' : (v < tt.amber ? 'tf-amber' : 'tf-red'));
+      };
+      const maxCalls = agents.reduce(function (m, a) { return Math.max(m, Number(a.totalCalls) || 0); }, 0);
       aEl.innerHTML = agents.length
-        ? agents.map(function (a) {
-            let cls = '';
-            if (a.pct != null && isFinite(Number(a.pct))) {
-              const p = Number(a.pct);
-              cls = p <= tt.deep ? ' tf-deep' : (p < tt.light ? ' tf-light'
-                  : (p < tt.amber ? ' tf-amber' : ' tf-red'));
-            }
-            return '<div class="dtf-row" title="' + escapeHtml(a.agent + ': '
-                + fmtNumber(a.transferred) + ' transferred of ' + fmtNumber(a.totalCalls)
-                + ' calls handled') + '">'
-              +   '<div class="dtf-name">' + escapeHtml(a.agent) + '</div>'
-              +   '<div class="dtf-bar"><span style="width:'
-              +     (aMax > 0 ? Math.max(2, Math.round((a.transferred / aMax) * 100)) : 0)
-              +     '%"></span></div>'
-              +   '<div class="dtf-num">' + escapeHtml(fmtNumber(a.transferred))
-              +     (a.pct == null ? '' : ' <span class="dtf-pct' + cls + '">' + a.pct + '%</span>')
-              +   '</div>'
-              + '</div>';
-          }).join('')
+        ? '<div class="dtf-rows">' + agents.map(function (a) {
+            const calls = Number(a.totalCalls) || 0, trn = Number(a.transferred) || 0;
+            const tc = tier(a.pct);
+            const w = maxCalls ? Math.max(calls ? 2 : 0, Math.round(calls / maxCalls * 1000) / 10) : 0;
+            const label = a.agent + ': ' + fmtNumber(trn) + ' transferred of ' + fmtNumber(calls) + ' calls handled';
+            return '<div class="dtf-name" title="' + escapeHtml(a.agent) + '">' + escapeHtml(a.agent) + '</div>'
+              + '<div class="dtf-track"><div style="width:' + w + '%">'
+              +   obOutcomeBarHtml_([{ cls: tc ? 'tf-' + tc.slice(3) : 'unk', n: trn, label: 'transferred' },
+                                     { cls: 'kept', n: Math.max(0, calls - trn), label: 'kept' }],
+                                    Math.max(calls, trn), label, 'mid')
+              + '</div></div>'
+              + '<div class="dtf-num"><strong>' + escapeHtml(fmtNumber(trn)) + '</strong> of ' + escapeHtml(fmtNumber(calls))
+              +   (a.pct == null ? '' : ' · <span class="dtf-pct ' + tc + '">' + a.pct + '%</span>') + '</div>';
+          }).join('') + '</div>'
         : '<div class="ds-note">No per-agent detail for this range.</div>';
     }
 
-    // The 11 destination columns are a FIXED set, so transfers to anywhere
-    // else fall outside them. Say so rather than letting the two lists
-    // quietly disagree with the headline (the reconciliation rule).
+    // The 11 destination columns are a FIXED set: say what the hatched part
+    // of the bar is, so it never reads as a destination of its own.
     const note = $('dept-transfer-note');
     if (note) {
       const un = Number(tr.queueUnaccounted) || 0;
       if (un > 0) {
         note.textContent = fmtNumber(un) + ' transfer' + (un === 1 ? '' : 's')
           + ' went somewhere outside the ' + queues.length + ' tracked destination'
-          + (queues.length === 1 ? '' : 's') + ', so the destination list sums to '
-          + fmtNumber(tr.queueSum) + ', not ' + fmtNumber(tr.transferred) + '.';
+          + (queues.length === 1 ? '' : 's') + ' (the hatched part of the bar).';
         note.style.display = '';
       } else {
         note.style.display = 'none';
@@ -4614,22 +5148,9 @@
     else if (m.clampedTo) parts.push('Through ' + m.dataThrough + ' (later days not imported yet).');
     if (m.missingCount) parts.push(m.missingCount + ' workday' + (m.missingCount === 1 ? '' : 's') + ' with no data, left out.');
     if (note) { note.textContent = parts.join(' '); note.style.display = parts.length ? '' : 'none'; }
-    var sp = k.split || {};
-    var splitTxt = function (key) {
-      var v = sp[key];
-      return (v && (Number(v.int) + Number(v.ext))) ? fmtNumber(v.int) + ' int · ' + fmtNumber(v.ext) + ' ext' : '';
-    };
-    if (tiles) {
-      tiles.innerHTML =
-          '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Answered</span></div>'
-        + '<div class="ds-kpi__value">' + fmtNumber(k.ibAnswered || 0) + '</div>'
-        + '<div class="ds-kpi__foot">' + fmtNumber(k.ibMissedFree || 0) + ' missed · ' + fmtNumber(k.ibMissedBusy || 0) + ' busy'
-        +   (splitTxt('ibAnswered') ? '<br>' + splitTxt('ibAnswered') : '') + '</div></div>'
-        + '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Answer %</span></div>'
-        + '<div class="ds-kpi__value">' + (k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '–') + '</div>'
-        + '<div class="ds-kpi__foot">busy excluded · ' + fmtNumber(k.obTotal || 0) + ' out'
-        +   (splitTxt('obTotal') ? '<br>' + splitTxt('obTotal') : '') + '</div></div>';
-    }
+    // SB-2: the same split as the Direct Calls report, slim (one bar for the
+    // calls that rang their lines, one for the calls they dialed).
+    if (tiles) tiles.innerHTML = directSummaryHtml_(k, null, 'card');
     var agents = ((d && d.agents) || []).slice().sort(function (x, y) {
       var ax = (Number(x.ibAnswered) || 0) + (Number(x.ibMissedFree) || 0), ay = (Number(y.ibAnswered) || 0) + (Number(y.ibMissedFree) || 0);
       return ay - ax || String(x.agent).localeCompare(String(y.agent));
@@ -4725,40 +5246,6 @@
     return ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
   }
 
-  /** The outbound twin of answeredBarHtml_: connected / not connected (placed). */
-  function obBarHtml_(a, unit, isTeam, p, tip) {
-    if (!a || !(Number(a.obTotal) > 0)) {
-      return '<span class="cell-zero" title="No outbound calls in this range">–</span>';
-    }
-    var placed = Number(a.obTotal) || 0, c = Number(a.obConnected) || 0, n = Math.max(0, placed - c);
-    var split = [];
-    if (a.obUnconnectedBrief) split.push(a.obUnconnectedBrief + ' brief');
-    if (a.obUnconnectedReal) split.push(a.obUnconnectedReal + ' rang out');
-    if (a.obUnconnectedUnknown) split.push(a.obUnconnectedUnknown + ' ring unknown');
-    var title = c + ' connected · ' + n + ' not connected' + (split.length ? ' (' + split.join(', ') + ')' : '')
-      + ' · ' + placed + ' placed. ' + OB_CONNECTED_DEF_;
-    var track = (unit > 0)
-      ? '<div class="ans-tally" aria-hidden="true">' + ansTallyBlocks_(c, unit, 'oc') + ansTallyBlocks_(n, unit, 'ou') + '</div>'
-      : '<div class="ans-track"><span class="ans-seg ob-conn" style="width:' + (c / placed * 100) + '%"></span>'
-        + '<span class="ans-seg ob-unconn" style="width:' + (n / placed * 100) + '%"></span></div>';
-    var perDay = (a.obPerDay != null)
-      ? '<span class="ans-perday" title="' + escapeHtml(isTeam
-          ? 'Calls placed per agent per day with outbound calls; team-average excludes left out'
-          : 'Calls placed per day, counting only days with outbound calls') + '">· '
-        + a.obPerDay + ' / day</span>'
-      : '';
-    return '<div class="ans-bar ob-bar" title="' + escapeHtml(title) + '">' + track
-      + '<div class="ans-nums"><span class="ob-c">' + c + '</span>'
-      // Batch F: connected is valenced; not-connected stays neutral (more
-      // dialling naturally means more unanswered calls -- not a regression).
-      + (p ? obPriorChip_(c - (Number(p.obConnected) || 0), 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '')
-      + '<span class="ans-slash">/</span>'
-      + '<span class="ob-u">' + n + '</span>'
-      + (p ? obPriorChip_(n - Math.max(0, (Number(p.obTotal) || 0) - (Number(p.obConnected) || 0)), 'neutral', WOW_NOISE_THRESHOLD, false, false, tip) : '')
-      + '<span class="ans-total" title="Calls placed">(' + placed + ')</span>'
-      + perDay + '</div></div>';
-  }
-
   // ── Batch F: prior-period chips on outbound ─────────────────────────────
   // The E5 chip (wow-chip, same valence + noise muting) for the outbound
   // figures, shared by the My Department Outbound / Both rows and the
@@ -4809,9 +5296,13 @@
       if (k === 'agent') return String(x.agent).localeCompare(String(y.agent)) * dir;
       var xv = (k in (x.ob || {})) ? x.ob[k] : x.inb ? x.inb[k] : null;
       var yv = (k in (y.ob || {})) ? y.ob[k] : y.inb ? y.inb[k] : null;
-      if (k === 'inRung') {   // layout B: the IN line's calls (answered + missed)
+      if (k === 'inRung') {   // the inbound calls (answered + missed)
         xv = x.inb ? (Number(x.inb.totalAnswered) || 0) + (Number(x.inb.totalMissed) || 0) : null;
         yv = y.inb ? (Number(y.inb.totalAnswered) || 0) + (Number(y.inb.totalMissed) || 0) : null;
+      }
+      if (k === 'talkAll') {   // LB-2: the Talk column holds both directions
+        xv = (x.inb ? Number(x.inb.tttSeconds) || 0 : 0) + (x.ob ? Number(x.ob.obTalkSec) || 0 : 0);
+        yv = (y.inb ? Number(y.inb.tttSeconds) || 0 : 0) + (y.ob ? Number(y.ob.obTalkSec) || 0 : 0);
       }
       if (k === 'answerRate') {
         var xt = x.inb ? (Number(x.inb.totalAnswered) || 0) + (Number(x.inb.totalMissed) || 0) : 0;
@@ -4833,32 +5324,88 @@
       + escapeHtml(label) + ' <span class="arrow">' + (on ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
   }
 
-  // Layout B (owner 2026-10-21): a metric column whose header sorts by the IN
-  // line or the OUT line -- two real buttons in one <th>; aria-sort names the
-  // active one's direction.
-  function obThPairHtml_(label, inKey, outKey, cls) {
-    var on = OB_VIEW_.sortKey === inKey ? 'in' : (OB_VIEW_.sortKey === outKey ? 'out' : '');
-    var btn = function (key, word) {
-      var act = OB_VIEW_.sortKey === key;
-      return '<button type="button" class="ob-sort-pick' + (act ? ' is-on' : '') + '" data-ob-sort="' + key + '"'
-        + ' aria-label="Sort by ' + escapeHtml(label) + ', ' + word + '">' + word + ' <span class="arrow">'
-        + (act ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></button>';
-    };
-    return '<th class="ob-pair-th' + (cls ? ' ' + cls : '') + '"'
-      + (on ? ' aria-sort="' + (OB_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
-      + '<span class="ob-pair-label">' + escapeHtml(label) + '</span>'
-      + '<span class="ob-sort-picks">' + btn(inKey, 'in') + btn(outKey, 'out') + '</span></th>';
+  // LB-2 (owner 2026-10-28, Option B of the agent-table mock): ONE line per
+  // agent. Inbound and outbound each get a bar column of their own, each on
+  // its own scale (the agents' largest rung / largest placed), so a small
+  // outbound volume stays readable; each bar's parts add up to the counts
+  // beside it, with the per-day pace under them. The rates carry the change
+  // chips; the count changes move into the bar's hover text.
+  function obSignedDelta_(cur, prev) {
+    var d = (Number(cur) || 0) - (Number(prev) || 0);
+    return (d > 0 ? '+' : (d < 0 ? '\u2212' : '\u00b1')) + Math.abs(d);
   }
-  // One agent row's four cells: the direction tags, then each metric as an
-  // IN line over an OUT line (.ob-dir-in / .ob-dir-out), one row per agent so
-  // sort, the agent panel and the exports keep their shape.
-  function obPairCells_(inBar, outBar, inRate, outRate, inTalk, outTalk) {
-    var pair = function (cls, a, b) {
-      return '<td class="ob-pair' + (cls ? ' ' + cls : '') + '"><div class="ob-line ob-dir-in">' + a + '</div>'
-        + '<div class="ob-line ob-dir-out">' + b + '</div></td>';
-    };
-    return '<td class="ob-dir-col"><div class="ob-line ob-dir-in ob-dir-tag">IN</div><div class="ob-line ob-dir-out ob-dir-tag">OUT</div></td>'
-      + pair('ans-bar-cell', inBar, outBar) + pair('num', inRate, outRate) + pair('num', inTalk, outTalk);
+  function obInCellHtml_(r, scaleMax) {
+    var a = Number(r && r.totalAnswered) || 0, m = Number(r && r.totalMissed) || 0, t = a + m;
+    if (!t) return zeroCell_('–');
+    // R10-4: a row passing its dept's answer standard draws its missed part
+    // lighter, so healthy rows recede.
+    var pass = Math.round(a / t * 100) >= answerStdFor_(r.dept || getRequestedDept()).target;
+    var tip = a + ' answered · ' + m + ' missed · ' + t + ' rung';
+    if (r.priorHasData === true) {
+      tip += ' · vs the prior period: answered ' + obSignedDelta_(a, r.priorAnswered)
+        + ', missed ' + obSignedDelta_(m, r.priorMissed);
+    }
+    var w = scaleMax ? Math.max(2, Math.round(t / scaleMax * 1000) / 10) : 100;
+    var per = (r.ansPerDay != null && r.ansPerDay !== '' && isFinite(Number(r.ansPerDay)))
+      ? '<span class="lb-sub" title="' + escapeHtml(ansPerDayHtml_(r).replace(/^.*title="([^"]*)".*$/, '$1')) + '">'
+        + Number(r.ansPerDay).toFixed(1) + ' ans/day</span>' : '';
+    return '<div class="lb-cell" title="' + escapeHtml(tip) + '">'
+      + '<div class="lb-track"><div style="width:' + w + '%">'
+      +   obOutcomeBarHtml_([{ cls: 'good', n: a, label: 'answered' }, { cls: pass ? 'misslite' : 'bad', n: m, label: 'missed' }],
+            t, tip, 'mid')
+      + '</div></div>'
+      + '<div class="lb-nums"><span class="lb-n"><span class="ans-n">' + a + '</span><span class="ans-slash">/</span>'
+      +   '<span class="miss-n">' + m + '</span></span>' + per + '</div></div>';
+  }
+  // The outbound bar's four parts (placed = connected + rang out + brief +
+  // unknown) in the outbound hue, darkest = connected.
+  function obOutParts_(o) {
+    var map = { good: 'oconn', bad: 'oreal', soft: 'obrief', unk: 'unk' };
+    return obPlacedParts_(o).map(function (x) { return { cls: map[x.cls], n: x.n, label: x.label }; });
+  }
+  function obOutCellHtml_(o, scaleMax, p) {
+    if (!o || !(Number(o.obTotal) > 0)) {
+      return '<span class="cell-zero" title="No outbound calls in this range">–</span>';
+    }
+    var placed = Number(o.obTotal) || 0, c = Number(o.obConnected) || 0, n = Math.max(0, placed - c);
+    var parts = obOutParts_(o);
+    var tip = parts.filter(function (x) { return x.n > 0; }).map(function (x) { return x.n + ' ' + x.label; }).join(' · ')
+      + ' · ' + placed + ' placed';
+    if (p) {
+      tip += ' · vs the prior period: connected ' + obSignedDelta_(c, p.obConnected)
+        + ', not connected ' + obSignedDelta_(n, Math.max(0, (Number(p.obTotal) || 0) - (Number(p.obConnected) || 0)));
+    }
+    tip += '. ' + OB_CONNECTED_DEF_;
+    var w = scaleMax ? Math.max(2, Math.round(placed / scaleMax * 1000) / 10) : 100;
+    var per = (o.obPerDay != null)
+      ? '<span class="lb-sub" title="Calls placed per day, counting only days with outbound calls">' + o.obPerDay + ' / day</span>' : '';
+    return '<div class="lb-cell lb-cell--out" title="' + escapeHtml(tip) + '">'
+      + '<div class="lb-track"><div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, placed, tip, 'mid') + '</div></div>'
+      + '<div class="lb-nums"><span class="lb-n"><span class="ob-c">' + c + '</span><span class="ans-slash">/</span>'
+      +   '<span class="ob-u">' + n + '</span></span>' + per + '</div></div>';
+  }
+  // The inbound rate's change chip (points), the same rule as the connect
+  // rate's: muted under OB_CHIP_RATE_PTS_ or when either window rang fewer
+  // than OB_CHIP_MIN_PLACED_ calls.
+  function obInRateChip_(r) {
+    if (!r || r.priorHasData !== true) return '';
+    var t = (Number(r.totalAnswered) || 0) + (Number(r.totalMissed) || 0);
+    var pt = (Number(r.priorAnswered) || 0) + (Number(r.priorMissed) || 0);
+    if (!t || !pt) return '';
+    var cur = r.totalAnswered / t * 100, pri = r.priorAnswered / pt * 100;
+    return obRateChip_(cur, pri, t, pt, 'Prior period: ' + Math.round(pri) + '% answered of ' + pt + ' rung.');
+  }
+  function obTalkCellHtml_(inSec, outSec) {
+    var i = Number(inSec) || 0, o = Number(outSec) || 0;
+    if (!i && !o) return zeroCell_('–');
+    return '<span class="lb-talk"><span class="lb-talk-in" title="Talk on inbound calls (TTT)">' + (i ? fmtDuration(i) : '–')
+      + ' <small>in</small></span><span class="lb-talk-out" title="Talk on outbound calls">' + (o ? fmtDuration(o) : '–')
+      + ' <small>out</small></span></span>';
+  }
+  function obLegendHtml_(items) {
+    return '<span class="lb-legend">' + items.map(function (x) {
+      return '<span class="lb-key"><span class="ob-seg-' + x[0] + '" aria-hidden="true"></span>' + escapeHtml(x[1]) + '</span>';
+    }).join('') + '</span>';
   }
 
   function obViewRender_() {
@@ -4872,14 +5419,20 @@
     var data = OB_VIEW_.data;
     var dept = getRequestedDept();
     var hasXfer = !!state.csrTransfer;   // owner 2026-10-22: Transfer % (CSR), inbound only
-    var cols = hasXfer ? 6 : 5;
-    // Layout B (owner 2026-10-21): an IN line over an OUT line in each
-    // agent's row. Each metric column sorts by either direction.
-    thead.innerHTML = '<tr>' + obThHtml_('agent', 'Agent')
-      + '<th class="ob-dir-col"><span class="sr-only">Direction</span></th>'
-      + obThPairHtml_('Calls · handled / not', 'inRung', 'obTotal')
-      + obThPairHtml_('Rate', 'answerRate', 'obConnectRate', 'num')
-      + obThPairHtml_('Talk', 'tttSeconds', 'obTalkSec', 'num')
+    var cols = hasXfer ? 7 : 6;
+    // LB-2: a group row naming each direction (with its colour key) over
+    // the sortable headers -- every header sorts by click.
+    thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
+      + '<th colspan="2" class="lb-g lb-g--in">Inbound · rings ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed']]) + '</th>'
+      + '<th colspan="2" class="lb-g lb-g--out">Outbound · placed ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'rang out'],
+          ['obrief', 'brief ring'], ['unk', 'not recorded']]) + '</th>'
+      + '<th colspan="' + (hasXfer ? 2 : 1) + '" aria-hidden="true"></th></tr>'
+      + '<tr>' + obThHtml_('agent', 'Agent')
+      + obThHtml_('inRung', 'Answered / missed', 'lb-th-bar')
+      + obThHtml_('answerRate', 'Ans %', 'num')
+      + obThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
+      + obThHtml_('obConnectRate', 'Conn %', 'num')
+      + obThHtml_('talkAll', 'Talk', 'num')
       + (hasXfer ? obThHtml_('transferPct', 'Transfer %', 'num') : '')
       + '</tr>';
 
@@ -4935,12 +5488,15 @@
     });
     var all = [];
     Object.keys(groups).forEach(function (d) { all = all.concat(groups[d]); });
-    var obUnit = obTallyUnitFor_(all.map(function (e) { return e.ob; }), 18);
-    var inUnit = ansTallyUnitFor_(all.map(function (e) { return e.inb || {}; }), 18);
-    // Layout B: ONE scale for both lines (the units share a ladder, so the
-    // larger one fits both), so in vs out volume compares by length.
-    if (inUnit && obUnit) inUnit = obUnit = Math.max(inUnit, obUnit);
-    var barCol = COLUMNS.find(function (c) { return c.type === 'bar'; });
+    // LB-2: each direction on its OWN scale, over the agent rows (totals and
+    // subtotals draw full width).
+    var inMax = 0, outMax = 0;
+    all.forEach(function (e) {
+      var t = e.inb ? (Number(e.inb.totalAnswered) || 0) + (Number(e.inb.totalMissed) || 0) : 0;
+      if (t > inMax) inMax = t;
+      var pl = e.ob ? (Number(e.ob.obTotal) || 0) : 0;
+      if (pl > outMax) outMax = pl;
+    });
     var pctCol = COLUMNS.find(function (c) { return c.type === 'pct'; });
 
     var rowHtml = function (e) {
@@ -4949,13 +5505,11 @@
       var po = (priorOk && o) ? (priorBy[obKey(e.dept, e.agent)] || null) : null;
       var ptip = priorTipFor(po);
       var cells = '<td class="agent-name">' + apRowToggleHtml_(e.agent) + '</td>'   // F27
-        + obPairCells_(
-          e.inb ? fmtCell(barCol, e.inb, { tallyUnit: inUnit }) : zeroCell_('–'),
-          obBarHtml_(o, obUnit, false, po, ptip),
-          e.inb ? fmtCell(pctCol, e.inb) : zeroCell_('–'),
-          obPctHtml_(o, po, ptip),
-          e.inb && e.inb.tttSeconds ? fmtDuration(e.inb.tttSeconds) : zeroCell_('–'),
-          o && o.obTalkSec ? fmtDuration(o.obTalkSec) : zeroCell_('–'))
+        + '<td class="lb-bar-td">' + (e.inb ? obInCellHtml_(e.inb, inMax) : zeroCell_('–')) + '</td>'
+        + '<td class="num">' + (e.inb ? fmtCell(pctCol, e.inb) + obInRateChip_(e.inb) : zeroCell_('–')) + '</td>'
+        + '<td class="lb-bar-td">' + obOutCellHtml_(o, outMax, po) + '</td>'
+        + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>'
+        + '<td class="num">' + obTalkCellHtml_(e.inb && e.inb.tttSeconds, o && o.obTalkSec) + '</td>'
         + (hasXfer ? '<td class="num ob-xfer">' + xferCellHtml_(e.inb) + '</td>' : '');
       return '<tr data-agent="' + escapeHtml(e.agent) + '"'
         + (e.dept ? ' data-dept="' + escapeHtml(e.dept) + '"' : '') + ' title="Show '
@@ -4963,10 +5517,11 @@
     };
     var totalRow = function (label, t, inT, cls) {
       var cells = '<td class="agents-total-label">' + escapeHtml(label) + '</td>'
-        + obPairCells_(
-          inT ? fmtCell(barCol, inT, {}) : '', obBarHtml_(t, 0, true),
-          inT ? fmtCell(pctCol, inT) : '', obPctHtml_(t),
-          inT && inT.tttSeconds ? fmtDuration(inT.tttSeconds) : '', t && t.obTalkSec ? fmtDuration(t.obTalkSec) : '')
+        + '<td class="lb-bar-td">' + (inT ? obInCellHtml_(inT, 0) : '') + '</td>'
+        + '<td class="num">' + (inT ? fmtCell(pctCol, inT) : '') + '</td>'
+        + '<td class="lb-bar-td">' + (t ? obOutCellHtml_(t, 0, null) : '') + '</td>'
+        + '<td class="num">' + obPctHtml_(t) + '</td>'
+        + '<td class="num">' + obTalkCellHtml_(inT && inT.tttSeconds, t && t.obTalkSec) + '</td>'
         + (hasXfer ? '<td class="num ob-xfer">' + (inT && inT.transferPct != null ? xferCellHtml_(inT) : '') + '</td>' : '');
       return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
     };
@@ -5010,15 +5565,16 @@
     if (dateEl) dateEl.textContent = data.meta.from === data.meta.to ? data.meta.from : (data.meta.from + ' – ' + data.meta.to);
     var tiles = $('tob-tiles');
     if (tiles) {
-      tiles.innerHTML =
-          '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Placed</span></div>'
-        + '<div class="ds-kpi__value">' + fmtNumber(t.obTotal || 0) + '</div>'
-        + '<div class="ds-kpi__foot">' + fmtNumber(t.obConnected || 0) + ' connected · '
-        +   (t.obPerDay != null ? t.obPerDay + ' / agent-day' : '–') + '</div></div>'
-        + '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Connect %</span></div>'
-        + '<div class="ds-kpi__value">' + (t.obConnectRate != null ? Math.round(t.obConnectRate) + '%' : '–') + '</div>'
-        + '<div class="ds-kpi__foot" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">talk &gt; 0 · avg '
-        +   fmtDuration(t.obAttSec || 0) + '</div></div>';
+      // SB-3: Placed as one slim bar (connected / rang out / brief / unknown).
+      var placed = Number(t.obTotal) || 0;
+      var pp = obPlacedParts_(t);
+      tiles.innerHTML = '<div class="tob-split">'
+        + '<div class="tdc-split-head"><span class="tdc-split-num">' + fmtNumber(placed) + '</span>'
+        + ' <span class="tdc-split-of">placed · ' + (t.obConnectRate != null ? Math.round(t.obConnectRate) + '%' : '–') + ' connected</span></div>'
+        + obSplitMiniHtml_(pp, placed, obPlacedAria_(t), escapeHtml(fmtNumber(pp[1].n) + ' rang out · ' + fmtNumber(pp[2].n) + ' brief · '
+            + fmtNumber(pp[3].n) + ' unknown · ' + (t.obPerDay != null ? t.obPerDay + ' / agent-day' : '–'))
+            + ' · <span title="' + escapeHtml(OB_CONNECTED_DEF_) + '">avg talk ' + escapeHtml(fmtDuration(t.obAttSec || 0)) + '</span>')
+        + '</div>';
     }
     var unit = obTallyUnitFor_(agents, 12);
     var row = function (a) {

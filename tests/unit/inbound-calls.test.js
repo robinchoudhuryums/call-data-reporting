@@ -1680,3 +1680,78 @@ test('IXT-1 / OXT-1: the editor wrapper runs the diagnostic over every held date
     assert.equal(got, 'all');
   } finally { h.ctx.diagnosePersonTransfers = real; }
 });
+
+// QF-1 (owner 2026-10-28): the owner's 10/26 call -- the queue and its first
+// ring start in the same second and 8x8 gave the ring the lower leg id.
+test('QF-1: a queue is listed before the agent it rang in the same second', function () {
+  const D = '10/26/2026 ';
+  const recs = build([
+    leg({ callId: 'Q1', legId: 1, start: D + '11:16:59', stop: D + '11:17:15', direction: 'Incoming', caller: '12145550123', callee: '999', calleeName: 'Website Introduction' }),
+    leg({ callId: 'Q1', legId: 2, start: D + '11:17:37', stop: D + '11:17:47', direction: 'Incoming', caller: '12145550123', callee: '231', calleeName: 'Adrian (Ankit) Sharma', missed: 'Missed' }),
+    leg({ callId: 'Q1', legId: 3, start: D + '11:17:37', stop: D + '11:18:04', direction: 'Incoming', caller: '12145550123', callee: '300', calleeName: 'A_Q_Sales' }),
+    leg({ callId: 'Q1', legId: 4, start: D + '11:17:47', stop: D + '11:17:57', direction: 'Incoming', caller: '12145550123', callee: '232', calleeName: 'Alex (Abhijeet) Gujral', missed: 'Missed' }),
+    leg({ callId: 'Q1', legId: 5, start: D + '11:18:04', connected: D + '11:18:04', stop: D + '11:20:57', direction: 'Incoming', talk: '0:02:53', caller: '12145550123', callee: '233', calleeName: 'Jemima John', answered: 'Answered' }),
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rec(recs, 'Q1').journey.map((e) => e.name))),
+    ['Website Introduction', 'A_Q_Sales', 'Adrian (Ankit) Sharma', 'Alex (Abhijeet) Gujral', 'Jemima John']);
+});
+
+test('QF-1: the reorder is a stable partition inside one second only', function () {
+  const ev = (t, name, kind) => ({ t: t, name: name, kind: kind || 'leg' });
+  const out = h.call('icQueueFirstWithinSecond_', [
+    ev('10:00:00', 'IVR'), ev('10:00:05', 'Ann'), ev('10:00:05', 'Bob'), ev('10:00:05', 'A_Q_One', 'queue'),
+    ev('10:00:05', 'A_Q_Two', 'queue'), ev('10:00:09', 'Cal', 'answer'), ev('10:00:09', 'A_Q_Three', 'queue')]);
+  assert.deepEqual(JSON.parse(JSON.stringify(out)).map((e) => e.name),
+    ['IVR', 'A_Q_One', 'A_Q_Two', 'Ann', 'Bob', 'A_Q_Three', 'Cal']);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('icQueueFirstWithinSecond_', []))), []);
+});
+
+// HOH-0 (owner 2026-10-28): the owner's 10/19 call -- flagged "hung up on hold"
+// though the caller then talked to CSR for 4:26. The only hold (1 s) and the
+// flag sit on the TRANSFERRING Sales agent's leg.
+function hohCall(extra) {
+  const D = '10/19/2026 ';
+  const id = 'H1';
+  return [
+    leg({ callId: id, legId: 1, start: D + '09:09:03', stop: D + '09:09:47', direction: 'Incoming', caller: '12145550123', callee: '999', calleeName: 'Website Introduction' }),
+    leg({ callId: id, legId: 2, start: D + '09:09:47', stop: D + '09:10:22', direction: 'Incoming', caller: '12145550123', callee: '300', calleeName: 'A_Q_Sales' }),
+    leg({ callId: id, legId: 3, start: D + '09:10:22', connected: D + '09:10:22', stop: D + '09:11:37', direction: 'Incoming', talk: '0:01:14',
+          caller: '12145550123', callee: '231', calleeName: 'Peter (Praneeth) Gummadi', answered: 'Answered', holdDur: '0:00:01', callerDisc: 'TRUE' }),
+    leg({ callId: id, legId: 4, start: D + '09:11:36', stop: D + '09:11:54', direction: 'Incoming', caller: '12145550123', callee: '103', calleeName: 'A_Q_CSR' }),
+    leg({ callId: id, legId: 5, start: D + '09:11:54', connected: D + '09:11:54', stop: (extra && extra.endCamila) || D + '09:16:21', direction: 'Incoming',
+          talk: (extra && extra.camTalk) || '0:04:26', caller: '12145550123', callee: '240', calleeName: 'Camila (Cheshta) Bhutani',
+          answered: (extra && extra.camAnswered === false) ? '-' : 'Answered', missed: (extra && extra.camAnswered === false) ? 'Missed' : '-',
+          callerDisc: (extra && extra.camFlag) ? 'TRUE' : 'N/A', holdDur: (extra && extra.camFlag) ? '0:00:30' : '0:00:00' }),
+  ];
+}
+
+test('HOH-0: a flag on the transferring agent\'s leg, then someone answered -- answeredAfter', function () {
+  const legs = hohCall();
+  const shape = JSON.parse(JSON.stringify(h.call('icHoldHangupShape_', legs)));
+  assert.equal(shape.cls, 'answeredAfter');
+  assert.equal(shape.flaggedLegHeld, true);
+  assert.equal(shape.flaggedLegAnswered, true);
+  const st = JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', legs)));
+  assert.equal(st.captured, 1);
+  assert.equal(st.flagged, 1);
+  assert.equal(st.answeredFlagged, 1);
+  assert.deepEqual(st.byClass, { final: 0, answeredAfter: 1, unansweredAfter: 0 });
+  assert.deepEqual(st.samples.answeredAfter, ['H1']);
+});
+
+test('HOH-0: the flag on the call\'s last leg is a real hang-up on hold -- final', function () {
+  const shape = h.call('icHoldHangupShape_', hohCall({ camFlag: true }));
+  assert.equal(shape.cls, 'final', 'the LAST flagged leg decides');
+});
+
+test('HOH-0: the call went on but nobody answered -- unansweredAfter', function () {
+  const shape = h.call('icHoldHangupShape_', hohCall({ camAnswered: false, camTalk: '0:00:00', endCamila: '10/19/2026 09:12:30' }));
+  assert.equal(shape.cls, 'unansweredAfter');
+  assert.equal(h.call('icHoldHangupShape_', hohCall().map((r) => { const c = r.slice(); c[34] = 'N/A'; return c; })), null, 'no flag, no shape');
+});
+
+test('HOH-0: the log line names every class and no number', function () {
+  const line = h.call('icHoldHangupLine_', JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohCall()))));
+  assert.match(line, /LAST 0 .*ANSWERED after it 1 .*unanswered 0/);
+  assert.ok(!/2145550123/.test(line));
+});

@@ -1259,12 +1259,27 @@ function sendInboundReportEmail(req) {
   const dateLabel = (meta.from || '') + ' – ' + (meta.to || '');
   const priorLabel = (meta.priorFrom || '') + ' – ' + (meta.priorTo || '');
 
+  // SB-5e (owner 2026-10-28): the email reads like the report since SB-5 --
+  // total = answered + rang out / voicemail + hung up (the three
+  // dispositions), the middle one shown for the first time, drawn as one
+  // bar; on hold and unanswered transfers say why they are not parts of it.
+  const total = Number(k.total) || 0;
+  const missRate = total ? Math.round((Number(k.missed) || 0) / total * 1000) / 10 : 0;
+  const SB_C_ = { ans: '#3d9476', mis: '#e8b49c', abd: '#c66b4b' };
+  const ivr = Number(k.abandonedIvr) || 0, dir = Number(k.abandonedDirect) || 0;
   const kpiRows =
       inboundEmailKpiRow_('Inbound calls', fmtNum_(k.total), inboundEmailDelta_(k.total, p.total, true))
-    + inboundEmailKpiRow_('Answered', fmtNum_(k.answered) + ' (' + (k.answerRate || 0) + '%)', inboundEmailDelta_(k.answered, p.answered, true))
-    + inboundEmailKpiRow_('Abandoned', fmtNum_(k.abandoned) + ' (' + (k.abandonRate || 0) + '%)', inboundEmailDelta_(k.abandoned, p.abandoned, false))
-    + inboundEmailKpiRow_('Abandoned on hold', fmtNum_(k.abandonedOnHold), inboundEmailDelta_(k.abandonedOnHold, p.abandonedOnHold, false))
-    + inboundEmailKpiRow_('Transfers not answered', fmtNum_(k.xferUnanswered), inboundEmailDelta_(k.xferUnanswered, p.xferUnanswered, false))
+    + '<tr><td colspan="2" style="padding:6px 10px 8px;border-bottom:1px solid #eee;">'
+    +   ekSplitBarHtml_([{ n: k.answered, color: SB_C_.ans }, { n: k.missed, color: SB_C_.mis }, { n: k.abandoned, color: SB_C_.abd }], total)
+    + '</td></tr>'
+    + inboundEmailKpiRow_('Answered', fmtNum_(k.answered) + ' (' + (k.answerRate || 0) + '%)', inboundEmailDelta_(k.answered, p.answered, true), SB_C_.ans)
+    + inboundEmailKpiRow_('Rang out or went to voicemail', fmtNum_(k.missed) + ' (' + missRate + '%)', inboundEmailDelta_(k.missed, p.missed, false), SB_C_.mis)
+    + inboundEmailKpiRow_('Hung up before anyone answered', fmtNum_(k.abandoned) + ' (' + (k.abandonRate || 0) + '%)', inboundEmailDelta_(k.abandoned, p.abandoned, false), SB_C_.abd)
+    + ((meta.companyView && (ivr || dir))
+      ? inboundEmailKpiRow_('… of them in the phone menu / on a person\u2019s line', fmtNum_(ivr) + ' / ' + fmtNum_(dir), '')
+      : '')
+    + inboundEmailKpiRow_('Hung up on hold (after an answer, so inside Answered)', fmtNum_(k.abandonedOnHold), inboundEmailDelta_(k.abandonedOnHold, p.abandonedOnHold, false))
+    + inboundEmailKpiRow_('Transfers nobody picked up (an agent\u2019s transfer attempt)', fmtNum_(k.xferUnanswered), inboundEmailDelta_(k.xferUnanswered, p.xferUnanswered, false))
     + inboundEmailKpiRow_('Avg wait', inboundEmailDur_(k.avgWaitSec), inboundEmailDelta_(k.avgWaitSec, p.avgWaitSec, false))
     + inboundEmailKpiRow_('Avg hold', inboundEmailDur_(k.avgHoldSec), '');
 
@@ -1279,7 +1294,7 @@ function sendInboundReportEmail(req) {
     subtitle: dateLabel + ' · vs prior ' + priorLabel,
     preheader: scopeLabel + ': ' + fmtNum_(k.total) + ' inbound calls, '
       + (k.abandonRate || 0) + '% abandoned · ' + dateLabel,
-    rowsHtml: ekRow_('<table style="border-collapse:collapse;width:100%;max-width:420px;">' + kpiRows + '</table>')
+    rowsHtml: ekRow_('<table style="border-collapse:collapse;width:100%;max-width:520px;">' + kpiRows + '</table>')
       + ekRow_(inboundEmailBreakdownTable_('By insurer', data.byInsurer)
           + inboundEmailBreakdownTable_('By advertised line', data.byDialIn), '4px 26px 6px'),
     ctaUrl: dashboardUrl,
@@ -1310,9 +1325,12 @@ function inboundEmailDelta_(cur, prev, goodUp) {
   const color = (up === goodUp) ? '#3d9476' : '#c66b4b';
   return '<span style="color:' + color + ';font-size:11px;"> ' + (up ? '▲+' : '▼') + dp + '% vs prior</span>';
 }
-function inboundEmailKpiRow_(label, value, deltaHtml) {
+function inboundEmailKpiRow_(label, value, deltaHtml, swatch) {
+  // SB-5e: `swatch` = the bar colour this row is a part of (a small key).
   return '<tr>'
-    + '<td style="padding:6px 10px;border-bottom:1px solid #eee;color:#6b7280;font-size:13px;">' + escapeHtmlServer_(label) + '</td>'
+    + '<td style="padding:6px 10px;border-bottom:1px solid #eee;color:#6b7280;font-size:13px;">'
+    +   (swatch ? '<span style="display:inline-block;width:9px;height:9px;background:' + swatch + ';margin-right:6px;"></span>' : '')
+    +   escapeHtmlServer_(label) + '</td>'
     + '<td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:700;font-size:14px;">'
     +   escapeHtmlServer_(String(value)) + (deltaHtml || '') + '</td>'
     + '</tr>';

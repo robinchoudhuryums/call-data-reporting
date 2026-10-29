@@ -385,6 +385,29 @@ function callerLookupSheetFallback_(hashes, from, to, out, user) {
 }
 
 /**
+ * PURE (QF-1, owner 2026-10-28). Display order for a stored journey: within a
+ * run of events sharing one `t`, queue events go first (8x8 can give a queue's
+ * first ring a lower leg id than the queue, so a journey captured before the
+ * fix lists the ring ahead of its queue). A stable partition -- nothing else
+ * moves. The capture applies the same rule from now on
+ * (cdr-import/inboundCalls.js::icQueueFirstWithinSecond_); both shapers below
+ * run it, so Caller Lookup, the path drill and their sheet fallbacks agree.
+ */
+function clQueueFirstWithinSecond_(events) {
+  var out = [];
+  for (var i = 0; i < (events || []).length; ) {
+    var j = i;
+    while (j < events.length && events[j] && events[i] && events[j].t === events[i].t) j++;
+    if (j === i) j = i + 1;
+    var run = events.slice(i, j);
+    run.filter(function (e) { return e && e.kind === 'queue'; }).forEach(function (e) { out.push(e); });
+    run.filter(function (e) { return !(e && e.kind === 'queue'); }).forEach(function (e) { out.push(e); });
+    i = j;
+  }
+  return out;
+}
+
+/**
  * Normalizes one to_jsonb row for the client: drops the hash + write
  * timestamp (the client has no use for either), parses the journey JSON
  * string to an array (null when absent / unparseable -- the client then
@@ -395,7 +418,7 @@ function callerLookupShapeCall_(r) {
   if (r.journey) {
     try {
       const arr = JSON.parse(r.journey);
-      if (Array.isArray(arr) && arr.length) journey = arr;
+      if (Array.isArray(arr) && arr.length) journey = clQueueFirstWithinSecond_(arr);
     } catch (e) { /* summary fallback */ }
   }
   return {
@@ -434,7 +457,7 @@ function callerLookupShapeOutbound_(r) {
   if (r.journey) {
     try {
       const arr = JSON.parse(r.journey);
-      if (Array.isArray(arr) && arr.length) journey = arr;
+      if (Array.isArray(arr) && arr.length) journey = clQueueFirstWithinSecond_(arr);
     } catch (e) { /* no journey */ }
   }
   return {

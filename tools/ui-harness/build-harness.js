@@ -156,6 +156,18 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getMissedCallsReport: function (req) {
       return spanDays(req) <= 2 ? P['missed-day'] : P['missed-30d'];
     },
+    // QV-2: the day quick view's ONE request -- composed from the three
+    // endpoints' own mocks, exactly as DayQuickView.gs composes the real ones
+    // (each part a one-day window; outbound only when asked for).
+    getDayQuickView: function (req) {
+      var days = {};
+      ((req && req.dates) || []).forEach(function (d) {
+        var r = { department: req.department, from: d, to: d };
+        days[d] = { summary: handlers.getDepartmentSummary(r), missed: handlers.getMissedCallsReport(r),
+                    outbound: req.outbound ? handlers.getDeptOutboundSummary(r) : null, errors: {} };
+      });
+      return { meta: { department: req.department, dates: (req && req.dates) || [], computeMs: 9, partMs: {} }, days: days };
+    },
     getIndividualReportInit: function () { return P['ir-init']; },
     getIndividualReport: function () { return P['ir-report']; },
     getInsightsReportInit: function () { return P['insights-init']; },
@@ -172,6 +184,25 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     // D1: the Direct Calls report -- a dept run is clamped + gappy, the
     // company run is clean (its prior chips render).
     getDirectCallReport: function (req) { return P[(req && req.department) ? 'direct-30d' : 'direct-all-clean']; },
+    // SB-5 (owner 2026-10-28): the Inbound report had no mock, so no gate ever
+    // rendered it. Company view and a dept view, each with total = answered +
+    // abandoned + missed (the three dispositions), and the company view's
+    // abandon stages (queue / phone menu / person's line).
+    getInboundReport: function (req) {
+      const dept = (req && req.department) || '';
+      const kp = function (t, a, ab, mi, ivr, dir, hold, xu) {
+        return { total: t, answered: a, abandoned: ab, missed: mi, abandonedOnHold: hold,
+          onHoldTransferIn: dept ? 0 : 4, onHoldTransferOut: 0, xferUnanswered: xu, xferUnansweredLinked: Math.floor(xu / 2),
+          abandonedIvr: ivr, abandonedDirect: dir, anonymous: 55, avgWaitSec: 48, avgHoldSec: 112,
+          abandonRate: Math.round(ab / t * 1000) / 10, answerRate: Math.round(a / t * 1000) / 10 };
+      };
+      const k = dept ? kp(1200, 1050, 90, 60, 0, 0, 22, 5) : kp(4120, 3410, 402, 308, 120, 38, 61, 14);
+      const p = dept ? kp(1150, 1001, 95, 54, 0, 0, 20, 6) : kp(3990, 3300, 410, 280, 118, 36, 58, 12);
+      return { meta: { from: (req && req.from) || '2026-09-28', to: (req && req.to) || '2026-10-27', department: dept || null,
+          companyView: !dept, available: true, unmapped: false, priorFrom: '2026-08-28', priorTo: '2026-09-25' },
+        kpis: k, kpisPrior: p, byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [],
+        outsideWindow: { calls: 0, abandoned: 0, answered: 0, abandonedPct: 0, beforeCalls: 0, beforeAbandoned: 0, afterCalls: 0, afterAbandoned: 0 } };
+    },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },
     getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1, linked: 1 }; },   // ESC-L1: one open linked copy
@@ -563,17 +594,34 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         const cov = new Date(from + 'T12:00:00Z'); cov.setUTCDate(cov.getUTCDate() + 3);
         meta.fallbackCoverageStart = cov.toISOString().slice(0, 10);   // 3 days into the window
       }
+      // DL-R1: the after-hours time from the next work day's open, and the
+      // department -> line-owner breakdown (most not called back first).
+      const after = sum(10, 3, 2, 1, 0, 0, 6, 2, 50400);
+      after.medianFromOpenSec = 2700;
+      const row = function (name, eps, none, byP, byT, other, got, pending, extra) {
+        return Object.assign({ name: name, episodes: eps, none: none, own: byP + byT, ownByPerson: byP, ownByTeam: byT,
+          other: other, gotThrough: got, pending: pending }, extra || {});
+      };
       return { meta: meta,
         counts: { calls: 49, anonymous: 4, trackable: 42, missed: 38, abandoned: 11, voicemailBox: 6, unownedLines: 1, misdials: 3 },
         all: sum(30, 14, 9, 3, 2, 1, 10, 6, 5400),
         work: sum(20, 11, 7, 2, 2, 1, 4, 4, 3600),
-        after: sum(10, 3, 2, 1, 0, 0, 6, 2, 50400) };
+        after: after,
+        byDept: [
+          Object.assign(row('Sales', 18, 7, 5, 3, 2, 1, 0), { noTeam: false, people: [
+            row('Sam Seller', 11, 5, 4, 1, 1, 0, 0, { voicemailBox: false }),
+            row('Sales Voicemails', 7, 2, 1, 2, 1, 1, 0, { voicemailBox: true }),
+          ] }),
+          Object.assign(row('CSR', 12, 3, 4, 2, 1, 1, 1), { noTeam: false, people: [
+            row('Ann Agent', 12, 3, 4, 2, 1, 1, 1, { voicemailBox: false }),
+          ] }),
+        ] };
     },
     getOutboundDirectRepeats: function (req) {
       return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || null, companyView: !(req && req.department),
           available: true, truncated: false, tzLabel: 'CST', callbackWindowDays: 3, lateHorizonDays: 14,
-          minAttempts: 2, episodes: 1 },
+          minAttempts: (req && Number(req.minAttempts) === 1) ? 1 : 2, owner: (req && req.owner) || null, episodes: 1 },
         episodes: [
           { firstIso: '2026-08-11', firstHms: '07:02:00', lastIso: '2026-08-12', team: 'Sales', lines: ['Sam Seller', 'Sales Voicemails'],
             voicemail: true,
@@ -682,6 +730,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           var args = [].slice.call(arguments);
           window.__HARNESS__.calls.push({ fn: name, args: args });
           var h = handlers[name];
+          // A driver can hold a reply back (window.__HARNESS__.delay[name] ms)
+          // to look at the page while a call is in flight.
+          var dl = (window.__HARNESS__.delay && window.__HARNESS__.delay[name]) || 0;
           setTimeout(function () {
             var fx = window.__HARNESS__.failOnce;
             if (fx && fx[name] > 0) {
@@ -701,7 +752,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
               console.warn('[harness] unmocked RPC: ' + name);
               fail && fail(new Error('harness: unmocked RPC ' + name));
             }
-          }, 60 + Math.random() * 120);   // realistic latency
+          }, dl + 60 + Math.random() * 120);   // realistic latency (+ a driver's hold)
         };
       },
     });
