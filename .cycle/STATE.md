@@ -13,6 +13,7 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-30 (5) -- NX-0b + XB re-run results.** NX-0b over 214 "only record of talk" legs: 210 never went through a menu or queue (click-to-dial 53 = followed within 2 min by the same agent's outbound call; 157 not followed; 4 after a real inbound call). Talk: none 54, 1-5 s 144, 6-59 s 11, 60 s+ 5. So ~210 phantom-looking inbound calls (no menu, no queue, a 1-5 s agent leg to the caller), but the click-to-dial explanation covers only a quarter -- asked the owner for the raw legs of ringBackOnly sample 1783985220389 before writing NX-2. XB: no Dept Config parent rows yet (PAP / Spanish / PAK / MWC / BackUp_FieldOps still unplaced); bounces still 3 in 446; 188 of the 557 off-roster answer steps are those "(caller)" legs.
 - **2026-10-30 (4) -- SHIPPED: [PR #398](https://github.com/robinchoudhuryums/call-data-reporting/pull/398) merged on green CI (merge 36db81c)** -- NX-0b. Branch restarted from main.
   **Owner-side:** push cdr-import, re-run `diagnoseOutsideNumberLegsAllDates`, send the `NX-0b TOTAL` line (decides NX-2); the PAP / Spanish / PAK Dept Config rows + bounce re-run (decides XB-1).
   **Where I left off:** nothing open on the branch.
