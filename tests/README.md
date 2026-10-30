@@ -200,7 +200,11 @@ tests/
                               followed through col P to the colleague's
                               hand-over (answeredAfter via the link), a
                               consult-only continuation stays final, chained
-                              links without looping; QF-1: a
+                              links without looping; NX-1 / NX-0 / NX-0b:
+                              the "(caller)" / "(external number)" labels,
+                              the outside-number legs sorted (duplicate,
+                              carrier, alone, other number) and the alone
+                              ones tested for click-to-dial; QF-1: a
                               queue listed before the agent it rang in the
                               same second, a stable partition inside one
                               second only),
