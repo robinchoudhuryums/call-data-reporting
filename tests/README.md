@@ -172,6 +172,10 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity;
+                              NX-2: an outbound call whose CallRecording
+                              leg 8x8 marks Incoming is outbound, not
+                              inbound -- on the owner's 10/19 legs -- and a
+                              real inbound call keeps its record;
                               IXT-1: transfers / consults to a PERSON on
                               the owner's 10/26 legs -- the Transfer To
                               link (consult up to the hand-over, the

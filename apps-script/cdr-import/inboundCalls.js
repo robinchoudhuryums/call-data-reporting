@@ -368,6 +368,21 @@ function icIsRecordingLeg_(leg) {
   return /^CallRecording\b/i.test(String(leg && leg[IC_COL.CALLEE] == null ? '' : leg[IC_COL.CALLEE]).trim());
 }
 
+/**
+ * PURE (NX-2, owner 2026-10-30). A leg that shows a caller CALLING IN:
+ * Direction Incoming and NOT 8x8's call-recording leg. 8x8 marks the recording
+ * leg Incoming with the far end's number as its caller -- on an OUTBOUND call
+ * too (the owner's 10/19 call 1783985220389: Alan's 1-second outbound call plus
+ * an "Incoming" CallRecording leg "from" the customer). A bare Incoming test
+ * filed such calls as inbound ones answered in a second (the old "N." step)
+ * and the outbound capture's Gate 1 dropped them. Every "is this an inbound
+ * call's group?" test uses this, never a bare Direction check.
+ */
+function icIsCallerIncoming_(leg) {
+  return String(leg && leg[IC_COL.DIRECTION] == null ? '' : leg[IC_COL.DIRECTION]).trim() === 'Incoming'
+    && !icIsRecordingLeg_(leg);
+}
+
 // SQL literal builders for the INLINE inbound insert (mirrors the phone-child
 // inline approach: eliminates ~14 JDBC bind-bridge calls per row, the
 // dominant per-row Apps Script cost). Free-text fields are single-quote
@@ -513,9 +528,7 @@ function icBusyIndexes_(groups, capturedRoots) {
   var outboundBusy = [];
   Object.keys(groups).forEach(function (root) {
     var g = groups[root];
-    var hasIncoming = g.some(function (l) {
-      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
-    });
+    var hasIncoming = g.some(icIsCallerIncoming_);   // NX-2: a recording leg is not a caller
     if (hasIncoming) return;
     g.forEach(function (l) {
       if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
@@ -581,9 +594,7 @@ function buildInboundCallRecords_(rawRows, opts) {
       return (Number(a[IC_COL.LEG_ID]) || 0) - (Number(b[IC_COL.LEG_ID]) || 0);
     });
 
-    var incoming = legs.filter(function (l) {
-      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
-    });
+    var incoming = legs.filter(icIsCallerIncoming_);   // NX-2: a recording leg is not a caller
     // Round-16 (owner): an INTERNAL-ORIGIN QUEUE call (an employee dials
     // another dept's queue; every leg Direction=Internal) is captured as a
     // FLAGGED record (isInternal) so the Missed report's "path" journey
@@ -1151,7 +1162,7 @@ function icPersonTransferEnrich_(groups, recordByRoot, agentBusy, stats, opts) {
   Object.keys(groups).forEach(function (root) {
     if (recordByRoot[root]) return;
     var g = groups[root];
-    if (g.some(function (l) { return dir(l) === 'Incoming'; })) return;
+    if (g.some(icIsCallerIncoming_)) return;   // NX-2
     if (g.some(function (l) { return icIsQueueName_(l[IC_COL.CALLEE_NAME]); })) return;   // R11-N's
     var target = linkedTo[root];
     if (target === '#ambiguous') { st.ambiguous++; return; }
@@ -3454,7 +3465,7 @@ function icOutsideLegsForGrid_(grid) {
   var obIndex = {};
   Object.keys(groups).forEach(function (root) {
     var g0 = groups[root];
-    if (g0.some(function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming'; })) return;
+    if (g0.some(icIsCallerIncoming_)) return;
     g0.forEach(function (l) {
       if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
       var num = icExternalNumber_(l[IC_COL.CALLEE]), t = icParseTs_(l[IC_COL.START]);

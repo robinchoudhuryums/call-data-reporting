@@ -514,3 +514,54 @@ test('OXT-1: a transfer target named only by an INBOUND call is the inbound capt
   const ob = build(rows);
   assert.equal(oxAdded(ob.find((r) => r.callId === 'OB1')).length, 0);
 });
+
+// NX-2 (owner 2026-10-30): the owner's 10/19 call 1783985220389 (number
+// disguised) -- Alan's 1-second OUTBOUND call plus 8x8's CallRecording leg,
+// which 8x8 marks Incoming "from" the dialled number. The inbound capture read
+// it as a call FROM the customer, answered in a second (the old "N." step), and
+// Gate 1 here dropped it. A recording leg is not a caller.
+function nx2Rows(extra) {
+  const D = '10/19/2026 ';
+  const C = '17275550199';
+  return [
+    leg({ callId: '1783985220389', legId: 2, start: D + '14:35:02', stop: D + '14:35:02', direction: 'Incoming',
+      caller: C, callerName: 'N/A', callee: 'CallRecording', calleeName: 'N/A', dialIn: C, dept: 'Inside Sales - Power Mobility' }),
+    leg({ callId: '1783985220389', legId: 1, start: D + '14:34:57', connected: D + '14:35:01', stop: D + '14:35:02',
+      direction: 'Outgoing', talk: '0:00:01', callTime: '0:00:05', caller: '107', callerName: 'Alan (Abhishek) Verma',
+      callee: C, calleeName: 'N/A', answered: 'Answered', dept: 'Inside Sales - Power Mobility' }),
+  ].concat(extra || []);
+}
+
+test('NX-2: an outbound call whose recording leg 8x8 marks Incoming is an OUTBOUND call, not an inbound one', function () {
+  const ob = JSON.parse(JSON.stringify(build(nx2Rows())));
+  assert.equal(ob.length, 1, 'Gate 1 no longer drops it');
+  assert.equal(ob[0].callId, '1783985220389');
+  assert.equal(ob[0].agentExt, '107');
+  assert.equal(ob[0].connected, true);
+  assert.equal(ob[0].talkSeconds, 1);
+  assert.equal(h.call('buildInboundCallRecords_', nx2Rows()).length, 0, 'and the inbound capture no longer files it');
+});
+
+test('NX-2: a real inbound call keeps its record when it also carries an Incoming recording leg', function () {
+  const D = '10/19/2026 ';
+  const C = '17275550199';
+  const rows = [
+    leg({ callId: 'IN1', legId: 1, start: D + '10:00:00', stop: D + '10:00:20', direction: 'Incoming', caller: C, callee: '103', calleeName: 'A_Q_CSR' }),
+    leg({ callId: 'IN1', legId: 2, start: D + '10:00:20', connected: D + '10:00:20', stop: D + '10:03:20', direction: 'Incoming', talk: '0:03:00',
+      caller: C, callee: '240', calleeName: 'Camila (Cheshta) Bhutani', answered: 'Answered', dept: 'Customer Success' }),
+    leg({ callId: 'IN1', legId: 3, start: D + '10:00:21', stop: D + '10:03:20', direction: 'Incoming', caller: C, callee: 'CallRecording' }),
+  ];
+  const recs = JSON.parse(JSON.stringify(h.call('buildInboundCallRecords_', rows)));
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].disposition, 'answered');
+  assert.equal(recs[0].callerNumber, '+17275550199');
+  assert.equal(build(rows).length, 0, 'still not an outbound call');
+  assert.equal(h.call('icIsCallerIncoming_', rows[2]), false);
+  assert.equal(h.call('icIsCallerIncoming_', rows[1]), true);
+});
+
+test('NX-2: the inbound side\'s outbound-busy index sees the call too (an inbound call at the same moment is not its twin)', function () {
+  const groups = h.call('icGroupLegsByRoot_', nx2Rows());
+  const idx = JSON.parse(JSON.stringify(h.call('icBusyIndexes_', groups, {})));
+  assert.equal(idx.outboundBusy.length, 1, 'the call with an Incoming recording leg is an outbound call to every index');
+});

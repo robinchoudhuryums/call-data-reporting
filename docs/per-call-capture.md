@@ -290,6 +290,13 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 > it is ever more than that), the masked CNAM for another named number, and
 > "(external number)" for a blank one. The old "N." was "N/A" put through the
 > initials mask.
+>
+> **A recording leg is not a caller (NX-2).** 8x8 marks its CallRecording leg
+> Incoming with the FAR END's number as caller -- on outbound calls too. "Does
+> this group have an Incoming leg?" (the inbound capture's `incoming`, the
+> outbound capture's Gate 1, the busy / cross-reference indexes) must use
+> `icIsCallerIncoming_`, never a bare Direction test, or a short outbound call
+> reads as an inbound call answered in a second and vanishes from outbound.
 
 > **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
 > first agent it rings often start in the same second, and 8x8 can give the
