@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-30 -- SHIPPED: [PR #397](https://github.com/robinchoudhuryums/call-data-reporting/pull/397) merged on green CI (merge 7225c48)** -- NX-1 / NX-0 / HOH-1 / XB-0c. Branch restarted from main.
+  **Owner-side:** push cdr-import + dashboard; run `diagnoseOutsideNumberLegsAllDates` and send the log (decides NX-2); add the PAP / Spanish / PAK Dept Config rows (+ MWC alias on Sales, BackUp_FieldOps on FieldOps), re-run `diagnoseTransferBouncesAllDates` (decides XB-1); walk S38's HOH-1 / NX-1 steps.
+  **Where I left off:** nothing open on the branch; waiting on the owner items above.
 - **2026-10-29 (10) -- NX-1 / NX-0 / HOH-1 / XB-0c (block 259-nx-hoh1-xb0c-broad-implement).** "N." relabelled "(caller)" / "(external number)" at capture; `diagnoseOutsideNumberLegs` (#87) to settle whether those legs are 8x8 artifacts; hold-hangup wording ("Hung up while on hold with <agent>", path row marked, Inbound report + email); bounce pass folds sub-queues into their Overview Parent and ignores UDC/UUC/AfterHours. 2764 tests, cdr-import bites 9/9.
   **Owner-side:** push cdr-import + dashboard; run `diagnoseOutsideNumberLegsAllDates` and send the log; add the PAP / Spanish / PAK Dept Config rows (+ MWC alias on Sales, BackUp_FieldOps on FieldOps) and re-run the bounce pass; walk S38's HOH-1 / NX-1 steps.
   **Where I left off:** committed + pushed; NO PR yet.
