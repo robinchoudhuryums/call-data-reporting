@@ -110,10 +110,10 @@ function buildOutboundCallRecords_(rawRows, opts) {
     });
 
     // Gate 1: any Incoming leg -> this is an inbound call's group (its agent
-    // 'Outgoing' talk legs belong to the inbound journey, not here).
-    var hasIncoming = legs.some(function (l) {
-      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
-    });
+    // 'Outgoing' talk legs belong to the inbound journey, not here). NX-2: an
+    // Incoming CALL-RECORDING leg is not one -- 8x8 marks it Incoming "from" the
+    // dialled number, and this gate used to drop those outbound calls.
+    var hasIncoming = legs.some(icIsCallerIncoming_);
     if (hasIncoming) return;
 
     // Gate 1b (OBX-1): a transfer's continuation is not a new outbound call.
@@ -210,9 +210,7 @@ function buildOutboundCallRecords_(rawRows, opts) {
     records.forEach(function (rr) { recordByRoot[rr.callId] = rr; });
     var inboundRoots = {};
     Object.keys(groups).forEach(function (root) {
-      if (groups[root].some(function (l) {
-        return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
-      })) inboundRoots[root] = true;
+      if (groups[root].some(icIsCallerIncoming_)) inboundRoots[root] = true;   // NX-2
     });
     var busy = icBusyIndexes_(groups, inboundRoots);
     var ownBusy = busy.outboundBusy.filter(function (e) { return recordByRoot[e.root]; });
@@ -639,7 +637,7 @@ function ocTransferHandoffs_(rawRows, opts) {
   });
   var hasIncoming = {}, extsOf = {};
   Object.keys(groups).forEach(function (g) {
-    hasIncoming[g] = groups[g].some(function (l) { return dirOf(l) === 'Incoming'; });
+    hasIncoming[g] = groups[g].some(icIsCallerIncoming_);   // NX-2
     var ex = {};
     groups[g].forEach(function (l) {
       var a = ocExtDigits_(l[IC_COL.CALLER]), b = ocExtDigits_(l[IC_COL.CALLEE]);

@@ -3833,3 +3833,15 @@ When something looks wrong, before assuming a code bug, check:
     no menu or queue and no outbound call after, or after a real inbound call;
     plus the gap and the leg's own talk. Re-run
     `diagnoseOutsideNumberLegsAllDates` after the cdr-import push.
+    **NX-2 (2026-10-30, the ROOT CAUSE, owner's raw legs for 1783985220389):
+    an ordinary OUTBOUND call -- Alan's 1-second Outgoing leg to the customer --
+    whose 8x8 CallRecording leg is marked Incoming "from" the customer's
+    number.** NX-0b's "no outbound call after" group (157) is that, and its
+    click-to-dial group was a short attempt and a redial. Both captures now
+    test direction with `icIsCallerIncoming_` (Incoming AND not a recording
+    leg): the inbound capture stops filing these calls (~26 a day, ~2% of
+    inbound, nearly all "answered" in 1-5 s) and the outbound capture's Gate 1
+    stops dropping them. **Not retroactive: after the cdr-import push, re-run
+    `backfillInboundCalls(from, to, true)` and `backfillOutboundCalls(from, to,
+    true)` over the held dates** (the IXT-1 / OBX-1 step, #84 / #82), then
+    the export triggers (#49 / #50) refresh the sheet copies.
