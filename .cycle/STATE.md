@@ -13,6 +13,7 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-30 (2) -- NX-0 results (8 dates, 8866 outside calls).** 284 outside-number legs, ALL Outgoing, all blank-named: duplicate of the agent's answer 12, warm-transfer carrier 16 (the artifacts, ~10%), the ONLY record of talk with the caller 214 (54 unanswered), a different outside number 42. 189 calls count as answered ONLY through such a leg, 182 take their final dept from it. Reading: mostly NOT an artifact -- most likely a callback to the caller filed under the original call (no answered Incoming leg at all); unconfirmed. Proposed NX-0b (gap between the caller's last leg and the outgoing leg + what happened to the caller before it) and asked the owner to eyeball sample 1783985223405; NX-2 (callback disposition / label, outbound-capture blind spot) waits on that.
 - **2026-10-30 -- SHIPPED: [PR #397](https://github.com/robinchoudhuryums/call-data-reporting/pull/397) merged on green CI (merge 7225c48)** -- NX-1 / NX-0 / HOH-1 / XB-0c. Branch restarted from main.
   **Owner-side:** push cdr-import + dashboard; run `diagnoseOutsideNumberLegsAllDates` and send the log (decides NX-2); add the PAP / Spanish / PAK Dept Config rows (+ MWC alias on Sales, BackUp_FieldOps on FieldOps), re-run `diagnoseTransferBouncesAllDates` (decides XB-1); walk S38's HOH-1 / NX-1 steps.
   **Where I left off:** nothing open on the branch; waiting on the owner items above.
