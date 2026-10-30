@@ -3821,3 +3821,15 @@ When something looks wrong, before assuming a code bug, check:
     whether the capture should drop the artifact legs from the path (and from
     the answered / department tests), which moves figures and waits on the
     owner. Pinned by `inbound-calls.test.js`.
+    **First run (2026-10-30, 8 dates): 284 legs, all Outgoing -- 12
+    duplicates, 16 carriers, 42 other numbers, and 214 the ONLY record of talk
+    with the caller (189 calls count as answered only through one).** The
+    owner's sample of that last group (1783985223405) read as CLICK-TO-DIAL:
+    no wait, a 1-second leg, then the same agent's 1:55 outbound call to the
+    number 5 s later -- 8x8 rings the agent's phone with the customer's number
+    as caller id before dialling out. **NX-0b** (same run, a second line per
+    date + `NX-0b TOTAL`) tests every such leg: click-to-dial (no menu or
+    queue, then that agent's outbound call to the number within 2 minutes),
+    no menu or queue and no outbound call after, or after a real inbound call;
+    plus the gap and the leg's own talk. Re-run
+    `diagnoseOutsideNumberLegsAllDates` after the cdr-import push.

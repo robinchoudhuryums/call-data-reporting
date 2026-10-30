@@ -1919,6 +1919,52 @@ test('NX-0: a forward to a different outside number is otherNumber; the line nam
   assert.ok(!/555/.test(line) && !/8115/.test(line));
 });
 
+// NX-0b (owner 2026-10-30): the owner's sample 1783985223405 -- an "inbound"
+// call with no wait whose only step was the agent's 1-second leg to the
+// caller, then the same agent's OUTBOUND call to that number 5 s later.
+function nxClick(o) {
+  o = o || {};
+  const D = '10/19/2026 ';
+  const rows = [];
+  if (o.menu) rows.push(leg({ callId: 'P1', legId: 0, start: D + '15:21:50', stop: D + '15:22:30', direction: 'Incoming', caller: NX_C, callee: '999', calleeName: 'Introduction - New' }));
+  rows.push(
+    leg({ callId: 'P1', legId: 1, start: D + '15:22:30', stop: D + '15:22:33', direction: 'Incoming', caller: NX_C, callee: '244', calleeName: 'David (Dhruv) Mishra' }),
+    leg({ callId: 'P1', legId: 2, start: D + '15:22:31', connected: D + '15:22:32', stop: D + '15:22:33', direction: 'Outgoing', talk: '0:00:01',
+          caller: '244', callerName: 'David (Dhruv) Mishra', callee: NX_C, answered: 'Answered', dept: 'Inside Sales - Power Mobility' }));
+  if (!o.noOutbound) rows.push(leg({ callId: 'O1', legId: 1, start: D + (o.obAt || '15:22:38'), connected: D + '15:22:45', stop: D + '15:24:40',
+    direction: 'Outgoing', talk: '0:01:55', caller: '244', callerName: 'David (Dhruv) Mishra', callee: NX_C, answered: 'Answered' }));
+  return rows;
+}
+
+test('NX-0b: no menu or queue, then the same agent\'s outbound call to that number seconds later -- click-to-dial', function () {
+  const st = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxClick())));
+  assert.deepEqual(st.byClass, { alone: 1 });
+  assert.equal(st.onlyAnswer, 1, 'today the call counts as answered only through this leg');
+  assert.deepEqual(st.alone.byVerdict, { clickToDial: 1, ringBackOnly: 0, afterRealInbound: 0 });
+  assert.equal(st.alone.followedByOutbound, 1);
+  assert.equal(st.alone.gap['10s or less'], 1);
+  assert.equal(st.alone.talk['1-5s'], 1);
+  assert.deepEqual(st.alone.samples.clickToDial, ['P1']);
+});
+
+test('NX-0b: no outbound call after it is ringBackOnly; one past the 2-minute window does not count; a menu first is afterRealInbound', function () {
+  const none = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxClick({ noOutbound: true }))));
+  assert.deepEqual(none.alone.byVerdict, { clickToDial: 0, ringBackOnly: 1, afterRealInbound: 0 });
+  const late = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxClick({ obAt: '15:24:40' }))));
+  assert.deepEqual(late.alone.byVerdict, { clickToDial: 0, ringBackOnly: 1, afterRealInbound: 0 }, '127 s after the leg ended');
+  const mid = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxClick({ obAt: '15:23:30' }))));
+  assert.equal(mid.alone.gap['11-60s'], 1);
+  const menu = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxClick({ menu: true }))));
+  assert.deepEqual(menu.alone.byVerdict, { clickToDial: 0, ringBackOnly: 0, afterRealInbound: 1 });
+  assert.equal(menu.alone.followedByOutbound, 1, 'the outbound call is still reported, whatever the verdict');
+});
+
+test('NX-0b: the line names every verdict and carries no number', function () {
+  const line = h.call('icOutsideAloneLine_', JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxClick()))).alone);
+  assert.match(line, /^1 legs that were the only record of talk with the caller -- click-to-dial .* 1, no menu or queue and no outbound call after 0, after a real inbound call \(through a menu or queue\) 0; followed by the same agent's outbound call to that number 1 \(10s or less 1, 11-60s 0, 61-120s 0 after the leg ended\); the leg's own talk -- none 0, 1-5s 1, 6-59s 0, 60s\+ 0$/);
+  assert.ok(!/8115/.test(line));
+});
+
 test('HOH-0: the log line names every class and no number', function () {
   const line = h.call('icHoldHangupLine_', JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohCall()))));
   assert.match(line, /LAST 0 .*ANSWERED after it 1 .*unanswered 0/);

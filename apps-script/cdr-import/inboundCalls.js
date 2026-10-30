@@ -3449,9 +3449,24 @@ function icOutsideLegsForGrid_(grid) {
       if (t && t.toUpperCase() !== 'N/A' && (rootOf[t] || t) !== root) named[rootOf[t] || t] = true;
     });
   });
+  // NX-0b: the agent's OUTBOUND calls (groups with no Incoming leg), keyed on
+  // the dialling extension + the number dialled, for the click-to-dial test.
+  var obIndex = {};
+  Object.keys(groups).forEach(function (root) {
+    var g0 = groups[root];
+    if (g0.some(function (l) { return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming'; })) return;
+    g0.forEach(function (l) {
+      if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
+      var num = icExternalNumber_(l[IC_COL.CALLEE]), t = icParseTs_(l[IC_COL.START]);
+      if (!num || isNaN(t)) return;
+      var k = icDigits_(l[IC_COL.CALLER]) + '|' + num;
+      (obIndex[k] = obIndex[k] || []).push(t);
+    });
+  });
   var st = { captured: recs.length, calls: 0, legs: 0, answered: 0, blankName: 0, byClass: {}, byDir: {},
              fromAgent: 0, xferTarget: 0, sharedSip: 0, onlyAnswer: 0, decidesDept: 0, shapes: {},
-             samples: { otherNumber: [], mirror: [], carrier: [], alone: [] } };
+             samples: { otherNumber: [], mirror: [], carrier: [], alone: [] },
+             alone: icOutsideAloneStats_() };
   recs.forEach(function (r) {
     var g = (groups[r.callId] || []).slice().sort(function (a, b) {
       return ((icParseTs_(a[IC_COL.START]) || 0) - (icParseTs_(b[IC_COL.START]) || 0))
@@ -3478,10 +3493,80 @@ function icOutsideLegsForGrid_(grid) {
       var key = sh.dir + ' / ' + sh.cls + (sh.xferTarget ? ' / transfer target' : '') + (sh.answered ? '' : ' / unanswered');
       st.shapes[key] = (st.shapes[key] || 0) + 1;
       if (st.samples[sh.cls].length < 5 && st.samples[sh.cls].indexOf(r.callId) === -1) st.samples[sh.cls].push(r.callId);
+      if (sh.cls === 'alone') icOutsideAloneFold_(st.alone, icOutsideAloneShape_(l, g, obIndex, r.callerNumber), r.callId);
     });
     if (hit) st.calls++;
   });
   return st;
+}
+
+// NX-0b (owner 2026-10-30): the owner's sample 1783985223405 was an "inbound"
+// call with no wait whose only step was the agent's 1-second leg to the
+// caller -- and the same agent's 1:55 OUTBOUND call to that number started 5 s
+// later. That is the click-to-dial shape: 8x8 rings the agent's own phone with
+// the customer's number as caller id, then dials out, and the capture reads the
+// first part as an inbound call from the customer. For every `alone` leg:
+//   clickToDial      -- the caller never went through a menu or a queue, and
+//                       the same agent's outbound call to that number starts
+//                       within IC_NX_OB_WINDOW_MS_ of the leg;
+//   ringBackOnly     -- no menu / queue, and no such outbound call;
+//   afterRealInbound -- the caller DID go through a menu or a queue (a real
+//                       inbound call, then the agent's leg to the caller).
+// Plus the gap to that outbound call and the leg's own talk time.
+var IC_NX_OB_WINDOW_MS_ = 120000;
+
+/** PURE. A fresh NX-0b stats object. */
+function icOutsideAloneStats_() {
+  return { legs: 0, byVerdict: { clickToDial: 0, ringBackOnly: 0, afterRealInbound: 0 }, followedByOutbound: 0,
+           gap: { '10s or less': 0, '11-60s': 0, '61-120s': 0 }, talk: { none: 0, '1-5s': 0, '6-59s': 0, '60s+': 0 },
+           samples: { clickToDial: [], ringBackOnly: [], afterRealInbound: [] } };
+}
+
+/** PURE. The NX-0b reading of one `alone` leg. */
+function icOutsideAloneShape_(l, g, obIndex, callerNumber) {
+  var dir = function (x) { return String(x[IC_COL.DIRECTION] == null ? '' : x[IC_COL.DIRECTION]).trim(); };
+  var ext = icDigits_(l[IC_COL.CALLER]);
+  var s0 = icParseTs_(l[IC_COL.START]), s1 = icParseTs_(l[IC_COL.STOP]);
+  if (isNaN(s1)) s1 = s0;
+  // A menu or a queue on the caller's side: an Incoming leg to anything but this agent's own phone.
+  var viaMenu = g.some(function (x) {
+    return x !== l && !icIsRecordingLeg_(x) && dir(x) === 'Incoming' && icDigits_(x[IC_COL.CALLEE]) !== ext;
+  });
+  var gapMs = null;
+  (obIndex[ext + '|' + (callerNumber || '')] || []).forEach(function (t) {
+    if (isNaN(s0) || t < s0 - 5000 || t > s1 + IC_NX_OB_WINDOW_MS_) return;
+    var gap = Math.max(0, t - s1);
+    if (gapMs === null || gap < gapMs) gapMs = gap;
+  });
+  var talk = icTimeToSec_(l[IC_COL.TALK]);
+  return {
+    verdict: viaMenu ? 'afterRealInbound' : (gapMs !== null ? 'clickToDial' : 'ringBackOnly'),
+    followed: gapMs !== null,
+    gap: gapMs === null ? null : (gapMs <= 10000 ? '10s or less' : (gapMs <= 60000 ? '11-60s' : '61-120s')),
+    talk: talk <= 0 ? 'none' : (talk <= 5 ? '1-5s' : (talk < 60 ? '6-59s' : '60s+'))
+  };
+}
+
+/** PURE. Folds one NX-0b reading. */
+function icOutsideAloneFold_(st, sh, callId) {
+  st.legs++;
+  st.byVerdict[sh.verdict]++;
+  if (sh.followed) { st.followedByOutbound++; st.gap[sh.gap]++; }
+  st.talk[sh.talk]++;
+  if (callId && st.samples[sh.verdict].length < 5 && st.samples[sh.verdict].indexOf(callId) === -1) st.samples[sh.verdict].push(callId);
+  return st;
+}
+
+/** PURE. NX-0b's log line. */
+function icOutsideAloneLine_(a) {
+  var n = function (v) { return String(Math.round(Number(v) || 0)); };
+  var v = a.byVerdict || {}, g = a.gap || {}, t = a.talk || {};
+  return n(a.legs) + ' legs that were the only record of talk with the caller -- click-to-dial (no menu or queue, then the same agent\'s outbound call to that number) '
+    + n(v.clickToDial) + ', no menu or queue and no outbound call after ' + n(v.ringBackOnly)
+    + ', after a real inbound call (through a menu or queue) ' + n(v.afterRealInbound)
+    + '; followed by the same agent\'s outbound call to that number ' + n(a.followedByOutbound)
+    + ' (' + Object.keys(g).map(function (k) { return k + ' ' + n(g[k]); }).join(', ') + ' after the leg ended)'
+    + '; the leg\'s own talk -- ' + Object.keys(t).map(function (k) { return k + ' ' + n(t[k]); }).join(', ');
 }
 
 /** PURE. NX-0's log line. */
@@ -3516,7 +3601,8 @@ function diagnoseOutsideNumberLegs(dateIso) {
   if (!sheets.length) { Logger.log('[nx] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
   try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
   try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
-  var total = { days: 0, byClass: {}, byDir: {}, shapes: {}, samples: { otherNumber: [], mirror: [], carrier: [], alone: [] } };
+  var total = { days: 0, byClass: {}, byDir: {}, shapes: {}, samples: { otherNumber: [], mirror: [], carrier: [], alone: [] },
+                alone: icOutsideAloneStats_() };
   var sums = ['captured', 'calls', 'legs', 'answered', 'blankName', 'fromAgent', 'xferTarget', 'sharedSip', 'onlyAnswer', 'decidesDept'];
   var t0 = Date.now();
   for (var i = 0; i < sheets.length; i++) {
@@ -3525,7 +3611,16 @@ function diagnoseOutsideNumberLegs(dateIso) {
     grid.shift();
     var st = icOutsideLegsForGrid_(grid);
     Logger.log('[nx] %s: %s', sheets[i].iso, icOutsideLegLine_(st));
+    Logger.log('[nx]   %s: %s', sheets[i].iso, icOutsideAloneLine_(st.alone));
     total.days++;
+    total.alone.legs += st.alone.legs;
+    total.alone.followedByOutbound += st.alone.followedByOutbound;
+    ['byVerdict', 'gap', 'talk'].forEach(function (k) {
+      Object.keys(st.alone[k]).forEach(function (x) { total.alone[k][x] += st.alone[k][x]; });
+    });
+    Object.keys(st.alone.samples).forEach(function (k) {
+      st.alone.samples[k].forEach(function (id) { if (total.alone.samples[k].length < 5) total.alone.samples[k].push(id); });
+    });
     sums.forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
     ['byClass', 'byDir', 'shapes'].forEach(function (k) {
       Object.keys(st[k]).forEach(function (x) { total[k][x] = (total[k][x] || 0) + st[k][x]; });
@@ -3539,6 +3634,10 @@ function diagnoseOutsideNumberLegs(dateIso) {
   Logger.log('[nx]   shapes: %s', icTopCounts_(total.shapes, 10).join('; '));
   ['mirror', 'carrier', 'alone', 'otherNumber'].forEach(function (k) {
     if (total.samples[k].length) Logger.log('[nx]   %s e.g.: %s', k, total.samples[k].join(', '));
+  });
+  Logger.log('[nx] NX-0b TOTAL: %s', icOutsideAloneLine_(total.alone));
+  ['clickToDial', 'ringBackOnly', 'afterRealInbound'].forEach(function (k) {
+    if (total.alone.samples[k].length) Logger.log('[nx]   %s e.g.: %s', k, total.alone.samples[k].join(', '));
   });
   return total;
 }
