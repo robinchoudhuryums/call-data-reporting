@@ -4643,6 +4643,9 @@
   }
   .cl-ev-queue  { border-left-color: var(--accent); }
   .cl-ev-answer { border-left-color: var(--good); }
+  /* HOH-1: the answered step where the caller hung up while on hold. */
+  .cl-ev-holdhang { border-left-color: var(--warn); }
+  .cl-ev-holdhang .cl-ev-bits { color: var(--ink); }
   /* Synthetic terminal row (owner note): marks the real hang-up moment --
      the last leg's start + duration -- so a long abandoned wait doesn't
      read as if the caller disconnected at the leg's START time. */

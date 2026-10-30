@@ -653,6 +653,12 @@ function tfDialogRun(req) {
 // answered and sent the caller back; "came back unanswered" = it returned
 // before anyone there answered (an overflow, or A pulling the call back).
 
+// XB-0c (owner 2026-10-29): queues that are a way IN, not a department -- the
+// sister brands' main lines (Universal Dialysis Center, Universal Urgent Care)
+// and the after-hours queue. A step through one is ignored and counted, never
+// "skipped": nothing is missing from the reading.
+var TF_BOUNCE_ENTRY_QUEUES_ = ['UDC_A_Q_Main', 'UUC_A_Q_Main', 'A_Q_AfterHours'];
+
 /**
  * PURE. The XB-0 reading of one journey. `deptsOfQueue(name)` /
  * `deptsOfAgent(name)` return arrays of department names.
@@ -660,12 +666,15 @@ function tfDialogRun(req) {
  * kind: 'sentBack'|'returnedUnanswered'}, skipped: {unmappedQueue,
  * twoDeptQueue, unknownAgent, twoRosterAgent}, unmappedQueues: [names],
  * unknownAgents: [names; a 7+-digit one as '(a number)'],
- * resolved: {byQueue, byStint} (XB-0b's two-roster placements) }.
+ * resolved: {byQueue, byStint} (XB-0b's two-roster placements),
+ * entryQueues (XB-0c: steps through TF_BOUNCE_ENTRY_QUEUES_, ignored) }.
  */
 function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
   var out = { stints: [], interDept: false, bounce: null,
     skipped: { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 }, unmappedQueues: [],
-    unknownAgents: [], resolved: { byQueue: 0, byStint: 0 } };
+    unknownAgents: [], resolved: { byQueue: 0, byStint: 0 }, entryQueues: 0 };
+  var entry = {};
+  TF_BOUNCE_ENTRY_QUEUES_.forEach(function (q) { entry[q.toLowerCase()] = true; });
   var ringingDept = null;   // the department of the queue that rang the next answerer
   (journey || []).forEach(function (ev) {
     if (!ev || ev.origin) return;
@@ -674,6 +683,7 @@ function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
     var isAns = ev.kind === 'answer' && (Number(ev.talk) || 0) > 0;
     if (!isQ && !isAns) return;
     var name = String(ev.name == null ? '' : ev.name).trim();
+    if (isQ && entry[name.toLowerCase()]) { out.entryQueues++; ringingDept = null; return; }
     var ds = (isQ ? deptsOfQueue(name) : deptsOfAgent(name)) || [];
     var rang = ringingDept;
     if (isQ) ringingDept = ds.length === 1 ? ds[0] : null;
@@ -721,22 +731,33 @@ function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
 
 /** PURE. Department lookups from the roster (tfRosterFromGrid_) + the Dept Config rows. */
 function tfBounceLookups_(roster, configRows, canon) {
+  // XB-0c (owner 2026-10-29: "PAP is a part of Sales"): a sub-queue folds into
+  // the department its Dept Config row names as Overview Parent (col C), ONE
+  // level, exactly as the dashboard nests it (INV-38) -- so Sales <-> PAP is
+  // no move, and an agent on the Sales and PAP rosters is on one department.
+  // A sub-queue with no row of its own keeps its own name (cdr-import cannot
+  // read the dashboard's seed map).
+  var parentOf = {};
+  (configRows || []).forEach(function (r) {
+    var d = String(r[0] == null ? '' : r[0]).trim(), p = String(r[2] == null ? '' : r[2]).trim();
+    if (d && p && p !== d) parentOf[d] = p;
+  });
+  var fold = function (d) { return parentOf[d] || d; };
+  var add = function (map, key, d) {
+    var list = map[key] = map[key] || [];
+    if (list.indexOf(fold(d)) === -1) list.push(fold(d));
+  };
   var agentDepts = {};
   (roster.depts || []).forEach(function (d) {
-    Object.keys((roster.byDept[d] || {}).names || {}).forEach(function (n) {
-      (agentDepts[n] = agentDepts[n] || []).push(d);
-    });
+    Object.keys((roster.byDept[d] || {}).names || {}).forEach(function (n) { add(agentDepts, n, d); });
   });
   var queueDepts = {};
   (roster.depts || []).forEach(function (d) {
-    tfDeptQueuesFromConfig_(d, configRows).forEach(function (q) {
-      var key = q.toLowerCase();
-      var list = queueDepts[key] = queueDepts[key] || [];
-      if (list.indexOf(d) === -1) list.push(d);
-    });
+    tfDeptQueuesFromConfig_(d, configRows).forEach(function (q) { add(queueDepts, q.toLowerCase(), d); });
   });
   var c = canon || function (n) { return n; };
   return {
+    parentOf: parentOf,
     deptsOfAgent: function (n) { return agentDepts[n] || agentDepts[c(n)] || []; },
     deptsOfQueue: function (q) { return queueDepts[String(q || '').toLowerCase()] || []; }
   };
@@ -755,6 +776,7 @@ function tfBounceFold_(st, b, callId) {
   st.resolved = st.resolved || { byQueue: 0, byStint: 0 };
   Object.keys(b.resolved || {}).forEach(function (k) { st.resolved[k] += b.resolved[k]; });
   if (Object.keys(b.skipped).some(function (k) { return b.skipped[k] > 0; })) st.callsWithSkip = (st.callsWithSkip || 0) + 1;
+  st.entryQueues = (st.entryQueues || 0) + (b.entryQueues || 0);
   st.sentBack = st.sentBack || 0; st.returnedUnanswered = st.returnedUnanswered || 0;
   st.pairs = st.pairs || {}; st.senders = st.senders || {}; st.samples = st.samples || [];
   if (!b.bounce) return st;
@@ -794,7 +816,8 @@ function tfBounceLine_(st) {
     + ', queue on two depts\' rows ' + String(sk.twoDeptQueue || 0) + ', answerer not on the roster ' + String(sk.unknownAgent || 0)
     + ', answerer on two rosters ' + String(sk.twoRosterAgent || 0)
     + ' (calls with any step skipped ' + String(st.callsWithSkip || 0) + '); two-roster answerers placed -- by the queue that rang them '
-    + String((st.resolved || {}).byQueue || 0) + ', in the department the call was already in ' + String((st.resolved || {}).byStint || 0);
+    + String((st.resolved || {}).byQueue || 0) + ', in the department the call was already in ' + String((st.resolved || {}).byStint || 0)
+    + '; steps through an entry queue (ignored) ' + String(st.entryQueues || 0);
 }
 
 /**
@@ -823,6 +846,10 @@ function diagnoseTransferBounces(dateIso) {
   icResetConfigMemos_();
   icLoadConfiguredQueueNames_();
   var lookups = tfBounceLookups_(tfReadRoster_(cfg), icDeptConfigActiveRows_(), icAgentCanonicalizer_());
+  var subs = Object.keys(lookups.parentOf).sort().map(function (d) { return d + ' -> ' + lookups.parentOf[d]; });
+  Logger.log('[xb] sub-queues folded into their parent: %s', subs.length ? subs.join('; ')
+    : 'none (no active Dept Config row names an Overview Parent)');
+  Logger.log('[xb] entry queues ignored: %s', TF_BOUNCE_ENTRY_QUEUES_.join(', '));
   var total = { captured: 0, days: 0 };
   var t0 = Date.now();
   for (var i = 0; i < sheets.length; i++) {
@@ -833,7 +860,7 @@ function diagnoseTransferBounces(dateIso) {
     Logger.log('[xb] %s: %s', sheets[i].iso, tfBounceLine_(st));
     total.days++;
     total.captured += st.captured;
-    ['calls', 'interDept', 'sentBack', 'returnedUnanswered', 'callsWithSkip'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    ['calls', 'interDept', 'sentBack', 'returnedUnanswered', 'callsWithSkip', 'entryQueues'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
     total.resolved = total.resolved || { byQueue: 0, byStint: 0 };
     Object.keys(st.resolved || {}).forEach(function (k) { total.resolved[k] += st.resolved[k]; });
     total.skipped = total.skipped || { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 };

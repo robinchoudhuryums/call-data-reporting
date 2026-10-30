@@ -523,6 +523,41 @@ test('XB-0b: answerers on no roster are listed by name, a number never', functio
   assert.ok(!/555/.test(line));
 });
 
+test('XB-0c: a sub-queue folds into its Overview Parent -- Sales <-> PAP is no move, a Sales + PAP agent is one department', function () {
+  const roster = h.call('tfRosterFromGrid_', ['Sales', 'PAP', 'CSR'], [
+    ['Peter (Praneeth) Gummadi, 231', 'Pam Pap, 260', 'Adrian (Ankit) Sharma, 233'],
+    ['Daniel (Dishant) Sahani, 352', 'Daniel (Dishant) Sahani, 352', ''],
+  ]);
+  const cfg = XB_CFG.concat([['PAP', 'A_Q_PAP', 'Sales', '', '', true, '', '', '', ''],
+                             ['Sales', 'A_Q_Sales', '', '', '', true, '', '', '', 'A_Q_Sales_MWC']]);
+  const lk = h.call('tfBounceLookups_', roster, cfg, null);
+  const of = (j) => JSON.parse(JSON.stringify(h.call('tfBounceOfJourney_', j, lk.deptsOfQueue, lk.deptsOfAgent)));
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.parentOf)), { PAP: 'Sales' });
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfQueue('A_Q_PAP'))), ['Sales']);
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfAgent('Daniel (Dishant) Sahani'))), ['Sales'], 'on two rosters, one department');
+  assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfQueue('a_q_sales_mwc'))), ['Sales'], 'an alias on the Sales row places MWC');
+  const stay = of([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), q('3', 'A_Q_PAP'), ans('4', 'Pam Pap')]);
+  assert.equal(stay.interDept, false, 'Sales -> PAP stays in Sales');
+  const back = of([q('1', 'A_Q_PAP'), ans('2', 'Pam Pap'), q('3', 'A_Q_CSR'), ans('4', 'Adrian (Ankit) Sharma'), q('5', 'A_Q_Sales'), ans('6', 'Peter (Praneeth) Gummadi')]);
+  assert.deepEqual(back.bounce, { from: 'Sales', to: 'CSR', sender: 'Pam Pap', returner: 'Adrian (Ankit) Sharma', kind: 'sentBack' },
+    'PAP -> CSR -> Sales is a bounce back to Sales');
+  // Without a PAP row the sub-queue keeps its own name (the seed map is the dashboard's).
+  const bare = h.call('tfBounceLookups_', roster, XB_CFG, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(bare.parentOf)), {});
+});
+
+test('XB-0c: an entry queue (sister-brand main lines, after hours) is ignored and counted, never "not placed"', function () {
+  const b = xbOf([q('1', 'UDC_A_Q_Main'), q('2', 'A_Q_Sales'), ans('3', 'Peter (Praneeth) Gummadi'), q('4', 'a_q_afterhours')]);
+  assert.equal(b.entryQueues, 2);
+  assert.equal(b.skipped.unmappedQueue, 0);
+  assert.deepEqual(b.unmappedQueues, []);
+  let st = h.call('tfBounceFold_', {}, h.call('tfBounceOfJourney_', [q('1', 'UUC_A_Q_Main'), ans('2', 'Peter (Praneeth) Gummadi')], XB.deptsOfQueue, XB.deptsOfAgent), 'C1');
+  st = JSON.parse(JSON.stringify(st));
+  st.captured = 1;
+  assert.equal(st.callsWithSkip || 0, 0, 'an entry queue is not a skipped step');
+  assert.match(h.call('tfBounceLine_', st), /steps through an entry queue \(ignored\) 1$/);
+});
+
 test('XB-0: the canonicalizer places an agent whose journey name is a feed variant', function () {
   const lk = h.call('tfBounceLookups_', XB_ROSTER, XB_CFG, (n) => (n === 'Peter Gummadi' ? 'Peter (Praneeth) Gummadi' : n));
   assert.deepEqual(JSON.parse(JSON.stringify(lk.deptsOfAgent('Peter Gummadi'))), ['Sales']);

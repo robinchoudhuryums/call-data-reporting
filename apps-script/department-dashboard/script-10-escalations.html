@@ -1793,9 +1793,47 @@
     }
     let html = '<span class="cl-chip ' + cls + '">' + escapeHtml(label) + '</span>';
     if (c.abandonedOnHold) {
-      html += ' <span class="cl-chip cl-chip-warn">Hung up on hold</span>';
+      // HOH-1 (owner 2026-10-29): on an ANSWERED call the flag is not an
+      // abandon -- the caller talked to someone, then hung up while that
+      // agent had them on hold -- so the chip says so and names the agent.
+      if (c.disposition === 'answered') {
+        const at = clHoldHangupIdx_(c);
+        const who = at >= 0 ? String(c.journey[at].name || '') : '';
+        html += ' <span class="cl-chip cl-chip-warn" title="Answered, then the caller hung up while the agent had them on hold.">'
+          + 'Hung up while on hold' + (who ? ' with ' + escapeHtml(who) : '') + '</span>';
+      } else {
+        html += ' <span class="cl-chip cl-chip-warn">Hung up on hold</span>';
+      }
     }
     return html;
+  }
+
+  /**
+   * PURE (HOH-1). The journey step where the caller hung up on hold, or -1.
+   * The capture stamps it (`holdHangup`, rows captured from 2026-10-29);
+   * on older rows it is the last answer by a PERSON -- HOH-0b measured the
+   * flag on the call's last leg in 149 of 149 cases, always after an answer
+   * -- skipping placeholders ("(caller)", "(unknown)"), masked initials (the
+   * old "N."), consults and the transferring call's prefixed hop.
+   */
+  function clHoldHangupIdx_(c) {
+    const j = (c && Array.isArray(c.journey)) ? c.journey : [];
+    if (!c || !c.abandonedOnHold || !j.length) return -1;
+    for (let i = j.length - 1; i >= 0; i--) { if (j[i] && j[i].holdHangup) return i; }
+    if (c.disposition !== 'answered') return -1;
+    for (let i = j.length - 1; i >= 0; i--) {
+      const ev = j[i];
+      if (!ev || ev.kind !== 'answer' || ev.consult || ev.origin) continue;
+      const n = String(ev.name || '');
+      if (!n || n.charAt(0) === '(' || /^(?:[A-Za-z0-9]\.)+$/.test(n)) continue;
+      return i;
+    }
+    return -1;
+  }
+
+  /** The timeline rows of one journey, marking the hold hang-up step (HOH-1; -1 = none). */
+  function clJourneyRowsHtml_(journey, holdIdx) {
+    return (journey || []).map(function (ev, i) { return clJourneyRowHtml_(ev, i === holdIdx); }).join('');
   }
 
   function clCallCardHtml_(c) {
@@ -1808,7 +1846,7 @@
     let body;
     if (c.journey && c.journey.length) {
       body = clChainHtml_(c.journey)
-           + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+           + '<div class="cl-journey">' + clJourneyRowsHtml_(c.journey, clHoldHangupIdx_(c))
            + clJourneyEndRowHtml_(c.journey) + '</div>';
     } else {
       // Pre-journey-extension row: queue-level summary only.
@@ -1847,7 +1885,7 @@
     if (c.attempts > 1) facts.push(c.attempts + ' attempts');
     let body = '';
     if (c.journey && c.journey.length > 1) {
-      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+      body = '<div class="cl-journey">' + clJourneyRowsHtml_(c.journey, -1)
            + clJourneyEndRowHtml_(c.journey) + '</div>';
     }
     return '<div class="cl-call-card cl-call-card--out">'
@@ -1938,13 +1976,16 @@
       + '</div>';
   }
 
-  function clJourneyRowHtml_(ev) {
+  function clJourneyRowHtml_(ev, holdHere) {
     const kindIcon = ev.kind === 'queue' ? '⧖' : (ev.kind === 'answer' ? '✓' : '·');
-    const kindCls  = ev.kind === 'answer' ? ' cl-ev-answer' : (ev.kind === 'queue' ? ' cl-ev-queue' : '');
+    const kindCls  = (ev.kind === 'answer' ? ' cl-ev-answer' : (ev.kind === 'queue' ? ' cl-ev-queue' : ''))
+      + (holdHere === true ? ' cl-ev-holdhang' : '');
     const bits = [];
     if (ev.talk)  bits.push('talked ' + fmtDuration(ev.talk));
     else if (ev.secs != null) bits.push(fmtDuration(ev.secs));
     if (ev.hold)  bits.push('held ' + fmtDuration(ev.hold));
+    // HOH-1: the step where the caller hung up while this agent had them on hold.
+    if (holdHere === true) bits.push('caller hung up here while on hold');
     if (ev.abandoned) bits.push('caller hung up');
     else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
     // IXT-1: a transfer / consult to a colleague, cross-referenced from the

@@ -38,7 +38,7 @@ var IC_COL = {
   TALK: 6, CALL_TIME: 7, CALLER: 8, CALLER_NAME: 9, CALLEE: 10, CALLEE_NAME: 11,
   PARENT_CALL_ID: 14, TRANSFER_TO: 15, DIAL_IN: 16, MISSED: 23, ABANDONED: 24, ANSWERED: 25,
   CAUSE: 26, CALLEE_HOLD_DURATION: 32, CALLEE_DISC_ON_HOLD: 33, CALLER_DISC_ON_HOLD: 34,
-  DEPARTMENTS: 36
+  SIP_CALL_ID: 35, DEPARTMENTS: 36
 };
 
 // ---- pure helpers -----------------------------------------------------------
@@ -272,8 +272,23 @@ function icFirstRingSec_(leg) {
  * PHI guard: a callee NAME that looks like a phone number (external
  * forward) is masked -- `inbound_calls` carries hashes only, never raw
  * numbers. Caller-side fields (number, CNAM name) are never included.
+ *
+ * NX-1 (owner 2026-10-29): a leg whose CALLEE is an outside number used to
+ * print "N." when its name cell was N/A -- the IMP-12 initials mask ran
+ * before the N/A check and made "N/A" an initial. Now: when that number is
+ * the CALLER's own (`opts.callerNumber`, the inbound capture passes it) the
+ * step reads "(caller)" -- the agent's leg to the caller, which 8x8 keeps
+ * beside the agent's answer leg and across a warm transfer (NX-0 sizes it);
+ * any other outside number keeps the masked CNAM, or "(external number)"
+ * when there is none (the marker the outbound readers look for first).
+ *
+ * HOH-1 (owner 2026-10-29): with `opts.markHoldHangup` (the inbound capture),
+ * the step whose Incoming leg carries Caller Disconnect On Hold is stamped
+ * `holdHangup: true`, so the path can show WHERE the caller hung up while
+ * held. HOH-0b measured it on the call's last leg in 149 of 149 flags.
  */
-function icBuildJourney_(legs) {
+function icBuildJourney_(legs, opts) {
+  var callerNo = (opts && opts.callerNumber) || null;
   var events = [];
   for (var i = 0; i < legs.length && events.length < IC_JOURNEY_MAX_EVENTS; i++) {
     var l = legs[i];
@@ -283,8 +298,11 @@ function icBuildJourney_(legs) {
     var rawName = String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim();
     var isQueue = icIsQueueName_(rawName);
     var name = rawName;
+    var calleeExt = !isQueue ? icExternalNumber_(l[IC_COL.CALLEE]) : null;
     if (/^\+?[\d\s\-().]{7,}$/.test(name)) name = '(external number)';
-    else if (!isQueue && name && icExternalNumber_(l[IC_COL.CALLEE])) {
+    else if (calleeExt && callerNo && calleeExt === callerNo) name = '(caller)';
+    else if (calleeExt && (!name || name.toUpperCase() === 'N/A')) name = '(external number)';
+    else if (calleeExt) {
       // P-11 (broad-scan 2026-09-17): a leg whose CALLEE is an external number
       // carries the external party's CNAM as its name (a forward / transfer
       // out) -- the IMP-12 initials rule applies to it exactly as it does to
@@ -307,6 +325,8 @@ function icBuildJourney_(legs) {
     if (!isNaN(startMs) && !isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - startMs) / 1000));
     if (talk > 0) ev.talk = talk;
     if (hold > 0) ev.hold = hold;
+    if (opts && opts.markHoldHangup && icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD])
+        && String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming') ev.holdHangup = true;
     if (String(l[IC_COL.ABANDONED] == null ? '' : l[IC_COL.ABANDONED]).trim() === 'Abandoned') {
       ev.abandoned = true;
     } else if (!answered
@@ -812,7 +832,7 @@ function buildInboundCallRecords_(rawRows, opts) {
       originDept:      isInternalOrigin ? icOriginDeptLabel_(originLeg) : null,
       numQueues:       queues.length,
       numTransfers:    Math.max(0, queues.length - 1),
-      journey:         icBuildJourney_(legs)
+      journey:         icBuildJourney_(legs, { callerNumber: callerNumber, markHoldHangup: true })
     };
     if (waitDiag) {
       // The wait the pre-WS-1 rule stored, and whose leg each rule started at.
@@ -3351,6 +3371,186 @@ function diagnoseHoldHangups(dateIso) {
 
 /** Editor-run: every held date (the Run picker can't pass 'all'). */
 function diagnoseHoldHangupsAllDates() { return diagnoseHoldHangups('all'); }
+
+// ---- NX-0 (owner 2026-10-29): are the outside-number legs real? -----------
+// The path's "N." bubble was a leg whose CALLEE is an outside number with an
+// N/A name (NX-1 relabels it). The owner suspects an 8x8 artifact rather than a
+// real step. This READ-ONLY pass sorts every such leg on a captured outside
+// inbound call:
+//   otherNumber -- the number is NOT the caller's: a real forward out;
+//   mirror      -- to the caller's own number and overlapping the SAME
+//                  agent's answer leg (their Incoming leg from the caller):
+//                  a second record of one conversation;
+//   carrier     -- to the caller, lasting to the call's end while ANOTHER
+//                  agent's answer starts inside it (the warm-transfer shape
+//                  of the owner's 10/22 call): it spans other people's talk;
+//   alone       -- to the caller with neither: the only record of that talk.
+// Plus what each one decides today: the call counts as answered only through
+// it (onlyAnswer), and its Departments value is the call's final department
+// (decidesDept). Call ids only, never a number. Writes nothing.
+
+/** PURE. The NX-0 reading of one outside-number leg `l` of a group. */
+function icOutsideLegShape_(l, g, ctx) {
+  var dir = function (x) { return String(x[IC_COL.DIRECTION] == null ? '' : x[IC_COL.DIRECTION]).trim(); };
+  var ms = function (v) { var t = icParseTs_(v); return isNaN(t) ? NaN : t; };
+  var answered = function (x) {
+    return icTimeToSec_(x[IC_COL.TALK]) > 0
+      && String(x[IC_COL.ANSWERED] == null ? '' : x[IC_COL.ANSWERED]).trim() === 'Answered';
+  };
+  var name = String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim();
+  var toCaller = !!(ctx.callerNumber && icExternalNumber_(l[IC_COL.CALLEE]) === ctx.callerNumber);
+  var fromExt = icDigits_(l[IC_COL.CALLER]);
+  var fromAgent = icIsBareExt_(l[IC_COL.CALLER]);
+  var s0 = ms(l[IC_COL.START]), s1 = ms(l[IC_COL.STOP]);
+  var others = g.filter(function (x) { return x !== l && !icIsRecordingLeg_(x); });
+  var mirror = toCaller && fromAgent && others.some(function (x) {
+    if (dir(x) !== 'Incoming' || !answered(x) || icDigits_(x[IC_COL.CALLEE]) !== fromExt) return false;
+    var a0 = ms(x[IC_COL.START]), a1 = ms(x[IC_COL.STOP]);
+    return !isNaN(a0) && !isNaN(a1) && !isNaN(s0) && !isNaN(s1) && a0 <= s1 && s0 <= a1;
+  });
+  var lastStop = -Infinity;
+  others.concat([l]).forEach(function (x) { var t = ms(x[IC_COL.STOP]); if (!isNaN(t) && t > lastStop) lastStop = t; });
+  var carrier = toCaller && !isNaN(s1) && s1 >= lastStop - IC_HOH_SLACK_MS_ && others.some(function (x) {
+    if (!answered(x) || dir(x) === 'Outgoing') return false;
+    if (icDigits_(x[IC_COL.CALLEE]) === fromExt) return false;
+    var a0 = ms(x[IC_COL.START]);
+    return !isNaN(a0) && a0 > s0 + IC_HOH_SLACK_MS_ && a0 < s1;
+  });
+  var sip = String(l[IC_COL.SIP_CALL_ID] == null ? '' : l[IC_COL.SIP_CALL_ID]).trim();
+  return {
+    cls: !toCaller ? 'otherNumber' : (mirror ? 'mirror' : (carrier ? 'carrier' : 'alone')),
+    dir: dir(l) || '?',
+    answered: answered(l),
+    blankName: !name || name.toUpperCase() === 'N/A',
+    fromAgent: fromAgent,
+    xferTarget: !!ctx.xferTarget,
+    sharedSip: !!sip && sip.toUpperCase() !== 'N/A' && others.some(function (x) {
+      return String(x[IC_COL.SIP_CALL_ID] == null ? '' : x[IC_COL.SIP_CALL_ID]).trim() === sip;
+    }),
+    onlyAnswer: answered(l) && !others.some(answered),
+    decidesDept: ctx.deptLeg === l
+  };
+}
+
+/** PURE over one grid (testable): every outside-number leg of the captured outside calls. */
+function icOutsideLegsForGrid_(grid) {
+  var recs = buildInboundCallRecords_(grid).filter(function (r) { return !r.isInternal; });
+  var groups = icGroupLegsByRoot_(grid);
+  var rootOf = {}, named = {};
+  Object.keys(groups).forEach(function (root) {
+    groups[root].forEach(function (l) {
+      var own = String(l[IC_COL.CALL_ID] == null ? '' : l[IC_COL.CALL_ID]).trim();
+      if (own) rootOf[own] = root;
+    });
+  });
+  Object.keys(groups).forEach(function (root) {
+    groups[root].forEach(function (l) {
+      var t = String(l[IC_COL.TRANSFER_TO] == null ? '' : l[IC_COL.TRANSFER_TO]).trim();
+      if (t && t.toUpperCase() !== 'N/A' && (rootOf[t] || t) !== root) named[rootOf[t] || t] = true;
+    });
+  });
+  var st = { captured: recs.length, calls: 0, legs: 0, answered: 0, blankName: 0, byClass: {}, byDir: {},
+             fromAgent: 0, xferTarget: 0, sharedSip: 0, onlyAnswer: 0, decidesDept: 0, shapes: {},
+             samples: { otherNumber: [], mirror: [], carrier: [], alone: [] } };
+  recs.forEach(function (r) {
+    var g = (groups[r.callId] || []).slice().sort(function (a, b) {
+      return ((icParseTs_(a[IC_COL.START]) || 0) - (icParseTs_(b[IC_COL.START]) || 0))
+        || ((Number(a[IC_COL.LEG_ID]) || 0) - (Number(b[IC_COL.LEG_ID]) || 0));
+    });
+    // The capture's final-department leg: the first answered talk leg with a Departments value.
+    var deptLeg = null;
+    for (var i = 0; i < g.length && !deptLeg; i++) {
+      var dep = String(g[i][IC_COL.DEPARTMENTS] == null ? '' : g[i][IC_COL.DEPARTMENTS]).trim();
+      if (icTimeToSec_(g[i][IC_COL.TALK]) > 0 && String(g[i][IC_COL.ANSWERED]).trim() === 'Answered'
+          && dep && dep.toUpperCase() !== 'N/A') deptLeg = g[i];
+    }
+    var hit = false;
+    g.forEach(function (l) {
+      if (icIsRecordingLeg_(l) || icIsQueueName_(l[IC_COL.CALLEE_NAME]) || !icExternalNumber_(l[IC_COL.CALLEE])) return;
+      var sh = icOutsideLegShape_(l, g, { callerNumber: r.callerNumber, xferTarget: !!named[r.callId], deptLeg: deptLeg });
+      hit = true;
+      st.legs++;
+      st.byClass[sh.cls] = (st.byClass[sh.cls] || 0) + 1;
+      st.byDir[sh.dir] = (st.byDir[sh.dir] || 0) + 1;
+      ['answered', 'blankName', 'fromAgent', 'xferTarget', 'sharedSip', 'onlyAnswer', 'decidesDept'].forEach(function (k) {
+        if (sh[k]) st[k]++;
+      });
+      var key = sh.dir + ' / ' + sh.cls + (sh.xferTarget ? ' / transfer target' : '') + (sh.answered ? '' : ' / unanswered');
+      st.shapes[key] = (st.shapes[key] || 0) + 1;
+      if (st.samples[sh.cls].length < 5 && st.samples[sh.cls].indexOf(r.callId) === -1) st.samples[sh.cls].push(r.callId);
+    });
+    if (hit) st.calls++;
+  });
+  return st;
+}
+
+/** PURE. NX-0's log line. */
+function icOutsideLegLine_(st) {
+  var c = st.byClass || {};
+  var n = function (v) { return String(Math.round(Number(v) || 0)); };
+  return n(st.captured) + ' captured outside calls; ' + n(st.calls) + ' carry a leg to an outside number (' + n(st.legs)
+    + ' legs, ' + n(st.answered) + ' answered, ' + n(st.blankName) + ' with a blank name) -- a second record of the agent\'s own answer '
+    + n(c.mirror) + ', spanning a warm transfer to the end ' + n(c.carrier) + ', the only record of that talk ' + n(c.alone)
+    + ', a different outside number ' + n(c.otherNumber) + '; from an agent extension ' + n(st.fromAgent)
+    + ', on a transfer-target call ' + n(st.xferTarget) + ', sharing a SIP id with another leg ' + n(st.sharedSip)
+    + '; the call counts as answered ONLY through it ' + n(st.onlyAnswer) + ', it sets the call\'s final department ' + n(st.decidesDept);
+}
+
+/**
+ * NX-0 (owner 2026-10-29): READ-ONLY. Over the held Call_Legs_* tabs
+ * (`dateIso` = one date, 'all' = every held date, blank = the latest): every
+ * leg to an outside number on a captured outside inbound call, sorted into
+ * mirror / carrier / alone / otherNumber, with directions, the shapes and
+ * call-id samples for Caller Lookup. Writes nothing; call ids only.
+ */
+function diagnoseOutsideNumberLegs(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { Logger.log('[nx] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
+  try { if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_(); } catch (e0) {}
+  try { if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_(); } catch (e1) {}
+  var total = { days: 0, byClass: {}, byDir: {}, shapes: {}, samples: { otherNumber: [], mirror: [], carrier: [], alone: [] } };
+  var sums = ['captured', 'calls', 'legs', 'answered', 'blankName', 'fromAgent', 'xferTarget', 'sharedSip', 'onlyAnswer', 'decidesDept'];
+  var t0 = Date.now();
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[nx] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
+    var grid = sheets[i].sheet.getDataRange().getDisplayValues();
+    grid.shift();
+    var st = icOutsideLegsForGrid_(grid);
+    Logger.log('[nx] %s: %s', sheets[i].iso, icOutsideLegLine_(st));
+    total.days++;
+    sums.forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    ['byClass', 'byDir', 'shapes'].forEach(function (k) {
+      Object.keys(st[k]).forEach(function (x) { total[k][x] = (total[k][x] || 0) + st[k][x]; });
+    });
+    Object.keys(st.samples).forEach(function (k) {
+      st.samples[k].forEach(function (id) { if (total.samples[k].length < 5) total.samples[k].push(id); });
+    });
+  }
+  Logger.log('[nx] TOTAL over %s date(s): %s', String(total.days), icOutsideLegLine_(total));
+  Logger.log('[nx]   by direction: %s', icTopCounts_(total.byDir, 6).join('; '));
+  Logger.log('[nx]   shapes: %s', icTopCounts_(total.shapes, 10).join('; '));
+  ['mirror', 'carrier', 'alone', 'otherNumber'].forEach(function (k) {
+    if (total.samples[k].length) Logger.log('[nx]   %s e.g.: %s', k, total.samples[k].join(', '));
+  });
+  return total;
+}
+
+/** Editor-run: every held date (the Run picker can't pass 'all'). */
+function diagnoseOutsideNumberLegsAllDates() { return diagnoseOutsideNumberLegs('all'); }
+
+/** PURE. Top-N "key: n" of a count map (the twin of transferFilter.js tfTopCounts_). */
+function icTopCounts_(map, n) {
+  return Object.keys(map || {}).sort(function (a, b) { return (map[b] - map[a]) || (a < b ? -1 : 1); })
+    .slice(0, n).map(function (k) { return k + ': ' + String(map[k]); });
+}
 
 /** PURE over one grid (testable): the capture's records + the legs behind them. */
 function icHoldHangupsForGrid_(grid) {

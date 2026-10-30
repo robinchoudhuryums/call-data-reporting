@@ -1278,7 +1278,7 @@ function sendInboundReportEmail(req) {
     + ((meta.companyView && (ivr || dir))
       ? inboundEmailKpiRow_('… of them in the phone menu / on a person\u2019s line', fmtNum_(ivr) + ' / ' + fmtNum_(dir), '')
       : '')
-    + inboundEmailKpiRow_('Hung up on hold (after an answer, so inside Answered)', fmtNum_(k.abandonedOnHold), inboundEmailDelta_(k.abandonedOnHold, p.abandonedOnHold, false))
+    + inboundEmailKpiRow_('Hung up while on hold (after an answer, so inside Answered)', fmtNum_(k.abandonedOnHold), inboundEmailDelta_(k.abandonedOnHold, p.abandonedOnHold, false))
     + inboundEmailKpiRow_('Transfers nobody picked up (an agent\u2019s transfer attempt)', fmtNum_(k.xferUnanswered), inboundEmailDelta_(k.xferUnanswered, p.xferUnanswered, false))
     + inboundEmailKpiRow_('Avg wait', inboundEmailDur_(k.avgWaitSec), inboundEmailDelta_(k.avgWaitSec, p.avgWaitSec, false))
     + inboundEmailKpiRow_('Avg hold', inboundEmailDur_(k.avgHoldSec), '');

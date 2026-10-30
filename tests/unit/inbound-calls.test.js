@@ -1812,6 +1812,113 @@ test('HOH-0b: col P chains (a transfer of a transfer) up to the hop cap, without
   assert.equal(linked.length, 3, 'W1 (consult + recording) + W2 (1), R1 never re-added');
 });
 
+// NX-1 / NX-0 (owner 2026-10-29): the path's "N." bubble. A leg to an outside
+// number with an N/A name went through the initials mask, so "N/A" printed as
+// "N.". The two shapes the owner's legs show: the agent's own Outgoing leg to
+// the caller beside their answer leg (a mirror), and -- on a warm transfer's
+// new call -- the colleague's leg to the caller that lasts to the end while
+// the next agent talks inside it (a carrier, the 10/22 call 1783985355961).
+const NX_C = '18115550123';
+function nxMirror(o) {
+  o = o || {};
+  const D = '10/22/2026 ';
+  return [
+    leg({ callId: 'M1', legId: 1, start: D + '08:00:00', stop: D + '08:00:10', direction: 'Incoming', caller: NX_C, callee: '103', calleeName: 'A_Q_CSR' }),
+    leg({ callId: 'M1', legId: 2, start: D + '08:00:10', connected: D + '08:00:10', stop: D + '08:03:10', direction: 'Incoming', talk: '0:03:00',
+          caller: NX_C, callee: '240', calleeName: 'Camila (Cheshta) Bhutani', answered: 'Answered', dept: o.noInDept ? 'N/A' : 'Customer Success' }),
+    leg({ callId: 'M1', legId: 3, start: D + '08:00:10', connected: D + '08:00:10', stop: D + '08:03:10', direction: 'Outgoing', talk: '0:03:00',
+          caller: '240', callerName: 'Camila (Cheshta) Bhutani', callee: NX_C, calleeName: o.cnam || 'N/A', answered: 'Answered', dept: 'Customer Success' }),
+  ];
+}
+function nxCarrier() {
+  const D = '10/22/2026 ';
+  return [
+    leg({ callId: 'R0', legId: 1, start: D + '08:43:54', connected: D + '08:43:54', stop: D + '08:52:06', direction: 'Incoming', talk: '0:08:12',
+          caller: NX_C, callee: '304', calleeName: 'Camila (Cheshta) Bhutani', answered: 'Answered', to: 'T1', dept: 'Customer Success' }),
+    leg({ callId: 'T1', legId: 1, start: D + '08:47:01', connected: D + '08:47:01', stop: D + '08:56:20', direction: 'Internal', talk: '0:09:18',
+          caller: '304', callee: '250', calleeName: 'Nicolas (Nitin) Ghonasgi', answered: 'Answered' }),
+    leg({ callId: 'T1', legId: 2, start: D + '08:52:07', connected: D + '08:52:07', stop: D + '08:58:25', direction: 'Outgoing', talk: '0:06:17',
+          caller: '250', callerName: 'Nicolas (Nitin) Ghonasgi', callee: NX_C, answered: 'Answered', dept: 'Customer Success' }),
+    leg({ callId: 'T1', legId: 3, start: D + '08:56:20', stop: D + '08:56:27', direction: 'Incoming', caller: NX_C, callee: '173', calleeName: 'A_Q_PAP' }),
+    leg({ callId: 'T1', legId: 4, start: D + '08:56:27', connected: D + '08:56:27', stop: D + '08:58:25', direction: 'Incoming', talk: '0:01:57',
+          caller: NX_C, callee: '215', calleeName: 'Percy (Praveen) Shukla', answered: 'Answered', dept: 'Inside Sales' }),
+  ];
+}
+
+test('NX-1: the agent\'s leg to the caller reads "(caller)", never "N." -- blank name or a CNAM alike', function () {
+  const names = (rows, id) => rec(build(rows), id).journey.map((e) => e.name);
+  assert.deepEqual(JSON.parse(JSON.stringify(names(nxMirror(), 'M1'))), ['A_Q_CSR', 'Camila (Cheshta) Bhutani', '(caller)']);
+  assert.deepEqual(JSON.parse(JSON.stringify(names(nxMirror({ cnam: 'MIRAMACE HEALTH' }), 'M1')))[2], '(caller)',
+    'the caller\'s own CNAM is not shown as initials either');
+  assert.ok(names(nxCarrier(), 'T1').indexOf('(caller)') !== -1);
+  assert.ok(names(nxCarrier(), 'T1').indexOf('N.') === -1);
+});
+
+test('NX-1: a different outside number reads "(external number)" when blank, initials when named; outbound gets the marker too', function () {
+  const D = '10/22/2026 ';
+  const rows = nxMirror().slice(0, 2).concat([
+    leg({ callId: 'M1', legId: 4, start: D + '08:03:10', connected: D + '08:03:12', stop: D + '08:05:00', direction: 'Incoming', talk: '0:01:48',
+          caller: NX_C, callee: '13125550000', calleeName: 'N/A', answered: 'Answered' }),
+    leg({ callId: 'M1', legId: 5, start: D + '08:05:00', connected: D + '08:05:01', stop: D + '08:06:00', direction: 'Incoming', talk: '0:00:59',
+          caller: NX_C, callee: '13125550001', calleeName: 'Acme Pharmacy', answered: 'Answered' })]);
+  const j = rec(build(rows), 'M1').journey.map((e) => e.name);
+  assert.deepEqual(JSON.parse(JSON.stringify(j.slice(2))), ['(external number)', 'A.P.']);
+  // Outbound passes no caller number: the dialled party's blank name is the marker
+  // obInstantDerivedRing_ reads first (OutboundReport.gs).
+  const ob = h.call('icBuildJourney_', [leg({ callId: 'O1', legId: 1, start: D + '09:00:00', connected: D + '09:00:20', stop: D + '09:02:00',
+    direction: 'Outgoing', talk: '0:01:40', caller: '240', callee: NX_C, calleeName: 'N/A', answered: 'Answered' })]);
+  assert.equal(ob[0].name, '(external number)');
+});
+
+test('HOH-1: the capture stamps the step whose Incoming leg carries the hold hang-up flag, and only that one', function () {
+  const rows = nxMirror().map((r) => r.slice());
+  rows[1][34] = 'TRUE';   // Camila's Incoming answer leg: the caller hung up while she held them
+  rows[2][34] = 'TRUE';   // the Outgoing leg never counts (not the caller's leg)
+  const j = JSON.parse(JSON.stringify(rec(build(rows), 'M1').journey));
+  assert.deepEqual(j.map((e) => !!e.holdHangup), [false, true, false]);
+  assert.equal(j[1].name, 'Camila (Cheshta) Bhutani');
+  // The outbound capture's journeys are never stamped.
+  assert.equal(h.call('icBuildJourney_', [rows[1]])[0].holdHangup, undefined);
+});
+
+test('NX-0: the agent\'s own leg to the caller beside their answer leg is a mirror; which leg sets the department is reported', function () {
+  const st = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxMirror())));
+  assert.equal(st.calls, 1);
+  assert.equal(st.legs, 1);
+  assert.deepEqual(st.byClass, { mirror: 1 });
+  assert.equal(st.fromAgent, 1);
+  assert.equal(st.blankName, 1);
+  assert.equal(st.onlyAnswer, 0, 'the agent\'s Incoming leg answers the call too');
+  assert.equal(st.decidesDept, 0, 'the Incoming answer leg comes first');
+  const noDept = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxMirror({ noInDept: true }))));
+  assert.equal(noDept.decidesDept, 1, 'with no Departments on the answer leg, the mirror sets the final department');
+  assert.deepEqual(st.samples.mirror, ['M1']);
+});
+
+test('NX-0: the warm-transfer leg that spans the next agent\'s talk to the end is a carrier, on a transfer-target call', function () {
+  const st = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxCarrier())));
+  assert.deepEqual(st.byClass, { carrier: 1 });
+  assert.equal(st.xferTarget, 1);
+  assert.deepEqual(st.shapes, { 'Outgoing / carrier / transfer target': 1 });
+  // Cut it short of the end: then it is the only record of that talk.
+  const rows = nxCarrier().map((r) => r.slice());
+  rows.filter((r) => r[0] === 'T1' && r[1] === 2)[0][4] = '10/22/2026 08:56:20';
+  const alone = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', rows)));
+  assert.deepEqual(alone.byClass, { alone: 1 });
+});
+
+test('NX-0: a forward to a different outside number is otherNumber; the line names every class and no number', function () {
+  const D = '10/22/2026 ';
+  const rows = nxMirror().slice(0, 2).concat([leg({ callId: 'M1', legId: 4, start: D + '08:03:10', connected: D + '08:03:12', stop: D + '08:05:00',
+    direction: 'Incoming', talk: '0:01:48', caller: NX_C, callee: '13125550000', calleeName: 'N/A', answered: 'Answered' })]);
+  const st = JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', rows)));
+  assert.deepEqual(st.byClass, { otherNumber: 1 });
+  assert.equal(st.fromAgent, 0);
+  const line = h.call('icOutsideLegLine_', JSON.parse(JSON.stringify(h.call('icOutsideLegsForGrid_', nxMirror()))));
+  assert.match(line, /a second record of the agent's own answer 1, spanning a warm transfer to the end 0, the only record of that talk 0, a different outside number 0/);
+  assert.ok(!/555/.test(line) && !/8115/.test(line));
+});
+
 test('HOH-0: the log line names every class and no number', function () {
   const line = h.call('icHoldHangupLine_', JSON.parse(JSON.stringify(h.call('icHoldHangupsForGrid_', hohCall()))));
   assert.match(line, /LAST 0 .*ANSWERED after it 1 .*unanswered 0/);

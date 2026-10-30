@@ -144,7 +144,7 @@ const MODALS = [
       record('Inbound (SB-5): company-wide, where the 402 hung up (queue / phone menu / person\u2019s line) adds up to them',
         JSON.stringify(v.where) === JSON.stringify(['bad:244', 'bad2:120', 'soft:38']), JSON.stringify(v.where));
       record('Inbound (SB-5): on hold and unanswered transfers are labelled under the bar, not in it; every figure keeps its vs-prior chip',
-        /61 hung up on hold — after an agent answered, so inside Answered/.test(v.quality) && /14 transfers nobody picked up/.test(v.quality)
+        /61 hung up while on hold — after an agent answered, so counted inside Answered/.test(v.quality) && /14 transfers nobody picked up/.test(v.quality)
           && v.deltas >= 10, JSON.stringify({ q: v.quality.slice(0, 160), deltas: v.deltas }));
     } } },
   // D1 (owner 2026-10-21): the Direct Calls report. The company run is clean

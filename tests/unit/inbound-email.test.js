@@ -50,7 +50,7 @@ test('SB-5e: one bar of three cells, each its share of the calls, in the row ord
 
 test('SB-5e: on hold and unanswered transfers say why they are not parts; the stages only company-wide', function () {
   const all = send(true);
-  assert.match(all, /Hung up on hold \(after an answer, so inside Answered\)/);
+  assert.match(all, /Hung up while on hold \(after an answer, so inside Answered\)/);
   assert.match(all, /Transfers nobody picked up \(an agent/);
   assert.match(all, /in the phone menu \/ on a person/);
   assert.match(all, /120 \/ 38/);

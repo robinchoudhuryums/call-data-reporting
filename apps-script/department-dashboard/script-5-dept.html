@@ -802,7 +802,7 @@
     var who = bits.length ? '<div class="cj-origin">Placed by ' + bits.join(' · ') + '</div>' : '';
     if (c.journey && c.journey.length) {
       return head + who + clChainHtml_(c.journey)
-        + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+        + '<div class="cl-journey">' + clJourneyRowsHtml_(c.journey, -1)
         + clJourneyEndRowHtml_(c.journey) + '</div>';
     }
     return head + who + '<div class="cl-journey-summary">(no leg-by-leg detail recorded '
@@ -845,12 +845,14 @@
       + (c.isInternal ? '<span class="cj-internal-tag">internal call</span> · ' : '')
       + escapeHtml(c.callDate || '')
       + (c.disposition ? ' · <strong>' + escapeHtml(c.disposition) + '</strong>' : '')
+      // HOH-1: an answered call whose caller then hung up while held.
+      + (c.abandonedOnHold && c.disposition === 'answered' ? ' · hung up while on hold' : '')
       + (c.abandonStage ? ' (' + escapeHtml(c.abandonStage) + ')' : '')
       + (c.dialIn ? ' · dial-in ' + escapeHtml(c.dialIn) : '')
       + '</div>';
     if (c.journey && c.journey.length) {
       return head + origin + related + clChainHtml_(c.journey)
-        + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+        + '<div class="cl-journey">' + clJourneyRowsHtml_(c.journey, clHoldHangupIdx_(c))
         + clJourneyEndRowHtml_(c.journey) + '</div>';
     }
     var path = [c.entryQueue, c.finalQueue].filter(Boolean).map(escapeHtml).join(' → ');
