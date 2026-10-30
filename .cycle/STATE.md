@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-10-30 (8) -- SHIPPED: [PR #399](https://github.com/robinchoudhuryums/call-data-reporting/pull/399) merged on green CI (merge 7cc99b0)** -- NX-2. Branch restarted from main.
+  **Owner-side:** push cdr-import; `backfillInboundCalls(from, to, true)` + `backfillOutboundCalls(from, to, true)` over the held dates; optional NX-0 re-run (the "only record of talk" group should shrink to a handful); the Active Dept Config rows for XB-1.
+  **Where I left off:** nothing open on the branch.
 - **2026-10-30 (7) -- NX-2 IMPLEMENTED (block 259-nx2-broad-implement).** `icIsCallerIncoming_` (Incoming AND not a recording leg) decides direction in both captures + the indexes; ~26 calls/day move from inbound to outbound. 2770 tests, bites 4/4. PR next, merge on green.
   **Owner-side:** push cdr-import; re-run both backfills over the held dates; Dept Config rows for XB-1.
 - **2026-10-30 (6) -- ROOT CAUSE of the phantom inbound calls (owner's raw legs, 1783985220389).** An ordinary OUTBOUND call (Outgoing 107 Alan -> customer, connected 1 s) whose 8x8 CallRecording leg is marked **Incoming with the customer's number as caller**. Inbound capture (`incoming` filter, inboundCalls.js ~585) reads that as the customer calling in -> a 1-second "answered" inbound call; outbound capture's Gate 1 (outboundCalls.js ~115, "any Incoming leg") drops the call. Not click-to-dial: the owner's first sample was a 1 s outbound attempt then a redial. Proposed NX-2 (asked for go): one helper `icIsCallerIncoming_` (Incoming AND not a recording leg) used by inbound 517/585/1154/3457 and outbound 115/214/642; ~210 calls / 8 days move from inbound to outbound; not retroactive -- re-run the inbound + outbound backfills over the held dates.
