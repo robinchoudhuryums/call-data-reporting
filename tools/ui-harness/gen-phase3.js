@@ -43,6 +43,9 @@ function fakeNeonConn() {
     setString(){}, setInt(){}, setObject(){},
     execute(){ return true; },
     executeQuery(){
+      // ESC-C3: the LIST query now names escalation_activity too (the card
+      // comment subqueries), so route on what the query SELECTS FROM.
+      if (/^SELECT COALESCE\(json_agg\(t ORDER BY t\.occurred_at/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
       if (/escalation_activity/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ACTIVITY) });
       if (/FROM \(/.test(sql) && /escalations/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
       if (/FILTER/.test(sql) && /escalations/.test(sql)) return mkRs({
