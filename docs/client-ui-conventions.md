@@ -2561,8 +2561,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   that count redials, a flag that sits inside another part -- on the line
   underneath, labelled. Live on: Agent Day outbound (SB-1, modal + panel),
   the Direct Calls report and the Team Direct Calls card (SB-2), the
-  Outbound summary, the Team Outbound panel and the Overview tile's
-  outbound line (SB-3), the Inbound report (SB-5) and the CSR Transfer
+  Outbound summary and the Team Outbound panel (SB-3; the Overview tiles
+  carry no bar since OVD-2), the Inbound report (SB-5) and the CSR Transfer
   detail (SB-6). Segment colours are generic (`ob-seg-good` handled,
   `-bad` lost, `-soft` a softer loss, `-unk` not known, `-cat1..5` +
   `-hatch` for destinations, `-tf-*` the R23 transfer tiers). Three rules:
