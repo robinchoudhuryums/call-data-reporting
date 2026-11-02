@@ -3893,3 +3893,14 @@ When something looks wrong, before assuming a code bug, check:
     parent (#86). Employee names and call ids only; writes nothing. Its
     numbers decide whether an admin list of these calls (TR-1) is built.
     Pinned by `transfer-filter.test.js`.
+    **TR-1 (built 2026-11-02, owner: "build now"):** the same reading is on the
+    dashboard as **Admin ▾ → Transfer retries** (`TransferRetries.gs`,
+    admin-only, read-only, Neon-only -- an unreachable Neon reads "unavailable"):
+    dates (Last 7 / 30 days, up to 92 days), a department-tried filter, the
+    summary, the people most often not answering first, and each call with its
+    path chip. The rule is MIRRORED from cdr-import and pinned by
+    `transfer-retries.test.js`'s parity test -- **retune the 8-second decline
+    line in BOTH `TF_RETRY_QUICK_SECS_` (transferFilter.js) and `TR_QUICK_SECS_`
+    (TransferRetries.gs)** once the TR-0 census says where it belongs. It reads
+    only what the capture stored: calls before IXT-1 / OXT-1, or not re-imported
+    since, show no retries. No property, trigger or migration.

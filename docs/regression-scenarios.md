@@ -704,3 +704,14 @@ S68 | Exception days: one outage day left out everywhere, said everywhere, and a
     - Remove the day (it asks first, in danger tone): within a page refresh every figure is back to including it.
   Expected: as described.
   Fails if: any report's numbers drop the day without a note, or show the note while still counting it; the striped bar sets the card's scale; a manager sees or can use the include switch; an alert fires or logs "no data" for the day; removing the day leaves any report excluding it after a refresh.
+
+S69 | Transfer retries: the admin list of transfers tried again in the same department (TR-1) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN, Admin ▾ → Transfer retries. It opens on the last 30 days (ending yesterday) for every department and shows a summary ("N calls where a transfer was tried again in the same department. The first attempt: X declined quickly, Y rang out, Z went to voicemail."), the people most often not answering first (with how many of those were quick declines), the "sent by → tried" department pairs, and one row per call.
+    - Pick a row and open its "↳ path": the call path shows the agent's attempt to the first person (missed, or voicemail) and then the attempt to the second person in that department, at the times the row gives. "Declined quickly" means that first ring lasted 8 seconds or less.
+    - Pick a department under "Department tried": only calls whose retried department is that one remain; a department with none says so.
+    - Last 7 days, or a custom From / To up to 92 days: it reloads for that window; a longer window is refused.
+    - Check one outbound row (marked Outbound) the same way: the dialling agent is the sender.
+    - As a MANAGER: no Transfer retries item in any menu; in the console `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getTransferRetries({ from: '2026-10-01', to: '2026-10-30' })` is refused (admin-only).
+  Expected: as described; no phone number appears anywhere on the page; with Neon unreachable the modal says the list is unavailable.
+  Fails if: a call whose second attempt went to the same person, or to someone in the sender's own department, is listed; a sub-queue (e.g. PAP) counts as a different department from its parent; the department filter keeps other departments; or a manager can open it.

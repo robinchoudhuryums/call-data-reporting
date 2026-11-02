@@ -2170,7 +2170,7 @@ items for anything it flags or doesn't cover.)
 86. `diagnoseTransferBounces` (XB-0, cdr-import, read-only): calls sent to another department after being answered that CAME BACK, by department trio and first sender
 87. `diagnoseOutsideNumberLegs` (NX-0, cdr-import, read-only) + NX-2: a CallRecording leg 8x8 marks Incoming is not a caller, so short outbound calls stop reading as inbound (not retroactive; re-run both backfills)
 88. Escalation comments missing from their thread (ESC-C2): `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (dashboard, admin, once after deploy); resolve comments now go into the thread (ESC-C1)
-89. `diagnoseTransferRetries` (TR-0, cdr-import, read-only): a call where an agent tried a person in another department, got no answer, then tried someone else there -- the incorrect-rejection check
+89. `diagnoseTransferRetries` (TR-0, cdr-import, read-only): a call where an agent tried a person in another department, got no answer, then tried someone else there -- the incorrect-rejection check; on the dashboard as Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned)
 
 ## Cycle Workflow Config
 
@@ -2344,6 +2344,7 @@ S65 | Alert reasons: an agent below a threshold over N workdays; callers not cal
 S66 | Queue figures follow their period: My Department queue chips, Overview abandoned chips, Insights idle agents (QD-1, QD-2, IDLE-2) | Subsystem: Department Dashboard
 S67 | Direct Calls report covers only days that exist: the clamp, missing workdays, the int / ext split (D1) | Subsystem: Department Dashboard
 S68 | Exception days: one outage day left out everywhere, said everywhere, and an admin can put it back (#81) | Subsystem: Department Dashboard
+S69 | Transfer retries: the admin list of transfers tried again in the same department (TR-1) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
