@@ -46,11 +46,11 @@ async function openDept(page, meta) {
 function tileLines() {
   return Array.from(document.querySelectorAll('.ov-dept-tile')).map((t) => {
     const ob = t.querySelector('.ov-dept-ob');
-    // SB-3: the slim connected / did-not-connect bar under the line -- since
-    // OVD-1 drawn only on a tile with no direct-line row, which owns the bar.
-    const bar = t.querySelector('.ov-dept-ob-bar:not(.ov-dept-dl-bar) .ob-obar');
+    // OVD-2 (owner 2026-11-02): a tile draws NO split bar -- neither SB-3's
+    // outbound connected bar nor OVD-1's direct-line bar; the numbers carry it.
+    const bar = t.querySelector('.ob-obar');
     const dl = t.querySelector('.ov-dept-dl');
-    const dlBar = t.querySelector('.ov-dept-dl-bar .ob-obar');
+    const dlBar = null;
     const segs = (b) => b ? Array.from(b.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':'
       + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0])) : null;
     return { dept: t.getAttribute('data-dept'), text: ob ? ob.textContent.replace(/\s+/g, ' ').trim() : null,
@@ -92,10 +92,10 @@ function tileLines() {
   // rate; the outbound row stays as text and its connected bar gives way.
   {
     const dd = first.direct.yesterday;
-    record('OVD-1: the tile shows the direct-line answer rate with its bar (answered / missed / busy) and the counts in words',
-      !!firstLine && firstLine.bar === null && /^Direct lines\s*\d/.test(firstLine.dl || '')
+    record('OVD-1/OVD-2: the tile shows the direct-line answer rate and the counts in words -- and no split bar at all',
+      !!firstLine && /^Direct lines\s*\d/.test(firstLine.dl || '')
         && firstLine.dl.indexOf(dd.rate.toFixed(1) + '% answered') !== -1
-        && JSON.stringify(firstLine.dlBar) === JSON.stringify(['good:' + dd.answered, 'bad:' + dd.missedFree, 'soft:' + dd.missedBusy].filter((x) => !/:0$/.test(x)))
+        && lines.every((l) => l.bar === null)
         && firstLine.dlWords.indexOf(dd.answered + ' answered · ' + dd.missedFree + ' missed · ' + dd.missedBusy + ' while busy · of '
           + (dd.answered + dd.missedFree + dd.missedBusy) + ' that rang their lines') === 0,
       first.name + ': ' + JSON.stringify(firstLine));
@@ -107,7 +107,7 @@ function tileLines() {
     record('OVD-1: a thin window (under 10 calls) mutes its chip', !!thin && thin.dlChip.length === 1 && /^muted /.test(thin.dlChip[0]),
       JSON.stringify(thin && thin.dlChip));
     const quiet = lines.filter((l) => l.dept === 'Power')[0];
-    record('OVD-1: a day with no rings says so and draws no bar', !!quiet && /no calls rang their lines/.test(quiet.dl || '') && quiet.dlBar === null,
+    record('OVD-1: a day with no rings says so and shows no counts line', !!quiet && /no calls rang their lines/.test(quiet.dl || '') && !quiet.dlWords,
       JSON.stringify(quiet));
     const withDl = ov.depts.filter((d) => d.direct && !d.parent).map((d) => d.name);
     const dlRendered = lines.filter((l) => l.dl).map((l) => l.dept);

@@ -196,14 +196,15 @@ test('OVD-1: each read fails on its own -- a broken direct read keeps the outbou
   });
 });
 
-test('OVD-1: the client draws the direct row (the tile’s bar) whenever shipped, and the outbound connected bar only without it', function () {
+test('OVD-1 / OVD-2: the client draws the direct row whenever shipped, and no split bar on the tile', function () {
   const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
   const src = fs.readFileSync(path.join(dir, 'script-3-overview.html'), 'utf8');
   const line = src.slice(src.indexOf('function ovBuildOutboundLine_'), src.indexOf('function ovBuildObRow_'));
   assert.match(line, /return ovBuildObRow_\(dept\) \+ ovBuildDirectLine_\(dept\);/, 'both call sites (tile + sub-queue card) get both rows');
   assert.match(line, /var dl = dept && dept\.direct && dept\.direct\[ovCardPeriod\];\s*if \(!dl\) return '';/);
-  assert.match(line, /\{ cls: 'good', n: a, label: 'answered' \},\s*\{ cls: 'bad', n: mf, label: 'missed while free' \},\s*\{ cls: 'soft', n: mb, label: 'missed while on another call' \}/);
+  assert.match(line, /fmtNumber\(a\) \+ ' answered · ' \+ fmtNumber\(mf\) \+ ' missed · ' \+ fmtNumber\(mb\) \+ ' while busy · of '/);
   assert.match(line, /obRateChip_\(dl\.rate, pr\.rate, a \+ mf,/, 'the chip is in points and mutes on a thin window, like the outbound rate');
-  const ob = src.slice(src.indexOf('function ovBuildObRow_'), src.indexOf('function ovBuildGridTile_'));
-  assert.match(ob, /var obBar = ob\.placed > 0 && !\(dept\.direct && dept\.direct\[ovCardPeriod\]\)/);
+  // OVD-2 (owner 2026-11-02): the tile draws no split bar, direct or outbound.
+  const rows = src.slice(src.indexOf('function ovBuildOutboundLine_'), src.indexOf('function ovBuildGridTile_'));
+  assert.doesNotMatch(rows, /obOutcomeBarHtml_/, 'no split bar on the tile');
 });

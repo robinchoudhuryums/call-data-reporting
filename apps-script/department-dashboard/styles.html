@@ -6396,14 +6396,12 @@
     font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
   .ov-dept-ob-pct { color: var(--dir-out); font-weight: 600; }
   .ov-dept-ob-since, .ov-dept-ob-none { color: var(--muted); font-size: 11px; }
-  .ov-dept-ob-bar { margin: 2px 0 4px; }   /* SB-3: connected / did not connect */
-  .ov-dept-ob-bar .ob-obar--thin { height: 6px; }
-  /* OVD-1: the direct-line row -- the tile's split bar, answered / missed
-     while free / missed while busy, with the counts in words under it. */
+  /* OVD-1: the direct-line row -- answer rate + chip, the counts in words
+     under it (no bar, OVD-2). */
   .ov-dept-tile-row.ov-dept-dl { align-items: center; gap: 10px; margin-top: 4px; }
   .ov-dir-pill.ov-dir-pill--direct { background: color-mix(in oklab, var(--accent) 14%, var(--paper)); color: var(--accent); }
   .ov-dept-dl-pct { font-weight: 600; color: var(--ink); }
-  .ov-dept-dl-words { color: var(--muted); font-size: 11.5px; margin-bottom: 4px; }
+  .ov-dept-dl-words { color: var(--muted); font-size: 11.5px; margin: 2px 0 4px; }
   /* Batch E1: the Insights Outbound fold (admin-only until 6c). */
   #ins-ob-fold .pr-kpi-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   #ins-ob-fold .ins-ob-scroll { overflow-x: auto; max-width: 100%; margin-top: 4px; }

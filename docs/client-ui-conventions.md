@@ -2394,15 +2394,14 @@ stay pinned by INV-39, INV-53 and INV-06.
   SAME card window the inbound stats show; a window that starts before outbound
   capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
   only to admins and only when its Neon read worked, so "render when present"
-  is the whole client gate. **OVD-1 (owner 2026-11-02): the tile's split bar
-  belongs to the DIRECT-LINE row** -- `ovBuildOutboundLine_` now returns
-  `ovBuildObRow_` (the outbound text + chips) + `ovBuildDirectLine_` (a blue
-  "Direct lines" pill, the answer rate with an `obRateChip_` points chip, the
-  answered / missed / busy bar and the counts in words, from `dept.direct`).
-  The outbound connected bar is drawn only on a tile with no direct block, so
-  a failed direct read still leaves a bar. Both call sites (grid tile +
-  sub-queue card) get both rows. Pinned by `overview-direct.test.js` and
-  `drive-outbound-e.js`. **The Outbound summary (E1, moved by UX-1):** the
+  is the whole client gate. **OVD-1 / OVD-2 (owner 2026-11-02): the tile's direct-line row** --
+  `ovBuildOutboundLine_` returns `ovBuildObRow_` (the outbound text + chips)
+  + `ovBuildDirectLine_` (a blue "Direct lines" pill, the answer rate with an
+  `obRateChip_` points chip, the counts in words, from `dept.direct`). The
+  tile draws NO split bar (OVD-2: the owner judged the numbers enough), so
+  SB-3's outbound connected bar is gone from the tiles too. Both call sites
+  (grid tile + sub-queue card) get both rows. Pinned by
+  `overview-direct.test.js` and `drive-outbound-e.js`. **The Outbound summary (E1, moved by UX-1):** the
   `#ins-ob-fold` fold (`insObSync_`, script-8; ids keep their historical
   `ins-*` prefix) sits in `#dept-ob-sections` DIRECTLY UNDER the outbound
   agent table, outside the Insights region (owner 2026-10-12, broad-scan
