@@ -317,6 +317,15 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       st.days = st.days.filter(function (d) { return d.date !== (req && req.date); });
       return st;
     },
+    // TR-1: the REAL getTransferRetries over gen-phase3's fake journeys; a
+    // department pick filters the same cases the way the server does.
+    getTransferRetriesInit: function () { return P['transfer-retries-init']; },
+    getTransferRetries: function (req) {
+      var d = JSON.parse(JSON.stringify(P['transfer-retries']));
+      if (req && req.dept) { d.cases = d.cases.filter(function (c) { return c.dept === req.dept; }); d.meta.dept = req.dept;
+        d.summary.cases = d.cases.length; }
+      return d;
+    },
     getOrphanFixInit: function () { return P['orphan-init']; },
     getDeptConfigInit: function () { return P['deptconfig-init']; },
     getAccessControlInit: function () { return P['access-init']; },

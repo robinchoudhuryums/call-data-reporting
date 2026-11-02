@@ -148,8 +148,9 @@ test('CL-18: every boot step is guarded, and a throwing step is recorded and bea
   const init = extractFn(chrome, 'init');
   const steps = between(init, /initStep_\('initHelpModal'/, /bootFailureNotice_\(false\);/);
   // 29 since G3 retired the Outbound modal (initOutboundReport left with it);
-  // 30 with the #81 exception-day editor (initExceptionDays_).
-  assert.equal((steps.match(/initStep_\(/g) || []).length, 30, 'the 30 surface inits each run under the guard');
+  // 30 with the #81 exception-day editor (initExceptionDays_); 31 with TR-1's
+  // transfer retries (initTransferRetries_).
+  assert.equal((steps.match(/initStep_\(/g) || []).length, 31, 'the 31 surface inits each run under the guard');
   assert.ok(!/^\s+init[A-Za-z_]*\(\);/m.test(steps) && !/^\s+(ovWireTrendCollapse_|loadEscBadge_)\(\);/m.test(steps),
     'no step in the guarded block is called bare');
   assert.match(src('script-11-qcd-boot.html'), /bootInit_\(\);\s*\n\s*devInstallToggle_\(\);/, 'boot enters through bootInit_');

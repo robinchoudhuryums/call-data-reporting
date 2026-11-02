@@ -228,7 +228,7 @@ tests/
                               the on-tab check (afRunCheck_) end to end, CLEAN
                               / MISMATCH / INCONCLUSIVE; validation, the page's
                               server calls and no HTML injection),
-                              transfer-filter (TR-0: a transfer retried in
+                              transfer-retries (TR-1: the dashboard's Transfer retries list -- PARITY with cdr-import's tfRetriesOfJourney_ over one journey corpus (and the same decline line), the sub-queue fold, newest-first cases filtered by the TRIED department with the callee + pair tallies and no number, the admin gate / date checks / 92-day cap / unknown department, one metered read of both tables prefiltered to journeys with a transfer and a missed ring, Neon down reading unavailable), transfer-filter (TR-0: a transfer retried in
                               the same department -- one case per call per
                               department, an own-dept colleague / the same
                               person twice / an answered first attempt is no

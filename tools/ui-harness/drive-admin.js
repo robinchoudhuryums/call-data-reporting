@@ -66,6 +66,39 @@ const MODALS = [
   // the probe walks the whole loop: the fixture day is listed, a missing
   // reason is refused in place, a save lists the new day, Remove asks in
   // DANGER tone and the day leaves the list.
+  // TR-1 (owner 2026-11-02): Transfer retries -- the REAL getTransferRetries
+  // over gen-phase3's fake journeys (3 retried calls, Elena Park tried first
+  // each time, 2 of them quick declines; one call with no retry).
+  { name: 'Transfer Retries', btn: '#transfer-retries-btn', sel: '#transfer-retries-modal', adminMenu: true,
+    probe: async function (page, record) {
+      await page.waitForTimeout(600);
+      const st = await page.evaluate(() => ({
+        summary: (document.getElementById('tr-summary') || {}).textContent || '',
+        callees: Array.from(document.querySelectorAll('#tr-callees tr')).map((r) => Array.from(r.cells).map((c) => c.textContent.trim()).join(' ')),
+        rows: document.querySelectorAll('#tr-tbody tr').length,
+        paths: document.querySelectorAll('#tr-tbody .pid-journey').length,
+        outbound: document.querySelectorAll('#tr-tbody .ov-dir-pill').length,
+        decline: document.querySelectorAll('#tr-tbody .tr-out--decline').length,
+        from: (document.getElementById('tr-from') || {}).value || '', to: (document.getElementById('tr-to') || {}).value || '',
+        depts: document.querySelectorAll('#tr-dept option').length,
+      }));
+      record('Transfer Retries: opens on a window and lists the three retried calls with their summary',
+        /^3 calls where a transfer was tried again in the same department\. The first attempt: 2 declined quickly, 1 rang out, 0 went to voicemail\.$/.test(st.summary.trim())
+          && st.rows === 3 && !!st.from && !!st.to, JSON.stringify(st));
+      record('Transfer Retries: the person tried first is tallied, with the quick declines', st.callees.length === 1
+        && /^Elena Park Sales 3 2$/.test(st.callees[0]), JSON.stringify(st.callees));
+      record('Transfer Retries: every row has its call-path chip; the outbound call is marked; declines are flagged',
+        st.paths === 3 && st.outbound === 1 && st.decline === 2, JSON.stringify(st));
+      record('Transfer Retries: the department picker lists every department', st.depts > 3, 'options=' + st.depts);
+      await page.selectOption('#tr-dept', 'Power'); await page.waitForTimeout(500);
+      const none = await page.evaluate(() => ({ summary: (document.getElementById('tr-summary') || {}).textContent || '',
+        rows: document.querySelectorAll('#tr-tbody tr').length,
+        call: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getTransferRetries').slice(-1)[0] }));
+      record('Transfer Retries: picking a department re-asks for it and says when there is nothing',
+        /^No transfer was tried again/.test(none.summary.trim()) && none.rows === 0 && none.call && none.call.args[0].dept === 'Power',
+        JSON.stringify(none));
+      await page.selectOption('#tr-dept', ''); await page.waitForTimeout(400);
+    } },
   { name: 'Exception Days', btn: '#exception-days-btn', sel: '#exception-days-modal', adminMenu: true,
     probe: async function (page, record) {
       const meta = require('./payloads/meta.json');
