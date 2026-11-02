@@ -2394,7 +2394,15 @@ stay pinned by INV-39, INV-53 and INV-06.
   SAME card window the inbound stats show; a window that starts before outbound
   capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
   only to admins and only when its Neon read worked, so "render when present"
-  is the whole client gate. **The Outbound summary (E1, moved by UX-1):** the
+  is the whole client gate. **OVD-1 (owner 2026-11-02): the tile's split bar
+  belongs to the DIRECT-LINE row** -- `ovBuildOutboundLine_` now returns
+  `ovBuildObRow_` (the outbound text + chips) + `ovBuildDirectLine_` (a blue
+  "Direct lines" pill, the answer rate with an `obRateChip_` points chip, the
+  answered / missed / busy bar and the counts in words, from `dept.direct`).
+  The outbound connected bar is drawn only on a tile with no direct block, so
+  a failed direct read still leaves a bar. Both call sites (grid tile +
+  sub-queue card) get both rows. Pinned by `overview-direct.test.js` and
+  `drive-outbound-e.js`. **The Outbound summary (E1, moved by UX-1):** the
   `#ins-ob-fold` fold (`insObSync_`, script-8; ids keep their historical
   `ins-*` prefix) sits in `#dept-ob-sections` DIRECTLY UNDER the outbound
   agent table, outside the Insights region (owner 2026-10-12, broad-scan
@@ -2447,8 +2455,9 @@ stay pinned by INV-39, INV-53 and INV-06.
   outbound call -- each drill has its own stale-drill counter, UI-5), the
   CE-3 "Direct lines" block (a nested lazy `<details>`, `#ins-dl-fold`, shared
   with the Overview section's `#ov-dl-fold` through one prefix-keyed view --
-  `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: work-
-  and after-hours bars and the department / person table since DL-R2, the
+  `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: a
+  work / after / all hours table and the department / person table with its
+  hours switch since DL-R3, the
   repeat-unreturned-callers drill; it follows
   its host's window and fetches only while open) and CSV / email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
@@ -2521,9 +2530,19 @@ stay pinned by INV-39, INV-53 and INV-06.
   own / another team / got through / pending / not called back sum to it --
   never put a figure on a different base into the bar (a rate of connected
   callbacks, a median) -- those go on the quality line below it; Direct lines
-  splits own into "by the person" and "by their team" and draws a work-hours
-  and an after-hours bar, the after-hours median counted from the next work
-  open (DL-R1). The CE-1 ruling still holds: own team, another team and got
+  splits own into "by the person" and "by their team", the after-hours
+  median counted from the next work open (DL-R1). **DL-R3 (owner 2026-11-02)
+  draws Direct lines in the Agent Call Metrics row shape** (`.ob-dl-cmp`):
+  the summary is one row per hours group (work / after / all) -- callers,
+  ONE bar (`obDlBarCellHtml_`, the LB-2 `lb-cell` with "called back / not"
+  beside it), the two rates, the median -- and the department table uses the
+  same cells with bar length = callers, plus an All / Work / After hours
+  switch (`obDlSetHours_`) that rebuilds each row's figure cells IN PLACE
+  from its `work` / `after` sub-figures, so open departments and person
+  lists survive a switch; the footer bar is always full width. A table this
+  wide inside the brief needs the grid item's `min-width: 0`
+  (`.ins-brief-list > .ins-brief-item`), or it grows the row under the
+  sticky side panels; drive-callbacks measures it. The CE-1 ruling still holds: own team, another team and got
   through stay separate segments. The Overview department table sorts most
   not called back first (`OB_CBDEPT_DEFAULT_SORT_`), and a row with any opens
   "List the N callers nobody called back" (`getOutboundUncalled` for that

@@ -634,6 +634,23 @@ the blob still caches. A period that starts before `coverageStart` is flagged
 stands, and fails closed when OutboundReport.gs is not loaded. Pinned in
 `overview-outbound.test.js` and the 6c pin.
 
+**OVD-1 (owner 2026-11-02) adds the tiles' direct-line answer rate on the SAME
+connection** (`ovReadTileLines_` opens one, `ovReadOutboundByDept_` and
+`ovReadDirectByDept_` each run one statement and fail on their own).
+`ovDirectSql_` groups `direct_call_history` BY DEPARTMENT -- that table carries
+the agent's roster department per row, so no roster map -- summing answered,
+missed while free and missed while busy for the five card periods and each
+period's INV-28 prior (`ovOutboundPriorWindows_`), plus `coverageStart` and
+`through`. The rate is answered ÷ (answered + missed while free), the Direct
+Calls report's rule; busy rings are shown, not rated. A prior is kept only
+when its window starts on or after capture. Metered as `overviewDirect`, no
+sheet fallback, `companyOverview:v30`. It is ADMIN-ONLY like the Direct Calls
+report, with no release switch: `personalizeOverview_` strips `dept.direct`,
+`directCoverageStart`, `directThrough` and `directPriorWindows` for every
+non-admin, whatever `OUTBOUND_VETTING_GATE_` says. Exception days (#81) are not
+applied, matching the outbound line and the Direct Calls report. Pinned in
+`overview-direct.test.js`.
+
 **Batch F adds prior-period chips to both.** The Overview's grouped read gains
 `pp_<period>` / `pc_<period>` FILTER columns for each card period's INV-28
 prior window (`ovOutboundPriorWindows_` -> the shared `computePriorWindow_`),
