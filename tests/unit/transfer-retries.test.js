@@ -15,7 +15,7 @@ const dash = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'De
 const imp = loadGas({ project: 'cdr-import', files: ['buildDQEHistoricalData.js', 'inboundCalls.js', 'transferFilter.js'] });
 
 const BY_AGENT = { 'Daniel (Dishant) Sahani': ['CSR'], 'Camila (Cheshta) Bhutani': ['CSR'], 'Rhea Power': ['Power'],
-  'Omar Power': ['Power'], 'Sub Rep': ['PowerSub'], 'Two Roster': ['Power', 'Sales'], 'Sam Seller': ['Sales'] };
+  'Omar Power': ['Power'], 'Sub Rep': ['PowerSub'], 'Two Roster': ['Power', 'Sales'], 'Sam Seller': ['Sales'], 'Cleo Desk': ['CSR'] };
 const PARENT = { PowerSub: 'Power' };
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const q = (t, name) => ({ t, name, kind: 'queue' });
@@ -38,13 +38,15 @@ const CORPUS = [
   [[ans('09:00:00', 'Sam Seller', 100), ans('09:05:00', 'Daniel (Dishant) Sahani', 90, { transfer: true, handover: true }),
     att('09:06:00', 'Rhea Power'), att('09:06:20', 'Omar Power', { secs: 9 })], null],
   [[ans('09:00:00', 'Daniel (Dishant) Sahani', 100, { origin: true }), att('09:06:00', 'Rhea Power', { secs: 1 }), att('09:06:20', 'Omar Power', { secs: 1 })], null],
+  // Two colleagues in the sender's OWN department: never a retry.
+  [[ans('09:00:00', 'Daniel (Dishant) Sahani', 100), att('09:01:00', 'Camila (Cheshta) Bhutani', { secs: 2 }), att('09:01:30', 'Cleo Desk', { secs: 2 })], null],
 ];
 
 test('TR-1: PARITY -- the dashboard mirror reads every corpus journey exactly as cdr-import\'s tfRetriesOfJourney_', function () {
   const lk = imp.call('tfBounceLookups_', imp.call('tfRosterFromGrid_', ['CSR', 'Power', 'PowerSub', 'Sales'], [
     ['Daniel (Dishant) Sahani, 352', 'Rhea Power, 401', 'Sub Rep, 403', 'Sam Seller, 300'],
     ['Camila (Cheshta) Bhutani, 240', 'Omar Power, 402', '', 'Two Roster, 410'],
-    ['', 'Two Roster, 410', '', ''],
+    ['Cleo Desk, 241', 'Two Roster, 410', '', ''],
   ]), [['PowerSub', 'A_Q_PowerSub', 'Power', '', '', true, '', '', '', '']], null);
   const dfn = dash.call('trDeptsOfAgentFn_', BY_AGENT, PARENT);
   let cases = 0;
