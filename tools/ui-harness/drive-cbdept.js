@@ -61,9 +61,13 @@ function section() {
     notCounted: ((document.getElementById('ov-cbdept-notcounted') || {}).textContent || '').trim(),
     ths: document.querySelectorAll('#ov-cbdept-table thead th[data-cbsort]').length,
     noneSort: (document.querySelector('#ov-cbdept-table th[data-cbsort="none"]') || { getAttribute: () => null }).getAttribute('aria-sort'),
-    order: rows.map((r) => r.querySelector('.qcd-expand-toggle').textContent.replace(/[↳▶]/g, '').trim()),
+    // CBX-1: the name without its "left out of the total" asterisk (asserted apart).
+    order: rows.map((r) => r.querySelector('.qcd-expand-toggle').textContent.replace(/[↳▶*]/g, '').trim()),
+    excl: rows.filter((r) => r.classList.contains('ob-cbdept-excluded') && r.querySelector('.ob-cbdept-excl'))
+      .map((r) => r.querySelector('.qcd-expand-toggle').textContent.replace(/[↳▶*]/g, '').trim()),
+    exclNote: ((document.querySelector('#ov-cbdept-tfoot tr.ob-cbdept-excl-row') || {}).textContent || '').trim(),
     child: rows.map((r) => r.classList.contains('ob-cbdept-child')),
-    total: Array.from(document.querySelectorAll('#ov-cbdept-tfoot tr td')).map((td) => td.textContent.trim()),
+    total: Array.from(document.querySelectorAll('#ov-cbdept-tfoot tr.ob-cbdept-total td')).map((td) => td.textContent.trim()),
   };
 }
 
@@ -112,6 +116,11 @@ function section() {
     await page.waitForTimeout(200);
   }
   record('the header comes from the shared column list (9 sortable columns)', s.ths === 9, 'ths=' + s.ths);
+  record('CBX-1: CSR and Spanish keep their rows, marked * and muted, with the note under the total',
+    JSON.stringify(s.excl) === JSON.stringify(['CSR', 'Spanish'])
+      && /^\* CSR and Spanish are left out of the All departments total and the summary above: their callers are calling for other departments/.test(s.exclNote),
+    JSON.stringify({ excl: s.excl, note: s.exclNote }));
+  record('CBX-1: the section heading says it is not counting CSR and Spanish', /· not counting CSR and Spanish$/.test(s.head), s.head);
   record('CB-R2 default order: most not called back first, the sub-queue directly under its parent, unmapped last',
     JSON.stringify(s.order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department'])
       && JSON.stringify(s.child) === JSON.stringify([false, true, false, false]) && s.noneSort === 'descending',
@@ -187,9 +196,13 @@ function section() {
   const cbLines = hdr >= 0 ? lines.slice(hdr + 1, hdr + 6) : [];
   const bad = lines.filter((l) => l.split(',').some((c) => /^[=+\-@]/.test(c.replace(/^"/, ''))));
   record('Download CSV carries the per-dept block in the ON-SCREEN order and the once-counted total',
-    hdr > 0 && lines[1] === 'Scope,All departments' && /^Sales,/.test(cbLines[0] || '') && /^Spanish,CSR,/.test(cbLines[2] || '')
+    hdr > 0 && lines[1] === 'Scope,All departments' && /^Sales,/.test(cbLines[0] || '') && /^Spanish \*,CSR,/.test(cbLines[2] || '')
       && /^All departments \(each episode once\),/.test(cbLines[4] || '') && bad.length === 0,
     JSON.stringify({ scope: lines[1], block: cbLines, bad: bad.slice(0, 2) }));
+  // CBX-1: the CSV marks the rows the total leaves out, and says so.
+  const exLine = lines[hdr + 6] || '';
+  record('CBX-1: the CSV marks CSR and Spanish with * and explains it under the total',
+    /^CSR \*,/.test(cbLines[1] || '') && /^"?\* CSR and Spanish left out of the All departments total/.test(exLine), JSON.stringify({ row: cbLines[1], note: exLine }));
 
   // CE-3: the company Direct lines block, lazy, with the repeat list.
   await page.click('#ov-dl-fold > summary');
@@ -207,7 +220,7 @@ function section() {
       .map((c) => (c.args && c.args[0]) || null),
     eps: document.querySelectorAll('#ov-dl-rep-list .ob-ep').length }));
   record('CE-3: the Overview Direct lines block reads the COMPANY view, once, with its repeat list',
-    dlc.length === 1 && dlc[0].department === '' && dlt.bars === 2 && dlt.depts === 2
+    dlc.length === 1 && dlc[0].department === '' && dlt.bars === 3 && dlt.depts === 2
       && drep.calls.length === 1 && drep.calls[0].department === '' && drep.eps === 1,
     JSON.stringify({ dlc: dlc, dlt: dlt, drep: drep }));
   record('FO-2: a spreadsheet-served payload says so, how far the copy reaches, and from when it names the line rung',

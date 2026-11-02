@@ -309,12 +309,18 @@ async function toggleColumns(page) {
   const dl = await page.evaluate(() => ({
     head: document.getElementById('ins-dl-head').textContent,
     counts: document.getElementById('ins-dl-counts').textContent,
-    // DL-R2: the summary (headline, a bar per hours group, one legend) + the table.
+    // DL-R3: the summary (headline + one row per hours group, one legend) + the table.
     num: (document.querySelector('#ins-dl-sum .ob-sum-num') || {}).textContent || '',
     bars: Array.from(document.querySelectorAll('#ins-dl-sum .ob-obar')).map((b) => Array.from(b.querySelectorAll('.ob-obar-seg'))
       .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0)),
-    legend: Array.from(document.querySelectorAll('#ins-dl-sum .ob-leg')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
-    quality: (document.querySelector('#ins-dl-sum .ob-sum-quality') || {}).textContent || '',
+    hrows: Array.from(document.querySelectorAll('#ins-dl-sum tr.ob-dl-hrow')).map((t) => ({ h: t.getAttribute('data-dl-hours'),
+      cells: Array.from(t.children).map((td) => td.textContent.replace(/\s+/g, ' ').trim()) })),
+    keys: Array.from(document.querySelectorAll('#ins-dl-sum .ob-dl-keys .lb-key')).map((k) => k.textContent.trim()),
+    legacy: document.querySelectorAll('#ins-dl-sum .ob-leg, #ins-dl-sum .ob-dl-group, #ins-dl-sum .ob-sum-fine').length,
+    // DL-R3: the block stays inside the main column (a grid item at min-width
+    // auto once grew it under the sticky side panel).
+    overflow: Math.round(document.getElementById('ins-dl-content').getBoundingClientRect().right
+      - document.querySelector('#dept-page .dept-main').getBoundingClientRect().right),
     depts: Array.from(document.querySelectorAll('#ins-dl-table tr.ob-dl-dept')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
     tiles: document.querySelectorAll('#ins-dl-content .ds-kpi').length,
     note: (function () { const n = document.getElementById('ins-dl-note'); return n && getComputedStyle(n).display !== 'none' ? n.textContent : null; })(),
@@ -322,14 +328,23 @@ async function toggleColumns(page) {
   record('CE-3: opening it sends nothing new -- the ONE fetch was for the fold’s window and dept',
     dlc.length === 1 && dlc[0].from === insMeta.from && dlc[0].to === insMeta.to && dlc[0].department === insMeta.department,
     JSON.stringify(dlc));
-  record('DL-R2: the headline is the callers not called back; one bar per hours group, each adding up',
-    dl.num === '10' && dl.tiles === 0 && dl.bars.length === 2 && dl.bars[0] === 20 && dl.bars[1] === 10
+  record('DL-R3: the headline is the callers not called back; one row per hours group (work, after, all), each bar adding up',
+    dl.num === '10' && dl.tiles === 0 && dl.bars.length === 3 && dl.bars[0] === 20 && dl.bars[1] === 10 && dl.bars[2] === 30
+      && dl.hrows.map((r) => r.h).join() === 'work,after,all' && dl.legacy === 0 && dl.overflow <= 1
       && /10 of 30 callers not called back/.test(dl.head), JSON.stringify(dl));
-  record('DL-R2: one legend carries work · after, "by the person" and "by a teammate" apart',
-    dl.legend.length === 6 && /^7 · 2\s*called back by the person/.test(dl.legend[0]) && /^4 · 1\s*by a teammate/.test(dl.legend[1])
-      && /^4 · 6\s*not called back/.test(dl.legend[5]), dl.legend.join(' | '));
-  record('DL-R2: after hours is timed from the next work day (8:30 CST open)',
-    /1:00:00.* work hours .*0:45:00.* after hours, counted from 8:30 the next work day/.test(dl.quality), dl.quality);
+  {
+    const w = (dl.hrows[0] || {}).cells || [], a = (dl.hrows[1] || {}).cells || [], t = (dl.hrows[2] || {}).cells || [];
+    record('DL-R3: each hours row reads callers | called back / not | the two rates | the median, side by side',
+      /^Work hours\s*8:30 AM – 5:00 PM, work days/.test(w[0] || '') && w[1] === '20' && w[2] === '11/4' && w[3] === '55%' && w[4] === '20%'
+        && w[5] === '1:00:00'
+        && /^After hours\s*incl\. weekends/.test(a[0] || '') && a[1] === '10' && a[2] === '3/6' && a[3] === '30%' && a[4] === '60%'
+        && t[0] === 'All hours' && t[1] === '30' && t[2] === '14/10' && t[5] === '—', JSON.stringify(dl.hrows));
+    record('DL-R3: after hours is timed from the next work day (8:30 CST open)',
+      /^0:45:00\s*from 8:30 the next work day$/.test(a[5] || ''), a[5]);
+  }
+  record('DL-R3: one legend names the six colours, "by the person" and "by a teammate" apart',
+    dl.keys.length === 6 && dl.keys[0] === 'called back by the person' && dl.keys[1] === 'by a teammate'
+      && dl.keys[5] === 'not called back', dl.keys.join(' | '));
   record('DL-R2: the department table, most not called back first',
     dl.depts.length === 2 && /^Sales/.test(dl.depts[0]) && /^CSR/.test(dl.depts[1]), dl.depts.join(' | '));
   {
@@ -384,6 +399,35 @@ async function toggleColumns(page) {
   record('DL-R2: a person row lists THEIR unreturned callers (owner + 1+ attempts asked)',
     pr.owner === 'Sam Seller' && pr.minAttempts === 1 && pl.shown && /Not called back · Sam Seller’s line/.test(pl.head),
     JSON.stringify({ pr: pr, pl: pl }));
+  // DL-R3: the hours switch re-reads every row in place -- open rows stay open.
+  const hrsRead = () => page.evaluate(() => ({
+    dept: Array.from(document.querySelector('#ins-dl-table tr.ob-dl-dept').children).map((td) => td.textContent.replace(/\s+/g, ' ').trim()),
+    sam: Array.from(document.querySelector('#ins-dl-table tr.ob-dl-person[data-dl-p="0"]').children).map((td) => td.textContent.replace(/\s+/g, ' ').trim()),
+    samShown: getComputedStyle(document.querySelector('#ins-dl-table tr.ob-dl-person[data-dl-p="0"]')).display !== 'none',
+    drillShown: getComputedStyle(document.querySelector('#ins-dl-table tr.ob-dl-drill')).display !== 'none',
+    total: Array.from(document.querySelector('#ins-dl-table tfoot tr').children).map((td) => td.textContent.replace(/\s+/g, ' ').trim()),
+    totalW: (document.querySelector('#ins-dl-table tfoot .lb-track > div') || { style: {} }).style.width,
+    pressed: Array.from(document.querySelectorAll('#ins-dl-table [data-dl-hours-pick]')).filter((b) => b.getAttribute('aria-pressed') === 'true')
+      .map((b) => b.getAttribute('data-dl-hours-pick')) }));
+  const h0 = await hrsRead();
+  record('DL-R3: the table opens on All hours, each row naming its after-hours callers',
+    h0.pressed.join() === 'all' && /^18\s*7 after hours$/.test(h0.dept[1]) && h0.dept[2] === '8/7' && h0.dept[3] === '44.4%' && h0.dept[4] === '38.9%'
+      && /^30\s*10 after hours$/.test(h0.total[1]), JSON.stringify(h0));
+  await page.click('#ins-dl-table [data-dl-hours-pick="after"]');
+  await page.waitForTimeout(200);
+  const h1 = await hrsRead();
+  record('DL-R3: After hours swaps every row to its after-hours callers, keeping open rows open and the total full width',
+    h1.pressed.join() === 'after' && h1.dept[1] === '7' && h1.dept[2] === '2/4' && h1.dept[4] === '57.1%'
+      && h1.sam[1] === '4' && h1.sam[2] === '1/3' && h1.samShown && h1.drillShown
+      && h1.total[1] === '10' && h1.total[2] === '3/6' && h1.totalW === '100%', JSON.stringify(h1));
+  await page.click('#ins-dl-table [data-dl-hours-pick="work"]');
+  await page.waitForTimeout(200);
+  const h2 = await hrsRead();
+  record('DL-R3: Work hours does the same for the work-hours callers',
+    h2.pressed.join() === 'work' && h2.dept[1] === '11' && h2.dept[2] === '6/3' && h2.total[1] === '20' && h2.total[2] === '11/4',
+    JSON.stringify(h2));
+  await page.click('#ins-dl-table [data-dl-hours-pick="all"]');
+  await page.waitForTimeout(200);
   await page.click('#ins-dl-fold > summary');
   await page.waitForTimeout(300);
   await page.click('#ins-dl-fold > summary');

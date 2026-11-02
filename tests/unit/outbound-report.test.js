@@ -15,6 +15,11 @@ const { loadGas } = require('../harness/loadGas');
 // Util.gs joins the load for the vetting probe (assertAdmin_ /
 // logStatusReturn_); the pre-existing tests are unaffected by it.
 const h = loadGas({ files: ['Config.gs', 'Util.gs', 'InboundReport.gs', 'OutboundReport.gs'] });
+// CBX-1 (owner 2026-11-02): the company view leaves CSR's callers out of its
+// totals. These suites test the callback ENGINE on fixtures where CSR is a
+// main department, so they run with no exclusion; CBX-1's own tests (in
+// outbound-callback-dept.test.js) switch it back on.
+h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = [];
 
 // Cross-file stubs (Data.gs / QCDReport.gs / DeptConfig.gs not loaded — each
 // stub mirrors the real signature; the real implementations are pinned by

@@ -634,6 +634,23 @@ the blob still caches. A period that starts before `coverageStart` is flagged
 stands, and fails closed when OutboundReport.gs is not loaded. Pinned in
 `overview-outbound.test.js` and the 6c pin.
 
+**OVD-1 (owner 2026-11-02) adds the tiles' direct-line answer rate on the SAME
+connection** (`ovReadTileLines_` opens one, `ovReadOutboundByDept_` and
+`ovReadDirectByDept_` each run one statement and fail on their own).
+`ovDirectSql_` groups `direct_call_history` BY DEPARTMENT -- that table carries
+the agent's roster department per row, so no roster map -- summing answered,
+missed while free and missed while busy for the five card periods and each
+period's INV-28 prior (`ovOutboundPriorWindows_`), plus `coverageStart` and
+`through`. The rate is answered ÷ (answered + missed while free), the Direct
+Calls report's rule; busy rings are shown, not rated. A prior is kept only
+when its window starts on or after capture. Metered as `overviewDirect`, no
+sheet fallback, `companyOverview:v30`. It is ADMIN-ONLY like the Direct Calls
+report, with no release switch: `personalizeOverview_` strips `dept.direct`,
+`directCoverageStart`, `directThrough` and `directPriorWindows` for every
+non-admin, whatever `OUTBOUND_VETTING_GATE_` says. Exception days (#81) are not
+applied, matching the outbound line and the Direct Calls report. Pinned in
+`overview-direct.test.js`.
+
 **Batch F adds prior-period chips to both.** The Overview's grouped read gains
 `pp_<period>` / `pc_<period>` FILTER columns for each card period's INV-28
 prior window (`ovOutboundPriorWindows_` -> the shared `computePriorWindow_`),
@@ -752,7 +769,7 @@ the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
 number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
 for -- are a SEPARATE, lazy, separately cached endpoint
-(`getOutboundDirectCallbacks`, `outboundDirect:v4`: dept + window + freshness
+(`getOutboundDirectCallbacks`, `outboundDirect:v5`: dept + window + freshness
 tag + roster hash) so the Callbacks figures never pay for it. Population:
 external calls whose first leg rang a PERSON (no entry queue, `first_agent`
 set) and that nobody answered, `missed` (rang out / that person's voicemail --
@@ -803,7 +820,7 @@ of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
 disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
 whose rows name the line rung: rows exported before FO-2 are blank there and
 would read as "no direct calls"). Cached
-`outboundReport:v9` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
+`outboundReport:v10` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since

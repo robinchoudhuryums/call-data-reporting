@@ -1135,7 +1135,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
   BOUNDARIES end-to-end. Payload shape changed, so a `companyOverview` bump (v28 then).
-  **The tile's QUEUE chips follow the same Window (QD-2, `companyOverview:v29`).**
+  **The tile's QUEUE chips follow the same Window (QD-2, the Overview cache's v29 bump).**
   `ovQcdForPeriod_` (script-3-overview) is the one place that picks them:
   Yesterday reads the latest-QCD-day snapshot (`dept.qcd`), every other window
   reads `dept.qcd.periods[key]` (same boundaries as the DQE buckets, capped at
@@ -2394,7 +2394,14 @@ stay pinned by INV-39, INV-53 and INV-06.
   SAME card window the inbound stats show; a window that starts before outbound
   capture (YTD) adds "since <capture start>". The server ships `dept.outbound`
   only to admins and only when its Neon read worked, so "render when present"
-  is the whole client gate. **The Outbound summary (E1, moved by UX-1):** the
+  is the whole client gate. **OVD-1 / OVD-2 (owner 2026-11-02): the tile's direct-line row** --
+  `ovBuildOutboundLine_` returns `ovBuildObRow_` (the outbound text + chips)
+  + `ovBuildDirectLine_` (a blue "Direct lines" pill, the answer rate with an
+  `obRateChip_` points chip, the counts in words, from `dept.direct`). The
+  tile draws NO split bar (OVD-2: the owner judged the numbers enough), so
+  SB-3's outbound connected bar is gone from the tiles too. Both call sites
+  (grid tile + sub-queue card) get both rows. Pinned by
+  `overview-direct.test.js` and `drive-outbound-e.js`. **The Outbound summary (E1, moved by UX-1):** the
   `#ins-ob-fold` fold (`insObSync_`, script-8; ids keep their historical
   `ins-*` prefix) sits in `#dept-ob-sections` DIRECTLY UNDER the outbound
   agent table, outside the Insights region (owner 2026-10-12, broad-scan
@@ -2447,8 +2454,9 @@ stay pinned by INV-39, INV-53 and INV-06.
   outbound call -- each drill has its own stale-drill counter, UI-5), the
   CE-3 "Direct lines" block (a nested lazy `<details>`, `#ins-dl-fold`, shared
   with the Overview section's `#ov-dl-fold` through one prefix-keyed view --
-  `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: work-
-  and after-hours bars and the department / person table since DL-R2, the
+  `obDlView_` / `obDlSync_` / `obDlRender_` / `obDlWire_` in script-9: a
+  work / after / all hours table and the department / person table with its
+  hours switch since DL-R3, the
   repeat-unreturned-callers drill; it follows
   its host's window and fetches only while open) and CSV / email export. It reads the SAME `getOutboundReport` payload
   the modal did and draws it with the shared renderers aimed at its
@@ -2499,7 +2507,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
   callback summary (CB-R1, next bullet) above the table, both drawn by the
   shared renderers; the phone-menu and person's-line hang-ups and the unmapped
-  queues are said in `#ov-cbdept-notcounted` inside the "How this is counted" ⓘ (IC-4, below):
+  queues are said in `#ov-cbdept-notcounted` inside the "How this is counted" ⓘ (IC-4, below), and
+  so are the callers on CSR's and Spanish's queues, which the company figures leave out (CBX-1:
+  their rows carry `excludedFromTotal`, render with a `.ob-cbdept-excl` asterisk, and a
+  `tr.ob-cbdept-excl-row` under the total names them):
   `outboundCallbackSummaryHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The
@@ -2518,9 +2529,19 @@ stay pinned by INV-39, INV-53 and INV-06.
   own / another team / got through / pending / not called back sum to it --
   never put a figure on a different base into the bar (a rate of connected
   callbacks, a median) -- those go on the quality line below it; Direct lines
-  splits own into "by the person" and "by their team" and draws a work-hours
-  and an after-hours bar, the after-hours median counted from the next work
-  open (DL-R1). The CE-1 ruling still holds: own team, another team and got
+  splits own into "by the person" and "by their team", the after-hours
+  median counted from the next work open (DL-R1). **DL-R3 (owner 2026-11-02)
+  draws Direct lines in the Agent Call Metrics row shape** (`.ob-dl-cmp`):
+  the summary is one row per hours group (work / after / all) -- callers,
+  ONE bar (`obDlBarCellHtml_`, the LB-2 `lb-cell` with "called back / not"
+  beside it), the two rates, the median -- and the department table uses the
+  same cells with bar length = callers, plus an All / Work / After hours
+  switch (`obDlSetHours_`) that rebuilds each row's figure cells IN PLACE
+  from its `work` / `after` sub-figures, so open departments and person
+  lists survive a switch; the footer bar is always full width. A table this
+  wide inside the brief needs the grid item's `min-width: 0`
+  (`.ins-brief-list > .ins-brief-item`), or it grows the row under the
+  sticky side panels; drive-callbacks measures it. The CE-1 ruling still holds: own team, another team and got
   through stay separate segments. The Overview department table sorts most
   not called back first (`OB_CBDEPT_DEFAULT_SORT_`), and a row with any opens
   "List the N callers nobody called back" (`getOutboundUncalled` for that
@@ -2540,8 +2561,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   that count redials, a flag that sits inside another part -- on the line
   underneath, labelled. Live on: Agent Day outbound (SB-1, modal + panel),
   the Direct Calls report and the Team Direct Calls card (SB-2), the
-  Outbound summary, the Team Outbound panel and the Overview tile's
-  outbound line (SB-3), the Inbound report (SB-5) and the CSR Transfer
+  Outbound summary and the Team Outbound panel (SB-3; the Overview tiles
+  carry no bar since OVD-2), the Inbound report (SB-5) and the CSR Transfer
   detail (SB-6). Segment colours are generic (`ob-seg-good` handled,
   `-bad` lost, `-soft` a softer loss, `-unk` not known, `-cat1..5` +
   `-hatch` for destinations, `-tf-*` the R23 transfer tiers). Three rules:

@@ -46,12 +46,18 @@ async function openDept(page, meta) {
 function tileLines() {
   return Array.from(document.querySelectorAll('.ov-dept-tile')).map((t) => {
     const ob = t.querySelector('.ov-dept-ob');
-    // SB-3: the slim connected / did-not-connect bar under the line.
-    const bar = t.querySelector('.ov-dept-ob-bar .ob-obar');
+    // OVD-2 (owner 2026-11-02): a tile draws NO split bar -- neither SB-3's
+    // outbound connected bar nor OVD-1's direct-line bar; the numbers carry it.
+    const bar = t.querySelector('.ob-obar');
+    const dl = t.querySelector('.ov-dept-dl');
+    const dlBar = null;
+    const segs = (b) => b ? Array.from(b.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':'
+      + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0])) : null;
     return { dept: t.getAttribute('data-dept'), text: ob ? ob.textContent.replace(/\s+/g, ' ').trim() : null,
-      shown: !!ob && getComputedStyle(ob).display !== 'none',
-      bar: bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).map((x) => x.getAttribute('data-seg') + ':'
-        + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0])) : null };
+      shown: !!ob && getComputedStyle(ob).display !== 'none', bar: segs(bar),
+      dl: dl ? dl.textContent.replace(/\s+/g, ' ').trim() : null, dlBar: segs(dlBar),
+      dlChip: dl ? Array.from(dl.querySelectorAll('.wow-chip')).map((c) => c.className.replace(/.*wow-chip-/, '') + ' ' + c.textContent) : [],
+      dlWords: ((t.querySelector('.ov-dept-dl-words') || {}).textContent || '').trim() };
   });
 }
 
@@ -82,10 +88,32 @@ function tileLines() {
     !!firstLine && firstLine.text.indexOf('Placed ' + fmt(first.outbound.yesterday.placed)) !== -1
       && firstLine.text.indexOf(first.outbound.yesterday.pct.toFixed(1) + '%') !== -1,
     first.name + ': ' + (firstLine && firstLine.text));
-  const y = first.outbound.yesterday;
-  record('admin (SB-3): under the line, a slim bar of connected and did-not-connect that adds up to Placed',
-    !!firstLine && JSON.stringify(firstLine.bar) === JSON.stringify(['good:' + y.connected].concat(y.placed > y.connected ? ['bad:' + (y.placed - y.connected)] : [])),
-    first.name + ': ' + JSON.stringify(firstLine && firstLine.bar));
+  // OVD-1 (owner 2026-11-02): the tile's split bar is the DIRECT-LINE answer
+  // rate; the outbound row stays as text and its connected bar gives way.
+  {
+    const dd = first.direct.yesterday;
+    record('OVD-1/OVD-2: the tile shows the direct-line answer rate and the counts in words -- and no split bar at all',
+      !!firstLine && /^Direct lines\s*\d/.test(firstLine.dl || '')
+        && firstLine.dl.indexOf(dd.rate.toFixed(1) + '% answered') !== -1
+        && lines.every((l) => l.bar === null)
+        && firstLine.dlWords.indexOf(dd.answered + ' answered · ' + dd.missedFree + ' missed · ' + dd.missedBusy + ' while busy · of '
+          + (dd.answered + dd.missedFree + dd.missedBusy) + ' that rang their lines') === 0,
+      first.name + ': ' + JSON.stringify(firstLine));
+    const up = dd.prior && dd.rate > dd.prior.rate;
+    record('OVD-1: the rate carries a points chip vs the prior window, coloured by direction',
+      !!firstLine && firstLine.dlChip.length === 1 && / pts$/.test(firstLine.dlChip[0]) && firstLine.dlChip[0].indexOf(up ? 'good' : 'warn') === 0,
+      JSON.stringify(firstLine && firstLine.dlChip));
+    const thin = lines.filter((l) => l.dept === 'Billing')[0];
+    record('OVD-1: a thin window (under 10 calls) mutes its chip', !!thin && thin.dlChip.length === 1 && /^muted /.test(thin.dlChip[0]),
+      JSON.stringify(thin && thin.dlChip));
+    const quiet = lines.filter((l) => l.dept === 'Power')[0];
+    record('OVD-1: a day with no rings says so and shows no counts line', !!quiet && /no calls rang their lines/.test(quiet.dl || '') && !quiet.dlWords,
+      JSON.stringify(quiet));
+    const withDl = ov.depts.filter((d) => d.direct && !d.parent).map((d) => d.name);
+    const dlRendered = lines.filter((l) => l.dl).map((l) => l.dept);
+    record('OVD-1: every top-level tile the payload gives a direct block renders the row',
+      withDl.length > 0 && withDl.every((d) => dlRendered.indexOf(d) !== -1), withDl.join(',') + ' / ' + dlRendered.join(','));
+  }
   // Batch F1: the tile line's prior-period chips (Yesterday vs the business day before).
   {
     const pr = first.outbound.yesterday.prior;
@@ -334,6 +362,8 @@ function tileLines() {
     await pg.waitForTimeout(2500);
     const vaLines = (await pg.evaluate(tileLines)).filter((l) => l.shown);
     record('View-as: no Overview tile shows the outbound line', vaLines.length === 0, vaLines.map((l) => l.dept).join(','));
+    const vaDl = (await pg.evaluate(tileLines)).filter((l) => l.dl);
+    record('OVD-1: View-as: no Overview tile shows the direct-line row', vaDl.length === 0, vaDl.map((l) => l.dept).join(','));
     await pg.selectOption('#view-as-select', '');
     await pg.waitForTimeout(2500);
     const back = (await pg.evaluate(tileLines)).filter((l) => l.shown).length;
@@ -357,6 +387,8 @@ function tileLines() {
     await pm.waitForTimeout(3000);
     const mLines = (await pm.evaluate(tileLines)).filter((l) => l.shown);
     record('manager: no Overview tile shows the outbound line', mLines.length === 0, mLines.map((l) => l.dept).join(','));
+    const mDl = (await pm.evaluate(tileLines)).filter((l) => l.dl);
+    record('OVD-1: manager: no Overview tile shows the direct-line row', mDl.length === 0, mDl.map((l) => l.dept).join(','));
     await openDept(pm, meta);
     const m = await pm.evaluate(() => {
       const f = document.getElementById('ins-ob-fold');

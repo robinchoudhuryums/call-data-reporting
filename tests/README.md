@@ -576,6 +576,15 @@ tests/
                               with its per-row date filter; the bound,
                               labelled, PHI-free Neon read; admin-first and
                               read-only),
+                              overview-direct (OVD-1: the Overview tiles'
+                              direct-line answer rate -- one grouped read of
+                              direct_call_history by department over the five
+                              card periods + INV-28 priors, on the SAME
+                              connection as the outbound read and failing on
+                              its own; busy rings out of the rate; unknown
+                              depts dropped; stripped for every non-admin
+                              whatever the outbound gate says; the client row
+                              owns the tile's bar),
                               overview-outbound (Batch E2: the Overview
                               tiles' outbound line -- one grouped read over
                               the SAME five card periods and read window,
@@ -725,7 +734,7 @@ tests/
                               internal attempts into the dept's queues,
                               abandoned after MORE than 60 s of own queue
                               time, linked or not, its own fields only),
-                              outbound-callback-dept (CB-1 on CE-1's
+                              outbound-callback-dept (CBX-1: the company view leaves CSR and its Spanish sub-queue out of the total, the headline block and the series while their rows stay, flagged, and the shared / unmapped queues stay in; a department view unchanged; CB-1 on CE-1's
                               episodes: the per-dept callback table -- the
                               five outcomes partition the episodes on every
                               row and the total, a same-second tie broken

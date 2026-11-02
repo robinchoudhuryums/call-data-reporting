@@ -1019,7 +1019,40 @@
   // admin-only (6c) and only when its Neon read succeeded, so "render when
   // present" is the whole gate -- a manager or a View-as preview never gets
   // the field. Violet (--dir-out), the outbound hue everywhere else.
+  // OVD-1 (owner 2026-11-02): under the outbound row (Placed, Conn % and their
+  // chips) sits the DIRECT-LINE row -- answer rate, chip, counts in words.
+  // OVD-2 (owner 2026-11-02): the tile draws NO split bar -- the numbers carry
+  // it -- neither the direct one nor SB-3's outbound connected bar.
   function ovBuildOutboundLine_(dept) {
+    return ovBuildObRow_(dept) + ovBuildDirectLine_(dept);
+  }
+  function ovBuildDirectLine_(dept) {
+    var dl = dept && dept.direct && dept.direct[ovCardPeriod];
+    if (!dl) return '';
+    var a = Number(dl.answered) || 0, mf = Number(dl.missedFree) || 0, mb = Number(dl.missedBusy) || 0;
+    var rang = a + mf + mb;
+    var since = (dl.partial && ovLastData && ovLastData.directCoverageStart)
+      ? '<span class="ov-dept-ob-since">since ' + escapeHtml(isoDateShort_(ovLastData.directCoverageStart)) + '</span>' : '';
+    var through = ovLastData && ovLastData.directThrough;
+    var lag = !!(through && ovLastData.latestDate && through < ovLastData.latestDate);
+    var pr = dl.prior || null;
+    var pw = (ovLastData && ovLastData.directPriorWindows && ovLastData.directPriorWindows[ovCardPeriod]) || {};
+    var tip = pr ? ('vs ' + (pw.from ? isoDateShort_(pw.from) + (pw.to && pw.to !== pw.from ? ' – ' + isoDateShort_(pw.to) : '') : 'the prior period')
+      + ': ' + (pr.rate != null ? Number(pr.rate).toFixed(1) + '% answered' : 'no calls rang their lines')) : '';
+    var body = dl.rate != null
+      ? '<span><span class="ov-dept-dl-pct">' + Number(dl.rate).toFixed(1) + '%</span> answered'
+        + (pr ? obRateChip_(dl.rate, pr.rate, a + mf, (Number(pr.answered) || 0) + (Number(pr.missedFree) || 0), tip) : '') + '</span>'
+      : '<span class="ov-dept-ob-none">' + (rang ? 'every ring came while they were on another call' : 'no calls rang their lines') + '</span>';
+    var words = fmtNumber(a) + ' answered · ' + fmtNumber(mf) + ' missed · ' + fmtNumber(mb) + ' while busy · of '
+      + fmtNumber(rang) + ' that rang their lines';
+    return '<div class="ov-dept-tile-row ov-dept-dl" title="' + escapeHtml('Calls that rang this department\u2019s people on their own'
+        + ' lines (not the queues). Answer rate = answered \u00f7 (answered + missed while free); a ring while already on another'
+        + ' call is shown but left out of the rate.' + (lag ? ' Direct-line data runs through ' + through + '.' : '')) + '">'
+      +   '<span class="ov-dir-pill ov-dir-pill--direct">Direct lines</span>' + body + since
+      + '</div>'
+      + (rang ? '<div class="ov-dept-dl-words">' + words + (lag ? ' · through ' + escapeHtml(isoDateShort_(through)) : '') + '</div>' : '');
+  }
+  function ovBuildObRow_(dept) {
     var ob = dept && dept.outbound && dept.outbound[ovCardPeriod];
     if (!ob) return '';
     var since = (ob.partial && ovLastData && ovLastData.outboundCoverageStart)
@@ -1038,18 +1071,9 @@
         + (pr ? obRateChip_(ob.pct, pr.pct, ob.placed, pr.placed, tip) : '') + '</span>'
       : '<span class="ov-dept-ob-none">no outbound calls</span>'
         + (pr && pr.placed ? obPriorChip_(-pr.placed, 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '');
-    // SB-3: a slim connected / did-not-connect bar under the line. Only the
-    // two parts: the tile's block carries no ring split, and the two add up.
-    var obBar = ob.placed > 0
-      ? '<div class="ov-dept-ob-bar">' + obOutcomeBarHtml_([
-          { cls: 'good', n: ob.connected, label: 'connected' },
-          { cls: 'bad', n: Math.max(0, ob.placed - ob.connected), label: 'did not connect' },
-        ], ob.placed, fmtNumber(ob.placed) + ' outbound calls placed: ' + fmtNumber(ob.connected) + ' connected, '
-          + fmtNumber(Math.max(0, ob.placed - ob.connected)) + ' did not connect', 'thin') + '</div>'
-      : '';
     return '<div class="ov-dept-tile-row ov-dept-ob" title="' + escapeHtml('Outbound calls placed by this department\u2019s roster agents in the selected window. ' + OB_CONNECTED_DEF_) + '">'
       +   '<span class="ov-dir-pill">Outbound</span>' + body + since
-      + '</div>' + obBar;
+      + '</div>';
   }
 
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
@@ -2719,7 +2743,8 @@
       // read differently from the tile beside it (6.9% vs 6.6%). The
       // unmapped-queue episodes are named in "How this is counted".
       head.textContent = fmtNumber(cb.none || 0) + ' of ' + fmtNumber(cb.episodes || 0)
-        + ' callers not called back · ' + (cb.ownPct != null ? cb.ownPct + '% called back by their own team' : 'no own-team callbacks');
+        + ' callers not called back · ' + (cb.ownPct != null ? cb.ownPct + '% called back by their own team' : 'no own-team callbacks')
+        + ((t.excludedDepts || []).length ? ' · not counting ' + t.excludedDepts.join(' and ') : '');   // CBX-1
     }
     var kp = $('ov-cbdept-kpis');
     if (kp) kp.innerHTML = outboundCallbackSummaryHtml_(cb, (data && data.callbackPrior) || null,
@@ -2734,6 +2759,11 @@
         bits.push(fmtNumber((cb.phoneMenuAbandons || 0) + (cb.directLineAbandons || 0)) + ' hang-ups reached no queue, so no team can call them back ('
           + fmtNumber(cb.phoneMenuAbandons || 0) + ' in the phone menu, ' + fmtNumber(cb.directLineAbandons || 0)
           + ' on a person’s line — those are in Direct lines below).');
+      }
+      // CBX-1: the excluded departments' callers, counted and named.
+      if ((t.excludedDepts || []).length && tot.excludedEpisodes) {
+        bits.push(fmtNumber(tot.excludedEpisodes) + ' callers on ' + t.excludedDepts.join(' and ') + '\u2019s queues are left out of every company figure here: '
+          + 'they were calling for other departments, so those teams are not expected to call every one back. Their rows (marked *) still show them.');
       }
       if (unm > 0) bits.push(fmtNumber(unm) + ' of the ' + fmtNumber(tot.episodes || 0) + ' callers hung up on queues mapped to no department; they are in the totals and on the “unmapped” row, and no department owns them.');
       nc.textContent = bits.join(' ');

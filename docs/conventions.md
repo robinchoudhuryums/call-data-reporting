@@ -569,15 +569,15 @@ complete set of prefixes.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v29` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v30` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v16` |
 | `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v5` |
-| `OutboundReport.gs` | `outboundReport:vN:` | `v9` |
-| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v4` |
+| `OutboundReport.gs` | `outboundReport:vN:` | `v10` |
+| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v5` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
 | `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |

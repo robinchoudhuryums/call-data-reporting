@@ -1133,8 +1133,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the full compute (`OVERVIEW_CACHE_MAX_BYTES` = 100 KB documents the
   cap; it is not enforced). MEASURED at ~27 KB for the 14 visible depts
   (16 on the roster, 2 in `OVERVIEW_HIDDEN_DEPTS`; ~1.9
-  KB/dept) before Batches E/F added the tiles' outbound block (~0.5 KB/dept,
-  so ~34 KB est.) -- roughly 40+ depts away, so this is instrumentation, not
+  KB/dept) before Batches E/F added the tiles' outbound block (~0.5 KB/dept)
+  and OVD-1 the direct-line block (~0.6 KB/dept, so ~42 KB est.) -- roughly
+  30+ depts away, so this is instrumentation, not
   a live risk, and it is LOG-only: nothing surfaces on the Health
   page.
 - **CSV exports must neutralize formula injection.** Agent names
@@ -1984,7 +1985,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd`)
   on serve for non-admins -- and, while `OUTBOUND_VETTING_GATE_` stands, the
   tiles' outbound line too (`dept.outbound`, `outboundCoverageStart`,
-  `outboundPriorWindows`; INV-39) -- keeping only the Company chart LINE, copied
+  `outboundPriorWindows`; INV-39) and, with NO release switch, the tiles'
+  direct-line row (`dept.direct`, `directCoverageStart`, `directThrough`,
+  `directPriorWindows`; OVD-1) -- keeping only the Company chart LINE, copied
   by allowlist into `companyTrendLine` (Step 2 #6). Viewer-personalized fields (`viewerRole`,
   `viewerDept`) are injected per-request so a payload warmed by
   user A still personalizes correctly for user B. Adding a new

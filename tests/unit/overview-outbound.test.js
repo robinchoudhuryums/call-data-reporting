@@ -135,9 +135,13 @@ test('E2: an admin gets the per-dept outbound block + coverage start, from ONE m
   assert.equal(tile(p, 'CSR').outbound.yesterday.placed, 8);
   assert.equal(tile(p, 'Sales').outbound.yesterday.placed, 0);
   assert.equal(tile(p, 'CSR Backup'), undefined, 'hidden depts still have no tile');
-  assert.equal(conn.sql.length, 1);
+  // OVD-1: the direct-line read rides the SAME connection, one statement each.
+  assert.equal(conn.opened, 1, 'one connection for both tile lines');
+  assert.equal(conn.sql.length, 2);
+  assert.match(conn.sql[0], /FROM outbound_calls/);
+  assert.match(conn.sql[1], /FROM direct_call_history/);
   assert.ok(conn.closed, 'the connection is closed');
-  assert.deepEqual(h.ctx.egress, ['overviewOutbound']);
+  assert.deepEqual(h.ctx.egress, ['overviewOutbound', 'overviewDirect']);
 });
 
 test('E2: the line rides the CACHED blob -- a repeat load (the 5-min auto-refresh) never reaches Neon', function () {
