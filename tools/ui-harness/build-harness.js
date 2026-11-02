@@ -608,9 +608,14 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       // department -> line-owner breakdown (most not called back first).
       const after = sum(10, 3, 2, 1, 0, 0, 6, 2, 50400);
       after.medianFromOpenSec = 2700;
-      const row = function (name, eps, none, byP, byT, other, got, pending, extra) {
-        return Object.assign({ name: name, episodes: eps, none: none, own: byP + byT, ownByPerson: byP, ownByTeam: byT,
-          other: other, gotThrough: got, pending: pending }, extra || {});
+      const fig = function (eps, none, byP, byT, other, got, pending) {
+        return { episodes: eps, none: none, own: byP + byT, ownByPerson: byP, ownByTeam: byT,
+          other: other, gotThrough: got, pending: pending };
+      };
+      // DL-R3: each row also carries its work-hours / after-hours figures.
+      const row = function (name, eps, none, byP, byT, other, got, pending, extra, w, a) {
+        return Object.assign({ name: name }, fig(eps, none, byP, byT, other, got, pending),
+          w ? { work: fig.apply(null, w), after: fig.apply(null, a) } : {}, extra || {});
       };
       return { meta: meta,
         counts: { calls: 49, anonymous: 4, trackable: 42, missed: 38, abandoned: 11, voicemailBox: 6, unownedLines: 1, misdials: 3 },
@@ -618,12 +623,12 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
         work: sum(20, 11, 7, 2, 2, 1, 4, 4, 3600),
         after: after,
         byDept: [
-          Object.assign(row('Sales', 18, 7, 5, 3, 2, 1, 0), { noTeam: false, people: [
-            row('Sam Seller', 11, 5, 4, 1, 1, 0, 0, { voicemailBox: false }),
-            row('Sales Voicemails', 7, 2, 1, 2, 1, 1, 0, { voicemailBox: true }),
+          Object.assign(row('Sales', 18, 7, 5, 3, 2, 1, 0, null, [11, 3, 4, 2, 1, 1, 0], [7, 4, 1, 1, 1, 0, 0]), { noTeam: false, people: [
+            row('Sam Seller', 11, 5, 4, 1, 1, 0, 0, { voicemailBox: false }, [7, 2, 3, 1, 1, 0, 0], [4, 3, 1, 0, 0, 0, 0]),
+            row('Sales Voicemails', 7, 2, 1, 2, 1, 1, 0, { voicemailBox: true }, [4, 1, 1, 1, 0, 1, 0], [3, 1, 0, 1, 1, 0, 0]),
           ] }),
-          Object.assign(row('CSR', 12, 3, 4, 2, 1, 1, 1), { noTeam: false, people: [
-            row('Ann Agent', 12, 3, 4, 2, 1, 1, 1, { voicemailBox: false }),
+          Object.assign(row('CSR', 12, 3, 4, 2, 1, 1, 1, null, [9, 1, 4, 2, 1, 1, 0], [3, 2, 0, 0, 0, 0, 1]), { noTeam: false, people: [
+            row('Ann Agent', 12, 3, 4, 2, 1, 1, 1, { voicemailBox: false }, [9, 1, 4, 2, 1, 1, 0], [3, 2, 0, 0, 0, 0, 1]),
           ] }),
         ] };
     },

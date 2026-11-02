@@ -220,7 +220,7 @@ function section() {
       .map((c) => (c.args && c.args[0]) || null),
     eps: document.querySelectorAll('#ov-dl-rep-list .ob-ep').length }));
   record('CE-3: the Overview Direct lines block reads the COMPANY view, once, with its repeat list',
-    dlc.length === 1 && dlc[0].department === '' && dlt.bars === 2 && dlt.depts === 2
+    dlc.length === 1 && dlc[0].department === '' && dlt.bars === 3 && dlt.depts === 2
       && drep.calls.length === 1 && drep.calls[0].department === '' && drep.eps === 1,
     JSON.stringify({ dlc: dlc, dlt: dlt, drep: drep }));
   record('FO-2: a spreadsheet-served payload says so, how far the copy reaches, and from when it names the line rung',

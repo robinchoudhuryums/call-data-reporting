@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v29` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v30` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -104,7 +104,11 @@
 // queue figures for the last 30 / 60 / 90 days and the year to date, the card
 // periods), so the abandoned chips follow the card period instead of always
 // showing the latest QCD day.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v29';
+// v30 (OVD-1, owner 2026-11-02): each tile may carry `direct` (the
+// direct-line answer rate per card period, from Neon direct_call_history, +
+// its prior) and the blob `directCoverageStart` / `directThrough` /
+// `directPriorWindows`; admin-only, stripped for everyone else.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v30';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -426,7 +430,10 @@ function getCompanyOverview(req) {
   // Batch E2: the tiles' outbound line, read ONCE here so it rides the cached
   // blob (the 5-min auto-refresh never reaches Neon). Best-effort: null when
   // Neon is unreachable/unconfigured, and the tiles then show no line.
-  const outbound = ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate);
+  // OVD-1: + the direct-line answer rate, read on the SAME connection.
+  const tileLines = ovReadTileLines_(allDepts, deptsForAgent, w, latestDate);
+  const outbound = tileLines.outbound;
+  const direct = tileLines.direct;
 
   // Format per-dept output. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
   // are skipped entirely; sub-queues get a `parent` reference and
@@ -452,7 +459,7 @@ function getCompanyOverview(req) {
   const tileCtx = { deptStats: deptStats, trendIsoLabels: trendIsoLabels, chartTrendIsoLabels: chartTrendIsoLabels,
     qcdSnapshotsByDept: qcdSnapshotsByDept, deptChartDaily: periods.deptChartDaily, overviewParentMap: overviewParentMap,
     rosterByDept: rosterByDept, alertedSet: alertedSet, latestDate: latestDate, deptPeriodAcc: periods.deptPeriodAcc,
-    outboundByDept: outbound ? outbound.byDept : null, window: w };
+    outboundByDept: outbound ? outbound.byDept : null, directByDept: direct ? direct.byDept : null, window: w };
   const allFormatted = allDepts
     .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
     .map(function (d) { return ovFormatDept_(d, tileCtx); });
@@ -486,6 +493,12 @@ function getCompanyOverview(req) {
   if (outbound) {
     result.outboundCoverageStart = outbound.coverageStart;
     result.outboundPriorWindows = outbound.priorWindows;   // Batch F1: the chips' hover windows
+  }
+  // OVD-1: likewise only when the direct read succeeded (admin-only, stripped below).
+  if (direct) {
+    result.directCoverageStart = direct.coverageStart;
+    result.directThrough = direct.through;
+    result.directPriorWindows = direct.priorWindows;
   }
 
   ovCacheOverview_(cache, ovCacheKey, result, dqeRows, depts);
@@ -1030,6 +1043,8 @@ function ovFormatDept_(d, c) {
   // Batch E2: the outbound line, per card period. Absent (not null) when the
   // read failed, so the client's "render only when present" needs no flag.
   if (c.outboundByDept) tile.outbound = c.outboundByDept[d] || ovOutboundEmpty_();
+  // OVD-1: the direct-line answer rate, per card period; absent likewise.
+  if (c.directByDept) tile.direct = c.directByDept[d] || ovDirectEmpty_();
   return tile;
 }
 
@@ -1149,12 +1164,16 @@ function ovOutboundShape_(raw, allDepts, deptsForAgent, w, latestDate, priorWind
   return { byDept: byDept, coverageStart: cov, priorWindows: pw };
 }
 
-/** Best-effort Neon read; null when Neon is unconfigured, unreachable or the read throws. */
-function ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate) {
-  if (typeof getDashboardNeonConn_ !== 'function') return null;
+/**
+ * Best-effort Neon read; null when Neon is unconfigured, unreachable or the
+ * read throws. OVD-1: `shared` is a connection the caller opened (and will
+ * close); without it the read opens and closes its own.
+ */
+function ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, shared) {
+  if (!shared && typeof getDashboardNeonConn_ !== 'function') return null;
   let conn = null;
   try {
-    conn = getDashboardNeonConn_();
+    conn = shared || getDashboardNeonConn_();
     if (!conn) return null;
     const stmt = conn.createStatement();
     const priorWindows = ovOutboundPriorWindows_(w, latestDate);
@@ -1168,6 +1187,137 @@ function ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate) {
     Logger.log('Overview outbound read failed (tiles render without the line): '
       + (e && e.message ? e.message : e));
     return null;
+  } finally {
+    if (conn && !shared) { try { conn.close(); } catch (ce) { /* closed */ } }
+  }
+}
+
+// ── OVD-1: direct-line answer rate on the dept tiles ────────────────────────
+// Owner 2026-11-02 (from the approved mock): the tile's split bar shows how
+// often the department's people answered calls to their OWN lines (not the
+// queues) -- answered / (answered + missed while free); a ring while already
+// on another call is shown but left out of the rate, the Direct Calls
+// report's rule (directCallAnswerRate_). From Neon direct_call_history, which
+// carries the agent's roster department per row, so a dept is a GROUP BY
+// department (no roster map). The SAME five card periods and INV-28 prior
+// windows as the outbound line. Admin-only like the Direct Calls report:
+// personalizeOverview_ strips it for everyone else. No sheet fallback (the
+// outbound line's rule): without Neon the tiles simply show no direct line.
+
+/** PURE. The zero block a dept with no direct-line calls carries. */
+function ovDirectEmpty_() {
+  const out = {};
+  OV_OUTBOUND_PERIODS_.forEach(function (k) {
+    out[k] = { answered: 0, missedFree: 0, missedBusy: 0, rate: null, partial: false, prior: null };
+  });
+  return out;
+}
+
+/** PURE. answered / (answered + missed while free), 0-100 to one place; null with nothing to rate. */
+function ovDirectRate_(answered, missedFree) {
+  const d = (Number(answered) || 0) + (Number(missedFree) || 0);
+  return d > 0 ? round1_((Number(answered) || 0) / d * 100) : null;
+}
+
+/** PURE. The grouped SQL. Every date is an internal validated ISO string. */
+function ovDirectSql_(w, latestDate, priorWindows) {
+  const starts = ovOutboundPeriodStarts_(w, latestDate);
+  const pw = priorWindows || {};
+  const A = 'ib_int_answered+ib_ext_answered', MF = 'ib_int_missed_free+ib_ext_missed_free',
+        MB = 'ib_int_missed_busy+ib_ext_missed_busy';
+  const agg = function (expr, cond, as) { return 'COALESCE(sum(' + expr + ') FILTER (WHERE ' + cond + '), 0) AS ' + as; };
+  let lo = w.readFromIso;
+  const cols = OV_OUTBOUND_PERIODS_.map(function (k) {
+    const cond = k === 'yesterday' ? "call_date = '" + latestDate + "'::date" : "call_date >= '" + starts[k] + "'::date";
+    let sel = agg(A, cond, 'da_' + k) + ', ' + agg(MF, cond, 'dmf_' + k) + ', ' + agg(MB, cond, 'dmb_' + k);
+    if (pw[k]) {
+      const pcond = "call_date BETWEEN '" + pw[k].from + "'::date AND '" + pw[k].to + "'::date";
+      sel += ', ' + agg(A, pcond, 'pda_' + k) + ', ' + agg(MF, pcond, 'pdmf_' + k);
+      if (pw[k].from < lo) lo = pw[k].from;
+    }
+    return sel;
+  }).join(', ');
+  return "SELECT json_build_object('depts', (SELECT COALESCE(json_agg(t), '[]') FROM ("
+    + 'SELECT department AS dept, ' + cols + ' FROM direct_call_history '
+    + "WHERE call_date BETWEEN '" + lo + "'::date AND '" + latestDate + "'::date "
+    + 'GROUP BY department) t), '
+    + "'coverageStart', (SELECT MIN(call_date)::text FROM direct_call_history), "
+    + "'through', (SELECT MAX(call_date)::text FROM direct_call_history))::text AS j";
+}
+
+/**
+ * PURE. Per-dept period sums -> the tile blocks. `partial` marks a period that
+ * starts before capture began; a prior is kept only when its window starts on
+ * or after capture (the outbound line's F1 rule). A department the roster does
+ * not know is dropped.
+ */
+function ovDirectShape_(raw, allDepts, w, latestDate, priorWindows) {
+  const starts = ovOutboundPeriodStarts_(w, latestDate);
+  const cov = (raw && raw.coverageStart) || null;
+  const pw = priorWindows || {};
+  const byDept = {};
+  allDepts.forEach(function (d) { byDept[d] = ovDirectEmpty_(); });
+  ((raw && raw.depts) || []).forEach(function (r) {
+    const b = byDept[r.dept];
+    if (!b) return;
+    OV_OUTBOUND_PERIODS_.forEach(function (k) {
+      const p = b[k];
+      p.answered += Number(r['da_' + k]) || 0;
+      p.missedFree += Number(r['dmf_' + k]) || 0;
+      p.missedBusy += Number(r['dmb_' + k]) || 0;
+      if (cov && pw[k] && pw[k].from >= cov) {
+        const pa = Number(r['pda_' + k]) || 0, pm = Number(r['pdmf_' + k]) || 0;
+        p.prior = { answered: pa, missedFree: pm, rate: ovDirectRate_(pa, pm) };
+      }
+    });
+  });
+  Object.keys(byDept).forEach(function (d) {
+    OV_OUTBOUND_PERIODS_.forEach(function (k) {
+      const p = byDept[d][k];
+      p.rate = ovDirectRate_(p.answered, p.missedFree);
+      p.partial = !!(cov && starts[k] < cov);
+      // A covered prior window with no calls is a real zero, not "no data".
+      if (!p.prior && cov && pw[k] && pw[k].from >= cov) p.prior = { answered: 0, missedFree: 0, rate: null };
+    });
+  });
+  return { byDept: byDept, coverageStart: cov, through: (raw && raw.through) || null, priorWindows: pw };
+}
+
+/** Best-effort Neon read on the caller's connection; null when the read throws or returns nothing. */
+function ovReadDirectByDept_(allDepts, w, latestDate, conn) {
+  if (!conn) return null;
+  try {
+    const stmt = conn.createStatement();
+    const priorWindows = ovOutboundPriorWindows_(w, latestDate);
+    const rs = stmt.executeQuery(ovDirectSql_(w, latestDate, priorWindows));
+    const json = rs.next() ? rs.getString('j') : null;
+    rs.close(); stmt.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'overviewDirect');
+    if (!json) return null;
+    return ovDirectShape_(JSON.parse(json), allDepts, w, latestDate, priorWindows);
+  } catch (e) {
+    Logger.log('Overview direct-line read failed (tiles render without it): ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+/**
+ * OVD-1: both tile lines on ONE Neon connection (one connect per Overview
+ * compute, which the cached blob then serves). Each read fails on its own: a
+ * broken direct read never costs the outbound line, or the reverse.
+ */
+function ovReadTileLines_(allDepts, deptsForAgent, w, latestDate) {
+  const none = { outbound: null, direct: null };
+  if (typeof getDashboardNeonConn_ !== 'function') return none;
+  let conn = null;
+  try {
+    conn = getDashboardNeonConn_();
+    if (!conn) return none;
+    return { outbound: ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, conn),
+             direct: ovReadDirectByDept_(allDepts, w, latestDate, conn) };
+  } catch (e) {
+    Logger.log('Overview tile-line read failed: ' + (e && e.message ? e.message : e));
+    return none;
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
   }
@@ -1831,6 +1981,12 @@ function personalizeOverview_(blob, user) {
       if (Array.isArray(out.depts)) out.depts.forEach(function (d) { if (d) delete d.outbound; });
       delete out.outboundPriorWindows;   // Batch F1
     }
+    // OVD-1: the direct-line answer rate is admin-only like the Direct Calls
+    // report (vetting). FAIL CLOSED: no release switch, every non-admin loses it.
+    delete out.directCoverageStart;
+    delete out.directThrough;
+    delete out.directPriorWindows;
+    if (Array.isArray(out.depts)) out.depts.forEach(function (d) { if (d) delete d.direct; });
     // INV-48: managers see the WoW "driver" (a named individual agent +
     // delta) only for their OWN dept; admins see drivers for all depts.
     // The dept aggregate tiles stay cross-dept-visible by design, but the

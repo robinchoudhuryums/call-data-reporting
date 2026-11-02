@@ -2695,6 +2695,45 @@
     if (!m) return '8:30';
     return String((+m[1] + 2) % 24) + ':' + m[2];
   }
+  // DL-R3 (owner 2026-11-02, from the approved mock): the summary is a small
+  // table in the Agent Call Metrics style -- one row per hours group (work,
+  // after, all), each with its callers, ONE outcome bar with "called back /
+  // not" beside it, the two rates and the median callback -- so the groups
+  // read against each other column by column. One legend names the colours;
+  // each segment's count is on its hover.
+  function obDlOwnPct_(s) {
+    return s && s.episodes ? obSharePct_((s.ownByPerson || 0) + (s.ownByTeam || 0), s.episodes) : null;
+  }
+  function obDlBarCellHtml_(s, label, widthPct) {
+    s = s || {};
+    const eps = Number(s.episodes) || 0;
+    if (!eps) return '<span class="cell-zero">–</span>';
+    const own = (Number(s.ownByPerson) || 0) + (Number(s.ownByTeam) || 0);
+    const aria = obDlBarAria_(label, s);
+    return '<div class="lb-cell ob-dl-cell" title="' + escapeHtml(aria) + '">'
+      + '<div class="lb-track"><div style="width:' + (widthPct == null ? 100 : widthPct) + '%">'
+      + obOutcomeBarHtml_(obDlSegs_(s), eps, aria, 'mid') + '</div></div>'
+      + '<div class="lb-nums"><span class="lb-n"><span class="ob-dl-own-n">' + fmtNumber(own) + '</span>'
+      + '<span class="ans-slash">/</span><span class="ob-dl-none-n">' + fmtNumber(s.none || 0) + '</span></span></div></div>';
+  }
+  function obDlRateCellsHtml_(s) {
+    const eps = Number(s && s.episodes) || 0;
+    const op = obDlOwnPct_(s);
+    return '<td class="num"><span class="ob-dl-own-pct">' + (op != null ? op + '%' : '—') + '</span></td>'
+      + '<td class="num"><span class="ob-dl-none-pct">' + (eps ? obSharePct_(s.none, eps) + '%' : '—') + '</span></td>';
+  }
+  function obDlKeysHtml_() {
+    return '<div class="lb-legend ob-dl-keys">' + obDlSegs_({}).map(function (p) {
+      return '<span class="lb-key"><span class="ob-seg-' + p.cls + '"></span>' + escapeHtml(p.label.replace(' (may be unrelated)', '')) + '</span>';
+    }).join('') + '<span class="ob-dl-keys-hint">hover a bar for its counts</span></div>';
+  }
+  // 'HH:MM:SS' raw PST -> 'h:mm AM/PM' CST (the work-hours row's caption).
+  function obDlCst12_(pst, dflt) {
+    const m = /^(\d{2}):(\d{2})/.exec(String(pst || ''));
+    if (!m) return dflt;
+    const h = (+m[1] + 2) % 24;
+    return ((h % 12) || 12) + ':' + m[2] + (h < 12 ? ' AM' : ' PM');
+  }
   function outboundDirectSummaryHtml_(data) {
     const meta = (data && data.meta) || {};
     const all = (data && data.all) || {}, work = (data && data.work) || {}, after = (data && data.after) || {};
@@ -2703,80 +2742,132 @@
       return '<div class="ds-note">No unanswered call to a person’s line carried caller ID in this window, '
         + 'so there is nobody to call back.</div>';
     }
-    const ownPct = function (s) { return s.episodes ? obSharePct_((s.ownByPerson || 0) + (s.ownByTeam || 0), s.episodes) : null; };
-    let html = '<div class="ob-sum">'
+    const open = obDlCstOpen_((meta.workWindowPst || {}).start);
+    const row = function (cls, name, sub, s, medHtml) {
+      return '<tr class="ob-dl-hrow" data-dl-hours="' + cls + '"><td><span class="ob-dl-hname">' + name + '</span>'
+        + (sub ? '<span class="ob-dl-hsub">' + sub + '</span>' : '') + '</td>'
+        + '<td class="num">' + fmtNumber(s.episodes || 0) + '</td>'
+        + '<td class="ob-dl-bar-td">' + obDlBarCellHtml_(s, name, 100) + '</td>'
+        + obDlRateCellsHtml_(s) + '<td class="num ob-dl-med">' + medHtml + '</td></tr>';
+    };
+    const med = function (sec, note) {
+      return sec != null ? escapeHtml(fmtDuration(sec)) + (note ? '<small>' + escapeHtml(note) + '</small>' : '') : '—';
+    };
+    return '<div class="ob-sum">'
       + '<div class="ob-sum-head"><div class="ob-sum-big"><span class="ob-sum-num">' + fmtNumber(all.none || 0) + '</span>'
       + '<span class="ob-sum-lead">caller' + (all.none === 1 ? '' : 's') + ' to a person’s line '
       + (all.none === 1 ? 'was' : 'were') + ' not called back</span></div>'
-      + '<div class="ob-sum-sub">' + fmtNumber(work.none || 0) + ' during work hours · ' + fmtNumber(after.none || 0)
-      + ' after hours · of ' + fmtNumber(eps) + ' callers whose call to a person went unanswered'
-      + (meta.from && meta.to ? ' · ' + escapeHtml(meta.from) + ' to ' + escapeHtml(meta.to) : '') + '</div></div>';
-    [['Work hours', work, ''], ['After hours', after, 'incl. weekends & holidays']].forEach(function (g) {
-      const s = g[1];
-      html += '<div class="ob-dl-group"><span class="ob-dl-group-name">' + g[0] + '</span>'
-        + '<span class="ob-dl-group-n">' + fmtNumber(s.episodes || 0) + ' callers' + (g[2] ? ' · ' + g[2] : '') + '</span></div>'
-        + (s.episodes ? obOutcomeBarHtml_(obDlSegs_(s), s.episodes, obDlBarAria_(g[0], s))
-          : '<div class="al-hint">None in this window.</div>');
-    });
-    html += obOutcomeLegendHtml_(obDlSegs_(work).map(function (p, i) {
-      const a = obDlSegs_(after)[i];
-      return { cls: p.cls, value: fmtNumber(p.n || 0) + ' · ' + fmtNumber(a.n || 0), label: p.label, emph: p.cls === 'none' };
-    }));
-    html += '<div class="ob-sum-fine">Each figure reads work hours · after hours.</div>';
-    const wp = ownPct(work), ap = ownPct(after);
-    const q = [];
-    q.push('Called back by the person or their team <strong>' + (wp != null ? wp + '%' : '—') + '</strong> work hours · <strong>'
-      + (ap != null ? ap + '%' : '—') + '</strong> after hours');
-    q.push('Median time to callback <strong>' + (work.medianCallbackSec != null ? fmtDuration(work.medianCallbackSec) : '—')
-      + '</strong> work hours · <strong>' + (after.medianFromOpenSec != null ? fmtDuration(after.medianFromOpenSec) : '—')
-      + '</strong> after hours, counted from ' + obDlCstOpen_((meta.workWindowPst || {}).start) + ' the next work day');
-    html += '<div class="ob-sum-quality">' + q.map(function (x) { return '<span>' + x + '</span>'; }).join('') + '</div>';
-    return html + '</div>';
+      + '<div class="ob-sum-sub">of ' + fmtNumber(eps) + ' callers whose call to a person went unanswered'
+      + (meta.from && meta.to ? ' · ' + escapeHtml(meta.from) + ' to ' + escapeHtml(meta.to) : '') + '</div></div>'
+      + '<div class="ov-cbdept-scroll"><table class="ob-dl-cmp"><thead><tr><th>When they called</th><th class="num">Callers</th>'
+      + '<th class="ob-dl-bar-th">What happened next <span class="ob-dl-th-note">(called back / not)</span></th>'
+      + '<th class="num">Called back by person or team</th><th class="num">Not called back</th>'
+      + '<th class="num">Median time to callback</th></tr></thead><tbody>'
+      + row('work', 'Work hours', escapeHtml(obDlCst12_((meta.workWindowPst || {}).start, '8:30 AM') + ' – '
+        + obDlCst12_((meta.workWindowPst || {}).end, '5:00 PM') + ', work days'), work, med(work.medianCallbackSec))
+      + row('after', 'After hours', 'incl. weekends &amp; holidays', after,
+        med(after.medianFromOpenSec, 'from ' + open + ' the next work day'))
+      + '</tbody><tfoot>'
+      + row('all', 'All hours', '', all, '<span title="Work and after hours are timed from different starts, so they are not combined">—</span>')
+      + '</tfoot></table></div>' + obDlKeysHtml_() + '</div>';
   }
 
-  // DL-R2: the department -> line-owner table ("whose line has the unreturned
-  // callers"), most not-called-back first. A department row opens its people;
-  // a person row opens their unreturned callers (getOutboundDirectRepeats with
-  // the owner and 1+ attempts). The rows do not sum to the total: an owner on
-  // two rosters is under both departments.
-  function obDlRowCells_(r) {
-    const eps = Number(r.episodes) || 0;
-    return '<td class="num">' + fmtNumber(eps) + '</td>'
-      + '<td class="num ob-cbdept-none"><strong>' + fmtNumber(r.none || 0) + '</strong>'
-      + (eps ? ' · ' + obSharePct_(r.none, eps) + '%' : '') + '</td>'
-      + '<td class="num" title="by the person · by a teammate">' + fmtNumber(r.ownByPerson || 0) + ' · ' + fmtNumber(r.ownByTeam || 0) + '</td>'
-      + '<td class="num">' + fmtNumber(r.other || 0) + '</td>'
-      + '<td class="num">' + fmtNumber(r.gotThrough || 0) + '</td>'
-      + '<td class="num">' + fmtNumber(r.pending || 0) + '</td>';
+  // DL-R2/DL-R3: the department -> line-owner table ("whose line has the
+  // unreturned callers"), most not-called-back first, in the same row shape
+  // as the summary. A department row opens its people; a person row opens
+  // their unreturned callers (getOutboundDirectRepeats with the owner and 1+
+  // attempts). The hours switch (DL-R3) re-reads each row's `work` / `after`
+  // figures in place, so open rows stay open. The rows do not sum to the
+  // total: an owner on two rosters is under both departments.
+  var OB_DL_HOURS_ = [['all', 'All hours'], ['work', 'Work hours'], ['after', 'After hours']];
+  function obDlPick_(r, hours) {
+    if (!r) return {};
+    return hours && hours !== 'all' && r[hours] ? r[hours] : r;
   }
-  function obDlTableHtml_(data) {
+  function obDlRowCells_(r, hours, scaleMax, label) {
+    const s = obDlPick_(r, hours);
+    const eps = Number(s.episodes) || 0;
+    const w = scaleMax ? Math.max(2, Math.round(eps / scaleMax * 1000) / 10) : 100;
+    const afterN = hours === 'all' && r && r.after ? Number(r.after.episodes) || 0 : 0;
+    return '<td class="num">' + fmtNumber(eps)
+      + (afterN ? '<span class="ob-dl-hsub">' + fmtNumber(afterN) + ' after hours</span>' : '') + '</td>'
+      + '<td class="ob-dl-bar-td">' + obDlBarCellHtml_(s, label, w) + '</td>' + obDlRateCellsHtml_(s);
+  }
+  function obDlScaleMax_(rows, hours) {
+    let m = 0;
+    (rows || []).forEach(function (d) { m = Math.max(m, Number(obDlPick_(d, hours).episodes) || 0); });
+    return m;
+  }
+  function obDlTableHtml_(data, hours) {
     const rows = (data && data.byDept) || [];
     if (!rows.length) return '';
+    hours = hours || 'all';
     const all = (data && data.all) || {};
+    const totals = { episodes: all.episodes, none: all.none, ownByPerson: all.ownByPerson, ownByTeam: all.ownByTeam,
+      other: all.other, gotThrough: all.gotThrough, pending: all.pending, work: data.work, after: data.after };
+    const max = obDlScaleMax_(rows, hours);
+    const split = !!rows[0].work;
     let body = '';
     rows.forEach(function (d, di) {
       body += '<tr class="ob-dl-dept" data-dl-dept="' + di + '"><td><button type="button" class="qcd-expand-toggle ob-dl-toggle"'
         + ' aria-expanded="false" data-dl-dept="' + di + '">' + escapeHtml(d.name) + ' <span class="qcd-expand-icon">&#9654;</span></button></td>'
-        + obDlRowCells_(d) + '</tr>';
-      (d.people || []).forEach(function (p) {
+        + obDlRowCells_(d, hours, max, d.name) + '</tr>';
+      (d.people || []).forEach(function (p, pi) {
         const label = p.name + (p.voicemailBox ? ' (voicemail box)' : '');
         const canList = Number(p.none) > 0 && p.name !== '(line not recorded)';
-        body += '<tr class="ob-dl-person" data-dl-of="' + di + '" style="display:none;"><td>'
+        body += '<tr class="ob-dl-person" data-dl-of="' + di + '" data-dl-p="' + pi + '" style="display:none;"><td>'
           + (canList
             ? '<button type="button" class="qcd-expand-toggle ob-dl-person-btn" aria-expanded="false" data-owner="' + escapeHtml(p.name) + '">'
               + escapeHtml(label) + ' <span class="qcd-expand-icon">&#9654;</span></button>'
             : '<span class="ob-dl-person-name">' + escapeHtml(label) + '</span>')
-          + '</td>' + obDlRowCells_(p) + '</tr>'
-          + (canList ? '<tr class="ob-dl-drill" style="display:none;"><td colspan="7"><div class="ob-dl-drill-list"></div></td></tr>' : '');
+          + '</td>' + obDlRowCells_(p, hours, max, label) + '</tr>'
+          + (canList ? '<tr class="ob-dl-drill" style="display:none;"><td colspan="5"><div class="ob-dl-drill-list"></div></td></tr>' : '');
       });
     });
-    return '<p class="al-hint ob-table-lead">By department and line owner &mdash; whose line has the most callers not called back. '
-      + 'Open a department for its people, and a person for their list.</p>'
-      + '<div class="ov-cbdept-scroll"><table class="al-config-table ob-dl-table"><thead><tr>'
-      + '<th>Department / line owner</th><th class="num">Callers</th><th class="num">Not called back</th>'
-      + '<th class="num" title="called back by the person · by a teammate">By person · team</th><th class="num">Other team</th>'
-      + '<th class="num">Got through</th><th class="num">In window</th></tr></thead><tbody>' + body + '</tbody>'
-      + '<tfoot><tr class="ob-cbdept-total"><td><strong>Every department</strong></td>' + obDlRowCells_(all) + '</tr></tfoot></table></div>';
+    const sw = split ? '<span class="segmented ob-dl-hours" role="group" aria-label="Hours shown in the table">'
+      + OB_DL_HOURS_.map(function (h) {
+        return '<button type="button" class="seg-btn' + (h[0] === hours ? ' active' : '') + '" data-dl-hours-pick="' + h[0]
+          + '" aria-pressed="' + (h[0] === hours) + '">' + h[1] + '</button>';
+      }).join('') + '</span>' : '';
+    return '<div class="ob-dl-table-head"><span class="ob-dl-cap">By department and line owner · most not called back first</span>' + sw + '</div>'
+      + '<div class="ov-cbdept-scroll"><table class="ob-dl-cmp ob-dl-table"><thead><tr>'
+      + '<th>Department / line owner</th><th class="num">Callers</th>'
+      + '<th class="ob-dl-bar-th">What happened next <span class="ob-dl-th-note">(bar length = callers)</span></th>'
+      + '<th class="num">Called back by person or team</th><th class="num">Not called back</th></tr></thead><tbody>' + body + '</tbody>'
+      + '<tfoot><tr class="ob-cbdept-total"><td>Every department</td>' + obDlRowCells_(totals, hours, 0, 'Every department')
+      + '</tr></tfoot></table></div>';
+  }
+  // DL-R3: the hours switch -- each row's figure cells are rebuilt in place.
+  function obDlSetHours_(prefix, host, hours) {
+    const v = obDlView_(prefix);
+    const data = v.data;
+    const rows = (data && data.byDept) || [];
+    if (!rows.length) return;
+    v.hours = hours;
+    const max = obDlScaleMax_(rows, hours);
+    const swap = function (tr, r, label, scale) {
+      if (!tr || !r) return;
+      Array.from(tr.children).slice(1).forEach(function (td) { td.remove(); });
+      tr.insertAdjacentHTML('beforeend', obDlRowCells_(r, hours, scale, label));
+    };
+    host.querySelectorAll('tr.ob-dl-dept').forEach(function (tr) {
+      const d = rows[+tr.getAttribute('data-dl-dept')];
+      swap(tr, d, d && d.name, max);
+    });
+    host.querySelectorAll('tr.ob-dl-person').forEach(function (tr) {
+      const d = rows[+tr.getAttribute('data-dl-of')];
+      const p = d && (d.people || [])[+tr.getAttribute('data-dl-p')];
+      swap(tr, p, p && p.name, max);
+    });
+    const all = data.all || {};
+    swap(host.querySelector('tfoot tr.ob-cbdept-total'), { episodes: all.episodes, none: all.none, ownByPerson: all.ownByPerson,
+      ownByTeam: all.ownByTeam, other: all.other, gotThrough: all.gotThrough, pending: all.pending,
+      work: data.work, after: data.after }, 'Every department', 0);   // the total always spans the cell
+    host.querySelectorAll('[data-dl-hours-pick]').forEach(function (b) {
+      const on = b.getAttribute('data-dl-hours-pick') === hours;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
   }
   // Delegated, wired once per surface's table host: department rows open
   // their people; person rows load that person's unreturned callers.
@@ -2784,6 +2875,8 @@
     if (!host || host._obDlWired) return;
     host._obDlWired = true;
     host.addEventListener('click', function (e) {
+      const hp = e.target.closest && e.target.closest('[data-dl-hours-pick]');
+      if (hp && host.contains(hp)) { obDlSetHours_(prefix, host, hp.getAttribute('data-dl-hours-pick')); return; }
       const dt = e.target.closest && e.target.closest('.ob-dl-toggle');
       if (dt && host.contains(dt)) {
         const open = dt.getAttribute('aria-expanded') !== 'true';
@@ -2889,7 +2982,7 @@
     }
     const sum = $(prefix + '-sum'); if (sum) sum.innerHTML = outboundDirectSummaryHtml_(data);
     const tbl = $(prefix + '-table');
-    if (tbl) { tbl.innerHTML = obDlTableHtml_(data); obDlWireTable_(prefix, tbl); }
+    if (tbl) { tbl.innerHTML = obDlTableHtml_(data, obDlView_(prefix).hours || 'all'); obDlWireTable_(prefix, tbl); }
   }
   // Wired once per surface: the fold's toggle (with that surface's window)
   // and the repeat-callers drill.

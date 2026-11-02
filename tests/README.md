@@ -576,6 +576,15 @@ tests/
                               with its per-row date filter; the bound,
                               labelled, PHI-free Neon read; admin-first and
                               read-only),
+                              overview-direct (OVD-1: the Overview tiles'
+                              direct-line answer rate -- one grouped read of
+                              direct_call_history by department over the five
+                              card periods + INV-28 priors, on the SAME
+                              connection as the outbound read and failing on
+                              its own; busy rings out of the rate; unknown
+                              depts dropped; stripped for every non-admin
+                              whatever the outbound gate says; the client row
+                              owns the tile's bar),
                               overview-outbound (Batch E2: the Overview
                               tiles' outbound line -- one grouped read over
                               the SAME five card periods and read window,

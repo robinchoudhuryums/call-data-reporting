@@ -510,6 +510,26 @@ test('DL-R1: by department and line owner -- the first-tried line, both rosters,
   assert.deepEqual(JSON.parse(JSON.stringify(h.ctx.obDirectByDept_([]))), []);
 });
 
+test('DL-R3: each department and person row carries its work-hours and after-hours figures, which add up to the row', function () {
+  const ep = (outcome, teams, owner, after) => ({ outcome: outcome, teams: teams, delaySec: outcome === 'own' ? 60 : null,
+    attempts: [{ owner: owner, iso: '2026-09-08', id: owner + Math.random() }], _after: after });
+  const isAfter = (e) => !!e._after;
+  const eps = [ep('own', ['CSR'], 'Cara', false), ep('none', ['CSR'], 'Cara', true), ep('none', ['CSR'], 'Dana', true),
+    ep('other', ['CSR'], 'Dana', false), ep('none', ['Sales'], 'Sam', false)];
+  const rows = JSON.parse(JSON.stringify(h.ctx.obDirectByDept_(eps, isAfter)));
+  const csr = rows.filter((r) => r.name === 'CSR')[0];
+  assert.deepEqual([csr.episodes, csr.work.episodes, csr.after.episodes], [4, 2, 2]);
+  assert.deepEqual([csr.none, csr.work.none, csr.after.none], [2, 0, 2]);
+  ['own', 'other', 'gotThrough', 'pending', 'none', 'ownByPerson', 'ownByTeam'].forEach(function (k) {
+    assert.equal(csr.work[k] + csr.after[k], csr[k], k + ' splits exactly');
+  });
+  const dana = csr.people.filter((p) => p.name === 'Dana')[0];
+  assert.deepEqual([dana.work.other, dana.after.none], [1, 1], 'people rows carry the split too');
+  assert.equal(csr.work.work, undefined, 'the sub-figures do not nest');
+  // No isAfter (an older caller): the row shape is unchanged.
+  assert.equal(JSON.parse(JSON.stringify(h.ctx.obDirectByDept_(eps)))[0].work, undefined);
+});
+
 test('CE-3: the counts split missed / abandoned, anonymous, the voicemail box and lines on no roster', function () {
   const c = JSON.parse(JSON.stringify(h.ctx.obDirectCounts_([
     { disp: 'missed', anon: false, who: 'Cara', n: 10 },

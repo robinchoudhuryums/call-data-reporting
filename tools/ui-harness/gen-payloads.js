@@ -277,7 +277,7 @@ function span(nDays) {
 }
 
 // Batch E2: a fake Neon connection that answers ONLY the Overview's grouped
-// outbound read (the SQL carries p_yesterday), so the tiles' outbound line is
+// outbound read (and, OVD-1, its direct-line read) (the SQL carries p_yesterday), so the tiles' outbound line is
 // produced by the REAL ovReadOutboundByDept_ + shaper + strip. Every other
 // statement throws, so nothing else in the Overview silently reads it.
 function withOverviewOutboundConn(fn) {
@@ -296,14 +296,34 @@ function withOverviewOutboundConn(fn) {
     return r;
   });
   const blob = JSON.stringify({ agents: per, coverageStart: '2026-07-10' });
+  // OVD-1: the tiles' direct-line read (direct_call_history, per department),
+  // shaped by the REAL ovDirectShape_. Billing gets a thin, weak window so a
+  // muted / warn chip both draw; Power has no rings yesterday.
+  const deptNames = Object.keys(DEPT_OF).map(function (a) { return DEPT_OF[a]; })
+    .filter(function (d, i, arr) { return arr.indexOf(d) === i; });
+  const drows = deptNames.map(function (d, i) {
+    const r = { dept: d };
+    [['yesterday', 1], ['last30', 22], ['last60', 44], ['last90', 66], ['ytd', 70]].forEach(function (kv) {
+      const k = kv[0], m = kv[1];
+      const none = d === 'Power' && k === 'yesterday';
+      r['da_' + k] = none ? 0 : (d === 'Billing' ? 6 : 18 + i * 8) * m;
+      r['dmf_' + k] = none ? 0 : (d === 'Billing' ? 3 : 2 + i) * m;
+      r['dmb_' + k] = none ? 0 : (1 + (i % 2)) * m;
+      r['pda_' + k] = (d === 'Billing' ? 8 : 17 + i * 8) * m;
+      r['pdmf_' + k] = (d === 'Billing' ? 1 : 3 + (i % 3)) * m;
+    });
+    return r;
+  });
+  const dblob = JSON.stringify({ depts: drows, coverageStart: '2026-07-10', through: LATEST });
   const realConn = h.ctx.getDashboardNeonConn_;
   h.ctx.getDashboardNeonConn_ = function () {
     return {
       createStatement: function () {
         return { executeQuery: function (sql) {
-          if (String(sql).indexOf('p_yesterday') === -1) throw new Error('harness: only the outbound read is faked');
+          const isDirect = String(sql).indexOf('FROM direct_call_history') !== -1 && String(sql).indexOf('da_yesterday') !== -1;
+          if (String(sql).indexOf('p_yesterday') === -1 && !isDirect) throw new Error('harness: only the outbound + direct tile reads are faked');
           let n = 0;
-          return { next: function () { return n++ === 0; }, getString: function () { return blob; }, close: function () {} };
+          return { next: function () { return n++ === 0; }, getString: function () { return isDirect ? dblob : blob; }, close: function () {} };
         }, close: function () {} };
       },
       close: function () {},

@@ -1808,7 +1808,7 @@ function getOutboundCalledBack(req) {
 //     OUTBOUND_BRIEF_RING_SEC_ (inbound_calls.first_ring_seconds, captured by
 //     cdr-import) is counted and kept OUT of the episodes; an unknown ring
 //     (rows captured before the column) stays in.
-//   * Lazy + separately cached (`outboundDirect:v4`), so the Callbacks
+//   * Lazy + separately cached (`outboundDirect:v5`), so the Callbacks
 //     figures never pay for it. Neon first; when it is unreachable the export
 //     tabs stand in (FO-2, obDirectEventsFromGrids_ mirrors the SQL), never
 //     cached and disclosed -- and with neither, unavailable, never zero.
@@ -1832,8 +1832,9 @@ function obDirectSharedLine_(n) {
 // v2 (FO-1): misdials leave the rate. v3 (B1): the window-edge episode rules
 // (PC-1) and pending vs the loaded calls (PC-2). v4 (DL-R1, owner 2026-10-28):
 // the per-department / per-line-owner breakdown `byDept` and the after-hours
-// callback time counted from the next work-window open.
-const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v4:';
+// callback time counted from the next work-window open. v5 (DL-R3, owner
+// 2026-11-02): each byDept row and person carries `work` / `after`.
+const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v5:';
 var OUTBOUND_DIRECT_REPEATS_MAX = 200;   // episodes on the repeat list
 
 /** PURE. A line owner's (or dialer's) homes: the roster, else a shared mailbox's dept. */
@@ -2202,10 +2203,20 @@ function obDirectEpOwner_(ep) {
 }
 
 /** PURE (DL-R1). One breakdown row's figures (the bar's segments, on one base). */
-function obDirectRowFigures_(eps) {
-  var s = obDirectSummary_(eps);
-  return { episodes: s.episodes, none: s.none, own: s.own, ownByPerson: s.ownByPerson, ownByTeam: s.ownByTeam,
-           other: s.other, gotThrough: s.gotThrough, pending: s.pending };
+function obDirectRowFigures_(eps, isAfter) {
+  var f = function (list) {
+    var s = obDirectSummary_(list);
+    return { episodes: s.episodes, none: s.none, own: s.own, ownByPerson: s.ownByPerson, ownByTeam: s.ownByTeam,
+             other: s.other, gotThrough: s.gotThrough, pending: s.pending };
+  };
+  var row = f(eps);
+  // DL-R3 (owner 2026-11-02): the same figures for the row's work-hours and
+  // after-hours callers, so the table can switch hours like the summary.
+  if (typeof isAfter === 'function') {
+    row.work = f((eps || []).filter(function (ep) { return !isAfter(ep); }));
+    row.after = f((eps || []).filter(isAfter));
+  }
+  return row;
 }
 
 /**
@@ -2216,7 +2227,7 @@ function obDirectRowFigures_(eps) {
  * like the callback table); an episode with no roster team sits on the "No
  * roster team" row. Sorted most not-called-back first, people likewise.
  */
-function obDirectByDept_(eps) {
+function obDirectByDept_(eps, isAfter) {
   var depts = {};
   (eps || []).forEach(function (ep) {
     var teams = (ep.teams && ep.teams.length) ? ep.teams : ['No roster team'];
@@ -2230,11 +2241,11 @@ function obDirectByDept_(eps) {
   var byNone = function (a, b) { return (b.none - a.none) || (b.episodes - a.episodes) || (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0)); };
   return Object.keys(depts).map(function (name) {
     var d = depts[name];
-    var row = obDirectRowFigures_(d.eps);
+    var row = obDirectRowFigures_(d.eps, isAfter);
     row.name = name;
     row.noTeam = name === 'No roster team';
     row.people = Object.keys(d.people).map(function (o) {
-      var pr = obDirectRowFigures_(d.people[o]);
+      var pr = obDirectRowFigures_(d.people[o], isAfter);
       pr.name = o;
       pr.voicemailBox = obDirectIsVoicemailLine_(o);
       return pr;
@@ -2315,7 +2326,7 @@ function getOutboundDirectCallbacks(req) {
     out.after = obDirectSummary_(d.eps.filter(isAfter));
     // DL-R1 (owner 2026-10-28): after hours is timed from the next work day.
     out.after.medianFromOpenSec = obDirectMedianFromOpen_(d.eps.filter(isAfter));
-    out.byDept = obDirectByDept_(d.eps);
+    out.byDept = obDirectByDept_(d.eps, isAfter);   // DL-R3: + each row's work / after split
     if (src.fallbackSource) {
       // FO-2: the export tabs answered -- disclosed, and never cached (the
       // CE-1 fallback rule), so the next request tries Neon again.

@@ -1135,7 +1135,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
   BOUNDARIES end-to-end. Payload shape changed, so a `companyOverview` bump (v28 then).
-  **The tile's QUEUE chips follow the same Window (QD-2, `companyOverview:v29`).**
+  **The tile's QUEUE chips follow the same Window (QD-2, the Overview cache's v29 bump).**
   `ovQcdForPeriod_` (script-3-overview) is the one place that picks them:
   Yesterday reads the latest-QCD-day snapshot (`dept.qcd`), every other window
   reads `dept.qcd.periods[key]` (same boundaries as the DQE buckets, capped at

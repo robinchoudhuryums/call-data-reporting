@@ -1019,7 +1019,46 @@
   // admin-only (6c) and only when its Neon read succeeded, so "render when
   // present" is the whole gate -- a manager or a View-as preview never gets
   // the field. Violet (--dir-out), the outbound hue everywhere else.
+  // OVD-1 (owner 2026-11-02, from the approved mock): the tile's split bar now
+  // shows the DIRECT-LINE answer rate; the outbound row stays as text (Placed,
+  // Conn % and their chips). Its connected bar is kept only for a tile that
+  // carries no direct block (the direct read failed), so no tile loses its bar.
   function ovBuildOutboundLine_(dept) {
+    return ovBuildObRow_(dept) + ovBuildDirectLine_(dept);
+  }
+  function ovBuildDirectLine_(dept) {
+    var dl = dept && dept.direct && dept.direct[ovCardPeriod];
+    if (!dl) return '';
+    var a = Number(dl.answered) || 0, mf = Number(dl.missedFree) || 0, mb = Number(dl.missedBusy) || 0;
+    var rang = a + mf + mb;
+    var since = (dl.partial && ovLastData && ovLastData.directCoverageStart)
+      ? '<span class="ov-dept-ob-since">since ' + escapeHtml(isoDateShort_(ovLastData.directCoverageStart)) + '</span>' : '';
+    var through = ovLastData && ovLastData.directThrough;
+    var lag = !!(through && ovLastData.latestDate && through < ovLastData.latestDate);
+    var pr = dl.prior || null;
+    var pw = (ovLastData && ovLastData.directPriorWindows && ovLastData.directPriorWindows[ovCardPeriod]) || {};
+    var tip = pr ? ('vs ' + (pw.from ? isoDateShort_(pw.from) + (pw.to && pw.to !== pw.from ? ' – ' + isoDateShort_(pw.to) : '') : 'the prior period')
+      + ': ' + (pr.rate != null ? Number(pr.rate).toFixed(1) + '% answered' : 'no calls rang their lines')) : '';
+    var body = dl.rate != null
+      ? '<span><span class="ov-dept-dl-pct">' + Number(dl.rate).toFixed(1) + '%</span> answered'
+        + (pr ? obRateChip_(dl.rate, pr.rate, a + mf, (Number(pr.answered) || 0) + (Number(pr.missedFree) || 0), tip) : '') + '</span>'
+      : '<span class="ov-dept-ob-none">' + (rang ? 'every ring came while they were on another call' : 'no calls rang their lines') + '</span>';
+    var parts = [
+      { cls: 'good', n: a, label: 'answered' },
+      { cls: 'bad', n: mf, label: 'missed while free' },
+      { cls: 'soft', n: mb, label: 'missed while on another call' },
+    ];
+    var words = fmtNumber(a) + ' answered · ' + fmtNumber(mf) + ' missed · ' + fmtNumber(mb) + ' while busy · of '
+      + fmtNumber(rang) + ' that rang their lines';
+    return '<div class="ov-dept-tile-row ov-dept-dl" title="' + escapeHtml('Calls that rang this department\u2019s people on their own'
+        + ' lines (not the queues). Answer rate = answered \u00f7 (answered + missed while free); a ring while already on another'
+        + ' call is shown but left out of the rate.' + (lag ? ' Direct-line data runs through ' + through + '.' : '')) + '">'
+      +   '<span class="ov-dir-pill ov-dir-pill--direct">Direct lines</span>' + body + since
+      + '</div>'
+      + (rang ? '<div class="ov-dept-ob-bar ov-dept-dl-bar">' + obOutcomeBarHtml_(parts, rang, rang + ' calls rang their lines: ' + words, 'thin') + '</div>'
+        + '<div class="ov-dept-dl-words">' + words + (lag ? ' · through ' + escapeHtml(isoDateShort_(through)) : '') + '</div>' : '');
+  }
+  function ovBuildObRow_(dept) {
     var ob = dept && dept.outbound && dept.outbound[ovCardPeriod];
     if (!ob) return '';
     var since = (ob.partial && ovLastData && ovLastData.outboundCoverageStart)
@@ -1040,7 +1079,7 @@
         + (pr && pr.placed ? obPriorChip_(-pr.placed, 'good', WOW_NOISE_THRESHOLD, false, false, tip) : '');
     // SB-3: a slim connected / did-not-connect bar under the line. Only the
     // two parts: the tile's block carries no ring split, and the two add up.
-    var obBar = ob.placed > 0
+    var obBar = ob.placed > 0 && !(dept.direct && dept.direct[ovCardPeriod])
       ? '<div class="ov-dept-ob-bar">' + obOutcomeBarHtml_([
           { cls: 'good', n: ob.connected, label: 'connected' },
           { cls: 'bad', n: Math.max(0, ob.placed - ob.connected), label: 'did not connect' },
