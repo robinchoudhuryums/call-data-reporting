@@ -22,7 +22,7 @@ DL-R3 | styles.html | `.ob-dl-cmp` family; `.ins-brief-list > .ins-brief-item { 
 OVD-1 | CompanyOverview.gs | `ovDirectSql_` / `ovDirectShape_` / `ovReadDirectByDept_` (direct_call_history by department, five card periods + INV-28 priors, rate = answered / (answered + missed while free)); `ovReadTileLines_` runs it and the outbound read on ONE connection, each failing alone; tile `direct` + blob `directCoverageStart` / `directThrough` / `directPriorWindows`, stripped for every non-admin; `companyOverview:v30`
 OVD-1 | script-3-overview.html | `ovBuildOutboundLine_` = `ovBuildObRow_` (outbound text + chips) + `ovBuildDirectLine_` (pill, rate + `obRateChip_`, answered / missed / busy bar, counts in words); the outbound connected bar is drawn only when the tile has no direct block
 
-TEST RESULTS: node --test 2810 pass / 0 fail (TZ=America/Chicago); lint:gas clean; module-deps --check clean after --write; INV-16 guard clean; bites 5/5 (DL-R3 split, OVD-1 strip, busy out of the rate, outbound bar gives way, and -- by hand, ci:ui driver -- the brief min-width fix); ci:ui: see STATE (run ciui-dlr3)
+TEST RESULTS: node --test 2810 pass / 0 fail (TZ=America/Chicago); lint:gas clean; module-deps --check clean after --write; INV-16 guard clean; bites 5/5 (DL-R3 split, OVD-1 strip, busy out of the rate, outbound bar gives way, and -- by hand, ci:ui driver -- the brief min-width fix); ci:ui green -- all stages passed, 823 checks, exit 0 (covers CBX-1 too)
 REGRESSION RISKS:
 - The Overview now runs a second Neon statement per compute (same connection). It is cached in the blob, so the 5-minute auto-refresh never reaches Neon.
 - An Overview tile whose direct read fails falls back to the old outbound connected bar, so no tile loses a bar.
