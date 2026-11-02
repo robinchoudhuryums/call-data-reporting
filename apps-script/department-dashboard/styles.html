@@ -8580,6 +8580,28 @@ tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82
 .ob-leg-t { font-size: 12px; color: var(--ink-muted, var(--muted)); }
 .ob-table-lead { margin: 4px 0 8px; }
 .ob-howto { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+/* IC-1..IC-4 (owner 2026-11-02): "How this is counted" is an ⓘ in the
+   section's button row; its bullets live in a hidden .ob-howto-src that the
+   gloss tooltip reads at show time (data-gloss-src). */
+.ob-howto-src[hidden] { display: none !important; }
+.ob-list-actions .ob-howto-tip, .ov-cbdept-controls .ob-howto-tip { margin-left: auto; }
+.ob-howto-tip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.ds-tooltip.ds-tooltip--wide { max-width: 380px; }
+.ds-tooltip .ds-tip-list { margin: 4px 0 0; padding-left: 16px; }
+.ds-tooltip .ds-tip-list li { margin: 3px 0; }
+.ds-tooltip.ds-tooltip--wide p { margin: 6px 0 0; color: var(--ink-muted, var(--muted)); }
+.ds-tooltip.ds-tooltip--wide p:empty { display: none; }
+/* IC-2: Direct lines reads as a disclosure -- a chevron that turns, like the
+   Insights folds' (.ins-fold-summary), and a hover state. */
+.ob-dl-summary { list-style: none; }
+.ob-dl-summary::-webkit-details-marker { display: none; }
+.ob-dl-summary::before {
+  content: '\25b8'; color: var(--muted); font-size: 12px; transition: transform 0.15s ease;
+  display: inline-block; width: 1em; height: 1em; line-height: 1em; text-align: center; align-self: center;
+}
+.ob-dl-fold[open] > .ob-dl-summary::before { transform: rotate(90deg); }
+.ob-dl-summary:hover .ds-zone-label { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .ob-dl-summary::before { transition: none; } }
 .ob-howto > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .ob-howto-body { font-size: 13px; color: var(--ink-muted, var(--muted)); }
 .ob-howto-body p { margin: 8px 0 0; }

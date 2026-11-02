@@ -23,6 +23,7 @@ const vm = require('vm');
 const DIR = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
 const src = (f) => fs.readFileSync(path.join(DIR, f), 'utf8');
 const S5 = src('script-5-dept.html');
+const S4 = src('script-4-nav.html');
 const S8 = src('script-8-insights.html');
 const S9 = src('script-9-inbound-direct.html');
 const S10 = src('script-10-escalations.html');
@@ -368,4 +369,48 @@ test('DV-1: the Direct view stays admin-only on its OWN gate -- the 6c release o
   const btn = HTML.match(/<button[^>]*data-dir-pick="direct"[^>]*>/);
   assert.ok(btn && /data-admin-only/.test(btn[0]), 'the Direct button carries its own data-admin-only');
   assert.match(extractFn(S5, 'obEffectiveDir_'), /obDir_ === 'direct' && !tdcActive_\(\)\) \? 'both'/, 'a viewer who cannot read the Direct report lands on the default view');
+});
+
+// ---- IC-1..IC-4 (owner 2026-11-02): explainers become ⓘ tooltips ------------
+test('IC-1/2/4: every "How this is counted" is an ⓘ whose bullets live in a hidden source element -- no visible explainer, no fold', function () {
+  const srcs = (HTML.match(/data-gloss-src="([\w-]+)"/g) || []).map(function (x) { return x.replace(/.*="([\w-]+)"/, '$1'); });
+  assert.deepEqual(srcs.slice().sort(), ['ins-cb-howto', 'ins-dl-howto', 'ov-cbdept-howto', 'ov-dl-howto']);
+  srcs.forEach(function (id) {
+    assert.match(HTML, new RegExp('<div id="' + id + '" class="ob-howto-src" hidden>'), id + ' is a hidden source');
+  });
+  assert.ok(!/<details class="ob-howto"/.test(HTML), 'no "How this is counted" fold is left');
+  assert.ok(!/<p class="al-hint">\s*Counted in <strong>contact episodes<\/strong>/.test(HTML), 'the Callbacks explainer is no longer on the page');
+  // The live figures that were in the explainers stay addressable by id, inside their sources.
+  [['ins-cb-howto', 'ins-cb-window'], ['ins-cb-howto', 'ins-cb-scope-note'], ['ins-dl-howto', 'ins-dl-counts'],
+   ['ov-dl-howto', 'ov-dl-counts'], ['ov-cbdept-howto', 'ov-cbdept-notcounted']].forEach(function (p) {
+    const box = HTML.slice(HTML.indexOf('<div id="' + p[0] + '"'), HTML.indexOf('</div>', HTML.indexOf('<div id="' + p[0] + '"')));
+    assert.ok(box.indexOf('id="' + p[1] + '"') !== -1, p[1] + ' sits inside ' + p[0]);
+  });
+  const show = S4.slice(S4.indexOf('    function show(el) {'), S4.indexOf('    function hide() {'));
+  assert.match(show, /const rich = src \? src\.innerHTML : el\.getAttribute\('data-gloss-rich'\);/, 'read at SHOW time, so the figures are current');
+});
+
+test('IC-1: the two Callbacks list buttons share one row; the sub-queue line moved into the tooltip, the Neon note stayed', function () {
+  const at = HTML.lastIndexOf('<div class="esc-resolve-actions ob-list-actions">', HTML.indexOf('id="ins-cb-uncalled-btn"'));
+  const row = HTML.slice(at, HTML.indexOf('</div>', at));
+  assert.ok(row.indexOf('id="ins-cb-uncalled-btn"') !== -1 && row.indexOf('id="ins-cb-calledback-btn"') !== -1, 'side by side');
+  const r = extractFn(S8, 'insCbRender_');
+  assert.ok(!/notes\.push\('Includes the abandoned callers/.test(r), 'the scope line is not a visible note');
+  assert.match(r, /scope\.textContent = subDepts\.length \?/);
+  assert.match(r, /notes\.push\('Neon was unreachable/, 'the fallback note stays visible');
+});
+
+test('IC-2: Direct lines reads as a disclosure -- a chevron that turns when open', function () {
+  assert.match(CSS, /\.ob-dl-summary::before \{\s*content: '\\25b8';/);
+  assert.match(CSS, /\.ob-dl-fold\[open\] > \.ob-dl-summary::before \{ transform: rotate\(90deg\); \}/);
+});
+
+test('IC-3: a brief row slides open AND shut on a user toggle; a rebuild and reduced motion switch instantly', function () {
+  assert.match(extractFn(S8, 'insBriefToggle_'), /insBriefApply_\(key, true\);/, 'a user toggle animates');
+  const a = extractFn(S8, 'insBriefApply_');
+  assert.match(a, /if \(!animate \|\| still \|\| typeof slot\.animate !== 'function' \|\| insBriefReducedMotion_\(\)\) \{/);
+  assert.match(a, /if \(open\) \{ slot\.hidden = false; setSections\(\); \}/, 'open: content in before measuring');
+  assert.match(a, /if \(!open\) \{ slot\.hidden = true; setSections\(\); \}/, 'close: sections shut only once the slide ends');
+  assert.match(extractFn(S8, 'insBriefReducedMotion_'), /prefers-reduced-motion: reduce/);
+  assert.ok(/insBriefApply_\(key\);/.test(S8), 'the rebuild path restores rows without animating');
 });

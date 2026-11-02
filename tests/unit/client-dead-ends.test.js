@@ -291,7 +291,10 @@ test('UD-4 / UD-5 / UD-6 / UD-9 / UD-10 / C2-13: the markup-level fixes', functi
   // Batch D added the Team Outbound panel's hint: three side panels now.
   // Four since D3 (2026-10-21): Queue Call Data, Team Rings, Team Outbound, Team Direct Calls.
   // Five since AT-1 (2026-11-02): the agent table's own ⓘ uses the same layer.
-  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 5, 'UD-6: every side-panel hint is a note on the styled tooltip layer');
+  // Nine since IC-1..IC-4: the four "How this is counted" ⓘs (Callbacks and
+  // Direct lines on My Department, Callbacks by department and Direct lines
+  // on the Overview).
+  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 9, 'UD-6: every side-panel hint is a note on the styled tooltip layer');
   assert.ok(/<h1 id="page-title" tabindex="-1">/.test(dash), 'UD-9: the page h1 can take focus');
   const s6 = src('script-6-ir.html');
   assert.ok(/const h1 = \$\('page-title'\);\s*\n\s*if \(h1\) \{ try \{ h1\.focus\(\); \}/.test(s6), 'UD-9: the from-Insights close focuses the h1');

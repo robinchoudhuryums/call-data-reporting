@@ -2137,26 +2137,58 @@
       insBriefApply_(key);
     });
   }
-  function insBriefApply_(key) {
+  // IC-3 (owner 2026-11-02): a row's section slides open AND shut, like the
+  // agent panel (apAnimateOpen_/apAnimateClose_). Only a user toggle animates
+  // (`animate`); a rebuild restoring the open rows does not. Reduced motion,
+  // or no Web Animations API, keeps the instant switch.
+  var INS_BRIEF_ANIM_MS_ = 200;
+  function insBriefReducedMotion_() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; }
+  }
+  function insBriefApply_(key, animate) {
     var box = $('ins-brief');
     if (!box) return;
     var open = !!INS_BRIEF_OPEN_[key];
     var btn = box.querySelector('[data-brief-key="' + key + '"]');
     var slot = box.querySelector('[data-brief-slot="' + key + '"]');
     if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (slot) slot.hidden = !open;
     var t = INS_BRIEF_TARGET_[key];
     // Setting `open` fires the section's own toggle listener: the trend chart,
     // the team-detail canvases, the agents chart and the Callbacks payload all
     // draw on open exactly as they did when the section was opened in place.
-    (t ? t.ids : []).forEach(function (id) {
-      var el = $(id);
-      if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
-    });
+    var setSections = function () {
+      (t ? t.ids : []).forEach(function (id) {
+        var el = $(id);
+        if (el && insBriefMounted_(el) && el.open !== open) el.open = open;
+      });
+    };
+    if (!slot) { setSections(); return; }
+    if (slot._briefAnim) { try { slot._briefAnim.cancel(); } catch (e0) {} slot._briefAnim = null; slot.style.overflow = ''; }
+    var still = slot.hidden === !open;   // already in the asked state
+    if (!animate || still || typeof slot.animate !== 'function' || insBriefReducedMotion_()) {
+      slot.hidden = !open;
+      setSections();
+      return;
+    }
+    // Open: show it and open the sections first, so the height is measured with
+    // the content in. Close: shut the sections only once the slide has ended.
+    if (open) { slot.hidden = false; setSections(); }
+    var cs = getComputedStyle(slot);
+    var full = { height: slot.getBoundingClientRect().height + 'px', paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1 };
+    var shut = { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0.3 };
+    slot.style.overflow = 'hidden';
+    var anim = slot.animate(open ? [shut, full] : [full, shut], { duration: INS_BRIEF_ANIM_MS_, easing: 'ease' });
+    slot._briefAnim = anim;
+    anim.onfinish = function () {
+      if (slot._briefAnim !== anim) return;
+      slot._briefAnim = null;
+      slot.style.overflow = '';
+      if (!open) { slot.hidden = true; setSections(); }
+    };
   }
   function insBriefToggle_(key, force) {
     INS_BRIEF_OPEN_[key] = (force === undefined) ? !INS_BRIEF_OPEN_[key] : !!force;
-    insBriefApply_(key);
+    insBriefApply_(key, true);
   }
   // Step 3: a jump that opens a section (an agent chip, a calendar day) must
   // open its brief ROW when the section sits in the accordion -- setting the
@@ -3045,11 +3077,15 @@
     if (fold && fold.open) {
       outboundRenderCbChart_((data && data.daily) || [], $('ins-cb-chart-wrap'), $('ins-cb-chart'));
     }
+    // IC-1: the sub-queue scope is part of "How this is counted" (the ⓘ);
+    // only the Neon-down fallback stays a visible note.
     var notes = [];
     var subDepts = (meta.scopeDepts || []).slice(1);
-    if (subDepts.length) {
-      notes.push('Includes the abandoned callers of the ' + subDepts.join(', ') + ' sub-queue'
-        + (subDepts.length === 1 ? '' : 's') + ', as the department view of the Outbound report does.');
+    var scope = $('ins-cb-scope-note');
+    if (scope) {
+      scope.textContent = subDepts.length ? 'Includes the abandoned callers of the ' + subDepts.join(', ') + ' sub-queue'
+        + (subDepts.length === 1 ? '' : 's') + ', as the department view of the Outbound report does.' : '';
+      scope.style.display = subDepts.length ? '' : 'none';
     }
     if (meta.fallbackSource === 'sheet') {
       notes.push('Neon was unreachable: these figures come from the Outbound Calls tab'

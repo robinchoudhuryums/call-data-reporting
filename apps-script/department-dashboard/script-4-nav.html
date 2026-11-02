@@ -1041,7 +1041,13 @@
       tip.style.top = Math.round(top) + 'px';
     }
     function show(el) {
-      const rich = el.getAttribute('data-gloss-rich');
+      // IC-1 (owner 2026-11-02): data-gloss-src names a HIDDEN element whose
+      // markup is the tooltip, read at show time so live figures inside it
+      // (the callback window, the not-counted lines) are always current.
+      const srcId = el.getAttribute('data-gloss-src');
+      const src = srcId ? document.getElementById(srcId) : null;
+      const rich = src ? src.innerHTML : el.getAttribute('data-gloss-rich');
+      tip.classList.toggle('ds-tooltip--wide', !!src);
       const text = el.getAttribute('title') || el.getAttribute('data-gloss');
       if (!rich && !text) return;
       if (el.hasAttribute('title')) {             // suppress native popover

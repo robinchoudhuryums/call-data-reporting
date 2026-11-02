@@ -96,6 +96,21 @@ function section() {
     JSON.stringify({ tiles: s.tiles, num: s.num, segs: s.segs }));
   record('CB-R1: the hang-ups no queue owns are said under "How this is counted", not in a tile',
     /52 hang-ups/.test(s.notCounted) && /phone menu/.test(s.notCounted), s.notCounted);
+  {
+    // IC-4 (owner 2026-11-02): the counting rules are an ⓘ in the controls row
+    // (no fold any more); hovering shows the bullets with the live not-counted line.
+    await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: 'center' }), '[data-gloss-src="ov-cbdept-howto"]');
+    await page.waitForTimeout(300);
+    await page.hover('[data-gloss-src="ov-cbdept-howto"]');
+    await page.waitForTimeout(300);
+    const t = await page.evaluate(() => { const el = document.getElementById('ds-gloss-tip');
+      return { shown: !!el && el.style.display !== 'none', items: el ? el.querySelectorAll('.ds-tip-list li').length : 0,
+               text: el ? el.textContent : '', fold: !!document.querySelector('#ov-cbdept-fold details.ob-howto') }; });
+    record('IC-4: "How this is counted" is an ⓘ (no fold) showing its five bullets and the not-counted line',
+      t.shown && t.items === 5 && /52 hang-ups/.test(t.text) && !t.fold, JSON.stringify(Object.assign({}, t, { text: t.text.slice(-100) })));
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(200);
+  }
   record('the header comes from the shared column list (9 sortable columns)', s.ths === 9, 'ths=' + s.ths);
   record('CB-R2 default order: most not called back first, the sub-queue directly under its parent, unmapped last',
     JSON.stringify(s.order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department'])
