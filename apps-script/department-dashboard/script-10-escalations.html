@@ -616,6 +616,7 @@
     let resolveTail = '';      // QF-2: the resolve form goes after the move / link forms
     body += fieldGrid;
     body += escLinkedLineHtml_(r);   // ESC-L1
+    body += escCardCommentsHtml_(r); // ESC-C3
 
     if (inReview) {
       // Phase 2 review verbs: Approve admits the submission into the dept
@@ -652,7 +653,6 @@
       body += '<div class="esc-resolved-by">Rejected — see Activity for the reviewer’s reason.</div>';
     } else if (resolved) {
       body += '<div class="esc-resolution"><strong>Resolution:</strong> ' + escapeHtml(r.resolution || '') + '</div>';
-      if (r.comments) body += '<div class="esc-comments"><strong>Comments:</strong> ' + escapeHtml(r.comments) + '</div>';
       const by = r.resolved_by ? (' by ' + escapeHtml(r.resolved_by)) : '';
       const at = r.resolved_at ? (' · ' + escapeHtml(escFmtWhen_(r.resolved_at))) : '';
       body += '<div class="esc-resolved-by">Resolved' + by + at + '</div>';
@@ -929,6 +929,12 @@
     }
     if (t.classList.contains('esc-link-save'))      { escLinkDept_(t.getAttribute('data-id')); return; }      // ESC-L2
     if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-comments-all')) {                                                          // ESC-C3
+      const cid = t.getAttribute('data-id');
+      const det = document.querySelector('.esc-activity[data-id="' + escCssId_(cid) + '"]');
+      if (det) { det.open = true; escLoadActivity_(cid); if (det.scrollIntoView) det.scrollIntoView({ block: 'nearest' }); }
+      return;
+    }
   }
 
   // 2a: admin permanent delete. dsConfirm_ in danger tone names the row by
@@ -952,8 +958,8 @@
         : 'This permanently removes escalation <code>' + escapeHtml(String(id)) + '</code>'
         + (row ? ' (' + escapeHtml(row.department || '') + (when ? ', ' + escapeHtml(when) : '') + ')' : '')
         + ' and its activity trail. Use it for entries logged by mistake or for testing. It cannot be undone.'
-        + (sibs.length ? ' The other linked departments keep their copies; to take a department off while keeping '
-          + 'its comments in the thread, use &ldquo;Remove&rdquo; instead.' : ''),
+        + (sibs.length ? ' The other linked departments keep their copies, and this copy&rsquo;s comments stay in their '
+          + 'shared thread; to take a department off and keep a record of it, use &ldquo;Remove&rdquo; instead.' : ''),
       confirmLabel: allLinked ? 'Delete all copies' : 'Delete permanently',
       cancelLabel: 'Keep it',
       tone: 'danger',
@@ -1359,6 +1365,39 @@
             + '</span>';
         }).join(', ')
       + '</div>';
+  }
+
+  // ESC-C3 (PURE): the latest comments on the card face -- author, time and
+  // (on a linked escalation) the department each was written under -- with a
+  // "View all" that opens Activity when the thread holds more. Falls back to
+  // the row's own comments field when the thread has none (a row the ESC-C2
+  // backfill has not reached, or the offline copy, which does not store the
+  // preview).
+  function escCardCommentsHtml_(r) {
+    const list = Array.isArray(r && r.card_comments) ? r.card_comments : [];
+    const total = Number(r && r.comment_count) || list.length;
+    const idAttr = escapeHtml(String((r && r.id) || ''));
+    if (!list.length) {
+      return (r && r.comments)
+        ? '<div class="esc-comments"><strong>Comments:</strong> ' + escapeHtml(r.comments) + '</div>' : '';
+    }
+    const shared = Array.isArray(r.linked) && r.linked.length > 0;
+    const more = total > list.length
+      ? '<button class="btn-link esc-comments-all" type="button" data-id="' + idAttr + '">View all '
+        + total + ' in Activity</button>' : '';
+    return '<div class="esc-card-comments">'
+      + '<div class="esc-card-comments-k">' + (total > list.length ? 'Latest comments' : (list.length === 1 ? 'Comment' : 'Comments')) + '</div>'
+      + list.map(function (c) {
+          const when = c && c.at ? escapeHtml(escFmtWhen_(c.at)) : '';
+          const who = c && c.actor ? escapeHtml(String(c.actor)) : '';
+          return '<div class="esc-card-comment">'
+            + '<div class="esc-card-comment-meta">' + who + (who && when ? ' &middot; ' : '') + when
+            + ((shared && c.department) ? ' <span class="esc-timeline-dept">' + escapeHtml(String(c.department)) + '</span>' : '')
+            + '</div>'
+            + '<div class="esc-card-comment-text">' + escapeHtml(String((c && c.detail) || ''))
+            + (c && c.cut ? '&hellip;' : '') + '</div></div>';
+        }).join('')
+      + more + '</div>';
   }
 
   function escFmtWhen_(s) {

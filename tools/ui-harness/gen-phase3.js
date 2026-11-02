@@ -15,7 +15,11 @@ const today=new Date(); const ago=(n)=>{const d=new Date(today);d.setDate(d.getD
 const ESC_ROWS = [
   { id: 101, department: 'CSR', occurred_at: ago(1)+' 10:42:00', caller: 'Maria G (daughter)', patient_name: 'R. Alvarez', trx: 'TRX-88121', area: 'Billing dispute', reason: 'Caller states she was promised a supervisor callback twice and never received one; invoice sent to collections in the meantime.', status: 'pending', resolution: null, comments: null, created_by: 'admin@ums.com', created_at: ago(1)+' 10:50:00', resolved_by: null, resolved_at: null, source: null,
     // ESC-L1: a LINKED copy -- Sales holds the other copy of this escalation.
-    group_id: 'grp-101', linked: [{ department: 'Power', status: 'removed' }, { department: 'Sales', status: 'in_progress' }] },
+    group_id: 'grp-101', linked: [{ department: 'Power', status: 'removed' }, { department: 'Sales', status: 'in_progress' }],
+    // ESC-C3: the latest comments on the card face (the thread holds 4).
+    card_comments: [{ actor: 'sales.mgr@ums.com', at: ago(0)+' 08:40:00', detail: 'Sales confirmed the account is current.', cut: false, department: 'Sales' },
+      { actor: 'manager@ums.com', at: ago(0)+' 09:15:00', detail: 'Reached the daughter; callback scheduled for 3 PM.', cut: false, department: 'CSR' }],
+    comment_count: 4 },
   // ESC-L2: Power was REMOVED from the linked escalation 101 (read-only copy).
   { id: 96, department: 'Power', occurred_at: ago(1)+' 10:42:00', caller: 'Maria G (daughter)', patient_name: 'R. Alvarez', trx: 'TRX-88121', area: 'Billing dispute', reason: 'Caller states she was promised a supervisor callback twice and never received one; invoice sent to collections in the meantime.', status: 'removed', resolution: null, comments: 'Not a Power order.', created_by: 'admin@ums.com', created_at: ago(1)+' 10:50:00', resolved_by: null, resolved_at: null, source: 'manual',
     group_id: 'grp-101', removed_by: 'admin@ums.com', removed_at: ago(0)+' 08:30:00', removed_reason: 'Dispute upheld: no Power equipment on this account.',

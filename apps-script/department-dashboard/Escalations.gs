@@ -85,6 +85,25 @@ var ESC_GROUP_DEPT_INDEX_ = 'idx_escalations_group_dept';
 var ESC_LINKED_SQL_ = "CASE WHEN e.group_id IS NULL THEN NULL ELSE ("
   + "SELECT json_agg(json_build_object('department', s.department, 'status', s.status) ORDER BY s.department) "
   + "FROM escalations s WHERE s.group_id = e.group_id AND s.id <> e.id) END";
+// ESC-C3 (owner 2026-11-02): the card shows its latest comments on its face --
+// the thread's 'comment' entries (a linked group's whole thread, each tagged
+// with the department it was written under), newest ESC_CARD_COMMENTS_N_, each
+// cut to ESC_CARD_COMMENT_CHARS_ (the full text stays in Activity), plus the
+// count so "View all" can say how many. A pending card showed none and a
+// resolved one showed only the row's single `comments` field, which the next
+// comment overwrites.
+var ESC_CARD_COMMENTS_N_ = 3;
+var ESC_CARD_COMMENT_CHARS_ = 600;
+function escCardCommentsSql_() {
+  var thread = "FROM escalation_activity a JOIN escalations e2 ON e2.id = a.escalation_id "
+    + "WHERE a.action = 'comment' AND (e2.id = e.id OR (e.group_id IS NOT NULL AND e2.group_id = e.group_id))";
+  return "(SELECT COALESCE(json_agg(json_build_object('actor', c.actor, 'at', c.at_local, 'detail', c.detail, "
+    + "'cut', c.cut, 'department', c.department) ORDER BY c.at ASC), '[]'::json) FROM ("
+    + "SELECT a.actor, a.at, " + escLocalTsSql_('a.at') + " AS at_local, left(a.detail, " + ESC_CARD_COMMENT_CHARS_ + ") AS detail, "
+    + "(length(a.detail) > " + ESC_CARD_COMMENT_CHARS_ + ") AS cut, COALESCE(a.department, e2.department) AS department "
+    + thread + " ORDER BY a.at DESC LIMIT " + ESC_CARD_COMMENTS_N_ + ") c) AS card_comments, "
+    + "(SELECT count(*) " + thread + ") AS comment_count";
+}
 // F-46: cap the list fetch (newest first). The query was unbounded json_agg
 // -- fine at today's volume, but Phase 2's external pending_review inserts
 // make it an unbounded single-string JDBC fetch of PII (the failure mode
@@ -164,7 +183,15 @@ function escChunkUtf8_(str, maxBytes) {
  * grows. tests/unit/escalations-snapshot.test.js pins the boundary.
  */
 function escSnapshotChunk_(rows) {
-  rows = (rows || []).slice(0, ESC_SNAPSHOT_MAX_ROWS);
+  // ESC-C3: the card-face comment preview is NOT stored -- it would cost up to
+  // ~1.8KB a row of the fixed chunk budget, and the offline Activity copy
+  // already carries the same comments. An offline card falls back to the
+  // row's own comments field.
+  rows = (rows || []).slice(0, ESC_SNAPSHOT_MAX_ROWS).map(function (r) {
+    if (!r || typeof r !== 'object' || !('card_comments' in r || 'comment_count' in r)) return r;
+    var o = {}; for (var k in r) if (k !== 'card_comments' && k !== 'comment_count') o[k] = r[k];
+    return o;
+  });
   var truncated = false;
   var json = JSON.stringify(rows);
   var chunks = escChunkUtf8_(json, ESC_SNAPSHOT_CHUNK_BYTES);
@@ -773,7 +800,8 @@ function getEscalations(req) {
             + "status, resolution, comments, created_by, " + escLocalTsSql_('created_at') + " AS created_at, "
             + "resolved_by, " + escLocalTsSql_('resolved_at') + " AS resolved_at, source, group_id, "
             + "removed_by, " + escLocalTsSql_('removed_at') + " AS removed_at, removed_reason, "   // ESC-L2
-            + ESC_LINKED_SQL_ + " AS linked "
+            + ESC_LINKED_SQL_ + " AS linked, "
+            + escCardCommentsSql_() + " "   // ESC-C3
             + "FROM escalations e"
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
             // F-46: newest-first cap inside the subquery (json_agg re-sorts
@@ -1496,6 +1524,12 @@ function resolveEscalation(req) {
     stmt.setString(5, id);
     stmt.execute();
     stmt.close();
+    // ESC-C1 (owner 2026-11-02): the comment typed while resolving went ONLY
+    // into the row's single `comments` field, never into the thread -- so a
+    // reopen hid it (a pending card shows the thread, not that field) and the
+    // next comment overwrote it for good. It is a thread entry like any other
+    // comment, written just before the 'resolved' one.
+    if (comments) escAppendActivity_(conn, id, 'comment', user.email, comments);
     escAppendActivity_(conn, id, 'resolved', user.email, resolution);
     conn.commit();
     Logger.log('resolveEscalation: %s resolved %s (%s)', user.email, id, dept);
@@ -1895,6 +1929,18 @@ function deleteEscalation(req) {
     goneIds = all ? escGroupIds_(conn, meta.groupId) : [id];
     if (goneIds.indexOf(id) === -1) goneIds.push(id);
     conn.setAutoCommit(false); txn = true;
+    // ESC-C4 (owner 2026-11-02: "keep its comments in the shared thread"):
+    // deleting ONE copy of a linked group used to take that copy's comments out
+    // of the thread the other departments share. They move to a surviving copy
+    // first, keeping the department they were written under; the copy's other
+    // entries (created, started, resolved...) go with it as before.
+    var keptOn = (!all && meta.groupId) ? escGroupSurvivor_(conn, meta.groupId, id) : null;
+    if (keptOn) {
+      var mv = conn.prepareStatement("UPDATE escalation_activity SET escalation_id = ?, department = COALESCE(department, ?) "
+        + "WHERE escalation_id = ? AND action = 'comment'");
+      mv.setString(1, keptOn); mv.setString(2, meta.department || ''); mv.setString(3, id);
+      mv.execute(); mv.close();
+    }
     var a = conn.prepareStatement(all
       ? 'DELETE FROM escalation_activity WHERE escalation_id IN (SELECT id FROM escalations WHERE group_id = ?)'
       : 'DELETE FROM escalation_activity WHERE escalation_id = ?');
@@ -1918,6 +1964,7 @@ function deleteEscalation(req) {
         + 'the deleted id(s) are excluded on serve (ESC_SNAPSHOT_DELETED); the next refresh replaces it.', id);
     }
     result = { id: id, deleted: n, allLinked: all };
+    if (keptOn) result.commentsKeptOn = keptOn;   // ESC-C4
     if (!snapOk) result.snapshotRefreshFailed = true;
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -1937,6 +1984,22 @@ function deleteEscalation(req) {
     if (scrub && scrub.status !== 'none') result.backupScrub = scrub.status;
   }
   return result;
+}
+
+/**
+ * ESC-C4: the copy of a linked group that inherits a deleted copy's comments --
+ * an active one before a removed one, the oldest first; null when none is left.
+ */
+function escGroupSurvivor_(conn, groupId, excludeId) {
+  var stmt = conn.prepareStatement("SELECT id FROM escalations WHERE group_id = ? AND id <> ? "
+    + "ORDER BY (status = 'removed'), created_at, id");
+  stmt.setString(1, groupId);
+  stmt.setString(2, excludeId);
+  var rs = stmt.executeQuery();
+  var out = null;
+  while (rs.next() && !out) { var v = rs.getString('id'); if (v && String(v) !== String(excludeId)) out = String(v); }
+  rs.close(); stmt.close();
+  return out;
 }
 
 /** ESC-D8: the ids of every copy in a linked group (any status). */
@@ -1992,6 +2055,81 @@ function backfillEscalationActivity() {
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('backfillEscalationActivity failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Backfill failed.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+// ── ESC-C2 (owner 2026-11-02): comments that never reached the thread ─────
+// Before ESC-C1 a comment typed while RESOLVING lived only in the row's single
+// `comments` field. A reopen hid it (a pending card shows the thread) and the
+// next comment overwrote it. A row whose `comments` text appears in no
+// 'comment' / 'resolved' entry of its own thread is such a comment -- still
+// recoverable while nobody has commented since. Preview lists them (ids,
+// departments, who resolved and when, the length -- never the text: comments
+// can carry PHI); the backfill writes each as a 'comment' entry credited to the
+// resolver, just before the resolve, and is idempotent (its own entry then
+// matches, so a re-run finds nothing).
+var ESC_COMMENT_GAP_WHERE_ = "e.comments IS NOT NULL AND e.comments <> '' "
+  + "AND NOT EXISTS (SELECT 1 FROM escalation_activity a WHERE a.escalation_id = e.id "
+  + "AND a.action IN ('comment', 'resolved') AND a.detail = e.comments)";
+
+/** ESC-C2, editor-run, ADMIN-ONLY, read-only: the escalations whose comment is in no thread entry. */
+function previewEscalationCommentGaps() {
+  assertAdmin_();
+  var conn = escTimed_(getDashboardNeonConn_());
+  if (!conn) { Logger.log('previewEscalationCommentGaps: Neon unreachable -- nothing checked.'); return null; }
+  try {
+    escEnsureTableOnce_(conn);
+    var stmt = conn.prepareStatement("SELECT COALESCE(json_agg(t ORDER BY t.created_at), '[]')::text AS j FROM ("
+      + "SELECT e.id, e.department, e.status, e.resolved_by, " + escLocalTsSql_('e.resolved_at') + " AS resolved_at, "
+      + "e.created_at, length(e.comments) AS chars FROM escalations e WHERE " + ESC_COMMENT_GAP_WHERE_ + ") t");
+    var rs = stmt.executeQuery();
+    var rows = JSON.parse((rs.next() ? rs.getString('j') : '[]') || '[]');
+    rs.close(); stmt.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(rows).length, 'escalations');
+    Logger.log('previewEscalationCommentGaps: %s escalation(s) hold a comment that is in no thread entry.', String(rows.length));
+    rows.slice(0, 50).forEach(function (r) {
+      Logger.log('  %s · %s · %s · %s · %s chars', r.id, r.department || '?', r.status || '?',
+        r.resolved_by ? ('resolved by ' + r.resolved_by + ' at ' + (r.resolved_at || '?')) : 'never resolved',
+        String(r.chars || 0));
+    });
+    if (rows.length > 50) Logger.log('  ... and %s more.', String(rows.length - 50));
+    if (rows.length) Logger.log('Run backfillEscalationCommentGaps() to add them to their threads.');
+    return { count: rows.length, rows: rows };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+/** ESC-C2, editor-run, ADMIN-ONLY: writes each such comment into its thread. Idempotent. */
+function backfillEscalationCommentGaps() {
+  assertAdmin_();
+  var conn = escOpenWriteConn_();                 // ESC-D2: connect + schema BEFORE the lock
+  var lock = escTakeWriteLock_(conn, 30000);
+  var txn = false, n = 0;
+  try {
+    escEnsureTableOnce_(conn);
+    conn.setAutoCommit(false); txn = true;
+    var st = conn.createStatement();
+    n = st.executeUpdate(
+      "INSERT INTO escalation_activity (id, escalation_id, action, actor, at, detail, department) "
+      + "SELECT md5(random()::text || e.id || 'cm'), e.id, 'comment', COALESCE(NULLIF(e.resolved_by, ''), e.created_by), "
+      + "COALESCE(e.resolved_at, e.created_at, now()) - interval '1 millisecond', e.comments, e.department "
+      + "FROM escalations e WHERE " + ESC_COMMENT_GAP_WHERE_);
+    st.close();
+    conn.commit();
+    txn = false;
+    try { conn.setAutoCommit(true); } catch (ae0) {}
+    Logger.log('backfillEscalationCommentGaps: %s comment(s) added to their threads.', String(Number(n) || 0));
+    try { escSnapshotMaybeRefresh_(conn, /*force=*/true); } catch (eSnap) { /* the next refresh carries them */ }
+    return { inserted: Number(n) || 0 };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('backfillEscalationCommentGaps failed: ' + (e && e.message ? e.message : e));
     throw new Error(e && e.message ? e.message : 'Backfill failed.');
   } finally {
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
@@ -2198,9 +2336,13 @@ function escNormalizeReviewFields_(row) {
  * (its detail names both).
  */
 function escAppendActivity_(conn, escId, action, actor, detail) {
+  // ESC-C1 (owner 2026-11-02): `at` is the STATEMENT's time (clock_timestamp),
+  // not the column default now() -- now() is the TRANSACTION's start, so two
+  // entries written in one transaction (a resolve's comment + its 'resolved')
+  // tied and the thread could list them in either order.
   var stmt = conn.prepareStatement(
-    'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail, department) '
-    + "VALUES (?, ?, ?, ?, NULLIF(?, ''), (SELECT department FROM escalations WHERE id = ?))");
+    'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail, department, at) '
+    + "VALUES (?, ?, ?, ?, NULLIF(?, ''), (SELECT department FROM escalations WHERE id = ?), clock_timestamp())");
   stmt.setString(1, Utilities.getUuid());
   stmt.setString(2, escId);
   stmt.setString(3, action);

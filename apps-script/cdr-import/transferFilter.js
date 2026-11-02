@@ -884,3 +884,254 @@ function diagnoseTransferBounces(dateIso) {
 
 /** Editor-run: every held date (the Run picker can't pass 'all'). */
 function diagnoseTransferBouncesAllDates() { return diagnoseTransferBounces('all'); }
+
+// ---- TR-0 (owner 2026-11-02): transfer RETRIES within one department ---------
+// "CSR calls Power rep #1, rep #1 rejects, and CSR ends up calling Power rep #2
+// while on the same call": a list to check for incorrect transfer rejections.
+// READ-ONLY, over the capture's own journeys (IXT-1 inbound, OXT-1 outbound) --
+// the person-transfer events are the attempts: a missed ring (`missed`, with
+// `voicemail` when the attempt fell to voicemail) or an answered consult. A
+// RETRY is a missed attempt to X in department D (D not the sender's own),
+// followed later on the SAME call by an attempt to Y (not X) in D. One case per
+// call per department. Departments fold sub-queues into their parent (XB-0c,
+// tfBounceLookups_). Employee names and call ids only, never a number.
+
+// A missed attempt that rang this many seconds or fewer reads as a DECLINE
+// (the callee pressed decline / was on DND) rather than ringing out; the ring
+// buckets are logged beside it so the owner can judge the line.
+var TF_RETRY_QUICK_SECS_ = 8;
+var TF_RETRY_RING_BUCKETS_ = [['0-3s', 3], ['4-8s', 8], ['9-15s', 15], ['16-25s', 25], ['26s+', Infinity]];
+var TF_RETRY_SAMPLES_ = 15;
+// Raw Data's "Last Leg Disposition" (not in IC_COL: nothing else reads it).
+var TF_COL_LAST_LEG_DISP_ = 41;
+
+function tfHmsToSec_(t) {
+  var m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(t || ''));
+  return m ? (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) : NaN;
+}
+
+/** PURE. How a person-transfer attempt ended: answered / voicemail / quickDecline / rangOut / unknown. */
+function tfRetryOutcome_(ev) {
+  if (ev.consult) return 'answered';
+  if (ev.voicemail) return 'voicemail';
+  if (ev.secs == null || isNaN(Number(ev.secs))) return 'unknown';
+  return Number(ev.secs) <= TF_RETRY_QUICK_SECS_ ? 'quickDecline' : 'rangOut';
+}
+
+function tfRetryOutcomeText_(o) {
+  return { answered: 'answered', voicemail: 'went to voicemail', quickDecline: 'quick decline',
+           rangOut: 'rang out', unknown: 'not answered' }[o] || o;
+}
+
+/** PURE. The ring-time bucket of a missed attempt ('?' when unknown). */
+function tfRetryRingBucket_(secs) {
+  if (secs == null || isNaN(Number(secs))) return '?';
+  for (var i = 0; i < TF_RETRY_RING_BUCKETS_.length; i++) if (Number(secs) <= TF_RETRY_RING_BUCKETS_[i][1]) return TF_RETRY_RING_BUCKETS_[i][0];
+  return '?';
+}
+
+/**
+ * PURE. The TR-0 reading of one captured call's journey.
+ * `sender0` = the dialling agent of an OUTBOUND call (null for inbound, whose
+ * sender is the last agent who answered -- or took a hand-over -- before the
+ * attempt). Returns { attempts, cases: [{senderName, senderDept, dept, first:
+ * {name, t, secs, outcome}, second: {name, t, secs, outcome}, gapSecs,
+ * moreInDept}], skipped: {senderUnknown, targetUnknown, targetTwoDepts} }.
+ */
+function tfRetriesOfJourney_(journey, deptsOfAgent, sender0) {
+  var out = { attempts: 0, cases: [], skipped: { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 } };
+  var sender = sender0 || null;
+  var att = [];
+  (journey || []).forEach(function (ev) {
+    if (!ev || ev.origin) return;
+    if (ev.kind === 'answer' && (!ev.transfer || ev.handover) && (Number(ev.talk) || 0) > 0 && !sender0) {
+      sender = String(ev.name || '').trim() || sender;
+      return;
+    }
+    if (!ev.transfer || !(ev.missed || ev.consult)) return;
+    out.attempts++;
+    var sd = sender ? (deptsOfAgent(sender) || []) : [];
+    if (!sd.length) { out.skipped.senderUnknown++; return; }
+    var name = String(ev.name || '').trim();
+    var td = deptsOfAgent(name) || [];
+    if (!td.length) { out.skipped.targetUnknown++; return; }
+    if (td.length > 1) { out.skipped.targetTwoDepts++; return; }
+    if (sd.indexOf(td[0]) !== -1) return;   // a colleague in the sender's own department
+    att.push({ ev: ev, name: name, dept: td[0], senderName: sender, senderDept: sd[0] });
+  });
+  var done = {};
+  for (var i = 0; i < att.length; i++) {
+    var a = att[i];
+    if (done[a.dept] || !a.ev.missed) continue;
+    for (var j = i + 1; j < att.length; j++) {
+      var b = att[j];
+      if (b.dept !== a.dept || b.name === a.name) continue;
+      var more = 0;
+      for (var k = j + 1; k < att.length; k++) if (att[k].dept === a.dept) more++;
+      // The gap runs to the retry's own event: a missed ring's start, or an
+      // answered consult's CONNECT (the time it was picked up).
+      var gap = tfHmsToSec_(b.ev.t) - tfHmsToSec_(a.ev.t);
+      out.cases.push({
+        senderName: a.senderName, senderDept: a.senderDept, dept: a.dept,
+        first: { name: a.name, t: a.ev.t, secs: a.ev.secs, outcome: tfRetryOutcome_(a.ev) },
+        second: { name: b.name, t: b.ev.t, secs: b.ev.secs, outcome: tfRetryOutcome_(b.ev) },
+        gapSecs: isNaN(gap) || gap < 0 ? null : gap, moreInDept: more
+      });
+      done[a.dept] = true;
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * PURE. Raw-leg lookup for the census: a missed internal DIAL leg (the shape
+ * icIxtGroupEvents_ turns into a missed attempt) keyed by the event's own
+ * name + time -> { cause, disp }.
+ */
+function tfRetryLegIndex_(grid) {
+  var idx = {};
+  (grid || []).forEach(function (l) {
+    if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Internal') return;
+    if (!icIsBareExt_(l[IC_COL.CALLER]) || !icIsBareExt_(l[IC_COL.CALLEE])) return;
+    if (String(l[IC_COL.MISSED] == null ? '' : l[IC_COL.MISSED]).trim() !== 'Missed') return;
+    var key = icIxtName_(l[IC_COL.CALLEE_NAME], icDigits_(l[IC_COL.CALLEE])) + '|' + icIsoTime_(icParseTs_(l[IC_COL.START]));
+    if (idx[key]) return;
+    idx[key] = { cause: String(l[IC_COL.CAUSE] == null ? '' : l[IC_COL.CAUSE]).trim() || '(blank)',
+                 disp: String(l[TF_COL_LAST_LEG_DISP_] == null ? '' : l[TF_COL_LAST_LEG_DISP_]).trim() || '(blank)' };
+  });
+  return idx;
+}
+
+/** PURE. Folds one call's cases into a stats object. */
+function tfRetryFold_(st, r, callId, kind, legIdx) {
+  st.calls = (st.calls || 0) + 1;
+  st.attempts = (st.attempts || 0) + r.attempts;
+  if (r.attempts) st.callsWithAttempts = (st.callsWithAttempts || 0) + 1;
+  st.skipped = st.skipped || { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 };
+  Object.keys(r.skipped).forEach(function (k) { st.skipped[k] += r.skipped[k]; });
+  ['cases', 'byKind', 'firstOutcome', 'secondOutcome', 'ring', 'pairs', 'firstCallees', 'census', 'gaps'].forEach(function (k) {
+    if (k === 'cases') st.cases = st.cases || 0; else st[k] = st[k] || {};
+  });
+  st.samples = st.samples || [];
+  var bump = function (map, key) { map[key] = (map[key] || 0) + 1; };
+  r.cases.forEach(function (c) {
+    st.cases++;
+    bump(st.byKind, kind);
+    bump(st.firstOutcome, c.first.outcome);
+    bump(st.secondOutcome, c.second.outcome);
+    bump(st.ring, tfRetryRingBucket_(c.first.secs));
+    bump(st.pairs, c.senderDept + ' -> ' + c.dept);
+    bump(st.firstCallees, c.first.name + ' (' + c.dept + ')');
+    bump(st.gaps, c.gapSecs == null ? '?' : (c.gapSecs <= 30 ? '<=30s' : (c.gapSecs <= 120 ? '31s-2m' : '2m+')));
+    var leg = (legIdx || {})[c.first.name + '|' + c.first.t];
+    bump(st.census, tfRetryOutcomeText_(c.first.outcome) + ' / Cause ' + (leg ? leg.cause : '(no leg found)')
+      + ' / Last Leg Disposition ' + (leg ? leg.disp : '(no leg found)'));
+    if (st.samples.length < TF_RETRY_SAMPLES_) {
+      st.samples.push(callId + ' (' + kind + ') ' + c.senderName + ' (' + c.senderDept + ') -> ' + c.first.name
+        + ': ' + tfRetryOutcomeText_(c.first.outcome) + (c.first.secs != null ? ' after ' + c.first.secs + 's' : '')
+        + (leg ? ' [Cause ' + leg.cause + ', ' + leg.disp + ']' : '')
+        + '; ' + (c.gapSecs != null ? c.gapSecs + 's later' : 'then') + ' -> ' + c.second.name + ': '
+        + tfRetryOutcomeText_(c.second.outcome) + ' (' + c.dept + ')'
+        + (c.moreInDept ? '; +' + c.moreInDept + ' more in ' + c.dept : ''));
+    }
+  });
+  return st;
+}
+
+/** PURE over one grid (testable): TR-0 over both captures' journeys. */
+function tfRetriesForGrid_(grid, lookups) {
+  var st = { inboundCaptured: 0, outboundCaptured: 0 };
+  var legIdx = tfRetryLegIndex_(grid);
+  buildInboundCallRecords_(grid).forEach(function (r) {
+    if (r.isInternal) return;
+    st.inboundCaptured++;
+    tfRetryFold_(st, tfRetriesOfJourney_(r.journey || [], lookups.deptsOfAgent, null), r.callId, 'inbound', legIdx);
+  });
+  if (typeof buildOutboundCallRecords_ === 'function') {
+    buildOutboundCallRecords_(grid).forEach(function (r) {
+      st.outboundCaptured++;
+      tfRetryFold_(st, tfRetriesOfJourney_(r.journey || [], lookups.deptsOfAgent, r.agentName || null), r.callId, 'outbound', legIdx);
+    });
+  }
+  return st;
+}
+
+/** PURE. TR-0's per-date / TOTAL line. */
+function tfRetryLine_(st) {
+  var sk = st.skipped || {}, fo = st.firstOutcome || {}, bk = st.byKind || {};
+  return String(st.inboundCaptured || 0) + ' inbound + ' + String(st.outboundCaptured || 0) + ' outbound captured calls; '
+    + String(st.callsWithAttempts || 0) + ' with a transfer attempt to a person (' + String(st.attempts || 0) + ' attempts); '
+    + 'RETRIED in the same department ' + String(st.cases || 0) + ' (inbound ' + String(bk.inbound || 0) + ', outbound '
+    + String(bk.outbound || 0) + '); first attempt ended -- quick decline (<=' + TF_RETRY_QUICK_SECS_ + 's) '
+    + String(fo.quickDecline || 0) + ', rang out ' + String(fo.rangOut || 0) + ', voicemail ' + String(fo.voicemail || 0)
+    + ', not timed ' + String(fo.unknown || 0) + '; attempts skipped -- sender on no roster ' + String(sk.senderUnknown || 0)
+    + ', callee on no roster ' + String(sk.targetUnknown || 0) + ', callee on two departments ' + String(sk.targetTwoDepts || 0);
+}
+
+/**
+ * TR-0 (owner 2026-11-02; Operator State #89): READ-ONLY. Over the held
+ * Call_Legs_* tabs (`dateIso` = one date, 'all' = every held date, blank = the
+ * latest): each call where an agent tried a person in ANOTHER department, got
+ * no answer, and then tried someone else in that same department -- how the
+ * first attempt ended (quick decline / rang out / voicemail, with the ring-time
+ * buckets and 8x8's Cause + Last Leg Disposition census), the gap before the
+ * retry, who declined, and call-id samples for Caller Lookup. Same builders as
+ * the capture. Employee and queue names and call ids only. Writes nothing.
+ */
+function diagnoseTransferRetries(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: s });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { Logger.log('[tr] no Call_Legs sheet for %s.', dateIso || '(latest)'); return null; }
+  var target = SpreadsheetApp.openById(getTargetSsId_());
+  var cfg = target.getSheetByName('DO NOT EDIT!');
+  if (!cfg) { Logger.log('[tr] "DO NOT EDIT!" not found in the CDR Report spreadsheet.'); return null; }
+  icResetConfigMemos_();
+  icLoadConfiguredQueueNames_();
+  var lookups = tfBounceLookups_(tfReadRoster_(cfg), icDeptConfigActiveRows_(), icAgentCanonicalizer_());
+  var subs = Object.keys(lookups.parentOf).sort().map(function (d) { return d + ' -> ' + lookups.parentOf[d]; });
+  Logger.log('[tr] sub-queues folded into their parent: %s', subs.length ? subs.join('; ')
+    : 'none (no active Dept Config row names an Overview Parent)');
+  var total = { days: 0 };
+  var t0 = Date.now();
+  for (var i = 0; i < sheets.length; i++) {
+    if (Date.now() - t0 > 4 * 60 * 1000) { Logger.log('[tr] stopped at the 4-minute budget before %s.', sheets[i].iso); break; }
+    var grid = sheets[i].sheet.getDataRange().getDisplayValues();
+    grid.shift();
+    var st = tfRetriesForGrid_(grid, lookups);
+    Logger.log('[tr] %s: %s', sheets[i].iso, tfRetryLine_(st));
+    total.days++;
+    ['inboundCaptured', 'outboundCaptured', 'calls', 'attempts', 'callsWithAttempts', 'cases'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    total.skipped = total.skipped || { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 };
+    Object.keys(st.skipped || {}).forEach(function (k) { total.skipped[k] += st.skipped[k]; });
+    ['byKind', 'firstOutcome', 'secondOutcome', 'ring', 'pairs', 'firstCallees', 'census', 'gaps'].forEach(function (k) {
+      total[k] = total[k] || {};
+      Object.keys(st[k] || {}).forEach(function (x) { total[k][x] = (total[k][x] || 0) + st[k][x]; });
+    });
+    total.samples = (total.samples || []).concat(st.samples || []).slice(0, TF_RETRY_SAMPLES_);
+  }
+  Logger.log('[tr] TOTAL over %s date(s): %s', String(total.days), tfRetryLine_(total));
+  var ring = TF_RETRY_RING_BUCKETS_.map(function (b) { return b[0] + ' ' + ((total.ring || {})[b[0]] || 0); });
+  if ((total.ring || {})['?']) ring.push('not timed ' + total.ring['?']);
+  if (total.cases) {
+    Logger.log('[tr]   first attempt rang: %s', ring.join(', '));
+    Logger.log('[tr]   the retry: %s', tfTopCounts_(Object.keys(total.secondOutcome || {}).reduce(function (m, k) {
+      m[tfRetryOutcomeText_(k)] = total.secondOutcome[k]; return m; }, {}), 6).join('; '));
+    Logger.log('[tr]   time to the retry: %s', tfTopCounts_(total.gaps, 4).join('; '));
+    Logger.log('[tr]   by department (sender -> tried): %s', tfTopCounts_(total.pairs, 10).join('; '));
+    Logger.log('[tr]   first person tried, who did not answer: %s', tfTopCounts_(total.firstCallees, 12).join('; '));
+    Logger.log('[tr]   how the first attempt ended, by 8x8 fields: %s', tfTopCounts_(total.census, 12).join('; '));
+    Logger.log('[tr]   e.g.: %s', total.samples.join(' | '));
+  }
+  return total;
+}
+
+/** Editor-run: every held date (the Run picker can't pass 'all'). */
+function diagnoseTransferRetriesAllDates() { return diagnoseTransferRetries('all'); }

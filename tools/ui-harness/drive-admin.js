@@ -619,6 +619,37 @@ const MODALS = [
       }
     }
 
+    // ESC-C3: the latest comments sit on the card face (author + time, a
+    // dept tag on a linked copy), "View all" opens Activity; a row with no
+    // thread comments falls back to its own comments field.
+    {
+      const cc = await page.evaluate(() => {
+        const c101 = document.querySelector('.esc-card[data-id="101"]');
+        const box = c101 ? c101.querySelector('.esc-card-comments') : null;
+        const c100 = document.querySelector('.esc-card[data-id="100"]');
+        return { n: box ? box.querySelectorAll('.esc-card-comment').length : -1,
+                 meta: box ? [...box.querySelectorAll('.esc-card-comment-meta')].map((m) => m.textContent.replace(/\s+/g, ' ').trim()) : [],
+                 all: box && box.querySelector('.esc-comments-all') ? box.querySelector('.esc-comments-all').textContent.trim() : '',
+                 fallback: c100 && c100.querySelector('.esc-comments') ? c100.querySelector('.esc-comments').textContent.trim() : '' };
+      });
+      record('ESC-C3: a card shows its latest comments with author, time and (linked) department',
+        cc.n === 2 && /^manager@ums\.com · \d{2}\/\d{2}\/\d{4} 09:15 CSR$/.test(cc.meta[1] || ''), JSON.stringify(cc));
+      record('ESC-C3: "View all N in Activity" appears when the thread holds more', cc.all === 'View all 4 in Activity', cc.all);
+      record('ESC-C3: a card with no thread comments shows its own comments field', /Vendor ETA requested/.test(cc.fallback), cc.fallback);
+      const btn = await page.$('.esc-card[data-id="101"] .esc-comments-all');
+      if (btn) {
+        await btn.click();
+        await page.waitForTimeout(700);
+        const opened = await page.evaluate(() => {
+          const d = document.querySelector('.esc-activity[data-id="101"]');
+          const b = document.querySelector('.esc-activity-body[data-id="101"]');
+          return { open: !!(d && d.open), loaded: b ? b.getAttribute('data-loaded') : null };
+        });
+        record('ESC-C3: "View all" opens and loads the Activity thread', opened.open && opened.loaded === '1', JSON.stringify(opened));
+        await page.evaluate(() => { const d = document.querySelector('.esc-activity[data-id="101"]'); if (d) d.open = false; });
+      }
+    }
+
     // ESC-L1: a LINKED copy names the other departments holding a copy, the
     // Move list never offers a dept that already holds one, the Overview strip
     // labels the linked count, and a two-department create sends both depts.
