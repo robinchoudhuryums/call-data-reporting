@@ -13,6 +13,8 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-02 (3) -- Batch 2 IMPLEMENTED (block 259-batch2-dv1-tdc1-broad-implement).** DV-1 (four-way switch: Inbound / Outbound / Inbound + outbound / Direct, admin-only; the Direct button keeps its own admin gate past the 6c release), TDC-1 (Team Direct Calls as a panel: loads with the page, skeleton, Retry, tally, rows open the Direct view; one fetch shared with the Direct view), AT-1 (table explainer -> ⓘ). 2791 tests, bites 5/5. Batch 1's ci:ui re-run was green (778). Committed + pushed; NO PR yet.
+  **Next:** Batch 3 (IC-1 Callbacks ⓘ + side-by-side list buttons, IC-2 Direct lines arrow + ⓘ, IC-3 brief drawer animation both ways, IC-4 the same on the Overview), then Batch 4 (TR-1) after the TR-0 numbers.
 - **2026-11-02 (2) -- Batch 1 IMPLEMENTED (block 259-batch1-esc-tr0-broad-implement).** ESC-C1 (resolve-time comment into the thread), ESC-C2 (gap preview + backfill, #88), ESC-C3 (latest comments on the card), ESC-C4 (single linked-copy delete keeps its comments), TR-0 (`diagnoseTransferRetries`, #89). 2787 tests, bites 8/8. Committed + pushed with DEP-5; NO PR yet (not asked).
   **Owner-side:** push dashboard + cdr-import; run `previewEscalationCommentGaps` then `backfillEscalationCommentGaps`; run `diagnoseTransferRetriesAllDates` and send the TOTAL + census lines (decides TR-1); check Transfer % on the CSR Agent Metrics table on the new deployment.
   **Next:** Batch 2 (DV-1 four-way direction switch with Outbound-only + Direct, admin-only; TDC-1 Team Direct Calls card), then Batch 3 (TR-1) after the TR-0 numbers.

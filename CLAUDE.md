@@ -2332,7 +2332,7 @@ S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S
 S54 | Browser Back / Forward walk the dashboard's views (CL-23) | Subsystem: Department Dashboard
 S55 | Abandoned-filter dialog matches the per-queue menu items (AF-1) | Subsystem: CDR Import
 S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dashboard
-S57 | My Department inbound + outbound together (Batch D; one toggle since Step 3) | Subsystem: Department Dashboard
+S57 | My Department inbound + outbound together (Batch D; four views since DV-1) | Subsystem: Department Dashboard
 S58 | Outbound on the Overview tiles and under the outbound table (Batches E/F, UX-1) | Subsystem: Department Dashboard
 S59 | Callbacks under the outbound table on My Department (Batch G1, UX-1) | Subsystem: Department Dashboard
 S60 | Direct-line callbacks and repeat unreturned callers (CE-3) | Subsystem: Department Dashboard

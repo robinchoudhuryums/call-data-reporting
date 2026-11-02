@@ -590,7 +590,10 @@
                   title="Calls the agents placed">Outbound</button>
           <button type="button" class="dept-qcd-period-btn active" data-dir-pick="both" aria-pressed="true"
                   title="Each agent's inbound and outbound calls side by side">Inbound + outbound</button>
-          <button type="button" class="dept-qcd-period-btn" data-dir-pick="direct" aria-pressed="false"
+          <!-- The Direct Calls report is admin-only on its OWN vetting, so this
+               button keeps data-admin-only even after the 6c release drops it
+               from the switch (obEffectiveDir_ falls back too, tdcActive_). -->
+          <button type="button" class="dept-qcd-period-btn" data-dir-pick="direct" aria-pressed="false" data-admin-only style="display:none;"
                   title="Calls to and from the agents' own extensions (the Direct Calls report)">Direct</button>
         </div>
         <button class="link-btn dept-cols-toggle" id="dept-cols-toggle" type="button"

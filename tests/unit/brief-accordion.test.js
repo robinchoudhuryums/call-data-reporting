@@ -363,3 +363,9 @@ test('TDC-1 / DV-1: ONE getDirectCallReport per dept + window, shared by the Tea
   assert.match(render, /dcViewRender_\(\);\n  \}$/, 'every paint of the panel repaints the Direct view from the same payload');
   assert.match(HTML, /<div id="dept-team-direct" class="dept-qcd-snapshot" data-admin-only/, 'a panel, admin-only, not a <details>');
 });
+
+test('DV-1: the Direct view stays admin-only on its OWN gate -- the 6c release of the switch does not release it', function () {
+  const btn = HTML.match(/<button[^>]*data-dir-pick="direct"[^>]*>/);
+  assert.ok(btn && /data-admin-only/.test(btn[0]), 'the Direct button carries its own data-admin-only');
+  assert.match(extractFn(S5, 'obEffectiveDir_'), /obDir_ === 'direct' && !tdcActive_\(\)\) \? 'both'/, 'a viewer who cannot read the Direct report lands on the default view');
+});

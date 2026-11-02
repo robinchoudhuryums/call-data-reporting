@@ -4941,7 +4941,12 @@
     if (!sw) return false;
     try { return getComputedStyle(sw).display !== 'none'; } catch (e) { return false; }
   }
-  function obEffectiveDir_() { return obAllowed_() ? obDir_ : 'in'; }
+  function obEffectiveDir_() {
+    if (!obAllowed_()) return 'in';
+    // DV-1: the Direct view needs the Direct Calls report, admin-only on its own
+    // vetting -- a viewer who cannot read it gets the default view instead.
+    return (obDir_ === 'direct' && !tdcActive_()) ? 'both' : obDir_;
+  }
   // UX-1 (broad-scan 2026-10-12 Batch 3b): the window the Outbound summary and
   // Callbacks sections under the outbound table read -- the PAGE's own loaded
   // window and its server-resolved INV-28 prior (state.meta, the same one the
