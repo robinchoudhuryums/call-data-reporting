@@ -2298,6 +2298,30 @@ stay pinned by INV-39, INV-53 and INV-06.
   table title (`obInfoSync_`, hidden on Inbound); only state notes (Neon
   down, capture start, a data gap) stay visible over the table. The Step 3 /
   Batch D history follows.
+- **"How this is counted" is an ⓘ, not a fold or a paragraph (IC-1..IC-4,
+  owner 2026-11-02).** Callbacks and Direct lines on My Department, Callbacks
+  by department and Direct lines on the Overview each carry a
+  `.ob-howto-tip` ("How this is counted ⓘ") at the right of their button row;
+  the ⓘ is the gloss layer's `side-hint-i gloss` with **`data-gloss-src`**
+  naming a hidden `.ob-howto-src` block whose markup (a `.ds-tip-title` and a
+  `.ds-tip-list` of bullets) the tooltip reads AT SHOW TIME
+  (`initGlossTooltip_`, script-4; `ds-tooltip--wide`). The live figures that
+  lived in those explainers keep their ids INSIDE the source
+  (`#ins-cb-window`, `#ins-cb-scope-note` -- the sub-queue line, `#ins-dl-counts`,
+  `#ov-dl-counts`, `#ov-cbdept-notcounted`), so their renderers are unchanged and
+  the tooltip is never stale. State notes (Neon down) stay visible. The two
+  Callbacks list buttons share one `.ob-list-actions` row (their lists open
+  below, in the same order). Direct lines' `.ob-dl-summary` has a turning ▸
+  chevron. Hover-only like every gloss tip: keyboard focus shows it too, a
+  touch tap does not. Pinned by `brief-accordion.test.js` + `drive-callbacks.js`
+  / `drive-cbdept.js`.
+- **Brief rows slide (IC-3).** `insBriefApply_(key, animate)` animates the
+  row's slot with the Web Animations API (height + padding, `INS_BRIEF_ANIM_MS_`)
+  on a USER toggle only (`insBriefToggle_` passes `true`); a rebuild restoring
+  open rows, reduced motion, or no `slot.animate` switches at once. Opening
+  shows the slot and opens the sections before measuring; closing shuts the
+  sections only when the slide ends (`onfinish`), so content does not vanish
+  mid-slide; a toggle during a slide cancels it.
 - **Outbound columns on the agent table (owner 2026-10, Batch D; one toggle
   since Step 3).** **Step 3 (owner 2026-10-16): inbound and outbound are
   TOGETHER by default** -- the three-way Inbound | Outbound | Both switch is now
@@ -2475,7 +2499,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
   callback summary (CB-R1, next bullet) above the table, both drawn by the
   shared renderers; the phone-menu and person's-line hang-ups and the unmapped
-  queues are said in `#ov-cbdept-notcounted` under "How this is counted":
+  queues are said in `#ov-cbdept-notcounted` inside the "How this is counted" ⓘ (IC-4, below):
   `outboundCallbackSummaryHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The
