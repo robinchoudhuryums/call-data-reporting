@@ -24,6 +24,11 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'NeonCoverage.gs',
           'InboundReport.gs', 'OutboundReport.gs'],
 });
+// CBX-1 (owner 2026-11-02): the company view leaves CSR's callers out of its
+// totals. These suites test the callback ENGINE on fixtures where CSR is a
+// main department, so they run with no exclusion; CBX-1's own tests (in
+// outbound-callback-dept.test.js) switch it back on.
+h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = [];
 
 const FROM = '2026-08-10', TO = '2026-08-11';
 const D = '2026-08-10';
@@ -335,4 +340,77 @@ test('CB-1: an ABANDON is attributed by its entry queue alone (the on-hold arm c
   // ...and the SQL predicate's on-hold arm requires disposition='answered'.
   const pred = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
   assert.match(pred, /\(c\.disposition='answered' AND COALESCE\(c\.abandoned_on_hold, false\)\) AND lower\(trim\(c\.final_dept\)\)/);
+});
+
+// ── CBX-1 (owner 2026-11-02): CSR (and its Spanish sub-queue) out of the
+// COMPANY-WIDE callback figures; their rows stay, flagged ───────────────────
+test('CBX-1: the company figures leave out CSR and Spanish; their rows stay, flagged; the shared and unmapped queues stay in', function () {
+  const run = function (list) {
+    h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = list;
+    install({ conn: null });
+    return JSON.parse(JSON.stringify(h.call('getOutboundReport', { from: FROM, to: TO, department: 'ALL' })));
+  };
+  const all = run([]);
+  const ex = run(['CSR']);
+  h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = [];
+  const rAll = byDept(all.callbackByDept), rEx = byDept(ex.callbackByDept);
+  // The rows are the same rows, with the same figures -- only flagged.
+  assert.deepEqual(Object.keys(rEx).sort(), Object.keys(rAll).sort(), 'no row disappears');
+  ['CSR', 'Spanish'].forEach(function (d) {
+    assert.equal(rEx[d].excludedFromTotal, true, d + ' is flagged');
+    assert.equal(rEx[d].episodes, rAll[d].episodes, d + '’s own figures are unchanged');
+  });
+  ['Sales', 'Power', 'Not mapped to a department'].forEach(function (d) {
+    assert.equal(rEx[d].excludedFromTotal, false, d + ' is not flagged');
+  });
+  assert.deepEqual(ex.callbackByDept.excludedDepts.slice().sort(), ['CSR', 'Spanish']);
+  // The total leaves out exactly the CSR-family-only episodes; the shared
+  // queue (Sales + Power) and the unmapped queue keep theirs.
+  const t = ex.callbackByDept.total;
+  const csrOnly = rAll.CSR.episodes;   // CSR's row is CSR + Spanish (a parent includes its child)
+  assert.equal(t.episodes, all.callbackByDept.total.episodes - csrOnly);
+  assert.equal(t.excludedEpisodes, csrOnly);
+  assert.ok(t.episodes > 0 && t.episodes >= rEx.Sales.episodes, 'the rest of the company is still counted');
+  assert.equal(t.unmappedEpisodes == null ? (t.episodes - t.mappedEpisodes) : t.unmappedEpisodes, all.callbackByDept.total.episodes - all.callbackByDept.total.mappedEpisodes,
+    'the unmapped callers stay in');
+  // The headline block and the series describe the same company episodes as the total.
+  assert.equal(ex.callback.episodes, t.episodes);
+  assert.equal(ex.callback.own, t.own);
+  assert.equal(ex.callback.none, t.none);
+  assert.deepEqual(ex.callback.excludedDepts, ['CSR']);
+  assert.equal(ex.daily.reduce((a, d) => a + d.episodes, 0), t.episodes, 'the daily series is the same episodes');
+  // The anonymous count on CSR's queue leaves the company figure too.
+  assert.equal(ex.callback.queueAnonymous, all.callback.queueAnonymous - rAll.CSR.abandonedAnonymous);
+});
+
+test('CBX-1: a department\'s own view is unchanged, CSR\'s included', function () {
+  const view = function (list, d) {
+    h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = list;
+    install({ conn: null });
+    return JSON.parse(JSON.stringify(h.call('getOutboundReport', { from: FROM, to: TO, department: d }).callback));
+  };
+  ['CSR', 'Sales'].forEach(function (d) {
+    const a = view([], d), b = view(['CSR'], d);
+    assert.deepEqual(b, a, d + ' sees the same callback figures');
+    assert.equal(b.excludedDepts, undefined, 'no exclusion note on a department view');
+  });
+  h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = [];
+});
+
+test('CBX-1: the exclusion is CSR by default, folds a sub-queue into its listed parent, and keeps a queue another department shares', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/OutboundReport.gs'), 'utf8');
+  assert.match(src, /var OB_CB_COMPANY_EXCLUDED_DEPTS_ = \['CSR'\];/);
+  h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = ['CSR'];
+  const ex = h.call('obCbCompanyExcludedFn_', { Spanish: 'CSR', PAP: 'Sales' });
+  assert.equal(ex('CSR'), true);
+  assert.equal(ex('Spanish'), true);
+  assert.equal(ex('Sales'), false);
+  assert.equal(ex('PAP'), false);
+  const sc = JSON.parse(JSON.stringify(h.call('obCbCompanyScope_',
+    [{ teams: ['CSR'] }, { teams: ['Spanish'] }, { teams: ['CSR', 'Sales'] }, { teams: [] }],
+    [{ kind: 'queue', q: 'a_q_csr', w: 'cur' }, { kind: 'queue', q: 'a_q_shared', w: 'cur' }, { kind: 'menu', q: '', w: 'cur' }],
+    { parentOf: { Spanish: 'CSR' }, ownersOf: { a_q_csr: ['CSR'], a_q_shared: ['CSR', 'Sales'] } })));
+  assert.deepEqual(sc.eps, [{ teams: ['CSR', 'Sales'] }, { teams: [] }], 'shared and unmapped stay');
+  assert.deepEqual(sc.counts.map((r) => r.q), ['a_q_shared', ''], 'CSR\'s own queue count leaves');
+  h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = [];
 });

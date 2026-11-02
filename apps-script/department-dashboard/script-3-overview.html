@@ -2719,7 +2719,8 @@
       // read differently from the tile beside it (6.9% vs 6.6%). The
       // unmapped-queue episodes are named in "How this is counted".
       head.textContent = fmtNumber(cb.none || 0) + ' of ' + fmtNumber(cb.episodes || 0)
-        + ' callers not called back · ' + (cb.ownPct != null ? cb.ownPct + '% called back by their own team' : 'no own-team callbacks');
+        + ' callers not called back · ' + (cb.ownPct != null ? cb.ownPct + '% called back by their own team' : 'no own-team callbacks')
+        + ((t.excludedDepts || []).length ? ' · not counting ' + t.excludedDepts.join(' and ') : '');   // CBX-1
     }
     var kp = $('ov-cbdept-kpis');
     if (kp) kp.innerHTML = outboundCallbackSummaryHtml_(cb, (data && data.callbackPrior) || null,
@@ -2734,6 +2735,11 @@
         bits.push(fmtNumber((cb.phoneMenuAbandons || 0) + (cb.directLineAbandons || 0)) + ' hang-ups reached no queue, so no team can call them back ('
           + fmtNumber(cb.phoneMenuAbandons || 0) + ' in the phone menu, ' + fmtNumber(cb.directLineAbandons || 0)
           + ' on a person’s line — those are in Direct lines below).');
+      }
+      // CBX-1: the excluded departments' callers, counted and named.
+      if ((t.excludedDepts || []).length && tot.excludedEpisodes) {
+        bits.push(fmtNumber(tot.excludedEpisodes) + ' callers on ' + t.excludedDepts.join(' and ') + '\u2019s queues are left out of every company figure here: '
+          + 'they were calling for other departments, so those teams are not expected to call every one back. Their rows (marked *) still show them.');
       }
       if (unm > 0) bits.push(fmtNumber(unm) + ' of the ' + fmtNumber(tot.episodes || 0) + ' callers hung up on queues mapped to no department; they are in the totals and on the “unmapped” row, and no department owns them.');
       nc.textContent = bits.join(' ');

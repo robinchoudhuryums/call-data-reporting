@@ -2210,20 +2210,29 @@
     if (!t || !tb) return;
     tb.innerHTML = obCbDeptOrder_(t.rows || [], v.sort).map(function (r) {
       const child = !!(r.parent && !r.unmapped);
+      // CBX-1: a department left out of the company total keeps its row, marked.
+      const excl = r.excludedFromTotal
+        ? '<span class="ob-cbdept-excl" title="Left out of the All departments total and the summary above">*</span>' : '';
       return '<tr class="qcd-expandable ob-cbdept-row' + (child ? ' ob-cbdept-child' : '')
-        + (r.unmapped ? ' ob-cbdept-unmapped' : '') + '">'
+        + (r.unmapped ? ' ob-cbdept-unmapped' : '') + (r.excludedFromTotal ? ' ob-cbdept-excluded' : '') + '">'
         + '<td><button type="button" class="qcd-expand-toggle" aria-expanded="false">'
         + (child ? '<span class="ob-cbdept-indent" aria-hidden="true">&#8627; </span>' : '')
-        + escapeHtml(r.dept) + ' <span class="qcd-expand-icon">&#9654;</span></button></td>'
+        + escapeHtml(r.dept) + excl + ' <span class="qcd-expand-icon">&#9654;</span></button></td>'
         + obCbDeptCellsHtml_(r)
         + '</tr>'
         + '<tr class="qcd-detail-row" style="display:none;"><td colspan="9"><div class="qcd-detail-wrap">'
         + obCbDeptDetailHtml_(r, t) + '</div></td></tr>';
     }).join('');
     if (tf) {
+      const ex = t.excludedDepts || [];
       tf.innerHTML = t.total
-        ? '<tr class="ob-cbdept-total"><td title="Every episode counted once, whichever departments its queue belongs to">'
+        ? '<tr class="ob-cbdept-total"><td title="Every episode counted once, whichever departments its queue belongs to'
+          + (ex.length ? ' -- except ' + escapeHtml(ex.join(' and ')) + '\u2019s' : '') + '">'
           + '<strong>All departments</strong></td>' + obCbDeptCellsHtml_(t.total) + '</tr>'
+          + (ex.length ? '<tr class="ob-cbdept-excl-row"><td colspan="9">* ' + escapeHtml(ex.join(' and '))
+            + (ex.length === 1 ? ' is' : ' are') + ' left out of the All departments total and the summary above: '
+            + (ex.length === 1 ? 'its' : 'their') + ' callers are calling for other departments, so '
+            + (ex.length === 1 ? 'it is' : 'they are') + ' not expected to call every one of them back.</td></tr>' : '')
         : '';
     }
     const table = $(v.prefix + '-table');
@@ -3130,8 +3139,12 @@
           r.other, r.gotThrough, r.none, r.ownConnected, r.ownConnectedPct != null ? r.ownConnectedPct : '',
           r.medianCallbackSec != null ? r.medianCallbackSec : '', r.pending]);
       };
-      obCbDeptOrder_(cbd.rows, cbDeptSort).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
+      obCbDeptOrder_(cbd.rows, cbDeptSort).forEach(function (r) { lines.push(cbdRow(r.dept + (r.excludedFromTotal ? ' *' : ''), r.parent, r)); });
       if (cbd.total) lines.push(cbdRow('All departments (each episode once)', '', cbd.total));
+      // CBX-1: say which rows the total leaves out.
+      if ((cbd.excludedDepts || []).length) {
+        lines.push(row(['* ' + cbd.excludedDepts.join(' and ') + ' left out of the All departments total (their callers call for other departments)']));
+      }
     }
     lines.push('');
     lines.push(row(['Agent', 'Roster dept', 'OB calls', 'Connected', 'Connect %',

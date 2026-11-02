@@ -2499,7 +2499,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
   callback summary (CB-R1, next bullet) above the table, both drawn by the
   shared renderers; the phone-menu and person's-line hang-ups and the unmapped
-  queues are said in `#ov-cbdept-notcounted` inside the "How this is counted" ⓘ (IC-4, below):
+  queues are said in `#ov-cbdept-notcounted` inside the "How this is counted" ⓘ (IC-4, below), and
+  so are the callers on CSR's and Spanish's queues, which the company figures leave out (CBX-1:
+  their rows carry `excludedFromTotal`, render with a `.ob-cbdept-excl` asterisk, and a
+  `tr.ob-cbdept-excl-row` under the total names them):
   `outboundCallbackSummaryHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The

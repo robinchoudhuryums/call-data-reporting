@@ -90,7 +90,7 @@
 // v9: B1 (broad-scan 2026-10-12) episodes join across the window's edges (PC-1),
 //     "pending" is judged against the loaded calls (PC-2); + meta.unmapped (PC-5)
 //     and the roster hash on the key (DATA-3)
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v9';
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v10';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -657,25 +657,30 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
   const cbCounts = obj.cbCounts || [];
   const evRows = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
   const cur = obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
-  out.callback = obEpCallbackBlock_(cur, cbCounts, 'cur', true);
+  // CBX-1: the COMPANY figures leave out the excluded departments' callers;
+  // the department table keeps their rows (flagged) from the full list.
+  const co = scope.companyView ? obCbCompanyScope_(cur, cbCounts, ctx) : { eps: cur, counts: cbCounts };
+  out.callback = obEpCallbackBlock_(co.eps, co.counts, 'cur', true);
+  if (scope.companyView) out.callback.excludedDepts = OB_CB_COMPANY_EXCLUDED_DEPTS_.slice();
   // B1/PC-2: disclosed, so a lagging ingest reads as "calls loaded through X"
   // rather than as a wave of "not called back".
   out.callback.dataThrough = obj.cbThrough || null;
   out.callback.dataLagging = obEpDataLagging_(obj.cbThrough, ctx.todayIso);
-  const series = obEpSeries_(cur);
+  const series = obEpSeries_(co.eps);
   out.daily = series.daily;             // per FIRST-attempt day: {date, episodes, own, other, ratePct}
   out.callbackByHour = series.byHour;   // (6) by the first attempt's hour: {hour, episodes, own, ratePct}
   // v2: the prior window through the SAME engine (delta chips compare like with like).
   if (pw && obj.cbAb) {
-    const pri = obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: pw.from, to: pw.to }));
-    const p = obEpCallbackBlock_(pri, cbCounts, 'pri', false);
+    const priAll = obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: pw.from, to: pw.to }));
+    const pco = scope.companyView ? obCbCompanyScope_(priAll, cbCounts, ctx) : { eps: priAll, counts: cbCounts };
+    const p = obEpCallbackBlock_(pco.eps, pco.counts, 'pri', false);
     out.callbackPrior = {
       episodes: p.episodes, own: p.own, ownPct: p.ownPct, ownConnectedPct: p.ownConnectedPct,
       otherPct: p.otherPct, gotThroughPct: p.gotThroughPct,
     };
   }
   // v5 (CB-1), on CE-1's unit: company view only; its total reconciles with `callback`.
-  if (scope.companyView) out.callbackByDept = obEpByDept_(cur, cbCounts, ctx, deptsByAgent);
+  if (scope.companyView) out.callbackByDept = obEpByDept_(cur, cbCounts, ctx, deptsByAgent, co);
   return out;
 }
 
@@ -705,6 +710,42 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
 // ---------------------------------------------------------------------------
 
 var OB_CB_UNMAPPED_LABEL_ = 'Not mapped to a department';
+
+// CBX-1 (owner 2026-11-02): departments whose callers are NOT counted in the
+// COMPANY-WIDE callback figures. CSR is the front line: its callers are
+// calling for other departments, so it is not expected to call every one of
+// them back, and counting it would make the company rate mostly a CSR rate.
+// A listed department's SUB-QUEUES are left out with it (owner: Spanish, CSR's
+// sub-queue, too). Their rows stay in the department table, flagged
+// `excludedFromTotal` -- the company view is admin-only, so they are only ever
+// shown to an admin. An episode is left out only when EVERY team that owns its
+// queue is listed (a queue shared with another department stays in). A
+// department's own view is unchanged.
+var OB_CB_COMPANY_EXCLUDED_DEPTS_ = ['CSR'];
+
+/** PURE. fn(team) -> true when the team is listed, or a sub-queue of one. */
+function obCbCompanyExcludedFn_(parentOf) {
+  var list = {};
+  OB_CB_COMPANY_EXCLUDED_DEPTS_.forEach(function (d) { list[d] = true; });
+  var p = parentOf || {};
+  return function (team) { return !!(team && (list[team] || (p[team] && list[p[team]]))); };
+}
+
+/**
+ * PURE. The company view's episodes and counts without the excluded teams':
+ * { eps, counts }. An episode with no team (an unmapped queue) stays in.
+ */
+function obCbCompanyScope_(eps, counts, ctx) {
+  var ex = obCbCompanyExcludedFn_(ctx && ctx.parentOf);
+  var ownersOf = (ctx && ctx.ownersOf) || {};
+  var allEx = function (teams) { return !!(teams && teams.length) && teams.every(ex); };
+  return {
+    eps: (eps || []).filter(function (ep) { return !allEx(ep.teams); }),
+    counts: (counts || []).filter(function (r) {
+      return !(r && r.kind === 'queue' && allEx(ownersOf[String(r.q == null ? '' : r.q)] || []));
+    })
+  };
+}
 var OB_CB_UNMAPPED_QUEUES_MAX_ = 10;
 
 /**
@@ -1151,7 +1192,7 @@ function obEpSeries_(eps) {
  *     that row out: no team can own a callback it was never mapped to.
  *   * byCaller names who decided each own / other outcome, by roster home.
  */
-function obEpByDept_(eps, counts, ctx, deptsByAgent) {
+function obEpByDept_(eps, counts, ctx, deptsByAgent, totalScope) {
   var parentOf = ctx.parentOf || {}, childrenOf = ctx.childrenOf || {};
   var ownersOf = ctx.ownersOf || {};
   var homesOf = function (a) { return (a && deptsByAgent && deptsByAgent[a]) || []; };
@@ -1217,6 +1258,8 @@ function obEpByDept_(eps, counts, ctx, deptsByAgent) {
     s.unmapped = unmapped;
     s.parent = unmapped ? null : (parentOf[d] || null);
     s.abandonedAnonymous = anonBy[d] || 0;
+    // CBX-1: the row stays; the company total leaves its callers out.
+    s.excludedFromTotal = !unmapped && obCbCompanyExcludedFn_(parentOf)(d);
     return s;
   });
   rows.sort(function (a, b) {
@@ -1224,17 +1267,22 @@ function obEpByDept_(eps, counts, ctx, deptsByAgent) {
     return a.dept < b.dept ? -1 : a.dept > b.dept ? 1 : 0;
   });
 
-  var total = obSummarizeEpisodes_(eps, false);
+  // CBX-1: the TOTAL row is the company figure -- the excluded departments'
+  // callers out (totalScope, from obCbCompanyScope_); the rows above keep them.
+  var tEps = totalScope ? totalScope.eps : eps;
+  var tCounts = totalScope ? totalScope.counts : counts;
+  var total = obSummarizeEpisodes_(tEps, false);
   total.medianCallbackSec = (function () {
-    var m = obMedianNonNeg_((eps || []).filter(function (e) { return e.outcome === 'own'; })
+    var m = obMedianNonNeg_((tEps || []).filter(function (e) { return e.outcome === 'own'; })
       .map(function (e) { return e.delaySec; }));
     return m == null ? null : Math.round(m);
   })();
-  var mapped = (eps || []).filter(function (e) { return e.teams.length; });
+  var mapped = (tEps || []).filter(function (e) { return e.teams.length; });
   total.mappedEpisodes = mapped.length;
+  total.excludedEpisodes = Math.max(0, (eps || []).length - (tEps || []).length);   // CBX-1
   total.mappedOwn = mapped.filter(function (e) { return e.outcome === 'own'; }).length;
   total.mappedOwnPct = obPct1_(total.mappedOwn, total.mappedEpisodes);
-  var c = obEpCounts_(counts, 'cur');
+  var c = obEpCounts_(tCounts, 'cur');
   total.abandonedAnonymous = c.queueAnonymous;
   total.phoneMenuAbandons = c.phoneMenuAbandons;
   total.directLineAbandons = c.directLineAbandons;
@@ -1244,6 +1292,7 @@ function obEpByDept_(eps, counts, ctx, deptsByAgent) {
   return {
     rows: rows,
     total: total,
+    excludedDepts: rows.filter(function (r) { return r.excludedFromTotal; }).map(function (r) { return r.dept; }),
     unmappedQueues: unmList.slice(0, OB_CB_UNMAPPED_QUEUES_MAX_),
     unmappedQueueCount: unmList.length,
   };
