@@ -2466,8 +2466,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   screen); a plain My Department landing while the switch is hidden; Step 3: the link
   opens the brief's Callbacks ROW -- `insBriefToggle_('callbacks', true)`, or
   `INS_BRIEF_OPEN_.callbacks` before the brief exists -- and never touches the
-  outbound columns toggle). It shows wherever `obAllowed_` holds (admin-only
-  until 6c, hidden in View-as; Step 3: independent of the columns toggle) and
+  direction switch). It shows wherever `obAllowed_` holds (admin-only
+  until 6c, hidden in View-as; independent of the direction switch) and
   PRELOADS (Step 3 #8, owner 2026-10-16) -- ONLY while My Department is the
   page (`insCbOnDeptPage_`: the dept page also renders under the Overview
   landing, which must fetch nothing for it; entering the page re-syncs via

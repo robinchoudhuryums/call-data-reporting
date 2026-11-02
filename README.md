@@ -12,10 +12,11 @@ Source of truth for the call-data reporting stack:
   Performance / Compare Ranges / QCD reports), and the **Escalations**
   worklist page, toggled via header buttons; the Individual report and
   Agent day modals (plus the admin-vetted Inbound / Direct) overlay any page.
-  Outbound has no modal (retired, G3): it lives on My Department behind the
-  "Show outbound columns" toggle (one IN line over an OUT line per agent since
-  2026-10-21), with the Outbound summary and Callbacks sections under that
-  table (UX-1) -- rows of the Insights brief while it is on (admin trial).
+  Outbound has no modal (retired, G3): it lives on My Department, where the
+  agent table's direction switch offers Inbound · Outbound · Inbound + outbound
+  (the default, one line per agent) · Direct (DV-1), with the Outbound summary
+  and Callbacks sections under that table (UX-1) -- rows of the Insights brief
+  (admin trial).
 - **Reference copies** of related Apps Script code from sibling projects
   (CDR Report, CDR Import) that the dashboard depends on. Pulled in
   gradually so changes across projects can be reviewed in one place.
@@ -597,8 +598,8 @@ the deployed web-app URL to land on that view:
   History sheet (DC-1); a window ends at the last imported day and names any
   missing workday, D1)
 - `#/report/outbound` — legacy (the Outbound report modal is retired, G3 —
-  lands on My Department with the Callbacks section open (the outbound columns
-  show by default since Step 3);
+  lands on My Department with the Callbacks section open (the agent table on
+  its default Inbound + outbound view);
   admin-only until the 6c release, a plain My Department landing for anyone else)
 - `#/report/agent-day` — Agent Day (one agent's calls on one day; admins and
   the manager of that agent's roster department)
