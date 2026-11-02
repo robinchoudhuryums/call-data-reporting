@@ -594,3 +594,87 @@ test('XB-0: over a grid it reads the capture\'s own journeys (outside calls only
   assert.equal(st.sentBack, 1);
   assert.deepEqual(st.pairs, { 'Sales -> CSR -> Sales': 1 });
 });
+
+// ── TR-0 (owner 2026-11-02): a transfer RETRIED in the same department ─────
+const TR_ROSTER = h.call('tfRosterFromGrid_', ['CSR', 'Power', 'PowerSub'], [
+  ['Daniel (Dishant) Sahani, 352', 'Rhea Power, 401', 'Sub Rep, 403'],
+  ['Camila (Cheshta) Bhutani, 240', 'Omar Power, 402', ''],
+]);
+const TR_CFG = [['PowerSub', 'A_Q_PowerSub', 'Power', '', '', true, '', '', '', '']];
+const TR = h.call('tfBounceLookups_', TR_ROSTER, TR_CFG, null);
+const trOf = (j, s0) => JSON.parse(JSON.stringify(h.call('tfRetriesOfJourney_', j, TR.deptsOfAgent, s0 || null)));
+const attempt = (t, name, x) => Object.assign({ t, name, kind: 'leg', missed: true, transfer: true }, x || {});
+const consult = (t, name) => ({ t, name, kind: 'answer', talk: 40, transfer: true, consult: true });
+
+test('TR-0: CSR tries Power rep #1 (quick decline), then Power rep #2 on the same call -- one case', function () {
+  const r = trOf([q('10:00:00', 'A_Q_CSR'), ans('10:00:05', 'Daniel (Dishant) Sahani', 300),
+    attempt('10:02:00', 'Rhea Power', { secs: 3 }), consult('10:02:20', 'Omar Power')]);
+  assert.equal(r.attempts, 2);
+  assert.equal(r.cases.length, 1);
+  const c = r.cases[0];
+  assert.equal(c.senderName, 'Daniel (Dishant) Sahani');
+  assert.equal(c.senderDept, 'CSR');
+  assert.equal(c.dept, 'Power');
+  assert.deepEqual([c.first.name, c.first.outcome, c.second.name, c.second.outcome, c.gapSecs],
+    ['Rhea Power', 'quickDecline', 'Omar Power', 'answered', 20]);
+});
+
+test('TR-0: the outcome classes -- voicemail beats ring time; the quick-decline line is inclusive', function () {
+  assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 3, voicemail: true }), 'voicemail');
+  assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 8 }), 'quickDecline');
+  assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 9 }), 'rangOut');
+  assert.equal(h.call('tfRetryOutcome_', { missed: true }), 'unknown');
+  assert.equal(h.call('tfRetryOutcome_', { consult: true }), 'answered');
+  assert.equal(h.call('tfRetryRingBucket_', 8), '4-8s');
+  assert.equal(h.call('tfRetryRingBucket_', 40), '26s+');
+  assert.equal(h.call('tfRetryRingBucket_', null), '?');
+});
+
+test('TR-0: not a retry -- the same person twice, an own-dept colleague, a first attempt that was answered', function () {
+  const a = ans('10:00:05', 'Daniel (Dishant) Sahani', 300);
+  assert.equal(trOf([a, attempt('10:02:00', 'Rhea Power', { secs: 20 }), attempt('10:03:00', 'Rhea Power', { secs: 20 })]).cases.length, 0);
+  assert.equal(trOf([a, attempt('10:02:00', 'Camila (Cheshta) Bhutani', { secs: 3 }), attempt('10:03:00', 'Daniel (Dishant) Sahani', { secs: 3 })]).cases.length, 0);
+  assert.equal(trOf([a, consult('10:02:00', 'Rhea Power'), consult('10:05:00', 'Omar Power')]).cases.length, 0);
+});
+
+test('TR-0: a sub-queue folds into its parent (Power rep -> PowerSub rep is the same department)', function () {
+  const r = trOf([ans('10:00:05', 'Daniel (Dishant) Sahani', 300), attempt('10:02:00', 'Rhea Power', { secs: 25, voicemail: true }),
+    attempt('10:02:40', 'Sub Rep', { secs: 30 }), attempt('10:03:30', 'Omar Power', { secs: 4 })]);
+  assert.equal(r.cases.length, 1, 'one case per call per department');
+  assert.equal(r.cases[0].second.name, 'Sub Rep');
+  assert.equal(r.cases[0].first.outcome, 'voicemail');
+  assert.equal(r.cases[0].moreInDept, 1);
+});
+
+test('TR-0: outbound sender is the dialling agent; unknown names are skipped and counted, never guessed', function () {
+  const r = trOf([attempt('11:00:00', 'Rhea Power', { secs: 2 }), attempt('11:00:30', 'Omar Power', { secs: 12 })], 'Camila (Cheshta) Bhutani');
+  assert.equal(r.cases.length, 1);
+  assert.equal(r.cases[0].senderDept, 'CSR');
+  assert.equal(r.cases[0].second.outcome, 'rangOut');
+  const u = trOf([attempt('11:00:00', 'Rhea Power', { secs: 2 }), attempt('11:00:30', 'ext 999', { secs: 2 })], 'Camila (Cheshta) Bhutani');
+  assert.equal(u.cases.length, 0);
+  assert.equal(u.skipped.targetUnknown, 1);
+  const s = trOf([attempt('11:00:00', 'Rhea Power', { secs: 2 })], null);
+  assert.equal(s.skipped.senderUnknown, 1);
+});
+
+test('TR-0: over a grid -- the capture\'s own journeys, the Cause / Last Leg Disposition census, no number anywhere', function () {
+  const D3 = '11/02/2026 ';
+  const id = 'TR1', cust = '12145550177';
+  const rows = [
+    leg({ callId: id, legId: 1, start: D3 + '10:00:00', stop: D3 + '10:00:05', direction: 'Incoming', caller: cust, callee: '103', calleeName: 'A_Q_CSR' }),
+    leg({ callId: id, legId: 2, start: D3 + '10:00:05', connected: D3 + '10:00:05', stop: D3 + '10:06:00', direction: 'Incoming', talk: '0:05:55', caller: cust, callee: '352', calleeName: 'Daniel (Dishant) Sahani', answered: 'Answered' }),
+    leg({ callId: 'I1', legId: 1, start: D3 + '10:02:00', stop: D3 + '10:02:03', direction: 'Internal', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: '401', calleeName: 'Rhea Power', missed: 'Missed' }),
+    leg({ callId: 'I2', legId: 1, start: D3 + '10:02:20', connected: D3 + '10:02:22', stop: D3 + '10:03:00', direction: 'Internal', talk: '0:00:38', caller: '352', callerName: 'Daniel (Dishant) Sahani', callee: '402', calleeName: 'Omar Power', answered: 'Answered' }),
+  ];
+  rows[2][26] = 'Rejected'; rows[2][41] = 'Busy';
+  const st = JSON.parse(JSON.stringify(h.call('tfRetriesForGrid_', rows, TR)));
+  assert.equal(st.inboundCaptured, 1);
+  assert.equal(st.cases, 1);
+  assert.deepEqual(st.firstOutcome, { quickDecline: 1 });
+  assert.deepEqual(st.census, { 'quick decline / Cause Rejected / Last Leg Disposition Busy': 1 });
+  assert.deepEqual(st.firstCallees, { 'Rhea Power (Power)': 1 });
+  assert.match(st.samples[0], /^TR1 \(inbound\) Daniel \(Dishant\) Sahani \(CSR\) -> Rhea Power: quick decline after 3s \[Cause Rejected, Busy\]; 22s later -> Omar Power: answered \(Power\)$/);
+  assert.ok(!JSON.stringify(st).includes('2145550177'), 'no caller number in the stats');
+  assert.match(h.call('tfRetryLine_', st), /RETRIED in the same department 1 \(inbound 1, outbound 0\); first attempt ended -- quick decline \(<=8s\) 1/);
+});

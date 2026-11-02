@@ -3356,6 +3356,168 @@
     dismissed: { verb: 'Dismiss', why: 'Dismissed: judged not a real issue for this agent.' },
   };
 
+  // ── TR-1 (owner 2026-11-02): Transfer retries ────────────────────────────
+  // Admin-only (data-admin-only menu item; getTransferRetries asserts admin).
+  // Opens on the last 30 days, every department; a preset or Show re-runs.
+  var TR_OUTCOME_TEXT_ = { quickDecline: 'Declined quickly', rangOut: 'Rang out', voicemail: 'Went to voicemail',
+                           answered: 'Answered', unknown: 'Not answered' };
+  var TR_STATE_ = { seq: 0, init: false };
+  function initTransferRetries_() {
+    const btn = $('transfer-retries-btn');
+    const modal = $('transfer-retries-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      if (!$('tr-from').value || !$('tr-to').value) trPreset_('last30');
+      trLoadInit_();
+      trRun_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    const presets = $('tr-presets');
+    if (presets) presets.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('[data-tr-preset]') : null;
+      if (!b) return;
+      trPreset_(b.getAttribute('data-tr-preset'));
+      trRun_();
+    });
+    ['tr-from', 'tr-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', function () { trPresetMark_(''); });
+    });
+    if ($('tr-run-btn')) $('tr-run-btn').addEventListener('click', trRun_);
+    if ($('tr-dept')) $('tr-dept').addEventListener('change', trRun_);
+  }
+  function trPresetMark_(v) {
+    Array.prototype.forEach.call(document.querySelectorAll('#tr-presets [data-tr-preset]'), function (b) {
+      const on = b.getAttribute('data-tr-preset') === v;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function trPreset_(v) {
+    const r = datePresetRange_(v);
+    if (!r) return;
+    $('tr-from').value = r.from;
+    $('tr-to').value = r.to;
+    trPresetMark_(v);
+  }
+  function trStatus_(kind, text) {
+    const s = $('tr-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+  function trLoadInit_() {
+    if (TR_STATE_.init) return;
+    google.script.run
+      .withSuccessHandler(function (d) {
+        TR_STATE_.init = true;
+        const sel = $('tr-dept');
+        if (sel && d && d.departments) {
+          const cur = sel.value;
+          sel.innerHTML = '<option value="">All departments</option>' + d.departments.map(function (x) {
+            return '<option value="' + escapeHtml(x) + '"' + (x === cur ? ' selected' : '') + '>' + escapeHtml(x) + '</option>';
+          }).join('');
+        }
+        if (d && d.quickSecs != null && $('tr-quick-secs')) $('tr-quick-secs').textContent = d.quickSecs;
+      })
+      .withFailureHandler(function () { /* the list still runs; the picker stays "All departments" */ })
+      .getTransferRetriesInit();
+  }
+  function trRun_() {
+    const from = $('tr-from').value, to = $('tr-to').value, dept = $('tr-dept') ? $('tr-dept').value : '';
+    if (!from || !to) { trStatus_('error', 'Pick a From and a To date.'); return; }
+    const tok = ++TR_STATE_.seq;
+    trStatus_('', 'Loading…');
+    const res = $('tr-results');
+    if (res) dsFrostShow_(res, 'Loading…');
+    google.script.run
+      .withSuccessHandler(function (d) {
+        if (tok !== TR_STATE_.seq) return;
+        if (res) dsFrostHide_(res);
+        trRender_(d || {});
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== TR_STATE_.seq) return;
+        if (res) { dsFrostHide_(res); res.style.display = 'none'; }
+        trStatus_('error', 'Could not load: ' + ((err && err.message) || err));
+      })
+      .getTransferRetries({ from: from, to: to, dept: dept });
+  }
+  function trOutcomeHtml_(x) {
+    const txt = TR_OUTCOME_TEXT_[x.outcome] || x.outcome;
+    const cls = x.outcome === 'quickDecline' ? ' tr-out--decline' : (x.outcome === 'answered' ? ' tr-out--ok' : '');
+    return '<span class="tr-out' + cls + '">' + escapeHtml(txt) + '</span>'
+      + (x.outcome !== 'answered' && x.secs != null ? ' <span class="al-hint">' + escapeHtml(String(x.secs)) + ' s</span>' : '');
+  }
+  function trRender_(d) {
+    const m = d.meta || {};
+    const res = $('tr-results');
+    if (m.available === false) {
+      if (res) res.style.display = 'none';
+      trStatus_('error', m.error || 'Transfer retries are unavailable right now (the call paths are read from Neon, which is unreachable).');
+      return;
+    }
+    trStatus_('', '');
+    if (res) res.style.display = '';
+    const sum = d.summary || {}, bo = sum.byOutcome || {};
+    const n = Number(sum.cases) || 0;
+    $('tr-summary').innerHTML = n
+      ? '<strong>' + escapeHtml(fmtNumber(n)) + '</strong> call' + (n === 1 ? '' : 's') + ' where a transfer was tried again in the same department'
+        + (m.dept ? ' (' + escapeHtml(m.dept) + ')' : '') + '. The first attempt: '
+        + escapeHtml(fmtNumber(bo.quickDecline || 0)) + ' declined quickly, ' + escapeHtml(fmtNumber(bo.rangOut || 0)) + ' rang out, '
+        + escapeHtml(fmtNumber(bo.voicemail || 0)) + ' went to voicemail' + (bo.unknown ? ', ' + escapeHtml(fmtNumber(bo.unknown)) + ' not timed' : '') + '.'
+      : 'No transfer was tried again in the same department in these dates' + (m.dept ? ' (' + escapeHtml(m.dept) + ')' : '') + '.';
+    const callees = sum.callees || [];
+    const cw = document.querySelector('#transfer-retries-modal .tr-callees-wrap');
+    if (cw) cw.style.display = callees.length ? '' : 'none';
+    $('tr-callees').innerHTML = callees.map(function (c) {
+      return '<tr><td>' + escapeHtml(c.name) + '</td><td>' + escapeHtml(c.dept) + '</td><td class="num">' + escapeHtml(fmtNumber(c.n))
+        + '</td><td class="num">' + escapeHtml(fmtNumber(c.quickDecline || 0)) + '</td></tr>';
+    }).join('');
+    const pairs = sum.pairs || [];
+    $('tr-pairs').textContent = pairs.length ? 'By department (sent by → tried): ' + pairs.map(function (p) { return p.pair + ' ' + p.n; }).join(' · ') : '';
+    const cases = d.cases || [];
+    $('tr-cases').style.display = cases.length ? '' : 'none';
+    $('tr-tbody').innerHTML = cases.map(function (c) {
+      return '<tr>'
+        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(c.first.t || c.start || '') + '</span></td>'
+        + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
+        +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '') + '</td>'
+        + '<td>' + escapeHtml(c.senderName || '') + ' <span class="al-hint">' + escapeHtml(c.senderDept || '') + '</span></td>'
+        + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span></td>'
+        + '<td>' + trOutcomeHtml_(c.first) + '</td>'
+        + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '') + '</td>'
+        + '<td>' + trOutcomeHtml_(c.second) + '</td>'
+        + '<td class="num">' + (c.gapSecs != null ? escapeHtml(String(c.gapSecs)) + ' s' : '–') + '</td></tr>';
+    }).join('');
+    const note = $('tr-note');
+    if (note) {
+      note.textContent = m.truncated ? 'Showing the newest ' + cases.length + ' of ' + n + '; narrow the dates or pick a department for the rest.' : '';
+      note.style.display = m.truncated ? '' : 'none';
+    }
+  }
+
   // ── Exception days editor (owner 2026-10-22, #81) ─────────────────────────
   // Admin-only: the menu item is data-admin-only and every server call starts
   // with assertAdmin_. One row per date; Remove is dsConfirm_-gated because it

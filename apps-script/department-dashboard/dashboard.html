@@ -133,6 +133,9 @@
             <button class="header-menu-item" id="exception-days-btn" type="button"
                     data-route="/admin/exception-days" data-admin-only role="menuitem"
                     title="Days whose call data is real but unfair to judge by (an outage) -- left out of every report's figures, and every report says so. Admin-only.">Exception days</button>
+            <button class="header-menu-item" id="transfer-retries-btn" type="button"
+                    data-route="/admin/transfer-retries" data-admin-only role="menuitem"
+                    title="Calls where an agent tried someone in another department, got no answer, then tried someone else there -- the list to check for transfers declined that should not have been. Admin-only.">Transfer retries</button>
           </div>
         </div>
       </nav>
@@ -321,6 +324,7 @@
               </span>
               <span class="al-hint" id="ov-cbdept-dates"></span>
               <button type="button" class="btn btn-secondary" id="ov-cbdept-csv-btn">Download CSV</button>
+              <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ov-cbdept-howto">&#9432;</span></span>
             </div>
             <div id="ov-cbdept-state" class="ds-note" style="display:none;"></div>
             <div id="ov-cbdept-content" style="display:none;">
@@ -336,23 +340,18 @@
                   </table>
                 </div>
               </div>
-              <!-- CB-R1: the counting rules, collapsed (they used to sit above the table). -->
-              <details class="ob-howto" id="ov-cbdept-howto">
-                <summary>How this is counted</summary>
-                <div class="ob-howto-body">
-                  <p>Each department is responsible for calling back its own abandoned callers,
-                    counted in <strong>contact episodes</strong> (one caller trying to reach one
-                    team, however many times they tried while the callback window stayed open).
-                    &ldquo;Own team&rdquo; = a dial by the department&rsquo;s own agents (a parent
-                    includes its sub-queues&rsquo; queues and agents); &ldquo;another team&rdquo; is
-                    kept apart because it may be unrelated; &ldquo;got through&rdquo; = the caller
-                    reached the team on a later call first. Every share is of the same total. Times
-                    run from the first attempt and include any internal handoff. The rows do not sum
-                    to the total: a parent includes its sub-queues, and a queue shared by two
-                    departments is in both.</p>
-                  <p id="ov-cbdept-notcounted" style="display:none;"></p>
-                </div>
-              </details>
+              <!-- CB-R1 / IC-4: the counting rules, read by the ⓘ in the controls row. -->
+              <div id="ov-cbdept-howto" class="ob-howto-src" hidden>
+                <span class="ds-tip-title">How this is counted</span>
+                <ul class="ds-tip-list">
+                  <li>Each department calls back its own abandoned callers, counted in <strong>contact episodes</strong>: one caller trying to reach one team while the callback window stays open.</li>
+                  <li><strong>Own team</strong>: a dial by the department&rsquo;s own agents (a parent includes its sub-queues&rsquo; queues and agents). <strong>Another team</strong> is counted separately; it may be unrelated.</li>
+                  <li><strong>Got through</strong>: the caller reached the team on a later call first.</li>
+                  <li>Every share is of the same total. Times run from the first attempt and include any internal handoff.</li>
+                  <li>The rows don&rsquo;t add up to the total: a parent includes its sub-queues, and a queue shared by two departments is in both.</li>
+                </ul>
+                <p id="ov-cbdept-notcounted" style="display:none;"></p>
+              </div>
               <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
                    getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
               <details id="ov-dl-fold" class="ob-dl-fold">
@@ -369,27 +368,24 @@
                     <p id="ov-dl-note" class="al-hint ob-dl-note" style="display:none;"></p>
                     <div id="ov-dl-sum" class="ob-sum-host"></div>
                     <div id="ov-dl-table"></div>
-                    <div class="esc-resolve-actions">
+                    <div class="esc-resolve-actions ob-list-actions">
                       <button class="btn btn-secondary" id="ov-dl-rep-btn" type="button">List repeat unreturned callers</button>
                       <span id="ov-dl-rep-status" class="al-hint"></span>
+                      <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ov-dl-howto">&#9432;</span></span>
                     </div>
                     <div id="ov-dl-rep-list" style="display:none;"></div>
-                    <details class="ob-howto">
-                      <summary>How this is counted</summary>
-                      <div class="ob-howto-body">
-                        <p>External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
-                          answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
-                          the two apart) or the caller hung up while it rang. Counted in contact episodes; the
-                          team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
-                          Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
-                          them back; &ldquo;by a teammate&rdquo; = someone else on their team did. A caller counts
-                          in work or after hours by their FIRST attempt; an after-hours callback is timed from
-                          the next work day&rsquo;s open. The table files a caller under the line they tried
-                          first. A call that rang the person for under 8 seconds is counted as a misdial and
-                          left out of the rates (a call with no recorded ring length stays in).</p>
-                        <p id="ov-dl-counts"></p>
-                      </div>
-                    </details>
+                    <!-- IC-2: the counting rules, read by the ⓘ above. -->
+                    <div id="ov-dl-howto" class="ob-howto-src" hidden>
+                      <span class="ds-tip-title">How this is counted</span>
+                      <ul class="ds-tip-list">
+                        <li>Outside calls that rang a <strong>person&rsquo;s line</strong> first and nobody answered: it rang out, went to voicemail, or the caller hung up while it rang.</li>
+                        <li>One contact episode per caller. The team is the line owner&rsquo;s department (the Sales voicemail box counts for Sales).</li>
+                        <li><strong>By the person</strong>: the line&rsquo;s owner called back. <strong>By a teammate</strong>: someone else on the team did.</li>
+                        <li>Work hours or after hours is decided by the first attempt; an after-hours callback is timed from the next workday&rsquo;s open.</li>
+                        <li>Filed under the first line tried. A ring under 8 seconds counts as a misdial and is left out of the rates.</li>
+                      </ul>
+                      <p id="ov-dl-counts"></p>
+                    </div>
                   </div>
                 </div>
               </details>
@@ -561,6 +557,11 @@
 
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
+        <!-- AT-1 (owner 2026-11-02): the Outbound / Both / Direct views' standing
+             explainer is a hover tooltip here, not a note over the table; its
+             text follows the view (obViewSync_). Notes that change how to read
+             the numbers today (Neon down, capture start, no data) stay visible. -->
+        <span id="dqe-table-info" class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this view" title="" style="display:none;">&#9432;</span>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
         <span class="dept-qcd-hint">Click a row to see that agent’s days; the Individual Report is one click inside.</span>
         <!-- Batch D (owner plan 2026-10): the outbound view of the table. ADMIN-ONLY
@@ -575,9 +576,21 @@
              toggle; off shows the classic inbound table. The container keeps
              its id and data-admin-only: its visibility is still the permission
              (obAllowed_), so managers and View-as see the inbound table only. -->
-        <div id="dept-dir-switch" class="dept-dir-switch" data-admin-only style="display:none;">
-          <button type="button" class="link-btn dept-cols-toggle" data-ob-cols aria-pressed="true"
-                  title="Show each agent's outbound calls beside their inbound ones">Show outbound columns</button>
+        <!-- DV-1 (owner 2026-11-02): back to a segmented switch, now four views --
+             Inbound, Outbound, Inbound + outbound (the default), Direct. Same id,
+             same data-admin-only: its visibility is still the permission. -->
+        <div id="dept-dir-switch" class="dept-dir-switch dept-qcd-period" data-admin-only role="group" aria-label="Agent table view" style="display:none;">
+          <button type="button" class="dept-qcd-period-btn" data-dir-pick="in" aria-pressed="false"
+                  title="Calls that rang the agents from the department's queues">Inbound</button>
+          <button type="button" class="dept-qcd-period-btn" data-dir-pick="out" aria-pressed="false"
+                  title="Calls the agents placed">Outbound</button>
+          <button type="button" class="dept-qcd-period-btn active" data-dir-pick="both" aria-pressed="true"
+                  title="Each agent's inbound and outbound calls side by side">Inbound + outbound</button>
+          <!-- The Direct Calls report is admin-only on its OWN vetting, so this
+               button keeps data-admin-only even after the 6c release drops it
+               from the switch (obEffectiveDir_ falls back too, tdcActive_). -->
+          <button type="button" class="dept-qcd-period-btn" data-dir-pick="direct" aria-pressed="false" data-admin-only style="display:none;"
+                  title="Calls to and from the agents' own extensions (the Direct Calls report)">Direct</button>
         </div>
         <button class="link-btn dept-cols-toggle" id="dept-cols-toggle" type="button"
                 aria-expanded="false"
@@ -623,6 +636,17 @@
           <thead id="agents-ob-thead"></thead>
           <tbody id="agents-ob-tfoot" class="agents-totals"></tbody>
           <tbody id="agents-ob-tbody"></tbody>
+        </table>
+      </div>
+      <!-- DV-1: the Direct view -- the Direct Calls report's per-agent figures for
+           this dept and the page's dates (getDirectCallReport, ONE fetch shared
+           with the Team Direct Calls card, TDC_). Rendered by dcViewRender_. -->
+      <div id="agents-dc-wrap" class="agents-table-wrap" style="display:none;">
+        <div id="agents-dc-note" class="ds-note" style="display:none;"></div>
+        <table id="agents-dc-table" class="agents agents-ob agents-dc">
+          <thead id="agents-dc-thead"></thead>
+          <tbody id="agents-dc-tfoot" class="agents-totals"></tbody>
+          <tbody id="agents-dc-tbody"></tbody>
         </table>
       </div>
 
@@ -677,35 +701,37 @@
             <div id="ins-cb-content" style="display:none;">
               <div id="ins-cb-kpis" class="ob-sum-host"></div>
               <div id="ins-cb-delay-strip" style="display:none;"></div>
-              <p class="al-hint">
-                Counted in <strong>contact episodes</strong>: one caller trying to reach this
-                team, however many times they tried while it stayed open (each try within
-                <span id="ins-cb-window">3</span> days of the last). &ldquo;Called back by own
-                team&rdquo; = someone on this department&rsquo;s roster (or its parent / sub-queue)
-                <em>dialed</em> the caller, whether or not it connected; the time runs from the
-                <strong>first</strong> attempt. &ldquo;Contacted by another team&rdquo; is kept
-                apart because it may be about something else. &ldquo;Got through&rdquo; = the
-                caller reached the team on a later call before anyone called back.
-                &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
-                greeting or a phone menu; the phone records report all three the same way, so it
-                is an upper bound on callers actually reached. Anonymous abandons (no caller ID)
-                cannot be tracked and are left out.
-              </p>
+              <!-- IC-1 (owner 2026-11-02): the counting rules are the ⓘ in the list
+                   row below (data-gloss-src reads this hidden block at hover time,
+                   so the callback window and the scope note stay live). -->
+              <div id="ins-cb-howto" class="ob-howto-src" hidden>
+                <span class="ds-tip-title">How this is counted</span>
+                <ul class="ds-tip-list">
+                  <li>One caller trying to reach this team counts once: tries within <span id="ins-cb-window">3</span> days of each other are the same episode.</li>
+                  <li><strong>Called back by own team</strong>: someone on this department&rsquo;s roster (or its parent or sub-queue) dialled the caller, connected or not. The time runs from the first attempt.</li>
+                  <li><strong>Contacted by another team</strong>: counted separately, because it may be about something else.</li>
+                  <li><strong>Got through</strong>: the caller reached the team on a later call before anyone called back.</li>
+                  <li><strong>Connected</strong>: the far end answered &mdash; a person, voicemail or a phone menu &mdash; so it is an upper bound on callers actually reached.</li>
+                  <li>Callers with no caller ID can&rsquo;t be tracked and are left out.</li>
+                </ul>
+                <p id="ins-cb-scope-note" style="display:none;"></p>
+              </div>
               <div id="ins-cb-chart-wrap" style="display:none; max-width:100%; height:140px;">
                 <canvas id="ins-cb-chart"></canvas>
               </div>
               <div id="ins-cb-hour-strip" style="display:none;"></div>
-              <div class="esc-resolve-actions">
+              <!-- IC-1: the two list buttons side by side (the lists open below,
+                   in the same order). CE-2: the called-back list -- who dialed, own
+                   or another team, the delay from the first attempt, and a path
+                   into the callback itself. -->
+              <div class="esc-resolve-actions ob-list-actions">
                 <button class="btn btn-secondary" id="ins-cb-uncalled-btn" type="button">List not-called-back calls</button>
+                <button class="btn btn-secondary" id="ins-cb-calledback-btn" type="button">List called-back calls</button>
                 <span id="ins-cb-uncalled-status" class="al-hint"></span>
+                <span id="ins-cb-calledback-status" class="al-hint"></span>
+                <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ins-cb-howto">&#9432;</span></span>
               </div>
               <div id="ins-cb-uncalled-list" style="display:none;"></div>
-              <!-- CE-2: the called-back list -- who dialed, own or another team, the delay
-                   from the first attempt, and a path into the callback itself. -->
-              <div class="esc-resolve-actions">
-                <button class="btn btn-secondary" id="ins-cb-calledback-btn" type="button">List called-back calls</button>
-                <span id="ins-cb-calledback-status" class="al-hint"></span>
-              </div>
               <div id="ins-cb-calledback-list" style="display:none;"></div>
               <!-- CE-3: Direct lines -- unanswered calls to a person's line. LAZY:
                    getOutboundDirectCallbacks runs only while this is open (obDlSync_). -->
@@ -723,27 +749,24 @@
                     <p id="ins-dl-note" class="al-hint ob-dl-note" style="display:none;"></p>
                     <div id="ins-dl-sum" class="ob-sum-host"></div>
                     <div id="ins-dl-table"></div>
-                    <div class="esc-resolve-actions">
+                    <div class="esc-resolve-actions ob-list-actions">
                       <button class="btn btn-secondary" id="ins-dl-rep-btn" type="button">List repeat unreturned callers</button>
                       <span id="ins-dl-rep-status" class="al-hint"></span>
+                      <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ins-dl-howto">&#9432;</span></span>
                     </div>
                     <div id="ins-dl-rep-list" style="display:none;"></div>
-                    <details class="ob-howto">
-                      <summary>How this is counted</summary>
-                      <div class="ob-howto-body">
-                        <p>External calls that rang a <strong>person&rsquo;s line</strong> first and nobody
-                          answered &mdash; it rang out, went to their voicemail (the phone records cannot tell
-                          the two apart) or the caller hung up while it rang. Counted in contact episodes; the
-                          team is the line owner&rsquo;s roster department (the Sales voicemail box counts for
-                          Sales). &ldquo;By the person&rdquo; = the owner of a line the caller tried dialed
-                          them back; &ldquo;by a teammate&rdquo; = someone else on their team did. A caller counts
-                          in work or after hours by their FIRST attempt; an after-hours callback is timed from
-                          the next work day&rsquo;s open. The table files a caller under the line they tried
-                          first. A call that rang the person for under 8 seconds is counted as a misdial and
-                          left out of the rates (a call with no recorded ring length stays in).</p>
-                        <p id="ins-dl-counts"></p>
-                      </div>
-                    </details>
+                    <!-- IC-2: the counting rules, read by the ⓘ above. -->
+                    <div id="ins-dl-howto" class="ob-howto-src" hidden>
+                      <span class="ds-tip-title">How this is counted</span>
+                      <ul class="ds-tip-list">
+                        <li>Outside calls that rang a <strong>person&rsquo;s line</strong> first and nobody answered: it rang out, went to voicemail, or the caller hung up while it rang.</li>
+                        <li>One contact episode per caller. The team is the line owner&rsquo;s department (the Sales voicemail box counts for Sales).</li>
+                        <li><strong>By the person</strong>: the line&rsquo;s owner called back. <strong>By a teammate</strong>: someone else on the team did.</li>
+                        <li>Work hours or after hours is decided by the first attempt; an after-hours callback is timed from the next workday&rsquo;s open.</li>
+                        <li>Filed under the first line tried. A ring under 8 seconds counts as a misdial and is left out of the rates.</li>
+                      </ul>
+                      <p id="ins-dl-counts"></p>
+                    </div>
                   </div>
                 </div>
               </details>
@@ -1641,29 +1664,46 @@
             <span id="tob-row-action-desc" class="sr-only">Activate to jump to this agent’s full row in the agent table.</span>
           </div>
         </div>
-        <!-- D3 (owner 2026-10-21): the Direct Calls report's figures for this
-             dept and the page's dates -- the SAME getDirectCallReport the modal
-             runs (admin-only while vetted), so the two can never disagree.
-             Collapsed and LAZY: nothing is fetched until it is opened, then
-             once per dept + window. data-admin-only: View-as hides it. -->
-        <details id="dept-team-direct" class="dept-qcd-snapshot dtd-fold" data-admin-only style="display:none;">
-          <summary class="dept-qcd-header dtd-summary">
+        <!-- D3 (owner 2026-10-21) + TDC-1 (owner 2026-11-02): the Direct Calls
+             report's figures for this dept and the page's dates -- the SAME
+             getDirectCallReport the modal runs (admin-only while vetted), so
+             the two never disagree. A panel like Team Rings / Team Outbound
+             (no longer a collapsed fold): a skeleton while it loads, a Retry
+             on failure, and ONE fetch per dept + window shared with the
+             agent table's Direct view. data-admin-only: View-as hides it. -->
+        <div id="dept-team-direct" class="dept-qcd-snapshot" data-admin-only style="display:none;" aria-busy="false">
+          <div class="dept-qcd-header">
             <strong>Team Direct Calls</strong>
             <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Calls to and from the agents’ own extensions (not the department queues) in the page’s dates, work window only -- the Direct Calls report’s figures. A ring missed while already on another call is “busy” and left out of the answer rate.">&#9432;</span>
-            <span class="dept-qcd-date" id="tdc-head">open to load</span>
-          </summary>
+            <span class="dept-qcd-date" id="tdc-date"></span>
+          </div>
+          <div id="tdc-loading" class="tdc-skel" style="display:none;" aria-hidden="true">
+            <div class="skeleton-line tdc-skel-head"></div>
+            <div class="skeleton-line tdc-skel-bar"></div>
+            <div class="skeleton-line tdc-skel-head"></div>
+            <div class="skeleton-line tdc-skel-bar"></div>
+            <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+            <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+            <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+          </div>
+          <div id="tdc-error" class="ds-note tdc-error" role="alert" style="display:none;">
+            <span id="tdc-error-msg">Could not load direct calls.</span>
+            <button type="button" class="link-btn" id="tdc-retry">Retry</button>
+          </div>
           <div id="tdc-note" class="ds-note dtd-note" style="display:none;"></div>
           <div class="trp-tiles" id="tdc-tiles"></div>
-          <div class="trp-table-wrap">
+          <div class="trp-table-wrap" id="tdc-table-wrap">
             <table class="trp-table">
               <thead><tr>
-                <th>Agent</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th><th class="trp-num">Out</th>
+                <th>Agent</th><th class="trp-num">Rang</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
               </tr></thead>
               <tbody id="tdc-tbody"></tbody>
             </table>
+            <span id="tdc-row-action-desc" class="sr-only">Activate to open the Direct view of the agent table at this agent’s row.</span>
           </div>
+          <div id="tdc-legend" class="ans-tally-legend" style="display:none;"></div>
           <button type="button" class="link-btn dtd-open" id="tdc-open-report">Open the Direct Calls report &#8599;</button>
-        </details>
+        </div>
       </aside>
       </div><!-- /.dept-layout -->
     </section>
@@ -2615,6 +2655,72 @@
           <tbody id="exc-tbody"></tbody>
         </table>
         <div id="exc-empty" class="al-hint" style="display:none;">No exception days yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TR-1 (owner 2026-11-02): transfer retries -- getTransferRetries
+       (TransferRetries.gs, admin-only, read-only, the call paths in Neon). -->
+  <div id="transfer-retries-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="transfer-retries-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="transfer-retries-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="transfer-retries-modal-title">Transfer retries</h2>
+      </div>
+      <div class="modal-panel-body">
+        <p class="al-hint">From the call paths: an agent on a call tried someone in <strong>another department</strong>,
+          got no answer, then tried someone else in that department on the same call. A ring of
+          <span id="tr-quick-secs">8</span> seconds or less reads as a decline. The list to check
+          for transfers turned away that should not have been.</p>
+        <div class="ir-form-grid tr-form">
+          <div class="ir-col">
+            <label for="tr-from">From</label>
+            <input type="date" id="tr-from">
+          </div>
+          <div class="ir-col">
+            <label for="tr-to">To</label>
+            <input type="date" id="tr-to">
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label">Quick select</span>
+            <span class="segmented" id="tr-presets" role="group" aria-label="Quick select">
+              <button type="button" class="seg-btn" data-tr-preset="last7" aria-pressed="false">Last 7 days</button>
+              <button type="button" class="seg-btn active" data-tr-preset="last30" aria-pressed="true">Last 30 days</button>
+            </span>
+          </div>
+          <div class="ir-col">
+            <label for="tr-dept">Department tried</label>
+            <select id="tr-dept"><option value="">All departments</option></select>
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
+            <button class="btn" id="tr-run-btn" type="button">Show</button>
+          </div>
+        </div>
+        <div id="tr-status" role="status" class="status" style="display:none;"></div>
+        <div id="tr-results" style="display:none;">
+          <p id="tr-summary" class="tr-summary"></p>
+          <div class="tr-side">
+            <div class="tr-callees-wrap">
+              <div class="ds-zone-label">Most often not answering first</div>
+              <table class="al-config-table tr-callees">
+                <thead><tr><th>Person tried first</th><th>Department</th><th class="num">Times</th><th class="num">Of which declined</th></tr></thead>
+                <tbody id="tr-callees"></tbody>
+              </table>
+            </div>
+            <p id="tr-pairs" class="al-hint"></p>
+          </div>
+          <div class="ds-zone-label">Calls</div>
+          <div class="tr-cases-wrap">
+            <table class="al-config-table tr-cases" id="tr-cases">
+              <thead><tr><th>When</th><th>Call</th><th>Sent by</th><th>Tried first</th><th>How it ended</th><th>Then tried</th><th>How that went</th><th class="num">After</th></tr></thead>
+              <tbody id="tr-tbody"></tbody>
+            </table>
+          </div>
+          <p id="tr-note" class="al-hint" style="display:none;"></p>
+        </div>
       </div>
     </div>
   </div>

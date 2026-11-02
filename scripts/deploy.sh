@@ -27,6 +27,9 @@
 #                    re-roll a deployment after an editor-side change.
 #   STRICT_DEPLOY=1  refuse a deploy from a dirty tree or a branch other than
 #                    main (both only WARN by default; DEP-3).
+#   VERSION_WARN_AT  warn when the project holds this many versions (default
+#                    180); Apps Script's cap is 200 and a deploy at it is
+#                    refused before anything runs (DEP-5).
 #
 # Notes:
 #   - Each project keeps its own gitignored .clasp.json; pass the project dir
@@ -147,6 +150,18 @@ if [ "${FORCE:-}" != "1" ] && [ -n "$HEAD_SHA" ] && [ -f "$LAST_FILE" ] \
   echo "    which is the current clean HEAD -- nothing new to ship."
   echo "    Re-run with FORCE=1 to deploy anyway."
   exit 0
+fi
+
+# DEP-5 (owner 2026-11-02): Apps Script keeps at most 200 versions per
+# project and every web-app deploy mints one, so a busy project fills up --
+# and the deploy then fails AFTER the push ("Cannot create more versions"),
+# leaving the live deployment on the old code. Count them FIRST, before the
+# gates' ten minutes and before the push: warn from VERSION_WARN_AT (180),
+# refuse at the limit. Only a run that will roll a deployment (an id) checks;
+# a sibling project or a push-only run creates no version. An unreadable
+# count (clasp not logged in, a new output shape) is reported and skipped.
+if [ -n "$DEP_ID" ]; then
+  node "$ROOT_ABS/scripts/check-version-limit.mjs" "$DIR"
 fi
 
 # TST-7: gate the LIVE push on the same checks CI runs (node --test + the

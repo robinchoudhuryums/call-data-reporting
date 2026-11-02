@@ -188,3 +188,73 @@ test('F41: the dirtiness scope is the project\'s clasp rootDir, resolved from it
   // And the warn lists only that scope's changes.
   assert.match(sh, /git status --short -- "\$PUSH_SCOPE"/);
 });
+
+// DEP-5 (owner 2026-11-02): Apps Script's 200-version cap stopped a deploy
+// ("Cannot create more versions") after the push. check-version-limit.mjs
+// counts the versions first: warn from 180, refuse at 200, never block on an
+// unreadable count. A stub clasp on PATH keeps it hermetic.
+function versionStub(bin, mode) {
+  // mode: 'v2' (clasp versions), 'v3' (versions fails, list-versions works), 'fail'
+  const body = '#!/bin/sh\n'
+    + 'if [ "$1" = "versions" ] && [ "' + mode + '" = "v2" ]; then\n'
+    + '  echo "~ $STUB_N Versions ~"; i=$STUB_N; while [ $i -gt 0 ]; do echo "$i - deploy"; i=$((i-1)); done; exit 0; fi\n'
+    + 'if [ "$1" = "list-versions" ] && [ "' + mode + '" = "v3" ]; then\n'
+    + '  i=$STUB_N; while [ $i -gt 0 ]; do echo "$i - deploy"; i=$((i-1)); done; exit 0; fi\n'
+    + 'echo "Unknown command or not logged in" >&2; exit 1\n';
+  fs.writeFileSync(path.join(bin, 'clasp'), body, { mode: 0o755 });
+}
+function runVersionCheck(mode, n, extraEnv) {
+  const bin = tmp(), proj = tmp();
+  fs.writeFileSync(path.join(proj, '.clasp.json'), JSON.stringify({ scriptId: '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789' }));
+  if (mode) versionStub(bin, mode);
+  const env = Object.assign({}, process.env, { PATH: bin + ':/usr/bin:/bin', STUB_N: String(n) }, extraEnv || {});
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'check-version-limit.mjs'), proj], { encoding: 'utf8', env: env });
+  fs.rmSync(bin, { recursive: true, force: true });
+  fs.rmSync(proj, { recursive: true, force: true });
+  return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
+}
+
+test('DEP-5: countVersions reads every clasp output shape, and says null rather than guess', async function () {
+  const { countVersions } = await import(path.join(ROOT, 'scripts', 'check-version-limit.mjs'));
+  assert.equal(countVersions('~ 198 Versions ~\n198 - deploy 2026\n197 - deploy'), 198, 'the header wins');
+  assert.equal(countVersions('3 - a\n2 - b\n1 - No description\n'), 3);
+  assert.equal(countVersions('Found 12 versions.'), 12);
+  assert.equal(countVersions('No deployed versions of script.'), 0);
+  assert.equal(countVersions('Something went wrong'), null);
+  assert.equal(countVersions(''), null);
+});
+
+test('DEP-5: room left passes quietly, 180+ warns, 200 refuses (exit 2) with the cleanup steps', { skip: process.platform === 'win32' }, function () {
+  let r = runVersionCheck('v2', 150);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /versions: 150 of 200 used/);
+  r = runVersionCheck('v2', 185);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /WARNING: 185 of 200 versions used -- 15 deploy\(s\) left/);
+  r = runVersionCheck('v2', 200);
+  assert.equal(r.code, 2, 'at the cap the deploy is refused');
+  assert.match(r.out, /200 versions -- Apps Script's limit is 200/);
+  assert.match(r.out, /Project History/);
+  r = runVersionCheck('v2', 170, { VERSION_WARN_AT: '160' });
+  assert.match(r.out, /WARNING: 170 of 200/, 'VERSION_WARN_AT moves the warning');
+});
+
+test('DEP-5: a newer clasp (list-versions) is read too; clasp missing or failing never blocks', { skip: process.platform === 'win32' }, function () {
+  let r = runVersionCheck('v3', 200);
+  assert.equal(r.code, 2, 'list-versions output counts the same');
+  r = runVersionCheck('fail', 0);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /version-limit check SKIPPED: could not list versions/);
+  r = runVersionCheck(null, 0);   // no clasp on PATH at all
+  assert.equal(r.code, 0);
+  assert.match(r.out, /SKIPPED: could not list versions \(clasp not found\)/);
+});
+
+test('DEP-5: deploy.sh runs the version check only when it will roll a deployment, before the gates and the push', function () {
+  const s = read('scripts/deploy.sh');
+  const check = s.indexOf('scripts/check-version-limit.mjs" "$DIR"');
+  assert.ok(check > 0, 'deploy.sh calls the check');
+  assert.match(s.slice(check - 200, check), /if \[ -n "\$DEP_ID" \]; then\s*\n\s*node /, 'only with a deployment id');
+  assert.ok(check < s.indexOf('TZ="$CI_TZ" npm run ci'), 'before the ten-minute gates');
+  assert.ok(check < s.indexOf('clasp push -f\n'), 'before the push, so nothing is pushed without a version to serve it');
+});

@@ -15,7 +15,11 @@ const today=new Date(); const ago=(n)=>{const d=new Date(today);d.setDate(d.getD
 const ESC_ROWS = [
   { id: 101, department: 'CSR', occurred_at: ago(1)+' 10:42:00', caller: 'Maria G (daughter)', patient_name: 'R. Alvarez', trx: 'TRX-88121', area: 'Billing dispute', reason: 'Caller states she was promised a supervisor callback twice and never received one; invoice sent to collections in the meantime.', status: 'pending', resolution: null, comments: null, created_by: 'admin@ums.com', created_at: ago(1)+' 10:50:00', resolved_by: null, resolved_at: null, source: null,
     // ESC-L1: a LINKED copy -- Sales holds the other copy of this escalation.
-    group_id: 'grp-101', linked: [{ department: 'Power', status: 'removed' }, { department: 'Sales', status: 'in_progress' }] },
+    group_id: 'grp-101', linked: [{ department: 'Power', status: 'removed' }, { department: 'Sales', status: 'in_progress' }],
+    // ESC-C3: the latest comments on the card face (the thread holds 4).
+    card_comments: [{ actor: 'sales.mgr@ums.com', at: ago(0)+' 08:40:00', detail: 'Sales confirmed the account is current.', cut: false, department: 'Sales' },
+      { actor: 'manager@ums.com', at: ago(0)+' 09:15:00', detail: 'Reached the daughter; callback scheduled for 3 PM.', cut: false, department: 'CSR' }],
+    comment_count: 4 },
   // ESC-L2: Power was REMOVED from the linked escalation 101 (read-only copy).
   { id: 96, department: 'Power', occurred_at: ago(1)+' 10:42:00', caller: 'Maria G (daughter)', patient_name: 'R. Alvarez', trx: 'TRX-88121', area: 'Billing dispute', reason: 'Caller states she was promised a supervisor callback twice and never received one; invoice sent to collections in the meantime.', status: 'removed', resolution: null, comments: 'Not a Power order.', created_by: 'admin@ums.com', created_at: ago(1)+' 10:50:00', resolved_by: null, resolved_at: null, source: 'manual',
     group_id: 'grp-101', removed_by: 'admin@ums.com', removed_at: ago(0)+' 08:30:00', removed_reason: 'Dispute upheld: no Power equipment on this account.',
@@ -32,6 +36,21 @@ const ESC_ACTIVITY = [
   { id: 2, escalation_id: 101, action: 'comment', actor: 'manager@ums.com', at: ago(0)+' 09:15:00', detail: 'Reached the daughter; callback scheduled for 3 PM.' },
 ];
 
+// TR-1: three calls whose transfer to Sales was tried again there (Elena Park
+// first each time) -- two inbound, one outbound -- plus a call with no retry.
+const trAt = (t, name, x) => Object.assign({ t, name, kind: 'leg', missed: true, transfer: true }, x || {});
+const TR_ROWS = [
+  { kind: 'inbound', date: ago(1), callId: '1783985478661', start: '10:00:00', agent: null, journey: JSON.stringify([
+    { t: '10:00:00', name: 'A_Q_CSR', kind: 'queue' }, { t: '10:00:05', name: 'Anna Reyes', kind: 'answer', talk: 300 },
+    trAt('10:02:00', 'Elena Park', { secs: 3 }), { t: '10:02:20', name: 'Frank Wu', kind: 'answer', talk: 40, transfer: true, consult: true }]) },
+  { kind: 'outbound', date: ago(2), callId: '1783985479001', start: '14:00:00', agent: 'Ben Ortiz', journey: JSON.stringify([
+    trAt('14:01:00', 'Elena Park', { secs: 25 }), trAt('14:01:40', 'Frank Wu', { secs: 20, voicemail: true })]) },
+  { kind: 'inbound', date: ago(3), callId: '1783985479302', start: '09:30:00', agent: null, journey: JSON.stringify([
+    { t: '09:30:05', name: 'Dev Patel', kind: 'answer', talk: 200 },
+    trAt('09:31:00', 'Elena Park', { secs: 2 }), { t: '09:31:30', name: 'Frank Wu', kind: 'answer', talk: 60, transfer: true, consult: true }]) },
+  { kind: 'inbound', date: ago(3), callId: '1783985479400', start: '11:00:00', agent: null, journey: JSON.stringify([
+    { t: '11:00:05', name: 'Carla Diaz', kind: 'answer', talk: 200 }, trAt('11:01:00', 'Elena Park', { secs: 30 })]) },
+];
 function mkRs(obj){ let used=false; return { next(){ if(used) return false; used=true; return true; },
   getString(k){ return (obj[k]==null)?null:String(obj[k]); }, getInt(k){ return Number(obj[k])||0; }, close(){} }; }
 function fakeNeonConn() {
@@ -39,8 +58,13 @@ function fakeNeonConn() {
     setString(){}, setInt(){}, setObject(){},
     execute(){ return true; },
     executeQuery(){
+      // ESC-C3: the LIST query now names escalation_activity too (the card
+      // comment subqueries), so route on what the query SELECTS FROM.
+      if (/^SELECT COALESCE\(json_agg\(t ORDER BY t\.occurred_at/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
       if (/escalation_activity/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ACTIVITY) });
       if (/FROM \(/.test(sql) && /escalations/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
+      // TR-1: the transfer-retries read (journeys prefiltered in SQL).
+      if (/journey LIKE/.test(sql) && /inbound_calls/.test(sql)) return mkRs({ j: JSON.stringify(TR_ROWS) });
       if (/FILTER/.test(sql) && /escalations/.test(sql)) return mkRs({
         n_pending: '2', n_inprog: '1', n_review: '2', n_resolved: '1', n_rejected: '1',
         n_resolved_mtd: '1', n_overdue: '1', oldest_open: ago(5)+' 14:05:00' });
@@ -99,7 +123,7 @@ const h = loadGas({
           'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'InboundReport.gs',
           'Escalations.gs', 'Alerts.gs', 'Digest.gs', 'QueueReportEmail.gs',
           'OrphanFix.gs', 'SystemHealth.gs', 'CacheWarm.gs', 'NeonKeepWarm.gs',
-          'Notifications.gs', 'AlertReasons.gs'],
+          'Notifications.gs', 'AlertReasons.gs', 'TransferRetries.gs'],
 });
 function install(email) {
   h.state.props.SPREADSHEET_ID = 'fake';
@@ -123,6 +147,8 @@ install('admin@ums.com');
 dump('esc-init', () => h.call('getEscalationsInit'));
 dump('esc-list', () => h.call('getEscalations', { department: 'ALL', status: 'all' }));
 dump('esc-activity', () => h.call('getEscalationActivity', { id: 101 }));
+dump('transfer-retries', () => h.call('getTransferRetries', { from: ago(30), to: ago(1) }));   // TR-1
+dump('transfer-retries-init', () => h.call('getTransferRetriesInit'));
 dump('alerts-init', () => h.call('getAlertsInit'));
 dump('digests-init', () => h.call('getDigestsInit'));
 dump('queuereport-init', () => h.call('getQueueReportInit'));

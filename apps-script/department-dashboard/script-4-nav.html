@@ -78,6 +78,7 @@
     // deep link lands here.
     '/admin/coaching':      { kind: 'modal', modalId: 'coaching-modal',      buttonId: 'coaching-btn' },
     '/admin/exception-days': { kind: 'modal', modalId: 'exception-days-modal', buttonId: 'exception-days-btn' },   // #81
+    '/admin/transfer-retries': { kind: 'modal', modalId: 'transfer-retries-modal', buttonId: 'transfer-retries-btn' },   // TR-1
     '/escalations':        { kind: 'page',  page: 'escalations' },
   };
 
@@ -1041,7 +1042,13 @@
       tip.style.top = Math.round(top) + 'px';
     }
     function show(el) {
-      const rich = el.getAttribute('data-gloss-rich');
+      // IC-1 (owner 2026-11-02): data-gloss-src names a HIDDEN element whose
+      // markup is the tooltip, read at show time so live figures inside it
+      // (the callback window, the not-counted lines) are always current.
+      const srcId = el.getAttribute('data-gloss-src');
+      const src = srcId ? document.getElementById(srcId) : null;
+      const rich = src ? src.innerHTML : el.getAttribute('data-gloss-rich');
+      tip.classList.toggle('ds-tooltip--wide', !!src);
       const text = el.getAttribute('title') || el.getAttribute('data-gloss');
       if (!rich && !text) return;
       if (el.hasAttribute('title')) {             // suppress native popover

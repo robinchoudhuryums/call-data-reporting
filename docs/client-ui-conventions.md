@@ -2275,6 +2275,53 @@ stay pinned by INV-39, INV-53 and INV-06.
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
   stripped by `personalizeOverview_` (since `companyOverview` v28).
+- **The agent table's four views (DV-1, owner 2026-11-02; admin trial).**
+  `#dept-dir-switch` is a segmented group again (`[data-dir-pick]` buttons,
+  `aria-pressed`): **Inbound** (the classic table), **Outbound** (the outbound
+  table without the inbound columns or Transfer % -- `obViewRender_` with
+  `outOnly`), **Inbound + outbound** (the default, LB-2 below) and **Direct**
+  (`#agents-dc-table`, `dcViewRender_`: the Direct Calls report's per-agent
+  rows -- answered / missed while free / busy and connected / not bars, each
+  on its own scale, Ans %, Conn %, average talk in / out; sortable; rows open
+  the agent panel). `obDir_` keeps any of the four from `cdr.dept.direction`,
+  else 'both'; `obSetDir_` is the one place a view changes. `body[data-dir]`
+  hides Team Rings on Outbound and Direct (`!important`, since its renderer
+  sets inline display). **The Direct view never fetches:** it reads `TDC_`,
+  the Team Direct Calls panel's payload, so the panel and the view are ONE
+  `getDirectCallReport` per dept + window (pinned in `brief-accordion.test.js`).
+  **The Direct button keeps its own `data-admin-only`**, and `obEffectiveDir_`
+  drops a stored 'direct' to 'both' unless `tdcActive_()` -- the Direct Calls
+  report is vetted separately, so the Outbound report's 6c release of the
+  switch must not release it. **AT-1:** the view's standing explainer
+  (Connected, the off-roster dialler count, "Export and Copy still produce the
+  inbound table", Direct's busy rule) is the `#dqe-table-info` ⓘ beside the
+  table title (`obInfoSync_`, hidden on Inbound); only state notes (Neon
+  down, capture start, a data gap) stay visible over the table. The Step 3 /
+  Batch D history follows.
+- **"How this is counted" is an ⓘ, not a fold or a paragraph (IC-1..IC-4,
+  owner 2026-11-02).** Callbacks and Direct lines on My Department, Callbacks
+  by department and Direct lines on the Overview each carry a
+  `.ob-howto-tip` ("How this is counted ⓘ") at the right of their button row;
+  the ⓘ is the gloss layer's `side-hint-i gloss` with **`data-gloss-src`**
+  naming a hidden `.ob-howto-src` block whose markup (a `.ds-tip-title` and a
+  `.ds-tip-list` of bullets) the tooltip reads AT SHOW TIME
+  (`initGlossTooltip_`, script-4; `ds-tooltip--wide`). The live figures that
+  lived in those explainers keep their ids INSIDE the source
+  (`#ins-cb-window`, `#ins-cb-scope-note` -- the sub-queue line, `#ins-dl-counts`,
+  `#ov-dl-counts`, `#ov-cbdept-notcounted`), so their renderers are unchanged and
+  the tooltip is never stale. State notes (Neon down) stay visible. The two
+  Callbacks list buttons share one `.ob-list-actions` row (their lists open
+  below, in the same order). Direct lines' `.ob-dl-summary` has a turning ▸
+  chevron. Hover-only like every gloss tip: keyboard focus shows it too, a
+  touch tap does not. Pinned by `brief-accordion.test.js` + `drive-callbacks.js`
+  / `drive-cbdept.js`.
+- **Brief rows slide (IC-3).** `insBriefApply_(key, animate)` animates the
+  row's slot with the Web Animations API (height + padding, `INS_BRIEF_ANIM_MS_`)
+  on a USER toggle only (`insBriefToggle_` passes `true`); a rebuild restoring
+  open rows, reduced motion, or no `slot.animate` switches at once. Opening
+  shows the slot and opens the sections before measuring; closing shuts the
+  sections only when the slide ends (`onfinish`), so content does not vanish
+  mid-slide; a toggle during a slide cancels it.
 - **Outbound columns on the agent table (owner 2026-10, Batch D; one toggle
   since Step 3).** **Step 3 (owner 2026-10-16): inbound and outbound are
   TOGETHER by default** -- the three-way Inbound | Outbound | Both switch is now
@@ -2324,7 +2371,13 @@ stay pinned by INV-39, INV-53 and INV-06.
   (`apTbody_` follows the visible table). The choice persists in
   `cdr.dept.direction`. Rendered-gated by `drive-deptoutbound.js`.
 - **Team Direct Calls, the side card (D3, owner 2026-10-21; admin trial).**
-  `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
+  **TDC-1 (owner 2026-11-02): a panel like Team Rings / Team Outbound, no longer
+  a collapsed fold** -- it loads with the page (`tdcSync_` -> `tdcFetch_`, once
+  per dept + window), shows a skeleton while loading (`#tdc-loading`,
+  `aria-busy`), an error line with Retry on a failure (`#tdc-error`,
+  `#tdc-retry`), a tally per agent (answered / missed / busy) with its legend,
+  and rows that open the agent table's Direct view at that agent (`tdcJump_`).
+  The text below describes the original fold. `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
   column: the Direct Calls report's figures for the page's dept and dates,
   through the report's OWN `getDirectCallReport` (admin-only while vetted), so
   the card and the report can never disagree -- answered (missed, busy, int /
@@ -2413,8 +2466,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   screen); a plain My Department landing while the switch is hidden; Step 3: the link
   opens the brief's Callbacks ROW -- `insBriefToggle_('callbacks', true)`, or
   `INS_BRIEF_OPEN_.callbacks` before the brief exists -- and never touches the
-  outbound columns toggle). It shows wherever `obAllowed_` holds (admin-only
-  until 6c, hidden in View-as; Step 3: independent of the columns toggle) and
+  direction switch). It shows wherever `obAllowed_` holds (admin-only
+  until 6c, hidden in View-as; independent of the direction switch) and
   PRELOADS (Step 3 #8, owner 2026-10-16) -- ONLY while My Department is the
   page (`insCbOnDeptPage_`: the dept page also renders under the Overview
   landing, which must fetch nothing for it; entering the page re-syncs via
@@ -2446,7 +2499,7 @@ stay pinned by INV-39, INV-53 and INV-06.
   auto-refresh -- never calls it (cross-file-pins "G2"). It shows the company
   callback summary (CB-R1, next bullet) above the table, both drawn by the
   shared renderers; the phone-menu and person's-line hang-ups and the unmapped
-  queues are said in `#ov-cbdept-notcounted` under "How this is counted":
+  queues are said in `#ov-cbdept-notcounted` inside the "How this is counted" ⓘ (IC-4, below):
   `outboundCallbackSummaryHtml_` and `outboundRenderCbDept_(t, meta, view)` with
   an Overview VIEW (`obCbDeptView_('ov-cbdept')`: its own element prefix, sort
   and last payload, so sorting one surface never reorders the other). The

@@ -90,8 +90,11 @@ function chartDrawn() {
   return { drawn: false, why: 'uniform pixels' };
 }
 
+// DV-1: the switch is segmented (Inbound / Outbound / Inbound + outbound /
+// Direct); this flips between the two views the Step 3 toggle offered.
 async function toggleColumns(page) {
-  await page.click('#dept-dir-switch [data-ob-cols]');
+  const cur = await page.evaluate(() => document.body.getAttribute('data-dir'));
+  await page.click('#dept-dir-switch [data-dir-pick="' + (cur === 'both' ? 'in' : 'both') + '"]');
   await page.waitForTimeout(1200);
 }
 
@@ -164,13 +167,57 @@ async function toggleColumns(page) {
   record('the daily callback chart is drawn (non-blank)', ch.drawn, JSON.stringify(ch));
 
   // Close + reopen: no re-fetch, and the chart is redrawn at a real size.
+  // IC-3 (owner 2026-11-02): the row's section slides shut and open again --
+  // mid-slide the slot is still showing at a partial height, the section
+  // stays open until the slide ends, and the slot ends hidden.
+  const slotH = () => page.evaluate(() => { const s2 = document.getElementById('ins-brief-slot-callbacks');
+    return { hidden: !!s2 && s2.hidden, h: s2 ? Math.round(s2.getBoundingClientRect().height) : 0,
+             open: !!document.getElementById('ins-cb-fold').open }; });
+  const full = await slotH();
   await toggleCb(page);
+  await page.waitForTimeout(90);
+  const mid = await slotH();
   await page.waitForTimeout(400);
+  const shut = await slotH();
+  record('IC-3: closing slides shut -- partial height mid-way with the section still open, then hidden',
+    full.h > 40 && !mid.hidden && mid.h > 0 && mid.h < full.h && mid.open && shut.hidden && !shut.open,
+    JSON.stringify({ full: full, mid: mid, shut: shut }));
   await toggleCb(page);
+  await page.waitForTimeout(90);
+  const opening = await slotH();
+  record('IC-3: opening slides open -- shown at once, partial height mid-way', !opening.hidden && opening.h > 0 && opening.h < full.h && opening.open,
+    JSON.stringify(opening));
   await page.waitForTimeout(1200);
   ch = await page.evaluate(chartDrawn);
   record('reopening repaints from the held payload (no second fetch) with a drawn chart',
     onScreen(await calls(page, 'getOutboundReport')).length === 1 && ch.drawn, JSON.stringify(ch));
+
+  // IC-1 (owner 2026-11-02): the counting rules are an ⓘ in the list row --
+  // no explainer paragraph on the page; hovering shows the bullets with the
+  // live callback window; the two list buttons sit side by side.
+  {
+    const vis = await page.evaluate(() => ({
+      para: Array.from(document.querySelectorAll('#ins-cb-content p')).some((p) => /^\s*Counted in contact episodes/.test(p.textContent) && p.offsetHeight > 0),
+      src: !!document.getElementById('ins-cb-howto') && document.getElementById('ins-cb-howto').offsetHeight === 0,
+      a: document.getElementById('ins-cb-uncalled-btn').getBoundingClientRect(),
+      b: document.getElementById('ins-cb-calledback-btn').getBoundingClientRect(),
+    }));
+    record('IC-1: no explainer paragraph on the page; the rules sit hidden for the ⓘ', !vis.para && vis.src, JSON.stringify({ para: vis.para, src: vis.src }));
+    record('IC-1: the two list buttons sit side by side', Math.abs(vis.a.top - vis.b.top) < 2 && vis.b.left > vis.a.right,
+      JSON.stringify({ a: [vis.a.left, vis.a.top], b: [vis.b.left, vis.b.top] }));
+    await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: 'center' }), '[data-gloss-src="ins-cb-howto"]');
+    await page.waitForTimeout(300);
+    await page.hover('[data-gloss-src="ins-cb-howto"]');
+    await page.waitForTimeout(300);
+    const tip = await page.evaluate(() => { const t = document.getElementById('ds-gloss-tip');
+      return { shown: !!t && t.style.display !== 'none', items: t ? t.querySelectorAll('.ds-tip-list li').length : 0,
+               wide: !!t && t.classList.contains('ds-tooltip--wide'), text: t ? t.textContent : '',
+               w: t ? Math.round(t.getBoundingClientRect().right) : 0, vw: window.innerWidth }; });
+    record('IC-1: hovering the ⓘ shows the six bullets, with the live callback window', tip.shown && tip.wide && tip.items === 6
+      && /within 3 days/.test(tip.text) && tip.w <= tip.vw, JSON.stringify(Object.assign({}, tip, { text: tip.text.slice(0, 80) })));
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(200);
+  }
 
   // The not-called-back drill, then the call path from one of its rows.
   await page.click('#ins-cb-uncalled-btn');
@@ -250,8 +297,14 @@ async function toggleColumns(page) {
     onScreen(await calls(page, 'getOutboundDirectCallbacks')).length === 1
       && await page.evaluate(() => !document.getElementById('ins-dl-fold').open
         && /not called back/.test(document.getElementById('ins-dl-head').textContent)));
+  // IC-2: Direct lines reads as a disclosure -- a chevron that turns on open.
+  const chevClosed = await page.evaluate(() => { const st = getComputedStyle(document.querySelector('#ins-dl-fold > summary'), '::before');
+    return { content: st.content, transform: st.transform }; });
   await page.click('#ins-dl-fold > summary');
   await page.waitForTimeout(1200);
+  const chevOpen = await page.evaluate(() => getComputedStyle(document.querySelector('#ins-dl-fold > summary'), '::before').transform);
+  record('IC-2: Direct lines has a chevron that turns when it opens', /▸/.test(chevClosed.content)
+    && chevClosed.transform === 'none' && chevOpen !== 'none', JSON.stringify({ closed: chevClosed, open: chevOpen }));
   const dlc = onScreen(await calls(page, 'getOutboundDirectCallbacks'));
   const dl = await page.evaluate(() => ({
     head: document.getElementById('ins-dl-head').textContent,
@@ -279,6 +332,18 @@ async function toggleColumns(page) {
     /1:00:00.* work hours .*0:45:00.* after hours, counted from 8:30 the next work day/.test(dl.quality), dl.quality);
   record('DL-R2: the department table, most not called back first',
     dl.depts.length === 2 && /^Sales/.test(dl.depts[0]) && /^CSR/.test(dl.depts[1]), dl.depts.join(' | '));
+  {
+    await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: 'center' }), '[data-gloss-src="ins-dl-howto"]');
+    await page.waitForTimeout(300);
+    await page.hover('[data-gloss-src="ins-dl-howto"]');
+    await page.waitForTimeout(300);
+    const t2 = await page.evaluate(() => { const t = document.getElementById('ds-gloss-tip');
+      return { shown: !!t && t.style.display !== 'none', items: t ? t.querySelectorAll('.ds-tip-list li').length : 0, text: t ? t.textContent : '' }; });
+    record('IC-2: the Direct lines ⓘ shows its bullets and the live counts line', t2.shown && t2.items === 5
+      && /6 to the Sales voicemail box/.test(t2.text), JSON.stringify(Object.assign({}, t2, { text: t2.text.slice(-120) })));
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(200);
+  }
   record('CE-3: the counting context is kept (in "How this is counted")',
     /6 to the Sales voicemail box/.test(dl.counts) && /38 rang out or went to voicemail/.test(dl.counts), dl.counts);
   record('FO-1: misdials are counted in the context line and named as left out of the rates; a Neon payload shows no copy note',
@@ -342,7 +407,7 @@ async function toggleColumns(page) {
     mail.length === 1 && mail[0].from === insMeta.from && mail[0].to === insMeta.to
       && mail[0].department === insMeta.department, JSON.stringify(mail));
 
-  // Step 3: the outbound COLUMNS toggle never touches the Callbacks section.
+  // Step 3 / DV-1: the direction switch never touches the Callbacks section.
   await toggleColumns(page);
   st = await page.evaluate(foldState);
   const dirOn = await page.evaluate(() => document.body.getAttribute('data-dir'));

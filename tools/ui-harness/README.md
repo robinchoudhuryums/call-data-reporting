@@ -112,10 +112,13 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   table: 7 cells on CSR, the group row with its keys, every inbound and
   outbound bar adding up to its counts with the per-day pace under them, the
   two scales, two rate chips per row and the count changes in the hover, and
-  every header's sort -- and the D3 Team
-  Direct Calls card: lazy, one request per window, the coverage note, the
-  report button, absent for a manager) the My Department **outbound columns** toggle (on
-  by default since Step 3; it replaced the Inbound | Outbound | Both switch)
+  every header's sort; DV-1's four views -- Inbound, the outbound-only table,
+  Inbound + outbound, and the Direct table's rows, bars, totals, sort and
+  agent panel with no second request; AT-1's table ⓘ -- and the D3 / TDC-1 Team
+  Direct Calls panel: loaded with the page, one request per window, skeleton,
+  error + Retry, rows that open the Direct view, the coverage note, the
+  report button, absent for a manager) the My Department **direction switch** (Inbound + outbound
+  by default; four views since DV-1)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
   agent rows only, and one request per window (a Refresh never re-sends one
@@ -155,15 +158,21 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the follow-ons, the misdial count line (FO-1) and the deep link holding the
   fold at the TOP of the screen while the page settles (FO-3); since
   CB-R1/DL-R2 the callback summary's bar and legend (one base, adding up) and
-  the Direct lines summary + department table with its person drill.
+  the Direct lines summary + department table with its person drill; since
+  IC-1..IC-3 the "How this is counted" ⓘ tooltips (bullets + live figures),
+  the side-by-side list buttons, the Direct lines chevron and the brief row's
+  slide shut and open.
 - `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
   admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
   keyboard expand and sort, CSV bytes, and (CE-3) the company Direct lines
   block, including its spreadsheet-served note (FO-2); since CB-R1/CB-R2 the
   summary that leads with the unreturned callers and its one-base bar, the
-  most-not-called-back default order, and a row's own unreturned-caller list.
-- `drive-admin.js` — ten **modals** (Alerts, Outlier Fix, Dept Config,
-  Access Control, System Health, Caller Lookup, Coaching, Exception Days --
+  most-not-called-back default order, and a row's own unreturned-caller list;
+  since IC-4 its "How this is counted" ⓘ (no fold).
+- `drive-admin.js` — eleven **modals** (Alerts, Outlier Fix, Dept Config,
+  Access Control, System Health, Caller Lookup, Coaching, Transfer Retries --
+  TR-1: the summary, the person tried first, path chips, the department filter --
+  Exception Days --
   since #81 its list, the in-place refusal of a missing reason, save, and a
   danger-tone Remove -- and the Agent Day
   report, run past its setup form -- whose outbound cards must carry an admin's

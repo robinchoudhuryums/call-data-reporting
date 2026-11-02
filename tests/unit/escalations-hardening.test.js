@@ -3,6 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
 
 // Batch-5 Escalations hardening: the F-44 occurred_at validator and the
 // F-45 row-level access gate. Both are pure -- no Neon / sheet doubles.
@@ -1169,6 +1172,7 @@ const ESC_REMOVED_GUARD_EXEMPT = {
   approveEscalation: 'pending_review-only allowlist; a removed copy can never be pending_review',
   rejectEscalation: 'pending_review-only allowlist; a removed copy can never be pending_review',
   backfillEscalationActivity: 'editor-run migration; inserts seed trail rows only, never a status change',
+  backfillEscalationCommentGaps: 'ESC-C2 editor-run repair; adds missing thread comments only (a removed copy keeps its comments too)',
 };
 
 function escPublicWriters() {
@@ -1350,7 +1354,7 @@ test('ESC-D2: every escalation write verb connects BEFORE it takes the lock (sou
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script',
     'department-dashboard', 'Escalations.gs'), 'utf8');
   const opens = src.match(/var conn = escOpenWriteConn_\(\);[^\n]*\n\s*var lock = escTakeWriteLock_\(conn, \d+\);/g) || [];
-  assert.equal(opens.length, 14, 'the 14 write verbs');
+  assert.equal(opens.length, 15, 'the 15 write verbs (ESC-C2 added backfillEscalationCommentGaps)');
   const bareLocks = (src.match(/LockService\.getScriptLock\(\)/g) || []).length;
   assert.equal(bareLocks, 1, 'the only getScriptLock is inside escTakeWriteLock_ -- a verb taking the lock '
     + 'before its connect would hold it across an unbounded JDBC connect again');
@@ -1450,8 +1454,9 @@ test('ESC-D1: every activity row records the copy\'s department at write time, i
   h.call('moveEscalation', { id: 'e1', department: 'Sales', note: 'wrong queue' });
   const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; });
   assert.equal(act.length, 1);
-  assert.match(act[0].sql, /\(id, escalation_id, action, actor, detail, department\)/);
-  assert.match(act[0].sql, /\(SELECT department FROM escalations WHERE id = \?\)\)$/);
+  assert.match(act[0].sql, /\(id, escalation_id, action, actor, detail, department, at\)/);
+  // ESC-C1: `at` is the statement's time, so two entries in one transaction keep their order.
+  assert.match(act[0].sql, /\(SELECT department FROM escalations WHERE id = \?\), clock_timestamp\(\)\)$/);
   assert.equal(act[0].params[5], 'e1', 'the dept is read for THIS copy, inside the caller\'s transaction');
   // The move UPDATE precedes the reassigned entry, so that one entry carries the NEW dept.
   const order = log.writes.map(function (w) { return w.sql.slice(0, 30); });
@@ -1500,7 +1505,7 @@ test('ESC-D1: esc-schema warns on a missing activity column; the memo key (v2) c
   const fs = require('fs'), path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
   const seeds = src.match(/INSERT INTO escalation_activity \(id, escalation_id, action, actor, at, detail, department\)/g) || [];
-  assert.equal(seeds.length, 2, 'backfillEscalationActivity\'s created + resolved seeds carry e.department');
+  assert.equal(seeds.length, 3, 'backfillEscalationActivity\'s created + resolved seeds and ESC-C2\'s comment backfill carry e.department');
 });
 
 // F44 (broad-scan 2026-10-14): the Neon session runs in UTC. `x::text` on the
@@ -1533,4 +1538,113 @@ test('F44: server-stamped instants render as script-zone wall clock; the typed o
   });
   assert.doesNotMatch(src, /\bat::text AS at/, 'activity `at` is never rendered in the session zone');
   assert.match(src, /occurred_at::text AS occurred_at/, 'the typed wall clock keeps its round-trip');
+});
+
+// ── ESC-C1..C4 (owner 2026-11-02): resolve-time comments stay in the thread ──
+test('ESC-C1: a comment given when resolving goes into the Activity thread BEFORE the resolved entry; no comment, no entry', function () {
+  const log = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', departments: ['CSR'], email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.state.userEmail = 'mgr@x.com';
+  h.call('resolveEscalation', { id: 'e1', resolution: 'called back', comments: '  spoke to the caller  ' });
+  const acts = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; });
+  assert.deepEqual(acts.map(function (w) { return w.params[2]; }), ['comment', 'resolved'], 'the comment first, then resolved');
+  assert.equal(acts[0].params[3], 'mgr@x.com', 'credited to the resolver');
+  assert.equal(acts[0].params[4], 'spoke to the caller', 'the cleaned text');
+  const log2 = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', departments: ['CSR'], email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log2);
+  h.call('resolveEscalation', { id: 'e1', resolution: 'called back' });
+  assert.deepEqual(log2.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })
+    .map(function (w) { return w.params[2]; }), ['resolved']);
+});
+
+test('ESC-C1: every activity row is stamped clock_timestamp(), so two entries in one transaction keep their order', function () {
+  const src = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  const body = src.slice(src.indexOf('function escAppendActivity_'), src.indexOf('function escAppendActivity_') + 1200);
+  assert.match(body, /clock_timestamp\(\)/, 'now() is the TRANSACTION start -- the comment and resolved rows would tie');
+});
+
+test('ESC-C2: the gap check and the backfill are ADMIN-ONLY and share ONE predicate; the backfill credits the resolver just before the resolve', function () {
+  const src = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  const fn = function (name) { const a = src.indexOf('function ' + name + '('); return src.slice(a, src.indexOf('\n}\n', a)); };
+  ['previewEscalationCommentGaps', 'backfillEscalationCommentGaps'].forEach(function (n) {
+    assert.match(fn(n), /^function \w+\(\) \{\n  assertAdmin_\(\);/, n + ' opens with the admin gate');
+    assert.match(fn(n), /ESC_COMMENT_GAP_WHERE_/, n + ' uses the shared predicate (preview and backfill can never disagree)');
+  });
+  assert.ok(!/Logger\.log\([^)]*comments\b(?!\))/.test(fn('previewEscalationCommentGaps').replace(/length\(e\.comments\)/g, '')),
+    'the preview never logs comment TEXT (PHI)');
+  assert.match(h.ctx.ESC_COMMENT_GAP_WHERE_, /NOT EXISTS \(SELECT 1 FROM escalation_activity a WHERE a\.escalation_id = e\.id AND a\.action IN \('comment', 'resolved'\) AND a\.detail = e\.comments\)/);
+  const bf = fn('backfillEscalationCommentGaps');
+  assert.match(bf, /COALESCE\(NULLIF\(e\.resolved_by, ''\), e\.created_by\)/);
+  assert.match(bf, /COALESCE\(e\.resolved_at, e\.created_at, now\(\)\) - interval '1 millisecond'/);
+  // the gate itself
+  h.ctx.resolveUser_ = function () { return { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'mgr@x.com' }; };
+  assert.throws(function () { h.call('previewEscalationCommentGaps'); }, /admin/i);
+  assert.throws(function () { h.call('backfillEscalationCommentGaps'); }, /admin/i);
+});
+
+test('ESC-C4: deleting ONE linked copy moves its comments onto a surviving copy (tagged with the deleted dept) before the delete', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3, activeOthers: 2,
+      groupDepts: ['CSR', 'Sales'], groupIds: ['e2', 'e3'] }, log);
+  h.ctx.logReportUsage_ = function () {};
+  const res = JSON.parse(JSON.stringify(h.call('deleteEscalation', { id: 'e1' })));
+  assert.equal(res.commentsKeptOn, 'e2');
+  const sqls = log.writes.map(function (w) { return w.sql; });
+  assert.match(sqls[0], /^UPDATE escalation_activity SET escalation_id = \?, department = COALESCE\(department, \?\) WHERE escalation_id = \? AND action = 'comment'$/);
+  assert.deepEqual(log.writes[0].params, ['e2', 'CSR', 'e1']);
+  assert.deepEqual(sqls.slice(1), ['DELETE FROM escalation_activity WHERE escalation_id = ?', 'DELETE FROM escalations WHERE id = ?']);
+  const probe = (log.reads || []).filter(function (r) { return /^SELECT id FROM escalations WHERE group_id = \? AND id <> \?/.test(r.sql); })[0];
+  assert.ok(probe, 'the survivor probe ran');
+  assert.match(probe.sql, /ORDER BY \(status = 'removed'\), created_at, id/, 'an active copy is preferred over a removed one');
+  assert.equal(log.commits, 1, 'the move and the delete are one transaction');
+});
+
+test('ESC-C4: a STANDALONE delete and a delete-ALL move nothing (there is no thread left to keep)', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.ctx.logReportUsage_ = function () {};
+  assert.ok(!h.call('deleteEscalation', { id: 'e1' }).commentsKeptOn);
+  assert.ok(!log.writes.some(function (w) { return /^UPDATE escalation_activity/.test(w.sql); }));
+  const log2 = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 2, groupDepts: ['CSR', 'Sales'], groupIds: ['e2'] }, log2);
+  h.call('deleteEscalation', { id: 'e1', allLinked: true });
+  assert.ok(!log2.writes.some(function (w) { return /^UPDATE escalation_activity/.test(w.sql); }));
+});
+
+test('ESC-C3: the list carries the latest comments (group-wide, capped, oldest-first) + a count; the snapshot does not store them', function () {
+  const sql = h.call('escCardCommentsSql_');
+  assert.match(sql, /a\.action = 'comment' AND \(e2\.id = e\.id OR \(e\.group_id IS NOT NULL AND e2\.group_id = e\.group_id\)\)/);
+  assert.match(sql, /ORDER BY a\.at DESC LIMIT 3\) c\) AS card_comments/);
+  assert.match(sql, /ORDER BY c\.at ASC/);
+  assert.match(sql, /left\(a\.detail, 600\)/);
+  assert.match(sql, /AS comment_count$/);
+  const packed = h.call('escSnapshotChunk_', [{ id: 'e1', comments: 'x', card_comments: [{ detail: 'y' }], comment_count: 1 }]);
+  const rows = JSON.parse(packed.chunks.join(''));
+  assert.deepEqual(rows, [{ id: 'e1', comments: 'x' }]);
+});
+
+test('ESC-C3: the card renders author, time, a dept tag on a linked row, a cut marker, and "View all N" only when the thread holds more', function () {
+  const src = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard/script-10-escalations.html'), 'utf8');
+  const start = src.indexOf('  function escCardCommentsHtml_(r)');
+  const end = src.indexOf('\n  }\n', start) + 4;
+  const fmt = src.slice(src.indexOf('  function escFmtWhen_(s)'), src.indexOf('\n  }\n', src.indexOf('  function escFmtWhen_(s)')) + 4);
+  const ctx = { escapeHtml: function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); } };
+  vm.runInNewContext(src.slice(start, end) + fmt + '\nthis.f = escCardCommentsHtml_;', ctx);
+  const one = ctx.f({ id: 'e1', card_comments: [{ actor: 'a@x.com', at: '2026-11-02 09:15:00', detail: 'left <vm>', cut: false, department: 'CSR' }], comment_count: 1 });
+  assert.match(one, /a@x\.com &middot; 11\/02\/2026 09:15/);
+  assert.match(one, /left &lt;vm>/, 'escaped');
+  assert.ok(!/esc-comments-all/.test(one), 'no "View all" when everything is shown');
+  assert.ok(!/esc-timeline-dept/.test(one), 'no dept tag on a standalone escalation');
+  const many = ctx.f({ id: 'e1', linked: [{ department: 'Sales' }], comment_count: 5,
+    card_comments: [{ actor: 'a', at: '2026-11-02 09:15:00', detail: 'x', cut: true, department: 'Sales' }] });
+  assert.match(many, /View all 5 in Activity/);
+  assert.match(many, /data-id="e1"/);
+  assert.match(many, /x&hellip;/);
+  assert.match(many, /esc-timeline-dept">Sales/);
+  assert.match(ctx.f({ id: 'e1', comments: 'old field' }), /<strong>Comments:<\/strong> old field/, 'falls back to the row field');
+  assert.equal(ctx.f({ id: 'e1' }), '');
 });

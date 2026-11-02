@@ -303,7 +303,7 @@ function tileLines() {
   // Refresh clears the shared store by design, and when the driver's own
   // date-change load lands before its Refresh click the table re-asks once.
   const nBefore = (await pg.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length));
-  await pg.click('#dept-dir-switch [data-ob-cols]');
+  await pg.click('#dept-dir-switch [data-dir-pick="both"]');   // DV-1
   await pg.waitForTimeout(1500);
   const both = await pg.evaluate(() => ({
     dir: document.body.getAttribute('data-dir'),

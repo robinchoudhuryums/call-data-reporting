@@ -44,6 +44,18 @@ When something looks wrong, before assuming a code bug, check:
     deploy.sh and have run once (cdr-import reports on its next import,
     cdr-report on its next DQE build). Commits deployed NOWHERE are invisible
     here -- Manage deployments is still the check for that.
+    **The 200-version cap (DEP-5, 2026-11-02).** Apps Script keeps at most
+    200 versions per project and every web-app deploy mints one (deploy.sh's
+    `clasp deploy -i` and the editor's "New version" alike); at the cap a
+    deploy fails with "Cannot create more versions" AFTER the push. Neither
+    clasp nor the API can delete a version, so the cleanup is manual: note the
+    live deployment's version in Manage deployments, then in **Project
+    History** (clock icon) delete the oldest versions -- all but the last ~20,
+    with "Bulk delete versions" where the editor offers it (a version an active
+    deployment uses cannot be deleted). `scripts/deploy.sh` counts them first
+    (`scripts/check-version-limit.mjs`): it warns from 180 (`VERSION_WARN_AT`)
+    and refuses at 200 before the gates or the push run, so clean up on the
+    warning. Editor-made versions count too but are not checked there.
 
 3. Did the user actually have access? The `Access Control` email match is
    case-INsensitive after trim (`resolveUser_`), so check the Department cell
@@ -2470,8 +2482,10 @@ When something looks wrong, before assuming a code bug, check:
        any more (G3, owner 2026-10-08: managers get the My Department
        version). Flip `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false`
        AND remove `data-admin-only` + `style="display:none;"` from
-       `#dept-dir-switch` (the My Department "Show outbound columns" toggle --
-       the Batch D three-way switch until Step 3), `#ins-ob-fold` (the Outbound summary, Batch E) and
+       `#dept-dir-switch` (the My Department direction switch -- the Batch D
+       three-way switch, one toggle from Step 3, four views since DV-1; its
+       **Direct** button KEEPS its own `data-admin-only`, because the Direct
+       Calls report is vetted separately), `#ins-ob-fold` (the Outbound summary, Batch E) and
        `#ins-cb-fold` (the Callbacks section, Batch G1) -- both under the
        outbound agent table since UX-1 -- in
        `dashboard.html`. The Overview tiles' outbound line needs no edit:
@@ -3845,3 +3859,48 @@ When something looks wrong, before assuming a code bug, check:
     `backfillInboundCalls(from, to, true)` and `backfillOutboundCalls(from, to,
     true)` over the held dates** (the IXT-1 / OBX-1 step, #84 / #82), then
     the export triggers (#49 / #50) refresh the sheet copies.
+
+88. **Escalation comments missing from their thread -- `previewEscalationCommentGaps`
+    then `backfillEscalationCommentGaps` (ESC-C2, dashboard, editor-run,
+    admin-only, owner 2026-11-02).** Until ESC-C1, a comment given when
+    RESOLVING was saved only on the escalation row, never in its Activity
+    thread -- a pending card shows only the thread, so after a reopen the
+    resolver's comment was hidden, and the next resolve's comment overwrote it
+    (those overwritten ones are gone for good). **Once, after the dashboard
+    deploy:** run `previewEscalationCommentGaps()` (read-only; logs each
+    escalation's id, department, status, resolver and the comment's LENGTH --
+    never its text) and, after reviewing it, `backfillEscalationCommentGaps()`:
+    it adds each saved comment to its thread as a Comment by the resolver
+    (the creator when it was never resolved), timed just before the resolve.
+    Idempotent -- a re-run adds nothing, and the preview then reads 0. Also
+    since ESC-C3 each card shows its latest three comments, and since ESC-C4
+    deleting ONE linked copy keeps that copy's comments in the shared thread
+    (tagged with its department). Pinned by `escalations-hardening.test.js`.
+
+89. **Transfers RETRIED inside one department -- `diagnoseTransferRetries`
+    (TR-0, cdr-import, read-only, owner 2026-11-02).** The check for incorrect
+    transfer rejections: an agent on a call tries a person in ANOTHER
+    department, gets no answer, then tries someone else in that same
+    department on the same call (CSR -> Power rep #1 declines -> Power rep #2).
+    Run **`diagnoseTransferRetriesAllDates()`** (or one date) after the
+    cdr-import push and read the TOTAL line, then: how the first attempt ended
+    (quick decline = rang 8 s or less, rang out, voicemail), the ring-time
+    buckets, how the retry went and how soon, sender -> tried department
+    pairs, who did not answer first, the 8x8 Cause / Last Leg Disposition
+    census of those first attempts, and call-id samples for Caller Lookup.
+    It reads the same person-transfer events the capture stores (IXT-1 /
+    OXT-1, #84), so it sees only what those see; sub-queues fold into their
+    parent (#86). Employee names and call ids only; writes nothing. Its
+    numbers decide whether an admin list of these calls (TR-1) is built.
+    Pinned by `transfer-filter.test.js`.
+    **TR-1 (built 2026-11-02, owner: "build now"):** the same reading is on the
+    dashboard as **Admin ▾ → Transfer retries** (`TransferRetries.gs`,
+    admin-only, read-only, Neon-only -- an unreachable Neon reads "unavailable"):
+    dates (Last 7 / 30 days, up to 92 days), a department-tried filter, the
+    summary, the people most often not answering first, and each call with its
+    path chip. The rule is MIRRORED from cdr-import and pinned by
+    `transfer-retries.test.js`'s parity test -- **retune the 8-second decline
+    line in BOTH `TF_RETRY_QUICK_SECS_` (transferFilter.js) and `TR_QUICK_SECS_`
+    (TransferRetries.gs)** once the TR-0 census says where it belongs. It reads
+    only what the capture stored: calls before IXT-1 / OXT-1, or not re-imported
+    since, show no retries. No property, trigger or migration.
