@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-02 (6) -- SHIPPED: [PR #400](https://github.com/robinchoudhuryums/call-data-reporting/pull/400) merged on green CI (merge e300e50)** -- DEP-5 + Batches 1-4 (ESC-C1..C4, TR-0, DV-1, TDC-1, AT-1, IC-1..IC-4, TR-1) + the sync-docs pass. Branch restarted from main.
+  **Owner-side:** push dashboard + cdr-import and roll the dashboard deployment; `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (#88); `diagnoseTransferRetriesAllDates` and send the census (may move the 8 s decline line in both constants, #89); walk S69.
+  **Where I left off:** nothing open on the branch.
 - **2026-11-02 (5) -- Batch 4 IMPLEMENTED (block 259-batch4-tr1-broad-implement).** TR-1: Admin ▾ → Transfer retries (`TransferRetries.gs`, admin-only, read-only, Neon-only), owner chose "build now" (before the TR-0 numbers) and an Admin modal. The rule is cdr-import's TR-0 rule, mirrored and parity-pinned (`transfer-retries.test.js`). 2800 tests, bites 5/5. Committed + pushed; NO PR yet.
   **Owner-side:** push dashboard + cdr-import; run TR-0 and send the census -- the 8 s decline line may move (both `TF_RETRY_QUICK_SECS_` and `TR_QUICK_SECS_`); the ESC-C2 preview/backfill; walk S69.
   **Where I left off:** Batches 1-4 all on the branch, no PR (not asked).
