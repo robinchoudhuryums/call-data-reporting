@@ -4920,14 +4920,17 @@
   //   - Both shows the two side by side and never adds them: "answered +
   //     placed" is not a meaningful total.
   //   - Export and Copy still produce the INBOUND table (said in the note).
-  // Step 3 (owner 2026-10-16): inbound and outbound TOGETHER by default. The
-  // three-way switch became one "Show outbound columns" toggle, so obDir_ is
-  // now 'both' or 'in' only: an explicitly saved 'in' stays off; anything
-  // else -- unset, or the retired 'out' / 'both' -- shows the columns.
+  // Step 3 (owner 2026-10-16): inbound and outbound TOGETHER by default.
+  // DV-1 (owner 2026-11-02): the switch is segmented again, with FOUR views --
+  // 'in', 'out' (outbound only), 'both' (the default) and 'direct' (the
+  // Direct Calls report's per-agent figures). A saved view is kept; anything
+  // else, or nothing saved, is 'both'.
   var OB_DIR_KEY_ = 'cdr.dept.direction';
+  var OB_DIRS_ = ['in', 'out', 'both', 'direct'];
   var obDir_ = (function () {
     try {
-      return localStorage.getItem(OB_DIR_KEY_) === 'in' ? 'in' : 'both';
+      var v = localStorage.getItem(OB_DIR_KEY_);
+      return OB_DIRS_.indexOf(v) !== -1 ? v : 'both';
     } catch (e) { return 'both'; }
   })();
   var OB_VIEW_ = { key: null, data: null, prior: null, seq: 0, error: null, inFlight: false, sortKey: 'obTotal', sortDir: 'desc' };
@@ -4956,11 +4959,36 @@
   function obSyncButtons_(dir) {
     var sw = $('dept-dir-switch');
     if (!sw) return;
-    var b = sw.querySelector('[data-ob-cols]');
-    if (!b) return;
-    var on = dir !== 'in';
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    Array.prototype.forEach.call(sw.querySelectorAll('[data-dir-pick]'), function (b) {
+      var on = b.getAttribute('data-dir-pick') === dir;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  // DV-1: one place that changes the view (the switch, a Team Direct Calls row).
+  function obSetDir_(d) {
+    if (OB_DIRS_.indexOf(d) === -1 || d === obDir_) return;
+    obDir_ = d;
+    try { localStorage.setItem(OB_DIR_KEY_, obDir_); } catch (err) {}
+    obViewSync_();
+  }
+  // AT-1 (owner 2026-11-02): the view's standing explainer is the ⓘ beside the
+  // table title -- hidden on the plain inbound view, which has none.
+  var OB_INFO_CONNECTED_ = 'Connected means the far end answered — a person, voicemail or a phone menu.';
+  var OB_INFO_EXPORT_ = 'Export and Copy still produce the inbound table.';
+  function obInfoSync_(dir, extra) {
+    var el = $('dqe-table-info');
+    if (!el) return;
+    var txt = '';
+    if (dir === 'out' || dir === 'both') {
+      txt = OB_INFO_CONNECTED_ + (extra ? ' ' + extra : '') + ' ' + OB_INFO_EXPORT_;
+    } else if (dir === 'direct') {
+      txt = 'The Direct Calls report’s figures for each agent: calls to and from their own extension, not the '
+        + 'department queues, in the work window. A ring missed while they were already on another call is “busy” '
+        + 'and left out of the answer rate. ' + (extra ? extra + ' ' : '') + OB_INFO_EXPORT_;
+    }
+    el.setAttribute('title', txt);
+    el.style.display = txt ? '' : 'none';
   }
 
   function obWire_() {
@@ -4968,12 +4996,10 @@
     obWired_ = true;
     var sw = $('dept-dir-switch');
     if (sw) sw.addEventListener('click', function (e) {
-      var b = e.target.closest && e.target.closest('[data-ob-cols]');
-      if (!b) return;
-      obDir_ = (obDir_ === 'in') ? 'both' : 'in';   // Step 3: a toggle, not a 3-way switch
-      try { localStorage.setItem(OB_DIR_KEY_, obDir_); } catch (err) {}
-      obViewSync_();
+      var b = e.target.closest && e.target.closest('[data-dir-pick]');
+      if (b) obSetDir_(b.getAttribute('data-dir-pick'));   // DV-1
     });
+    dcWire_();
     var thead = $('agents-ob-thead');
     var sortBy = function (th) {
       var k = th.getAttribute('data-ob-sort');
@@ -5084,9 +5110,12 @@
    */
   // ── D3 (owner 2026-10-21): Team Direct Calls, the side card ─────────────
   // The Direct Calls report for THIS dept over the page's window, through the
-  // report's own endpoint (admin-only while vetted). Collapsed + lazy: fetched
-  // only once the card is open, then once per dept + window (TDC_.key); a
-  // reply for an older key is dropped (seq). Admins only, never View-as.
+  // report's own endpoint (admin-only while vetted). TDC-1 (owner 2026-11-02):
+  // a panel like Team Rings / Team Outbound, no longer a lazy fold -- fetched
+  // with the page (once per dept + window, TDC_.key), a skeleton while it
+  // loads, a Retry on failure; a reply for an older key is dropped (seq).
+  // The agent table's Direct view (DV-1, dcViewRender_) reads the SAME TDC_,
+  // so the two never send two requests or disagree. Admins only, never View-as.
   var TDC_ = { key: null, data: null, error: null, loading: false, seq: 0, wired: false };
   function tdcActive_() {
     return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
@@ -5102,21 +5131,30 @@
     if (!el || !tdcActive_()) return;
     if (!TDC_.wired) {
       TDC_.wired = true;
-      el.addEventListener('toggle', function () { if (el.open) tdcFetch_(); });
       var ob = $('tdc-open-report');
       if (ob) ob.addEventListener('click', tdcOpenReport_);
+      var rt = $('tdc-retry');
+      if (rt) rt.addEventListener('click', function () { TDC_.error = null; tdcFetch_(); });
+      // A row opens the agent table's Direct view at that agent.
+      var tb = $('tdc-tbody');
+      if (tb) {
+        tb.addEventListener('click', function (e) {
+          var tr = e.target.closest && e.target.closest('tr.trp-row');
+          if (tr) tdcJump_(tr.getAttribute('data-tdc-agent') || '');
+        });
+        tb.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          var tr = e.target.closest && e.target.closest('tr.trp-row');
+          if (tr) { e.preventDefault(); tdcJump_(tr.getAttribute('data-tdc-agent') || ''); }
+        });
+      }
     }
-    var key = tdcKey_();
-    if (key !== TDC_.key) {
-      TDC_.key = key; TDC_.data = null; TDC_.error = null; TDC_.loading = false; TDC_.seq++;
-      if (!el.open) { tdcRender_(); return; }
-    }
-    if (el.open) tdcFetch_(); else tdcRender_();
+    tdcFetch_();
   }
   function tdcFetch_() {
     var key = tdcKey_();
-    if (!key) return;
-    if (TDC_.key !== key) { TDC_.key = key; TDC_.data = null; TDC_.error = null; TDC_.loading = false; }
+    if (!key) { tdcRender_(); return; }
+    if (TDC_.key !== key) { TDC_.key = key; TDC_.data = null; TDC_.error = null; TDC_.loading = false; TDC_.seq++; }
     if (TDC_.data || TDC_.error || TDC_.loading) { tdcRender_(); return; }
     var p = key.split('|');
     var tok = ++TDC_.seq;
@@ -5135,37 +5173,268 @@
       })
       .getDirectCallReport({ from: p[1], to: p[2], department: p[0] });
   }
+  // The direct agents (the payload's), most rung first. Rang = every call that
+  // rang their line: answered + missed while free + missed while busy.
+  function dcRang_(a) {
+    return (Number(a && a.ibAnswered) || 0) + (Number(a && a.ibMissedFree) || 0) + (Number(a && a.ibMissedBusy) || 0);
+  }
   function tdcRender_() {
-    var head = $('tdc-head'), note = $('tdc-note'), tiles = $('tdc-tiles'), tb = $('tdc-tbody');
-    if (!head) return;
+    var el = $('dept-team-direct');
+    var date = $('tdc-date'), note = $('tdc-note'), tiles = $('tdc-tiles'), tb = $('tdc-tbody');
+    var skel = $('tdc-loading'), errBox = $('tdc-error'), wrap = $('tdc-table-wrap'), leg = $('tdc-legend');
+    if (!el || !tiles) return;
     var d = TDC_.data, m = (d && d.meta) || {}, k = (d && d.kpis) || {};
-    if (TDC_.loading) { head.textContent = 'loading…'; return; }
-    if (TDC_.error) { head.textContent = 'could not load'; if (note) { note.textContent = TDC_.error; note.style.display = ''; } return; }
-    if (!d) { head.textContent = 'open to load'; if (note) note.style.display = 'none'; if (tiles) tiles.innerHTML = ''; if (tb) tb.innerHTML = ''; return; }
-    if (m.available === false) { head.textContent = 'unavailable'; if (tiles) tiles.innerHTML = ''; if (tb) tb.innerHTML = ''; return; }
-    head.textContent = fmtNumber(k.ibAnswered || 0) + ' ans'
-      + (k.ibAnswerRate != null ? ' · ' + k.ibAnswerRate + '%' : '') + ' · ' + fmtNumber(k.obTotal || 0) + ' out';
+    var key = TDC_.key ? TDC_.key.split('|') : null;
+    if (date) date.textContent = key ? (key[1] === key[2] ? key[1] : key[1] + ' – ' + key[2]) : '';
+    var loading = !!TDC_.loading;
+    el.setAttribute('aria-busy', loading ? 'true' : 'false');
+    if (skel) skel.style.display = loading ? '' : 'none';
+    if (errBox) {
+      errBox.style.display = (!loading && TDC_.error) ? '' : 'none';
+      var em = $('tdc-error-msg');
+      if (em && TDC_.error) em.textContent = 'Could not load direct calls: ' + TDC_.error;
+    }
+    var showBody = !loading && !TDC_.error && !!d;
+    if (wrap) wrap.style.display = showBody ? '' : 'none';
+    if (!showBody) {
+      tiles.innerHTML = ''; if (tb) tb.innerHTML = ''; if (note) note.style.display = 'none';
+      if (leg) leg.style.display = 'none';
+      dcViewRender_();
+      return;
+    }
     var parts = [];
-    if (m.noDataInRange) parts.push('No direct-call data in these dates yet.');
+    if (m.available === false) parts.push('Direct calls are unavailable right now.');
+    else if (m.noDataInRange) parts.push('No direct-call data in these dates yet.');
     else if (m.clampedTo) parts.push('Through ' + m.dataThrough + ' (later days not imported yet).');
     if (m.missingCount) parts.push(m.missingCount + ' workday' + (m.missingCount === 1 ? '' : 's') + ' with no data, left out.');
     if (note) { note.textContent = parts.join(' '); note.style.display = parts.length ? '' : 'none'; }
     // SB-2: the same split as the Direct Calls report, slim (one bar for the
     // calls that rang their lines, one for the calls they dialed).
-    if (tiles) tiles.innerHTML = directSummaryHtml_(k, null, 'card');
+    tiles.innerHTML = m.available === false ? '' : directSummaryHtml_(k, null, 'card');
     var agents = ((d && d.agents) || []).slice().sort(function (x, y) {
-      var ax = (Number(x.ibAnswered) || 0) + (Number(x.ibMissedFree) || 0), ay = (Number(y.ibAnswered) || 0) + (Number(y.ibMissedFree) || 0);
-      return ay - ax || String(x.agent).localeCompare(String(y.agent));
+      return dcRang_(y) - dcRang_(x) || String(x.agent).localeCompare(String(y.agent));
     });
+    var max = 0;
+    agents.forEach(function (a) { var r = dcRang_(a); if (r > max) max = r; });
+    var unit = 0;
+    if (max) {
+      unit = ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
+      for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) { if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= 12) { unit = ANS_TALLY_UNITS_[i]; break; } }
+    }
     if (tb) {
       tb.innerHTML = agents.length ? agents.map(function (a) {
-        return '<tr class="trp-row"><td class="trp-name" title="' + escapeHtml(a.agent) + '">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
-          + '<td class="trp-num"><span class="trp-a">' + fmtNumber(a.ibAnswered || 0) + '</span><span class="trp-sep"> / </span>'
-          +   '<span class="trp-m">' + fmtNumber(a.ibMissedFree || 0) + '</span></td>'
-          + '<td class="trp-num">' + (a.ibAnswerRate != null ? a.ibAnswerRate + '%' : '–') + '</td>'
-          + '<td class="trp-num">' + fmtNumber(a.obTotal || 0) + '</td></tr>';
+        var ans = Number(a.ibAnswered) || 0, mf = Number(a.ibMissedFree) || 0, mb = Number(a.ibMissedBusy) || 0;
+        var tally = (unit > 0 && (ans + mf + mb) > 0) ? '<div class="ans-tally trp-tally" aria-hidden="true">'
+          + ansTallyBlocks_(ans, unit, 'a') + ansTallyBlocks_(mf, unit, 'm') + ansTallyBlocks_(mb, unit, 'mb') + '</div>' : '';
+        return '<tr class="trp-row" data-tdc-agent="' + escapeHtml(a.agent) + '" tabindex="0" aria-describedby="tdc-row-action-desc"'
+          + ' title="' + escapeHtml(a.agent + ': ' + ans + ' answered · ' + mf + ' missed while free · ' + mb
+            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' dialed — click for the Direct view') + '">'
+          + '<td class="trp-name">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
+          + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
+          + '<td class="trp-num"><span class="trp-a">' + fmtNumber(ans) + '</span><span class="trp-sep"> / </span>'
+          +   '<span class="trp-m">' + fmtNumber(mf) + '</span></td>'
+          + '<td class="trp-num">' + (a.ibAnswerRate != null ? a.ibAnswerRate + '%' : '–') + '</td></tr>';
       }).join('') : '<tr><td colspan="4" class="trp-empty">No direct calls in these dates.</td></tr>';
     }
+    if (leg) {
+      leg.innerHTML = unit > 0 ? '<span class="tdc-leg-k"><span class="tly a"></span> answered</span>'
+        + '<span class="tdc-leg-k"><span class="tly m"></span> missed</span><span class="tdc-leg-k"><span class="tly mb"></span> busy</span>'
+        + (unit > 1 ? '<span class="tdc-leg-k">each block = ' + unit + ' calls</span>' : '') : '';
+      leg.style.display = unit > 0 ? '' : 'none';
+    }
+    dcViewRender_();
+  }
+  // A Team Direct Calls row: the Direct view, scrolled to that agent.
+  function tdcJump_(name) {
+    if (!name) return;
+    obSetDir_('direct');
+    var target = Array.prototype.find.call(document.querySelectorAll('#agents-dc-tbody tr[data-agent]'),
+      function (r) { return r.getAttribute('data-agent') === name; });
+    if (!target) return;
+    try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (err) {}
+    target.classList.remove('trp-jump-hit');
+    void target.offsetWidth;
+    target.classList.add('trp-jump-hit');
+  }
+
+  // ── DV-1 (owner 2026-11-02): the Direct view of the agent table ─────────
+  // The Direct Calls report's per-agent rows (TDC_, the card's own payload)
+  // in the LB-2 shape: a bar for the calls that rang the agent's line
+  // (answered / missed while free / missed while on another call) and one
+  // for the calls they dialed (connected / not), each on its own scale.
+  var DC_VIEW_ = { sortKey: 'rang', sortDir: 'desc', wired: false };
+  function dcConnRate_(a) {
+    var t = Number(a && a.obTotal) || 0;
+    return t ? Math.round((Number(a.obConnected) || 0) / t * 1000) / 10 : null;
+  }
+  function dcSortVal_(a, k) {
+    if (k === 'rang') return dcRang_(a);
+    if (k === 'ibAnswerRate') return a.ibAnswerRate == null ? null : Number(a.ibAnswerRate);
+    if (k === 'obTotal') return Number(a.obTotal) || 0;
+    if (k === 'obConnectRate') return dcConnRate_(a);
+    if (k === 'att') return Number(a.ibAttSec) || 0;
+    return null;
+  }
+  function dcSortList_(list) {
+    var k = DC_VIEW_.sortKey, dir = DC_VIEW_.sortDir === 'asc' ? 1 : -1;
+    return list.slice().sort(function (x, y) {
+      if (k === 'agent') return String(x.agent).localeCompare(String(y.agent)) * dir;
+      var xn = dcSortVal_(x, k), yn = dcSortVal_(y, k);
+      if (xn === null && yn === null) return String(x.agent).localeCompare(String(y.agent));
+      if (xn === null) return 1;
+      if (yn === null) return -1;
+      return ((xn - yn) * dir) || String(x.agent).localeCompare(String(y.agent));
+    });
+  }
+  function dcThHtml_(key, label, cls) {
+    var on = DC_VIEW_.sortKey === key;
+    return '<th data-dc-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
+      + (on ? ' aria-sort="' + (DC_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
+      + escapeHtml(label) + ' <span class="arrow">' + (on ? (DC_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
+  }
+  function dcInCellHtml_(a, scaleMax) {
+    var parts = directIbParts_(a);
+    var t = dcRang_(a);
+    if (!t) return zeroCell_('–');
+    var tip = parts.map(function (x) { return x.n + ' ' + x.label; }).join(' · ') + ' · ' + t + ' rang their line';
+    var w = scaleMax ? Math.max(2, Math.round(t / scaleMax * 1000) / 10) : 100;
+    var busy = parts[2].n ? '<span class="lb-sub" title="Missed while already on another call -- left out of the answer rate">'
+      + parts[2].n + ' busy</span>' : '';
+    return '<div class="lb-cell" title="' + escapeHtml(tip) + '">'
+      + '<div class="lb-track"><div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, t, tip, 'mid') + '</div></div>'
+      + '<div class="lb-nums"><span class="lb-n"><span class="ans-n">' + parts[0].n + '</span><span class="ans-slash">/</span>'
+      +   '<span class="miss-n">' + parts[1].n + '</span></span>' + busy + '</div></div>';
+  }
+  function dcOutCellHtml_(a, scaleMax) {
+    var placed = Number(a && a.obTotal) || 0, c = Number(a && a.obConnected) || 0, n = Math.max(0, placed - c);
+    if (!placed) return '<span class="cell-zero" title="No calls dialed from their extension in this range">–</span>';
+    var parts = [{ cls: 'oconn', n: c, label: 'connected' }, { cls: 'oreal', n: n, label: 'did not connect' }];
+    var tip = c + ' connected · ' + n + ' did not connect · ' + placed + ' dialed. ' + OB_CONNECTED_DEF_;
+    var w = scaleMax ? Math.max(2, Math.round(placed / scaleMax * 1000) / 10) : 100;
+    return '<div class="lb-cell lb-cell--out" title="' + escapeHtml(tip) + '">'
+      + '<div class="lb-track"><div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, placed, tip, 'mid') + '</div></div>'
+      + '<div class="lb-nums"><span class="lb-n"><span class="ob-c">' + c + '</span><span class="ans-slash">/</span>'
+      +   '<span class="ob-u">' + n + '</span></span></div></div>';
+  }
+  function dcRateHtml_(a) {
+    if (!a || a.ibAnswerRate == null) return zeroCell_('–');
+    var cls = benchValueCls_('% answered', a.ibAnswerRate + '%', true, 'direct');
+    return '<span class="' + escapeHtml(String(cls || '').trim()) + '" title="Answered of the calls that rang while they were free">'
+      + a.ibAnswerRate + '%</span>';
+  }
+  function dcTalkHtml_(a) {
+    var i = Number(a && a.ibAttSec) || 0, o = Number(a && a.obAttSec) || 0;
+    if (!i && !o) return zeroCell_('–');
+    return '<span class="lb-talk"><span class="lb-talk-in" title="Average talk on the calls they answered">' + (i ? fmtDuration(i) : '–')
+      + ' <small>in</small></span><span class="lb-talk-out" title="Average talk on the calls they dialed that connected">'
+      + (o ? fmtDuration(o) : '–') + ' <small>out</small></span></span>';
+  }
+  function dcWire_() {
+    if (DC_VIEW_.wired) return;
+    var thead = $('agents-dc-thead');
+    if (!thead) return;
+    DC_VIEW_.wired = true;
+    var sortBy = function (th) {
+      var k = th.getAttribute('data-dc-sort');
+      if (!k) return;
+      if (DC_VIEW_.sortKey === k) DC_VIEW_.sortDir = DC_VIEW_.sortDir === 'asc' ? 'desc' : 'asc';
+      else { DC_VIEW_.sortKey = k; DC_VIEW_.sortDir = (k === 'agent') ? 'asc' : 'desc'; }
+      dcViewRender_();
+      var again = document.querySelector('#agents-dc-thead [data-dc-sort="' + k + '"]');
+      if (again) again.focus();
+    };
+    thead.addEventListener('click', function (e) {
+      var th = e.target.closest && e.target.closest('[data-dc-sort]');
+      if (th) sortBy(th);
+    });
+    thead.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var th = e.target.closest && e.target.closest('[data-dc-sort]');
+      if (th) { e.preventDefault(); sortBy(th); }
+    });
+    // Rows open the same inline agent panel the other views do.
+    var tb = $('agents-dc-tbody');
+    if (tb) {
+      tb.addEventListener('click', function (e) {
+        var tr = e.target.closest && e.target.closest('tr[data-agent]');
+        if (!tr) return;
+        if (window.getSelection) {
+          var sel = window.getSelection();
+          if (sel && !sel.isCollapsed && tr.contains(sel.anchorNode)) return;
+        }
+        if (typeof apToggleFromRow_ === 'function') apToggleFromRow_(tr);
+      });
+      tb.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && e.target.closest('tr.ap-open')) {
+          e.preventDefault();
+          if (typeof apClose_ === 'function') apClose_(true);
+        }
+      });
+    }
+  }
+  function dcViewRender_() {
+    var wrap = $('agents-dc-wrap');
+    var thead = $('agents-dc-thead'), tbody = $('agents-dc-tbody'), tfoot = $('agents-dc-tfoot'), note = $('agents-dc-note');
+    if (!wrap || !thead || !tbody || !tfoot || obEffectiveDir_() !== 'direct') return;
+    dcWire_();
+    thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
+      + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['soft', 'busy']]) + '</th>'
+      + '<th colspan="2" class="lb-g lb-g--out">Dialed from their line ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
+      + '<th aria-hidden="true"></th></tr>'
+      + '<tr>' + dcThHtml_('agent', 'Agent') + dcThHtml_('rang', 'Answered / missed', 'lb-th-bar')
+      + dcThHtml_('ibAnswerRate', 'Ans %', 'num') + dcThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
+      + dcThHtml_('obConnectRate', 'Conn %', 'num') + dcThHtml_('att', 'Avg talk', 'num') + '</tr>';
+    var d = TDC_.data, m = (d && d.meta) || {};
+    if (TDC_.loading) dsFrostShow_(wrap, 'Loading direct calls…'); else dsFrostHide_(wrap);
+    var notes = [];
+    if (TDC_.error) notes.push('Could not load direct calls: ' + TDC_.error);
+    else if (d) {
+      if (m.available === false) notes.push('Direct calls are unavailable right now.');
+      else if (m.noDataInRange) notes.push('No direct-call data in these dates yet.');
+      else if (m.clampedTo) notes.push('Through ' + m.dataThrough + ' (later days not imported yet).');
+      if (m.missingCount) notes.push(m.missingCount + ' workday' + (m.missingCount === 1 ? '' : 's') + ' with no data, left out.');
+    }
+    if (note) { note.textContent = notes.join(' '); note.style.display = notes.length ? '' : 'none'; }
+    obInfoSync_('direct', '');
+    if (!d) { tbody.innerHTML = TDC_.error ? '<tr><td colspan="6" class="ob-empty">Direct calls are unavailable.</td></tr>' : ''; tfoot.innerHTML = ''; return; }
+    var agents = d.agents || [];
+    var inMax = 0, outMax = 0;
+    agents.forEach(function (a) {
+      var r = dcRang_(a); if (r > inMax) inMax = r;
+      var o = Number(a.obTotal) || 0; if (o > outMax) outMax = o;
+    });
+    var rowHtml = function (a) {
+      return '<tr data-agent="' + escapeHtml(a.agent) + '"' + (a.dept ? ' data-dept="' + escapeHtml(a.dept) + '"' : '')
+        + ' title="Show ' + escapeHtml(a.agent) + '’s days (the Individual Report is inside)">'
+        + '<td class="agent-name">' + apRowToggleHtml_(a.agent) + '</td>'
+        + '<td class="lb-bar-td">' + dcInCellHtml_(a, inMax) + '</td>'
+        + '<td class="num">' + dcRateHtml_(a) + '</td>'
+        + '<td class="lb-bar-td">' + dcOutCellHtml_(a, outMax) + '</td>'
+        + '<td class="num">' + (dcConnRate_(a) != null ? Math.round(dcConnRate_(a)) + '%' : zeroCell_('–')) + '</td>'
+        + '<td class="num">' + dcTalkHtml_(a) + '</td></tr>';
+    };
+    var depts = [];
+    agents.forEach(function (a) { var x = a.dept || ''; if (depts.indexOf(x) === -1) depts.push(x); });
+    var body = '';
+    if (depts.length > 1) {
+      depts.forEach(function (x) {
+        var mine = agents.filter(function (a) { return (a.dept || '') === x; });
+        body += '<tr class="subq-group-head ob-group-head"><td colspan="6">' + escapeHtml(x || '—')
+          + ' <span class="subq-count">' + mine.length + ' agent' + (mine.length === 1 ? '' : 's') + '</span></td></tr>'
+          + dcSortList_(mine).map(rowHtml).join('');
+      });
+    } else {
+      body = dcSortList_(agents).map(rowHtml).join('');
+    }
+    if (!agents.length) body = '<tr><td colspan="6" class="ob-empty">No direct calls by this department’s agents in this range.</td></tr>';
+    tbody.innerHTML = body;
+    var k = d.kpis || {};
+    tfoot.innerHTML = agents.length ? '<tr><td class="agents-total-label">Total</td>'
+      + '<td class="lb-bar-td">' + dcInCellHtml_(k, 0) + '</td><td class="num">' + dcRateHtml_(k) + '</td>'
+      + '<td class="lb-bar-td">' + dcOutCellHtml_(k, 0) + '</td>'
+      + '<td class="num">' + (dcConnRate_(k) != null ? Math.round(dcConnRate_(k)) + '%' : '') + '</td>'
+      + '<td class="num">' + dcTalkHtml_(k) + '</td></tr>' : '';
+    if (typeof apReattach_ === 'function') apReattach_();
   }
   // "Open the Direct Calls report": the modal, on the same dept and dates, run.
   function tdcOpenReport_() {
@@ -5194,9 +5463,12 @@
     if (typeof insCbSync_ === 'function') insCbSync_();
     var obWrap = $('agents-ob-wrap');
     var tob = $('dept-team-outbound');
-    if (dir === 'in') {
+    var dcWrap = $('agents-dc-wrap');
+    if (dcWrap) dcWrap.style.display = dir === 'direct' ? '' : 'none';
+    if (dir === 'in' || dir === 'direct') {   // DV-1: the Direct view reads TDC_ (tdcSync_ above)
       if (obWrap) obWrap.style.display = 'none';
       if (tob) tob.style.display = 'none';
+      if (dir === 'direct') dcViewRender_(); else obInfoSync_('in');
       return;
     }
     if (obWrap) obWrap.style.display = '';
@@ -5414,17 +5686,26 @@
     var dir = obEffectiveDir_();
     var thead = $('agents-ob-thead'), tbody = $('agents-ob-tbody'), tfoot = $('agents-ob-tfoot');
     var note = $('agents-ob-note');
-    // Since Step 3 the direction is only 'in' or 'both' (obDir_ reads a
-    // retired 'out' as 'both'), so this renders the Both table only -- the
-    // Outbound-only table it once also drew was trimmed 2026-10-21.
-    if (!thead || !tbody || !tfoot || dir === 'in') return;
+    // DV-1: this table draws the Both view and (again) the Outbound-only view
+    // -- the same rows, without the inbound columns or Transfer %.
+    if (!thead || !tbody || !tfoot || (dir !== 'both' && dir !== 'out')) return;
+    var outOnly = dir === 'out';
+    if (outOnly && ['inRung', 'answerRate', 'transferPct'].indexOf(OB_VIEW_.sortKey) !== -1) { OB_VIEW_.sortKey = 'obTotal'; OB_VIEW_.sortDir = 'desc'; }
+    if (outOnly && OB_VIEW_.sortKey === 'talkAll') OB_VIEW_.sortKey = 'obTalkSec';
+    if (!outOnly && OB_VIEW_.sortKey === 'obTalkSec') OB_VIEW_.sortKey = 'talkAll';
     var data = OB_VIEW_.data;
     var dept = getRequestedDept();
-    var hasXfer = !!state.csrTransfer;   // owner 2026-10-22: Transfer % (CSR), inbound only
-    var cols = hasXfer ? 7 : 6;
+    var hasXfer = !!state.csrTransfer && !outOnly;   // owner 2026-10-22: Transfer % (CSR), inbound only
+    var cols = outOnly ? 4 : (hasXfer ? 7 : 6);
     // LB-2: a group row naming each direction (with its colour key) over
     // the sortable headers -- every header sorts by click.
-    thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
+    if (outOnly) {
+      thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
+        + '<th colspan="2" class="lb-g lb-g--out">Outbound · placed ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'rang out'],
+            ['obrief', 'brief ring'], ['unk', 'not recorded']]) + '</th><th aria-hidden="true"></th></tr>'
+        + '<tr>' + obThHtml_('agent', 'Agent') + obThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
+        + obThHtml_('obConnectRate', 'Conn %', 'num') + obThHtml_('obTalkSec', 'Talk', 'num') + '</tr>';
+    } else thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
       + '<th colspan="2" class="lb-g lb-g--in">Inbound · rings ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed']]) + '</th>'
       + '<th colspan="2" class="lb-g lb-g--out">Outbound · placed ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'rang out'],
           ['obrief', 'brief ring'], ['unk', 'not recorded']]) + '</th>'
@@ -5438,7 +5719,9 @@
       + (hasXfer ? obThHtml_('transferPct', 'Transfer %', 'num') : '')
       + '</tr>';
 
-    var notes = [];
+    // AT-1: only what changes how to read today's numbers stays a visible
+    // note; the standing explainer (and the off-roster count) is the ⓘ.
+    var notes = [], info = '';
     if (OB_VIEW_.error) notes.push('Could not load outbound calls: ' + OB_VIEW_.error);
     if (data && data.meta) {
       if (data.meta.available === false) notes.push('Outbound calls could not be read just now (Neon and the Outbound Calls tab were both unavailable).');
@@ -5446,11 +5729,11 @@
         + (data.meta.fallbackThrough ? ', which runs through ' + data.meta.fallbackThrough : '') + '.');
       var capStart = data.meta.coverageStart;
       if (capStart && data.meta.from < capStart) notes.push('Outbound capture began ' + capStart + '; days before it have no outbound calls.');
-      if (data.meta.offRosterAgents) notes.push(data.meta.offRosterAgents + ' dialler' + (data.meta.offRosterAgents === 1 ? '' : 's')
-        + ' on no roster of this department ' + (data.meta.offRosterAgents === 1 ? 'is' : 'are') + ' left out.');
+      if (data.meta.offRosterAgents) info = data.meta.offRosterAgents + ' dialler' + (data.meta.offRosterAgents === 1 ? '' : 's')
+        + ' on no roster of this department ' + (data.meta.offRosterAgents === 1 ? 'is' : 'are') + ' left out.';
     }
-    notes.push('Connected means the far end answered — a person, voicemail or a phone menu. Export and Copy still produce the inbound table.');
-    if (note) { note.textContent = notes.join(' '); note.style.display = ''; }
+    if (note) { note.textContent = notes.join(' '); note.style.display = notes.length ? '' : 'none'; }
+    obInfoSync_(dir, info);
 
     if (!data && !OB_VIEW_.error) { tbody.innerHTML = ''; tfoot.innerHTML = ''; obPanelRender_(null); return; }
     var obAgents = (data && data.agents) || [];
@@ -5506,11 +5789,15 @@
       // E5's rule: an agent with no row in the prior window gets no chip.
       var po = (priorOk && o) ? (priorBy[obKey(e.dept, e.agent)] || null) : null;
       var ptip = priorTipFor(po);
-      var cells = '<td class="agent-name">' + apRowToggleHtml_(e.agent) + '</td>'   // F27
+      var name = '<td class="agent-name">' + apRowToggleHtml_(e.agent) + '</td>';   // F27
+      var outCells = '<td class="lb-bar-td">' + obOutCellHtml_(o, outMax, po) + '</td>'
+        + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>';
+      var cells = outOnly   // DV-1: the Outbound view -- the same row without the inbound columns
+        ? name + outCells + '<td class="num">' + (o && Number(o.obTalkSec) ? fmtDuration(o.obTalkSec) : zeroCell_('–')) + '</td>'
+        : name
         + '<td class="lb-bar-td">' + (e.inb ? obInCellHtml_(e.inb, inMax) : zeroCell_('–')) + '</td>'
         + '<td class="num">' + (e.inb ? fmtCell(pctCol, e.inb) + obInRateChip_(e.inb) : zeroCell_('–')) + '</td>'
-        + '<td class="lb-bar-td">' + obOutCellHtml_(o, outMax, po) + '</td>'
-        + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>'
+        + outCells
         + '<td class="num">' + obTalkCellHtml_(e.inb && e.inb.tttSeconds, o && o.obTalkSec) + '</td>'
         + (hasXfer ? '<td class="num ob-xfer">' + xferCellHtml_(e.inb) + '</td>' : '');
       return '<tr data-agent="' + escapeHtml(e.agent) + '"'
@@ -5518,11 +5805,16 @@
         + escapeHtml(e.agent) + '’s days (the Individual Report is inside)">' + cells + '</tr>';
     };
     var totalRow = function (label, t, inT, cls) {
+      var outCells = '<td class="lb-bar-td">' + (t ? obOutCellHtml_(t, 0, null) : '') + '</td>'
+        + '<td class="num">' + obPctHtml_(t) + '</td>';
+      if (outOnly) {   // DV-1
+        return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td class="agents-total-label">' + escapeHtml(label) + '</td>'
+          + outCells + '<td class="num">' + (t && Number(t.obTalkSec) ? fmtDuration(t.obTalkSec) : '') + '</td></tr>';
+      }
       var cells = '<td class="agents-total-label">' + escapeHtml(label) + '</td>'
         + '<td class="lb-bar-td">' + (inT ? obInCellHtml_(inT, 0) : '') + '</td>'
         + '<td class="num">' + (inT ? fmtCell(pctCol, inT) : '') + '</td>'
-        + '<td class="lb-bar-td">' + (t ? obOutCellHtml_(t, 0, null) : '') + '</td>'
-        + '<td class="num">' + obPctHtml_(t) + '</td>'
+        + outCells
         + '<td class="num">' + obTalkCellHtml_(inT && inT.tttSeconds, t && t.obTalkSec) + '</td>'
         + (hasXfer ? '<td class="num ob-xfer">' + (inT && inT.transferPct != null ? xferCellHtml_(inT) : '') + '</td>' : '');
       return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
@@ -5560,7 +5852,8 @@
     var panel = $('dept-team-outbound');
     if (!panel) return;
     var agents = (data && data.agents) || [];
-    if (obEffectiveDir_() === 'in' || !data || !agents.length) { panel.style.display = 'none'; return; }
+    var pdir = obEffectiveDir_();
+    if ((pdir !== 'out' && pdir !== 'both') || !data || !agents.length) { panel.style.display = 'none'; return; }
     panel.style.display = '';
     var t = data.totals || {};
     var dateEl = $('tob-date');

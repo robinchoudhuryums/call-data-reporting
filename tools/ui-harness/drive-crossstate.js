@@ -88,11 +88,11 @@ const UNMOCKED_OK = new Set(['getInboundHeatmap', 'getInboundReport',
     };
   });
   const switchDept = async (d) => { await page.selectOption('#dept-selector', d); await page.waitForTimeout(3500); };
-  // Step 3: the switch is one "Show outbound columns" toggle -- 'both' (on) or
-  // 'in' (off). Click it only when the page is not already in the state asked.
+  // DV-1: the segmented switch -- click the view asked for, only when the
+  // page is not already on it.
   const setDir = async (d) => {
     const cur = await page.evaluate(() => document.body.getAttribute('data-dir'));
-    if (cur !== d) { await page.click('#dept-dir-switch [data-ob-cols]'); await page.waitForTimeout(1200); }
+    if (cur !== d) { await page.click('#dept-dir-switch [data-dir-pick="' + d + '"]'); await page.waitForTimeout(1200); }
   };
 
   // ---- 1. dept switch with the brief open -------------------------------

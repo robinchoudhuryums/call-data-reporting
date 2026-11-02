@@ -290,7 +290,8 @@ test('UD-4 / UD-5 / UD-6 / UD-9 / UD-10 / C2-13: the markup-level fixes', functi
   const dash = src('dashboard.html');
   // Batch D added the Team Outbound panel's hint: three side panels now.
   // Four since D3 (2026-10-21): Queue Call Data, Team Rings, Team Outbound, Team Direct Calls.
-  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 4, 'UD-6: every side-panel hint is a note on the styled tooltip layer');
+  // Five since AT-1 (2026-11-02): the agent table's own ⓘ uses the same layer.
+  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 5, 'UD-6: every side-panel hint is a note on the styled tooltip layer');
   assert.ok(/<h1 id="page-title" tabindex="-1">/.test(dash), 'UD-9: the page h1 can take focus');
   const s6 = src('script-6-ir.html');
   assert.ok(/const h1 = \$\('page-title'\);\s*\n\s*if \(h1\) \{ try \{ h1\.focus\(\); \}/.test(s6), 'UD-9: the from-Insights close focuses the h1');
@@ -374,7 +375,8 @@ test('F27: an agent row is not the control -- no tabindex on the row, the name-c
   });
   const dept = src('script-5-dept.html');
   assert.match(between(dept, /function apRowToggleHtml_\(/, /\n  function /), /<button type="button" class="ap-row-toggle" aria-expanded="false"/);
-  assert.equal((dept.match(/apRowToggleHtml_\((row|e)\.agent\)/g) || []).length, 3, 'all three agent-row builders use it');
+  // DV-1 added the Direct view's builder (`a.agent`): four.
+  assert.equal((dept.match(/apRowToggleHtml_\((row|e|a)\.agent\)/g) || []).length, 4, 'all four agent-row builders use it');
   const ap = src('script-10-escalations.html');
   assert.ok(!/tr\.(setAttribute|removeAttribute)\('aria-expanded'/.test(ap), 'the panel never marks the ROW expanded');
   assert.match(between(ap, /function apClose_\(/, /\n  function /), /b\.setAttribute\('aria-expanded', 'false'\)/,

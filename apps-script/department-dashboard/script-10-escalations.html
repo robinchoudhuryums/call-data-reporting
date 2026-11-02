@@ -2719,10 +2719,12 @@
   }
 
   // Batch D: rows live in whichever agent table is showing -- the inbound one,
-  // or the Outbound / Both one (#agents-ob-tbody).
+  // the Outbound / Both one (#agents-ob-tbody) or, DV-1, the Direct one.
   function apTbody_() {
     const dir = document.body.getAttribute('data-dir');
-    return dir === 'both' ? $('agents-ob-tbody') : $('agents-tbody');
+    if (dir === 'both' || dir === 'out') return $('agents-ob-tbody');
+    if (dir === 'direct') return $('agents-dc-tbody');
+    return $('agents-tbody');
   }
 
   function apRowsFor_(agent) {

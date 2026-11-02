@@ -90,8 +90,11 @@ function chartDrawn() {
   return { drawn: false, why: 'uniform pixels' };
 }
 
+// DV-1: the switch is segmented (Inbound / Outbound / Inbound + outbound /
+// Direct); this flips between the two views the Step 3 toggle offered.
 async function toggleColumns(page) {
-  await page.click('#dept-dir-switch [data-ob-cols]');
+  const cur = await page.evaluate(() => document.body.getAttribute('data-dir'));
+  await page.click('#dept-dir-switch [data-dir-pick="' + (cur === 'both' ? 'in' : 'both') + '"]');
   await page.waitForTimeout(1200);
 }
 
@@ -342,7 +345,7 @@ async function toggleColumns(page) {
     mail.length === 1 && mail[0].from === insMeta.from && mail[0].to === insMeta.to
       && mail[0].department === insMeta.department, JSON.stringify(mail));
 
-  // Step 3: the outbound COLUMNS toggle never touches the Callbacks section.
+  // Step 3 / DV-1: the direction switch never touches the Callbacks section.
   await toggleColumns(page);
   st = await page.evaluate(foldState);
   const dirOn = await page.evaluate(() => document.body.getAttribute('data-dir'));

@@ -3763,9 +3763,18 @@
      back over the outbound view. Direction hues follow the Agent Day tiles:
      inbound = --accent, outbound = --dir-out. */
   .dept-dir-switch { margin-left: 8px; }
-  /* Step 3: the switch is one "Show outbound columns" toggle, so data-dir is
-     'both' or 'in' (the 'out' rules were trimmed 2026-10-21). */
-  body[data-dir="both"] #agents-in-wrap { display: none; }
+  /* DV-1 (owner 2026-11-02): four views -- in / out / both / direct. The
+     inbound table shows only on 'in'; Team Rings (the inbound ring panel)
+     steps aside on the Outbound and Direct views. !important: renderTeamRingsPanel_
+     sets the panel's inline display on every repaint. */
+  body[data-dir="both"] #agents-in-wrap,
+  body[data-dir="out"] #agents-in-wrap,
+  body[data-dir="direct"] #agents-in-wrap { display: none; }
+  body[data-dir="out"] #dept-team-rings,
+  body[data-dir="direct"] #dept-team-rings { display: none !important; }
+  #dept-dir-switch.dept-qcd-period { display: inline-flex; margin: 0 0 0 8px; }
+  .tly.mb { background: color-mix(in oklab, var(--warn) 42%, var(--paper)); }
+  #dqe-table-info { margin-left: 2px; }
   .tly.oc { background: var(--dir-out); }
   .tly.ou { background: var(--line); }
   .ob-c { color: var(--dir-out); font-weight: 600; }
@@ -3805,13 +3814,20 @@
   .lb-talk small { color: var(--muted); font-size: 10px; }
   .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
   /* D3: the Team Direct Calls side card -- a collapsed, lazy fold. */
-  .dtd-fold > summary.dtd-summary { cursor: pointer; list-style: none; }
-  .dtd-fold > summary.dtd-summary::-webkit-details-marker { display: none; }
-  .dtd-fold > summary.dtd-summary::after { content: '\25BE'; margin-left: 6px; color: var(--muted); }
-  .dtd-fold[open] > summary.dtd-summary::after { content: '\25B4'; }
-  .dtd-fold .dtd-note { margin: 6px 0; font-size: 11.5px; }
-  .dtd-fold .dtd-open { margin-top: 6px; font-size: 12px; }
-  .dtd-fold .trp-empty { color: var(--muted); text-align: left; }
+  /* TDC-1 (owner 2026-11-02): Team Direct Calls is a panel like its two
+     neighbours -- a skeleton while it loads, an error line with Retry. */
+  #dept-team-direct .dtd-note { margin: 6px 0; font-size: 11.5px; }
+  #dept-team-direct .dtd-open { margin-top: 6px; font-size: 12px; }
+  #dept-team-direct .trp-empty { color: var(--muted); text-align: left; }
+  #dept-team-direct .trp-row { cursor: pointer; }
+  .tdc-skel { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+  .tdc-skel .skeleton-line.tdc-skel-head { width: 45%; height: 16px; }
+  .tdc-skel .skeleton-line.tdc-skel-bar { height: 10px; }
+  .tdc-skel .skeleton-row { margin-bottom: 0; }
+  #tdc-legend { flex-wrap: wrap; gap: 3px 10px; }
+  #tdc-legend .tdc-leg-k { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .tdc-error { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 6px 0; font-size: 12px; }
+  @media (prefers-reduced-motion: reduce) { .tdc-skel .skeleton-line { animation: none; } }
   /* D1: the Direct Calls report's internal / external split under a count. */
   .dc-split { font: 400 10.5px/1.3 var(--mono); color: var(--muted); white-space: nowrap; }
   #agents-ob-note { margin: 0 0 8px; }

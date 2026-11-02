@@ -106,6 +106,12 @@ async function openDept(page, meta) {
       heads: Array.from(document.querySelectorAll('#agents-ob-thead tr:not(.lb-groups) th')).map((t) => t.textContent.replace(/[▲▼▽]/g, '').trim()),
       total: (document.querySelector('#agents-ob-tfoot tr') || {}).textContent || '',
       note: (document.getElementById('agents-ob-note') || {}).textContent || '',
+      noteShown: vis('agents-ob-note'),
+      info: (document.getElementById('dqe-table-info') || { getAttribute: () => '' }).getAttribute('title') || '',
+      infoShown: vis('dqe-table-info'),
+      dcShown: vis('agents-dc-wrap'),
+      dcRows: document.querySelectorAll('#agents-dc-tbody tr[data-agent]').length,
+      tdc: vis('dept-team-direct'),
       tobRows: document.querySelectorAll('#tob-tbody tr.trp-row').length,
       tobTiles: (document.getElementById('tob-tiles') || {}).textContent || '',
       tobBar: Array.from(document.querySelectorAll('#tob-tiles .ob-obar-seg'))
@@ -113,12 +119,15 @@ async function openDept(page, meta) {
     };
   });
 
-  const toggleCols = async () => { await page.click('#dept-dir-switch [data-ob-cols]'); await page.waitForTimeout(900); };
+  // DV-1: the segmented switch.
+  const pick = async (d) => { await page.click('#dept-dir-switch [data-dir-pick="' + d + '"]'); await page.waitForTimeout(900); };
+  const pressed = (d) => page.getAttribute('#dept-dir-switch [data-dir-pick="' + d + '"]', 'aria-pressed');
 
   let v = await view();
   record('admin: inbound AND outbound together is the default view (Step 3)',
     v.dir === 'both' && v.obShown && !v.inShown, JSON.stringify(v).slice(0, 120));
-  record('the toggle reads "on"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'true');
+  record('DV-1: "Inbound + outbound" reads pressed, the other three not',
+    (await pressed('both')) === 'true' && (await pressed('in')) === 'false' && (await pressed('out')) === 'false' && (await pressed('direct')) === 'false');
   // LB-2 (owner 2026-10-28): one header per column, each sorting by click.
   record('LB-2: the headers are Agent, Answered / missed, Ans %, Connected / not, Conn %, Talk, Transfer %',
     JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Answered / missed', 'Ans %', 'Connected / not', 'Conn %', 'Talk', 'Transfer %']), v.heads.join(' | '));
@@ -146,9 +155,9 @@ async function openDept(page, meta) {
     v.total.slice(0, 120));
   record('the team per-day figure renders on the total row', v.total.indexOf(ob.totals.obPerDay + ' / day') !== -1,
     'want ' + ob.totals.obPerDay);
-  record('the note says what Connected means and that exports stay inbound',
-    /far end answered/.test(v.note) && /inbound table/.test(v.note), v.note.slice(0, 90));
-  record('the off-roster dialler is disclosed, not shown', /1 dialler/.test(v.note)
+  record('AT-1: the table\'s ⓘ says what Connected means and that exports stay inbound; no standing note over the table',
+    v.infoShown && /far end answered/.test(v.info) && /inbound table/.test(v.info) && !v.noteShown, JSON.stringify({ info: v.info.slice(0, 90), note: v.note }));
+  record('the off-roster dialler is disclosed (in the ⓘ), not shown', /1 dialler/.test(v.info)
     && !(await page.locator('#agents-ob-tbody tr[data-agent="Off Roster Dialler"]').count()));
   record('Team Rings stays and Team Outbound shows beside it', v.rings && v.tob && v.tobRows === ob.agents.length,
     JSON.stringify({ tob: v.tob, rings: v.rings, rows: v.tobRows }));
@@ -303,18 +312,36 @@ async function openDept(page, meta) {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
 
-  // ---- columns off, and back on --------------------------------------------
-  await toggleCols();
+  // ---- DV-1: the four views ------------------------------------------------
+  await pick('in');
   v = await view();
-  record('columns OFF restores the original inbound table and Team Rings only', v.dir === 'in' && v.inShown && !v.obShown && v.rings && !v.tob,
-    JSON.stringify({ dir: v.dir, i: v.inShown, o: v.obShown, rings: v.rings, tob: v.tob }));
-  record('the toggle reads "off"', (await page.getAttribute('#dept-dir-switch [data-ob-cols]', 'aria-pressed')) === 'false');
+  record('Inbound restores the original inbound table and Team Rings only, with no ⓘ',
+    v.dir === 'in' && v.inShown && !v.obShown && !v.dcShown && v.rings && !v.tob && !v.infoShown,
+    JSON.stringify({ dir: v.dir, i: v.inShown, o: v.obShown, rings: v.rings, tob: v.tob, info: v.infoShown }));
+  record('the Inbound button reads pressed', (await pressed('in')) === 'true' && (await pressed('both')) === 'false');
   let stored = await page.evaluate(() => localStorage.getItem('cdr.dept.direction'));
-  record('"off" persists per browser', stored === 'in', String(stored));
-  await toggleCols();
+  record('the view persists per browser', stored === 'in', String(stored));
+  await pick('out');
+  v = await view();
+  record('DV-1: Outbound shows the outbound-only table (Agent, Connected / not, Conn %, Talk) and Team Outbound, not Team Rings',
+    v.dir === 'out' && v.obShown && !v.inShown && !v.dcShown && !v.rings && v.tob
+      && JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Connected / not', 'Conn %', 'Talk']),
+    JSON.stringify({ dir: v.dir, heads: v.heads, rings: v.rings, tob: v.tob }));
+  {
+    const out = await page.evaluate(() => ({
+      groups: Array.from(document.querySelectorAll('#agents-ob-thead tr.lb-groups th.lb-g')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
+      cells: (document.querySelector('#agents-ob-tbody tr[data-agent]') || { querySelectorAll: () => [] }).querySelectorAll(':scope > td').length,
+      xfer: !!document.querySelector('#agents-ob-thead [data-ob-sort="transferPct"]'),
+    }));
+    record('DV-1: the Outbound view has one direction group, four cells a row and no Transfer %',
+      out.groups.length === 1 && /^Outbound · placed/.test(out.groups[0]) && out.cells === 4 && !out.xfer, JSON.stringify(out));
+  }
+  record('DV-1: Outbound keeps the ⓘ', v.infoShown && /far end answered/.test(v.info), v.info.slice(0, 60));
+  await pick('both');
   stored = await page.evaluate(() => localStorage.getItem('cdr.dept.direction'));
   v = await view();
-  record('columns back ON', v.dir === 'both' && v.obShown && !v.inShown && stored === 'both', JSON.stringify({ dir: v.dir, stored: stored }));
+  record('back to Inbound + outbound', v.dir === 'both' && v.obShown && !v.inShown && v.rings && v.tob && stored === 'both'
+    && v.heads.length === 7, JSON.stringify({ dir: v.dir, stored: stored, heads: v.heads }));
 
   // ---- narrow viewport --------------------------------------------------
   await page.setViewportSize({ width: 360, height: 800 });
@@ -342,7 +369,7 @@ async function openDept(page, meta) {
     await pr.waitForTimeout(2500);
     await openDept(pr, meta);
     const beforeSwitch = await pr.evaluate(() => (window.__HARNESS__.calls || []).length);
-    await pr.click('#dept-dir-switch [data-ob-cols]');
+    await pr.click('#dept-dir-switch [data-dir-pick="both"]');   // DV-1
     await pr.waitForTimeout(2500);
     // FO-3: the table and the Insights Outbound fold share ONE client store,
     // so the switch asks for each window once between them, not once each.
@@ -379,44 +406,131 @@ async function openDept(page, meta) {
     await pr.close();
   }
 
-  // ---- D3 (owner 2026-10-21): Team Direct Calls, the admin side card ------
+  // ---- D3 + TDC-1 (owner 2026-11-02): Team Direct Calls, the admin side panel
+  // and DV-1's Direct view, ONE request between them ----------------------
   {
     const d30 = require('./payloads/direct-30d.json');
-    const before = await page.evaluate(() => {
+    const card = await page.evaluate(() => {
       const el = document.getElementById('dept-team-direct');
-      return { shown: !!el && getComputedStyle(el).display !== 'none', open: !!(el && el.open),
-               head: (document.getElementById('tdc-head') || {}).textContent || '',
-               called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length };
-    });
-    record('D3: the Team Direct Calls card is there for the admin, collapsed, and asks for nothing until opened',
-      before.shown && !before.open && /open to load/.test(before.head) && before.called === 0, JSON.stringify(before));
-    await page.click('#dept-team-direct > summary');
-    await page.waitForTimeout(900);
-    const after = await page.evaluate(() => {
       const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').map((c) => c.args[0]);
-      return { calls: calls, page: { from: document.getElementById('from-date').value, to: document.getElementById('to-date').value },
-               head: (document.getElementById('tdc-head') || {}).textContent || '',
+      const shown = (id) => { const x = document.getElementById(id); return !!x && getComputedStyle(x).display !== 'none'; };
+      return { shown: !!el && getComputedStyle(el).display !== 'none', tag: el ? el.tagName : '',
+               calls: calls, page: { from: document.getElementById('from-date').value, to: document.getElementById('to-date').value },
+               date: (document.getElementById('tdc-date') || {}).textContent || '',
                note: (document.getElementById('tdc-note') || {}).textContent || '',
-               tiles: document.querySelectorAll('#tdc-tiles .ds-kpi').length,
-               // SB-2: two slim bars (lines rung, calls dialed), each adding up.
+               skel: shown('tdc-loading'), err: shown('tdc-error'), busy: el ? el.getAttribute('aria-busy') : '',
                bars: Array.from(document.querySelectorAll('#tdc-tiles .ob-obar')).map((b) => Array.from(b.querySelectorAll('.ob-obar-seg'))
                  .reduce((a, x) => a + parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]), 0)),
-               rows: document.querySelectorAll('#tdc-tbody tr.trp-row').length };
+               rows: document.querySelectorAll('#tdc-tbody tr.trp-row').length,
+               tally: document.querySelectorAll('#tdc-tbody .trp-tally .tly').length,
+               legend: shown('tdc-legend') };
     });
-    const c0 = after.calls[0] || {};
-    record('D3: opening it asks ONCE, for this dept over the page\'s dates, and shows the report\'s figures',
-      after.calls.length === 1 && c0.department === 'CSR' && c0.from === after.page.from && c0.to === after.page.to
-        && after.tiles === 0 && after.rows === d30.agents.length
-        && after.bars.length === 2
-        && after.bars[0] === d30.kpis.ibAnswered + d30.kpis.ibMissedFree + d30.kpis.ibMissedBusy
-        && after.bars[1] === d30.kpis.obTotal
-        && after.head.indexOf(String(d30.kpis.ibAnswered)) === 0,
-      JSON.stringify({ calls: after.calls, head: after.head, tiles: after.tiles, bars: after.bars, rows: after.rows, want: d30.agents.length }));
-    record('D3: the card says when the data stops early and names the gap', /not imported/.test(after.note) && /1 workday/.test(after.note), after.note);
-    await page.click('#dept-team-direct > summary'); await page.waitForTimeout(200);
-    await page.click('#dept-team-direct > summary'); await page.waitForTimeout(400);
-    const again = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length);
-    record('D3: closing and reopening on the same window asks for nothing more', again === 1, 'calls=' + again);
+    // It loads with the page now, so the landing window (before openDept set
+    // the 30 days) was fetched too: count the requests for THIS window.
+    const mine = card.calls.filter((c) => c.from === card.page.from && c.to === card.page.to);
+    const c0 = mine[0] || {};
+    record('TDC-1: Team Direct Calls is a panel (not a fold) that loaded with the page -- ONE request for this window, this dept',
+      card.shown && card.tag === 'DIV' && mine.length === 1 && c0.department === 'CSR' && card.date.indexOf(card.page.from) === 0,
+      JSON.stringify({ tag: card.tag, calls: card.calls, date: card.date }));
+    record('TDC-1: loaded -- no skeleton, no error, not busy; both bars add up; a row per agent with a tally and its legend',
+      !card.skel && !card.err && card.busy === 'false' && card.bars.length === 2
+        && card.bars[0] === d30.kpis.ibAnswered + d30.kpis.ibMissedFree + d30.kpis.ibMissedBusy
+        && card.bars[1] === d30.kpis.obTotal && card.rows === d30.agents.length && card.tally > 0 && card.legend,
+      JSON.stringify({ skel: card.skel, err: card.err, busy: card.busy, bars: card.bars, rows: card.rows, tally: card.tally }));
+    record('D3: the panel says when the data stops early and names the gap', /not imported/.test(card.note) && /1 workday/.test(card.note), card.note);
+
+    // DV-1: the Direct view reads the SAME payload -- no second request.
+    await pick('direct');
+    const dv = await page.evaluate(() => {
+      const shown = (id) => { const x = document.getElementById(id); return !!x && getComputedStyle(x).display !== 'none'; };
+      const rows = Array.from(document.querySelectorAll('#agents-dc-tbody tr[data-agent]'));
+      const num = (x) => parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]);
+      const first = rows[0];
+      const bar = first && first.querySelector('td.lb-bar-td .ob-obar');
+      return { dir: document.body.getAttribute('data-dir'), dc: shown('agents-dc-wrap'), inb: shown('agents-in-wrap'), ob: shown('agents-ob-wrap'),
+               rings: shown('dept-team-rings'), tob: shown('dept-team-outbound'), tdc: shown('dept-team-direct'),
+               rows: rows.length, agent: first ? first.getAttribute('data-agent') : '',
+               heads: Array.from(document.querySelectorAll('#agents-dc-thead tr:not(.lb-groups) th')).map((t) => t.textContent.replace(/[▲▼▽]/g, '').trim()),
+               barSum: bar ? Array.from(bar.querySelectorAll('.ob-obar-seg')).reduce((a, x) => a + num(x), 0) : -1,
+               nums: first && first.querySelector('.lb-n') ? first.querySelector('.lb-n').textContent : '',
+               total: (document.querySelector('#agents-dc-tfoot tr') || {}).textContent || '',
+               info: (document.getElementById('dqe-table-info') || { getAttribute: () => '' }).getAttribute('title') || '',
+               note: (document.getElementById('agents-dc-note') || {}).textContent || '',
+               calls: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length };
+    });
+    const callsBefore = card.calls.length;
+    const a0 = d30.agents.find((a) => a.agent === dv.agent) || {};
+    record('DV-1: Direct shows the Direct table and the Team Direct Calls panel only, with no second request',
+      dv.dir === 'direct' && dv.dc && !dv.inb && !dv.ob && !dv.rings && !dv.tob && dv.tdc && dv.calls === callsBefore,
+      JSON.stringify(dv).slice(0, 200));
+    record('DV-1: one row per agent the report carries, headed Agent / Answered / missed / Ans % / Connected / not / Conn % / Avg talk',
+      dv.rows === d30.agents.length
+        && JSON.stringify(dv.heads) === JSON.stringify(['Agent', 'Answered / missed', 'Ans %', 'Connected / not', 'Conn %', 'Avg talk']),
+      JSON.stringify(dv.heads));
+    record('DV-1: the most-rung agent leads, and their bar adds up to every call that rang their line',
+      dv.barSum === (a0.ibAnswered || 0) + (a0.ibMissedFree || 0) + (a0.ibMissedBusy || 0)
+        && dv.nums.replace(/\s/g, '') === (a0.ibAnswered || 0) + '/' + (a0.ibMissedFree || 0)
+        && d30.agents.every((a) => (a.ibAnswered + a.ibMissedFree + a.ibMissedBusy) <= dv.barSum),
+      JSON.stringify({ agent: dv.agent, sum: dv.barSum, nums: dv.nums }));
+    record('DV-1: the total row carries the report\'s totals', dv.total.indexOf(d30.kpis.ibAnswered + '/' + d30.kpis.ibMissedFree) !== -1, dv.total.slice(0, 120));
+    record('DV-1: the ⓘ says what Direct counts and that busy is left out; the data gap stays a visible note',
+      /own extension/.test(dv.info) && /busy/.test(dv.info) && /not imported/.test(dv.note), JSON.stringify({ info: dv.info.slice(0, 80), note: dv.note }));
+    await page.click('#agents-dc-thead th[data-dc-sort="agent"]'); await page.waitForTimeout(300);
+    const names = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-dc-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
+    const asc = names.slice().sort((x, y) => x.localeCompare(y));
+    record('DV-1: the Direct headers sort', names.length > 1 && (names.join('|') === asc.join('|') || names.join('|') === asc.slice().reverse().join('|')), names.join(', '));
+    await page.locator('#agents-dc-tbody tr[data-agent]').first().click();
+    await page.waitForTimeout(900);
+    const dp = await page.evaluate(() => { const p = document.getElementById('ap-panel'); return { open: !!p, inDc: !!p && !!p.closest('#agents-dc-tbody') }; });
+    record('DV-1: a Direct row opens the inline agent panel beneath it', dp.open && dp.inDc, JSON.stringify(dp));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+
+    // A panel row opens the Direct view at that agent (from another view too).
+    await pick('both');
+    const target = d30.agents[d30.agents.length - 1].agent;
+    await page.click('#tdc-tbody tr.trp-row[data-tdc-agent="' + target + '"]');
+    await page.waitForTimeout(900);
+    const jumped = await page.evaluate((n) => ({ dir: document.body.getAttribute('data-dir'),
+      hit: !!document.querySelector('#agents-dc-tbody tr.trp-jump-hit[data-agent="' + n + '"]') }), target);
+    record('TDC-1: a panel row switches to the Direct view and marks that agent\'s row', jumped.dir === 'direct' && jumped.hit, JSON.stringify(jumped));
+    await pick('both');
+
+    // Retry + skeleton, on a fresh page: every load fails until the driver
+    // lets it through; then Retry is held in flight (skeleton) and lands.
+    {
+      const pf = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+      pf.on('pageerror', (e) => errors.push('tdc-retry pageerror: ' + e.message));
+      await skipTour(pf);
+      await pf.addInitScript(() => {
+        localStorage.setItem('cdr.dept.direction', 'both');
+        const set = () => { if (window.__HARNESS__) window.__HARNESS__.failOnce.getDirectCallReport = 99; else setTimeout(set, 0); };
+        set();
+      });
+      await pf.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
+      await pf.waitForTimeout(2500);
+      await openDept(pf, meta);
+      const shownIn = (p2) => p2.evaluate(() => {
+        const shown = (id) => { const x = document.getElementById(id); return !!x && getComputedStyle(x).display !== 'none'; };
+        return { skel: shown('tdc-loading'), err: shown('tdc-error'), table: shown('tdc-table-wrap'),
+                 busy: (document.getElementById('dept-team-direct') || { getAttribute: () => '' }).getAttribute('aria-busy'),
+                 msg: (document.getElementById('tdc-error-msg') || {}).textContent || '',
+                 rows: document.querySelectorAll('#tdc-tbody tr.trp-row').length };
+      });
+      const failed = await shownIn(pf);
+      record('TDC-1: a failed load shows the error and a Retry, not an empty table', failed.err && /injected failure/.test(failed.msg) && !failed.table && !failed.skel,
+        JSON.stringify(failed));
+      await pf.evaluate(() => { window.__HARNESS__.failOnce.getDirectCallReport = 0; window.__HARNESS__.delay = { getDirectCallReport: 1200 }; });
+      await pf.click('#tdc-retry');
+      await pf.waitForTimeout(250);
+      const loading = await shownIn(pf);
+      record('TDC-1: while it loads the panel shows a skeleton and says it is busy', loading.skel && loading.busy === 'true' && !loading.table && !loading.err,
+        JSON.stringify(loading));
+      await pf.waitForTimeout(1800);
+      const after = await shownIn(pf);
+      record('TDC-1: Retry loads the panel', !after.err && !after.skel && after.table && after.rows === d30.agents.length, JSON.stringify(after));
+      await pf.close();
+    }
+
     await page.click('#tdc-open-report');
     await page.waitForTimeout(1500);
     const modal = await page.evaluate(() => ({ open: getComputedStyle(document.getElementById('direct-call-modal')).display !== 'none',

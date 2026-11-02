@@ -257,23 +257,44 @@ test('8: the panel reads through the store; hover and focus on either agent tabl
 
 // ---- 5: inbound + outbound together ----------------------------------------
 
-test('5: outbound columns are ON by default; only an explicit "in" turns them off', function () {
-  const iife = S5.slice(S5.indexOf('  var obDir_ = (function () {'), S5.indexOf('})();', S5.indexOf('  var obDir_ = (function () {')) + 5);
+test('5 / DV-1: together is the default; the four views are kept as saved; anything else lands on together', function () {
+  const start = S5.indexOf('  var OB_DIRS_ = ');
+  const iife = S5.slice(start, S5.indexOf('})();', start) + 5);
   const run = function (stored) {
     const sb = { localStorage: { getItem: function () { return stored; } }, OB_DIR_KEY_: 'cdr.dept.direction' };
     vm.runInNewContext(iife, sb);
     return sb.obDir_;
   };
   assert.equal(run(null), 'both', 'unset -> together');
-  assert.equal(run('in'), 'in', 'a saved "off" stays off');
-  assert.equal(run('out'), 'both', 'the retired Outbound-only choice lands on together');
-  assert.equal(run('both'), 'both');
-  assert.match(extractFn(S5, 'obWire_'), /obDir_ = \(obDir_ === 'in'\) \? 'both' : 'in';/, 'the control is a two-state toggle');
+  ['in', 'out', 'both', 'direct'].forEach(function (d) { assert.equal(run(d), d, d + ' is kept'); });
+  assert.equal(run('sideways'), 'both', 'an unknown value -> together');
+  assert.match(extractFn(S5, 'obWire_'), /closest\('\[data-dir-pick\]'\)/, 'the control is the segmented picker');
   const sw = HTML.match(/<div id="dept-dir-switch"[^>]*>[\s\S]*?<\/div>/);
   assert.ok(sw, '#dept-dir-switch is missing');
   assert.match(sw[0], /data-admin-only/, 'still the admin-only permission container (obAllowed_)');
-  assert.match(sw[0], /data-ob-cols aria-pressed="true"/);
-  assert.ok(!/data-dir="out"/.test(sw[0]), 'the three-way switch is gone');
+  const picks = (sw[0].match(/data-dir-pick="(\w+)"/g) || []).map(function (x) { return x.replace(/.*="(\w+)"/, '$1'); });
+  assert.deepEqual(picks, ['in', 'out', 'both', 'direct'], 'Inbound, Outbound, Inbound + outbound, Direct -- in that order');
+  assert.match(sw[0], /data-dir-pick="both" aria-pressed="true"/, 'together is pressed before the client runs');
+  assert.ok(!/data-ob-cols/.test(sw[0]), 'the one-button toggle is gone');
+});
+
+test('DV-1: the agent panel finds its rows in whichever table the view shows', function () {
+  const fn = extractFn(S10, 'apTbody_');
+  assert.match(fn, /dir === 'both' \|\| dir === 'out'\) return \$\('agents-ob-tbody'\)/);
+  assert.match(fn, /dir === 'direct'\) return \$\('agents-dc-tbody'\)/);
+  assert.match(fn, /return \$\('agents-tbody'\);/);
+});
+
+test('AT-1: the Outbound / Both / Direct explainers are the table\'s ⓘ; a state note (Neon down, capture start) stays visible', function () {
+  const r = extractFn(S5, 'obViewRender_');
+  assert.ok(!/notes\.push\('Connected means/.test(r), 'the Connected definition is no longer a visible note');
+  assert.match(r, /info = data\.meta\.offRosterAgents/, 'the off-roster count goes to the tooltip');
+  assert.match(r, /notes\.push\('Neon is unreachable/, 'the fallback note stays visible');
+  assert.match(r, /notes\.push\('Outbound capture began/, 'the capture-start note stays visible');
+  assert.match(r, /note\.style\.display = notes\.length \? '' : 'none'/, 'no empty note box');
+  const info = extractFn(S5, 'obInfoSync_');
+  assert.match(info, /el\.style\.display = txt \? '' : 'none';/, 'no ⓘ on the plain inbound view');
+  assert.match(HTML, /<span id="dqe-table-info" class="side-hint-i gloss" tabindex="0" role="note"/, 'the ⓘ is keyboard-reachable');
 });
 
 // ---- 3: the accordion -------------------------------------------------------
@@ -326,4 +347,19 @@ test('3: the Outbound / Callbacks rows quote their heads, updated in place', fun
   assert.match(extractFn(S8, 'insObRender_'), /head\.textContent = insObHeadText_\(t, cur\.scope\);\s*insBriefRowFromHead_\('outbound'\);/,
     'the loaded head reaches its row');
   assert.match(extractFn(S8, 'insBriefRank_'), /outbound: 2, callbacks: 3/);
+});
+
+test('TDC-1 / DV-1: ONE getDirectCallReport per dept + window, shared by the Team Direct Calls panel and the Direct view', function () {
+  const view = extractFn(S5, 'dcViewRender_');
+  assert.ok(!/google\.script\.run/.test(view), 'the Direct view never sends its own request -- it reads TDC_');
+  assert.match(view, /var d = TDC_\.data/);
+  const n = (S5.match(/\.getDirectCallReport\(/g) || []).length;
+  assert.equal(n, 1, 'script-5 calls getDirectCallReport exactly once (tdcFetch_)');
+  const sync = extractFn(S5, 'tdcSync_');
+  assert.ok(!/addEventListener\('toggle'/.test(sync), 'no longer a lazy fold: it loads with the page');
+  assert.match(sync, /\$\('tdc-retry'\)/, 'a failed load offers Retry');
+  const render = extractFn(S5, 'tdcRender_');
+  assert.match(render, /skel\.style\.display = loading \? '' : 'none'/, 'a skeleton while it loads');
+  assert.match(render, /dcViewRender_\(\);\n  \}$/, 'every paint of the panel repaints the Direct view from the same payload');
+  assert.match(HTML, /<div id="dept-team-direct" class="dept-qcd-snapshot" data-admin-only/, 'a panel, admin-only, not a <details>');
 });
