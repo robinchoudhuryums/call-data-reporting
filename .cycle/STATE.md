@@ -13,6 +13,8 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-02 -- DEP-5 IMPLEMENTED (block 259-dep5-broad-implement).** The owner hit Apps Script's 200-version cap on a dashboard deploy. `scripts/check-version-limit.mjs`, run by deploy.sh before the gates and the push when it will roll a deployment: warn from 180, refuse at 200. 2774 tests, bites 5/5. Committed + pushed; NO PR yet (not asked).
+  **Owner-side:** delete old versions in Project History (keep the live one + last ~20), then redo the deploy.
 - **2026-10-30 (8) -- SHIPPED: [PR #399](https://github.com/robinchoudhuryums/call-data-reporting/pull/399) merged on green CI (merge 7cc99b0)** -- NX-2. Branch restarted from main.
   **Owner-side:** push cdr-import; `backfillInboundCalls(from, to, true)` + `backfillOutboundCalls(from, to, true)` over the held dates; optional NX-0 re-run (the "only record of talk" group should shrink to a handful); the Active Dept Config rows for XB-1.
   **Where I left off:** nothing open on the branch.
