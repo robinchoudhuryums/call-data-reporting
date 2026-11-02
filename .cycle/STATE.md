@@ -6,13 +6,16 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-10-29
+Updated: 2026-11-02
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-02 (2) -- Batch 1 IMPLEMENTED (block 259-batch1-esc-tr0-broad-implement).** ESC-C1 (resolve-time comment into the thread), ESC-C2 (gap preview + backfill, #88), ESC-C3 (latest comments on the card), ESC-C4 (single linked-copy delete keeps its comments), TR-0 (`diagnoseTransferRetries`, #89). 2787 tests, bites 8/8. Committed + pushed with DEP-5; NO PR yet (not asked).
+  **Owner-side:** push dashboard + cdr-import; run `previewEscalationCommentGaps` then `backfillEscalationCommentGaps`; run `diagnoseTransferRetriesAllDates` and send the TOTAL + census lines (decides TR-1); check Transfer % on the CSR Agent Metrics table on the new deployment.
+  **Next:** Batch 2 (DV-1 four-way direction switch with Outbound-only + Direct, admin-only; TDC-1 Team Direct Calls card), then Batch 3 (TR-1) after the TR-0 numbers.
 - **2026-11-02 -- DEP-5 IMPLEMENTED (block 259-dep5-broad-implement).** The owner hit Apps Script's 200-version cap on a dashboard deploy. `scripts/check-version-limit.mjs`, run by deploy.sh before the gates and the push when it will roll a deployment: warn from 180, refuse at 200. 2774 tests, bites 5/5. Committed + pushed; NO PR yet (not asked).
   **Owner-side:** delete old versions in Project History (keep the live one + last ~20), then redo the deploy.
 - **2026-10-30 (8) -- SHIPPED: [PR #399](https://github.com/robinchoudhuryums/call-data-reporting/pull/399) merged on green CI (merge 7cc99b0)** -- NX-2. Branch restarted from main.

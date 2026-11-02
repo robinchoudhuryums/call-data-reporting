@@ -470,9 +470,10 @@ S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC
     - Click "Remove Sales…": the dialog will not accept an empty reason. Enter "Dispute upheld: billing matter". The Sales card turns "Removed" (read-only, the reason shown), leaves the Pending list and the Overview count, and the thread keeps the Sales comment tagged "Sales · removed" plus a "Department removed" entry with the reason.
     - As the Sales manager: the escalation is under Status -> Removed, opens read-only with the whole thread, and no Resolve / Comment / Start controls. A crafted resolve on it is refused ("was removed from this escalation").
     - Try removing CSR, then Power, as admin: the last active department is refused ("last department still on this escalation").
-    - "Delete all linked…": a red confirm naming every department; confirming deletes every copy. A plain "Delete…" on a linked copy deletes only that copy.
+    - "Delete all linked…": a red confirm naming every department; confirming deletes every copy. A plain "Delete…" on a linked copy deletes only that copy -- and that copy's comments stay in the others' thread, still tagged with its department (ESC-C4).
+    - ESC-C1 / C3: on a pending copy, resolve it WITH a comment, then reopen it. The comment is still on the card face (author, time, department) and in Activity as a "Comment" just above "Resolved". Add comments until the thread holds four: the card shows the latest three and "View all 4 in Activity", which opens the thread.
   Expected: as described.
-  Fails if: the thread misses another department's entries or its tags; an edit changes only one copy or changes a status; a removed dept can still write, or loses read access; the removal deletes comments; the last department can be removed; or Delete removes more (or fewer) copies than it says.
+  Fails if: the thread misses another department's entries or its tags; an edit changes only one copy or changes a status; a removed dept can still write, or loses read access; the removal deletes comments; the last department can be removed; Delete removes more (or fewer) copies than it says; a single-copy delete takes its comments with it; or a resolve-time comment is missing from the thread after a reopen.
 
 S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
   Steps:

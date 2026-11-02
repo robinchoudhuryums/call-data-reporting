@@ -128,7 +128,13 @@ tests/
                               span-vs-full-scan equivalence, the ALL-HISTORY
                               ext derivation that a naive span would shrink,
                               and the wide-read count), escalations
-                              hardening (incl. ESC-R1: admin-only move of a
+                              hardening (incl. ESC-C1..C4: a resolve-time
+                              comment enters the thread before "resolved",
+                              the gap preview / backfill share one predicate
+                              behind the admin gate, the card's latest-three
+                              comments SQL + renderer, the snapshot not storing
+                              them, a single linked-copy delete moving its
+                              comments to a survivor; ESC-R1: admin-only move of a
                               pending/in-progress escalation, the reassigned
                               trail row, the new-dept notice, and Edit no
                               longer writing the dept; ESC-L1: linked copies --
@@ -222,7 +228,15 @@ tests/
                               the on-tab check (afRunCheck_) end to end, CLEAN
                               / MISMATCH / INCONCLUSIVE; validation, the page's
                               server calls and no HTML injection),
-                              transfer-filter (XB-0: transfers that came back,
+                              transfer-filter (TR-0: a transfer retried in
+                              the same department -- one case per call per
+                              department, an own-dept colleague / the same
+                              person twice / an answered first attempt is no
+                              retry, the quick-decline line and ring buckets,
+                              sub-queue folding, the outbound sender, unknown
+                              names skipped and counted, the grid pass with
+                              its Cause / Last Leg Disposition census and no
+                              number anywhere; XB-0: transfers that came back,
                               on the owner's 10/22 Sales -> CSR -> Sales call
                               -- sender / returner, a consult or a stayed
                               transfer is no bounce, came back unanswered,

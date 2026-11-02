@@ -3857,3 +3857,37 @@ When something looks wrong, before assuming a code bug, check:
     `backfillInboundCalls(from, to, true)` and `backfillOutboundCalls(from, to,
     true)` over the held dates** (the IXT-1 / OBX-1 step, #84 / #82), then
     the export triggers (#49 / #50) refresh the sheet copies.
+
+88. **Escalation comments missing from their thread -- `previewEscalationCommentGaps`
+    then `backfillEscalationCommentGaps` (ESC-C2, dashboard, editor-run,
+    admin-only, owner 2026-11-02).** Until ESC-C1, a comment given when
+    RESOLVING was saved only on the escalation row, never in its Activity
+    thread -- a pending card shows only the thread, so after a reopen the
+    resolver's comment was hidden, and the next resolve's comment overwrote it
+    (those overwritten ones are gone for good). **Once, after the dashboard
+    deploy:** run `previewEscalationCommentGaps()` (read-only; logs each
+    escalation's id, department, status, resolver and the comment's LENGTH --
+    never its text) and, after reviewing it, `backfillEscalationCommentGaps()`:
+    it adds each saved comment to its thread as a Comment by the resolver
+    (the creator when it was never resolved), timed just before the resolve.
+    Idempotent -- a re-run adds nothing, and the preview then reads 0. Also
+    since ESC-C3 each card shows its latest three comments, and since ESC-C4
+    deleting ONE linked copy keeps that copy's comments in the shared thread
+    (tagged with its department). Pinned by `escalations-hardening.test.js`.
+
+89. **Transfers RETRIED inside one department -- `diagnoseTransferRetries`
+    (TR-0, cdr-import, read-only, owner 2026-11-02).** The check for incorrect
+    transfer rejections: an agent on a call tries a person in ANOTHER
+    department, gets no answer, then tries someone else in that same
+    department on the same call (CSR -> Power rep #1 declines -> Power rep #2).
+    Run **`diagnoseTransferRetriesAllDates()`** (or one date) after the
+    cdr-import push and read the TOTAL line, then: how the first attempt ended
+    (quick decline = rang 8 s or less, rang out, voicemail), the ring-time
+    buckets, how the retry went and how soon, sender -> tried department
+    pairs, who did not answer first, the 8x8 Cause / Last Leg Disposition
+    census of those first attempts, and call-id samples for Caller Lookup.
+    It reads the same person-transfer events the capture stores (IXT-1 /
+    OXT-1, #84), so it sees only what those see; sub-queues fold into their
+    parent (#86). Employee names and call ids only; writes nothing. Its
+    numbers decide whether an admin list of these calls (TR-1) is built.
+    Pinned by `transfer-filter.test.js`.
