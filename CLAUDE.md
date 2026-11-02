@@ -195,8 +195,11 @@ node --test          # from repo root (or: npm test)
 # push also STAMPS BuildStamp.gs (UTC + git sha + branch; the committed
 # placeholder is trap-restored after) -- the Health page's build-stamp row
 # renders it, and a bare `clasp push -f` ships "unstamped", which is itself
-# the finding. Standalone:
+# the finding. DEP-5: a run that rolls a deployment also counts the project's
+# versions first (Apps Script caps them at 200; cleanup is manual, Operator
+# State #2) -- warn from 180, refuse at 200, before the gates. Standalone:
 #   node scripts/check-remote-orphans.mjs <project-dir>
+#   node scripts/check-version-limit.mjs <project-dir>
 scripts/deploy.sh .                      <dashboard-deployment-id>
 scripts/deploy.sh apps-script/cdr-report     # no id -- not a web app; the push IS the deploy
 scripts/deploy.sh apps-script/cdr-import     # no id -- ditto (triggers/menus run pushed code)

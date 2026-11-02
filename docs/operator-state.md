@@ -44,6 +44,18 @@ When something looks wrong, before assuming a code bug, check:
     deploy.sh and have run once (cdr-import reports on its next import,
     cdr-report on its next DQE build). Commits deployed NOWHERE are invisible
     here -- Manage deployments is still the check for that.
+    **The 200-version cap (DEP-5, 2026-11-02).** Apps Script keeps at most
+    200 versions per project and every web-app deploy mints one (deploy.sh's
+    `clasp deploy -i` and the editor's "New version" alike); at the cap a
+    deploy fails with "Cannot create more versions" AFTER the push. Neither
+    clasp nor the API can delete a version, so the cleanup is manual: note the
+    live deployment's version in Manage deployments, then in **Project
+    History** (clock icon) delete the oldest versions -- all but the last ~20,
+    with "Bulk delete versions" where the editor offers it (a version an active
+    deployment uses cannot be deleted). `scripts/deploy.sh` counts them first
+    (`scripts/check-version-limit.mjs`): it warns from 180 (`VERSION_WARN_AT`)
+    and refuses at 200 before the gates or the push run, so clean up on the
+    warning. Editor-made versions count too but are not checked there.
 
 3. Did the user actually have access? The `Access Control` email match is
    case-INsensitive after trim (`resolveUser_`), so check the Department cell
