@@ -1247,8 +1247,12 @@ When something looks wrong, before assuming a code bug, check:
     (`CSR=92/2`), layered over the `DEPT_ANSWER_TARGET_SEED` (CSR 92/2) --
     read via `getAnswerStandardFor_(dept)`, which every dept-context
     answer judgment resolves through. `TRANSFER_TIERS`: the CSR Transfer-%
-    tile's cut points (`deep=25, light=30, amber=35`; <=deep deeper-green,
-    <light light-green, <amber amber, >=amber red). Answer tints are
+    cut points, on the tile AND every Transfer % cell (`deep=25, light=30,
+    amber=32` since AC-5, owner 2026-11-04; <=deep deeper-green, <light
+    light-green, light..amber INCLUSIVE amber, above amber red -- one client
+    rule, `xferTier_`). **A saved `TRANSFER_TIERS` property wins over the new
+    default:** if the Standards editor shows `amber 35` (saved before AC-5),
+    set it to 32 there. Answer tints are
     THREE-tier (green at/above target, amber within the band, red past it)
     across the dashboard, agent app, emails, and digest verdicts --
     display/tone layer ONLY, so no cache bump; injected as
@@ -3702,6 +3706,18 @@ When something looks wrong, before assuming a code bug, check:
     else" line naming a CURRENT employee under a spelling the canonicalizer
     does not join is a missing alias: add it in Outlier Fix, then rebuild.
     Pinned by `tests/unit/direct-call-metrics.test.js`.
+    **DCA-2 (owner 2026-11-04, "should match with name also"; from a Direct
+    view showing three former employees with calls):** a blank or non-person
+    name is now credited by extension ONLY when that extension showed its
+    roster person's OWN name on another leg the same day; otherwise it is
+    credited to no one. So a former employee's reassigned extension lends
+    them nothing even when 8x8 leaves the name blank. Still not retroactive.
+    **`diagnoseDirectCallAttributionAllDates()`** is the Run-picker entry for
+    `'all'`; its log adds "no name and unconfirmed that day" (with extension,
+    roster name and sample call ids). **`rebuildDirectCallHeldDates(fromIso)`**
+    (#90) rebuilds every held date with today's rules; dates older than the
+    held `Call_Legs_*` tabs keep the old credit until their source is
+    re-imported (#56).
 84. **Transfers and consults to a person on the caller's journey -- IXT-1 and
     `diagnosePersonTransfers` (cdr-import, owner 2026-10-27).** Caller Lookup
     (and every journey drill) used to stop at the agent who answered when that
@@ -3913,3 +3929,24 @@ When something looks wrong, before assuming a code bug, check:
     tell them apart. Both copies changed together; after the cdr-import push a
     re-run should read about 20 quick declines and 37 voicemails where the
     first run read 1 and 56.
+90. **The per-call DIRECT list -- `direct_calls` and the agent panel's Direct
+    tab (AC-6, cdr-import + dashboard, owner 2026-11-04).** Every call to or
+    from a person's own line (the queues left out): colleagues by roster name,
+    an internal extension nobody rosters by its 8x8 name, an outside party only
+    as an HMAC hash (the inbound_calls `caller_hash` rule) -- never a number or
+    a caller's name. Written by the daily direct build into Neon
+    `direct_calls` (auto-created), each date replaced whole in the SAME
+    transaction as `direct_call_history`, so the list and the day's counts
+    cannot disagree; it uses `HMAC_SECRET` (#17). The bulk-backfill path
+    defers Neon (`skipNeon`), so it writes no list. **After the cdr-import
+    push, run `rebuildDirectCallHeldDates()` once** (cdr-import editor): it
+    reruns the direct build for every held `Call_Legs_*` date (~14 days) --
+    filling the list AND applying DCA-2 (#83) to those dates -- and logs a
+    resume date if it hits its 4.5-minute budget
+    (`rebuildDirectCallHeldDates("2026-10-28")`). Older dates show only the
+    outside callers who rang the person's line (from `inbound_calls`), with a
+    note, until their source is re-imported (#56). The dashboard serves it
+    from `getAgentDay` to ADMINS only, the Direct Calls report's vetting gate;
+    the hash is never selected. Joins the Neon backup (#28, monthly files),
+    the restore list and the retention prune (#57, the per-call horizon).
+    Pinned by `tests/unit/direct-calls-capture.test.js`.

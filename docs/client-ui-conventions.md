@@ -2357,10 +2357,17 @@ stay pinned by INV-39, INV-53 and INV-06.
   agents' largest rung / largest placed; totals and subtotals full width), the
   two counts beside each bar and the per-day pace under them. A group row over
   the headers names each direction with its colour key and is NOT sticky; the
-  header row is. Ans % and Conn % carry the change chips (`obInRateChip_`,
+  header row is -- and since AC-1 it sticks under the dept controls strip at
+  >= 1200 px (the wrapper drops `overflow-x` there; narrower keeps S2-3's
+  sideways scroll). Ans % and Conn % carry the change chips (`obInRateChip_`,
   points, the connect-rate rule); the count changes are in each bar's hover
-  text, never a chip; Talk shows inbound over outbound and sorts by their sum
-  (`talkAll` -- time on the phone, the one sum that means something); every
+  text, never a chip; Talk ("Talk · avg", AC-2) shows each direction's total
+  with its average per call (`obTalkCellHtml_`) and sorts by their sum
+  (`talkAll` -- time on the phone, the one sum that means something). The
+  Outbound-only view lists only agents who placed a call (AC-4). Every
+  Transfer % cell tints through the one `xferTier_` rule (AC-5: amber 30-32 %
+  inclusive, red above). The agent panel's admin-only Direct tab
+  (`apDirectTableHtml_`, AC-6) lists the day's direct calls; every
   header sorts by click and keyboard (`obThHtml_`). Still ONE `<tr>` per
   agent, so the agent panel, subtotals and exports keep their shape.
   `drive-deptoutbound.js` pins the cells, the group row, that every bar adds
