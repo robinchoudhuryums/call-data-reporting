@@ -13,6 +13,16 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **OWNER-SIDE OUTSTANDING (consolidated 2026-11-04; PRs #400 + #401 are merged, nothing open on the branch):**
+  1. Apps Script version cap (DEP-5): if the deploy refuses at 200, delete old versions in Project History (keep the live one + ~20).
+  2. Push dashboard + cdr-import, roll the dashboard deployment.
+  3. Once after deploy: `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (#88).
+  4. Run `diagnoseTransferRetriesAllDates` (cdr-import) and send the census -- it may move the 8 s decline line, which lives in BOTH `TF_RETRY_QUICK_SECS_` and `TR_QUICK_SECS_` (#89).
+  5. Walk S48, S58, S60, S69 (and S57 for the four-way switch); check Transfer % on the CSR Agent Call Metrics table.
+  **Follow-ons (not started, need an owner call):** exception days (#81 phase 2) are not applied to the Overview tile outbound / direct lines or the Direct Calls report; the tile's direct-line row must be released together with the Direct Calls report (one strip in `personalizeOverview_`).
+- **2026-11-02 (10) -- SHIPPED: [PR #401](https://github.com/robinchoudhuryums/call-data-reporting/pull/401) merged on green CI (merge c609554)** -- CBX-1, DL-R3, OVD-1, OVD-2 + /sync-docs. Branch restarted from main.
+  **Owner-side:** push the dashboard and roll the deployment; walk S48, S58, S60.
+  **Where I left off:** nothing open on the branch.
 - **2026-11-02 (9) -- OVD-2 (owner): the Overview tiles draw no split bar** -- the direct-line bar AND SB-3's outbound connected bar are gone; the direct-line row keeps its rate, chip and counts in words. Unit + drive-outbound-e green. **Owner-side:** unchanged (push the dashboard, roll the deployment, walk S58 + S60).
 - **2026-11-02 (8) -- DL-R3 + OVD-1 IMPLEMENTED (block 259-dlr3-ovd1-broad-implement; owner: "build both mocks, including Insights, and add the per-dept hours split").** DL-R3: Direct lines (Overview + Insights) in the Agent Call Metrics shape -- the summary is one row per hours group (work / after / all: callers, one bar with "called back / not", both rates, the median); the department / line-owner table uses the same cells with an All / Work / After hours switch fed by new per-row `work` / `after` figures (`outboundDirect:v5`); a brief grid item got `min-width: 0` (the wider table grew it under the side panels). OVD-1: each Overview tile's split bar is the DIRECT-LINE answer rate (answered / (answered + missed while free), busy shown not rated, a points chip vs the prior window, counts in words), from one grouped `direct_call_history` read on the outbound read's connection; the outbound row stays text; admin-only, stripped for every non-admin (`companyOverview:v30`).
   **Owner-side:** push the dashboard and roll the deployment; walk S58 + S60.
