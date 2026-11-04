@@ -833,12 +833,14 @@ const DEPT_ANSWER_TARGET_SEED = Object.freeze({
   'CSR': Object.freeze({ target: 92, band: 2 }),
 });
 
-// CSR Transfer-% display tiers (the My Department team-strip tile): pct <=
-// deep reads deeper-green, < light reads light-green, < amber reads amber,
-// >= amber reads red. Admin-tunable via the TRANSFER_TIERS Script Property
-// (`deep=25, light=30, amber=35`); read via getTransferTiers_. LOWER is
-// better -- a transfer is a hand-off the caller had to sit through.
-const TRANSFER_TIERS_DEFAULT = Object.freeze({ deep: 25, light: 30, amber: 35 });
+// CSR Transfer-% display tiers (the My Department team-strip tile and every
+// Transfer % cell): pct <= deep reads deeper-green, < light reads
+// light-green, light..amber (INCLUSIVE, AC-5) reads amber, above amber reads
+// red. AC-5 (owner 2026-11-04): amber 30-32 %, red above 32 %. Admin-tunable
+// via the TRANSFER_TIERS Script Property (`deep=25, light=30, amber=32`);
+// read via getTransferTiers_. LOWER is better -- a transfer is a hand-off the
+// caller had to sit through.
+const TRANSFER_TIERS_DEFAULT = Object.freeze({ deep: 25, light: 30, amber: 32 });
 
 // R25: `CSR Transfer Historical Data` layout (INV-52). The sheet is per-AGENT
 // per-DAY: A..G are Month Year | Week | Date | Agent | Trans % | Total Calls |

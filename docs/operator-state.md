@@ -1482,7 +1482,7 @@ When something looks wrong, before assuming a code bug, check:
     narrowed ones described below. One consequence worth knowing: an agent on
     two rosters who worked none of a department's queues in the window gets
     no My Department row there and is listed under "roster agents with no
-    data" instead (IDLE-1, `summary:v24`).
+    data" instead (IDLE-1, the summary cache's v24).
 
     Values: `dept` (narrow each agent-day to the department's own queues, the
     sub-queue Phase 2 behavior) | anything else, including unset, = `off` (every
@@ -1538,7 +1538,7 @@ When something looks wrong, before assuming a code bug, check:
     the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
     real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
     the canonical pair to spot-check. Reversible
-    either way with no redeploy — the scope is part of the `summary:v24` cache
+    either way with no redeploy — the scope is part of the `summary:v25` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a

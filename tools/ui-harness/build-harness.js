@@ -839,7 +839,7 @@ html = html.replace('<?!= answerTargetsJson ?>', JSON.stringify({ global: 80, ba
 html = html.replace('<?!= standardsJson ?>', JSON.stringify({
   answer: { global: 80, band: 10, direct: null, inbound: null,
             depts: { CSR: { target: 92, band: 2 } } },
-  transfer: { deep: 25, light: 30, amber: 35 },
+  transfer: { deep: 25, light: 30, amber: 32 },
   abandon: 4,
 }));
 // Update notice: empty stamp (like a pre-E3 deployment) so the notice stays

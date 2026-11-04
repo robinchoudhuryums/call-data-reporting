@@ -126,11 +126,11 @@ test('R23 dept targets: save canonicalizer throws loudly on malformed tokens', f
   assert.throws(function () { h.call('deptAnswerTargetsPropertyString_', 'CSR=junk'); }, /Could not read/);
 });
 
-test('R23 transfer tiers: seed 25/30/35, property override, canonicalizer enforces the ascending ladder', function () {
+test('R23 / AC-5 transfer tiers: seed 25/30/32, property override, canonicalizer enforces the ascending ladder', function () {
   delete h.state.props.TRANSFER_TIERS;
   h.ctx.TRANSFER_TIERS_MEMO_ = null;
   let t = h.call('getTransferTiers_');
-  assert.equal(t.deep, 25); assert.equal(t.light, 30); assert.equal(t.amber, 35);
+  assert.equal(t.deep, 25); assert.equal(t.light, 30); assert.equal(t.amber, 32);   // AC-5: amber 30-32, red above
 
   h.state.props.TRANSFER_TIERS = 'deep=20, light=28, amber=33';
   h.ctx.TRANSFER_TIERS_MEMO_ = null;

@@ -831,6 +831,17 @@
     border-bottom: 1px solid var(--line);
   }
   .agents thead th:hover { color: var(--ink); }
+  /* AC-1 (owner 2026-11-04): the Agent Call Metrics header sticks under the
+     dept controls strip while the PAGE scrolls. An overflow-x:auto wrapper is
+     a scroll container, which pins a sticky header to the wrapper (which
+     never scrolls vertically) -- so at desktop widths, where every view fits
+     its column, the wrapper stops clipping and the header rides the page.
+     Narrow screens keep the sideways scroll (S2-3) and a non-sticky header. */
+  @media (min-width: 1200px) {
+    #dept-page .agents-table-wrap { overflow-x: visible; }
+    #dept-page .agents thead th { top: var(--dept-sticky-h, 84px); }
+    #dept-page .agents-ob td.lb-bar-td { min-width: 140px; }
+  }
   .agents thead th .arrow {
     display: inline-block;
     width: 10px;
@@ -3816,6 +3827,7 @@
   .lb-talk { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.3; white-space: nowrap; }
   .lb-talk-out { color: var(--dir-out); font-size: 12px; }
   .lb-talk small { color: var(--muted); font-size: 10px; }
+  .lb-talk small.lb-att { font-size: 10.5px; }   /* AC-2: the per-call average beside the total */
   .agents-ob .ob-empty { text-align: left; color: var(--muted); padding: 14px; }
   /* D3: the Team Direct Calls side card -- a collapsed, lazy fold. */
   /* TDC-1 (owner 2026-11-02): Team Direct Calls is a panel like its two

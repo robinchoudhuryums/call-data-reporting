@@ -389,7 +389,7 @@ test('DATA-7: computeSummary_ with sections:false reads neither QCD nor CSR, and
   }
 });
 
-// summary:v24 (owner 2026-10-20, idle rows): the My Department table leaves
+// IDLE-1, summary v24 (owner 2026-10-20, idle rows): the My Department table leaves
 // out an agent whose rows in the window are ALL zero. Two writers produce such
 // rows -- the build (an agent who rang on some queue that day, every ring
 // outside the work window) and the queue split (a crossover agent narrowed to
@@ -412,7 +412,7 @@ test('v24: a build-written all-zero row gets no My Department row, and lands in 
   assert.equal(data.totals.totalAnswered, 3);
   assert.equal(data.totals.rosterAgentCount, 1);
   assert.equal(rowFor(data, 'Anna').daysActive, 1, 'Anna\'s zero day is not a ring-day');
-  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:v24:') === 0; }));
+  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:v25:') === 0; }));
   // The other consumers (agent app, digests, coaching) do not pass the flag:
   // the agent's own zero is a real figure there.
   install([dqeRow({ date: '2026-03-10', agent: 'Ben', ext: '501', rung: 0, missed: 0, answered: 0 })]);

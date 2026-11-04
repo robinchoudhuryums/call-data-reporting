@@ -285,7 +285,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v24). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v25). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -1408,7 +1408,7 @@ behind the removed button.
   translucent). `drive-subqueue.js` pins the agent-tally/subtotal-bar split.
   A row with NO calls (any row type) draws a muted dash (`.ans-idle`) instead
   of either bar -- an empty full-width track read as a broken row; the My
-  Department table no longer sends such agents at all (IDLE-1, `summary:v24`,
+  Department table no longer sends such agents at all (IDLE-1, the summary cache's v24,
   `answered-bar.test.js`). Insights follows the same rule on an agent-free
   run (IDLE-2, `insights:v26`): no card for an agent with no calls in the
   window, so the quiet group and the small-sample banner no longer count them.

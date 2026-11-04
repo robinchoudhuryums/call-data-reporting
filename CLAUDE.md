@@ -620,7 +620,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Scope (owner ruling, R18): the exclusion applies to PER-AGENT AVERAGES
   AND BENCHMARKS only -- manager volume stays in dept TOTALS and RATES.**
   Consumers are the IR team-average, the My Department team "ans/day"
-  (`summary:v24`, answered per agent per day), the Team Outbound per-day
+  (`summary:v25`, answered per agent per day), the Team Outbound per-day
   figure (`deptOutbound:v1`, Batch D), and, since R18, Insights via
   `meta.teamAvgBasis` (the gap-vs-team baseline, the call-share equal-share
   benchmark, the behind-team classification); Insights' `teamStats`,
@@ -1794,7 +1794,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" it or hardcode that default in a second
   place. `subScope` is a cache-key
-  dimension (`summary:v24`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
+  dimension (`summary:v25`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
