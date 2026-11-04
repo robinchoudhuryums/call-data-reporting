@@ -3904,3 +3904,12 @@ When something looks wrong, before assuming a code bug, check:
     (TransferRetries.gs)** once the TR-0 census says where it belongs. It reads
     only what the capture stored: calls before IXT-1 / OXT-1, or not re-imported
     since, show no retries. No property, trigger or migration.
+    **TR-2 (2026-11-04, from the first all-dates census -- 61 retries over 10
+    days, 49 of them CSR -> Power):** the 8 s line stays, but ring time now
+    decides BEFORE voicemail. 20 first attempts rang 8 s or less and were all
+    labelled voicemail, because a person who declines often sends the call
+    straight there; "voicemail" now means a ring that ran out to it (~12-17 s
+    here). 8x8's Cause ("Redirected" on both 3 s and 15 s voicemails) cannot
+    tell them apart. Both copies changed together; after the cdr-import push a
+    re-run should read about 20 quick declines and 37 voicemails where the
+    first run read 1 and 56.

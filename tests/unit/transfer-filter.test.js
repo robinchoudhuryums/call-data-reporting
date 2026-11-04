@@ -619,8 +619,10 @@ test('TR-0: CSR tries Power rep #1 (quick decline), then Power rep #2 on the sam
     ['Rhea Power', 'quickDecline', 'Omar Power', 'answered', 20]);
 });
 
-test('TR-0: the outcome classes -- voicemail beats ring time; the quick-decline line is inclusive', function () {
-  assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 3, voicemail: true }), 'voicemail');
+test('TR-0 / TR-2: the outcome classes -- ring time beats voicemail (a quick send-to-voicemail is a decline); the line is inclusive', function () {
+  assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 3, voicemail: true }), 'quickDecline');
+  assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 15, voicemail: true }), 'voicemail');
+  assert.equal(h.call('tfRetryOutcome_', { missed: true, voicemail: true }), 'voicemail');
   assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 8 }), 'quickDecline');
   assert.equal(h.call('tfRetryOutcome_', { missed: true, secs: 9 }), 'rangOut');
   assert.equal(h.call('tfRetryOutcome_', { missed: true }), 'unknown');
@@ -676,5 +678,5 @@ test('TR-0: over a grid -- the capture\'s own journeys, the Cause / Last Leg Dis
   assert.deepEqual(st.firstCallees, { 'Rhea Power (Power)': 1 });
   assert.match(st.samples[0], /^TR1 \(inbound\) Daniel \(Dishant\) Sahani \(CSR\) -> Rhea Power: quick decline after 3s \[Cause Rejected, Busy\]; 22s later -> Omar Power: answered \(Power\)$/);
   assert.ok(!JSON.stringify(st).includes('2145550177'), 'no caller number in the stats');
-  assert.match(h.call('tfRetryLine_', st), /RETRIED in the same department 1 \(inbound 1, outbound 0\); first attempt ended -- quick decline \(<=8s\) 1/);
+  assert.match(h.call('tfRetryLine_', st), /RETRIED in the same department 1 \(inbound 1, outbound 0\); first attempt ended -- quick decline incl. sent to voicemail \(<=8s\) 1/);
 });

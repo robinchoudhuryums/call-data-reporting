@@ -45,9 +45,16 @@ function trHmsToSec_(t) {
 /** PURE. How a person-transfer attempt ended: answered / voicemail / quickDecline / rangOut / unknown. */
 function trRetryOutcome_(ev) {
   if (ev.consult) return 'answered';
+  // TR-2 (owner 2026-11-04, from the TR-0 census): ring time decides BEFORE
+  // voicemail. A miss that rang TR_QUICK_SECS_ (8) s or less was sent away by the person
+  // (decline, often straight to voicemail -- 20 of 61 first attempts did,
+  // all labelled voicemail before); "voicemail" now means the ring ran out
+  // to it (~12-17 s here). 8x8's Cause cannot tell the two apart.
+  var secs = (ev.secs == null || isNaN(Number(ev.secs))) ? null : Number(ev.secs);
+  if (secs != null && secs <= TR_QUICK_SECS_) return 'quickDecline';
   if (ev.voicemail) return 'voicemail';
-  if (ev.secs == null || isNaN(Number(ev.secs))) return 'unknown';
-  return Number(ev.secs) <= TR_QUICK_SECS_ ? 'quickDecline' : 'rangOut';
+  if (secs == null) return 'unknown';
+  return 'rangOut';
 }
 
 /**
