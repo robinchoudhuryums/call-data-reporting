@@ -913,9 +913,16 @@ function tfHmsToSec_(t) {
 /** PURE. How a person-transfer attempt ended: answered / voicemail / quickDecline / rangOut / unknown. */
 function tfRetryOutcome_(ev) {
   if (ev.consult) return 'answered';
+  // TR-2 (owner 2026-11-04, from the TR-0 census): ring time decides BEFORE
+  // voicemail. A miss that rang TF_RETRY_QUICK_SECS_ (8) s or less was sent away by the person
+  // (decline, often straight to voicemail -- 20 of 61 first attempts did,
+  // all labelled voicemail before); "voicemail" now means the ring ran out
+  // to it (~12-17 s here). 8x8's Cause cannot tell the two apart.
+  var secs = (ev.secs == null || isNaN(Number(ev.secs))) ? null : Number(ev.secs);
+  if (secs != null && secs <= TF_RETRY_QUICK_SECS_) return 'quickDecline';
   if (ev.voicemail) return 'voicemail';
-  if (ev.secs == null || isNaN(Number(ev.secs))) return 'unknown';
-  return Number(ev.secs) <= TF_RETRY_QUICK_SECS_ ? 'quickDecline' : 'rangOut';
+  if (secs == null) return 'unknown';
+  return 'rangOut';
 }
 
 function tfRetryOutcomeText_(o) {
@@ -1063,8 +1070,8 @@ function tfRetryLine_(st) {
   return String(st.inboundCaptured || 0) + ' inbound + ' + String(st.outboundCaptured || 0) + ' outbound captured calls; '
     + String(st.callsWithAttempts || 0) + ' with a transfer attempt to a person (' + String(st.attempts || 0) + ' attempts); '
     + 'RETRIED in the same department ' + String(st.cases || 0) + ' (inbound ' + String(bk.inbound || 0) + ', outbound '
-    + String(bk.outbound || 0) + '); first attempt ended -- quick decline (<=' + TF_RETRY_QUICK_SECS_ + 's) '
-    + String(fo.quickDecline || 0) + ', rang out ' + String(fo.rangOut || 0) + ', voicemail ' + String(fo.voicemail || 0)
+    + String(bk.outbound || 0) + '); first attempt ended -- quick decline incl. sent to voicemail (<=' + TF_RETRY_QUICK_SECS_ + 's) '
+    + String(fo.quickDecline || 0) + ', rang out ' + String(fo.rangOut || 0) + ', voicemail after ringing out ' + String(fo.voicemail || 0)
     + ', not timed ' + String(fo.unknown || 0) + '; attempts skipped -- sender on no roster ' + String(sk.senderUnknown || 0)
     + ', callee on no roster ' + String(sk.targetUnknown || 0) + ', callee on two departments ' + String(sk.targetTwoDepts || 0);
 }

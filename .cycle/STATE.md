@@ -13,6 +13,7 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-04 -- owner ran the post-deploy steps.** ESC-C2 preview found 0 gaps (backfill added 0; #88 closed). TR-0 all-dates census: 61 retries / 10 days, 49 CSR -> Power; first attempts 1 quick decline / 4 rang out / 56 voicemail, but 20 rang <=8 s -- quick sends to voicemail. **TR-2 implemented:** ring time decides before voicemail in BOTH `tfRetryOutcome_` and `trRetryOutcome_` (8 s line unchanged), modal wording updated. **Owner-side:** push cdr-import + dashboard, re-run `diagnoseTransferRetriesAllDates` (expect ~20 quick declines / ~37 voicemail), open Admin -> Transfer retries.
 - **OWNER-SIDE OUTSTANDING (consolidated 2026-11-04; PRs #400 + #401 are merged, nothing open on the branch):**
   1. Apps Script version cap (DEP-5): if the deploy refuses at 200, delete old versions in Project History (keep the live one + ~20).
   2. Push dashboard + cdr-import, roll the dashboard deployment.

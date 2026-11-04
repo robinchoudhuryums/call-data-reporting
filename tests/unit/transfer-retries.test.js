@@ -60,6 +60,37 @@ test('TR-1: PARITY -- the dashboard mirror reads every corpus journey exactly as
   assert.equal(dash.ctx.TR_QUICK_SECS_, imp.ctx.TF_RETRY_QUICK_SECS_, 'the decline line is the same number on both sides');
 });
 
+test('TR-2: ring time decides before voicemail, in BOTH copies -- a quick send-to-voicemail is a decline', function () {
+  const cases = [
+    [{ consult: true, secs: 3 }, 'answered'],
+    [{ secs: 3, voicemail: true }, 'quickDecline'],     // sent straight to voicemail: the TR-0 census's 20
+    [{ secs: 8, voicemail: true }, 'quickDecline'],     // the line itself is a decline
+    [{ secs: 9, voicemail: true }, 'voicemail'],
+    [{ secs: 15, voicemail: true }, 'voicemail'],       // rang out to voicemail (~12-17 s timeout)
+    [{ voicemail: true }, 'voicemail'],                 // untimed voicemail stays voicemail
+    [{ secs: 2 }, 'quickDecline'],
+    [{ secs: 20 }, 'rangOut'],
+    [{}, 'unknown'],
+  ];
+  cases.forEach(function (c) {
+    assert.equal(imp.ctx.tfRetryOutcome_(c[0]), c[1], 'cdr-import ' + JSON.stringify(c[0]));
+    assert.equal(dash.ctx.trRetryOutcome_(c[0]), c[1], 'dashboard ' + JSON.stringify(c[0]));
+  });
+  assert.equal(imp.ctx.TF_RETRY_QUICK_SECS_, dash.ctx.TR_QUICK_SECS_, 'one decline line, two copies');
+  // End to end on a journey, both copies: sent to voicemail within 2 s, then a colleague answers.
+  const lk = imp.call('tfBounceLookups_', imp.call('tfRosterFromGrid_', ['CSR', 'Power'], [
+    ['Daniel (Dishant) Sahani, 352', 'Rhea Power, 401'], ['', 'Omar Power, 402'],
+  ]), [], null);
+  const j = [ans('10:00:05', 'Daniel (Dishant) Sahani', 300), att('10:02:00', 'Rhea Power', { secs: 2, voicemail: true }),
+    cons('10:02:30', 'Omar Power')];
+  const a = plain(imp.call('tfRetriesOfJourney_', j, lk.deptsOfAgent, null));
+  const d = plain(dash.call('trRetriesOfJourney_', j, dash.call('trDeptsOfAgentFn_', BY_AGENT, PARENT), null));
+  assert.deepEqual(d, a, 'the two copies agree');
+  assert.equal(a.cases.length, 1);
+  assert.equal(a.cases[0].first.outcome, 'quickDecline');
+  assert.equal(a.cases[0].second.outcome, 'answered');
+});
+
 test('TR-1: the department lookup folds a sub-queue into its parent and dedupes', function () {
   const fn = dash.call('trDeptsOfAgentFn_', { A: ['PowerSub', 'Power'], B: ['Sales'] }, { PowerSub: 'Power' });
   assert.deepEqual(plain(fn('A')), ['Power']);
