@@ -473,7 +473,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (calleeAgent && !exclusions.has(calleeAgent.name) && ibCaller && !queueExtSet.has(caller)) {
       const b = ensure(calleeAgent.name, calleeAgent.dept);
       let ev = b.ib[root];
-      if (!ev) { ev = b.ib[root] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid }; }
+      if (!ev) { ev = b.ib[root] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid, otherName: dcClean_(r[C.CALLER_NAME]) }; }
       ev.legs[cid] = true;
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       const ringEnd = (startSec != null) ? startSec + Math.max(0, dcTimeToSec_(r[C.CALLTIME])) : null;
@@ -514,7 +514,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         && !isIncomingCall(cid, parent)) {
       const b = ensure(callerAgent.name, callerAgent.dept);
       let ev = b.ob[root];
-      if (!ev) { ev = b.ob[root] = { intExt: dcOutboundSide_(dir, callee, extToAgent), start: startSec, connected: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid }; }
+      if (!ev) { ev = b.ob[root] = { intExt: dcOutboundSide_(dir, callee, extToAgent), start: startSec, connected: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid, otherName: dcClean_(r[C.CALLEE_NAME]) }; }
       ev.legs[cid] = true;   // the call's side stays its FIRST leg's (a later internal transfer leg does not make an outside call internal)
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       if (talk > 0) { ev.connected = true; ev.legTalk[cid] = Math.max(ev.legTalk[cid] || 0, talk); ev.talk = dcSumValues_(ev.legTalk); }
@@ -620,6 +620,51 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     return (x.dept || '').localeCompare(y.dept || '') || (x.agent || '').localeCompare(y.agent || '');
   });
 
+  // AC-6 (owner 2026-11-04): opt-in PER-CALL records -- one per direct call
+  // per agent, the SAME events the counts above came from (every rule above
+  // applies: queue calls out, DCA-1/2 credit, one event per root call), all
+  // hours with an in-window flag. The other party: a roster colleague by
+  // name, an internal extension nobody rosters by its 8x8 name, an outside
+  // party ONLY as its number (hashed by the writer, never stored). call_start
+  // is raw PST, the inbound_calls / outbound_calls convention.
+  let events = null;
+  if (opts.events) {
+    events = [];
+    const other = function (ev, ext, side) {
+      const ra = extToAgent[ext];
+      if (side === 'int') {
+        if (ra) return { name: ra.name, ext: ext, number: null };
+        return { name: dcPersonName_(ev.otherName) || null, ext: ext || null, number: null };
+      }
+      const d = String(ext == null ? '' : ext).replace(/\D/g, '');
+      return { name: null, ext: null, number: d.length >= 10 ? '+' + d : null };
+    };
+    Object.keys(A).forEach(function (name) {
+      const a = A[name];
+      Object.keys(a.ib).forEach(function (cid) {
+        const ev = a.ib[cid];
+        let outcome = 'answered';
+        if (!ev.answered) {
+          const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
+          outcome = (ev.start != null && busyBlocker(a.occ, ring)) ? 'missed_busy' : 'missed_free';
+        }
+        const o = other(ev, ev.caller, ev.intExt);
+        events.push({ agent: name, dept: a.dept, direction: 'in', side: ev.intExt, callId: cid, callStart: ev.start == null ? null : secToHms(ev.start),
+          ringSec: (ev.start != null && ev.ringEnd != null) ? Math.max(0, ev.ringEnd - ev.start) : null,
+          talkSec: ev.answered ? ev.talk : 0, outcome: outcome, inWindow: inWindow(ev.start),
+          otherName: o.name, otherExt: o.ext, otherNumber: o.number });
+      });
+      Object.keys(a.ob).forEach(function (cid) {
+        const ev = a.ob[cid];
+        const o = other(ev, ev.callee, ev.intExt);
+        events.push({ agent: name, dept: a.dept, direction: 'out', side: ev.intExt, callId: cid, callStart: ev.start == null ? null : secToHms(ev.start),
+          ringSec: null, talkSec: ev.connected ? ev.talk : 0, outcome: ev.connected ? 'connected' : 'not_connected',
+          inWindow: inWindow(ev.start), otherName: o.name, otherExt: o.ext, otherNumber: o.number });
+      });
+    });
+    events.sort(function (x, y) { return (x.callStart || '') < (y.callStart || '') ? -1 : ((x.callStart || '') > (y.callStart || '') ? 1 : 0); });
+  }
+
   const meta = { agents: rows.length, droppedNoStart: droppedNoStart, missedBusyTotal: missedBusyTotal, missedFreeTotal: missedFreeTotal };
   if (!extOnly) {
     const list = function (o) { return Object.keys(o).map(function (k) { return o[k]; }).sort(function (x, y) { return y.n - x.n || (x.ext < y.ext ? -1 : 1); }); };
@@ -638,7 +683,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       outsideNumber: DGI.outsideNumber, other: DGI.other, talked: DGI.talked,
       topCallees: top(DGI.callee), topContexts: top(DGI.ctx) };
   }
-  return { rows: rows, meta: meta };
+  return events ? { rows: rows, meta: meta, events: events } : { rows: rows, meta: meta };
 }
 
 /**
@@ -980,8 +1025,65 @@ function dcInlineTuple_(r) {
     .join(',') + ')';
 }
 
+// AC-6 (owner 2026-11-04): one row per direct call per agent -- the per-call
+// list behind the agent panel's Direct tab. Replaced WHOLE per date in the
+// same transaction as direct_call_history, so the list and the day's counts
+// can never disagree. Employee names and extensions only; an outside party is
+// its HMAC hash (the inbound_calls caller_hash rule, so Caller Lookup joins),
+// never a number or a CNAM name. Not retroactive: dates before the capture
+// fill only by a rebuild (rebuildDirectCallHeldDates, ~14 days held).
+function dcEnsureEventsTable_(conn) {
+  const ddl = conn.createStatement();
+  ddl.execute(
+    'CREATE TABLE IF NOT EXISTS direct_calls (' +
+    'call_date date NOT NULL, call_id text NOT NULL, agent_name text NOT NULL, department text, ' +
+    'direction text NOT NULL, side text, call_start text, ring_sec int, talk_sec int, outcome text, ' +
+    'in_window boolean, other_name text, other_ext text, other_hash text, updated_at timestamptz DEFAULT now(), ' +
+    'PRIMARY KEY (call_date, call_id, agent_name, direction))');
+  ddl.execute('CREATE INDEX IF NOT EXISTS idx_direct_calls_agent ON direct_calls (agent_name, call_date)');
+  ddl.close();
+}
+const DIRECT_EVENTS_HEAD_ = 'INSERT INTO direct_calls (call_date, call_id, agent_name, department, direction, side, '
+  + 'call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext, other_hash) VALUES ';
+const DIRECT_EVENTS_TAIL_ = ' ON CONFLICT (call_date, call_id, agent_name, direction) DO NOTHING';
+/** PURE. One events tuple; `hash` is the outside party's HMAC (or null). */
+function dcEventTuple_(isoDate, e, hash) {
+  const int = function (v) { return (v == null || !isFinite(Number(v))) ? 'NULL' : String(Math.round(Number(v))); };
+  return '(' + [neonSqlLit_(isoDate) + '::date', neonSqlLit_(e.callId), neonSqlLit_(e.agent), neonSqlLit_(e.dept || null),
+    neonSqlLit_(e.direction), neonSqlLit_(e.side || null), neonSqlLit_(e.callStart || null), int(e.ringSec), int(e.talkSec),
+    neonSqlLit_(e.outcome || null), e.inWindow ? 'TRUE' : 'FALSE', neonSqlLit_(e.otherName || null),
+    neonSqlLit_(e.otherExt || null), neonSqlLit_(hash || null)].join(',') + ')';
+}
+/** Writes one date's events on the caller's connection + transaction. Returns the count. */
+function dcWriteEvents_(conn, isoDate, events) {
+  dcEnsureEventsTable_(conn);
+  const del = conn.prepareStatement('DELETE FROM direct_calls WHERE call_date = ?::date');
+  del.setString(1, isoDate);
+  del.execute();
+  del.close();
+  if (!events || !events.length) return 0;
+  let secret = null;
+  try { secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET'); } catch (e) { secret = null; }
+  const seen = {};
+  const list = events.filter(function (e) {
+    const k = e.callId + '|' + e.agent + '|' + e.direction;
+    if (seen[k]) return false;
+    seen[k] = true;
+    return true;
+  });
+  const tuple = function (e) {
+    const h = (secret && e.otherNumber && typeof cdrHashPhone_ === 'function') ? cdrHashPhone_(e.otherNumber, secret) : null;
+    return dcEventTuple_(isoDate, e, h);
+  };
+  const res = neonInsertInline_(conn, DIRECT_EVENTS_HEAD_, DIRECT_EVENTS_TAIL_, list, tuple, function () {
+    throw new Error('direct_calls: one event tuple exceeded the statement cap (cannot happen for these short rows).');
+  });
+  dcLog_('dcWriteEvents_: wrote %s direct call(s) for %s%s.', list.length, isoDate, neonInlineNote_(res));
+  return list.length;
+}
+
 /** Upsert per-agent-day rows for one date. Best-effort; returns a status object. */
-function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
+function writeDirectCallRowsToNeon_(rows, monthYear, isoDate, events) {
   // P-5: an EMPTY row set still runs the authoritative date-DELETE below --
   // dcWriteSheet_ clears the sheet's rows for the date even when zero new
   // rows are produced, so early-returning here left the full stale row set
@@ -1009,8 +1111,10 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
       return Object.assign({ monthYear: monthYear, isoDate: isoDate }, r);
     });
     const n = dcUpsertRows_(conn, upsertRows);
+    // AC-6: the per-call list, same transaction (undefined = an older caller: left alone).
+    const ne = (events !== undefined) ? dcWriteEvents_(conn, isoDate, events) : null;
     conn.commit();
-    return { inserted: n };
+    return ne === null ? { inserted: n } : { inserted: n, events: ne };
   } catch (e) {
     try { conn.rollback(); } catch (rb) {}
     dcLog_('writeDirectCallRowsToNeon_ failed: ' + (e && e.message ? e.message : e));
@@ -1252,7 +1356,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
         strayLegs, isoDate);
     }
   }
-  const result = computeDirectCallMetrics(dayRows, maps, opts);
+  const result = computeDirectCallMetrics(dayRows, maps, Object.assign({}, opts, { events: true }));   // AC-6
   const at = result.meta && result.meta.attribution;
   if (at && (at.mismatch || at.otherCell)) {
     dcLog_('buildDirectCallFromRaw_: DCA-1 -- %s leg(s) credited to NO ONE (the 8x8 name is not the roster agent on that extension), '
@@ -1273,7 +1377,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   }
   let neon = { inserted: 0 };
   if (!opts.skipNeon) {
-    try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
+    try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate, result.events || []); }
     catch (e) {
       dcLog_('buildDirectCallFromRaw_: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e));
       neon = { inserted: 0, error: String(e && e.message ? e.message : e) };
@@ -1402,6 +1506,50 @@ function diagnoseDirectCallCounting() {
  */
 /** Editor-run: every held date (the Run picker can't pass 'all'). */
 function diagnoseDirectCallAttributionAllDates() { return diagnoseDirectCallAttribution('all'); }
+
+/**
+ * AC-6 + DCA-2 (owner 2026-11-04): editor-run. Rebuilds Direct Call History
+ * (sheet + Neon direct_call_history) AND the per-call direct_calls list for
+ * every held Call_Legs_* date from `fromIso` on (default: all held), with
+ * today's rules -- so DCA-1/DCA-2 attribution and the Direct tab reach the
+ * ~14 days the workbook still holds. Older dates need their source
+ * re-imported (Operator State #56). Stops at a 4.5-minute budget and logs the
+ * date to resume from. Writes only what the daily import writes.
+ */
+function rebuildDirectCallHeldDates(fromIso) {
+  const target = SpreadsheetApp.openById(getTargetSsId_());
+  const configSheet = target.getSheetByName('DO NOT EDIT!');
+  if (!configSheet) { dcLog_('[direct-rebuild] "DO NOT EDIT!" not found in the CDR Report spreadsheet.'); return null; }
+  const tabs = [];
+  SpreadsheetApp.getActiveSpreadsheet().getSheets().forEach(function (sh) {
+    const m = sh.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m && (!fromIso || m[1] >= fromIso)) tabs.push({ iso: m[1], sheet: sh });
+  });
+  tabs.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  const t0 = Date.now(), done = [];
+  for (let i = 0; i < tabs.length; i++) {
+    if (Date.now() - t0 > 4.5 * 60 * 1000) {
+      dcLog_('[direct-rebuild] stopped at the time budget -- run rebuildDirectCallHeldDates("%s") to continue.', tabs[i].iso);
+      break;
+    }
+    const p = tabs[i].iso.split('-');
+    const dateObj = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+    try {
+      const grid = tabs[i].sheet.getDataRange().getDisplayValues();
+      if (grid.length < 2) continue;
+      const r = buildDirectCallFromRaw_(target, grid, configSheet, { expectedDate: dateObj });
+      const neon = r.neon || {};
+      dcLog_('[direct-rebuild] %s: %s agent row(s), %s direct call(s) listed, neon=%s',
+        tabs[i].iso, String(r.wrote), String(neon.events != null ? neon.events : 0),
+        neon.unreachable ? 'unreachable' : (neon.error ? 'error: ' + neon.error : 'ok'));
+      done.push(tabs[i].iso);
+    } catch (e) {
+      dcLog_('[direct-rebuild] %s failed: %s', tabs[i].iso, e && e.message ? e.message : e);
+    }
+  }
+  dcLog_('[direct-rebuild] rebuilt %s of %s held date(s).', String(done.length), String(tabs.length));
+  return { rebuilt: done, held: tabs.length };
+}
 
 function diagnoseDirectCallAttribution(dateIso) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();

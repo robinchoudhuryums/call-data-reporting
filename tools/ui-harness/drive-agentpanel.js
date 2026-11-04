@@ -214,6 +214,26 @@ function record(name, pass, detail) {
   });
   await page.waitForTimeout(300);
   record('manager: no call id column on the outbound calls', mgrIds.n === 0 && mgrIds.head.indexOf('Call') === -1, JSON.stringify(mgrIds));
+  // AC-6 (owner 2026-11-04): the Direct tab -- calls to / from the agent's own
+  // line, colleagues by name, an outside party never by number; admin-only.
+  {
+    await page.locator('#ap-panel .ap-tab[data-ap-tab="direct"]').click();
+    await page.waitForTimeout(300);
+    const dc = await page.evaluate(() => ({
+      tab: (document.querySelector('#ap-panel .ap-tab[data-ap-tab="direct"]') || { textContent: '' }).textContent.replace(/\s+/g, ' ').trim(),
+      heads: Array.from(document.querySelectorAll('#ap-panel .ap-direct thead th')).map((th) => th.textContent),
+      rows: Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.replace(/\s+/g, ' ').trim())),
+    }));
+    record('AC-6: the Direct tab lists the agent\'s direct calls -- way, who, outcome, rang, talk',
+      /^Direct calls\s*4$/.test(dc.tab) && JSON.stringify(dc.heads) === JSON.stringify(['Time', 'Way', 'With', 'Outcome', 'Rang', 'Talk'])
+        && dc.rows.length === 4 && dc.rows[0][1] === 'Called' && /^Cal Colleague · internal$/.test(dc.rows[0][2]) && dc.rows[0][3] === 'Connected'
+        && /^Bea Buddy · internal$/.test(dc.rows[1][2]) && dc.rows[1][3] === 'Missed (on another call)'
+        && dc.rows[2][2] === 'Outside caller' && dc.rows[2][1] === 'Called them'
+        && /after hours/.test(dc.rows[3][0]) && !dc.rows.some((r) => /\d{7,}/.test(r.join(' '))), JSON.stringify(dc));
+    await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').click();
+    await page.waitForTimeout(300);
+    await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').focus();
+  }
   // UI-1 (broad-scan 2026-10-12): the tabs keyboard model -- arrows move
   // selection AND focus, only the selected tab is in the Tab order.
   await page.keyboard.press('ArrowLeft');

@@ -4341,7 +4341,10 @@
       + '<div class="dqv-ad-h">Inbound calls <span class="ap-tab-n">' + fmtNumber(inbound.length) + '</span></div>'
       + apInboundTableHtml_(inbound)
       + (showOb ? '<div class="dqv-ad-h">Outbound calls <span class="ap-tab-n">' + fmtNumber(outbound.length) + '</span></div>'
-          + apOutboundTableHtml_(outbound, meta.date) : '');
+          + apOutboundTableHtml_(outbound, meta.date) : '')
+      // AC-6: direct calls (admins only -- the server sends no source otherwise).
+      + (meta.directSource ? '<div class="dqv-ad-h">Direct calls <span class="ap-tab-n">' + fmtNumber(((data && data.direct) || []).length) + '</span></div>'
+          + apDirectTableHtml_((data && data.direct) || [], meta) : '');
   }
 
   /**

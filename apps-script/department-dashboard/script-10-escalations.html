@@ -3135,6 +3135,40 @@
       + '</tbody></table>';
   }
 
+  // AC-6 (owner 2026-11-04): the agent's DIRECT calls -- to or from their own
+  // line, the queues left out: who they tried to reach and who tried them.
+  // Admin-only (the server sends no list otherwise). Before the direct-call
+  // capture began (meta.directCaptureStart) only outside callers who rang
+  // their line are known, and the note says so.
+  var AD_DIRECT_OUTCOME_ = {
+    answered: ['good', 'Answered'], missed_free: ['warn', 'Missed'],
+    missed_busy: ['muted', 'Missed (on another call)'], missed: ['warn', 'Missed'],
+    abandoned: ['warn', 'Hung up while ringing'], connected: ['good', 'Connected'], not_connected: ['muted', 'No answer'],
+  };
+  function adDirectNoteHtml_(meta) {
+    if (!meta || meta.directSource !== 'inbound') return '';
+    return '<p class="ap-note">Only outside callers who rang this person’s line are listed for this day: calls with colleagues are recorded '
+      + (meta.directCaptureStart ? 'from ' + escapeHtml(meta.directCaptureStart) : 'once the direct-call capture begins') + '.</p>';
+  }
+  function apDirectTableHtml_(rows, meta) {
+    const note = adDirectNoteHtml_(meta);
+    if (!rows || !rows.length) return note + '<div class="ds-note">No direct calls to or from this agent’s line on this day.</div>';
+    return note + '<table class="ap-calls ap-direct"><thead><tr><th>Time</th><th>Way</th><th>With</th><th>Outcome</th><th>Rang</th><th>Talk</th></tr></thead><tbody>'
+      + rows.map(function (c) {
+          const oc = AD_DIRECT_OUTCOME_[c.outcome] || ['muted', c.outcome || '–'];
+          const way = c.direction === 'out' ? 'Called' : 'Called them';
+          return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?')
+            + (c.inWindow === false ? ' <span class="ap-path">· after hours</span>' : '') + '</td>'
+            + '<td>' + escapeHtml(way) + '</td>'
+            + '<td class="ap-party">' + escapeHtml(c.other || '–')
+            +   (c.side === 'int' ? ' <span class="ap-path">· internal</span>' : '') + '</td>'
+            + '<td><span class="cl-chip cl-chip-' + oc[0] + '">' + escapeHtml(oc[1]) + '</span></td>'
+            + '<td class="m">' + (c.ringSec != null ? fmtDuration(c.ringSec) : '–') + '</td>'
+            + '<td class="m">' + (c.talkSec ? fmtDuration(c.talkSec) : '–') + '</td></tr>';
+        }).join('')
+      + '</tbody></table>';
+  }
+
   function apDayHtml_(data, tab) {
     const meta = (data && data.meta) || {};
     const inbound = (data && data.inbound) || [];
@@ -3142,6 +3176,9 @@
     const rings = (data && data.missedRings) || [];
     const showRings = rings.length > 0 && meta.tier !== 'full';
     if (tab === 'rings' && !showRings) tab = 'in';
+    const direct = (data && data.direct) || [];
+    const showDirect = !!meta.directSource;   // AC-6: admins only (the server sends none otherwise)
+    if (tab === 'direct' && !showDirect) tab = 'in';
     const rec = (data && data.reconcile) || {};
     const tier = adTierNote_(meta);
     const tabBtn = function (key, label, n) {
@@ -3155,6 +3192,7 @@
     };
     let list;
     if (tab === 'out') list = apOutboundTableHtml_(outbound, meta.date);
+    else if (tab === 'direct') list = apDirectTableHtml_(direct, meta);
     else if (tab === 'rings') list = '<div class="ap-rings">' + rings.map(function (t) { return escapeHtml(String(t)); }).join(' · ') + '</div>';
     else list = apInboundTableHtml_(inbound);
     return '<div class="ap-daybar"><span class="ap-daybar-t">' + escapeHtml(apWeekday_(meta.date) + ' ' + (meta.date || '')) + '</span>'
@@ -3168,6 +3206,7 @@
       + '<div class="ap-tabs" role="tablist" aria-label="Calls on this day">'
       +   tabBtn('in', 'Inbound calls', inbound.length)
       +   tabBtn('out', 'Outbound calls', outbound.length)
+      +   (showDirect ? tabBtn('direct', 'Direct calls', direct.length) : '')
       +   (showRings ? tabBtn('rings', 'Missed rings', rings.length) : '')
       + '</div>'
       + '<div class="ap-list" role="tabpanel" aria-labelledby="ap-tab-' + tab + '">' + list + '</div>';

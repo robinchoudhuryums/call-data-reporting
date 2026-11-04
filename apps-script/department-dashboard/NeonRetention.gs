@@ -83,7 +83,7 @@ var NEON_RETENTION_TRIGGER_HOUR_ = 3;              // Sunday, script TZ (backup 
 // runs, so one missed or failed Saturday does not hold the prune (every row
 // old enough to prune was backed up by a run long before it) while a backup
 // that is off or keeps failing does.
-var NEON_RETENTION_PERCALL_TABLES_ = ['inbound_calls', 'outbound_calls'];
+var NEON_RETENTION_PERCALL_TABLES_ = ['inbound_calls', 'outbound_calls', 'direct_calls'];   // AC-6
 var NEON_RETENTION_BACKUP_MAX_AGE_MS_ = 15 * 24 * 3600 * 1000;
 
 /**
@@ -149,6 +149,7 @@ function neonRetentionPlan_(settings, batch) {
     journeyStep('outbound_calls'),
     deleteStep('inbound_calls', callOld),
     deleteStep('outbound_calls', callOld),
+    deleteStep('direct_calls', callOld),   // AC-6: the per-call Direct list, same horizon
     deleteStep('dqe_history', histOld),
     deleteStep('qcd_history', histOld),
   ];
