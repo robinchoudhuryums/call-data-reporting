@@ -185,3 +185,28 @@ test('H2 publishDashboardStandards_: never throws -- a missing sheet is reported
   assert.ok(/re-run setup\(\)/.test(out.error), out.error);
   delete h.state.spreadsheet;
 });
+
+// AC-5 (owner 2026-11-04): ONE client tier rule for every Transfer % surface,
+// run for real from the fragment -- amber 30-32 % inclusive, red above 32 %.
+test('AC-5: the client tier rule -- deep <= 25, green < 30, amber 30-32 inclusive, red above 32', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-5-dept.html'), 'utf8');
+  const a = src.indexOf('  var XFER_TIERS_DEFAULT_');
+  const b = src.indexOf('  function xferTierCls_');
+  assert.ok(a > 0 && b > a, 'the tier block moved');
+  const ctx = { window: {} };
+  vm.createContext(ctx);
+  vm.runInContext(src.slice(a, src.indexOf('\n', b) + 1), ctx);
+  const t = (p) => ctx.xferTier_(p);
+  assert.deepEqual([25, 26, 29.9, 30, 31, 32, 32.1, 40].map(t),
+    ['tf-deep', 'tf-light', 'tf-light', 'tf-amber', 'tf-amber', 'tf-amber', 'tf-red', 'tf-red']);
+  assert.equal(t(null), '');
+  assert.equal(ctx.xferTierCls_(31), ' tf-amber');
+  ctx.window.__STANDARDS__ = { transfer: { deep: 20, light: 28, amber: 33 } };
+  assert.equal(t(33), 'tf-amber', 'a tuned amber line is inclusive too');
+  assert.equal(t(33.5), 'tf-red');
+  // Every Transfer % surface routes through it -- no second copy of the ladder.
+  assert.equal((src.match(/tt\.amber/g) || []).length, 1, 'one comparison against amber, inside xferTier_');
+});
