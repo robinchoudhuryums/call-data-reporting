@@ -937,6 +937,36 @@ function combineSummaries_(primary, parts) {
       dropDays(r);   // Step 4
     });
   });
+  // AC-3 (owner 2026-11-04): a crossover agent's NARROWED rows partition
+  // their CALLS (summed above, correctly), but not their DAYS. Each dept's
+  // row counted every day the agent rang on its queues, so a day worked on
+  // both CSR's and Spanish's queues was two agent-days in the team
+  // "ans/day" denominator, roughly halving that agent's contribution.
+  // Count each such agent's days ONCE: drop (sum of the rows' days) minus
+  // (the union of their dates). Only rows that both entered the pair (team-
+  // average excludes contributed nothing) and are not already removed as a
+  // B-1 superset's slice (DATA-8 above).
+  const scopedDays = {};
+  parts.forEach(function (p) {
+    const ad = p && p.totals && p.totals._activeDaysByAgent;
+    if (!ad) return;
+    (p.rows || []).forEach(function (r) {
+      const name = String(r.agent || '');
+      if (!name || !r.queueScoped || !r.matchedViaRoster || supersetRoster[name]) return;
+      if (teamAvgExcludeSet_(r.dept || (p.meta && p.meta.department))[name]) return;
+      const days = ad[name];
+      if (!days) return;
+      const e = scopedDays[name] || (scopedDays[name] = { n: 0, sum: 0, union: {} });
+      e.n++;
+      e.sum += Number(r.daysActive) || 0;
+      days.forEach(function (d) { e.union[d] = true; });
+    });
+  });
+  Object.keys(scopedDays).forEach(function (name) {
+    const e = scopedDays[name];
+    if (e.n < 2) return;
+    grand.ansPerDayAgentDays -= Math.max(0, e.sum - Object.keys(e.union).length);
+  });
   grand.crossoverAgentCount = crossoverAgentCount;
   if (wantDaily) grand.daily = summaryDailyList_(grandDaily);
   // #81: every part's excluded days, merged by date (each dept's roster
@@ -1130,7 +1160,7 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
-  const cacheKey = 'summary:v24:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v25:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
@@ -1155,7 +1185,7 @@ function getDepartmentSummary(req) {
   // other depts skip computing them -- a read each, and a child's read
   // failure no longer blocks caching a payload that never contained it.
   const parts = deptSet.map(function (d) {
-    // summary:v24: dropIdle -- agents with no calls in the window get no row.
+    // IDLE-1 (summary v24): dropIdle -- agents with no calls in the window get no row.
     return computeSummary_(d, from, to, scope, { sections: d === dept, daily: true, dropIdle: true });   // Step 4: daily
   });
   // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
@@ -1398,7 +1428,7 @@ function computeSummary_(dept, from, to, scope, opts) {
   // so Digest / Coaching / the agent app / diagnostics are unchanged.
   const wantDaily = !!(opts && opts.daily);
   const dailyByAgent = {};
-  // summary:v24 (owner 2026-10): opt-in, My Department only. An agent whose
+  // IDLE-1, summary v24 (owner 2026-10): opt-in, My Department only. An agent whose
   // window rows are ALL zero gets no table row -- see the finalize loop.
   const dropIdle = !!(opts && opts.dropIdle);
   const idleAgents = {};
@@ -1543,10 +1573,15 @@ function computeSummary_(dept, from, to, scope, opts) {
 
   // Finalize per-agent rows.
   const rows = [];
+  // AC-3: each agent's active dates (a ring that day), for combineSummaries_
+  // to count a crossover agent's working day ONCE across depts. Rides on
+  // totals NON-ENUMERABLE below (never serialized, never cached).
+  const activeDaysByAgent = {};
   for (const k in acc) {
     if (!Object.prototype.hasOwnProperty.call(acc, k)) continue;
     const a = acc[k];
-    // summary:v24 (owner 2026-10): an agent with rows in the window but no
+    activeDaysByAgent[a.agent] = Object.keys(a.days);
+    // IDLE-1, summary v24 (owner 2026-10): an agent with rows in the window but no
     // calls in them is not shown. Two things write such rows: the build writes
     // one for every agent who rang on any queue that day, even when every ring
     // fell outside the work window, and the queue split (QUEUE_SPLIT_SCOPE=
@@ -1696,6 +1731,7 @@ function computeSummary_(dept, from, to, scope, opts) {
   });
   totals.ansPerDayAnswered = teamAns;
   totals.ansPerDayAgentDays = teamDays;
+  Object.defineProperty(totals, '_activeDaysByAgent', { value: activeDaysByAgent, enumerable: false });   // AC-3
   totals.ansPerDay = teamDays ? round1_(teamAns / teamDays) : null;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
   // Sub-queue Phase 1: every row names its OWN department, so a combined

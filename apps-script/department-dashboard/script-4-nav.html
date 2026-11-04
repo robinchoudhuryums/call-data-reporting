@@ -1635,7 +1635,7 @@
       var t = s.transfer || {};
       if (t.deep != null && t.light != null && t.amber != null) {
         set('transfer', 'deeper green at ' + t.deep + '% or lower, light green under ' + t.light
-          + '%, amber ' + t.light + '–' + t.amber + '%, red at ' + t.amber + '% or higher.');
+          + '%, amber ' + t.light + '–' + t.amber + '%, red above ' + t.amber + '%.');
       }
     } catch (e) { /* the static fallback text stands */ }
   })();

@@ -30,10 +30,19 @@ function row(o) {
   r[5]  = o.dir || '';                   // Incoming | Internal | Outgoing
   r[6]  = o.talk || '';                  // H:MM:SS
   r[7]  = o.callTime || '';              // H:MM:SS (ring/hold duration)
+  // DCA-2: a real leg names the person on a roster extension (8x8's display
+  // name), so an unnamed fixture side on a roster extension gets that name;
+  // pass `callerName: ''` / `calleeName: ''` explicitly for a BLANK-name leg.
+  const nameOf = function (ext, given) {
+    if (given !== undefined) return given;
+    const k = String(ext || '');
+    const a = MAPS.extToAgent[k] || (typeof D2MAPS !== 'undefined' && D2MAPS.extToAgent[k]);
+    return a ? a.name : '';
+  };
   r[8]  = o.caller || '';                // CALLER ext/number (col I)
-  r[9]  = o.callerName || '';            // CALLER NAME (col J)
+  r[9]  = nameOf(o.caller, o.callerName); // CALLER NAME (col J)
   r[10] = o.callee || '';               // CALLEE ext/number (col K)
-  r[11] = o.calleeName || '';            // CALLEE NAME (col L) -- e.g. 'A_Q_CSR'
+  r[11] = nameOf(o.callee, o.calleeName); // CALLEE NAME (col L) -- e.g. 'A_Q_CSR'
   r[13] = o.ctx || '';                   // CONTEXT ('CallQueue...' => queue leg)
   r[14] = o.parent || '';                // PARENT_CALL (col O)
   r[22] = o.callerId || '';              // CALLER_ID (col W) -- DQE queue marker
@@ -749,16 +758,36 @@ test('DCA-1: when the new owner is ALSO on the roster with that extension, the c
   assert.equal(res.meta.attribution.otherCell, 1);
 });
 
-test('DCA-1: a blank or non-person name keeps the extension-only rule unchanged (owner decides after step 0)', function () {
-  const res = compute(grid([
-    row({ cid: 'B1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230000', callee: '101', answered: true }),
+test('DCA-2: a blank or non-person name is credited by extension only when that extension named its roster person the same day', function () {
+  const blanks = [
+    row({ cid: 'B1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230000', callee: '101', calleeName: '', answered: true }),
     row({ cid: 'B2', start: D + '10:05:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230001', callee: '101', calleeName: 'N/A', answered: true }),
     row({ cid: 'B3', start: D + '10:10:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230002', callee: '101', calleeName: 'Voicemail', answered: true }),
     row({ cid: 'B4', start: D + '10:15:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230003', callee: '101', calleeName: '+15551239999', answered: true }),
-  ]), MAPS, {});
-  assert.equal(rowFor(res, 'Anna').ib_ext_answered, 4);
+  ];
+  // Only blank / non-person names on 101 all day: nobody shows it is still Anna's -> credited to no one.
+  let res = compute(grid(blanks), MAPS, {});
+  assert.equal(rowFor(res, 'Anna'), undefined, 'a reassigned extension\'s unnamed legs do not reach the former employee');
+  assert.equal(res.meta.attribution.blankUnconfirmed, 4);
+  assert.equal(res.meta.attribution.blank, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(res.meta.attribution.blankUnconfirmedBy)),
+    [{ ext: '101', rosterName: 'Anna', n: 4, samples: ['B1', 'B2', 'B3', 'B4'] }]);
+  // One leg that day names Anna on 101: the blank legs are hers again.
+  res = compute(grid(blanks.concat([
+    row({ cid: 'N1', start: D + '11:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230009', callee: '101', calleeName: 'Anna', answered: true }),
+  ])), MAPS, {});
+  assert.equal(rowFor(res, 'Anna').ib_ext_answered, 5);
   assert.equal(res.meta.attribution.blank, 4);
-  assert.equal(res.meta.attribution.mismatch, 0);
+  assert.equal(res.meta.attribution.blankUnconfirmed, 0);
+  // Somebody ELSE named on 101 proves nothing for Anna: the blanks stay uncredited.
+  res = compute(grid(blanks.concat([
+    row({ cid: 'N2', start: D + '11:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:10', caller: '+15551230009', callee: '101', calleeName: 'Nina New', answered: true }),
+  ])), MAPS, {});
+  assert.equal(rowFor(res, 'Anna'), undefined);
+  assert.equal(res.meta.attribution.mismatch, 1);
+  assert.equal(res.meta.attribution.blankUnconfirmed, 4);
+  // The pre-DCA-1 rule (the diagnostic's comparison) still credits by extension.
+  assert.equal(rowFor(compute(grid(blanks), MAPS, { extOnly: true }), 'Anna').ib_ext_answered, 4);
   assert.equal(h.call('dcPersonName_', 'A_Q_CSR'), '');
   assert.equal(h.call('dcPersonName_', 'CallRecording (595)'), '');
   assert.equal(h.call('dcPersonName_', 'Nina New'), 'Nina New');
@@ -817,7 +846,7 @@ test('DCA-1 step 0: the diagnostic folds days, lists shared extensions, the cont
   const t = J(h.call('dcAttributionAcrossDays_', [
     day('2026-03-09', [
       row({ cid: 'A1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina New', answered: true }),
-      row({ cid: 'A2', start: D + '10:05:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230001', callee: '101', answered: true }),
+      row({ cid: 'A2', start: D + '10:05:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230001', callee: '101', calleeName: '', answered: true }),
       row({ cid: 'A3', start: D + '10:10:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230002', callee: '102', calleeName: 'Bob', answered: true }),
     ]),
     day('2026-03-10', [
@@ -825,11 +854,15 @@ test('DCA-1 step 0: the diagnostic folds days, lists shared extensions, the cont
       row({ cid: 'X9', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230004', callee: '101', calleeName: 'Nina New', answered: true }),   // a 03/09 leg on the 03/10 tab: dropped
     ]),
   ], maps));
-  assert.deepEqual(t.days.map((d) => [d.iso, d.match, d.blank, d.mismatch]), [['2026-03-09', 1, 1, 1], ['2026-03-10', 0, 0, 1]]);
+  // DCA-2: A2's blank name on 101, a day 101 named only Nina New -> credited to no one.
+  assert.deepEqual(t.days.map((d) => [d.iso, d.match, d.blank, d.blankUnconfirmed, d.mismatch]),
+    [['2026-03-09', 1, 0, 1, 1], ['2026-03-10', 0, 0, 0, 1]]);
   assert.deepEqual(t.mismatches.map((m) => [m.ext, m.rosterName, m.legName, m.n, m.samples]), [['101', 'Anna', 'Nina New', 2, ['A1', 'A4']]]);
+  assert.deepEqual(t.blankUnconfirmedBy.map((m) => [m.ext, m.rosterName, m.n, m.samples]), [['101', 'Anna', 1, ['A2']]]);
+  assert.equal(t.blankUnconfirmed, 1);
   assert.deepEqual(t.shared.map((x) => x.ext), ['101']);
-  assert.deepEqual(t.blankOnContested, [{ ext: '101', n: 1 }]);
-  assert.deepEqual(t.changes, [{ agent: 'Anna (CSR)', was: 3, now: 1 }]);
+  assert.deepEqual(t.blankOnContested, [], 'no confirmed blank leg sits on a contested extension');
+  assert.deepEqual(t.changes, [{ agent: 'Anna (CSR)', was: 3, now: 0 }]);
   assert.ok(!JSON.stringify(t).includes('555123'), 'no phone number anywhere in the result');
 });
 

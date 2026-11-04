@@ -143,6 +143,9 @@ function runNeonBackup_() {
       // trigger armed. The table is auto-created by the capture's first run;
       // until then the catch below reports a clean not-created-yet skip.
       { table: 'outbound_calls',      dateCol: 'call_date', cast: 'date',        orderBy: 'call_date, call_id' },
+      // AC-6: direct_calls (the per-call Direct tab list) has no sheet primary
+      // either -- the P5 lesson, applied as the capture ships.
+      { table: 'direct_calls',        dateCol: 'call_date', cast: 'date',        orderBy: 'call_date, call_id, agent_name, direction' },
     ];
     var journeyDays = nbJourneyDays_();
     for (var m = 0; m < monthlies.length; m++) {
@@ -1082,7 +1085,7 @@ function nbScrubMonthSafe_(folder, ym, currentYm, todayIso) {
 
 // ── Restore (either store) ────────────────────────────────────────────
 
-var NB_RESTORE_TABLES_ = ['escalations', 'escalation_activity', 'inbound_calls', 'outbound_calls',
+var NB_RESTORE_TABLES_ = ['escalations', 'escalation_activity', 'inbound_calls', 'outbound_calls', 'direct_calls',
                           'dept_config', 'alert_config', 'digest_config'];
 var NB_RESTORE_BATCH_ = 500;
 

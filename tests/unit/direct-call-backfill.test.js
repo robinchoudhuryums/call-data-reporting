@@ -273,6 +273,7 @@ test('S2C-3: an other-date leg ANYWHERE in the grid is dropped, so it cannot cou
       const r = new Array(26).fill('');
       r[0] = cid; r[2] = start; r[5] = dir; r[6] = talk; r[7] = calltime;
       r[8] = caller; r[10] = callee; r[14] = 'N/A'; r[23] = mis; r[25] = ans;
+      r[11] = callee === '201' ? 'Anna' : '';   // DCA-2: 8x8 names the person on the extension
       return r;
     }
     const rawDisp = [new Array(26).fill('H'),

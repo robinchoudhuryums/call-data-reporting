@@ -751,3 +751,41 @@ test('R49: an early CSR-family leg appears in the split AND still sums to the ro
   assert.equal(sumR, row[5], 'split rung sums to F');
   assert.equal(sumA, row[7], 'split answered sums to H');
 });
+
+// AC-3 (owner 2026-11-04): two NARROWED rows of one crossover agent partition
+// their calls but not their days -- the team ans/day must count each working
+// day once, or a CSR + Spanish agent's day reads as two agent-days.
+test('AC-3: the combined ans/day counts a crossover agent\'s day once across their narrowed rows', function () {
+  const part = function (dept, ans, days, extra) {
+    const all = ans + (extra ? extra.ans : 0);
+    const t = { totalRung: all, totalMissed: 0, totalAnswered: all, totalUnique: all, tttSeconds: ans * 10,
+                rosterAgentCount: 1 + (extra ? 1 : 0), queueOnlyAgentCount: 0,
+                ansPerDayAnswered: ans + (extra ? extra.ans : 0), ansPerDayAgentDays: days.length + (extra ? extra.days.length : 0) };
+    const ad = { Anna: days };
+    const rows = [{ agent: 'Anna', dept: dept, matchedViaRoster: true, queueScoped: true, totalRung: ans, totalMissed: 0,
+                    totalAnswered: ans, totalUnique: ans, tttSeconds: ans * 10, daysActive: days.length }];
+    if (extra) {
+      ad.Bob = extra.days;
+      rows.push({ agent: 'Bob', dept: dept, matchedViaRoster: true, queueScoped: true, totalRung: extra.ans, totalMissed: 0,
+                  totalAnswered: extra.ans, totalUnique: extra.ans, tttSeconds: 0, daysActive: extra.days.length });
+    }
+    Object.defineProperty(t, '_activeDaysByAgent', { value: ad, enumerable: false, configurable: true });
+    return { meta: { department: dept }, rows: rows, totals: t, qcd: null, csrTransfer: null,
+             diagnostics: { rosterWithNoData: [], queueOnlyMatched: [] } };
+  };
+  // Anna: 40 CSR + 5 Spanish answers on the SAME two days; Bob (CSR only): 20 on one day.
+  const a = part('CSR', 40, ['2026-10-01', '2026-10-02'], { ans: 20, days: ['2026-10-01'] });
+  const b = part('Spanish', 5, ['2026-10-01', '2026-10-02']);
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.totalAnswered, 65, 'calls still partition and sum');
+  assert.equal(r.totals.ansPerDayAnswered, 65);
+  assert.equal(r.totals.ansPerDayAgentDays, 3, 'Anna 2 days (not 4) + Bob 1');
+  assert.equal(r.totals.ansPerDay, 21.7, '65 / 3 -- not 65 / 5');
+  // Different days are both real: one CSR day, one Spanish day = 2 agent-days.
+  const c = part('CSR', 40, ['2026-10-01']), d = part('Spanish', 5, ['2026-10-02']);
+  assert.equal(hData.call('combineSummaries_', c, [c, d]).totals.ansPerDayAgentDays, 2);
+  // A part without the day map (older caller) is left as it was.
+  const e = part('CSR', 40, ['2026-10-01']), f = part('Spanish', 5, ['2026-10-01']);
+  Object.defineProperty(f.totals, '_activeDaysByAgent', { value: undefined });
+  assert.equal(hData.call('combineSummaries_', e, [e, f]).totals.ansPerDayAgentDays, 2, 'no map, no correction');
+});

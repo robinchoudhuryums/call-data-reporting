@@ -933,9 +933,25 @@ in the response.
 > extension with that name -- `dcBuildExtMaps_` now lists EVERY cell per
 > extension (`extCands`) -- or NO ONE when it names somebody else. A blank or
 > non-person name (`dcPersonName_`: N/A, a queue, voicemail, anything with a
-> digit) keeps the extension-only rule unchanged, pending the owner's call on
-> `diagnoseDirectCallAttribution`. Busy time follows the same rule. Not
-> retroactive.
+> digit) is credited by extension ONLY when that extension showed its roster
+> person's own name on another leg the same day (DCA-2, owner 2026-11-04: a
+> one-pass `ownerSeen` set, `confirmBlank`), else to no one. Busy time follows
+> the same rule. Not retroactive (`rebuildDirectCallHeldDates`, #90, rebuilds
+> the held dates).
+>
+> **The per-call list (AC-6, Operator State #90).** With `opts.events` the same
+> pass emits one record per direct call per agent -- every hour, flagged
+> `inWindow`, outcome answered / missed_free / missed_busy / connected /
+> not_connected, the other party as a roster colleague, an unrostered
+> extension's 8x8 name, or (outside) a number the writer hashes and drops.
+> `buildDirectCallFromRaw_` always asks for them and `writeDirectCallRowsToNeon_`
+> replaces the date in Neon `direct_calls` inside the counts' transaction, so
+> the list and the day's counts share every rule above. The bulk path's
+> `skipNeon` writes no list. The dashboard reads it in `agentDayFetchCapture_`
+> (its own best-effort read; never the hash) and `agentDayDirect_` serves it
+> to admins as the agent panel's Direct tab, falling back -- before the
+> capture's first date -- to the outside callers in `inbound_calls` (no entry
+> queue, `first_agent` = the agent).
 
 **Direct-extension call metrics are a separate population from the
 DQE/QCD queue metrics, with a "busy" carve-out.** `cdr-import/directCallMetrics.js`

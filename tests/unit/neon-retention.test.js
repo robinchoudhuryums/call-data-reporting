@@ -60,11 +60,11 @@ test('R27: the call-row floor is strictly above the coverage checks\' max window
   assert.ok(floors.historyMonths >= 25);
 });
 
-test('R27: the plan is six ctid-batched statements over exactly the retained tables', function () {
+test('R27 / AC-6: the plan is seven ctid-batched statements over exactly the retained tables', function () {
   const plan = h.call('neonRetentionPlan_', { journeyDays: 90, callDays: 400, historyMonths: 25 }, 5000);
   assert.deepEqual(JSON.parse(JSON.stringify(plan.map(function (s) { return s.key; }))),
     ['inbound_calls:journey', 'outbound_calls:journey', 'inbound_calls:rows',
-     'outbound_calls:rows', 'dqe_history:rows', 'qcd_history:rows']);
+     'outbound_calls:rows', 'direct_calls:rows', 'dqe_history:rows', 'qcd_history:rows']);
   plan.forEach(function (s) {
     assert.match(s.sql, /WHERE ctid IN \(SELECT ctid FROM \w+ WHERE .* LIMIT 5000\)$/, s.key + ' is ctid-batched');
     assert.ok(!/call_history_phones|call_history_dept|direct_call_history|escalation|coaching/.test(s.sql),
@@ -72,7 +72,8 @@ test('R27: the plan is six ctid-batched statements over exactly the retained tab
   });
   assert.match(plan[0].sql, /^UPDATE inbound_calls SET journey = NULL .*journey IS NOT NULL AND call_date < CURRENT_DATE - 90 /);
   assert.match(plan[2].sql, /^DELETE FROM inbound_calls .*call_date < CURRENT_DATE - 400 /);
-  assert.match(plan[4].sql, /^DELETE FROM dqe_history .*call_date < \(CURRENT_DATE - INTERVAL '25 months'\)::date /);
+  assert.match(plan[4].sql, /^DELETE FROM direct_calls .*call_date < CURRENT_DATE - 400 /, 'AC-6: the per-call direct list, the per-call horizon');
+  assert.match(plan[5].sql, /^DELETE FROM dqe_history .*call_date < \(CURRENT_DATE - INTERVAL '25 months'\)::date /);
   // Operator input reaches the SQL only as integers.
   const evil = h.call('neonRetentionPlan_', { journeyDays: '90; DROP TABLE x', callDays: 400, historyMonths: 25 }, 10);
   assert.match(evil[0].sql, /CURRENT_DATE - 90 LIMIT 10\)$/);
@@ -112,10 +113,10 @@ test('R27: a step keeps batching until a batch comes back short', function () {
   const res = h.call('neonRetentionExecute_', c, plan(3), { batch: 3 });
   const inb = res.steps[0];
   assert.equal(inb.rows, 7); assert.equal(inb.batches, 3); assert.equal(inb.done, true);
-  assert.equal(res.steps[5].batches, 1, 'a zero first batch ends the step');
+  assert.equal(res.steps[6].batches, 1, 'a zero first batch ends the step');
   assert.equal(res.rows, 7);
   assert.equal(res.errors.length, 0);
-  assert.equal(c.seen.length, 3 + 1 + 1 + 1 + 1 + 1, 'one statement per batch, every step visited');
+  assert.equal(c.seen.length, 3 + 1 + 1 + 1 + 1 + 1 + 1, 'one statement per batch, every step visited');
 });
 
 test('R27: the run budget stops batching and is reported ok (it continues next run)', function () {
@@ -138,7 +139,7 @@ test('R27: a not-yet-created table is a clean per-step skip; a throwing step is 
   const res = h.call('neonRetentionExecute_', c, plan(5), { batch: 5 });
   assert.equal(res.steps[1].skipped, 'table not created yet');
   assert.equal(res.steps[2].error, 'deadlock detected');
-  assert.equal(res.steps[4].rows, 2, 'steps after the throw still run');
+  assert.equal(res.steps[5].rows, 2, 'steps after the throw still run');
   assert.deepEqual(JSON.parse(JSON.stringify(res.errors)), ['inbound_calls:rows: deadlock detected']);
   const s = h.call('neonRetentionSummary_', { journeyDays: 90, callDays: 400, historyMonths: 25 }, res);
   assert.match(s, /^FAILED 1 step\(s\) threw/);
@@ -234,7 +235,7 @@ test('ENG-2: with no healthy backup the run prunes ONLY the sheet-primary tables
   // Opt-out: every step runs again.
   runWith({ 'DELETE FROM inbound_calls': [9] }, null, { NEON_RETENTION_WITHOUT_BACKUP: 'true' });
   const out2 = h.call('runNeonRetentionPrune');
-  assert.equal(out2.steps.length, 6);
+  assert.equal(out2.steps.length, 7);   // AC-6: + direct_calls:rows
   assert.match(h.state.props.NEON_RETENTION_LAST_RESULT, /^ok pruned 9 row\(s\)/);
 });
 

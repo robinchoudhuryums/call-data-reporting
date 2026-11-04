@@ -654,6 +654,15 @@ tests/
                               as its own neon-rename row, and the Neon-only
                               retry of a failed mirror),
                               orphan-roster-add (the New-hire flow),
+                              direct-calls-capture (AC-6: the per-call direct
+                              list -- cdr-import emits one record per direct call
+                              from the SAME events as the daily counts, colleagues
+                              by roster name, an outside party only as a number the
+                              writer hashes; the stored row never holds the number;
+                              written in the counts' transaction; the dashboard
+                              serves it from its first date and falls back to the
+                              outside callers in inbound_calls before that;
+                              admin-only, the hash never selected),
                               agent-day (6d: the agent-day interaction view --
                               the three-tier horizon decided by what CAME
                               BACK rather than the calendar, the journey-LIKE

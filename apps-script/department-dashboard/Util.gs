@@ -1474,7 +1474,7 @@ function getAnswerStandardFor_(dept) {
   };
 }
 
-/** PURE. Tolerant TRANSFER_TIERS parser (`deep=25, light=30, amber=35`). */
+/** PURE. Tolerant TRANSFER_TIERS parser (`deep=25, light=30, amber=32`). */
 function parseTransferTiers_(raw) {
   const out = {};
   String(raw == null ? '' : raw).split(/[,\n]/).forEach(function (tok) {

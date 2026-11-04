@@ -501,6 +501,46 @@ function agentDayReconcile_(counts, day, tier) {
              + dqeAnswered + '. Calls outside the work window are counted by one and not the other.' };
 }
 
+/**
+ * PURE. AC-6 (owner 2026-11-04): the agent's DIRECT calls for the day --
+ * calls to or from their own line, the queues left out -- as one list:
+ *   source 'capture' -- cdr-import's direct_calls (every direct call, both
+ *     directions, colleagues by name, an outside party as "Outside caller" /
+ *     "Outside number"), from the date it began;
+ *   source 'inbound' -- before then, only the OUTSIDE callers who rang their
+ *     line first, from inbound_calls (no entry queue, first_agent = them);
+ *   source null -- neither could be read.
+ * Each row: { callId, callStart (raw PST), direction 'in'|'out', side
+ * 'int'|'ext', other, outcome, ringSec, talkSec, inWindow }.
+ */
+function agentDayDirect_(cap, agentName, dateIso) {
+  var start = cap && cap.directStart ? String(cap.directStart) : null;
+  var label = function (r) {
+    if (r.side === 'int') return r.other_name || (r.other_ext ? 'Extension ' + r.other_ext : 'A colleague');
+    return r.direction === 'in' ? 'Outside caller' : 'Outside number';
+  };
+  if (cap && cap.direct && (cap.direct.length || (start && dateIso >= start))) {
+    var rows = cap.direct.map(function (r) {
+      return { callId: r.call_id || null, callStart: r.call_start || null, direction: r.direction, side: r.side || null,
+        other: label(r), outcome: r.outcome || null,
+        ringSec: r.ring_sec == null ? null : Number(r.ring_sec), talkSec: Number(r.talk_sec) || 0,
+        inWindow: r.in_window !== false };
+    });
+    var trunc = rows.length > AGENT_DAY_MAX_CALLS_;
+    return { rows: trunc ? rows.slice(0, AGENT_DAY_MAX_CALLS_) : rows, source: 'capture', captureStart: start, truncated: trunc };
+  }
+  if (!cap || !cap.available) return { rows: [], source: null, captureStart: start, truncated: false };
+  var ib = (cap.inbound || []).filter(function (r) {
+    return !r.is_internal && !String(r.entry_queue || '').trim() && String(r.first_agent || '').trim() === agentName;
+  }).map(function (r) {
+    var disp = String(r.disposition || '');
+    return { callId: r.call_id || null, callStart: r.call_start || null, direction: 'in', side: 'ext', other: 'Outside caller',
+      outcome: disp === 'answered' ? 'answered' : (disp === 'abandoned' ? 'abandoned' : 'missed'),
+      ringSec: null, talkSec: 0, inWindow: true };
+  });
+  return { rows: ib, source: 'inbound', captureStart: start, truncated: false };
+}
+
 /** Empty payload skeleton -- one shape whatever happened, so the client never branches on undefined. */
 function emptyAgentDay_(scope, horizons) {
   return {
@@ -511,6 +551,7 @@ function emptyAgentDay_(scope, horizons) {
       journeyHorizonDays: horizons.journeyDays, captureHorizonDays: horizons.callDays,
       ageDays: null, truncated: false, neonAvailable: false, outboundCaptured: false,
       outboundCaptureStart: AGENT_DAY_OUTBOUND_CAPTURE_START_,
+      directSource: null, directCaptureStart: null,   // AC-6
       tzLabel: 'CST', computeMs: 0,
     },
     day: null,
@@ -518,6 +559,7 @@ function emptyAgentDay_(scope, horizons) {
     reconcile: { checked: false, exact: false, note: null },
     inbound: [],
     outbound: [],
+    direct: [],   // AC-6
     missedRings: [],
   };
 }
@@ -551,7 +593,7 @@ function agentDayLikePattern_(agentName) {
 
 function agentDayFetchCapture_(agentName, dateIso, opts) {
   var out = { available: false, inbound: [], outbound: [], anyJourney: false,
-              insurerIn: [], insurerOut: [], callbackMatches: [] };
+              insurerIn: [], insurerOut: [], callbackMatches: [], direct: null, directStart: null };
   if (typeof getDashboardNeonConn_ !== 'function') return out;
   var conn = null;
   try {
@@ -631,6 +673,31 @@ function agentDayFetchCapture_(agentName, dateIso, opts) {
         + 'JOIN insurance_numbers i ON i.phone_hash = o.callee_hash '
         + 'WHERE o.call_date = ?::date AND o.agent_name = ?) t',
         [dateIso, agentName]);
+    }
+    // AC-6 (owner 2026-11-04): the agent's DIRECT calls (calls to / from
+    // their own line, not the queues), from cdr-import's direct_calls. Its
+    // own best-effort read: before cdr-import has created the table, or on
+    // any failure, `direct` stays null and the caller falls back to the
+    // outside callers in inbound_calls. The outside party's hash is never
+    // selected.
+    try {
+      var dq = conn.prepareStatement("SELECT json_build_object('rows', (SELECT COALESCE(json_agg(t ORDER BY t.call_start), '[]') FROM ("
+        + 'SELECT call_id, direction, side, call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext '
+        + 'FROM direct_calls WHERE call_date = ?::date AND agent_name = ? '
+        + 'LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t), '
+        + "'start', (SELECT MIN(call_date)::text FROM direct_calls))::text AS j");
+      dq.setString(1, dateIso);
+      dq.setString(2, agentName);
+      var drs = dq.executeQuery();
+      var dj = drs.next() ? drs.getString('j') : null;
+      drs.close(); dq.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(dj ? dj.length : 0, 'agentDay');
+      var dobj = JSON.parse(dj || '{}');
+      out.direct = dobj.rows || [];
+      out.directStart = dobj.start || null;
+    } catch (eD) {
+      Logger.log('agentDayFetchCapture_ direct read skipped: ' + (eD && eD.message ? eD.message : eD));
+      out.direct = null;
     }
     // Every same-day inbound call from the number this agent dialled; the
     // caller keeps the latest one BEFORE the dial that the viewer may see.
@@ -780,6 +847,14 @@ function getAgentDay(req) {
 
   out.inbound = inbound;
   out.outbound = outbound;
+  // AC-6: the Direct tab -- ADMIN-ONLY while the Direct Calls report is
+  // vetted (its own gate); everyone else gets no list and no source.
+  var dir = isAdmin ? agentDayDirect_(cap, scope.agentName, scope.date)
+    : { rows: [], source: null, captureStart: null, truncated: false };
+  out.direct = dir.rows;
+  out.meta.directSource = dir.source;
+  out.meta.directCaptureStart = dir.captureStart;
+  if (dir.truncated) out.meta.truncated = true;
   out.counts = agentDayCounts_(inbound, outbound);
   out.meta.tier = agentDayTier_(cap.inbound.length, anyJourney, cap.outbound.length);
   out.meta.ageDays = agentDayAgeDays_(scope.date,

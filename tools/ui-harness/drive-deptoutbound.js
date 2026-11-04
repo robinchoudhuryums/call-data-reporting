@@ -129,8 +129,33 @@ async function openDept(page, meta) {
   record('DV-1: "Inbound + outbound" reads pressed, the other three not',
     (await pressed('both')) === 'true' && (await pressed('in')) === 'false' && (await pressed('out')) === 'false' && (await pressed('direct')) === 'false');
   // LB-2 (owner 2026-10-28): one header per column, each sorting by click.
-  record('LB-2: the headers are Agent, Answered / missed, Ans %, Connected / not, Conn %, Talk, Transfer %',
-    JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Answered / missed', 'Ans %', 'Connected / not', 'Conn %', 'Talk', 'Transfer %']), v.heads.join(' | '));
+  record('LB-2: the headers are Agent, Answered / missed, Ans %, Connected / not, Conn %, Talk · avg, Transfer %',
+    JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Answered / missed', 'Ans %', 'Connected / not', 'Conn %', 'Talk · avg', 'Transfer %']), v.heads.join(' | '));
+  {
+    // AC-2 (owner 2026-11-04): the Talk cell carries each direction's average.
+    const tk = await page.evaluate(() => {
+      const r = Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'))
+        .find((t) => t.querySelector('.lb-talk-in') && t.querySelector('.lb-talk-out .lb-att'));
+      return r ? { inn: r.querySelector('.lb-talk-in').textContent.replace(/\s+/g, ' ').trim(),
+        out: r.querySelector('.lb-talk-out').textContent.replace(/\s+/g, ' ').trim() } : null;
+    });
+    record('AC-2: the Talk cell shows total talk and the average per call, inbound and outbound',
+      !!tk && /in · avg \d+:\d{2}:\d{2}$/.test(tk.inn) && /out · avg \d+:\d{2}:\d{2}$/.test(tk.out), JSON.stringify(tk));
+    // AC-1: at desktop width the header row rides the page under the controls strip.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const before = await page.evaluate(() => document.querySelector('#agents-ob-thead tr:not(.lb-groups) th').getBoundingClientRect().top);
+    await page.evaluate(() => { const t = document.getElementById('agents-ob-table'); window.scrollTo(0, t.getBoundingClientRect().top + window.scrollY + 200); });
+    await page.waitForTimeout(300);
+    const st = await page.evaluate(() => {
+      const th = document.querySelector('#agents-ob-thead tr:not(.lb-groups) th');
+      const strip = document.querySelector('#dept-page .controls');
+      return { th: Math.round(th.getBoundingClientRect().top), strip: Math.round(strip.getBoundingClientRect().bottom),
+        wrapOverflow: getComputedStyle(document.getElementById('agents-ob-wrap')).overflowX };
+    });
+    record('AC-1: scrolled past the table top, its header row sticks just under the dept controls strip',
+      st.wrapOverflow === 'visible' && Math.abs(st.th - st.strip) <= 2 && before > st.th, JSON.stringify(Object.assign({ before: Math.round(before) }, st)));
+    await page.evaluate(() => window.scrollTo(0, 0));
+  }
   {
     // Owner 2026-10-22: layout B carries Transfer % too (CSR), one value per
     // agent, the same figure the classic table shows.
@@ -323,10 +348,16 @@ async function openDept(page, meta) {
   record('the view persists per browser', stored === 'in', String(stored));
   await pick('out');
   v = await view();
-  record('DV-1: Outbound shows the outbound-only table (Agent, Connected / not, Conn %, Talk) and Team Outbound, not Team Rings',
+  record('DV-1: Outbound shows the outbound-only table (Agent, Connected / not, Conn %, Talk · avg) and Team Outbound, not Team Rings',
     v.dir === 'out' && v.obShown && !v.inShown && !v.dcShown && !v.rings && v.tob
-      && JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Connected / not', 'Conn %', 'Talk']),
+      && JSON.stringify(v.heads) === JSON.stringify(['Agent', 'Connected / not', 'Conn %', 'Talk · avg']),
     JSON.stringify({ dir: v.dir, heads: v.heads, rings: v.rings, tob: v.tob }));
+  {
+    // AC-4 (owner 2026-11-04): the Outbound view lists only agents who placed a call.
+    const empt = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-ob-tbody tr[data-agent]'))
+      .filter((t) => !t.querySelector('.lb-cell--out')).map((t) => t.getAttribute('data-agent')));
+    record('AC-4: no agent row without outbound calls in the Outbound view', empt.length === 0, empt.join(', '));
+  }
   {
     const out = await page.evaluate(() => ({
       groups: Array.from(document.querySelectorAll('#agents-ob-thead tr.lb-groups th.lb-g')).map((t) => t.textContent.replace(/\s+/g, ' ').trim()),

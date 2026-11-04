@@ -2849,12 +2849,17 @@
   // -- Transfer % column (owner 2026-10-22) --------------------------------
   // The CSR tile's tier rule: <= deep deeper green, < light green, < amber
   // amber, else red (TRANSFER_TIERS, the Standards editor).
-  function xferTierCls_(pct) {
-    if (pct == null || !isFinite(Number(pct))) return '';
-    var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
+  // AC-5 (owner 2026-11-04): ONE tier rule for every Transfer % surface --
+  // <= deep deeper green, < light green, light..amber (inclusive) amber,
+  // ABOVE amber red. Default 25 / 30 / 32: amber 30-32 %, red above 32 %.
+  var XFER_TIERS_DEFAULT_ = { deep: 25, light: 30, amber: 32 };
+  function xferTier_(pct) {
+    if (pct == null || pct === '' || !isFinite(Number(pct))) return '';
+    var tt = ((window.__STANDARDS__ || {}).transfer) || XFER_TIERS_DEFAULT_;
     var p = Number(pct);
-    return p <= tt.deep ? ' tf-deep' : (p < tt.light ? ' tf-light' : (p < tt.amber ? ' tf-amber' : ' tf-red'));
+    return p <= tt.deep ? 'tf-deep' : (p < tt.light ? 'tf-light' : (p <= tt.amber ? 'tf-amber' : 'tf-red'));
   }
+  function xferTierCls_(pct) { var c = xferTier_(pct); return c ? ' ' + c : ''; }
   /**
    * Joins state.csrTransfer.agents onto the table rows by EXACT name (INV-04:
    * the transfer sheet writes the csr_team roster spelling), sets the tile's
@@ -3579,14 +3584,10 @@
         trChip = deptStripDelta_(Math.round((tr.pct - tr.prior.pct) * 10) / 10, 'bad', 1, ' pts',
           priorTip + ': ' + tr.prior.pctStr);
       }
-      // R23 (owner): tiered tint -- <=deep deeper-green, <light light-green,
-      // <amber amber, >=amber red (tunable via the Standards editor).
+      // R23 (owner): tiered tint, the AC-5 rule (tunable via the Standards editor).
       var trCls = '';
       if (tr.pct != null && isFinite(Number(tr.pct))) {
-        var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
-        var trPct = Number(tr.pct);
-        trCls = trPct <= tt.deep ? ' tf-deep' : (trPct < tt.light ? ' tf-light'
-              : (trPct < tt.amber ? ' tf-amber' : ' tf-red'));
+        trCls = xferTierCls_(tr.pct);   // AC-5
       }
       trTile =
           '<div class="dts-tile dts-tile--queue" title="Transferred &divide; total calls across CSR agents, this range (CSR Transfer Historical Data).">'
@@ -4105,10 +4106,9 @@
         // CSR's Transfer % card: that day from csrTransfer.daily (no day bars).
         var tr = state.csrTransfer, d = null;
         ((tr && tr.daily) || []).forEach(function (x) { if (x && x.date === b.from) d = x; });
-        var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
         f = (d && d.totalCalls)
           ? { big: (Math.round(Number(d.pct) * 10) / 10) + '%', sub: fmtNumber(d.transferred) + ' of ' + fmtNumber(d.totalCalls) + ' calls',
-              cls: Number(d.pct) <= tt.deep ? 'tf-deep' : (Number(d.pct) < tt.light ? 'tf-light' : (Number(d.pct) < tt.amber ? 'tf-amber' : 'tf-red')) }
+              cls: xferTier_(d.pct) }   // AC-5
           : { big: '–', sub: 'no CSR calls', cls: '' };
       }
       if (!f) return;
@@ -4279,7 +4279,7 @@
         + '<td class="lb-bar-td">' + (e.inb ? obInCellHtml_(e.inb, inMax) : zeroCell_('–')) + '</td>'
         + '<td class="num">' + (e.inb && e.rung ? fmtCell(pctCol, e.inb) : zeroCell_('–')) + '</td>'
         + (showOb ? '<td class="lb-bar-td">' + obOutCellHtml_(e.ob, outMax, null) + '</td>' : '')
-        + '<td class="num">' + (showOb ? obTalkCellHtml_(e.inb && e.inb.tttSeconds, e.ob && e.ob.obTalkSec)
+        + '<td class="num">' + (showOb ? obTalkCellHtml_(e.inb && e.inb.tttSeconds, e.ob && e.ob.obTalkSec, e.inb && e.inb.attSeconds, e.ob && e.ob.obAttSec)
                                        : ((e.inb && Number(e.inb.tttSeconds) > 0) ? fmtDuration(e.inb.tttSeconds) : zeroCell_('–'))) + '</td>'
         + '</tr>';
     }).join('');
@@ -4288,7 +4288,7 @@
       + '<td class="lb-bar-td">' + (t ? obInCellHtml_(Object.assign({}, t, { ansPerDay: null }), 0) : '') + '</td>'
       + '<td class="num">' + (t ? fmtCell(pctCol, t) : '') + '</td>'
       + (showOb ? '<td class="lb-bar-td">' + (ot ? obOutCellHtml_(ot, 0, null) : '') + '</td>' : '')
-      + '<td class="num">' + (showOb ? obTalkCellHtml_(t && t.tttSeconds, ot && ot.obTalkSec)
+      + '<td class="num">' + (showOb ? obTalkCellHtml_(t && t.tttSeconds, ot && ot.obTalkSec, t && t.attSeconds, ot && ot.obAttSec)
                                      : (t && Number(t.tttSeconds) > 0 ? fmtDuration(t.tttSeconds) : '')) + '</td></tr>';
     return '<table class="dqv-table" data-cols="' + cols + '"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>'
       + (idle ? '<p class="dqv-foot-note">' + idle + ' roster agent' + (idle === 1 ? '' : 's') + ' had no calls this day.</p>' : '');
@@ -4341,7 +4341,10 @@
       + '<div class="dqv-ad-h">Inbound calls <span class="ap-tab-n">' + fmtNumber(inbound.length) + '</span></div>'
       + apInboundTableHtml_(inbound)
       + (showOb ? '<div class="dqv-ad-h">Outbound calls <span class="ap-tab-n">' + fmtNumber(outbound.length) + '</span></div>'
-          + apOutboundTableHtml_(outbound, meta.date) : '');
+          + apOutboundTableHtml_(outbound, meta.date) : '')
+      // AC-6: direct calls (admins only -- the server sends no source otherwise).
+      + (meta.directSource ? '<div class="dqv-ad-h">Direct calls <span class="ap-tab-n">' + fmtNumber(((data && data.direct) || []).length) + '</span></div>'
+          + apDirectTableHtml_((data && data.direct) || [], meta) : '');
   }
 
   /**
@@ -4861,12 +4864,7 @@
 
     const aEl = $('dept-transfer-agents');
     if (aEl) {
-      const tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
-      const tier = function (pct) {
-        if (pct == null || !isFinite(Number(pct))) return '';
-        const v = Number(pct);
-        return v <= tt.deep ? 'tf-deep' : (v < tt.light ? 'tf-light' : (v < tt.amber ? 'tf-amber' : 'tf-red'));
-      };
+      const tier = xferTier_;   // AC-5: the one tier rule
       const maxCalls = agents.reduce(function (m, a) { return Math.max(m, Number(a.totalCalls) || 0); }, 0);
       aEl.innerHTML = agents.length
         ? '<div class="dtf-rows">' + agents.map(function (a) {
@@ -5674,12 +5672,18 @@
     var cur = r.totalAnswered / t * 100, pri = r.priorAnswered / pt * 100;
     return obRateChip_(cur, pri, t, pt, 'Prior period: ' + Math.round(pri) + '% answered of ' + pt + ' rung.');
   }
-  function obTalkCellHtml_(inSec, outSec) {
-    var i = Number(inSec) || 0, o = Number(outSec) || 0;
+  // AC-2 (owner 2026-11-04): total talk AND the average per call, each
+  // direction -- inbound ATT is the table's INV-05 mean (attSeconds), outbound
+  // the average over connected calls (obAttSec). `outOnly` draws one line.
+  function obTalkCellHtml_(inSec, outSec, inAtt, outAtt, outOnly) {
+    var i = Number(inSec) || 0, o = Number(outSec) || 0, ia = Number(inAtt) || 0, oa = Number(outAtt) || 0;
+    var avg = function (a) { return a ? ' <small class="lb-att" title="Average talk per call">· avg ' + fmtDuration(a) + '</small>' : ''; };
+    var outLine = '<span class="lb-talk-out" title="Talk on outbound calls; the average is over the calls that connected">'
+      + (o ? fmtDuration(o) : '–') + ' <small>out</small>' + avg(oa) + '</span>';
+    if (outOnly) return o ? '<span class="lb-talk">' + outLine + '</span>' : zeroCell_('–');
     if (!i && !o) return zeroCell_('–');
-    return '<span class="lb-talk"><span class="lb-talk-in" title="Talk on inbound calls (TTT)">' + (i ? fmtDuration(i) : '–')
-      + ' <small>in</small></span><span class="lb-talk-out" title="Talk on outbound calls">' + (o ? fmtDuration(o) : '–')
-      + ' <small>out</small></span></span>';
+    return '<span class="lb-talk"><span class="lb-talk-in" title="Talk on inbound calls (TTT); the average is ATT">' + (i ? fmtDuration(i) : '–')
+      + ' <small>in</small>' + avg(ia) + '</span>' + outLine + '</span>';
   }
   function obLegendHtml_(items) {
     return '<span class="lb-legend">' + items.map(function (x) {
@@ -5709,7 +5713,7 @@
         + '<th colspan="2" class="lb-g lb-g--out">Outbound · placed ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'rang out'],
             ['obrief', 'brief ring'], ['unk', 'not recorded']]) + '</th><th aria-hidden="true"></th></tr>'
         + '<tr>' + obThHtml_('agent', 'Agent') + obThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
-        + obThHtml_('obConnectRate', 'Conn %', 'num') + obThHtml_('obTalkSec', 'Talk', 'num') + '</tr>';
+        + obThHtml_('obConnectRate', 'Conn %', 'num') + obThHtml_('obTalkSec', 'Talk · avg', 'num') + '</tr>';
     } else thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
       + '<th colspan="2" class="lb-g lb-g--in">Inbound · rings ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed']]) + '</th>'
       + '<th colspan="2" class="lb-g lb-g--out">Outbound · placed ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'rang out'],
@@ -5720,7 +5724,7 @@
       + obThHtml_('answerRate', 'Ans %', 'num')
       + obThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
       + obThHtml_('obConnectRate', 'Conn %', 'num')
-      + obThHtml_('talkAll', 'Talk', 'num')
+      + obThHtml_('talkAll', 'Talk · avg', 'num')
       + (hasXfer ? obThHtml_('transferPct', 'Transfer %', 'num') : '')
       + '</tr>';
 
@@ -5776,6 +5780,11 @@
       if (seen[obKey(d, a.agent)]) return;
       (groups[d] = groups[d] || []).push({ dept: d, agent: a.agent, inb: null, ob: a });
     });
+    // AC-4 (owner 2026-11-04): the Outbound-only view lists only agents who
+    // placed a call in the window (the Both view keeps every inbound row).
+    if (outOnly) Object.keys(groups).forEach(function (d) {
+      groups[d] = groups[d].filter(function (e) { return e.ob && Number(e.ob.obTotal) > 0; });
+    });
     var all = [];
     Object.keys(groups).forEach(function (d) { all = all.concat(groups[d]); });
     // LB-2: each direction on its OWN scale, over the agent rows (totals and
@@ -5798,12 +5807,12 @@
       var outCells = '<td class="lb-bar-td">' + obOutCellHtml_(o, outMax, po) + '</td>'
         + '<td class="num">' + obPctHtml_(o, po, ptip) + '</td>';
       var cells = outOnly   // DV-1: the Outbound view -- the same row without the inbound columns
-        ? name + outCells + '<td class="num">' + (o && Number(o.obTalkSec) ? fmtDuration(o.obTalkSec) : zeroCell_('–')) + '</td>'
+        ? name + outCells + '<td class="num">' + obTalkCellHtml_(0, o && o.obTalkSec, 0, o && o.obAttSec, true) + '</td>'
         : name
         + '<td class="lb-bar-td">' + (e.inb ? obInCellHtml_(e.inb, inMax) : zeroCell_('–')) + '</td>'
         + '<td class="num">' + (e.inb ? fmtCell(pctCol, e.inb) + obInRateChip_(e.inb) : zeroCell_('–')) + '</td>'
         + outCells
-        + '<td class="num">' + obTalkCellHtml_(e.inb && e.inb.tttSeconds, o && o.obTalkSec) + '</td>'
+        + '<td class="num">' + obTalkCellHtml_(e.inb && e.inb.tttSeconds, o && o.obTalkSec, e.inb && e.inb.attSeconds, o && o.obAttSec) + '</td>'
         + (hasXfer ? '<td class="num ob-xfer">' + xferCellHtml_(e.inb) + '</td>' : '');
       return '<tr data-agent="' + escapeHtml(e.agent) + '"'
         + (e.dept ? ' data-dept="' + escapeHtml(e.dept) + '"' : '') + ' title="Show '
@@ -5814,13 +5823,13 @@
         + '<td class="num">' + obPctHtml_(t) + '</td>';
       if (outOnly) {   // DV-1
         return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td class="agents-total-label">' + escapeHtml(label) + '</td>'
-          + outCells + '<td class="num">' + (t && Number(t.obTalkSec) ? fmtDuration(t.obTalkSec) : '') + '</td></tr>';
+          + outCells + '<td class="num">' + (t && Number(t.obTalkSec) ? obTalkCellHtml_(0, t.obTalkSec, 0, t.obAttSec, true) : '') + '</td></tr>';
       }
       var cells = '<td class="agents-total-label">' + escapeHtml(label) + '</td>'
         + '<td class="lb-bar-td">' + (inT ? obInCellHtml_(inT, 0) : '') + '</td>'
         + '<td class="num">' + (inT ? fmtCell(pctCol, inT) : '') + '</td>'
         + outCells
-        + '<td class="num">' + obTalkCellHtml_(inT && inT.tttSeconds, t && t.obTalkSec) + '</td>'
+        + '<td class="num">' + obTalkCellHtml_(inT && inT.tttSeconds, t && t.obTalkSec, inT && inT.attSeconds, t && t.obAttSec) + '</td>'
         + (hasXfer ? '<td class="num ob-xfer">' + (inT && inT.transferPct != null ? xferCellHtml_(inT) : '') + '</td>' : '');
       return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + cells + '</tr>';
     };
