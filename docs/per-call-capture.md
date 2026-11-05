@@ -923,6 +923,15 @@ in the response.
 
 ### Direct-extension call metrics
 
+> **The report's OUTBOUND is calls to COLLEAGUES (DO-1, owner 2026-11-05).**
+> `getDirectCallReport`'s `obTotal` / `obConnected` / `obTalkSec` / `obAttSec`
+> (kpis, prior, per agent, per dept) sum the `ob_int_*` columns only; calls to
+> outside numbers ride alongside as `obExt` `{total, connected, talkSec,
+> attSec}` (`directCallObExt_`) and render as a small "+N to outside numbers"
+> line -- the Outbound view owns them. Storage is unchanged (both halves are
+> still captured), the missed-while-busy rule still counts every call, and the
+> direct-LINE figures (Overview, Insights) are inbound-only. `directCall:v6`.
+
 > **An extension AND the name on the leg (DCA-1, Operator State #83).**
 > Former employees stay on `DO NOT EDIT!` with their old extension, and 8x8
 > reassigns extensions, so the build no longer credits a leg by extension
@@ -1004,7 +1013,7 @@ date's sheet rows as contiguous blocks rather than one `deleteRow` per row
 `direct-call-metrics.test.js` the block delete). Dashboard read
 surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
 (ONE json_build_object round-trip; answer rate EXCLUDES the busy
-carve-out; cached `directCall:v5` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
+carve-out; cached `directCall:v6` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
 the client delta chips). **D1 (2026-10-21): the report covers only days that
 exist** -- a coverage read first (`max(call_date)` + the dates with rows), the
 window CLAMPED to the last date with data (`meta.to`, the asked end in

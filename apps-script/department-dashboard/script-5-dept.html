@@ -5062,7 +5062,8 @@
     } else if (dir === 'direct') {
       txt = 'The Direct Calls report’s figures for each agent: calls to and from their own extension, not the '
         + 'department queues, in the work window. A ring missed while they were already on another call is “busy” '
-        + 'and left out of the answer rate. ' + (extra ? extra + ' ' : '') + OB_INFO_EXPORT_;
+        + 'and left out of the answer rate. Outbound here is calls to colleagues; calls to outside numbers show as a '
+        + 'small line and are counted in the Outbound view. ' + (extra ? extra + ' ' : '') + OB_INFO_EXPORT_;
     }
     el.setAttribute('title', txt);
     el.style.display = txt ? '' : 'none';
@@ -5305,7 +5306,8 @@
           + ansTallyBlocks_(ans, unit, 'a') + ansTallyBlocks_(mf, unit, 'm') + ansTallyBlocks_(mb, unit, 'mb') + '</div>' : '';
         return '<tr class="trp-row" data-tdc-agent="' + escapeHtml(a.agent) + '" tabindex="0" aria-describedby="tdc-row-action-desc"'
           + ' title="' + escapeHtml(a.agent + ': ' + ans + ' answered · ' + mf + ' missed while free · ' + mb
-            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' dialed — click for the Direct view') + '">'
+            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' calls to colleagues'
+            + ((a.obExt && a.obExt.total) ? ' (+' + a.obExt.total + ' to outside numbers)' : '') + ' — click for the Direct view') + '">'
           + '<td class="trp-name">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
           + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
           + '<td class="trp-num"><span class="trp-a">' + fmtNumber(ans) + '</span><span class="trp-sep"> / </span>'
@@ -5382,16 +5384,21 @@
       + '<div class="lb-nums"><span class="lb-n"><span class="ans-n">' + parts[0].n + '</span><span class="ans-slash">/</span>'
       +   '<span class="miss-n">' + parts[1].n + '</span></span>' + busy + '</div></div>';
   }
+  // DO-1 (owner 2026-11-05): calls to COLLEAGUES; the calls to outside
+  // numbers (the Outbound view's to count) ride as a small line under them.
   function dcOutCellHtml_(a, scaleMax) {
     var placed = Number(a && a.obTotal) || 0, c = Number(a && a.obConnected) || 0, n = Math.max(0, placed - c);
-    if (!placed) return '<span class="cell-zero" title="No calls dialed from their extension in this range">–</span>';
+    var ext = Number(a && a.obExt && a.obExt.total) || 0;
+    var extLine = ext ? '<div class="dc-ext-line" title="Calls from their own line to outside numbers -- counted in the Outbound view">+'
+      + fmtNumber(ext) + ' to outside numbers</div>' : '';
+    if (!placed) return '<span class="cell-zero" title="No calls to a colleague from their extension in this range">–</span>' + extLine;
     var parts = [{ cls: 'oconn', n: c, label: 'connected' }, { cls: 'oreal', n: n, label: 'did not connect' }];
-    var tip = c + ' connected · ' + n + ' did not connect · ' + placed + ' dialed. ' + OB_CONNECTED_DEF_;
+    var tip = c + ' connected · ' + n + ' did not connect · ' + placed + ' calls to colleagues. ' + OB_CONNECTED_DEF_;
     var w = scaleMax ? Math.max(2, Math.round(placed / scaleMax * 1000) / 10) : 100;
     return '<div class="lb-cell lb-cell--out" title="' + escapeHtml(tip) + '">'
       + '<div class="lb-track"><div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, placed, tip, 'mid') + '</div></div>'
       + '<div class="lb-nums"><span class="lb-n"><span class="ob-c">' + c + '</span><span class="ans-slash">/</span>'
-      +   '<span class="ob-u">' + n + '</span></span></div></div>';
+      +   '<span class="ob-u">' + n + '</span></span></div></div>' + extLine;
   }
   function dcRateHtml_(a) {
     if (!a || a.ibAnswerRate == null) return zeroCell_('–');
@@ -5456,7 +5463,7 @@
     dcWire_();
     thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
       + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['soft', 'busy']]) + '</th>'
-      + '<th colspan="2" class="lb-g lb-g--out">Dialed from their line ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
+      + '<th colspan="2" class="lb-g lb-g--out">Called colleagues ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
       + '<th aria-hidden="true"></th></tr>'
       + '<tr>' + dcThHtml_('agent', 'Agent') + dcThHtml_('rang', 'Answered / missed', 'lb-th-bar')
       + dcThHtml_('ibAnswerRate', 'Ans %', 'num') + dcThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
