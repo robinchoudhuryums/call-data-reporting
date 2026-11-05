@@ -1506,6 +1506,11 @@ behind the removed button.
   (`#settings-notify`, hidden; `notifySettingsOpen_` renders it only when
   `USER.notifyEdit`), never a route. The Coaching modal gains "Gates by
   department" (`coachingGateSentence_`) and Met / Rotated / Dismissed closes.
+  CO-1/CO-2: each gate card reports Saving / Saved / its error beside its
+  buttons (`coachingCardStatus_`), edited cards are `.is-dirty` and "Save all
+  changes" sends them in ONE `saveCoachingDeptRules` call; a reload never
+  re-renders over unsaved edits; the worklist row is `coachingRowHtml_`'s
+  agent + dept, rate bar with the team marker, and status pill.
   Rendered by `drive-notify.js`; the pure pieces are pinned in
   `notifications.test.js` / `alert-reasons.test.js`.
 - **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD

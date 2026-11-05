@@ -532,7 +532,10 @@ From/To default (which must snap to DQE specifically).
   (`COACHING_DEPT_RULES`) and then the manager layer (stricter only, the
   `coach*` fields of `NOTIFY_STRICTER_`). Every flag carries the `gates` it
   was judged under. The manager email is HELD for admins:
-  `coachingManagerRecipients_` is the one release seam.
+  `coachingManagerRecipients_` is the one release seam. **CO-1:** a dept may
+  set `flatRatePct` instead -- a flat answer-% floor replacing the ratio and
+  points-behind gates (missed rings still apply); it is admin-only, outside
+  the manager layer, and `coachingGatesText_` / `coachingGateSentence_` word it.
 - **Alert reasons (Step 5c, `AlertReasons.gs`)**: ride `runAlertsCore_`
   (same date, claim, log) after the answer-rate rules; a reason row carries
   `reason` and is excluded from the dept counts, drift and History. Admins

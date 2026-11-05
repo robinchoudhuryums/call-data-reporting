@@ -1066,6 +1066,10 @@ filtering would break the reconciliation. (3) The 11 destination columns are
 a FIXED set, so `queueSum`/`queueUnaccounted` DISCLOSE transfers going
 anywhere else rather than letting the lists silently disagree with the
 headline. `tests/unit/csr-transfer-detail.test.js` pins all three.
+**TD-1/TD-2 (client):** every figure in the section carries a chip against
+`csrTransfer.prior` (same function, same sheet, matched by exact name), and
+the "other tracked queues" key opens the list of those destinations
+(`dtfWireRest_`); `drive-deptoutbound.js` asserts both.
 
 
 ### Agent-day interaction view (6d)
