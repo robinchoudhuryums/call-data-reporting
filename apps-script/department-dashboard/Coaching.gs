@@ -64,9 +64,18 @@ var COACHING_GATE_FIELDS_ = Object.freeze({
   minMissed:       ['coachMinMissed', 1, 1000],
 });
 
+// CO-1 (owner 2026-11-05): a department may use a FLAT answer-rate gate
+// instead of the team-relative pair -- flag an agent who answers less than
+// `flatRatePct` % of their rings (plus the missed-rings volume gate). Set =
+// flat mode (the ratio and points-behind gates are not applied); blank = the
+// team-relative gates. Admin-only: the manager layer's stricter values apply
+// to the team-relative gates and the missed rings, never to this floor.
+var COACHING_FLAT_FIELD_ = 'flatRatePct';
+var COACHING_FLAT_LIMITS_ = [1, 100];
+
 function coachingDefaultGates_() {
   return { maxTeamRatioPct: Math.round(COACHING_MAX_TEAM_RATIO_ * 100),
-           behindPts: COACHING_BEHIND_TEAM_PTS_, minMissed: COACHING_MIN_MISSED_ };
+           behindPts: COACHING_BEHIND_TEAM_PTS_, minMissed: COACHING_MIN_MISSED_ };   // flatRatePct: present only when set (CO-1)
 }
 
 /** The stored per-dept admin gates; a malformed property reads as EMPTY. */
@@ -79,7 +88,7 @@ function readCoachingDeptRules_() {
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
       Object.keys(obj).forEach(function (dept) {
         var r = obj[dept] || {}, clean = {};
-        Object.keys(COACHING_GATE_FIELDS_).forEach(function (g) {
+        Object.keys(COACHING_GATE_FIELDS_).concat([COACHING_FLAT_FIELD_]).forEach(function (g) {
           var v = Number(r[g]);
           if (r[g] !== '' && r[g] != null && isFinite(v)) clean[g] = v;
         });
@@ -116,22 +125,33 @@ function coachingEffectiveGates_(dept) {
     if (mv != null) manager[g] = mv;
     effective[g] = (typeof notifyStricterOf_ === 'function') ? notifyStricterOf_(field, admin[g], mv) : admin[g];
   });
+  if (admin.flatRatePct != null) effective.flatRatePct = admin.flatRatePct;   // CO-1: admin-only
   return { admin: admin, manager: manager, effective: effective };
 }
 
 /** computeCoachingFlags_'s opts from a gates object. */
 function coachingFlagOpts_(g) {
-  return { maxTeamRatio: g.maxTeamRatioPct / 100, behindPts: g.behindPts, minMissed: g.minMissed };
+  return { maxTeamRatio: g.maxTeamRatioPct / 100, behindPts: g.behindPts, minMissed: g.minMissed,
+           flatRatePct: g.flatRatePct != null ? g.flatRatePct : null };
+}
+
+/** PURE. The gates as one line of text (emails, logs). */
+function coachingGatesText_(g) {
+  g = g || coachingDefaultGates_();
+  if (g.flatRatePct != null) {
+    return 'Flagged when an agent answers less than ' + g.flatRatePct + '% of their rings, with '
+      + g.minMissed + '+ missed rings over ' + COACHING_WINDOW_WORKDAYS_ + ' workdays.';
+  }
+  return 'Flagged when an agent answers less than ' + g.maxTeamRatioPct + '% as often as the team, at least '
+    + g.behindPts + ' points behind, with ' + g.minMissed + '+ missed rings over ' + COACHING_WINDOW_WORKDAYS_ + ' workdays.';
 }
 
 /**
- * RPC (admin): set a department's coaching gates. `req = { department,
- * maxTeamRatioPct, behindPts, minMissed }`; a blank field returns that gate
- * to the company default, all blank clears the dept. Config write (INV-01):
- * assertAdmin_ + validation + LockService + a Logger audit line.
+ * Validates one department's gates from a save request: `{ dept, rec }`,
+ * `rec` holding only the fields set. `req.mode === 'team'` (or a blank
+ * flatRatePct) leaves the flat gate unset. Throws a readable message.
  */
-function saveCoachingDeptRule(req) {
-  assertAdmin_();
+function coachingCleanRule_(req) {
   req = req || {};
   var dept = String(req.department || '').trim();
   if (!dept) throw new Error('Department is required.');
@@ -142,10 +162,24 @@ function saveCoachingDeptRule(req) {
     if (v === '' || v == null) return;
     var n = Number(v), lim = COACHING_GATE_FIELDS_[g];
     if (!isFinite(n) || n < lim[1] || n > lim[2]) {
-      throw new Error(g + ' must be a number from ' + lim[1] + ' to ' + lim[2] + '.');
+      throw new Error(dept + ': ' + g + ' must be a number from ' + lim[1] + ' to ' + lim[2] + '.');
     }
     rec[g] = g === 'minMissed' ? Math.round(n) : Math.round(n * 10) / 10;
   });
+  var fv = req[COACHING_FLAT_FIELD_];
+  if (req.mode === 'flat' && (fv === '' || fv == null)) throw new Error(dept + ': a flat gate needs an answer % (1 to 100).');
+  if (req.mode !== 'team' && fv !== '' && fv != null) {
+    var fn = Number(fv);
+    if (!isFinite(fn) || fn < COACHING_FLAT_LIMITS_[0] || fn > COACHING_FLAT_LIMITS_[1]) {
+      throw new Error(dept + ': the flat answer % must be a number from 1 to 100.');
+    }
+    rec[COACHING_FLAT_FIELD_] = Math.round(fn * 10) / 10;
+  }
+  return { dept: dept, rec: rec };
+}
+
+/** Writes cleaned rules (`[{dept, rec}]`) in ONE read-modify-write under the lock. */
+function coachingWriteRules_(list) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Busy -- please retry in a moment.');
   try {
@@ -153,16 +187,56 @@ function saveCoachingDeptRule(req) {
     var cur = {};
     try { cur = JSON.parse(props.getProperty(COACHING_DEPT_RULES_PROP_) || '{}') || {}; } catch (pe) { cur = {}; }
     if (typeof cur !== 'object' || Array.isArray(cur)) cur = {};
-    if (Object.keys(rec).length) cur[dept] = rec; else delete cur[dept];
+    list.forEach(function (x) {
+      if (Object.keys(x.rec).length) cur[x.dept] = x.rec; else delete cur[x.dept];
+    });
     if (Object.keys(cur).length) props.setProperty(COACHING_DEPT_RULES_PROP_, JSON.stringify(cur));
     else props.deleteProperty(COACHING_DEPT_RULES_PROP_);
     COACHING_DEPT_RULES_MEMO_ = null;
-    Logger.log('saveCoachingDeptRule: %s %s by %s', dept, JSON.stringify(rec) || '(defaults)',
-      Session.getActiveUser().getEmail());
+    var who = Session.getActiveUser().getEmail();
+    list.forEach(function (x) {
+      Logger.log('saveCoachingDeptRule: %s %s by %s', x.dept, JSON.stringify(x.rec) || '(defaults)', who);
+    });
   } finally {
     lock.releaseLock();
   }
-  return { department: dept, gates: coachingEffectiveGates_(dept) };
+}
+
+/**
+ * RPC (admin): set a department's coaching gates. `req = { department,
+ * maxTeamRatioPct, behindPts, minMissed }`; a blank field returns that gate
+ * to the company default, all blank clears the dept. Config write (INV-01):
+ * assertAdmin_ + validation + LockService + a Logger audit line.
+ */
+function saveCoachingDeptRule(req) {
+  assertAdmin_();
+  var x = coachingCleanRule_(req);
+  coachingWriteRules_([x]);
+  return { department: x.dept, gates: coachingEffectiveGates_(x.dept) };
+}
+
+/**
+ * RPC (admin, CO-1): save several departments' gates at once --
+ * `req = { rules: [<saveCoachingDeptRule req>, ...] }`. Every rule is
+ * validated FIRST, so one bad value saves nothing; then one locked write.
+ * Same INV-01 config-write mitigations as the single save.
+ */
+function saveCoachingDeptRules(req) {
+  assertAdmin_();
+  var rules = (req && req.rules) || [];
+  if (!Array.isArray(rules) || !rules.length) throw new Error('Nothing to save.');
+  if (rules.length > 60) throw new Error('Too many departments in one save.');
+  var seen = {};
+  var list = rules.map(function (r) {
+    var x = coachingCleanRule_(r);
+    if (seen[x.dept]) throw new Error(x.dept + ' appears twice.');
+    seen[x.dept] = true;
+    return x;
+  });
+  coachingWriteRules_(list);
+  var out = {};
+  list.forEach(function (x) { out[x.dept] = coachingEffectiveGates_(x.dept); });
+  return { saved: list.map(function (x) { return x.dept; }), gates: out };
 }
 
 /** Every dept's gates, for the worklist page. Best-effort per dept. */
@@ -212,6 +286,7 @@ function computeCoachingFlags_(rows, excludes, opts) {
   var maxRatio  = o.maxTeamRatio != null ? o.maxTeamRatio : COACHING_MAX_TEAM_RATIO_;
   var behindPts = o.behindPts    != null ? o.behindPts    : COACHING_BEHIND_TEAM_PTS_;
   var minMissed = o.minMissed    != null ? o.minMissed    : COACHING_MIN_MISSED_;
+  var flat      = o.flatRatePct  != null && isFinite(Number(o.flatRatePct)) ? Number(o.flatRatePct) : null;   // CO-1
   var exSet = {};
   (excludes || []).forEach(function (n) { exSet[String(n)] = true; });
 
@@ -232,21 +307,27 @@ function computeCoachingFlags_(rows, excludes, opts) {
     if (a + m === 0) return;
     var rate = a / (a + m) * 100;
     if (m < minMissed) return;                              // volume gate
-    // A team that answers nothing gives no baseline to be "half of" -- no
-    // flags rather than flagging everyone against a zero.
-    if (teamRate == null || teamRate <= 0) return;
-    if (rate >= teamRate * maxRatio) return;                // headline ratio gate
-    if ((teamRate - rate) < behindPts) return;              // absolute floor beneath it
+    if (flat != null) {
+      if (rate >= flat) return;                             // CO-1: the flat floor alone
+    } else {
+      // A team that answers nothing gives no baseline to be "half of" -- no
+      // flags rather than flagging everyone against a zero.
+      if (teamRate == null || teamRate <= 0) return;
+      if (rate >= teamRate * maxRatio) return;              // headline ratio gate
+      if ((teamRate - rate) < behindPts) return;            // absolute floor beneath it
+    }
+    var tr = teamRate || 0;
     flags.push({
       agent: r.agent,
       rung: Number(r.totalRung) || (a + m),
       missed: m,
       answered: a,
       ratePct: Math.round(rate * 10) / 10,
-      teamRatePct: Math.round(teamRate * 10) / 10,
-      gapPts: Math.round((teamRate - rate) * 10) / 10,
+      teamRatePct: Math.round(tr * 10) / 10,
+      gapPts: Math.round((tr - rate) * 10) / 10,
       // "answers N% as often as the team" -- the sentence a manager reads.
-      teamRatioPct: Math.round(rate / teamRate * 1000) / 10,
+      teamRatioPct: tr > 0 ? Math.round(rate / tr * 1000) / 10 : 0,
+      flatRatePct: flat,
     });
   });
   // Worst RELATIVE standing first (the gate's own metric), gap as tiebreak.
@@ -489,21 +570,51 @@ function coachingManagerEmail_(dept, flags, win, rcpt) {
     title: n + ' agent' + (n === 1 ? '' : 's') + ' to talk with',
     subtitle: win.from + ' .. ' + win.to + ' (' + COACHING_WINDOW_WORKDAYS_ + ' workdays)',
     callout: { kicker: 'Held for admins', html: appEsc_(heldText), tone: 'warn' },
-    list: { title: 'Answering well behind the team', items: flags.map(function (f) { return appEsc_(line(f)); }) },
+    table: coachingFlagTable_(flags, false, 'Answering well behind ' + (g.flatRatePct != null ? 'the ' + g.flatRatePct + '% floor' : 'the team')),
     stepsTitle: 'What to do',
     steps: [
       { head: 'Talk, or change the queues.', body: 'Meet with each of them about it, or change their queue assignment.' },
       { head: 'Close the flag.', body: 'Mark it Met (you talked), Rotated (you changed the queues) or Dismissed (not a real issue) in the coaching worklist.' },
     ],
     ctaUrl: appDashUrl_('#/admin/coaching'), ctaLabel: 'Open the coaching worklist',
-    footerHtml: appEsc_('Flagged when an agent answers less than ' + g.maxTeamRatioPct + '% as often as the team, at least '
-      + g.behindPts + ' points behind, with ' + g.minMissed + '+ missed rings.'),
+    footerHtml: appEsc_(coachingGatesText_(g)),
   };
   var body = [heldText, '', subject.replace('[Held for admins] ', ''), win.from + ' .. ' + win.to, '']
     .concat(flags.map(function (f) { return '  - ' + line(f); }))
     .concat(['', 'What to do: meet with each of them, or change their queue assignment; then mark the flag Met,',
       'Rotated or Dismissed in the coaching worklist.']).join('\n');
   return { subject: subject, notice: notice, body: body };
+}
+
+/**
+ * CO-2 (owner 2026-11-05): the flags as an email TABLE, one row per agent --
+ * who (and, for admins, which department), their answer rate drawn against a
+ * bar, the team's rate and how often they answer next to it, the missed rings.
+ * Cells are escaped here (appEsc_), so the kit gets ready HTML.
+ */
+function coachingFlagTable_(flags, withDept, title) {
+  var bad = '#b23a2c', track = '#e2e8ee', mut = '#606872';
+  var bar = function (rate) {
+    var r = Math.max(0, Math.min(100, Number(rate) || 0));
+    var cells = (r > 0 ? '<td width="' + Math.max(1, r) + '%" style="background:' + bad + ';height:6px;font-size:0;line-height:6px;">&nbsp;</td>' : '')
+      + (r < 100 ? '<td width="' + Math.max(1, 100 - r) + '%" style="background:' + track + ';height:6px;font-size:0;line-height:6px;">&nbsp;</td>' : '');
+    return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin-top:4px;"><tr>' + cells + '</tr></table>';
+  };
+  var sub = function (t) { return '<div style="font-size:11px;color:' + mut + ';">' + t + '</div>'; };
+  return {
+    title: title || 'Flagged agents',
+    cols: [{ label: 'Agent' }, { label: 'Answered', width: '120' }, { label: 'Team' }, { label: 'Missed', align: 'right' }],
+    rows: (flags || []).map(function (f) {
+      return [
+        '<strong>' + appEsc_(f.agent) + '</strong>' + (withDept ? sub(appEsc_(f.dept)) : ''),
+        '<strong style="color:' + bad + ';">' + appEsc_(f.ratePct) + '%</strong>' + bar(f.ratePct),
+        appEsc_(f.teamRatePct) + '%' + sub(f.flatRatePct != null
+          ? 'below the ' + appEsc_(f.flatRatePct) + '% floor'
+          : appEsc_(Math.round(f.teamRatioPct)) + '% as often · ' + appEsc_(f.gapPts) + ' pts behind'),
+        '<strong>' + appEsc_(f.missed) + '</strong>' + sub('of&nbsp;' + appEsc_(f.rung) + '&nbsp;rung'),
+      ];
+    }),
+  };
 }
 
 /** Sends the held manager email for every dept with NEW flags. Best-effort:
@@ -701,13 +812,9 @@ function coachingDeliveryRun_() {
               tiles: [{ label: 'New flags', value: String(toEmail.length), tone: 'warn' },
                       { label: 'Still open', value: String(diff.continuing.length), sub: 'metrics refreshed' },
                       { label: 'Recovered', value: String(diff.recoveredOpenRows.length), sub: 'left open to close', tone: diff.recoveredOpenRows.length ? 'good' : 'neutral' }],
-              list: { title: 'Flagged agents', items: toEmail.map(function (f) {
-                return '<strong>' + appEsc_(f.dept) + ' · ' + appEsc_(f.agent) + '</strong>: answers ' + appEsc_(f.teamRatioPct)
-                  + '% as often as the team (' + appEsc_(f.ratePct) + '% vs ' + appEsc_(f.teamRatePct) + '%, ' + appEsc_(f.gapPts)
-                  + ' pts behind) — ' + appEsc_(f.missed) + ' missed of ' + appEsc_(f.rung) + ' rung';
-              }) },
+              table: coachingFlagTable_(toEmail, true, 'Flagged agents'),
               callout: { kicker: 'Gates', html: 'company defaults: rate &lt; ' + (COACHING_MAX_TEAM_RATIO_ * 100) + '% of team rate, &ge; ' + COACHING_BEHIND_TEAM_PTS_
-                + ' pts behind, &ge; ' + COACHING_MIN_MISSED_ + ' missed (a department may set its own) — roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides. '
+                + ' pts behind, &ge; ' + COACHING_MIN_MISSED_ + ' missed (a department may set its own, or a flat answer %) — roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides. '
                 + 'Admin-only until released; managers are not copied.', tone: 'neutral' },
               ctaUrl: appDashUrl_('#/admin/coaching'), ctaLabel: 'Open the worklist',
               footerHtml: 'Sent by the weekly coaching delivery (Operator State #48).',

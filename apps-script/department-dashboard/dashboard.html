@@ -2488,10 +2488,11 @@
           inbound ring <em>missed because the agent was already on another
           call</em> is counted separately (&ldquo;missed (busy)&rdquo;) and
           <em>excluded</em> from the answer rate. Only calls that start inside the
-          work window (8:30 AM&ndash;5:00 PM CST) count. Under each count:
-          <strong>int</strong> = with a coworker (an inbound call from a coworker&rsquo;s
-          extension, an outbound call to an extension on the roster),
-          <strong>ext</strong> = everything else. The end date stops at the last
+          work window (8:30 AM&ndash;5:00 PM CST) count. Under each inbound count:
+          <strong>int</strong> = from a coworker&rsquo;s extension, <strong>ext</strong> =
+          an outside caller. <strong>Outbound</strong> is calls to colleagues&rsquo;
+          extensions; calls to outside numbers show as a small
+          &ldquo;+N to outside numbers&rdquo; line and are counted in the Outbound view. The end date stops at the last
           day with imported data. Admin-only while the numbers are being vetted.
         </div>
         <div id="direct-call-form-error" role="status" class="status status-error" style="display:none;"></div>
@@ -2746,10 +2747,9 @@
           <span id="coaching-summary" class="al-hint"></span>
         </div>
         <div id="coaching-status" role="status" class="status" style="display:none;"></div>
-        <table class="al-config-table" id="coaching-table" style="display:none;">
+        <table class="al-config-table coach-table" id="coaching-table" style="display:none;">
           <thead><tr>
-            <th>Dept</th><th>Agent</th><th class="num">Rate vs team</th>
-            <th class="num">Missed / Rung</th><th class="num">Flagged</th>
+            <th>Agent</th><th>Answer rate vs team</th><th>Missed rings</th>
             <th>Window</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody id="coaching-tbody"></tbody>
@@ -2765,8 +2765,15 @@
             looser; the stricter value applies. <strong>Email me the manager version</strong> sends you
             what that department&rsquo;s managers will read once coaching is released.
           </p>
+          <p class="al-hint">
+            A department can use a <strong>flat answer %</strong> instead: flag anyone who answers less
+            than that share of their rings, whatever the team does (the missed-rings gate still applies).
+          </p>
+          <div class="coaching-gates-bar">
+            <button class="btn" id="coaching-gates-save-all" type="button" disabled>Save all changes</button>
+            <span class="al-hint" id="coaching-gates-status" role="status" aria-live="polite"></span>
+          </div>
           <div class="coaching-gates" id="coaching-gates" role="list" aria-label="Coaching gates by department"></div>
-          <p class="al-hint" id="coaching-gates-status" role="status"></p>
         </div>
         <!-- Delivery engine controls (the Neon-backup section shape). -->
         <div class="al-section" id="coaching-delivery-section">

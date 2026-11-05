@@ -135,8 +135,10 @@ function neonShapeFor(pw) {
   return JSON.stringify({
     kpis: { agents: 2, ibAnswered: 3 + 2 + 0 + 1 + 5 + 0, ibMissedFree: 1 + 0 + 0 + 1 + 0 + 2,
             ibMissedBusy: 0 + 1 + 4 + 0 + 0 + 0, ibTalkSec: 300 + 200 + 0 + 90 + 400 + 0,
-            obTotal: 1 + 2 + 0 + 0 + 3 + 0, obConnected: 1 + 1 + 0 + 0 + 2 + 0,
-            obTalkSec: 50 + 80 + 0 + 0 + 120 + 0,
+            // DO-1: outbound = calls to colleagues (the int columns); the
+            // outside calls' talk rides separately.
+            obTotal: 1 + 0 + 3, obConnected: 1 + 0 + 2,
+            obTalkSec: 50 + 0 + 120, obExtTalkSec: 80 + 0 + 0,
             // D1: the split, summed per side from the same three rows.
             ibIntAnswered: 3 + 0 + 5, ibExtAnswered: 2 + 1 + 0,
             ibIntMissedFree: 1 + 0 + 0, ibExtMissedFree: 0 + 1 + 2,
@@ -148,24 +150,24 @@ function neonShapeFor(pw) {
         ib_talk_sec: 500, ib_int_answered: 3, ib_ext_answered: 2,
         ib_int_missed_free: 1, ib_ext_missed_free: 0, ib_int_missed_busy: 0, ib_ext_missed_busy: 1,
         ob_int_connected: 1, ob_ext_connected: 1,
-        ob_total: 3, ob_connected: 2, ob_talk_sec: 130, ob_int_total: 1, ob_ext_total: 2 },
+        ob_total: 1, ob_connected: 1, ob_talk_sec: 50, ob_ext_talk_sec: 80, ob_int_total: 1, ob_ext_total: 2 },
       { agent: 'Ana', dept: 'Sales', ib_answered: 5, ib_missed_free: 2, ib_missed_busy: 0,
         ib_talk_sec: 400, ib_int_answered: 5, ib_ext_answered: 0,
         ib_int_missed_free: 0, ib_ext_missed_free: 2, ib_int_missed_busy: 0, ib_ext_missed_busy: 0,
         ob_int_connected: 2, ob_ext_connected: 0,
-        ob_total: 3, ob_connected: 2, ob_talk_sec: 120, ob_int_total: 3, ob_ext_total: 0 },
+        ob_total: 3, ob_connected: 2, ob_talk_sec: 120, ob_ext_talk_sec: 0, ob_int_total: 3, ob_ext_total: 0 },
       { agent: 'Bob', dept: 'CSR', ib_answered: 1, ib_missed_free: 1, ib_missed_busy: 4,
         ib_talk_sec: 90, ib_int_answered: 0, ib_ext_answered: 1,
         ib_int_missed_free: 0, ib_ext_missed_free: 1, ib_int_missed_busy: 4, ib_ext_missed_busy: 0,
         ob_int_connected: 0, ob_ext_connected: 0,
-        ob_total: 0, ob_connected: 0, ob_talk_sec: 0, ob_int_total: 0, ob_ext_total: 0 },
+        ob_total: 0, ob_connected: 0, ob_talk_sec: 0, ob_ext_talk_sec: 0, ob_int_total: 0, ob_ext_total: 0 },
     ],
     kpisPrior: { ibAnswered: 1 + 0 + 2 + 0, ibMissedFree: 1 + 0 + 0 + 0,
                  ibMissedBusy: 0, ibTalkSec: 60 + 100,
-                 obTotal: 1 + 0 + 0 + 1, obConnected: 1 + 1, obTalkSec: 30 + 45 },
+                 obTotal: 1 + 0, obConnected: 1 + 0, obTalkSec: 30 + 0, obExtTotal: 0 + 1 },
     deptsPrior: [
       { dept: 'CSR', ib_answered: 1, ib_missed_free: 1, ib_missed_busy: 0, ob_total: 1 },
-      { dept: 'Sales', ib_answered: 2, ib_missed_free: 0, ib_missed_busy: 0, ob_total: 1 },
+      { dept: 'Sales', ib_answered: 2, ib_missed_free: 0, ib_missed_busy: 0, ob_total: 0 },
     ],
     coverageStart: pw.from,
   });
@@ -198,6 +200,13 @@ test('DC-1 SOURCE PARITY: Neon path and sheet fallback produce the same payload 
 
   assert.deepEqual(strip(viaSheet), strip(viaNeon),
     'the two sources must shape byte-identical payloads (shared shaper + mirrored aggregation)');
+  // DO-1 (owner 2026-11-05): outbound = calls to colleagues; outside numbers
+  // ride as obExt (the Outbound view counts those).
+  const k = JSON.parse(JSON.stringify(viaNeon.kpis));
+  assert.deepEqual([k.obTotal, k.obConnected, k.obTalkSec], [4, 3, 170], 'colleague calls only');
+  assert.deepEqual(k.obExt, { total: 2, connected: 1, talkSec: 80, attSec: 80 });
+  const ana = JSON.parse(JSON.stringify(viaSheet.agents)).filter(function (a) { return a.agent === 'Ana' && a.dept === 'CSR'; })[0];
+  assert.deepEqual([ana.obTotal, ana.obExt.total, ana.obExt.connected], [1, 2, 1]);
 });
 
 test('DC-1: fallback numbers -- busy carve-out, distinct-agent count, ordering', function () {
@@ -255,4 +264,13 @@ test('DC-1: missing sheet keeps the old behavior (available=false)', function ()
   const out = h.call('computeDirectCallReport_', { from: FROM, to: TO, dept: '', companyView: true });
   assert.equal(out.meta.available, false);
   assert.equal(out.meta.fallbackSource, undefined);
+});
+
+test('DO-1: the Neon query sums the colleague (int) outbound columns only -- outside calls ride as obExt', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'DirectCallReport.gs'), 'utf8');
+  assert.ok(src.indexOf('ob_int_total+ob_ext_total') === -1 && src.indexOf('ob_int_connected+ob_ext_connected') === -1
+    && src.indexOf('ob_int_talk_sec+ob_ext_talk_sec') === -1, 'no outbound figure adds the outside calls back in');
+  assert.match(src, /"sum\(ob_int_total\) AS ob_total, " \+/);
+  assert.match(src, /"'obTotal', COALESCE\(sum\(ob_int_total\),0\), " \+/);
+  assert.match(src, /DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v6'/);
 });

@@ -3670,6 +3670,7 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
     if ($('coaching-refresh-btn')) $('coaching-refresh-btn').addEventListener('click', coachingLoad_);
+    if ($('coaching-gates-save-all')) $('coaching-gates-save-all').addEventListener('click', coachingSaveAllGates_);   // CO-1
     if ($('coaching-status-filter')) $('coaching-status-filter').addEventListener('change', coachingLoad_);
 
     // Row actions: ONE delegated listener (rows re-render on every load).
@@ -3789,49 +3790,120 @@
   }
 
   // ---- Step 5b: gates by department ----
-  // PURE (pinned): a dept's gates as the sentence they enforce.
+  // PURE (pinned): a dept's gates as the sentence they enforce. CO-1: a flat
+  // answer-% gate reads as its own sentence.
   function coachingGateSentence_(g) {
+    if (g && g.flatRatePct != null && g.flatRatePct !== '') {
+      return 'Flag an agent who answers less than <strong>' + escapeHtml(String(g.flatRatePct)) + '%</strong> of their rings '
+        + '(a flat gate, not compared with the team), with <strong>' + escapeHtml(String(g.minMissed)) + '+</strong> missed rings over 10 workdays.';
+    }
     return 'Flag an agent who answers less than <strong>' + escapeHtml(String(g.maxTeamRatioPct)) + '%</strong> as often as the team, '
       + 'at least <strong>' + escapeHtml(String(g.behindPts)) + '</strong> points behind, with <strong>'
       + escapeHtml(String(g.minMissed)) + '+</strong> missed rings over 10 workdays.';
   }
+  // [gate, label, min, max, mode] -- mode: shown only in that mode ('' = both).
   var COACHING_GATE_INPUTS_ = [
-    ['maxTeamRatioPct', 'Ratio % of team', 5, 100],
-    ['behindPts', 'Points behind', 0, 50],
-    ['minMissed', 'Missed rings', 1, 1000],
+    ['maxTeamRatioPct', 'Ratio % of team', 5, 100, 'team'],
+    ['behindPts', 'Points behind', 0, 50, 'team'],
+    ['flatRatePct', 'Answer % below', 1, 100, 'flat'],
+    ['minMissed', 'Missed rings', 1, 1000, ''],
   ];
+  function coachingCardMode_(card) {
+    var sel = card && card.querySelector('select[data-gate-mode]');
+    return sel ? sel.value : 'team';
+  }
+  function coachingSyncCardMode_(card) {
+    var mode = coachingCardMode_(card);
+    card.querySelectorAll('[data-gate-field]').forEach(function (el) {
+      var m = el.getAttribute('data-gate-field');
+      el.hidden = !!m && m !== mode;
+    });
+  }
+  function coachingCardReq_(card) {
+    var req = { department: card.getAttribute('data-dept'), mode: coachingCardMode_(card) };
+    card.querySelectorAll('input[data-gate]').forEach(function (inp) {
+      var g = inp.getAttribute('data-gate');
+      req[g] = (g === 'flatRatePct' && req.mode !== 'flat') ? '' : inp.value;
+    });
+    return req;
+  }
+  function coachingCardStatus_(card, msg, kind) {
+    var el = card && card.querySelector('.coaching-gate-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = 'coaching-gate-status' + (kind ? ' is-' + kind : '');
+  }
+  function coachingDirtyCount_() {
+    var box = $('coaching-gates');
+    return box ? box.querySelectorAll('.al-rule.is-dirty').length : 0;
+  }
+  function coachingSyncSaveAll_() {
+    var b = $('coaching-gates-save-all');
+    if (!b || b.getAttribute('aria-busy') === 'true') return;
+    var n = coachingDirtyCount_();
+    b.disabled = !n;
+    b.textContent = n ? 'Save all changes (' + n + ')' : 'Save all changes';
+  }
   function coachingRenderGates_(meta) {
     const box = $('coaching-gates');
     if (!box) return;
     const gates = (meta && meta.deptGates) || {};
     const depts = Object.keys(gates);
-    if (!depts.length) { box.innerHTML = '<p class="al-hint">Department gates unavailable.</p>'; return; }
+    // CO-1: a worklist reload (a flag closed, Refresh) never throws away gate
+    // edits that are not saved yet.
+    if (coachingDirtyCount_()) return;
+    if (!depts.length) { box.innerHTML = '<p class="al-hint">Department gates unavailable.</p>'; coachingSyncSaveAll_(); return; }
     box.innerHTML = depts.map(function (d, i) {
       const g = gates[d] || {}, eff = g.effective || {}, adm = g.admin || {}, mgr = g.manager || {};
+      const flat = adm.flatRatePct != null && adm.flatRatePct !== '';
       const mgrKeys = Object.keys(mgr);
       const mgrNote = mgrKeys.length
         ? '<span class="al-rule-chip is-on">Manager stricter: ' + mgrKeys.map(function (k) {
             return escapeHtml(k === 'maxTeamRatioPct' ? mgr[k] + '%' : k === 'behindPts' ? mgr[k] + ' pts' : mgr[k] + ' missed');
           }).join(', ') + ' &middot; applies</span>' : '';
-      return '<div class="al-rule" role="listitem" data-dept="' + escapeHtml(d) + '">'
+      const modeId = 'coaching-gate-' + i + '-mode';
+      return '<div class="al-rule coaching-gate-card" role="listitem" data-dept="' + escapeHtml(d) + '">'
         + '<p class="al-rule-sentence"><strong>' + escapeHtml(d) + '</strong> &mdash; ' + coachingGateSentence_(eff) + '</p>'
         + (mgrNote ? '<div class="al-rule-meta">' + mgrNote + '</div>' : '')
         + '<div class="coaching-gate-row">'
+        + '<label for="' + modeId + '">Gate</label><select id="' + modeId + '" data-gate-mode>'
+        +   '<option value="team"' + (flat ? '' : ' selected') + '>Relative to the team</option>'
+        +   '<option value="flat"' + (flat ? ' selected' : '') + '>Flat answer %</option>'
+        + '</select>'
         + COACHING_GATE_INPUTS_.map(function (f) {
             const id = 'coaching-gate-' + i + '-' + f[0];
-            return '<label for="' + id + '">' + f[1] + '</label><input type="number" id="' + id + '" data-gate="' + f[0]
-              + '" min="' + f[2] + '" max="' + f[3] + '" step="1" value="' + (adm[f[0]] != null ? escapeHtml(String(adm[f[0]])) : '') + '">';
+            return '<span class="coaching-gate-field" data-gate-field="' + f[4] + '"><label for="' + id + '">' + f[1] + '</label>'
+              + '<input type="number" id="' + id + '" data-gate="' + f[0] + '" min="' + f[2] + '" max="' + f[3] + '" step="1" value="'
+              + (adm[f[0]] != null ? escapeHtml(String(adm[f[0]])) : '') + '"></span>';
           }).join('')
         + '<button type="button" class="btn btn-secondary coaching-gate-save">Save</button>'
         + '<button type="button" class="link-btn coaching-gate-preview">Email me the manager version</button>'
+        + '<span class="coaching-gate-status" role="status" aria-live="polite"></span>'
         + '</div></div>';
     }).join('');
-    box.querySelectorAll('.coaching-gate-save').forEach(function (b) {
-      b.addEventListener('click', function () { coachingSaveGates_(b.closest('.al-rule'), b); });
+    box.querySelectorAll('.coaching-gate-card').forEach(function (card) {
+      coachingSyncCardMode_(card);
+      const dirty = function () {
+        card.classList.add('is-dirty');
+        coachingCardStatus_(card, 'Unsaved changes', 'dirty');
+        coachingSyncSaveAll_();
+      };
+      card.querySelectorAll('input[data-gate]').forEach(function (inp) { inp.addEventListener('input', dirty); });
+      const sel = card.querySelector('select[data-gate-mode]');
+      if (sel) sel.addEventListener('change', function () { coachingSyncCardMode_(card); dirty(); });
+      card.querySelector('.coaching-gate-save').addEventListener('click', function (e) { coachingSaveGates_(card, e.currentTarget); });
+      card.querySelector('.coaching-gate-preview').addEventListener('click', function (e) {
+        coachingPreviewManagerEmail_(card, e.currentTarget);
+      });
     });
-    box.querySelectorAll('.coaching-gate-preview').forEach(function (b) {
-      b.addEventListener('click', function () { coachingPreviewManagerEmail_(b.closest('.al-rule').getAttribute('data-dept'), b); });
-    });
+    coachingSyncSaveAll_();
+  }
+  // The saved department's sentence, from the server's applied gates.
+  function coachingCardSentence_(card, g) {
+    const eff = g && g.effective;
+    const p = card && card.querySelector('.al-rule-sentence');
+    if (!eff || !p || eff.minMissed == null) return;
+    p.innerHTML = '<strong>' + escapeHtml(card.getAttribute('data-dept')) + '</strong> &mdash; ' + coachingGateSentence_(eff);
   }
   function coachingGatesStatus_(msg, isError) {
     const el = $('coaching-gates-status');
@@ -3839,75 +3911,159 @@
     el.textContent = msg || '';
     el.classList.toggle('is-error', !!isError);
   }
+  // CO-1: a button that says what it is doing while its call is out.
+  function coachingBtnBusy_(btn, busy, label) {
+    if (!btn) return;
+    if (busy) {
+      btn.setAttribute('data-label', btn.textContent);
+      btn.textContent = label;
+      btn.setAttribute('aria-busy', 'true');
+      btn.classList.add('is-busy');
+      btn.disabled = true;
+    } else {
+      btn.textContent = btn.getAttribute('data-label') || btn.textContent;
+      btn.removeAttribute('aria-busy');
+      btn.classList.remove('is-busy');
+      btn.disabled = false;
+    }
+  }
+  // One save per department at a time; different departments may save together
+  // (the server serializes the write).
+  var coachingSaving_ = {};
   function coachingSaveGates_(card, btn) {
-    if (!card || mutationBusy_('coachingGates')) return;
+    if (!card) return;
     const dept = card.getAttribute('data-dept');
-    const req = { department: dept };
-    card.querySelectorAll('input[data-gate]').forEach(function (inp) { req[inp.getAttribute('data-gate')] = inp.value; });
-    if (btn) btn.disabled = true;
+    if (coachingSaving_[dept]) return;
+    coachingSaving_[dept] = true;
+    coachingBtnBusy_(btn, true, 'Saving…');
+    coachingCardStatus_(card, 'Saving…', 'busy');
     google.script.run
-      .withSuccessHandler(function () {
-        mutationDone_('coachingGates');
-        if (btn) btn.disabled = false;
-        coachingGatesStatus_('Saved the gates for ' + dept + '. The next weekly run uses them.');
-        coachingLoad_();
+      .withSuccessHandler(function (r) {
+        delete coachingSaving_[dept];
+        coachingCardSentence_(card, r && r.gates);
+        coachingBtnBusy_(btn, false);
+        card.classList.remove('is-dirty');
+        coachingCardStatus_(card, 'Saved — the next weekly run uses these gates.', 'ok');
+        coachingSyncSaveAll_();
       })
       .withFailureHandler(function (err) {
-        mutationDone_('coachingGates');
-        if (btn) btn.disabled = false;
-        coachingGatesStatus_(err && err.message ? err.message : String(err), true);
+        delete coachingSaving_[dept];
+        coachingBtnBusy_(btn, false);
+        coachingCardStatus_(card, err && err.message ? err.message : String(err), 'error');
       })
-      .saveCoachingDeptRule(req);
+      .saveCoachingDeptRule(coachingCardReq_(card));
   }
-  function coachingPreviewManagerEmail_(dept, btn) {
+  // CO-1 (owner): every changed department in one call -- validated together,
+  // so one bad value saves nothing and is named.
+  function coachingSaveAllGates_() {
+    const box = $('coaching-gates');
+    const btn = $('coaching-gates-save-all');
+    if (!box || !btn || btn.getAttribute('aria-busy') === 'true') return;
+    const cards = Array.prototype.slice.call(box.querySelectorAll('.coaching-gate-card.is-dirty'));
+    if (!cards.length) return;
+    coachingBtnBusy_(btn, true, 'Saving ' + cards.length + ' department' + (cards.length === 1 ? '' : 's') + '…');
+    cards.forEach(function (c) { coachingCardStatus_(c, 'Saving…', 'busy'); });
+    coachingGatesStatus_('');
+    google.script.run
+      .withSuccessHandler(function (r) {
+        coachingBtnBusy_(btn, false);
+        cards.forEach(function (c) {
+          c.classList.remove('is-dirty');
+          coachingCardStatus_(c, 'Saved.', 'ok');
+          coachingCardSentence_(c, r && r.gates && r.gates[c.getAttribute('data-dept')]);
+        });
+        const n = (r && r.saved && r.saved.length) || cards.length;
+        coachingGatesStatus_('Saved the gates for ' + n + ' department' + (n === 1 ? '' : 's') + '. The next weekly run uses them.');
+        coachingSyncSaveAll_();
+      })
+      .withFailureHandler(function (err) {
+        coachingBtnBusy_(btn, false);
+        const msg = err && err.message ? err.message : String(err);
+        cards.forEach(function (c) { coachingCardStatus_(c, 'Not saved', 'error'); });
+        coachingGatesStatus_('Nothing was saved: ' + msg, true);
+        coachingSyncSaveAll_();
+      })
+      .saveCoachingDeptRules({ rules: cards.map(coachingCardReq_) });
+  }
+  function coachingPreviewManagerEmail_(card, btn) {
+    if (!card) return;
+    const dept = card.getAttribute('data-dept');
     if (mutationBusy_('coachingPreview')) return;
-    if (btn) btn.disabled = true;
-    coachingGatesStatus_('Sending ' + dept + '’s manager email to you…');
+    coachingBtnBusy_(btn, true, 'Sending…');
+    coachingCardStatus_(card, 'Sending ' + dept + '’s manager email to you…', 'busy');
     google.script.run
       .withSuccessHandler(function (r) {
         mutationDone_('coachingPreview');
-        if (btn) btn.disabled = false;
-        coachingGatesStatus_('Sent to ' + (r && r.sentTo || 'you') + ': ' + dept + '’s manager email (' + (r && r.flags) + ' agent'
-          + (r && r.flags === 1 ? '' : 's') + '). No manager received it.');
+        coachingBtnBusy_(btn, false);
+        coachingCardStatus_(card, 'Sent to ' + (r && r.sentTo || 'you') + ' (' + (r && r.flags) + ' agent'
+          + (r && r.flags === 1 ? '' : 's') + '). No manager received it.', 'ok');
       })
       .withFailureHandler(function (err) {
         mutationDone_('coachingPreview');
-        if (btn) btn.disabled = false;
-        coachingGatesStatus_(err && err.message ? err.message : String(err), true);
+        coachingBtnBusy_(btn, false);
+        coachingCardStatus_(card, err && err.message ? err.message : String(err), 'error');
       })
       .previewCoachingManagerEmail({ department: dept });
   }
 
+  // CO-2 (owner 2026-11-05): one row per flag, readable at a glance -- the
+  // agent and department together, the answer rate drawn against the team's
+  // (a bar to 100% with the team's rate as a marker), the missed rings in
+  // words, the window as dates, the status as a pill.
+  var COACHING_MON_ = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function coachingShortDate_(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return m ? COACHING_MON_[Number(m[2]) - 1] + ' ' + Number(m[3]) : '';
+  }
+  function coachingRateBarHtml_(rate, team) {
+    const clamp = function (v) { return Math.max(0, Math.min(100, Number(v) || 0)); };
+    if (rate == null) return '';
+    return '<div class="coach-rate-bar" role="img" aria-label="Answered ' + escapeHtml(String(rate)) + '% of rings'
+      + (team != null ? '; the team answered ' + escapeHtml(String(team)) + '%' : '') + '">'
+      + '<span class="coach-rate-fill" style="width:' + clamp(rate) + '%"></span>'
+      + (team != null ? '<span class="coach-rate-team" style="left:' + clamp(team) + '%" title="Team ' + escapeHtml(String(team)) + '%"></span>' : '')
+      + '</div>';
+  }
   function coachingRowHtml_(r) {
     const open = r.status === 'open';
     const ratio = r.team_ratio_pct != null ? Math.round(r.team_ratio_pct) : null;
-    const rateCell = (r.rate_pct != null ? r.rate_pct : '—') + '% vs '
-      + (r.team_rate_pct != null ? r.team_rate_pct : '—') + '%'
-      + (ratio != null ? ' <span class="al-hint">(' + ratio + '% of team, '
-        + (r.gap_pts != null ? r.gap_pts : '—') + ' pts behind)</span>' : '');
-    const statusCell = open ? 'open'
-      : escapeHtml(COACHING_STATUS_LABEL_[r.status] || r.status) + (r.closed_by ? ' <span class="al-hint" title="'
-        + escapeHtml((r.closed_at || '') + (r.note ? (' — ' + r.note) : ''))
-        + '">by ' + escapeHtml(r.closed_by) + '</span>' : '');
+    const fmtN = function (v) { return v != null ? escapeHtml(fmtNumber(v)) : '—'; };
+    const since = coachingShortDate_(r.created_at);
+    const agentCell = '<div class="coach-agent">' + escapeHtml(r.agent_name || '') + '</div>'
+      + '<div class="coach-sub"><span class="coach-dept">' + escapeHtml(r.department || '') + '</span>'
+      + ((r.times_flagged || 1) > 1 ? ' <span class="coach-times" title="Flagged in ' + escapeHtml(String(r.times_flagged))
+          + ' weekly runs">flagged ' + escapeHtml(String(r.times_flagged)) + '×</span>' : '')
+      + (since ? ' · since ' + escapeHtml(since) : '') + '</div>';
+    const rateCell = '<div class="coach-rate"><strong>' + (r.rate_pct != null ? escapeHtml(String(r.rate_pct)) + '%' : '—') + '</strong>'
+      + ' <span class="coach-vs">vs team ' + (r.team_rate_pct != null ? escapeHtml(String(r.team_rate_pct)) + '%' : '—') + '</span></div>'
+      + coachingRateBarHtml_(r.rate_pct, r.team_rate_pct)
+      + (ratio != null ? '<div class="coach-sub">' + ratio + '% as often as the team'
+          + (r.gap_pts != null ? ' · ' + escapeHtml(String(r.gap_pts)) + ' pts behind' : '') + '</div>' : '');
+    const missedCell = '<div class="coach-missed"><strong>' + fmtN(r.missed) + '</strong> missed</div>'
+      + '<div class="coach-sub">of ' + fmtN(r.rung) + ' rung · ' + fmtN(r.answered) + ' answered</div>';
+    const winCell = '<div>' + escapeHtml(coachingShortDate_(r.window_from)) + ' – ' + escapeHtml(coachingShortDate_(r.window_to)) + '</div>'
+      + '<div class="coach-sub">10 workdays</div>';
+    const statusCell = open ? '<span class="coach-pill coach-pill--open">Open</span>'
+      : '<span class="coach-pill coach-pill--' + escapeHtml(r.status === 'resolved' ? 'met' : r.status) + '">'
+        + escapeHtml(COACHING_STATUS_LABEL_[r.status] || r.status) + '</span>'
+        + (r.closed_by ? '<div class="coach-sub" title="' + escapeHtml((r.closed_at || '') + (r.note ? (' — ' + r.note) : ''))
+          + '">by ' + escapeHtml(r.closed_by) + (r.note ? ' · “' + escapeHtml(r.note.length > 40 ? r.note.slice(0, 40) + '…' : r.note) + '”' : '') + '</div>' : '');
     const actions = open
-      ? '<input type="text" class="coaching-note-input" data-note-for="' + escapeHtml(r.id)
-        + '" maxlength="500" placeholder="note (optional)" style="width:110px;"'
-        + ' aria-label="Note for ' + escapeHtml(r.agent_name || 'this flag') + ' (optional)"> '   // UI-8
-        + '<button class="btn btn-secondary" type="button" data-coaching-action="met" data-id="'
-        + escapeHtml(r.id) + '" title="The conversation happened">Met</button> '
+      ? '<div class="coach-actions"><input type="text" class="coaching-note-input" data-note-for="' + escapeHtml(r.id)
+        + '" maxlength="500" placeholder="Note (optional)"'
+        + ' aria-label="Note for ' + escapeHtml(r.agent_name || 'this flag') + ' (optional)">'   // UI-8
+        + '<div class="coach-btns"><button class="btn btn-secondary" type="button" data-coaching-action="met" data-id="'
+        + escapeHtml(r.id) + '" title="The conversation happened">Met</button>'
         + '<button class="btn btn-secondary" type="button" data-coaching-action="rotated" data-id="'
-        + escapeHtml(r.id) + '" title="Their queue assignment was changed instead">Rotated</button> '
+        + escapeHtml(r.id) + '" title="Their queue assignment was changed instead">Rotated</button>'
         + '<button class="btn btn-ghost" type="button" data-coaching-action="dismissed" data-id="'
-        + escapeHtml(r.id) + '" title="Not a real issue for this agent">Dismissed</button>'
+        + escapeHtml(r.id) + '" title="Not a real issue for this agent">Dismissed</button></div></div>'
       : '';
-    return '<tr>'
-      + '<td>' + escapeHtml(r.department || '') + '</td>'
-      + '<td>' + escapeHtml(r.agent_name || '') + '</td>'
-      + '<td class="num">' + rateCell + '</td>'
-      + '<td class="num">' + (r.missed != null ? r.missed : '—') + ' / ' + (r.rung != null ? r.rung : '—')
-        + ' <span class="al-hint">(' + (r.answered != null ? r.answered : '—') + ' ans)</span></td>'
-      + '<td class="num">' + (r.times_flagged || 1) + '×</td>'
-      + '<td>' + escapeHtml((r.window_from || '') + ' .. ' + (r.window_to || '')) + '</td>'
+    return '<tr class="coach-row' + (open ? ' is-open' : '') + '">'
+      + '<td>' + agentCell + '</td>'
+      + '<td class="coach-rate-td">' + rateCell + '</td>'
+      + '<td>' + missedCell + '</td>'
+      + '<td>' + winCell + '</td>'
       + '<td>' + statusCell + '</td>'
       + '<td>' + actions + '</td>'
       + '</tr>';

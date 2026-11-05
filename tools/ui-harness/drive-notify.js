@@ -176,19 +176,79 @@ async function openNotifications(page) {
     JSON.stringify(cw.actions) === JSON.stringify(['Met', 'Rotated', 'Dismissed']), JSON.stringify(cw.actions));
   const cg = cw.gates.filter((g) => g.dept === 'CSR')[0];
   record('coaching: each dept\'s gates read as a sentence naming the APPLIED values, a manager\'s stricter value chipped',
-    cw.gates.length === 2 && !!cg && /less than 60% as often as the team, at least 3 points behind, with 20\+ missed rings/.test(cg.text)
-      && /Manager stricter: 3 pts/.test(cg.chip) && cg.inputs === 3, JSON.stringify(cw.gates));
+    cw.gates.length === 3 && !!cg && /less than 60% as often as the team, at least 3 points behind, with 20\+ missed rings/.test(cg.text)
+      && /Manager stricter: 3 pts/.test(cg.chip) && cg.inputs === 4, JSON.stringify(cw.gates));
+  // CO-1: a flat answer-% department reads as its own sentence, with only the
+  // inputs its mode uses showing; switching the mode swaps them and marks the card unsaved.
+  const flat = await page.evaluate(() => {
+    const c = document.querySelector('#coaching-gates .al-rule[data-dept="Power"]');
+    const vis = (g) => { const i = c.querySelector('input[data-gate="' + g + '"]'); return !!i && i.offsetParent !== null; };
+    return { text: c.querySelector('.al-rule-sentence').textContent, mode: c.querySelector('select[data-gate-mode]').value,
+      flatShown: vis('flatRatePct'), ratioShown: vis('maxTeamRatioPct'), saveAll: document.getElementById('coaching-gates-save-all').disabled };
+  });
+  record('CO-1: a flat answer-% gate reads as its own sentence and shows only its own inputs; Save all starts disabled',
+    /less than 40% of their rings \(a flat gate/.test(flat.text) && flat.mode === 'flat' && flat.flatShown && !flat.ratioShown && flat.saveAll === true,
+    JSON.stringify(flat));
+  // CO-2: the worklist row -- agent with department, the rate drawn against the team, the status pill.
+  const crow = await page.evaluate(() => {
+    const tr = document.querySelector('#coaching-tbody tr');
+    return { agent: (tr.querySelector('.coach-agent') || {}).textContent, dept: (tr.querySelector('.coach-dept') || {}).textContent,
+      fill: (tr.querySelector('.coach-rate-fill') || { style: {} }).style.width, team: (tr.querySelector('.coach-rate-team') || { style: {} }).style.left,
+      pill: (tr.querySelector('.coach-pill') || {}).textContent, times: (tr.querySelector('.coach-times') || {}).textContent,
+      cols: document.querySelectorAll('#coaching-table thead th').length };
+  });
+  record('CO-2: a flag row names the agent and department, draws their rate against the team\'s, and shows an Open pill',
+    crow.agent === 'Test Agent' && crow.dept === 'CSR' && crow.fill === '21.4%' && crow.team === '78.9%' && crow.pill === 'Open'
+      && /flagged 2×/.test(crow.times || '') && crow.cols === 6, JSON.stringify(crow));
   await page.fill('#coaching-gates .al-rule[data-dept="Sales"] input[data-gate="maxTeamRatioPct"]', '55');
   await page.click('#coaching-gates .al-rule[data-dept="Sales"] .coaching-gate-save');
   await page.waitForTimeout(600);
   const gsave = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'saveCoachingDeptRule').map((c) => c.args[0]));
-  record('coaching: Save sends that dept\'s three gates', gsave.length === 1 && gsave[0].department === 'Sales'
-    && gsave[0].maxTeamRatioPct === '55' && gsave[0].behindPts === '5', JSON.stringify(gsave));
-  await page.click('#coaching-gates .al-rule[data-dept="CSR"] .coaching-gate-preview');
+  const savedCard = await page.evaluate(() => {
+    const c = document.querySelector('#coaching-gates .al-rule[data-dept="Sales"]');
+    return { status: c.querySelector('.coaching-gate-status').textContent, dirty: c.classList.contains('is-dirty'),
+      text: c.querySelector('.al-rule-sentence').textContent };
+  });
+  record('coaching: Save sends that dept\'s gates and says it saved, beside the button', gsave.length === 1 && gsave[0].department === 'Sales'
+    && gsave[0].maxTeamRatioPct === '55' && gsave[0].behindPts === '5' && gsave[0].mode === 'team' && gsave[0].flatRatePct === ''
+    && /^Saved/.test(savedCard.status) && !savedCard.dirty && /less than 55% as often/.test(savedCard.text),
+    JSON.stringify({ gsave: gsave, card: savedCard }));
+  // CO-1: Save all -- two edited departments in ONE call, the button saying what it does.
+  await page.fill('#coaching-gates .al-rule[data-dept="CSR"] input[data-gate="minMissed"]', '18');
+  await page.selectOption('#coaching-gates .al-rule[data-dept="Sales"] select[data-gate-mode]', 'flat');
+  await page.fill('#coaching-gates .al-rule[data-dept="Sales"] input[data-gate="flatRatePct"]', '30');
+  const allLabel = await page.evaluate(() => { const b = document.getElementById('coaching-gates-save-all'); return { t: b.textContent, d: b.disabled }; });
+  await page.click('#coaching-gates-save-all');
   await page.waitForTimeout(600);
-  const prevStatus = await page.evaluate(() => document.getElementById('coaching-gates-status').textContent);
-  record('coaching: "Email me the manager version" reaches the admin, and says no manager got it',
-    (await calls(page, 'previewCoachingManagerEmail')) === 1 && /No manager received it/.test(prevStatus), prevStatus);
+  const all = await page.evaluate(() => ({
+    calls: window.__HARNESS__.calls.filter((c) => c.fn === 'saveCoachingDeptRules').map((c) => c.args[0].rules.map((r) => r.department + ':' + r.mode)),
+    status: document.getElementById('coaching-gates-status').textContent,
+    dirty: document.querySelectorAll('#coaching-gates .is-dirty').length,
+    sales: document.querySelector('#coaching-gates .al-rule[data-dept="Sales"] .al-rule-sentence').textContent,
+  }));
+  record('CO-1: Save all sends every edited department in one call and says so; the cards are clean after',
+    allLabel.t === 'Save all changes (2)' && !allLabel.d && all.calls.length === 1 && JSON.stringify(all.calls[0]) === '["CSR:team","Sales:flat"]'
+      && /Saved the gates for 2 departments/.test(all.status) && all.dirty === 0 && /less than 30% of their rings/.test(all.sales),
+    JSON.stringify({ allLabel: allLabel, all: all }));
+  // ...and a bad value saves nothing, naming the department.
+  await page.fill('#coaching-gates .al-rule[data-dept="CSR"] input[data-gate="behindPts"]', '99');
+  await page.click('#coaching-gates-save-all');
+  await page.waitForTimeout(600);
+  const badAll = await page.evaluate(() => ({ status: document.getElementById('coaching-gates-status').textContent,
+    card: document.querySelector('#coaching-gates .al-rule[data-dept="CSR"] .coaching-gate-status').textContent }));
+  record('CO-1: a bad value in Save all saves nothing and names the department', /^Nothing was saved: CSR: behindPts/.test(badAll.status)
+    && badAll.card === 'Not saved', JSON.stringify(badAll));
+  // The manager-email preview reports on its own card, while it sends and after.
+  const prevBusy = await page.evaluate(() => new Promise((res) => {
+    const c = document.querySelector('#coaching-gates .al-rule[data-dept="CSR"]');
+    c.querySelector('.coaching-gate-preview').click();
+    res({ btn: c.querySelector('.coaching-gate-preview').textContent, st: c.querySelector('.coaching-gate-status').className });
+  }));
+  await page.waitForTimeout(600);
+  const prevStatus = await page.evaluate(() => document.querySelector('#coaching-gates .al-rule[data-dept="CSR"] .coaching-gate-status').textContent);
+  record('coaching: "Email me the manager version" says Sending on its card, then that it reached the admin and no manager got it',
+    (await calls(page, 'previewCoachingManagerEmail')) === 1 && prevBusy.btn === 'Sending…' && /is-busy/.test(prevBusy.st)
+      && /No manager received it/.test(prevStatus), JSON.stringify({ prevBusy: prevBusy, prevStatus: prevStatus }));
   await page.click('#coaching-tbody [data-coaching-action="rotated"]');
   await page.waitForTimeout(300);
   const rotAsk = await page.evaluate(() => (document.querySelector('.ds-confirm') || {}).textContent || '');
@@ -275,7 +335,7 @@ async function openNotifications(page) {
   // The modal's keep-warm / cache-warm panels are unmocked on purpose (their
   // own error states render); only this page's verbs must all be mocked.
   const NOTIFY_RPCS = ['getAlertHistory', 'sendAlertTest', 'setNotifyManagerEdit', 'getNotifyRules', 'saveNotifyManagerRule',
-    'saveCoachingDeptRule', 'previewCoachingManagerEmail', 'updateCoachingFlagStatus', 'getCoachingWorklist',
+    'saveCoachingDeptRule', 'saveCoachingDeptRules', 'previewCoachingManagerEmail', 'updateCoachingFlagStatus', 'getCoachingWorklist',
     'saveAlertReasonRule', 'previewAlerts'];
   const unmocked = unmockedA.concat(unmockedM).filter((n) => NOTIFY_RPCS.indexOf(n) !== -1);
   record('no Notifications RPC is unmocked', unmocked.length === 0, unmocked.join(', '));

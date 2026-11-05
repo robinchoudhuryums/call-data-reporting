@@ -6,13 +6,17 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-11-04
+Updated: 2026-11-05
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-05 (2) -- TD-1/TD-2 + CO-1/CO-2 IMPLEMENTED (block 259-td-co-broad-implement; owner notes).** Transfer detail chips vs prior + the other-destinations list; coaching gate busy/saved states, Save all, a flat answer-% gate; the worklist rows and both coaching emails restyled. Dashboard only. **Owner-side:** push the dashboard + roll the deployment; walk S44 and S64.
+  **Where I left off:** committed + pushed on the branch with DCA-3/4/5; no PR (not asked).
+- **2026-11-05 -- DCA-3/4/5 IMPLEMENTED (block 259-dca345-broad-implement; owner after the first all-dates attribution run).** DCA-3 reassigned / unlisted extensions credit the roster person 8x8 names (3,067 legs were going to no one); DCA-4 "Parker" no longer matches call park (a current employee read 151 -> 0); DCA-5 Spanish + CSR agents credited to CSR. cdr-import only. **Owner-side:** push cdr-import, re-run `rebuildDirectCallHeldDates()`, then `diagnoseDirectCallAttributionAllDates()`; Outlier Fix aliases for the two spelling variants (Shrivastava, Millie S.).
+  **Where I left off:** committed + pushed on the branch; no PR (not asked).
 - **2026-11-04 (2) -- AC batch IMPLEMENTED (block 259-ac-dca2-broad-implement; owner testing notes).** AC-1 sticky Agent Call Metrics header; AC-2 ATT in the Talk column; AC-3 combined ans/day counts a CSR + Spanish agent's day once (summary:v25); AC-4 Outbound view lists only diallers; AC-5 Transfer % amber 30-32 / red above 32; DCA-2 (owner's screenshot: Hope (Heeya) Shah, Laura Flores, Regina Malijan in the Direct view) -- a blank-name direct leg is credited only when the extension named its roster person that day; AC-6 the agent panel's admin-only Direct tab over a new Neon `direct_calls` capture (Operator State #90).
   **SHIPPED: PR #404 merged (9e23d1f) on CI green (test, lint, ui-harness; local ci:ui 827 checks); branch restarted from main.**
   **Owner-side:** push dashboard + cdr-import; run `rebuildDirectCallHeldDates()` once (applies DCA-2 to held dates + fills the Direct tab); check the Standards editor's Transfer amber (35 -> 32 if saved); optional `diagnoseDirectCallAttributionAllDates()`; walk S56, S57. Older dates keep the old direct credit until re-imported (#56).

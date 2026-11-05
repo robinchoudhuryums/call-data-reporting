@@ -923,6 +923,15 @@ in the response.
 
 ### Direct-extension call metrics
 
+> **The report's OUTBOUND is calls to COLLEAGUES (DO-1, owner 2026-11-05).**
+> `getDirectCallReport`'s `obTotal` / `obConnected` / `obTalkSec` / `obAttSec`
+> (kpis, prior, per agent, per dept) sum the `ob_int_*` columns only; calls to
+> outside numbers ride alongside as `obExt` `{total, connected, talkSec,
+> attSec}` (`directCallObExt_`) and render as a small "+N to outside numbers"
+> line -- the Outbound view owns them. Storage is unchanged (both halves are
+> still captured), the missed-while-busy rule still counts every call, and the
+> direct-LINE figures (Overview, Insights) are inbound-only. `directCall:v6`.
+
 > **An extension AND the name on the leg (DCA-1, Operator State #83).**
 > Former employees stay on `DO NOT EDIT!` with their old extension, and 8x8
 > reassigns extensions, so the build no longer credits a leg by extension
@@ -936,8 +945,15 @@ in the response.
 > digit) is credited by extension ONLY when that extension showed its roster
 > person's own name on another leg the same day (DCA-2, owner 2026-11-04: a
 > one-pass `ownerSeen` set, `confirmBlank`), else to no one. Busy time follows
-> the same rule. Not retroactive (`rebuildDirectCallHeldDates`, #90, rebuilds
-> the held dates).
+> the same rule. **DCA-3:** a name the roster has, on an extension that
+> person's cell does not list (reassigned, or listed nowhere -- extension-length
+> only), is credited to THEM (`maps.nameCells`, `dcCellForName_`), and a blank
+> leg on an extension that named exactly one person that day follows them;
+> the per-call list names that colleague. **DCA-4:** the non-person filter's
+> words match whole ("Parker" is not call park) and a roster name always
+> counts as a person. **DCA-5:** a person on two rosters listed in
+> `DC_DEPT_PREFER_` (Spanish -> CSR) is credited to the preferred one. Not
+> retroactive (`rebuildDirectCallHeldDates`, #90, rebuilds the held dates).
 >
 > **The per-call list (AC-6, Operator State #90).** With `opts.events` the same
 > pass emits one record per direct call per agent -- every hour, flagged
@@ -997,7 +1013,7 @@ date's sheet rows as contiguous blocks rather than one `deleteRow` per row
 `direct-call-metrics.test.js` the block delete). Dashboard read
 surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
 (ONE json_build_object round-trip; answer rate EXCLUDES the busy
-carve-out; cached `directCall:v5` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
+carve-out; cached `directCall:v6` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
 the client delta chips). **D1 (2026-10-21): the report covers only days that
 exist** -- a coverage read first (`max(call_date)` + the dates with rows), the
 window CLAMPED to the last date with data (`meta.to`, the asked end in
@@ -1059,6 +1075,10 @@ filtering would break the reconciliation. (3) The 11 destination columns are
 a FIXED set, so `queueSum`/`queueUnaccounted` DISCLOSE transfers going
 anywhere else rather than letting the lists silently disagree with the
 headline. `tests/unit/csr-transfer-detail.test.js` pins all three.
+**TD-1/TD-2 (client):** every figure in the section carries a chip against
+`csrTransfer.prior` (same function, same sheet, matched by exact name), and
+the "other tracked queues" key opens the list of those destinations
+(`dtfWireRest_`); `drive-deptoutbound.js` asserts both.
 
 
 ### Agent-day interaction view (6d)

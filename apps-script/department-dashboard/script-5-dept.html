@@ -4825,12 +4825,35 @@
     if (!tr || (!queues.length && !agents.length)) { sec.style.display = 'none'; return; }
     sec.style.display = '';
 
+    // TD-1 (owner 2026-11-05): every figure here carries a chip against the
+    // INV-28 prior window -- csrTransfer.prior, the same block the Transfer %
+    // tile compares against (same function, same sheet, so a destination or
+    // an agent matches by its exact name).
+    const prior = tr.prior || null;
+    const pm = (state.meta) || {};
+    const priorTip = 'Prior period ' + (pm.priorFrom || '') + ' – ' + (pm.priorTo || '');
     const sub = $('dept-transfer-sub');
     if (sub) {
-      sub.textContent = fmtNumber(tr.transferred) + ' transfer'
+      let chip = '';
+      if (prior && prior.pct != null && tr.pct != null) {
+        chip = ' · ' + deptStripDelta_(Math.round((tr.pct - prior.pct) * 10) / 10, 'bad', 1, ' pts',
+          priorTip + ': ' + (prior.pctStr || prior.pct + '%')) + ' vs prior';
+      }
+      sub.innerHTML = escapeHtml(fmtNumber(tr.transferred) + ' transfer'
         + (tr.transferred === 1 ? '' : 's') + ' of ' + fmtNumber(tr.totalCalls)
-        + ' calls · ' + (tr.pctStr || '');
+        + ' calls · ' + (tr.pctStr || '')) + chip;
     }
+    const priorQ = {};
+    ((prior && prior.queues) || []).forEach(function (q) { priorQ[q.queue] = Number(q.transferred) || 0; });
+    const priorA = {};
+    ((prior && prior.agents) || []).forEach(function (a) { priorA[a.agent] = a; });
+    // A destination's transfers vs the prior window's (same workday count, so
+    // counts compare); a destination absent then counts from zero.
+    const qChip = function (name, n) {
+      if (!prior) return '';
+      const was = priorQ[name] || 0;
+      return deptStripDelta_(n - was, 'bad', 3, '', priorTip + ': ' + fmtNumber(was) + ' transfer' + (was === 1 ? '' : 's'));
+    };
 
     // SB-6 (owner 2026-10-28): both lists are SPLIT bars now. Where the
     // transfers went is one bar whose parts are the destinations -- the five
@@ -4853,13 +4876,21 @@
       }
       if (un > 0) parts.push({ cls: 'hatch', n: un, label: 'outside the tracked destinations' });
       const base = parts.reduce(function (a, x) { return a + x.n; }, 0);
+      const restPrior = rest.reduce(function (a, q) { return a + (priorQ[q.queue] || 0); }, 0);
       qEl.innerHTML = base
         ? obOutcomeBarHtml_(parts, base, fmtNumber(base) + ' transfers: ' + parts.map(function (x) {
             return fmtNumber(x.n) + ' to ' + x.label; }).join(', '))
-          + obOutcomeLegendHtml_(parts.map(function (x) {
-            return { cls: x.cls, value: fmtNumber(x.n) + ' · ' + (obSharePct_(x.n, base) || 0) + '%', label: x.label };
+          + obOutcomeLegendHtml_(parts.map(function (x, i) {
+            let extra = '';
+            if (x.cls === 'unk') extra = prior ? deptStripDelta_(x.n - restPrior, 'bad', 3, '', priorTip + ': ' + fmtNumber(restPrior)) : '';
+            else if (x.cls !== 'hatch') extra = qChip(x.label, x.n);
+            return { cls: x.cls, value: fmtNumber(x.n) + ' · ' + (obSharePct_(x.n, base) || 0) + '%', label: x.label, extraHtml: extra };
           }))
+          + (rest.length ? dtfRestListHtml_(rest, base, qChip) : '')
         : '<div class="ds-note">No destination detail for this range.</div>';
+      // TD-2 (owner): the "other tracked queues" key and bar part open the list
+      // of those queues, each with its own count, share and chip.
+      if (rest.length) dtfWireRest_(qEl);
     }
 
     const aEl = $('dept-transfer-agents');
@@ -4872,6 +4903,11 @@
             const tc = tier(a.pct);
             const w = maxCalls ? Math.max(calls ? 2 : 0, Math.round(calls / maxCalls * 1000) / 10) : 0;
             const label = a.agent + ': ' + fmtNumber(trn) + ' transferred of ' + fmtNumber(calls) + ' calls handled';
+            const pa = priorA[a.agent];
+            const aChip = (prior && pa && pa.pct != null && a.pct != null)
+              ? ' ' + deptStripDelta_(Math.round((a.pct - pa.pct) * 10) / 10, 'bad', 1, ' pts',
+                  priorTip + ': ' + pa.pct + '% (' + fmtNumber(pa.transferred) + ' of ' + fmtNumber(pa.totalCalls) + ')')
+              : '';
             return '<div class="dtf-name" title="' + escapeHtml(a.agent) + '">' + escapeHtml(a.agent) + '</div>'
               + '<div class="dtf-track"><div style="width:' + w + '%">'
               +   obOutcomeBarHtml_([{ cls: tc ? 'tf-' + tc.slice(3) : 'unk', n: trn, label: 'transferred' },
@@ -4879,7 +4915,7 @@
                                     Math.max(calls, trn), label, 'mid')
               + '</div></div>'
               + '<div class="dtf-num"><strong>' + escapeHtml(fmtNumber(trn)) + '</strong> of ' + escapeHtml(fmtNumber(calls))
-              +   (a.pct == null ? '' : ' · <span class="dtf-pct ' + tc + '">' + a.pct + '%</span>') + '</div>';
+              +   (a.pct == null ? '' : ' · <span class="dtf-pct ' + tc + '">' + a.pct + '%</span>') + aChip + '</div>';
           }).join('') + '</div>'
         : '<div class="ds-note">No per-agent detail for this range.</div>';
     }
@@ -4899,6 +4935,44 @@
       }
     }
   }
+  // TD-2: the tracked destinations past the five named ones, as a list under
+  // the legend -- hidden until the "other tracked queues" key (or its part of
+  // the bar) is clicked; the open state survives a repaint.
+  var dtfRestOpen_ = false;
+  function dtfRestListHtml_(rest, base, qChip) {
+    return '<div class="dtf-rest" id="dept-transfer-rest"' + (dtfRestOpen_ ? '' : ' hidden') + '>'
+      + '<div class="dtf-rest-h">Other tracked destinations</div>'
+      + '<div class="dtf-rest-rows">' + rest.map(function (q) {
+          const n = Number(q.transferred) || 0;
+          return '<div class="dtf-rest-name" title="' + escapeHtml(q.queue) + '">' + escapeHtml(q.queue) + '</div>'
+            + '<div class="dtf-rest-num"><strong>' + escapeHtml(fmtNumber(n)) + '</strong> · ' + (obSharePct_(n, base) || 0) + '%</div>'
+            + '<div class="dtf-rest-chip">' + qChip(q.queue, n) + '</div>';
+        }).join('') + '</div></div>';
+  }
+  function dtfWireRest_(host) {
+    const list = host.querySelector('#dept-transfer-rest');
+    const key = host.querySelector('.ob-legend .ob-leg[data-seg="unk"]');
+    const seg = host.querySelector('.ob-obar-seg[data-seg="unk"]');
+    if (!list || !key) return;
+    const sync = function () {
+      list.hidden = !dtfRestOpen_;
+      key.setAttribute('aria-expanded', dtfRestOpen_ ? 'true' : 'false');
+      key.classList.toggle('is-open', dtfRestOpen_);
+    };
+    const toggle = function () { dtfRestOpen_ = !dtfRestOpen_; sync(); };
+    key.classList.add('dtf-rest-toggle');
+    key.setAttribute('role', 'button');
+    key.setAttribute('tabindex', '0');
+    key.setAttribute('aria-controls', 'dept-transfer-rest');
+    key.title = 'Show each of these destinations';
+    key.addEventListener('click', toggle);
+    key.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+    if (seg) { seg.classList.add('dtf-rest-toggle'); seg.addEventListener('click', toggle); }
+    sync();
+  }
+
   // ── Batch D (owner plan 2026-10): Inbound | Outbound | Both ───────────────
   //
   // A switch over the My Department agent table. Inbound is the table every
@@ -4988,7 +5062,8 @@
     } else if (dir === 'direct') {
       txt = 'The Direct Calls report’s figures for each agent: calls to and from their own extension, not the '
         + 'department queues, in the work window. A ring missed while they were already on another call is “busy” '
-        + 'and left out of the answer rate. ' + (extra ? extra + ' ' : '') + OB_INFO_EXPORT_;
+        + 'and left out of the answer rate. Outbound here is calls to colleagues; calls to outside numbers show as a '
+        + 'small line and are counted in the Outbound view. ' + (extra ? extra + ' ' : '') + OB_INFO_EXPORT_;
     }
     el.setAttribute('title', txt);
     el.style.display = txt ? '' : 'none';
@@ -5231,7 +5306,8 @@
           + ansTallyBlocks_(ans, unit, 'a') + ansTallyBlocks_(mf, unit, 'm') + ansTallyBlocks_(mb, unit, 'mb') + '</div>' : '';
         return '<tr class="trp-row" data-tdc-agent="' + escapeHtml(a.agent) + '" tabindex="0" aria-describedby="tdc-row-action-desc"'
           + ' title="' + escapeHtml(a.agent + ': ' + ans + ' answered · ' + mf + ' missed while free · ' + mb
-            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' dialed — click for the Direct view') + '">'
+            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' calls to colleagues'
+            + ((a.obExt && a.obExt.total) ? ' (+' + a.obExt.total + ' to outside numbers)' : '') + ' — click for the Direct view') + '">'
           + '<td class="trp-name">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
           + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
           + '<td class="trp-num"><span class="trp-a">' + fmtNumber(ans) + '</span><span class="trp-sep"> / </span>'
@@ -5308,16 +5384,21 @@
       + '<div class="lb-nums"><span class="lb-n"><span class="ans-n">' + parts[0].n + '</span><span class="ans-slash">/</span>'
       +   '<span class="miss-n">' + parts[1].n + '</span></span>' + busy + '</div></div>';
   }
+  // DO-1 (owner 2026-11-05): calls to COLLEAGUES; the calls to outside
+  // numbers (the Outbound view's to count) ride as a small line under them.
   function dcOutCellHtml_(a, scaleMax) {
     var placed = Number(a && a.obTotal) || 0, c = Number(a && a.obConnected) || 0, n = Math.max(0, placed - c);
-    if (!placed) return '<span class="cell-zero" title="No calls dialed from their extension in this range">–</span>';
+    var ext = Number(a && a.obExt && a.obExt.total) || 0;
+    var extLine = ext ? '<div class="dc-ext-line" title="Calls from their own line to outside numbers -- counted in the Outbound view">+'
+      + fmtNumber(ext) + ' to outside numbers</div>' : '';
+    if (!placed) return '<span class="cell-zero" title="No calls to a colleague from their extension in this range">–</span>' + extLine;
     var parts = [{ cls: 'oconn', n: c, label: 'connected' }, { cls: 'oreal', n: n, label: 'did not connect' }];
-    var tip = c + ' connected · ' + n + ' did not connect · ' + placed + ' dialed. ' + OB_CONNECTED_DEF_;
+    var tip = c + ' connected · ' + n + ' did not connect · ' + placed + ' calls to colleagues. ' + OB_CONNECTED_DEF_;
     var w = scaleMax ? Math.max(2, Math.round(placed / scaleMax * 1000) / 10) : 100;
     return '<div class="lb-cell lb-cell--out" title="' + escapeHtml(tip) + '">'
       + '<div class="lb-track"><div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, placed, tip, 'mid') + '</div></div>'
       + '<div class="lb-nums"><span class="lb-n"><span class="ob-c">' + c + '</span><span class="ans-slash">/</span>'
-      +   '<span class="ob-u">' + n + '</span></span></div></div>';
+      +   '<span class="ob-u">' + n + '</span></span></div></div>' + extLine;
   }
   function dcRateHtml_(a) {
     if (!a || a.ibAnswerRate == null) return zeroCell_('–');
@@ -5382,7 +5463,7 @@
     dcWire_();
     thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
       + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['soft', 'busy']]) + '</th>'
-      + '<th colspan="2" class="lb-g lb-g--out">Dialed from their line ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
+      + '<th colspan="2" class="lb-g lb-g--out">Called colleagues ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
       + '<th aria-hidden="true"></th></tr>'
       + '<tr>' + dcThHtml_('agent', 'Agent') + dcThHtml_('rang', 'Answered / missed', 'lb-th-bar')
       + dcThHtml_('ibAnswerRate', 'Ans %', 'num') + dcThHtml_('obTotal', 'Connected / not', 'lb-th-bar')

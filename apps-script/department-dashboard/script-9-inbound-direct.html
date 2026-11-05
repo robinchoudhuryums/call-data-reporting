@@ -1582,6 +1582,16 @@
       { cls: 'soft', n: Number(k.ibMissedBusy) || 0, label: 'missed while on another call' },
     ];
   }
+  // DO-1 (owner 2026-11-05): the outbound figures here are calls to
+  // COLLEAGUES; calls to outside numbers are the Outbound view's to count, so
+  // they show only as this small line under the figure.
+  function directExtLineHtml_(ext, compact) {
+    const t = Number(ext && ext.total) || 0;
+    if (!t) return '';
+    const c = Number(ext.connected) || 0;
+    return '<div class="dc-ext-line" title="Calls from their own line to outside numbers. The Outbound view counts these (all day; this report counts work hours).">+'
+      + escapeHtml(fmtNumber(t)) + ' to outside numbers' + (compact ? '' : ' (' + escapeHtml(fmtNumber(c)) + ' connected)') + '</div>';
+  }
   function directSummaryHtml_(k, p, mode) {
     k = k || {};
     const ibParts = directIbParts_(k);
@@ -1592,7 +1602,7 @@
     const obTotal = Number(k.obTotal) || 0, obConn = Number(k.obConnected) || 0;
     const obParts = [{ cls: 'good', n: obConn, label: 'connected' },
                      { cls: 'bad', n: Math.max(0, obTotal - obConn), label: 'did not connect' }];
-    const obAria = fmtNumber(obTotal) + ' calls dialed: ' + fmtNumber(obConn) + ' connected, '
+    const obAria = fmtNumber(obTotal) + ' calls to colleagues: ' + fmtNumber(obConn) + ' connected, '
       + fmtNumber(Math.max(0, obTotal - obConn)) + ' did not connect';
     const rateTxt = k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—';
     if (mode === 'card') {
@@ -1602,9 +1612,10 @@
         + obSplitMiniHtml_(ibParts, rung, aria, escapeHtml(fmtNumber(ibParts[1].n) + ' missed while free · '
             + fmtNumber(ibParts[2].n) + ' while busy · ' + rateTxt + ' when free'))
         + '<div class="tdc-split-head tdc-split-head--out"><span class="tdc-split-num">' + fmtNumber(obTotal) + '</span>'
-        + ' <span class="tdc-split-of">dialed</span></div>'
+        + ' <span class="tdc-split-of">calls to colleagues</span></div>'
         + obSplitMiniHtml_(obParts, obTotal, obAria, escapeHtml(fmtNumber(obConn) + ' connected'
             + (obTotal ? ' (' + Math.round(obConn / obTotal * 100) + '%)' : '')))
+        + directExtLineHtml_(k.obExt, false)
         + '</div>';
     }
     const sp = k.split || {};
@@ -1642,11 +1653,11 @@
       ],
     });
     const outSum = obSplitSummaryHtml_({
-      cls: 'ob-split--compact', num: fmtNumber(obTotal), lead: 'direct calls dialed',
+      cls: 'ob-split--compact', num: fmtNumber(obTotal), lead: 'calls to colleagues',
       subHtml: p ? inboundDelta_(k.obTotal, p.obTotal, 'pos', false) : '',
       total: obTotal, parts: obParts, aria: obAria,
-      quality: ['Average talk <strong>' + escapeHtml(fmtDuration(k.obAttSec)) + '</strong> per connected call'
-        + directSplitText_(sp, 'obTotal', ' · ')],
+      quality: ['Average talk <strong>' + escapeHtml(fmtDuration(k.obAttSec)) + '</strong> per connected call']
+        .concat(directExtLineHtml_(k.obExt, false) ? [directExtLineHtml_(k.obExt, false)] : []),
     });
     return '<div class="ob-split-pair">' + inSum + outSum + '</div>';
   }
@@ -1710,8 +1721,10 @@
       + '<td class="num">' + sp(r.ibMissedBusy, 'ibMissedBusy') + '</td>'
       + '<td class="num' + rateCls + '">' + rateStr + '</td>'
       + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
-      + '<td class="num">' + sp(r.obTotal, 'obTotal') + '</td>'
-      + '<td class="num">' + sp(r.obConnected, 'obConnected') + '</td>'
+      // DO-1: calls to colleagues, with the outside calls as a small line.
+      + '<td class="num">' + fmtNumber(r.obTotal) + directExtLineHtml_(r.obExt, true) + '</td>'
+      + '<td class="num">' + fmtNumber(r.obConnected)
+      +   ((r.obExt && r.obExt.total) ? '<div class="dc-ext-line">+' + fmtNumber(r.obExt.connected) + ' outside</div>' : '') + '</td>'
       + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
       + '</tr>';
   }
@@ -1768,7 +1781,7 @@
     + '<th class="num" data-sort="ibMissedBusy">IB missed (busy)</th>'
     + '<th class="num" data-sort="ibAnswerRate">Answer %</th>'
     + '<th class="num" data-sort="ibAttSec">IB ATT</th>'
-    + '<th class="num" data-sort="obTotal">OB calls</th>'
+    + '<th class="num" data-sort="obTotal" title="Calls they dialed to a colleague\u2019s extension; calls to outside numbers show as a small line and are counted in the Outbound view">OB to colleagues</th>'
     + '<th class="num" data-sort="obConnected">OB connected</th>'
     + '<th class="num" data-sort="obAttSec">OB ATT</th>'
     + '</tr></thead>';
@@ -1813,7 +1826,7 @@
           +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedBusy) + '</b> missed (busy)</span>'
           +     '<span class="ddc-stat"><b' + (rateCls ? ' class="' + rateCls + '"' : '') + '>' + rateStr + '</b> answer' + dRate + '</span>'
           +     '<span class="ddc-stat"><b>' + fmtDuration(g.ibAttSec) + '</b> IB ATT</span>'
-          +     '<span class="ddc-stat"><b>' + fmtNumber(g.obTotal) + '</b> OB' + dOb + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.obTotal) + '</b> OB to colleagues' + dOb + '</span>'
           +   '</span>'
           + '</summary>'
           + '<div class="direct-dept-body">'
@@ -1849,10 +1862,10 @@
     if (meta.clampedTo) lines.push(row(['Data runs through', meta.dataThrough, 'asked end', meta.requestedTo]));
     if (meta.missingCount) lines.push(row(['Workdays with no data', (meta.missingDates || []).join(' ')]));
     lines.push(row(['Agent', 'Dept', 'IB answered', 'IB missed (free)', 'IB missed (busy)',
-      'Answer %', 'IB ATT sec', 'OB calls', 'OB connected', 'OB ATT sec',
+      'Answer %', 'IB ATT sec', 'OB calls to colleagues', 'OB connected (colleagues)', 'OB ATT sec (colleagues)',
       'IB int answered', 'IB ext answered', 'OB int calls', 'OB ext calls',
       'IB int missed (free)', 'IB ext missed (free)', 'IB int missed (busy)', 'IB ext missed (busy)',
-      'OB int connected', 'OB ext connected']));
+      'OB int connected', 'OB ext connected', 'OB ATT sec (outside numbers)']));
     (d.agents || []).forEach(function (r) {
       const sp = r.split || {};
       const g = function (k, side) { return (sp[k] && sp[k][side] != null) ? sp[k][side] : ''; };
@@ -1860,7 +1873,7 @@
         r.ibAnswerRate != null ? r.ibAnswerRate : '', r.ibAttSec, r.obTotal, r.obConnected, r.obAttSec,
         r.ibIntAnswered, r.ibExtAnswered, r.obIntTotal, r.obExtTotal,
         g('ibMissedFree', 'int'), g('ibMissedFree', 'ext'), g('ibMissedBusy', 'int'), g('ibMissedBusy', 'ext'),
-        g('obConnected', 'int'), g('obConnected', 'ext')]));
+        g('obConnected', 'int'), g('obConnected', 'ext'), r.obExt ? r.obExt.attSec : '']));
     });
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');

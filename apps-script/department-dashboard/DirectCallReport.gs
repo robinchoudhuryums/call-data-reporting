@@ -48,7 +48,7 @@
 // v5 (D1, owner 2026-10-21): coverage-aware -- the window is clamped to the
 // last date with data, workdays with no rows are listed, the prior comparison
 // is dropped when either window has a gap, and the full int/ext split ships.
-const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v5';
+const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v6';   // DO-1: outbound = colleagues
 const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 
 /**
@@ -300,9 +300,10 @@ function computeDirectCallReport_(scope) {
       "'ibMissedFree', COALESCE(sum(ib_int_missed_free+ib_ext_missed_free),0), " +
       "'ibMissedBusy', COALESCE(sum(ib_int_missed_busy+ib_ext_missed_busy),0), " +
       "'ibTalkSec', COALESCE(sum(ib_int_talk_sec+ib_ext_talk_sec),0), " +
-      "'obTotal', COALESCE(sum(ob_int_total+ob_ext_total),0), " +
-      "'obConnected', COALESCE(sum(ob_int_connected+ob_ext_connected),0), " +
-      "'obTalkSec', COALESCE(sum(ob_int_talk_sec+ob_ext_talk_sec),0))";
+      "'obTotal', COALESCE(sum(ob_int_total),0), " +
+      "'obConnected', COALESCE(sum(ob_int_connected),0), " +
+      "'obTalkSec', COALESCE(sum(ob_int_talk_sec),0), " +
+      "'obExtTotal', COALESCE(sum(ob_ext_total),0))";
 
     // Per-agent sums; derived rates computed client-/server-side after the
     // fetch. ib_answered/ib_missed_free drive the answer rate (busy excluded).
@@ -314,9 +315,12 @@ function computeDirectCallReport_(scope) {
             "'ibMissedFree', COALESCE(sum(ib_int_missed_free+ib_ext_missed_free),0), " +
             "'ibMissedBusy', COALESCE(sum(ib_int_missed_busy+ib_ext_missed_busy),0), " +
             "'ibTalkSec', COALESCE(sum(ib_int_talk_sec+ib_ext_talk_sec),0), " +
-            "'obTotal', COALESCE(sum(ob_int_total+ob_ext_total),0), " +
-            "'obConnected', COALESCE(sum(ob_int_connected+ob_ext_connected),0), " +
-            "'obTalkSec', COALESCE(sum(ob_int_talk_sec+ob_ext_talk_sec),0), " +
+            // DO-1: outbound here is calls to COLLEAGUES; outside numbers ride
+            // alongside (obExt*) -- the Outbound view owns them.
+            "'obTotal', COALESCE(sum(ob_int_total),0), " +
+            "'obConnected', COALESCE(sum(ob_int_connected),0), " +
+            "'obTalkSec', COALESCE(sum(ob_int_talk_sec),0), " +
+            "'obExtTalkSec', COALESCE(sum(ob_ext_talk_sec),0), " +
             // D1: the internal / external split of every figure.
             "'ibIntAnswered', COALESCE(sum(ib_int_answered),0), 'ibExtAnswered', COALESCE(sum(ib_ext_answered),0), " +
             "'ibIntMissedFree', COALESCE(sum(ib_int_missed_free),0), 'ibExtMissedFree', COALESCE(sum(ib_ext_missed_free),0), " +
@@ -343,9 +347,10 @@ function computeDirectCallReport_(scope) {
               "sum(ib_int_missed_free) AS ib_int_missed_free, sum(ib_ext_missed_free) AS ib_ext_missed_free, " +
               "sum(ib_int_missed_busy) AS ib_int_missed_busy, sum(ib_ext_missed_busy) AS ib_ext_missed_busy, " +
               "sum(ob_int_connected) AS ob_int_connected, sum(ob_ext_connected) AS ob_ext_connected, " +
-              "sum(ob_int_total+ob_ext_total) AS ob_total, " +
-              "sum(ob_int_connected+ob_ext_connected) AS ob_connected, " +
-              "sum(ob_int_talk_sec+ob_ext_talk_sec) AS ob_talk_sec, " +
+              "sum(ob_int_total) AS ob_total, " +
+              "sum(ob_int_connected) AS ob_connected, " +
+              "sum(ob_int_talk_sec) AS ob_talk_sec, " +
+              "sum(ob_ext_talk_sec) AS ob_ext_talk_sec, " +
               "sum(ob_int_total) AS ob_int_total, sum(ob_ext_total) AS ob_ext_total " +
             "FROM direct_call_history c WHERE " + dr + " GROUP BY agent_name, department) t), " +
         // v2 prior window (deltas):
@@ -355,7 +360,7 @@ function computeDirectCallReport_(scope) {
               "sum(ib_int_answered+ib_ext_answered) AS ib_answered, " +
               "sum(ib_int_missed_free+ib_ext_missed_free) AS ib_missed_free, " +
               "sum(ib_int_missed_busy+ib_ext_missed_busy) AS ib_missed_busy, " +
-              "sum(ob_int_total+ob_ext_total) AS ob_total " +
+              "sum(ob_int_total) AS ob_total " +
             "FROM direct_call_history c WHERE " + priorDr + " GROUP BY department) t2), " +
         // R12-26b: coverage start (earliest direct-call history date, unscoped)
         // so the client can warn when the requested From predates the data.
@@ -417,6 +422,7 @@ function directCallShapePayload_(scope, obj) {
       obConnected: obConnected,
       obTalkSec: obTalkSec,
       obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
+      obExt: directCallObExt_(k.obExtTotal, k.obExtConnected, k.obExtTalkSec),   // DO-1
       split: directCallSplit_(k, 'camel'),   // D1
     },
     kpisPrior: directCallPriorKpis_(obj.kpisPrior || null),
@@ -465,8 +471,20 @@ function directCallShapeAgent_(r) {
     obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
     obIntTotal: Number(r.ob_int_total) || 0,
     obExtTotal: Number(r.ob_ext_total) || 0,
+    obExt: directCallObExt_(r.ob_ext_total, r.ob_ext_connected, r.ob_ext_talk_sec),   // DO-1
     split: directCallSplit_(r, 'snake'),   // D1
   };
+}
+
+/**
+ * DO-1 (owner 2026-11-05): the report's outbound figures (obTotal /
+ * obConnected / obTalkSec / obAttSec) are calls to COLLEAGUES' extensions;
+ * calls to outside numbers are the Outbound view's to count, so they ride
+ * alongside here only as this small block, shown as a line under the figure.
+ */
+function directCallObExt_(total, connected, talkSec) {
+  const t = Number(total) || 0, c = Number(connected) || 0, s = Number(talkSec) || 0;
+  return { total: t, connected: c, talkSec: s, attSec: c ? Math.round(s / c) : 0 };
 }
 
 /**
@@ -565,9 +583,10 @@ function dcSumKpis_(rows) {
     k.ibMissedFree += r.ibIntMissedFree + r.ibExtMissedFree;
     k.ibMissedBusy += r.ibIntMissedBusy + r.ibExtMissedBusy;
     k.ibTalkSec += r.ibIntTalkSec + r.ibExtTalkSec;
-    k.obTotal += r.obIntTotal + r.obExtTotal;
-    k.obConnected += r.obIntConnected + r.obExtConnected;
-    k.obTalkSec += r.obIntTalkSec + r.obExtTalkSec;
+    k.obTotal += r.obIntTotal;            // DO-1: colleagues only
+    k.obConnected += r.obIntConnected;
+    k.obTalkSec += r.obIntTalkSec;
+    k.obExtTalkSec = (k.obExtTalkSec || 0) + r.obExtTalkSec;
     ['ibIntAnswered', 'ibExtAnswered', 'ibIntMissedFree', 'ibExtMissedFree', 'ibIntMissedBusy', 'ibExtMissedBusy',
      'obIntTotal', 'obExtTotal', 'obIntConnected', 'obExtConnected'].forEach(function (f) {
       k[f] = (k[f] || 0) + (r[f] || 0);   // D1: the split, the SQL's camelCase kpi keys
@@ -626,9 +645,10 @@ function directCallSheetFallback_(scope, empty) {
       a.ib_talk_sec += r.ibIntTalkSec + r.ibExtTalkSec;
       a.ib_int_answered += r.ibIntAnswered;
       a.ib_ext_answered += r.ibExtAnswered;
-      a.ob_total += r.obIntTotal + r.obExtTotal;
-      a.ob_connected += r.obIntConnected + r.obExtConnected;
-      a.ob_talk_sec += r.obIntTalkSec + r.obExtTalkSec;
+      a.ob_total += r.obIntTotal;           // DO-1: colleagues only
+      a.ob_connected += r.obIntConnected;
+      a.ob_talk_sec += r.obIntTalkSec;
+      a.ob_ext_talk_sec = (a.ob_ext_talk_sec || 0) + r.obExtTalkSec;
       a.ob_int_total += r.obIntTotal;
       a.ob_ext_total += r.obExtTotal;
       a.ib_int_missed_free += r.ibIntMissedFree; a.ib_ext_missed_free += r.ibExtMissedFree;
@@ -650,7 +670,7 @@ function directCallSheetFallback_(scope, empty) {
       d.ib_answered += r.ibIntAnswered + r.ibExtAnswered;
       d.ib_missed_free += r.ibIntMissedFree + r.ibExtMissedFree;
       d.ib_missed_busy += r.ibIntMissedBusy + r.ibExtMissedBusy;
-      d.ob_total += r.obIntTotal + r.obExtTotal;
+      d.ob_total += r.obIntTotal;           // DO-1
     });
 
     var out = directCallShapePayload_(scope, {

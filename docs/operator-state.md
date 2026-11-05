@@ -1836,6 +1836,13 @@ When something looks wrong, before assuming a code bug, check:
       is the ONE place that decides who receives it, and it returns the
       admins until release. "Email me the manager version" previews it.
 
+    **CO-1 (2026-11-05):** the Gates by department cards save one at a time
+    (a busy button, a status beside it) or together with **Save all changes**
+    (`saveCoachingDeptRules`: every department validated first, one locked
+    write, so a bad value saves nothing). A department may use a **flat
+    answer %** gate instead of the team-relative pair -- flag anyone under
+    that share of their rings, plus the missed-rings gate (`flatRatePct` in
+    `COACHING_DEPT_RULES`); the manager layer does not apply to the floor.
 49. **Inbound Calls tab export trigger — the heatmap's sheet fallback stays
     fresh only if this runs.** The abandon heatmap degrades to the
     `Inbound Calls` tab when Neon is unreachable
@@ -3690,8 +3697,8 @@ When something looks wrong, before assuming a code bug, check:
     Outlier Fix alias still matches -- or another roster cell listing the same
     extension; a leg naming **somebody else is credited to no one** (logged by
     the build: "credited to NO ONE"). **A blank or non-person name** (N/A, a
-    queue, voicemail, a number) **keeps the extension-only rule for now** --
-    the owner decides that case from the diagnostic's numbers. **Not
+    queue, voicemail, a number) **kept the extension-only rule at first** --
+    superseded by DCA-2 and DCA-3 below. **Not
     retroactive:** rebuild the dates still in `Call_Legs_*` (~14 days) with a
     re-import or `runDirectCallBuild`, and older dates by re-importing their
     source (#56). **`diagnoseDirectCallAttribution(date)` /
@@ -3718,6 +3725,26 @@ When something looks wrong, before assuming a code bug, check:
     (#90) rebuilds every held date with today's rules; dates older than the
     held `Call_Legs_*` tabs keep the old credit until their source is
     re-imported (#56).
+    **DCA-3 / DCA-4 / DCA-5 (owner 2026-11-05, from the first all-dates run:
+    3,067 legs on reassigned extensions credited to no one, a current
+    employee's calls lost, Spanish agents on the Spanish row).** **DCA-3:** a
+    leg naming a roster person whose cell does not list that extension is now
+    credited to THAT person (a reassigned extension, kind `named`; an
+    extension no cell lists, `namedUnlisted` -- extension-length numbers
+    only, never an outside caller's caller-ID name or a queue), and a
+    blank-name leg on an extension that named exactly ONE roster person that
+    day follows them (`blankNamed`); a name nobody on the roster has is still
+    credited to no one. No roster edit is needed for a reassigned extension;
+    a SPELLING variant of a current employee still needs an Outlier Fix
+    alias. **DCA-4:** the non-person filter matched "Parker" as call park, so
+    Parker (Picasso) Roychowdhury's legs all read blank and DCA-2 dropped
+    them; its words now match whole, and a name the roster knows is a person
+    whatever it contains. **DCA-5:** a person on the Spanish AND CSR rosters
+    is credited to their CSR row (`DC_DEPT_PREFER_`; add a pair there for
+    another such rule). The diagnostic gains a REASSIGNED section (extension,
+    the cell it is listed under, 8x8's name, who it went to). Not
+    retroactive: **run `rebuildDirectCallHeldDates()` again after the push**,
+    then `diagnoseDirectCallAttributionAllDates()` to see the new split.
 84. **Transfers and consults to a person on the caller's journey -- IXT-1 and
     `diagnosePersonTransfers` (cdr-import, owner 2026-10-27).** Caller Lookup
     (and every journey drill) used to stop at the agent who answered when that
@@ -3941,7 +3968,7 @@ When something looks wrong, before assuming a code bug, check:
     defers Neon (`skipNeon`), so it writes no list. **After the cdr-import
     push, run `rebuildDirectCallHeldDates()` once** (cdr-import editor): it
     reruns the direct build for every held `Call_Legs_*` date (~14 days) --
-    filling the list AND applying DCA-2 (#83) to those dates -- and logs a
+    filling the list AND applying the current direct-credit rules (DCA-1..5, #83) to those dates -- and logs a
     resume date if it hits its 4.5-minute budget
     (`rebuildDirectCallHeldDates("2026-10-28")`). Older dates show only the
     outside callers who rang the person's line (from `inbound_calls`), with a

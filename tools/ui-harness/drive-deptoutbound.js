@@ -506,6 +506,25 @@ async function openDept(page, meta) {
     record('DV-1: the total row carries the report\'s totals', dv.total.indexOf(d30.kpis.ibAnswered + '/' + d30.kpis.ibMissedFree) !== -1, dv.total.slice(0, 120));
     record('DV-1: the ⓘ says what Direct counts and that busy is left out; the data gap stays a visible note',
       /own extension/.test(dv.info) && /busy/.test(dv.info) && /not imported/.test(dv.note), JSON.stringify({ info: dv.info.slice(0, 80), note: dv.note }));
+    // DO-1 (owner 2026-11-05): outbound here is calls to colleagues; the
+    // calls to outside numbers are one small line under it, never in the bar.
+    const dvo = await page.evaluate(() => {
+      const r = document.querySelector('#agents-dc-tbody tr[data-agent]');
+      const out = r.querySelectorAll('td.lb-bar-td')[1];
+      const num = (x) => parseFloat(x.style.flexGrow || (x.style.flex || '').split(' ')[0]);
+      return { agent: r.getAttribute('data-agent'),
+        barSum: Array.from(out.querySelectorAll('.ob-obar-seg')).reduce((a, x) => a + num(x), 0),
+        ext: (out.querySelector('.dc-ext-line') || {}).textContent || '',
+        group: (document.querySelector('#agents-dc-thead .lb-g--out') || {}).textContent || '',
+        card: (document.querySelector('#dept-team-direct .tdc-split') || {}).textContent || '',
+        info: (document.getElementById('dqe-table-info') || { getAttribute: () => '' }).getAttribute('title') || '' };
+    });
+    const ao = d30.agents.find((a) => a.agent === dvo.agent) || {};
+    record('DO-1: the Direct view\'s outbound bar is calls to colleagues, the outside calls a small line under it; the card and the ⓘ say so',
+      dvo.barSum === ao.obTotal && ao.obTotal === ao.obIntTotal && dvo.ext === '+' + ao.obExtTotal + ' to outside numbers'
+        && /^Called colleagues/.test(dvo.group) && /calls to colleagues/.test(dvo.card) && /to outside numbers/.test(dvo.card)
+        && /Outbound here is calls to colleagues/.test(dvo.info),
+      JSON.stringify({ dvo: dvo, ob: [ao.obTotal, ao.obIntTotal, ao.obExtTotal] }));
     await page.click('#agents-dc-thead th[data-dc-sort="agent"]'); await page.waitForTimeout(300);
     const names = await page.evaluate(() => Array.from(document.querySelectorAll('#agents-dc-tbody tr[data-agent]')).map((r) => r.getAttribute('data-agent')));
     const asc = names.slice().sort((x, y) => x.localeCompare(y));
@@ -603,6 +622,44 @@ async function openDept(page, meta) {
       agentTr === tf.transferred && agentCalls === tf.calls && tf.agents.every((segs) => /^tf-(deep|light|amber|red):/.test(segs[0]))
         && tf.nums.every((n, i) => i === 0 || tf.nums[i - 1] >= n),
       JSON.stringify({ agents: tf.agents, nums: tf.nums, calls: tf.calls }));
+  }
+
+  // TD-1 / TD-2 (owner 2026-11-05): chips vs the prior window on the section
+  // line, every named destination and every agent; the "other tracked queues"
+  // key opens the list of those destinations, by click and by keyboard.
+  {
+    const td = await page.evaluate(() => {
+      const q = (sel) => Array.from(document.querySelectorAll(sel));
+      return {
+        sub: q('#dept-transfer-sub .dts-delta').length,
+        legs: q('#dept-transfer-queues .ob-legend .ob-leg').map((l) => l.getAttribute('data-seg') + ':' + l.querySelectorAll('.dts-delta').length),
+        agents: q('#dept-transfer-agents .dtf-num').length,
+        agentChips: q('#dept-transfer-agents .dtf-num .dts-delta').length,
+        restHidden: (document.getElementById('dept-transfer-rest') || {}).hidden,
+        restRows: q('#dept-transfer-rest .dtf-rest-name').length,
+      };
+    });
+    record('TD-1: the section line, every named destination and every agent carry a chip vs the prior period',
+      td.sub === 1 && td.legs.filter((x) => /^(cat\d|unk):1$/.test(x)).length === td.legs.filter((x) => !/^hatch/.test(x)).length
+        && td.agents > 0 && td.agentChips === td.agents,
+      JSON.stringify(td));
+    await page.click('#dept-transfer-queues .ob-leg[data-seg="unk"]');
+    await page.waitForTimeout(150);
+    const open1 = await page.evaluate(() => {
+      const r = document.getElementById('dept-transfer-rest');
+      const k = document.querySelector('#dept-transfer-queues .ob-leg[data-seg="unk"]');
+      return { shown: !!r && !r.hidden && r.getBoundingClientRect().height > 0, exp: k && k.getAttribute('aria-expanded'),
+        rows: Array.from(document.querySelectorAll('#dept-transfer-rest .dtf-rest-name')).map((x) => x.textContent),
+        chips: document.querySelectorAll('#dept-transfer-rest .dts-delta').length };
+    });
+    await page.focus('#dept-transfer-queues .ob-leg[data-seg="unk"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+    const closed = await page.evaluate(() => document.getElementById('dept-transfer-rest').hidden);
+    record('TD-2: clicking "other tracked queues" lists each of them with its count and chip; Enter closes it again',
+      td.restHidden === true && open1.shown && open1.exp === 'true' && open1.rows.length === td.restRows && td.restRows >= 1
+        && open1.chips === open1.rows.length && closed === true,
+      JSON.stringify({ td: td, open1: open1, closed: closed }));
   }
 
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));

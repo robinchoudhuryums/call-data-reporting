@@ -425,14 +425,16 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
       return { agent: r.agent, dept: dept, ib_answered: ia + ea, ib_missed_free: imf + emf, ib_missed_busy: imb + emb,
         ib_talk_sec: (ia + ea) * (95 + i * 7), ib_int_answered: ia, ib_ext_answered: ea,
         ib_int_missed_free: imf, ib_ext_missed_free: emf, ib_int_missed_busy: imb, ib_ext_missed_busy: emb,
-        ob_total: ot, ob_connected: oc, ob_talk_sec: oc * 110, ob_int_total: oi, ob_ext_total: ot - oi,
+        // DO-1: the query's ob_total / ob_connected / ob_talk_sec are colleague calls only.
+        ob_total: oi, ob_connected: Math.min(oi, oc), ob_talk_sec: Math.min(oi, oc) * 110,
+        ob_ext_talk_sec: (oc - Math.min(oi, oc)) * 110, ob_int_total: oi, ob_ext_total: ot - oi,
         ob_int_connected: Math.min(oi, oc), ob_ext_connected: oc - Math.min(oi, oc) };
     });
   };
   const sumK = function (as) {
     const k = { agents: as.length };
     const f = { ibAnswered: 'ib_answered', ibMissedFree: 'ib_missed_free', ibMissedBusy: 'ib_missed_busy', ibTalkSec: 'ib_talk_sec',
-      obTotal: 'ob_total', obConnected: 'ob_connected', obTalkSec: 'ob_talk_sec',
+      obTotal: 'ob_total', obConnected: 'ob_connected', obTalkSec: 'ob_talk_sec', obExtTalkSec: 'ob_ext_talk_sec',
       ibIntAnswered: 'ib_int_answered', ibExtAnswered: 'ib_ext_answered', ibIntMissedFree: 'ib_int_missed_free',
       ibExtMissedFree: 'ib_ext_missed_free', ibIntMissedBusy: 'ib_int_missed_busy', ibExtMissedBusy: 'ib_ext_missed_busy',
       obIntTotal: 'ob_int_total', obExtTotal: 'ob_ext_total', obIntConnected: 'ob_int_connected', obExtConnected: 'ob_ext_connected' };

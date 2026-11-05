@@ -219,6 +219,7 @@ const MODALS = [
         return { note: n && n.style.display !== 'none' ? n.textContent : '', to: document.getElementById('direct-call-to').value,
                  preset: document.getElementById('direct-call-preset').value, date: (document.getElementById('direct-call-results-date') || {}).textContent || '',
                  split: tr ? Array.from(tr.querySelectorAll('.dc-split')).map((x) => x.textContent) : [],
+                 ext: tr ? Array.from(tr.querySelectorAll('.dc-ext-line')).map((x) => x.textContent) : [],
                  chips: document.querySelectorAll('#direct-call-kpi-row .pr-delta').length };
       }, P30.agents[0].agent);
       record('Direct: an end past the last imported day is corrected -- the note says so and the End date moves back',
@@ -227,8 +228,14 @@ const MODALS = [
       record('Direct: a workday with no data is named, and the vs-prior chips are withheld',
         /No data for 1 workday/.test(c.note) && /No vs-prior chips/.test(c.note) && c.chips === 0, JSON.stringify({ chips: c.chips, note: c.note.slice(-160) }));
       const s0 = P30.agents[0].split;
-      record('Direct: each count shows its internal / external split',
-        c.split.length === 5 && c.split[0] === s0.ibAnswered.int + ' int · ' + s0.ibAnswered.ext + ' ext', JSON.stringify(c.split));
+      // DO-1 (owner 2026-11-05): the inbound counts keep their int / ext split;
+      // outbound is calls to colleagues, the outside calls one small line each.
+      const a0 = P30.agents[0], ox = a0.obExt || {};
+      record('Direct: each inbound count shows its internal / external split; outbound shows the calls to outside numbers as a line',
+        c.split.length === 3 && c.split[0] === s0.ibAnswered.int + ' int · ' + s0.ibAnswered.ext + ' ext'
+          && (ox.total ? (c.ext.length === 2 && c.ext[0] === '+' + ox.total + ' to outside numbers' && c.ext[1] === '+' + ox.connected + ' outside')
+                       : c.ext.length === 0),
+        JSON.stringify({ split: c.split, ext: c.ext, obExt: ox }));
     } } },
 ];
 

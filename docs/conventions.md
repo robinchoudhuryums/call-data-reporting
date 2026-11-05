@@ -532,7 +532,10 @@ From/To default (which must snap to DQE specifically).
   (`COACHING_DEPT_RULES`) and then the manager layer (stricter only, the
   `coach*` fields of `NOTIFY_STRICTER_`). Every flag carries the `gates` it
   was judged under. The manager email is HELD for admins:
-  `coachingManagerRecipients_` is the one release seam.
+  `coachingManagerRecipients_` is the one release seam. **CO-1:** a dept may
+  set `flatRatePct` instead -- a flat answer-% floor replacing the ratio and
+  points-behind gates (missed rings still apply); it is admin-only, outside
+  the manager layer, and `coachingGatesText_` / `coachingGateSentence_` word it.
 - **Alert reasons (Step 5c, `AlertReasons.gs`)**: ride `runAlertsCore_`
   (same date, claim, log) after the answer-rate rules; a reason row carries
   `reason` and is excluded from the dept counts, drift and History. Admins
@@ -575,7 +578,7 @@ complete set of prefixes.
 | `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
-| `DirectCallReport.gs` | `directCall:vN:` | `v5` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v6` |
 | `OutboundReport.gs` | `outboundReport:vN:` | `v10` |
 | `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v5` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |
