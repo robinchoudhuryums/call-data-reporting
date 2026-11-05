@@ -265,3 +265,12 @@ test('DC-1: missing sheet keeps the old behavior (available=false)', function ()
   assert.equal(out.meta.available, false);
   assert.equal(out.meta.fallbackSource, undefined);
 });
+
+test('DO-1: the Neon query sums the colleague (int) outbound columns only -- outside calls ride as obExt', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'DirectCallReport.gs'), 'utf8');
+  assert.ok(src.indexOf('ob_int_total+ob_ext_total') === -1 && src.indexOf('ob_int_connected+ob_ext_connected') === -1
+    && src.indexOf('ob_int_talk_sec+ob_ext_talk_sec') === -1, 'no outbound figure adds the outside calls back in');
+  assert.match(src, /"sum\(ob_int_total\) AS ob_total, " \+/);
+  assert.match(src, /"'obTotal', COALESCE\(sum\(ob_int_total\),0\), " \+/);
+  assert.match(src, /DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v6'/);
+});
