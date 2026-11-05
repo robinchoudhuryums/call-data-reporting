@@ -880,3 +880,131 @@ test('DCA-1 step 0: the log prints whole numbers and masks anything number-shape
   assert.match(text, /Anna \(CSR\) \| 4 \| 1/);
   assert.ok(!/\d\.0\b/.test(text), 'no ".0" counts: ' + text);
 });
+
+// ── DCA-3 / DCA-4 / DCA-5 (owner 2026-11-05) ────────────────────────────────
+// DCA-3: 8x8 names a roster person the extension's cell does not list (a
+// reassigned extension, or one no cell lists) -> the call is that person's.
+// DCA-4: "Parker" is a person, not call park. DCA-5: Spanish + CSR -> CSR.
+const RMAPS = {
+  extToAgent: { '101': { name: 'Anna', dept: 'CSR' }, '102': { name: 'Bob', dept: 'CSR' }, '204': { name: 'Parker (Picasso) Roy', dept: 'Power' },
+    '304': { name: 'Nancy', dept: 'Power' } },
+  queueExtSet: new Set(['103']), exclusions: new Set(['103']),
+  extCands: { '101': [{ name: 'Anna', dept: 'CSR' }], '102': [{ name: 'Bob', dept: 'CSR' }], '204': [{ name: 'Parker (Picasso) Roy', dept: 'Power' }],
+    '304': [{ name: 'Camila', dept: 'Spanish' }, { name: 'Camila', dept: 'CSR' }, { name: 'Nancy', dept: 'Power' }] },
+  nameCells: { 'Anna': [{ name: 'Anna', dept: 'CSR' }], 'Bob': [{ name: 'Bob', dept: 'CSR' }], 'Nina': [{ name: 'Nina', dept: 'Sales' }],
+    'Parker (Picasso) Roy': [{ name: 'Parker (Picasso) Roy', dept: 'Power' }], 'Ivr Patel': [{ name: 'Ivr Patel', dept: 'Sales' }],
+    'Nancy': [{ name: 'Nancy', dept: 'Power' }], 'Camila': [{ name: 'Camila', dept: 'Spanish' }, { name: 'Camila', dept: 'CSR' }] },
+};
+
+test('DCA-3: a reassigned extension\'s calls go to the roster person 8x8 names -- named, unnamed the same day, and on an extension no cell lists', function () {
+  const res = compute(grid([
+    // ext 101 is still listed under Anna (who left); 8x8 names Nina, who is on the Sales roster with no extension.
+    row({ cid: 'R1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina', answered: true }),
+    // a blank-name leg on 101 the same day: 101 named only Nina today -> hers.
+    row({ cid: 'R2', start: D + '10:10:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230001', callee: '101', calleeName: '', missed: true }),
+    // Nina on an extension no roster cell lists.
+    row({ cid: 'R3', start: D + '10:20:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:05', caller: '150', callerName: 'Nina', callee: '+15551230002' }),
+    // An outside caller whose caller-ID name happens to be a roster name is NOT her.
+    row({ cid: 'R4', start: D + '10:30:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05', caller: '+15551230003', callerName: 'Nina', callee: '102', answered: true }),
+  ]), RMAPS, {});
+  assert.equal(rowFor(res, 'Anna'), undefined, 'the former employee gets nothing');
+  const n = rowFor(res, 'Nina');
+  assert.equal(n.dept, 'Sales');
+  assert.deepEqual([n.ib_ext_answered, n.ib_ext_missed_free, n.ob_ext_total], [1, 1, 1]);
+  assert.equal(rowFor(res, 'Bob').ib_ext_answered, 1, 'R4 is Bob\'s inbound call, not an outbound call of Nina\'s');
+  const at = J(res.meta.attribution);
+  assert.deepEqual([at.named, at.blankNamed, at.namedUnlisted, at.mismatch, at.blankUnconfirmed], [1, 1, 1, 0, 0]);
+  assert.deepEqual(at.reassigned.map((m) => [m.ext, m.rosterName, m.legName, m.to, m.n]).sort(),
+    [['101', 'Anna', '(no name)', 'Nina', 1], ['101', 'Anna', 'Nina', 'Nina', 1], ['150', '', 'Nina', 'Nina', 1]]);
+  // Somebody on NO roster is still credited to no one.
+  const r2 = compute(grid([
+    row({ cid: 'S1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Zed Nobody', answered: true }),
+  ]), RMAPS, {});
+  assert.equal(r2.rows.length, 0);
+  assert.equal(r2.meta.attribution.mismatch, 1);
+});
+
+test('DCA-3: two people named on one extension leave its blank legs to no one; a queue extension never credits by name', function () {
+  const res = compute(grid([
+    row({ cid: 'T1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05', caller: '+15551230000', callee: '101', calleeName: 'Nina', answered: true }),
+    row({ cid: 'T2', start: D + '10:05:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05', caller: '+15551230001', callee: '101', calleeName: 'Bob', answered: true }),
+    row({ cid: 'T3', start: D + '10:10:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230002', callee: '101', calleeName: '', missed: true }),
+    row({ cid: 'T4', start: D + '10:15:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:05', caller: '103', callerName: 'Nina', callee: '102', answered: true }),
+  ]), RMAPS, {});
+  assert.equal(res.meta.attribution.blankUnconfirmed, 1);
+  assert.equal(rowFor(res, 'Nina').ib_ext_missed_free, 0);
+  assert.equal(rowFor(res, 'Nina').ob_int_total, 0, 'the queue extension 103 is not Nina\'s line');
+});
+
+test('DCA-3: the Direct tab names the colleague the call was credited to, not the former employee the extension is listed under', function () {
+  const res = compute(grid([
+    row({ cid: 'U1', start: D + '10:00:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:05', caller: '102', callee: '101', calleeName: 'Nina', answered: true }),
+  ]), RMAPS, { events: true });
+  const bob = J(res.events).filter((e) => e.agent === 'Bob');
+  assert.deepEqual(bob.map((e) => [e.direction, e.otherName, e.otherExt]), [['out', 'Nina', '101']]);
+  const nina = J(res.events).filter((e) => e.agent === 'Nina');
+  assert.deepEqual(nina.map((e) => [e.direction, e.otherName]), [['in', 'Bob']]);
+});
+
+test('DCA-4: a person whose name contains a feature word is a person; the roster decides', function () {
+  assert.equal(h.call('dcPersonName_', 'Parker (Picasso) Roy'), 'Parker (Picasso) Roy');
+  assert.equal(h.call('dcPersonName_', 'Hunter Smith'), 'Hunter Smith');
+  assert.equal(h.call('dcPersonName_', 'Call Park'), '');
+  assert.equal(h.call('dcPersonName_', 'Parked Call'), '');
+  assert.equal(h.call('dcPersonName_', 'Hunt Group 2'), '');
+  assert.equal(h.call('dcPersonName_', 'Main Menu'), '');
+  // Parker named on his own extension: a match, so his unnamed legs are confirmed his.
+  const res = compute(grid([
+    row({ cid: 'P1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05', caller: '+15551230000', callee: '204', calleeName: 'Parker (Picasso) Roy', answered: true }),
+    row({ cid: 'P2', start: D + '10:05:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230001', callee: '204', calleeName: '', missed: true }),
+    // A roster name the feature words would catch is still a person.
+    row({ cid: 'P3', start: D + '10:10:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:05', caller: '160', callerName: 'Ivr Patel', callee: '+15551230002' }),
+  ]), RMAPS, {});
+  const p = rowFor(res, 'Parker (Picasso) Roy');
+  assert.deepEqual([p.ib_ext_answered, p.ib_ext_missed_free], [1, 1]);
+  assert.equal(res.meta.attribution.blankUnconfirmed, 0);
+  assert.equal(rowFor(res, 'Ivr Patel').ob_ext_total, 1);
+});
+
+test('DCA-5: a person on the Spanish AND CSR rosters is credited to their CSR row, however the extension resolves', function () {
+  const res = compute(grid([
+    row({ cid: 'C1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05', caller: '+15551230000', callee: '304', calleeName: 'Camila', answered: true }),
+    row({ cid: 'C2', start: D + '10:05:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551230001', callee: '304', calleeName: '', missed: true }),
+  ]), RMAPS, {});
+  const rows = J(res.rows).filter((r) => r.agent === 'Camila');
+  assert.deepEqual(rows.map((r) => [r.dept, r.ib_ext_answered, r.ib_ext_missed_free]), [['CSR', 1, 1]]);
+  assert.equal(rowFor(res, 'Nancy'), undefined);
+  assert.equal(h.call('dcPreferCell_', { name: 'Zoe', dept: 'Spanish' }, RMAPS).dept, 'Spanish', 'no CSR cell: stays where it is');
+});
+
+test('DCA-3: dcBuildExtMaps_ indexes every roster cell by name, a cell with no extension too', function () {
+  const cfg = {
+    getLastRow: () => 3, getLastColumn: () => 8,
+    getRange: function (r, c, nr, nc) {
+      const g = [['', '', '', '', '', 'CSR', 'Sales', 'Spanish'], ['A_Q_CSR', '103', '', '', '', 'Anna, 101', 'Nina', 'Anna, 101'], ['', '', '', '', '', 'Bob, 102', '', '']];
+      return { getValues: () => g.slice(r - 1, r - 1 + nr).map((row2) => row2.slice(c - 1, c - 1 + nc)) };
+    },
+  };
+  const m = h.call('dcBuildExtMaps_', cfg);
+  assert.deepEqual(J(m.nameCells), { Anna: [{ name: 'Anna', dept: 'CSR' }, { name: 'Anna', dept: 'Spanish' }],
+    Nina: [{ name: 'Nina', dept: 'Sales' }], Bob: [{ name: 'Bob', dept: 'CSR' }] });
+});
+
+test('DCA-3: the diagnostic folds and logs the reassigned legs by extension, former name and who they went to', function () {
+  const day = (iso, rows) => ({ iso: iso, grid: grid(rows) });
+  const t = J(h.call('dcAttributionAcrossDays_', [
+    day('2026-03-09', [
+      row({ cid: 'V1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230000', callee: '101', calleeName: 'Nina', answered: true }),
+      row({ cid: 'V2', start: D + '10:05:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10', caller: '+15551230001', callee: '101', calleeName: 'Nina', answered: true }),
+    ]),
+  ], RMAPS));
+  assert.equal(t.named, 2);
+  assert.deepEqual(t.days.map((d) => [d.iso, d.named, d.mismatch]), [['2026-03-09', 2, 0]]);
+  assert.deepEqual(t.reassigned.map((m) => [m.ext, m.rosterName, m.legName, m.to, m.n, m.samples]), [['101', 'Anna', 'Nina', 'Nina', 2, ['V1', 'V2']]]);
+  assert.deepEqual(t.changes, [{ agent: 'Anna (CSR)', was: 2, now: 0 }, { agent: 'Nina (Sales)', was: 0, now: 2 }]);
+  const lines = [];
+  const real = h.ctx.dcLog_;
+  h.ctx.dcLog_ = function () { lines.push(Array.prototype.slice.call(arguments).join(' | ')); };
+  try { h.call('dcLogAttribution_', t); } finally { h.ctx.dcLog_ = real; }
+  assert.match(lines.join('\n'), /REASSIGNED.*\| 2\n.*\| 101 \| Anna \| Nina \| Nina \| 2 \| V1, V2/);
+});

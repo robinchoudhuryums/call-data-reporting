@@ -936,8 +936,15 @@ in the response.
 > digit) is credited by extension ONLY when that extension showed its roster
 > person's own name on another leg the same day (DCA-2, owner 2026-11-04: a
 > one-pass `ownerSeen` set, `confirmBlank`), else to no one. Busy time follows
-> the same rule. Not retroactive (`rebuildDirectCallHeldDates`, #90, rebuilds
-> the held dates).
+> the same rule. **DCA-3:** a name the roster has, on an extension that
+> person's cell does not list (reassigned, or listed nowhere -- extension-length
+> only), is credited to THEM (`maps.nameCells`, `dcCellForName_`), and a blank
+> leg on an extension that named exactly one person that day follows them;
+> the per-call list names that colleague. **DCA-4:** the non-person filter's
+> words match whole ("Parker" is not call park) and a roster name always
+> counts as a person. **DCA-5:** a person on two rosters listed in
+> `DC_DEPT_PREFER_` (Spanish -> CSR) is credited to the preferred one. Not
+> retroactive (`rebuildDirectCallHeldDates`, #90, rebuilds the held dates).
 >
 > **The per-call list (AC-6, Operator State #90).** With `opts.events` the same
 > pass emits one record per direct call per agent -- every hour, flagged

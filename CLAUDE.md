@@ -2174,7 +2174,7 @@ items for anything it flags or doesn't cover.)
 87. `diagnoseOutsideNumberLegs` (NX-0, cdr-import, read-only) + NX-2: a CallRecording leg 8x8 marks Incoming is not a caller, so short outbound calls stop reading as inbound (not retroactive; re-run both backfills)
 88. Escalation comments missing from their thread (ESC-C2): `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (dashboard, admin, once after deploy); resolve comments now go into the thread (ESC-C1)
 89. `diagnoseTransferRetries` (TR-0, cdr-import, read-only): a call where an agent tried a person in another department, got no answer, then tried someone else there -- the incorrect-rejection check; on the dashboard as Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned)
-90. The per-call direct list (AC-6): Neon `direct_calls` behind the agent panel's admin-only Direct tab; run `rebuildDirectCallHeldDates()` (cdr-import) once after the push -- it also applies DCA-2 (#83) to the held dates
+90. The per-call direct list (AC-6): Neon `direct_calls` behind the agent panel's admin-only Direct tab; run `rebuildDirectCallHeldDates()` (cdr-import) after each cdr-import push that changes direct credit -- it re-applies DCA-1..5 (#83) to the held dates
 
 ## Cycle Workflow Config
 
