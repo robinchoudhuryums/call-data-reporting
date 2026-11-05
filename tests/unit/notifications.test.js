@@ -348,6 +348,44 @@ test('saveCoachingDeptRule: admin-only, validated, under the lock; blanks return
   } finally { delete h.ctx.assertAdmin_; }
 });
 
+test('CO-1: a flat answer-% gate saves, applies instead of the team pair, and switching back to the team clears it', function () {
+  install({ user: 'admin@x.com' });
+  assert.throws(function () { h.call('saveCoachingDeptRule', { department: 'CSR', mode: 'flat', flatRatePct: '' }); }, /needs an answer %/);
+  assert.throws(function () { h.call('saveCoachingDeptRule', { department: 'CSR', mode: 'flat', flatRatePct: 0 }); }, /from 1 to 100/);
+  let r = J(h.call('saveCoachingDeptRule', { department: 'CSR', mode: 'flat', flatRatePct: 35, minMissed: 10 }));
+  assert.equal(r.gates.admin.flatRatePct, 35);
+  assert.equal(r.gates.effective.flatRatePct, 35, 'the flat gate is admin-only and passes straight through');
+  assert.deepEqual(J(h.call('coachingFlagOpts_', r.gates.effective)).flatRatePct, 35);
+  assert.equal(h.call('coachingGatesText_', r.gates.effective),
+    'Flagged when an agent answers less than 35% of their rings, with 10+ missed rings over 10 workdays.');
+  r = J(h.call('saveCoachingDeptRule', { department: 'CSR', mode: 'team', flatRatePct: 35, minMissed: 10 }));
+  assert.equal(r.gates.admin.flatRatePct, undefined, 'team mode drops the stored floor even if the box still holds one');
+});
+
+test('CO-1: Save all validates every department first -- one bad value saves nothing -- then writes once', function () {
+  install({ user: 'admin@x.com' });
+  const locks = h.state.locks;
+  assert.throws(function () {
+    h.call('saveCoachingDeptRules', { rules: [{ department: 'CSR', minMissed: 12 }, { department: 'Sales', behindPts: 99 }] });
+  }, /Sales: behindPts must be a number from 0 to 50/);
+  assert.equal(h.state.props.COACHING_DEPT_RULES, undefined, 'nothing written');
+  assert.throws(function () { h.call('saveCoachingDeptRules', { rules: [] }); }, /Nothing to save/);
+  assert.throws(function () {
+    h.call('saveCoachingDeptRules', { rules: [{ department: 'CSR', minMissed: 12 }, { department: 'CSR', minMissed: 13 }] });
+  }, /CSR appears twice/);
+  const r = J(h.call('saveCoachingDeptRules', { rules: [
+    { department: 'CSR', minMissed: 12 }, { department: 'Sales', mode: 'flat', flatRatePct: 40 }] }));
+  assert.deepEqual(r.saved, ['CSR', 'Sales']);
+  assert.equal(h.state.locks, locks + 1, 'one locked write for the batch');
+  assert.deepEqual(JSON.parse(h.state.props.COACHING_DEPT_RULES), { CSR: { minMissed: 12 }, Sales: { flatRatePct: 40 } });
+  assert.equal(r.gates.Sales.effective.flatRatePct, 40);
+  install({ user: 'csr.mgr@x.com' });
+  h.ctx.assertAdmin_ = function () { throw new Error('Admin only.'); };
+  try {
+    assert.throws(function () { h.call('saveCoachingDeptRules', { rules: [{ department: 'CSR', minMissed: 12 }] }); }, /Admin only/);
+  } finally { delete h.ctx.assertAdmin_; }
+});
+
 test('the held manager email\'s recipients are the ADMINS today (the one release seam)', function () {
   install();
   const r = J(h.call('coachingManagerRecipients_', 'CSR'));
@@ -398,6 +436,9 @@ const gateSentence = new Function('escapeHtml', 'return (' + extractFn(S7, 'coac
 test('client: coaching gates read as a sentence; the worklist closes as Met / Rotated / Dismissed', function () {
   assert.equal(gateSentence({ maxTeamRatioPct: 60, behindPts: 4, minMissed: 15 }),
     'Flag an agent who answers less than <strong>60%</strong> as often as the team, at least <strong>4</strong> points behind, with <strong>15+</strong> missed rings over 10 workdays.');
+  assert.equal(gateSentence({ maxTeamRatioPct: 60, behindPts: 4, minMissed: 15, flatRatePct: 35 }),
+    'Flag an agent who answers less than <strong>35%</strong> of their rings (a flat gate, not compared with the team), with <strong>15+</strong> missed rings over 10 workdays.',
+    'CO-1: a flat gate reads as its own sentence');
   const row = extractFn(S7, 'coachingRowHtml_');
   ['met', 'rotated', 'dismissed'].forEach(function (a) {
     assert.ok(row.indexOf('data-coaching-action="' + a + '"') !== -1, a + ' button');

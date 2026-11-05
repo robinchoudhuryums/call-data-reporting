@@ -1836,6 +1836,13 @@ When something looks wrong, before assuming a code bug, check:
       is the ONE place that decides who receives it, and it returns the
       admins until release. "Email me the manager version" previews it.
 
+    **CO-1 (2026-11-05):** the Gates by department cards save one at a time
+    (a busy button, a status beside it) or together with **Save all changes**
+    (`saveCoachingDeptRules`: every department validated first, one locked
+    write, so a bad value saves nothing). A department may use a **flat
+    answer %** gate instead of the team-relative pair -- flag anyone under
+    that share of their rings, plus the missed-rings gate (`flatRatePct` in
+    `COACHING_DEPT_RULES`); the manager layer does not apply to the floor.
 49. **Inbound Calls tab export trigger — the heatmap's sheet fallback stays
     fresh only if this runs.** The abandon heatmap degrades to the
     `Inbound Calls` tab when Neon is unreachable

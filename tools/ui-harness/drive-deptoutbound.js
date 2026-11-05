@@ -605,6 +605,44 @@ async function openDept(page, meta) {
       JSON.stringify({ agents: tf.agents, nums: tf.nums, calls: tf.calls }));
   }
 
+  // TD-1 / TD-2 (owner 2026-11-05): chips vs the prior window on the section
+  // line, every named destination and every agent; the "other tracked queues"
+  // key opens the list of those destinations, by click and by keyboard.
+  {
+    const td = await page.evaluate(() => {
+      const q = (sel) => Array.from(document.querySelectorAll(sel));
+      return {
+        sub: q('#dept-transfer-sub .dts-delta').length,
+        legs: q('#dept-transfer-queues .ob-legend .ob-leg').map((l) => l.getAttribute('data-seg') + ':' + l.querySelectorAll('.dts-delta').length),
+        agents: q('#dept-transfer-agents .dtf-num').length,
+        agentChips: q('#dept-transfer-agents .dtf-num .dts-delta').length,
+        restHidden: (document.getElementById('dept-transfer-rest') || {}).hidden,
+        restRows: q('#dept-transfer-rest .dtf-rest-name').length,
+      };
+    });
+    record('TD-1: the section line, every named destination and every agent carry a chip vs the prior period',
+      td.sub === 1 && td.legs.filter((x) => /^(cat\d|unk):1$/.test(x)).length === td.legs.filter((x) => !/^hatch/.test(x)).length
+        && td.agents > 0 && td.agentChips === td.agents,
+      JSON.stringify(td));
+    await page.click('#dept-transfer-queues .ob-leg[data-seg="unk"]');
+    await page.waitForTimeout(150);
+    const open1 = await page.evaluate(() => {
+      const r = document.getElementById('dept-transfer-rest');
+      const k = document.querySelector('#dept-transfer-queues .ob-leg[data-seg="unk"]');
+      return { shown: !!r && !r.hidden && r.getBoundingClientRect().height > 0, exp: k && k.getAttribute('aria-expanded'),
+        rows: Array.from(document.querySelectorAll('#dept-transfer-rest .dtf-rest-name')).map((x) => x.textContent),
+        chips: document.querySelectorAll('#dept-transfer-rest .dts-delta').length };
+    });
+    await page.focus('#dept-transfer-queues .ob-leg[data-seg="unk"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+    const closed = await page.evaluate(() => document.getElementById('dept-transfer-rest').hidden);
+    record('TD-2: clicking "other tracked queues" lists each of them with its count and chip; Enter closes it again',
+      td.restHidden === true && open1.shown && open1.exp === 'true' && open1.rows.length === td.restRows && td.restRows >= 1
+        && open1.chips === open1.rows.length && closed === true,
+      JSON.stringify({ td: td, open1: open1, closed: closed }));
+  }
+
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
   record('no page/console errors during the walk', realErrors.length === 0,
     Array.from(new Set(realErrors)).slice(0, 3).join(' | '));

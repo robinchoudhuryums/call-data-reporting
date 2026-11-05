@@ -323,6 +323,28 @@ function ekListHtml_(title, items) {
     }).join('') + '</table>';
 }
 
+/**
+ * CO-2: a compact data table -- `cols` [{label, align, width}], `rows` arrays
+ * of pre-escaped cell HTML (caller escapes), with the house header row.
+ */
+function ekTableHtml_(title, cols, rows) {
+  rows = (rows || []).filter(Boolean);
+  if (!rows.length) return '';
+  cols = cols || [];
+  return (title ? ekSectionTitle_(title) : '')
+    + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid '
+    + EK_C_.line + ';border-radius:8px;">'
+    + ekTheadRow_(cols)
+    + rows.map(function (r) {
+      return '<tr>' + r.map(function (cell, i) {
+        const c = cols[i] || {};
+        return '<td valign="top"' + (c.align ? ' align="' + c.align + '"' : '') + (c.width ? ' width="' + c.width + '"' : '')
+          + ' style="padding:9px 12px;font:13px/1.45 ' + EK_SANS_ + ';color:' + EK_C_.ink + ';border-top:1px solid ' + EK_C_.rowline + ';">'
+          + cell + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</table>';
+}
+
 /** Monospace block for stacks / logs (escaped, wrapped, capped). */
 function ekMonoHtml_(title, text, cap) {
   const t = String(text == null ? '' : text);
@@ -344,6 +366,7 @@ function ekSectionTitle_(title) {
  *     tiles: [{label, value, sub, tone}],
  *     callout: {kicker, html, tone},
  *     list: {title, items: [html]},
+ *     table: {title, cols: [{label, align, width}], rows: [[html]]},
  *     stepsTitle, steps: [{head, body}],
  *     mono: {title, text},
  *     intro (html), outro (html),
@@ -358,6 +381,7 @@ function ekNoticeHtml_(o) {
   if (o.tiles && o.tiles.length) rows += ekRow_(ekTilesHtml_(o.tiles), (o.intro ? '10px' : '20px') + ' 26px 6px');
   if (o.callout && o.callout.html) rows += ekRow_(ekCalloutHtml_(o.callout.kicker || '', o.callout.html, o.callout.tone || (tone === 'neutral' ? 'neutral' : tone === 'good' ? 'good' : 'warn')), '10px 26px 4px');
   if (o.list && o.list.items && o.list.items.length) rows += ekRow_(ekListHtml_(o.list.title, o.list.items), '12px 26px 4px');
+  if (o.table && o.table.rows && o.table.rows.length) rows += ekRow_(ekTableHtml_(o.table.title, o.table.cols, o.table.rows), '12px 26px 4px');
   if (o.steps && o.steps.length) rows += ekRow_((o.stepsTitle ? ekSectionTitle_(o.stepsTitle) : '') + ekStepsHtml_(o.steps, tone === 'bad' ? 'bad' : tone === 'warn' ? 'warn' : 'good'), '12px 26px 6px');
   if (o.mono && o.mono.text) rows += ekRow_(ekMonoHtml_(o.mono.title, o.mono.text), '12px 26px 6px');
   if (o.outro) rows += ekRow_('<div style="font:13px/1.5 ' + EK_SANS_ + ';color:' + EK_C_.mut + ';">' + o.outro + '</div>', '10px 26px 8px');

@@ -5700,6 +5700,43 @@
   .coaching-gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; font-size: 12px; }
   .coaching-gate-row input { width: 72px; }
   #coaching-gates-status.is-error { color: var(--bad); }
+  /* CO-1: Save all at the top, per-card status beside the buttons, busy buttons. */
+  .coaching-gates-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 8px 0 2px;
+    position: sticky; top: 0; z-index: 2; background: var(--paper-card); padding: 6px 0; }
+  .coaching-gate-card.is-dirty { border-left: 3px solid var(--caution); }
+  .coaching-gate-field { display: inline-flex; align-items: center; gap: 6px; }
+  .coaching-gate-field[hidden] { display: none; }
+  .coaching-gate-status { font-size: 12px; color: var(--muted); }
+  .coaching-gate-status.is-busy::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+    border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px;
+    animation: coaching-spin 0.8s linear infinite; }
+  .coaching-gate-status.is-ok { color: var(--good); }
+  .coaching-gate-status.is-error { color: var(--bad); }
+  .coaching-gate-status.is-dirty { color: var(--caution); }
+  .btn.is-busy { cursor: progress; opacity: 0.85; }
+  @keyframes coaching-spin { to { transform: rotate(360deg); } }
+  /* CO-2: the coaching worklist rows. */
+  .coach-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; }
+  .coach-row.is-open td:first-child { box-shadow: inset 3px 0 0 var(--caution); }
+  .coach-agent { font-weight: 600; }
+  .coach-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .coach-dept { display: inline-block; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--r); font-size: 10.5px; color: var(--ink); }
+  .coach-times { color: var(--caution); font-weight: 600; }
+  .coach-rate-td { min-width: 170px; }
+  .coach-rate strong, .coach-missed strong { font-family: var(--mono); font-size: 13px; }
+  .coach-vs { font-size: 12px; color: var(--muted); }
+  .coach-rate-bar { position: relative; height: 6px; margin: 5px 0 2px; background: var(--paper-2); border-radius: 3px; max-width: 200px; }
+  .coach-rate-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--bad); border-radius: 3px; }
+  .coach-rate-team { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); }
+  .coach-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid transparent; }
+  .coach-pill--open { color: var(--caution); border-color: var(--caution); }
+  .coach-pill--met { color: var(--good); border-color: var(--good); }
+  .coach-pill--rotated { color: var(--accent); border-color: var(--accent); }
+  .coach-pill--dismissed { color: var(--muted); border-color: var(--line); }
+  .coach-actions { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+  .coach-actions .coaching-note-input { width: 100%; }
+  .coach-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  @media (prefers-reduced-motion: reduce) { .coaching-gate-status.is-busy::before { animation: none; } }
 
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
@@ -7157,6 +7194,22 @@
   .dtf-pct.tf-light { color: var(--good); }
   .dtf-pct.tf-amber { color: var(--warn); }
   .dtf-pct.tf-red   { color: var(--bad); }
+  /* TD-1/TD-2: prior chips on the transfer detail, and the expandable list of
+     the other tracked destinations. */
+  .dtf-num .dts-delta { margin-left: 4px; }
+  .dept-transfer .ob-leg-x .dts-delta { margin-left: 6px; }
+  .dtf-rest-toggle { cursor: pointer; }
+  .ob-leg.dtf-rest-toggle { border-radius: var(--r); padding: 2px 4px; margin: -2px -4px; }
+  .ob-leg.dtf-rest-toggle:hover, .ob-leg.dtf-rest-toggle.is-open { background: var(--paper-2, rgba(0,0,0,0.04)); }
+  .ob-leg.dtf-rest-toggle .ob-leg-t::after { content: ' \25B8'; color: var(--muted); }
+  .ob-leg.dtf-rest-toggle.is-open .ob-leg-t::after { content: ' \25BE'; }
+  .ob-leg.dtf-rest-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .dtf-rest { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); }
+  .dtf-rest[hidden] { display: none; }
+  .dtf-rest-h { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .dtf-rest-rows { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 3px 12px; font-size: 12px; align-items: baseline; }
+  .dtf-rest-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dtf-rest-num { font-family: var(--mono); white-space: nowrap; }
   /* Owner 2026-10-22: the CSR agent table's Transfer % column. Shown only on
      a table that carries transfer data (.has-xfer, CSR); everywhere else the
      cells stay in the DOM but out of the layout, so column counts and every

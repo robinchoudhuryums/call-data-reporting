@@ -42,6 +42,35 @@ test('coaching: all three gates must hold — a qualifying agent is flagged with
   assert.equal(f.missed, 55);
 });
 
+test('CO-1: a flat answer-% gate flags anyone under the floor, whatever the team does -- and only them', function () {
+  // A struggling team (all near 30%): the relative gates flag nobody; a 35% floor flags everyone under it with enough misses.
+  const rows = [row('Anna', 30, 70), row('Bob', 40, 60), row('Cal', 2, 8)];
+  assert.equal(h.call('computeCoachingFlags_', rows, []).length, 0, 'team-relative: nobody');
+  const flags = JSON.parse(JSON.stringify(h.call('computeCoachingFlags_', rows, [], { flatRatePct: 35, minMissed: 20 })));
+  assert.deepEqual(flags.map((f) => [f.agent, f.ratePct, f.flatRatePct]), [['Anna', 30, 35]],
+    'Bob is above the floor; Cal is under it but below the missed-rings gate');
+  // A team that answered nothing still has a floor to compare with.
+  const zero = JSON.parse(JSON.stringify(h.call('computeCoachingFlags_', [row('Z', 0, 30)], [], { flatRatePct: 10, minMissed: 20 })));
+  assert.deepEqual(zero.map((f) => [f.agent, f.teamRatioPct]), [['Z', 0]]);
+});
+
+test('CO-2: the coaching emails carry the flags as a table -- escaped, with the bar, the team and the floor', function () {
+  const h2 = loadGas({ files: ['Config.gs', 'Util.gs', 'EmailKit.gs', 'Coaching.gs'] });
+  const t = JSON.parse(JSON.stringify(h2.call('coachingFlagTable_', [
+    { agent: '<Low>', dept: 'CSR', ratePct: 21.4, teamRatePct: 77.7, teamRatioPct: 27.6, gapPts: 56.2, missed: 55, rung: 70 },
+    { agent: 'Flat', dept: 'Sales', ratePct: 30, teamRatePct: 31, teamRatioPct: 96.8, gapPts: 1, missed: 70, rung: 100, flatRatePct: 35 },
+  ], true, 'Flagged agents')));
+  assert.deepEqual(t.cols.map((c) => c.label), ['Agent', 'Answered', 'Team', 'Missed']);
+  assert.match(t.rows[0][0], /&lt;Low&gt;.*CSR/);
+  assert.match(t.rows[0][1], /21\.4%.*<table/);
+  assert.match(t.rows[0][2], /77\.7%.*28% as often · 56\.2 pts behind/);
+  assert.match(t.rows[1][2], /below the 35% floor/);
+  const html = h2.call('ekNoticeHtml_', { title: 'x', table: t });
+  assert.match(html, /FLAGGED AGENTS|Flagged agents/);
+  assert.match(html, /&lt;Low&gt;/);
+  assert.equal(h2.call('ekTableHtml_', 'x', [], []), '', 'no rows, no table');
+});
+
 test('coaching: the volume gate blocks a low-rate agent under the missed floor', function () {
   // 5/15 = 25% answered — terrible, but only 15 missed rings (< 20).
   const rows = [row('Anna', 180, 20), row('Quiet', 5, 15)];

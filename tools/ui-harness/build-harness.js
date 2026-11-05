@@ -551,11 +551,28 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
                  effective: { maxTeamRatioPct: 60, behindPts: 3, minMissed: 20 } },
           Sales: { admin: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 }, manager: {},
                    effective: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 20 } },
+          // CO-1: a department on a flat answer-% gate.
+          Power: { admin: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 15, flatRatePct: 40 }, manager: {},
+                   effective: { maxTeamRatioPct: 50, behindPts: 5, minMissed: 15, flatRatePct: 40 } },
         } } };
     },
     saveCoachingDeptRule: function (req) {
       if (req && req.maxTeamRatioPct !== '' && Number(req.maxTeamRatioPct) < 5) throw new Error('maxTeamRatioPct must be a number from 5 to 100.');
-      return { department: req && req.department, gates: {} };
+      const g = { maxTeamRatioPct: Number(req.maxTeamRatioPct) || 50, behindPts: Number(req.behindPts) || 5, minMissed: Number(req.minMissed) || 20 };
+      if (req.mode === 'flat') g.flatRatePct = Number(req.flatRatePct);
+      return { department: req && req.department, gates: { admin: g, manager: {}, effective: g } };
+    },
+    // CO-1: Save all -- one bad value (a points-behind over 50) saves nothing.
+    saveCoachingDeptRules: function (req) {
+      const rules = (req && req.rules) || [];
+      rules.forEach(function (r) { if (Number(r.behindPts) > 50) throw new Error(r.department + ': behindPts must be a number from 0 to 50.'); });
+      const gates = {};
+      rules.forEach(function (r) {
+        const g = { maxTeamRatioPct: Number(r.maxTeamRatioPct) || 50, behindPts: Number(r.behindPts) || 5, minMissed: Number(r.minMissed) || 20 };
+        if (r.mode === 'flat') g.flatRatePct = Number(r.flatRatePct);
+        gates[r.department] = { admin: g, manager: {}, effective: g };
+      });
+      return { saved: rules.map(function (r) { return r.department; }), gates: gates };
     },
     previewCoachingManagerEmail: function (req) {
       return { sentTo: 'admin@ums.com', department: req && req.department, flags: 1, window: { from: '2026-08-03', to: '2026-08-14' } };
