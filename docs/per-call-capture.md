@@ -923,6 +923,13 @@ in the response.
 
 ### Direct-extension call metrics
 
+> **Own number or main line? (DID-0, Operator State #91.)** The direct
+> metrics do not record the dial-in number, so the Direct report cannot yet
+> split outside callers by how they reached the person.
+> `diagnoseDirectDialIn` (read-only) measures it from the held `Call_Legs_*`
+> tabs -- the call's first legs (straight / menu / colleague) and col Q's
+> dial-in number -- before any report change.
+>
 > **The report's OUTBOUND is calls to COLLEAGUES (DO-1, owner 2026-11-05).**
 > `getDirectCallReport`'s `obTotal` / `obConnected` / `obTalkSec` / `obAttSec`
 > (kpis, prior, per agent, per dept) sum the `ob_int_*` columns only; calls to
