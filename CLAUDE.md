@@ -234,7 +234,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# EIGHTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
+# SEVENTEEN ASSERTING drivers gate it, eighteen runs (drive-smoke as two role
+# shards, SPEED-2) (`tools/ui-harness/ci.mjs`; one line each
 # in tools/ui-harness/README.md "Asserting drivers" -- the per-driver list
 # lives there, not here; SPEED-1: they run 4 at a time, UI_HARNESS_JOBS). Two pins ride on them: `cross-file-pins.test.js`
 # fails when a `kind:'modal'` route in script-4-nav.html is neither driven by

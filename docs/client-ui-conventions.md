@@ -2375,7 +2375,12 @@ stay pinned by INV-39, INV-53 and INV-06.
   Outbound-only view lists only agents who placed a call (AC-4). Every
   Transfer % cell tints through the one `xferTier_` rule (AC-5: amber 30-32 %
   inclusive, red above). The agent panel's admin-only Direct tab
-  (`apDirectTableHtml_`, AC-6) lists the day's direct calls; every
+  (`apDirectTableHtml_`, AC-6) lists the day's direct calls -- outside
+  callers labelled by how they reached the agent (their direct line / a main
+  line, DID-3), a ring missed while busy naming who that other call was with
+  (`busy_with`, never a number) -- under a summary block that counts every
+  row of the day (`agentDayDirectSummary_` / `apDirectSummaryHtml_`, ADT-2;
+  it sits outside the list's scroll box, colleagues top 5 with "Show all"); every
   header sorts by click and keyboard (`obThHtml_`). Still ONE `<tr>` per
   agent, so the agent panel, subtotals and exports keep their shape.
   `drive-deptoutbound.js` pins the cells, the group row, that every bar adds
