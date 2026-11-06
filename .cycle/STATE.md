@@ -6,13 +6,17 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-11-05
+Updated: 2026-11-06
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-06 (2) -- SPEED-1..4 IMPLEMENTED (block 259-speed-broad-implement; owner: faster deploys without checking less).** ci:ui drivers run 4 at a time (UI_HARNESS_JOBS), drive-smoke as admin + manager shards, sibling deploys skip ci:ui (dashboard-only harness, pinned), and a gate passed at a clean commit is not re-run for it (.last-gated, REGATE=1). Measured ci:ui 877 s -> 240 s. Tooling only.
+  **Where I left off:** committed + pushed; PR to merge on CI green.
+- **2026-11-06 -- SHIPPED: PR #407 merged (fb1358a) on CI green** -- DID-0 `diagnoseDirectDialIn` / `diagnoseDirectDialInAllDates()` (cdr-import, read-only): own direct number vs a main line through the phone menu vs via a colleague, per number and per agent (Operator State #91). **Owner-side:** push cdr-import, run `diagnoseDirectDialInAllDates()`, send the log -- it decides whether the Direct report splits "their direct line" vs "a main line". Branch restarted from main.
+  **Where I left off:** nothing open on the branch; waiting on the DID-0 log.
 - **2026-11-05 (3) -- SHIPPED: PR #406 merged (149e153) on CI green** -- DCA-3/4/5, DO-1 (Direct outbound = colleagues, outside calls as a line, `directCall:v6`), TD-1/2, CO-1/2, sync-docs. **Owner-side:** push cdr-import -> `rebuildDirectCallHeldDates()` -> `diagnoseDirectCallAttributionAllDates()`; Outlier Fix aliases for the two spelling variants; push the dashboard + roll the deployment; walk S44, S64, S67. Branch restarted from main.
 - **2026-11-05 (2) -- TD-1/TD-2 + CO-1/CO-2 IMPLEMENTED (block 259-td-co-broad-implement; owner notes).** Transfer detail chips vs prior + the other-destinations list; coaching gate busy/saved states, Save all, a flat answer-% gate; the worklist rows and both coaching emails restyled. Dashboard only. **Owner-side:** push the dashboard + roll the deployment; walk S44 and S64.
   **Where I left off:** committed + pushed on the branch with DCA-3/4/5; no PR (not asked).

@@ -12,7 +12,9 @@ cd tools/ui-harness && npm init -y >/dev/null && npm i playwright@1.62.1 && cd -
 npm run ci:ui
 ```
 `ci:ui` (→ `ci.mjs`) generates payloads → builds the admin + manager sites →
-runs the **asserting** drivers, and exits non-zero on any failure. It SKIPS
+runs the **asserting** drivers -- four at a time (SPEED-1; `UI_HARNESS_JOBS=1`
+for the old one-by-one order), each one's output printed whole when it ends --
+and exits non-zero if any of them failed, after naming every failing driver. It SKIPS
 cleanly with a message when playwright isn't installed, so it's safe in any
 environment. This is what `.github/workflows/ci.yml`'s `ui-harness` job runs.
 
@@ -38,7 +40,9 @@ so the gate itself is not affected -- this is the hand-run trap. When
 bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 
 ### Asserting drivers (pass/fail — these gate CI)
-- `drive-smoke.js` — (since #81 also the generated Individual Report's
+- `drive-smoke.js [admin|manager]` — (SPEED-2: the gate runs it as two
+  shards, one per role, side by side; with no argument it checks both)
+  (since #81 also the generated Individual Report's
   exception-day note) boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
   class: laid out and visible but entirely uniform pixels), and horizontal page

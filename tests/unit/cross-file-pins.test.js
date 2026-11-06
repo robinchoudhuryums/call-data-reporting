@@ -803,7 +803,8 @@ test('F1: every modal route in the router is driven by drive-admin.js or documen
   // that looked only at drive-admin would have called it uncovered. The
   // driver list is read from ci.mjs's STAGES so it follows the real gate.
   const ci = read('tools/ui-harness/ci.mjs');
-  const driverFiles = [...ci.matchAll(/\['node',\s*\['(drive-[a-z0-9-]+\.js)'\]/g)].map((m) => m[1]);
+  // SPEED-2: a driver may carry arguments (drive-smoke runs as two role shards).
+  const driverFiles = [...new Set([...ci.matchAll(/\['node',\s*\['(drive-[a-z0-9-]+\.js)'/g)].map((m) => m[1]))];
   assert.ok(driverFiles.length >= 5,
     'only ' + driverFiles.length + ' asserting drivers parsed out of ci.mjs -- '
     + 'the STAGES table was reshaped. Fix the pin.');

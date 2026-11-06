@@ -258,3 +258,124 @@ test('DEP-5: deploy.sh runs the version check only when it will roll a deploymen
   assert.ok(check < s.indexOf('TZ="$CI_TZ" npm run ci'), 'before the ten-minute gates');
   assert.ok(check < s.indexOf('clasp push -f\n'), 'before the push, so nothing is pushed without a version to serve it');
 });
+
+// ── SPEED-1..4 (owner 2026-11-06): a faster deploy gate that checks exactly as
+// much as before. The rendered-UI drivers run concurrently, drive-smoke runs as
+// two role shards, a sibling deploy skips the dashboard-only rendered gate, and
+// a gate that passed at a clean commit is not re-run for that same commit.
+
+// SPEED-1/2: the parallel runner still runs every driver, setup first.
+test('SPEED-1/2: ci.mjs builds first, then runs every asserting driver concurrently, smoke in two role shards', function () {
+  const ci = read('tools/ui-harness/ci.mjs');
+  const setupAt = ci.indexOf('const SETUP = [');
+  const stagesAt = ci.indexOf('const STAGES = [');
+  assert.ok(setupAt > 0 && stagesAt > setupAt, 'SETUP is declared before the driver STAGES');
+  const setup = ci.slice(setupAt, stagesAt);
+  ['gen-payloads.js', 'gen-phase3.js', "'build-harness.js', 'admin'", "'build-harness.js', 'manager'", 'build-agent.js']
+    .forEach(function (s) { assert.ok(setup.indexOf(s) > 0, s + ' is a SETUP stage (drivers read what it writes)'); });
+  const stages = ci.slice(stagesAt, ci.indexOf('];', stagesAt));
+  assert.doesNotMatch(stages, /gen-|build-/, 'no build step among the concurrent drivers');
+  // Both smoke shards, and only the two real roles.
+  assert.match(stages, /\['node', \['drive-smoke\.js', 'admin'\]/);
+  assert.match(stages, /\['node', \['drive-smoke\.js', 'manager'\]/);
+  assert.doesNotMatch(stages, /\['node', \['drive-smoke\.js'\]/, 'no unsharded smoke run beside the shards');
+  // Every asserting driver on disk is in the gate (exploratory ones excluded).
+  const EXPLORATORY = ['drive.js', 'drive-insights.js', 'drive-phase3.js'];
+  const onDisk = fs.readdirSync(path.join(ROOT, 'tools', 'ui-harness'))
+    .filter(function (f) { return /^drive-[a-z0-9-]+\.js$/.test(f) && EXPLORATORY.indexOf(f) < 0; });
+  onDisk.forEach(function (f) { assert.ok(stages.indexOf("'" + f + "'") > 0, f + ' is an asserting driver missing from STAGES'); });
+  // The runner: concurrency knob, every driver awaited, setup before drivers, a
+  // failure anywhere exits non-zero.
+  assert.match(ci, /process\.env\.UI_HARNESS_JOBS/);
+  assert.match(ci, /runSetup\(\);\s*\nawait runDrivers\(\);/);
+  assert.match(ci, /await Promise\.all\(Array\.from\(\{ length: jobs \}, worker\)\)/);
+  assert.match(ci, /if \(failed\.length\) \{[\s\S]{0,200}process\.exit\(/);
+});
+
+test('SPEED-2: drive-smoke takes an optional role, refuses an unknown one, and defaults to both', function () {
+  const src = read('tools/ui-harness/drive-smoke.js');
+  assert.match(src, /const ALL_ROLES = \['admin', 'manager'\];/);
+  assert.match(src, /const ROLES = ROLE_ARG \? \[ROLE_ARG\] : ALL_ROLES;/);
+  assert.match(src, /for \(const role of ROLES\)/);
+  assert.match(src, /ALL_ROLES\.indexOf\(ROLE_ARG\) < 0\) \{[\s\S]{0,200}process\.exit\(2\)/, 'a typo is refused, not run as zero roles');
+  // The shards are only sound while nothing outlives one role's pass: the only
+  // module-level mutable state is the shared results list.
+  const mutables = src.match(/^(let|var) /mg) || [];
+  assert.equal(mutables.length, 0, 'drive-smoke gained module-level mutable state -- check the role shards still share nothing');
+});
+
+// SPEED-3: the rendered gate drives ONLY the dashboard, which is the whole
+// warrant for skipping it on a sibling deploy. If the harness ever loads a
+// sibling project's code, this fails -- and the skip in deploy.sh must go.
+test('SPEED-3: tools/ui-harness loads only dashboard server code, and deploy.sh skips ci:ui only for the siblings', function () {
+  const dir = path.join(ROOT, 'tools', 'ui-harness');
+  fs.readdirSync(dir).filter(function (f) { return /\.(js|mjs)$/.test(f); }).forEach(function (f) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    assert.doesNotMatch(src, /cdr-import|cdr-report|project:\s*['"]/,
+      f + ' reaches a sibling project -- the SPEED-3 ci:ui skip for cdr-import / cdr-report deploys is no longer sound; remove it');
+  });
+  const sh = read('scripts/deploy.sh');
+  const arm = /case "\$DIR" in\s*\n\s*apps-script\/cdr-import\|apps-script\/cdr-report\)\s*\n\s*echo "==> npm run ci:ui   SKIPPED[^\n]*\n\s*;;\s*\n\s*\*\)([\s\S]*?)\n\s*;;\s*\n\s*esac/.exec(sh);
+  assert.ok(arm, 'the ci:ui skip is a case arm naming exactly the two siblings');
+  assert.match(arm[1], /CI=1 TZ="\$CI_TZ" npm run ci:ui/, 'every other project (the dashboard) still runs ci:ui');
+});
+
+// SPEED-4: the once-per-commit gate marker, run for real in a scratch repo.
+test('SPEED-4: a gate is skipped only at the same CLEAN commit, zone and tools; dirt, a new commit or REGATE=1 re-runs it', { skip: process.platform === 'win32' }, function () {
+  const sh = read('scripts/deploy.sh');
+  const a = sh.indexOf('# GATE-MARK-BEGIN'), b = sh.indexOf('# GATE-MARK-END');
+  assert.ok(a > 0 && b > a, 'the marker block exists');
+  const block = sh.slice(a, b);
+  const root = tmp();
+  const git = function () { return spawnSync('git', Array.prototype.slice.call(arguments), { cwd: root, encoding: 'utf8' }); };
+  git('init', '-q'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+  fs.writeFileSync(path.join(root, '.gitignore'), '.last-gated\n.last-gated.tmp\n');
+  fs.writeFileSync(path.join(root, 'a.txt'), '1');
+  git('add', '-A'); git('commit', '-qm', 'one');
+  // Run the block, then a script of gate calls; prints "done:<gate>" per hit.
+  const run = function (script, env) {
+    const r = spawnSync('bash', ['-c', 'set -euo pipefail\nROOT_ABS="$1"; CI_TZ="${CI_TZ:-America/Chicago}"\n' + block + '\n' + script, '_', root],
+      { encoding: 'utf8', env: Object.assign({}, process.env, env || {}) });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout;
+  };
+  const check = 'for g in unit ui; do if gate_done_ $g; then echo done:$g; fi; done';
+  try {
+    assert.equal(run(check), '', 'nothing recorded yet');
+    run('gate_record_ unit');
+    assert.equal(run(check), 'done:unit\n', 'unit recorded at this clean commit; ui still due');
+    run('gate_record_ ui');
+    assert.equal(run(check), 'done:unit\ndone:ui\n');
+    assert.equal(run(check, { REGATE: '1' }), '', 'REGATE=1 re-runs everything');
+    assert.equal(run(check, { CI_TZ: 'UTC' }), '', 'a different zone is a different gate');
+    // An uncommitted change anywhere (untracked counts): nothing skipped, nothing recorded.
+    fs.writeFileSync(path.join(root, 'new.test.js'), 'x');
+    assert.equal(run(check), '', 'an untracked file is a dirty tree');
+    run('gate_record_ unit');
+    fs.rmSync(path.join(root, 'new.test.js'));
+    assert.equal(run(check), 'done:unit\ndone:ui\n', 'the dirty run recorded nothing new and broke nothing');
+    // A new commit: nothing carries over, and its first record drops the old sha.
+    fs.writeFileSync(path.join(root, 'a.txt'), '2');
+    git('commit', '-qam', 'two');
+    assert.equal(run(check), '', 'a new commit runs every gate');
+    run('gate_record_ ui');
+    const lines = fs.readFileSync(path.join(root, '.last-gated'), 'utf8').trim().split('\n');
+    const head = git('rev-parse', 'HEAD').stdout.trim();
+    assert.equal(lines.length, 1, 'only the current commit is kept');
+    assert.ok(lines[0].indexOf(head + ' ui tz=America/Chicago node=') === 0, lines[0]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('SPEED-4: each gate records only after its commands, inside the DEPLOY_SKIP_CI gate; .last-gated is gitignored', function () {
+  const sh = read('scripts/deploy.sh');
+  const gate = /if \[ "\$\{DEPLOY_SKIP_CI:-\}" != "1" \]; then([\s\S]*?)\nfi\n/.exec(sh)[1];
+  const at = function (s) { const i = gate.indexOf(s); assert.ok(i >= 0, s); return i; };
+  assert.ok(at('TZ="$CI_TZ" npm run ci\n') < at('npm run lint:gas\n') && at('npm run lint:gas\n') < at('gate_record_ unit'),
+    'unit is recorded after BOTH npm run ci and lint:gas');
+  assert.ok(at('CI=1 TZ="$CI_TZ" npm run ci:ui\n') < at('gate_record_ ui'), 'ui is recorded after ci:ui');
+  assert.ok(at('if gate_done_ unit') < at('TZ="$CI_TZ" npm run ci\n'), 'the skip check guards the run');
+  assert.match(sh, /set -euo pipefail/, 'a failing gate exits before its record');
+  const gi = read('.gitignore');
+  assert.match(gi, /^\.last-gated$/m, 'the marker never dirties the tree it checks');
+  assert.match(gi, /^\.last-gated\.tmp$/m);
+});

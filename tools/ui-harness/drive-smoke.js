@@ -15,7 +15,10 @@
  *   4. Horizontal document overflow (a layout that pushes the page sideways),
  *      at desktop width AND at phone width (CL-9).
  *
- * Run: node drive-smoke.js   (after gen-payloads/gen-phase3 + build-harness)
+ * Run: node drive-smoke.js [admin|manager]   (after gen-payloads/gen-phase3 + build-harness)
+ *   With no argument it checks both roles, one after the other. SPEED-2: ci.mjs
+ *   runs it as two shards (`admin`, `manager`) side by side -- each pass of the
+ *   role loop boots its own pages and shares nothing with the other role.
  */
 const path = require('path');
 const { chromium } = require('playwright');
@@ -419,10 +422,19 @@ async function visibleErrorTones(page) {
   });
 }
 
+// SPEED-2: an optional role argument limits the run to that role's shard.
+const ALL_ROLES = ['admin', 'manager'];
+const ROLE_ARG = process.argv[2];
+if (ROLE_ARG && ALL_ROLES.indexOf(ROLE_ARG) < 0) {
+  console.error('drive-smoke: unknown role "' + ROLE_ARG + '" (expected one of: ' + ALL_ROLES.join(', ') + ')');
+  process.exit(2);
+}
+const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
+
 (async () => {
   const browser = await chromium.launch(launchOptions());
 
-  for (const role of ['admin', 'manager']) {
+  for (const role of ROLES) {
     const { page, errors } = await bootPage(browser, role);
 
     // Visit every page the role can reach; each is a fresh render pass.

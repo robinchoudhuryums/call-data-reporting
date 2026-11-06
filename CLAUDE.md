@@ -197,7 +197,10 @@ node --test          # from repo root (or: npm test)
 # renders it, and a bare `clasp push -f` ships "unstamped", which is itself
 # the finding. DEP-5: a run that rolls a deployment also counts the project's
 # versions first (Apps Script caps them at 200; cleanup is manual, Operator
-# State #2) -- warn from 180, refuse at 200, before the gates. Standalone:
+# State #2) -- warn from 180, refuse at 200, before the gates. SPEED-3/4: a
+# sibling deploy skips ci:ui (it drives only dashboard code; deploy-tooling
+# pins that), and a gate passed at a clean commit is not re-run for it
+# (gitignored .last-gated; REGATE=1 forces). Standalone:
 #   node scripts/check-remote-orphans.mjs <project-dir>
 #   node scripts/check-version-limit.mjs <project-dir>
 scripts/deploy.sh .                      <dashboard-deployment-id>
@@ -233,7 +236,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
 # EIGHTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
 # in tools/ui-harness/README.md "Asserting drivers" -- the per-driver list
-# lives there, not here). Two pins ride on them: `cross-file-pins.test.js`
+# lives there, not here; SPEED-1: they run 4 at a time, UI_HARNESS_JOBS). Two pins ride on them: `cross-file-pins.test.js`
 # fails when a `kind:'modal'` route in script-4-nav.html is neither driven by
 # an asserting driver nor listed in its DRIVER_MODAL_EXEMPT with a reason
 # (F1), and the agent app's teammate-name privacy is asserted at the rendered
