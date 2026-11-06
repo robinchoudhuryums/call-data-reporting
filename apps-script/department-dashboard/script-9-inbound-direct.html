@@ -136,7 +136,7 @@
     const dept = $('inbound-dept') ? $('inbound-dept').value : '';
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
-    const __sig = reportSig_({ from: from, to: to, department: dept });   // D1b key
+    const __sig = reportSig_({ from: from, to: to, department: dept, exc: excIncludeOn_() });   // D1b key (+ EXC-2: the admin include switch)
     const __rtok = ++reportReqSeq_.inb;   // C-8: stale-response guard
     const __inboundRepaint = function (d, opts) { inboundRenderReport_(d, opts); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
     reportSwrPaint_('inbound', __sig, __inboundRepaint, 'inbound-results-status');   // SWR: instant repeat-paint
@@ -161,7 +161,7 @@
         if (reportFailFallback_('inbound', __sig, __inboundRepaint, 'inbound-results-status')) return;
         inboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getInboundReport({ from: from, to: to, department: dept });
+      .getInboundReport(excReq_({ from: from, to: to, department: dept }));   // EXC-2 (#81)
   }
 
   // ds-kpi tile for the simpler (label, value, cap, deltaHtml) shape used by
@@ -627,6 +627,7 @@
     coverageNoteUpsert_('inbound-body', 'inbound',
       (data && data.meta && data.meta.from) || null, null,
       (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
+    excNoteUpsert_('inbound-body', (data && data.meta && data.meta.exceptionDays) || null);   // EXC-2 (#81)
     inboundLastData = data;
     inboundDrillCache = {};   // drill-down series are per (range, dept)
     inboundCollapseDrill_();
@@ -1465,7 +1466,7 @@
         gen.disabled = false; gen.textContent = prev;
         directCallSetError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getDirectCallReport({ from: from, to: to, department: dept });
+      .getDirectCallReport(excReq_({ from: from, to: to, department: dept }));   // EXC-2 (#81)
   }
 
   function directCallRenderReport_(data) {
@@ -1473,6 +1474,7 @@
     coverageNoteUpsert_('direct-call-body', 'direct',
       (data && data.meta && data.meta.from) || null, null,
       (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
+    excNoteUpsert_('direct-call-body', (data && data.meta && data.meta.exceptionDays) || null);   // EXC-2 (#81)
     const meta = (data && data.meta) || {};
     const unavail = $('direct-call-unavailable');
     const empty = $('direct-call-empty');

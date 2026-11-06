@@ -130,6 +130,9 @@ function inboundResolveRequest_(req) {
   }
 
   const companyView = !dept;
+  // EXC-2 (#81): an ADMIN's "include exception days" ask, before any cache key
+  // (reportFreshnessTag_ carries the include flag) or query is built.
+  if (typeof setExceptionIncludeFromReq_ === 'function') setExceptionIncludeFromReq_(req);
   // Effective queue list (Dept Config-overridable, sub-queue rollup) UNIONED
   // with the dept's raw inbound-queue aliases -- inbound_calls stores the raw
   // queue spellings (e.g. "A_Q_CSR") which differ from the QCD-canonical
@@ -611,7 +614,7 @@ function journeyPrunedMeta_(call, dateIso, nowMs) {
   } catch (e) { return {}; }
 }
 
-function getCallJourney(req) {
+function getCallJourneyImpl_(req) {
   req = req || {};
   const user = resolveUser_(Session.getActiveUser().getEmail());
   // Phase A (agent role): allowlist -- the dept pinning below only fires for
@@ -774,6 +777,24 @@ function getCallJourney(req) {
   } finally {
     try { conn.close(); } catch (ce) {}
   }
+}
+
+/**
+ * The call path drill (inbound or outbound; every gate is in
+ * getCallJourneyImpl_). EXC-2 (#81 phase 2): a call found on an exception day
+ * carries `exceptionDay` { date, reason } -- the drill shows every call (it is
+ * a record of what happened), and says when the reports leave that day out.
+ */
+function getCallJourney(req) {
+  const res = getCallJourneyImpl_(req);
+  try {
+    if (res && res.found && typeof exceptionDayMark_ === 'function') {
+      const iso = String((res.call && (res.call.callDate || res.call.call_date)) || (req && req.date) || '').slice(0, 10);
+      const m = exceptionDayMark_(iso);
+      if (m) res.exceptionDay = m;
+    }
+  } catch (e) { /* the mark is best-effort; the path itself stands */ }
+  return res;
 }
 
 /**
@@ -1434,7 +1455,7 @@ function xferJourneyEndSec_(journeyText) {
   return end;
 }
 
-function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
+function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues, excSql) {
   const qList = (deptQueues && deptQueues.length)
     ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
     : 'NULL';
@@ -1449,6 +1470,7 @@ function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
     + ' FROM inbound_calls x JOIN inbound_calls c'
     + ' ON c.call_date = x.call_date AND c.call_id = x.related_call_id'
     + " WHERE x.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
+    + (excSql ? String(excSql).replace(/c\.call_date/g, 'x.call_date') : '')   // EXC-2 (#81)
     + ' AND COALESCE(x.is_internal, false)'
     + " AND COALESCE(x.related_call_kind, 'inbound') = 'inbound'"
     + " AND x.disposition <> 'answered' AND COALESCE(trim(x.entry_queue), '') <> ''"
@@ -1535,13 +1557,14 @@ function xferQueueWaitSec_(journeyText) {
  * empty -> the company view (every queue); otherwise the attempt's entry
  * queue must be one of the dept's (case-insensitive, the B-4 rule).
  */
-function inboundXferUnansweredSql_(fromIso, toIso, deptQueues, companyView) {
+function inboundXferUnansweredSql_(fromIso, toIso, deptQueues, companyView, excSql) {
   const qList = (deptQueues && deptQueues.length)
     ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
     : 'NULL';
   return "(SELECT json_build_object('n', count(*), "
     + "'linked', count(*) FILTER (WHERE c.related_call_id IS NOT NULL))"
     + " FROM inbound_calls c WHERE c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
+    + (excSql || '')   // EXC-2 (#81)
     + ' AND COALESCE(c.is_internal, false)'
     + " AND c.disposition = 'abandoned' AND COALESCE(trim(c.entry_queue), '') <> ''"
     + (companyView ? '' : ' AND lower(trim(c.entry_queue)) IN (' + qList + ')')
@@ -1757,6 +1780,11 @@ function xferSampleTally_(rows, deptMap, labelsOf) {
   return out;
 }
 
+/** EXC-2 (#81): the exception-day clause on c.call_date ('' when none, or Util.gs is not loaded). */
+function inboundExcSql_(from, to, dept) {
+  return (typeof exceptionNotInSql_ === 'function') ? exceptionNotInSql_('c.call_date', from, to, dept) : '';
+}
+
 function computeInboundReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyInboundReport_(scope);
@@ -1785,11 +1813,17 @@ function computeInboundReport_(scope) {
     // per-insurer/per-number cuts (they can't be labeled) but they still
     // count in the headline KPIs + per-queue.
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
+    // EXC-2 (#81 phase 2): the exception days for this scope leave every
+    // figure below -- current AND prior window (the prior already skips an
+    // all-department day; a one-department day inside it still has to go).
+    // '' with no exception day, so the SQL is exactly what it was.
+    const excCur = inboundExcSql_(from, to, scope.dept || null);
+    const excPrior = inboundExcSql_(prior.from, prior.to, scope.dept || null);
     // Work-window scope (2026-07). Appending it to `dr`/`priorDr` scopes EVERY
     // sub-select below in one place -- KPIs, byInsurer, byDialIn, byQueue,
     // byDialInInsurer and daily -- so no dept-facing figure can drift out of
     // scope by being added later. `drOutside` feeds the research block only.
-    const dateRange = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
+    const dateRange = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + excCur + deptPred;
     // Round-16: internal-origin queue calls (is_internal, journey-only
     // capture) are excluded from EVERY metric surface -- they exist for
     // the Missed report's path drill, not the inbound figures. Same
@@ -1806,7 +1840,7 @@ function computeInboundReport_(scope) {
     const drOutside = dateRange + ' AND ' + inboundWindowClause_(false)
                   + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to
-                  + "'::date" + deptPred + ' AND ' + inboundWindowClause_(true)
+                  + "'::date" + excPrior + deptPred + ' AND ' + inboundWindowClause_(true)
                   + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     // R5: the derived dial-in agent label reads first_agent, a column the
     // cdr-import capture adds via its idempotent DDL. Guard on its existence
@@ -1845,11 +1879,11 @@ function computeInboundReport_(scope) {
         "'kpisPrior', " + kpiSelect(priorDr) + ", " +
         // S2C-2: the transfer-abandon tallies (company view: only the BLIND
         // ones, which no scope counted before -- an on-hold move nets to zero).
-        "'xfer', " + inboundXferTallySql_(from, to, deptPred, scope.deptQueues) + ", " +
-        "'xferPrior', " + inboundXferTallySql_(prior.from, prior.to, deptPred, scope.deptQueues) + ", " +
+        "'xfer', " + inboundXferTallySql_(from, to, deptPred, scope.deptQueues, excCur) + ", " +
+        "'xferPrior', " + inboundXferTallySql_(prior.from, prior.to, deptPred, scope.deptQueues, excPrior) + ", " +
         // S2C-6: transfer attempts into our queues nobody answered (QCD's rule).
-        "'xferUn', " + inboundXferUnansweredSql_(from, to, scope.deptQueues, scope.companyView) + ", " +
-        "'xferUnPrior', " + inboundXferUnansweredSql_(prior.from, prior.to, scope.deptQueues, scope.companyView) + ", " +
+        "'xferUn', " + inboundXferUnansweredSql_(from, to, scope.deptQueues, scope.companyView, excCur) + ", " +
+        "'xferUnPrior', " + inboundXferUnansweredSql_(prior.from, prior.to, scope.deptQueues, scope.companyView, excPrior) + ", " +
         // R12-26b: coverage start (earliest captured inbound call, unscoped)
         // so the client can warn when the requested From predates capture.
         "'coverageStart', (SELECT MIN(call_date)::text FROM inbound_calls), " +
@@ -1968,6 +2002,8 @@ function computeInboundReport_(scope) {
         priorFrom: prior.from, priorTo: prior.to,
         coverageStart: obj.coverageStart || null,   // R12-26b
         rows: kpis.total, generatedAt: new Date().toISOString(),
+        exceptionDays: (typeof exceptionDaysNoteFor_ === 'function')   // EXC-2 (#81; absent when none)
+          ? exceptionDaysNoteFor_(from, to, scope.dept || null) : undefined,
       },
       kpis: kpis,
       kpisPrior: kpisPrior,

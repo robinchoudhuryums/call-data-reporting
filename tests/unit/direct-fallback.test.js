@@ -240,11 +240,14 @@ test('DC-1: fallback payloads are never cached; healthy payloads still cache', f
   install({ sheet: fakeSheet(fixtureRows(pw)) });
   const out = h.call('getDirectCallReport', REQ);
   assert.equal(out.meta.fallbackSource, 'sheet');
-  assert.equal(h.state.cache.size, 0, 'a recovered Neon must not be masked for the TTL');
+  // EXC-2: count REPORT keys only -- the exception-day list (excDays:v1) is
+  // cached by its own reader once the fallback asks it about a row.
+  const reportKeys = function () { return Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('excDays:') !== 0; }).length; };
+  assert.equal(reportKeys(), 0, 'a recovered Neon must not be masked for the TTL');
 
   install({ conn: neonConnReturning(neonShapeFor(pw)) });
   h.call('getDirectCallReport', REQ);
-  assert.equal(h.state.cache.size, 1);
+  assert.equal(reportKeys(), 1);
 });
 
 test('DC-1: a query THROW (not just conn-null) reaches the fallback', function () {

@@ -1902,6 +1902,7 @@
          +     '<span class="cl-call-when">' + when + '</span>'
          +     '<span class="cl-chip cl-chip-dir-in">Inbound</span>'
          +     clOutcomeChip_(c)
+         +     excMarkChipHtml_(c.exceptionDay)   // EXC-2 (#81)
          +   '</div>'
          +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
          +   body
@@ -1932,6 +1933,7 @@
          +     '<span class="cl-call-when">' + when + '</span>'
          +     '<span class="cl-chip cl-chip-dir-out">Outbound</span>'
          +     outcome
+         +     excMarkChipHtml_(c.exceptionDay)   // EXC-2 (#81)
          +   '</div>'
          +   '<div class="cl-call-facts">' + facts.join(' · ') + '</div>'
          +   body
@@ -2490,6 +2492,12 @@
     const dateEl = $('ad-results-date');
     if (dateEl) dateEl.textContent = meta.date || '';
 
+    // EXC-2 (#81): a day the reports leave out says so; the page still lists it all.
+    const excEl = $('ad-exc-note');
+    if (excEl) {
+      excEl.textContent = meta.exceptionDay ? excMarkText_(meta.exceptionDay) + '. Every call that day is still listed here.' : '';
+      excEl.style.display = meta.exceptionDay ? '' : 'none';
+    }
     const note = $('ad-tier-note');
     const noteHtml = adTierNote_(meta);
     if (note) {
@@ -3006,9 +3014,10 @@
     const boxes = days.map(function (d) {
       const on = d.date === selected;
       const ob = d.outboundCaptured ? fmtNumber(d.outbound || 0) + ' outbound' : 'outbound –';
-      return '<button type="button" class="ap-day' + (on ? ' is-on' : '') + '" data-ap-date="' + escapeHtml(d.date) + '"'
+      return '<button type="button" class="ap-day' + (on ? ' is-on' : '') + (d.exceptionDay ? ' is-exception' : '') + '" data-ap-date="' + escapeHtml(d.date) + '"'
         + ' aria-pressed="' + (on ? 'true' : 'false') + '"'
-        + ' title="' + escapeHtml(d.date) + (d.outboundCaptured ? '' : ' · outbound not captured') + '">'
+        + ' title="' + escapeHtml(d.date) + (d.outboundCaptured ? '' : ' · outbound not captured')
+        + (d.exceptionDay ? ' · ' + excMarkText_(d.exceptionDay) : '') + '">'   // EXC-2 (#81)
         + '<span class="ap-day-top"><span class="ap-day-w">' + escapeHtml(apWeekday_(d.date)) + '</span>'
         +   apDayRateHtml_(d, dept) + '</span>'
         + '<span class="ap-day-d">' + escapeHtml(apShortDate_(d.date)) + '</span>'
@@ -3267,6 +3276,7 @@
       + (rec.exact ? '<span class="ap-sub">per-call list matches the daily totals</span>' : '')
       + '</div>'
       + (tier ? '<div class="ds-note">' + tier + '</div>' : '')
+      + excMarkNoteHtml_(meta.exceptionDay)   // EXC-2 (#81)
       + '<div class="ap-kpis">' + adKpiRowsHtml_(meta, (data && data.day) || null, (data && data.counts) || {}) + '</div>'
       + (rec.note ? '<p class="ap-note">' + escapeHtml(rec.note) + '</p>' : '')
       + (meta.truncated ? '<p class="ap-note">This day exceeded the display cap; the lists show the first '

@@ -3633,9 +3633,19 @@ When something looks wrong, before assuming a code bug, check:
     server-side, and View-as hides it). **Timing:** a save busts the list's
     cache, and the list's hash is part of `reportFreshnessTag_`, so every
     report re-keys at once (others' open tabs pick it up on their next
-    load). Removing a day puts it back the same way. **Not covered (phase
-    2):** the per-call reports (Inbound / Outbound / Direct / Caller Lookup /
-    the journey drill), team-tools' own reads of the workbook (#68), and
+    load). Removing a day puts it back the same way. **Phase 2 (EXC-2,
+    2026-11-06):** the per-call report TOTALS leave it out too -- the Inbound
+    and Direct Calls reports (current + prior window, each with the note; a
+    Direct company view drops a one-department day from that department's
+    card only), the Overview tiles' outbound and direct lines, My Department's
+    outbound table and Team Direct Calls card -- and an exception day is not a
+    Direct "missing workday". Caller Lookup, the call path drill and Agent Day
+    (with its strip) list what HAPPENED, so they keep every call and mark the
+    day ("Exception day (reason) -- left out of report figures"). **Not
+    covered:** callbacks (Overview / My Department / Insights), the abandon
+    heatmap, direct-line callbacks and repeat callers, the insurer daily view,
+    the report emails' own text, team-tools' reads of the workbook (#68 -- it
+    would read the `Exception Days` tab with the same rules), and
     anomaly-suggested days. A failed sheet read serves the last-good copy in
     `EXCEPTION_DAYS_SHEET_COPY` (engine state, never set by hand). Pinned by
     `tests/unit/exception-days.test.js`; cross-file-pins fails a DQE reader

@@ -754,7 +754,8 @@
           body.innerHTML = '<div class="ds-note">' + cjMsg + '</div>';
           return;
         }
-        body.innerHTML = ((resp.kind === 'outbound')
+        body.innerHTML = excMarkNoteHtml_(resp.exceptionDay, 'This call is still shown in full.')   // EXC-2 (#81)
+          + ((resp.kind === 'outbound')
           ? outboundJourneyHtml_(resp.call)
           : callJourneyHtml_(resp.call))
           // OD-5: a NULL journey on a call older than the retention horizon is
@@ -5160,7 +5161,8 @@
   function obSummaryStoreClear_() { OB_SUMMARY_STORE_.entries = {}; OB_SUMMARY_STORE_.order = []; }
   function obSummaryFetch_(req, onOk, onErr) {
     var st = OB_SUMMARY_STORE_;
-    var k = [req.department, req.from, req.to].join('|');
+    // EXC-2: the admin include switch is part of the key -- the two answers differ.
+    var k = [req.department, req.from, req.to].join('|') + (excIncludeOn_() ? '|x' : '');
     var e = st.entries[k];
     if (e && e.done) { setTimeout(function () { onOk(e.data); }, 0); return; }
     if (e) { e.waiters.push({ ok: onOk, err: onErr }); return; }
@@ -5178,7 +5180,7 @@
         var w = e.waiters; e.waiters = [];
         w.forEach(function (x) { if (x.err) x.err(err); });
       })
-      .getDeptOutboundSummary(req);
+      .getDeptOutboundSummary(excReq_(req));   // EXC-2 (#81)
   }
 
   /**
@@ -5202,7 +5204,8 @@
   function tdcKey_() {
     var m = state.meta || {};
     var dept = getRequestedDept();
-    return (dept && m.from && m.to) ? dept + '|' + m.from + '|' + m.to : null;
+    // EXC-2: + the admin include switch (a fourth part the fetch ignores).
+    return (dept && m.from && m.to) ? dept + '|' + m.from + '|' + m.to + (excIncludeOn_() ? '|x' : '') : null;
   }
   function tdcSync_() {
     var el = $('dept-team-direct');
@@ -5249,7 +5252,7 @@
         TDC_.loading = false; TDC_.error = (err && err.message) ? err.message : String(err);
         tdcRender_();
       })
-      .getDirectCallReport({ from: p[1], to: p[2], department: p[0] });
+      .getDirectCallReport(excReq_({ from: p[1], to: p[2], department: p[0] }));   // EXC-2 (#81)
   }
   // The direct agents (the payload's), most rung first. Rang = every call that
   // rang their line: answered + missed while free + missed while busy.

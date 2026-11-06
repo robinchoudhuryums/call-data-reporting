@@ -157,6 +157,60 @@ const vis = (sel) => { const el = document.querySelector(sel); return !!el && ge
   record('the trend chart shades the day and bridges the lines across it', Array.isArray(ov.idx) && ov.idx.length === 1 && ov.bridged > 0,
     JSON.stringify(ov));
 
+  // ---- EXC-2: the per-call reports say so; the call-level views mark --------
+  const openReport = async (btn) => {
+    await page.click('#reports-menu-btn');
+    await page.waitForTimeout(300);
+    await page.click(btn);
+    await page.waitForTimeout(900);
+  };
+  const noteIn = (sel) => page.evaluate((s) => {
+    const el = document.querySelector(s);
+    return { shown: !!el && getComputedStyle(el).display !== 'none', text: el ? el.textContent : '' };
+  }, sel);
+  // The Inbound report over the 30 days (the fixture's window spans the day).
+  await openReport('#inbound-report-btn');
+  await page.fill('#inbound-from', meta.from30);
+  await page.fill('#inbound-to', meta.latest);
+  await page.click('#inbound-generate-btn');
+  await page.waitForTimeout(1600);
+  const ibn = await noteIn('#inbound-body > .exc-note');
+  record('EXC-2: the Inbound report says the day is left out, and why', ibn.shown && /1 exception day left out/.test(ibn.text) && /8x8 outage/.test(ibn.text), ibn.text);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(600);
+  // The Direct Calls report: its payload is the REAL server's, computed with the
+  // fixture's exception day inside the asked window.
+  await openReport('#direct-call-report-btn');
+  await page.click('#direct-call-generate-btn');
+  await page.waitForTimeout(1600);
+  const dcn = await noteIn('#direct-call-body > .exc-note');
+  record('EXC-2: the Direct Calls report says the day is left out (from the real server payload)', dcn.shown && /8x8 outage/.test(dcn.text), dcn.text);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(600);
+  // Agent Day ON the exception day: every call is listed, the note says the reports leave it out.
+  await openReport('#agent-day-btn');
+  await page.fill('#ad-date', meta.excDate);
+  await page.click('#ad-run-btn');
+  await page.waitForTimeout(2000);
+  const adn = await noteIn('#ad-exc-note');
+  const adCards = await page.evaluate(() => document.querySelectorAll('#ad-inbound-list .cl-call-card').length);
+  record('EXC-2: Agent Day on the exception day keeps its calls and says the reports leave the day out',
+    adn.shown && /Exception day \(8x8 outage\)/.test(adn.text) && adCards > 0, JSON.stringify({ text: adn.text, cards: adCards }));
+  // The call path drill from that day carries the same mark.
+  const pathBtn = page.locator('#ad-outbound-list .cl-call-card .pid-journey').first();
+  if (await pathBtn.count()) {
+    await pathBtn.click();
+    await page.waitForTimeout(1200);
+    const cj = await noteIn('#call-journey-overlay .exc-mark-note');
+    record('EXC-2: the call path drill marks a call on the exception day', cj.shown && /8x8 outage/.test(cj.text), cj.text);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+  } else {
+    record('EXC-2: the call path drill marks a call on the exception day', false, 'no path link on the Agent Day cards');
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(600);
+
   // ---- 360 px -----------------------------------------------------------------
   await page.click('#my-dept-btn');
   await page.waitForTimeout(1500);

@@ -717,6 +717,7 @@ S68 | Exception days: one outage day left out everywhere, said everywhere, and a
     - Agent app (an agent whose window spans it): "Not counted: <day>: 8x8 outage ..." under the header.
     - The next morning's daily alert run (or Preview on that date) logs the dept rows as `skipped` -- "Exception day (...): 8x8 outage -- not assessed".
     - Change the day to one department only: that department's figures and its own queue chips drop it; another department's, and the company hero, keep it.
+    - EXC-2 (per-call reports): Reports ▾ → Inbound and → Direct Calls over a window spanning the day each show the same note and figures lower by that day; with the day scoped to one department, the Direct company view drops it from that department's card only. The Overview tiles' outbound and direct lines leave it out; My Department's outbound table and the Team Direct Calls card too. Caller Lookup on a caller who rang that day: the call is listed with an "Exception day" chip. Agent Day on that date (and the agent panel's day): every call listed, a note says the reports leave the day out; a "↳ path" from it says so too.
     - Remove the day (it asks first, in danger tone): within a page refresh every figure is back to including it.
   Expected: as described.
   Fails if: any report's numbers drop the day without a note, or show the note while still counting it; the striped bar sets the card's scale; a manager sees or can use the include switch; an alert fires or logs "no data" for the day; removing the day leaves any report excluding it after a refresh.

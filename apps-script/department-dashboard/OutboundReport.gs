@@ -406,7 +406,7 @@ function outboundBucketDelays_(delays) {
  * `ob_days` (Batch D) counts the days the agent placed at least one call, the
  * denominator of the "/ day" figure.
  */
-function outboundAgentsSel_(f, t) {
+function outboundAgentsSel_(f, t, excSql) {
   // The tie order is byte order with a blank name first -- what the sheet
   // twin's JS sort (obAgentsFromGrid_) does. The database's default collation
   // ignores case and punctuation and puts NULL last, so the two sources
@@ -429,7 +429,8 @@ function outboundAgentsSel_(f, t) {
     +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
     +   'COALESCE(sum(attempts),0) AS attempts, '
     +   'count(DISTINCT call_date) AS ob_days '
-    + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
+    + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date"
+    + (excSql || '') + ' '   // EXC-2 (#81): My Department's exception-day clause ('' elsewhere)
     + 'GROUP BY 1) t)';
 }
 
@@ -5549,13 +5550,14 @@ function obDaysAfterIso_(iso, n) {
  * getDeptOutboundSummary's (Batch D), pinned to the SQL by
  * outbound-fallback.test.js.
  */
-function obAgentsFromGrid_(obGrid, fromIso, toIso) {
+function obAgentsFromGrid_(obGrid, fromIso, toIso, skipFn) {
   var byAgent = {};
   for (var i = 0; i < obGrid.length; i++) {
     var row = obGrid[i];
     var iso = ncCellDateIso_(row[0]);
     if (!iso || iso < fromIso || iso > toIso) continue;
     var agent = String(row[3] == null ? '' : row[3]).trim();
+    if (skipFn && skipFn(iso, agent)) continue;   // EXC-2: the SQL clause's twin
     var a = byAgent[agent] || (byAgent[agent] = {
       agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
       ob_unconn_brief: 0, ob_unconn_real: 0, ob_days: 0, _days: {},
@@ -6151,14 +6153,61 @@ function deptOutboundProject_(scope, shaped, excl) {
   };
 }
 
+/**
+ * EXC-2 (#81 phase 2): which calls My Department's outbound table leaves out.
+ * The table groups each agent under ONE in-scope department (the shaper's
+ * rule: the first of scopeDepts on the agent's roster), so a day scoped to
+ * some departments leaves only the agents grouped under them -- the same
+ * figures the inbound table drops for that department. Returns
+ * { sql, skip(iso, agent), days } -- sql '' and days [] with no exception day
+ * in the window (the query is then exactly what it was).
+ */
+function deptObExceptions_(scope, deptsByAgent) {
+  var out = { sql: '', skip: null, days: [] };
+  if (typeof getExceptionDays_ !== 'function' || typeof exceptionIncludeOn_ !== 'function' || exceptionIncludeOn_()) return out;
+  var inScope = (scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept];
+  var lit = function (v) { return "'" + String(v).replace(/'/g, "''") + "'"; };
+  var allDates = {}, byDate = {};
+  var groupOf = null;
+  getExceptionDays_().forEach(function (d) {
+    if (d.date < scope.from || d.date > scope.to || !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return;
+    if (!d.depts.length) { allDates[d.date] = true; out.days.push(d); return; }
+    var hit = d.depts.filter(function (x) { return inScope.indexOf(x) !== -1; });
+    if (!hit.length) return;
+    if (!groupOf) {
+      groupOf = {};
+      Object.keys(deptsByAgent || {}).forEach(function (name) {
+        var homes = deptsByAgent[name] || [];
+        for (var s = 0; s < inScope.length; s++) if (homes.indexOf(inScope[s]) !== -1) { groupOf[name] = inScope[s]; break; }
+      });
+    }
+    var names = Object.keys(groupOf).filter(function (n) { return hit.indexOf(groupOf[n]) !== -1; }).sort();
+    if (!names.length) return;
+    var set = {};
+    names.forEach(function (n) { set[n] = true; });
+    byDate[d.date] = set;
+    out.days.push({ date: d.date, depts: hit, reason: d.reason });
+  });
+  var alls = Object.keys(allDates).sort();
+  if (alls.length) out.sql += ' AND o.call_date NOT IN (' + alls.map(function (x) { return lit(x) + '::date'; }).join(', ') + ')';
+  Object.keys(byDate).sort().forEach(function (iso) {
+    out.sql += ' AND NOT (o.call_date = ' + lit(iso) + "::date AND COALESCE(trim(o.agent_name), '') IN ("
+      + Object.keys(byDate[iso]).sort().map(lit).join(', ') + '))';
+  });
+  if (out.days.length) out.skip = function (iso, agent) { return !!allDates[iso] || !!(byDate[iso] && byDate[iso][agent]); };
+  out.days.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  return out;
+}
+
 /** Neon first (the report's own SQL), the Outbound Calls tab when Neon is down. */
 function computeDeptOutbound_(scope) {
   var deptsByAgent = buildDeptsByAgent_();
+  var exc = deptObExceptions_(scope, deptsByAgent);   // EXC-2 (#81)
   var conn = null, shaped = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (conn) {
-      var sql = "SELECT json_build_object('agents', " + outboundAgentsSel_(scope.from, scope.to)
+      var sql = "SELECT json_build_object('agents', " + outboundAgentsSel_(scope.from, scope.to, exc.sql)
         + ", 'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls))::text AS j";
       var stmt = conn.createStatement();
       var rs = stmt.executeQuery(sql);
@@ -6180,7 +6229,7 @@ function computeDeptOutbound_(scope) {
       var ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, scope.from);
       if (!ob) { empty.meta.available = false; shaped = empty; }
       else {
-        shaped = outboundShapeReport_(scope, { agents: obAgentsFromGrid_(ob.grid, scope.from, scope.to) },
+        shaped = outboundShapeReport_(scope, { agents: obAgentsFromGrid_(ob.grid, scope.from, scope.to, exc.skip) },
           deptsByAgent, null);
         shaped.meta.fallbackSource = 'sheet';
         shaped.meta.fallbackThrough = ob.through || null;
@@ -6195,11 +6244,21 @@ function computeDeptOutbound_(scope) {
   ((scope.scopeDepts && scope.scopeDepts.length) ? scope.scopeDepts : [scope.dept]).forEach(function (d) {
     excl[d] = (typeof teamAvgExcludeSet_ === 'function') ? teamAvgExcludeSet_(d) : {};
   });
-  return deptOutboundProject_(scope, shaped, excl);
+  var projected = deptOutboundProject_(scope, shaped, excl);
+  // EXC-2: the days left out, named with the departments a scoped one left.
+  if (exc.days.length) {
+    projected.meta.exceptionDays = exc.days.map(function (d) {
+      var scoped = d.depts && d.depts.length && (d.depts.length < ((scope.scopeDepts || []).length || 1));
+      return { date: d.date, reason: scoped ? (d.reason ? d.reason + ' — ' : '') + d.depts.join(', ') + ' only' : d.reason };
+    });
+  }
+  return projected;
 }
 
 function getDeptOutboundSummary(req) {
   var scope = outboundResolveRequest_(req);           // the 6c gate + validation
+  // EXC-2 (#81): an admin's include ask, before the key (the freshness tag carries it).
+  if (typeof setExceptionIncludeFromReq_ === 'function') setExceptionIncludeFromReq_(req);
   if (scope.companyView) throw new Error('department is required.');
   assertReportRangeCap_(scope.from, scope.to);        // SEC-1
   var cache = CacheService.getScriptCache();

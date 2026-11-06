@@ -445,7 +445,15 @@ function callerLookupShapeCall_(r) {
     dialIn:          r.dial_in_number || null,
     insurer:         r.insurer || null,
     journey:         journey,
+    // EXC-2 (#81): a call on an exception day is MARKED, never hidden (absent otherwise).
+    exceptionDay:    clExceptionMark_(r.call_date),
   };
+}
+
+/** EXC-2: the exception-day mark for a call date (undefined when none, or Util.gs is not loaded). */
+function clExceptionMark_(iso) {
+  if (typeof exceptionDayMark_ !== 'function') return undefined;
+  return exceptionDayMark_(String(iso || '').slice(0, 10)) || undefined;
 }
 
 /**
@@ -472,6 +480,7 @@ function callerLookupShapeOutbound_(r) {
     ringSeconds: r.ring_seconds == null ? null : (Number(r.ring_seconds) || 0),
     attempts:    Number(r.attempts) || 1,
     journey:     journey,
+    exceptionDay: clExceptionMark_(r.call_date),   // EXC-2 (#81)
   };
 }
 

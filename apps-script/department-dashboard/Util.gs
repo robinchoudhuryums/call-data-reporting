@@ -715,6 +715,84 @@ function applyExceptionDays_(rows, dept, opts) {
   return info;
 }
 
+/**
+ * #81 phase 2 (EXC-2): the per-call reports' SQL form of the step. Returns
+ * " AND <col> NOT IN ('YYYY-MM-DD'::date, ...)" for the exception days in
+ * [from, to] that apply to `dept` (null = company: all-department days only),
+ * or '' when there are none -- so a query with no exception day is exactly
+ * what it was. The dates come from the editor's validated list and are
+ * re-checked here before they are inlined.
+ *
+ * `deptCol` (optional) is for a COMPANY-level query whose rows carry their own
+ * department (direct_call_history): there a one-department day also leaves
+ * that department's rows -- " AND NOT (<col> = 'D'::date AND <deptCol> IN
+ * (...))" -- so per-department cards and the total over them still add up.
+ */
+function exceptionNotInSql_(col, from, to, dept, deptCol) {
+  if (!from || !to) return '';
+  let all;
+  try { all = exceptionIncludeOn_() ? [] : getExceptionDays_(); } catch (e) { return ''; }
+  const ok = function (iso) { return /^\d{4}-\d{2}-\d{2}$/.test(iso); };
+  const lit = function (s) { return "'" + String(s).replace(/'/g, "''") + "'"; };
+  const dates = [], scoped = [];
+  all.forEach(function (d) {
+    if (d.date < from || d.date > to || !ok(d.date)) return;
+    if (!d.depts.length || (dept != null && d.depts.indexOf(dept) !== -1)) dates.push(lit(d.date) + '::date');
+    else if (dept == null && deptCol) scoped.push(d);
+  });
+  let out = dates.length ? ' AND ' + col + ' NOT IN (' + dates.join(', ') + ')' : '';
+  scoped.forEach(function (d) {
+    out += ' AND NOT (' + col + ' = ' + lit(d.date) + '::date AND ' + deptCol + ' IN ('
+      + d.depts.map(lit).join(', ') + '))';
+  });
+  return out;
+}
+
+/**
+ * PURE-ish. The meta form for a per-call report: [{date, reason}] for the
+ * days left out of [from, to] for `dept`, or undefined when there are none
+ * (so a payload with no exception day is byte-identical to before).
+ */
+function exceptionDaysNoteFor_(from, to, dept, withScoped) {
+  let days;
+  try {
+    days = (withScoped && dept == null && !exceptionIncludeOn_())
+      ? getExceptionDays_().filter(function (d) { return d.date >= from && d.date <= to; })
+      : exceptionDaysInRange_(from, to, dept);
+  } catch (e) { return undefined; }
+  // `withScoped` (a company view whose rows carry their department): a
+  // one-department day is named with the departments it left out.
+  return days.length ? days.map(function (d) {
+    const reason = (dept == null && d.depts.length)
+      ? (d.reason ? d.reason + ' — ' : '') + d.depts.join(', ') + ' only'
+      : d.reason;
+    return { date: d.date, reason: reason };
+  }) : undefined;
+}
+
+/**
+ * EXC-2 (#81 phase 2): the MARK a call-level view shows (Caller Lookup, the
+ * call path drill, Agent Day). Those views list what happened, so they keep
+ * every call; a call on an exception day is labelled instead of left out.
+ * `dept` undefined = any listed day; a string = an all-department day or one
+ * listing that department; null = all-department days only. Returns
+ * { date, reason } (a scoped day's reason names its departments) or null.
+ * Never consults the admin include switch -- nothing here is left out.
+ */
+function exceptionDayMark_(iso, dept) {
+  if (!iso) return null;
+  let days;
+  try { days = getExceptionDays_(); } catch (e) { return null; }
+  for (let i = 0; i < days.length; i++) {
+    const d = days[i];
+    if (d.date !== iso) continue;
+    if (dept !== undefined && d.depts.length && (dept == null || d.depts.indexOf(dept) === -1)) continue;
+    const reason = d.depts.length ? (d.reason ? d.reason + ' — ' : '') + d.depts.join(', ') + ' only' : d.reason;
+    return { date: d.date, reason: reason || '' };
+  }
+  return null;
+}
+
 /** PURE. The payload form: only the days inside [from, to], oldest first. */
 function exceptionDaysMeta_(info, from, to) {
   return ((info && info.excluded) || []).filter(function (e) { return e.date >= from && e.date <= to; });

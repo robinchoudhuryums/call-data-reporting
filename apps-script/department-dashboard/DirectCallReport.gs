@@ -107,6 +107,9 @@ function directCallResolveRequest_(req) {
     throw new Error('Unknown department: ' + dept);
   }
 
+  // EXC-2 (#81): an ADMIN's "include exception days" ask, before the cache key
+  // (reportFreshnessTag_ carries the include flag) or any query is built.
+  if (typeof setExceptionIncludeFromReq_ === 'function') setExceptionIncludeFromReq_(req);
   return { from: from, to: to, dept: dept, companyView: !dept, user: user };
 }
 
@@ -141,15 +144,26 @@ function dcMissingWorkdays_(from, to, present, isHoliday) {
   return { dates: out, count: count };
 }
 
-/** The company-holiday test, read ONCE per request (best-effort). */
-function dcHolidayFn_() {
+/**
+ * The company-holiday test, read ONCE per request (best-effort). EXC-2 (#81):
+ * with `scope`, an exception day the report leaves out is not a "missing
+ * workday" either (an outage day may have no rows, and it is not counted
+ * anyway) -- for a company view, only an all-department day.
+ */
+function dcHolidayFn_(scope) {
+  var hol = null;
   try {
     if (typeof getCompanyHolidayRanges_ === 'function' && typeof isDateInSkipRanges_ === 'function') {
       var ranges = getCompanyHolidayRanges_();
-      return function (iso) { return isDateInSkipRanges_(iso, ranges); };
+      hol = function (iso) { return isDateInSkipRanges_(iso, ranges); };
     }
   } catch (e) { /* no holidays known: weekends only */ }
-  return null;
+  if (!scope || typeof exceptionDayFor_ !== 'function') return hol;
+  var dept = scope.companyView ? null : scope.dept;
+  return function (iso) {
+    if (hol && hol(iso)) return true;
+    try { return !!exceptionDayFor_(iso, dept); } catch (e2) { return false; }
+  };
 }
 
 /**
@@ -259,6 +273,16 @@ function getDirectCallReport(req) {
   return data;
 }
 
+/**
+ * EXC-2 (#81): the exception-day clause for a direct query ('' when none, or
+ * Util.gs is not loaded). Rows carry their department, so a company view
+ * leaves a one-department day's rows for that department only.
+ */
+function dcExcSql_(from, to, dept) {
+  return (typeof exceptionNotInSql_ === 'function')
+    ? exceptionNotInSql_('c.call_date', from, to, dept, 'c.department') : '';
+}
+
 function computeDirectCallReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyDirectCallReport_(scope);
@@ -282,18 +306,25 @@ function computeDirectCallReport_(scope) {
     const covObj = JSON.parse(covJson);
     const present = {};
     (covObj.days || []).forEach(function (d) { present[String(d)] = true; });
-    const cov = dcCoverage_(scope, covObj.mx || null, present, dcHolidayFn_());
+    const cov = dcCoverage_(scope, covObj.mx || null, present, dcHolidayFn_(scope));
     if (cov.noData) return dcApplyCoverageMeta_(empty, cov);
     const effTo = cov.to;
 
     // from/to are validated ISO; the dept literal is escaped (and is itself a
     // roster-derived dept header, not free user text). ONE query, ONE getString.
     const deptPred = scope.companyView ? '' : ' AND c.department = ' + directCallSqlLit_(scope.dept);
-    const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + effTo + "'::date" + deptPred;
+    // EXC-2 (#81 phase 2): exception days leave every figure -- current and
+    // prior. A company view drops a one-department day's rows for THAT
+    // department only (rows carry their department), so the cards still add
+    // up to the total. '' with no exception day: the SQL is what it was.
+    const excDept = scope.companyView ? null : scope.dept;
+    const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + effTo + "'::date" + deptPred
+      + dcExcSql_(from, effTo, excDept);
     // v2: INV-28 immediately-preceding same-length window for the delta chips
     // (D1: of the CLAMPED window, so a part window never meets a whole one).
     const pw = cov.pw;
-    const priorDr = "c.call_date BETWEEN '" + pw.from + "'::date AND '" + pw.to + "'::date" + deptPred;
+    const priorDr = "c.call_date BETWEEN '" + pw.from + "'::date AND '" + pw.to + "'::date" + deptPred
+      + dcExcSql_(pw.from, pw.to, excDept);
     // Scope-level prior KPI sums + per-dept prior aggregates (for the company
     // view's dept header-row deltas). ib_talk kept so ATT can be re-derived.
     const priorKpiSel = "json_build_object(" +
@@ -413,6 +444,10 @@ function directCallShapePayload_(scope, obj) {
       companyView: scope.companyView, available: true, vetting: true,
       coverageStart: obj.coverageStart || null,   // R12-26b
       cacheHit: false, computeMs: 0,
+      // EXC-2 (#81): the days left out (absent when none). A company view
+      // names a one-department day with the departments it left.
+      exceptionDays: (typeof exceptionDaysNoteFor_ === 'function')
+        ? exceptionDaysNoteFor_(scope.from, scope.to, scope.companyView ? null : scope.dept, true) : undefined,
     },
     kpis: {
       agents: Number(k.agents) || 0,
@@ -474,7 +509,8 @@ function directCallViaRows_(conn, scope, from, to) {
       +   "WHEN c.via IS NULL THEN 'unsplit' WHEN c.via = 'colleague' THEN 'colleague' WHEN c.via = 'menu' THEN 'main' "
       +   "WHEN c.dial_in = ANY(" + labelArr + ") OR c.dial_in IN (SELECT n FROM m) THEN 'main' ELSE 'line' END AS cls "
       +   "FROM direct_calls c WHERE c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date"
-      +   " AND c.direction = 'in' AND c.side = 'ext' AND c.in_window" + deptPred + ') '
+      +   " AND c.direction = 'in' AND c.side = 'ext' AND c.in_window" + deptPred
+      +   dcExcSql_(from, to, scope.companyView ? null : scope.dept) + ') '   // EXC-2
       + "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
       + 'SELECT agent_name AS agent, department AS dept, cls, outcome, count(*) AS n FROM k GROUP BY 1, 2, 3, 4) t';
     var stmt = conn.createStatement();
@@ -697,13 +733,16 @@ function directCallSheetFallback_(scope, empty) {
     var res = directCallSheetRows_(pw0.from, scope.to);   // one read covers both windows (a clamp only narrows them)
     if (!res) { empty.meta.available = false; return empty; }
     // D1: the SAME coverage rule as the Neon path, from the sheet's dates.
-    var cov = dcCoverage_(scope, res.maxDate || null, res.present || {}, dcHolidayFn_());
+    var cov = dcCoverage_(scope, res.maxDate || null, res.present || {}, dcHolidayFn_(scope));
     if (cov.noData) { var e0 = dcApplyCoverageMeta_(empty, cov); e0.meta.fallbackSource = 'sheet'; return e0; }
     var pw = cov.pw, effTo = cov.to;
     var deptF = scope.companyView ? null : scope.dept;
     var cur = [], prior = [];
     res.rows.forEach(function (r) {
       if (deptF && r.dept !== deptF) return;
+      // EXC-2 (#81): the Neon path's rule -- a row on an exception day for its
+      // own department (all-department days for everyone) is left out.
+      if (typeof exceptionDayFor_ === 'function' && exceptionDayFor_(r.date, r.dept)) return;
       if (r.date >= scope.from && r.date <= effTo) cur.push(r);
       else if (r.date >= pw.from && r.date <= pw.to) prior.push(r);
     });

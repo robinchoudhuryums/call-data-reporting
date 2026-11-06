@@ -324,7 +324,7 @@ test('FO-3: the table and the Insights Outbound fold share ONE client store for 
   const i = s5.indexOf('function obSummaryFetch_(');
   const body = s5.slice(i, s5.indexOf('\n  }\n', i));
   assert.equal((s5.match(/\.getDeptOutboundSummary\(/g) || []).length, 1, 'one call site, inside the store');
-  assert.match(body, /\.getDeptOutboundSummary\(req\)/);
+  assert.match(body, /\.getDeptOutboundSummary\(excReq_\(req\)\)/);   // EXC-2: + the admin include switch
   assert.match(body, /if \(e && e\.done\) \{ setTimeout\(function \(\) \{ onOk\(e\.data\); \}, 0\); return; \}/,
     'a held answer replays ASYNCHRONOUSLY, so a caller can show its loading state first');
   assert.match(body, /if \(e\) \{ e\.waiters\.push\(/, 'an in-flight request queues the second caller instead of re-sending');
