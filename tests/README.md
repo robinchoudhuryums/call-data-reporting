@@ -622,7 +622,7 @@ tests/
                               harness), dept-summary-email,
                               digest-insights, dqe-silence-watch (episode
                               streaks + the OPS-1 confirmed-send rule),
-                              direct-call-metrics / direct-call-backfill /
+                              direct-call-metrics / direct-call-backfill (ADT-3: both direct writers' DDL before the transaction, P-9) /
                               direct-call-report (DID-0: the dial-in diagnostic -- straight / menu / colleague, the number verdicts; DID-1: the capture stores via + dial_in, no reading without the Departments column; ADT-2: a missed_busy ring names who the blocking call was with, never a number; DID-2: the report's their-line / main-line split, folded per (agent, dept), a failed read never costs the report; the direct-extension
                               family: busy carve-out engine, the R39
                               block delete, resumable upsert -- R39 inline
