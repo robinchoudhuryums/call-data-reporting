@@ -13,6 +13,7 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-06 (3) -- SHIPPED: PR #408 merged (a125e6f) on CI green** -- SPEED-1..4 (parallel ci:ui drivers, smoke role shards, sibling deploys skip ci:ui, once-per-commit `.last-gated`). CI's ui-harness job ran 4 min 26 s (was ~14.5). No owner action; the next `scripts/deploy.sh` uses it. Branch restarted from main.
 - **2026-11-06 (2) -- SPEED-1..4 IMPLEMENTED (block 259-speed-broad-implement; owner: faster deploys without checking less).** ci:ui drivers run 4 at a time (UI_HARNESS_JOBS), drive-smoke as admin + manager shards, sibling deploys skip ci:ui (dashboard-only harness, pinned), and a gate passed at a clean commit is not re-run for it (.last-gated, REGATE=1). Measured ci:ui 877 s -> 240 s. Tooling only.
   **Where I left off:** committed + pushed; PR to merge on CI green.
 - **2026-11-06 -- SHIPPED: PR #407 merged (fb1358a) on CI green** -- DID-0 `diagnoseDirectDialIn` / `diagnoseDirectDialInAllDates()` (cdr-import, read-only): own direct number vs a main line through the phone menu vs via a colleague, per number and per agent (Operator State #91). **Owner-side:** push cdr-import, run `diagnoseDirectDialInAllDates()`, send the log -- it decides whether the Direct report splits "their direct line" vs "a main line". Branch restarted from main.
