@@ -516,6 +516,7 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
     - Pick an older day: the view below changes to it. Switch the tabs (Inbound calls / Outbound calls; Missed rings only on a day past the journey horizon) -- each shows its own list.
     - Sort the table by another column: the panel stays open under the same agent. Open a second agent: the first closes (one panel at a time). Collapse the sub-queue group holding the open agent: the panel closes.
     - (Step 2 1b) Inbound calls show a From column: a colleague by name and dept for an internal call, "Outside caller · <line name>" for an outside one (as ADMIN, the insurer's name when the number is a known insurer line). Outbound calls show a To column (a colleague, or "Outside number" / the insurer for an admin) and, under it, "↩ callback to HH:MM inbound (answered|abandoned...)" when that number called in earlier the same day. Check one callback against Caller Lookup. No phone number appears anywhere.
+    - (ADT-1) On a wide screen, each tab's list (Inbound, Outbound, Direct) shows its header row (Time / From or Way / ...) at the TOP of the list, above the first call, and it stays there as the list scrolls -- never partway down the rows.
     - Click "Individual report ↗": the Individual Report opens for that agent over the same window.
     - Export CSV / Copy for spreadsheet with the panel open: the output is the table only, unchanged.
     - Set the window to ONE day and open a row: no strip, the day view directly.

@@ -168,6 +168,14 @@ function record(name, pass, detail) {
     JSON.stringify({ heads: st.heads, parties: st.parties }));
   record('the day opens on the Inbound tab with its calls', st.onTab === 'in' && st.callRows > 0,
     'tab=' + st.onTab + ' rows=' + st.callRows);
+  {
+    const off = await page.evaluate(() => {
+      const list = document.querySelector('#ap-panel .ap-list');
+      const th = list && list.querySelector('thead th');
+      return (list && th) ? Math.round(th.getBoundingClientRect().top - list.getBoundingClientRect().top) : null;
+    });
+    record('ADT-1: the Inbound list\'s header row sits at the top of the list', off !== null && Math.abs(off) <= 2, 'offset=' + off);
+  }
 
   // ---- 2. switch day and tab ---------------------------------------------
   const firstDate = st.onDate;
@@ -224,6 +232,16 @@ function record(name, pass, detail) {
       heads: Array.from(document.querySelectorAll('#ap-panel .ap-direct thead th')).map((th) => th.textContent),
       rows: Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).map((tr) => Array.from(tr.children).map((td) => td.textContent.replace(/\s+/g, ' ').trim())),
     }));
+    // ADT-1 (owner 2026-11-06): the list's header row sits at the TOP of its
+    // list -- AC-1's page-sticky offset once reached these nested tables and
+    // parked the header partway down the rows. Checked here and on Inbound.
+    const hdrOffset = await page.evaluate(() => {
+      const list = document.querySelector('#ap-panel .ap-list');
+      const th = list && list.querySelector('thead th');
+      return (list && th) ? Math.round(th.getBoundingClientRect().top - list.getBoundingClientRect().top) : null;
+    });
+    record('ADT-1: the Direct list\'s header row sits at the top of the list, not partway down it',
+      hdrOffset !== null && Math.abs(hdrOffset) <= 2, 'offset=' + hdrOffset);
     record('AC-6: the Direct tab lists the agent\'s direct calls -- way, who, outcome, rang, talk',
       /^Direct calls\s*4$/.test(dc.tab) && JSON.stringify(dc.heads) === JSON.stringify(['Time', 'Way', 'With', 'Outcome', 'Rang', 'Talk'])
         && dc.rows.length === 4 && dc.rows[0][1] === 'Called' && /^Cal Colleague · internal$/.test(dc.rows[0][2]) && dc.rows[0][3] === 'Connected'

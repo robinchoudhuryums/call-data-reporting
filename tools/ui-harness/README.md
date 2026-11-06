@@ -82,7 +82,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   Escape / Collapse focus return, one panel at a time, CSV untouched, 360 px.
   Since 2026-10-21 also the open / close slide (settled = unclipped, a
   closing panel detached at once) and the admin-only outbound call ids;
-  since SB-1 the day's outbound split bar adding up to Placed.
+  since SB-1 the day's outbound split bar adding up to Placed; since ADT-1
+  the Inbound and Direct lists' header row sitting at the top of its list.
 - `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1

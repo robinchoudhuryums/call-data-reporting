@@ -2364,7 +2364,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   the headers names each direction with its colour key and is NOT sticky; the
   header row is -- and since AC-1 it sticks under the dept controls strip at
   >= 1200 px (the wrapper drops `overflow-x` there; narrower keeps S2-3's
-  sideways scroll). Ans % and Conn % carry the change chips (`obInRateChip_`,
+  sideways scroll). That offset rule uses CHILD combinators
+  (`.agents > thead > tr > th`, ADT-1): the agent panel's call lists are
+  tables nested inside `.agents` that scroll in their own box, so a
+  descendant selector parked their header partway down the rows. Ans % and Conn % carry the change chips (`obInRateChip_`,
   points, the connect-rate rule); the count changes are in each bar's hover
   text, never a chip; Talk ("Talk · avg", AC-2) shows each direction's total
   with its average per call (`obTalkCellHtml_`) and sorts by their sum

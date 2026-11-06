@@ -226,6 +226,17 @@ test('R8-D3: the sticky header the rule exists for is still sticky at top: 0', f
     'the whole flush-header treatment is downstream of this being top: 0');
 });
 
+// ADT-1 (owner 2026-11-06): AC-1's page-sticky header offset belongs to the
+// OUTER agent table only. A descendant selector also reached the agent panel's
+// call lists (tables nested inside .agents, scrolling in their own box) and
+// parked their header ~80 px down the rows; drive-agentpanel measures it.
+test('ADT-1: the AC-1 sticky offset is scoped to the outer agents table, never a nested list', function () {
+  const styles = read('apps-script/department-dashboard/styles.html');
+  assert.match(styles, /#dept-page \.agents > thead > tr > th \{ top: var\(--dept-sticky-h, 84px\); \}/);
+  assert.doesNotMatch(styles, /\.agents thead th \{ top: var\(--dept-sticky-h/,
+    'a descendant selector reaches the panel lists nested inside .agents');
+});
+
 // ---- B-2: every DQE reader must be cut over to the DAL ---------------------
 //
 // The DAL cutover was ASSERTED complete ("ALL DQE readers are now cut over")

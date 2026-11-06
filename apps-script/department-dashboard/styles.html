@@ -836,10 +836,14 @@
      a scroll container, which pins a sticky header to the wrapper (which
      never scrolls vertically) -- so at desktop widths, where every view fits
      its column, the wrapper stops clipping and the header rides the page.
-     Narrow screens keep the sideways scroll (S2-3) and a non-sticky header. */
+     Narrow screens keep the sideways scroll (S2-3) and a non-sticky header.
+     ADT-1 (owner 2026-11-06): the offset is for the OUTER table's own header
+     only -- the child combinator keeps it off the agent panel's call lists,
+     tables nested inside .agents that scroll in their own box, where it
+     parked the header ~80 px down the rows (their header sticks at top 0). */
   @media (min-width: 1200px) {
     #dept-page .agents-table-wrap { overflow-x: visible; }
-    #dept-page .agents thead th { top: var(--dept-sticky-h, 84px); }
+    #dept-page .agents > thead > tr > th { top: var(--dept-sticky-h, 84px); }
     #dept-page .agents-ob td.lb-bar-td { min-width: 140px; }
   }
   .agents thead th .arrow {
