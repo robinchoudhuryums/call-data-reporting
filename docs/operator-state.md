@@ -3977,3 +3977,25 @@ When something looks wrong, before assuming a code bug, check:
     the hash is never selected. Joins the Neon backup (#28, monthly files),
     the restore list and the retention prune (#57, the per-call horizon).
     Pinned by `tests/unit/direct-calls-capture.test.js`.
+
+91. **`diagnoseDirectDialIn(dateIso)` / `diagnoseDirectDialInAllDates()` --
+    did an outside caller dial the agent's OWN number? (DID-0, cdr-import,
+    read-only, owner 2026-11-06).** For every outside call the Direct report
+    credits to a person (the same events, DCA-1..5 credit), the call's legs
+    say how it got there: **straight** (the first leg rang that person),
+    **menu** (a phone-menu / auto-attendant node rang first -- a leg with no
+    Departments value that is not a queue, a person or a recording) or
+    **colleague** (another person's leg rang first: a transfer or forward),
+    plus the call's **dial-in number** (col Q, the company number dialed).
+    Logs per date; then **by number dialed** -- straight / menu / colleague,
+    who it rang, and a verdict: *main line* (at least half came through a
+    menu), *direct line of <agent>* (`DC_DID_MIN_CALLS_`=3+ arrived straight
+    and `DC_DID_OWNER_SHARE_`=80% of them rang one person) or *unclear*; then
+    **by agent** -- via their own direct line / another number dialed
+    straight / a menu / a colleague / no dial-in, with their line(s) and
+    sample call ids to check in Raw Data. Dial-in numbers are company numbers
+    (stored plain in `inbound_calls`); the caller's number is never read or
+    logged. A tab with no Departments column is flagged (menu cannot be told
+    from a person there). Read its numbers BEFORE anything changes in the
+    reports: it decides whether the Direct report can split outside callers
+    by "their direct line" vs "a main line".

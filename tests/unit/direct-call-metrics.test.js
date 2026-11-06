@@ -1008,3 +1008,63 @@ test('DCA-3: the diagnostic folds and logs the reassigned legs by extension, for
   try { h.call('dcLogAttribution_', t); } finally { h.ctx.dcLog_ = real; }
   assert.match(lines.join('\n'), /REASSIGNED.*\| 2\n.*\| 101 \| Anna \| Nina \| Nina \| 2 \| V1, V2/);
 });
+
+// ── DID-0 (owner 2026-11-06): own direct number vs a main line ─────────────
+function wideRow(o) {
+  const r = row(o).concat(new Array(14).fill(''));
+  r[16] = o.dialIn || '';
+  r[36] = o.depts != null ? o.depts : '';
+  return r;
+}
+function wideGrid(rows) { return [new Array(40).fill('')].concat(rows); }
+
+test('DID-0: straight to the agent vs through a phone menu vs through a colleague, by dial-in number and by agent', function () {
+  const g = [];
+  // Anna's own number 2145550101: three calls ring her extension straight away.
+  ['D1', 'D2', 'D3'].forEach((id, i) => g.push(wideRow({ cid: id, start: D + '10:0' + i + ':00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+    caller: '+1555123000' + i, callee: '101', calleeName: 'Anna', answered: true, dialIn: '2145550101', depts: 'CSR' })));
+  // The main line 8005550100: a menu node first, then Anna's extension.
+  ['M1', 'M2'].forEach((id, i) => {
+    g.push(wideRow({ cid: id, start: D + '11:0' + i + ':00', dir: 'Incoming', callTime: '0:00:10', caller: '+1555222000' + i,
+      callee: '2000', calleeName: 'Main Menu', dialIn: '8005550100', depts: 'N/A' }));
+    g.push(wideRow({ cid: id + 'b', parent: id, start: D + '11:0' + i + ':12', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:05',
+      caller: '+1555222000' + i, callee: '101', calleeName: 'Anna', answered: true, dialIn: '8005550100', depts: 'CSR' }));
+  });
+  // Bob's number, then a forward to Anna: a colleague first.
+  g.push(wideRow({ cid: 'T1', start: D + '12:00:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15553330000',
+    callee: '102', calleeName: 'Bob', missed: true, dialIn: '2145550102', depts: 'CSR' }));
+  g.push(wideRow({ cid: 'T1b', parent: 'T1', start: D + '12:00:25', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+    caller: '+15553330000', callee: '101', calleeName: 'Anna', answered: true, dialIn: '2145550102', depts: 'CSR' }));
+  const t = J(h.call('dcDialInAcrossDays_', [{ iso: '2026-03-09', grid: wideGrid(g) }], MAPS));
+  assert.deepEqual([t.total.calls, t.total.straight, t.total.menu, t.total.colleague], [7, 4, 2, 1]);
+  const byNum = {};
+  t.numbers.forEach((x) => { byNum[x.number] = x; });
+  assert.deepEqual([byNum['2145550101'].verdict, byNum['2145550101'].owner], ['direct line', 'Anna']);
+  assert.equal(byNum['8005550100'].verdict, 'main line');
+  const anna = t.agents.find((a) => a.agent === 'Anna');
+  assert.deepEqual([anna.calls, anna.ownLine, anna.otherStraight, anna.menu, anna.colleague], [6, 3, 0, 2, 1]);
+  assert.deepEqual(anna.lines, ['2145550101']);
+  assert.deepEqual(anna.samples.menu, ['M1', 'M2']);
+  // Bob's line: he took one call straight (missed) -- under the 3-call bar, so "unclear", never guessed.
+  assert.equal(byNum['2145550102'].verdict, 'unclear');
+  assert.equal(t.days[0].noDeptColumn, false);
+  assert.ok(!JSON.stringify(t).includes('5551230'), 'no caller number anywhere in the result');
+});
+
+test('DID-0: the log names the verdicts, prints whole numbers, never a caller number, and warns on a tab with no Departments column', function () {
+  const lines = [];
+  const real = h.ctx.dcLog_;
+  h.ctx.dcLog_ = function () { lines.push(Array.prototype.slice.call(arguments).join(' | ')); };
+  try {
+    h.call('dcLogDialIn_', { days: [{ iso: '2026-03-09', total: 3, straight: 2, menu: 1, colleague: 0, noDialIn: 0, noDeptColumn: true }],
+      total: { calls: 3, straight: 2, menu: 1, colleague: 0, noDialIn: 0 },
+      numbers: [{ number: '2145550101', calls: 3, straight: 3, menu: 0, colleague: 0, agents: 1, top: 'Anna', topCalls: 3, verdict: 'direct line', owner: 'Anna', samples: ['D1'] }],
+      agents: [{ agent: 'Anna', dept: 'CSR', calls: 3, ownLine: 3, otherStraight: 0, menu: 0, colleague: 0, noDialIn: 0, lines: ['2145550101'],
+        samples: { ownLine: ['D1'], otherStraight: [], menu: [], colleague: [], noDialIn: [] } }] });
+  } finally { h.ctx.dcLog_ = real; }
+  const text = lines.join('\n');
+  assert.match(text, /direct line \| of Anna|direct line of Anna/);
+  assert.match(text, /WARNING: this tab has no Departments column/);
+  assert.match(text, /their line\(s\): \| 2145550101|their line\(s\): 2145550101/);
+  assert.ok(!/\d\.0\b/.test(text), 'no ".0" counts: ' + text);
+});

@@ -1867,3 +1867,199 @@ function dcLogPipelineHealth_(ss, status, rows, ms, notes) {
     sh.appendRow([new Date(), 'directBuild', status, rows, ms, notes]);
   } catch (e) { /* best-effort */ }
 }
+
+// ── DID-0 (owner 2026-11-06): did the outside caller dial the agent's OWN
+// number, or a main line routed to their extension? ─────────────────────────
+// Read-only. For every outside call the Direct report counts as a person's
+// direct inbound call (the SAME events, DCA-1..5 credit), the call's legs
+// say how it got there:
+//   straight  -- the first leg rang THIS agent (no menu, no colleague first):
+//                the caller dialed a number that reaches them directly;
+//   menu      -- a phone-menu / auto-attendant node rang first (a leg with no
+//                Departments value, not a queue, not a person, not a
+//                recording) -- a main line, then the menu sent it on;
+//   colleague -- another PERSON's leg rang first (a transfer or forward);
+// plus the call's dial-in number (col Q, the company number dialed). Per
+// dial-in number: how its calls arrived and who they rang, with a verdict --
+// "main line" when menu calls are at least half, "<agent>'s direct line" when
+// at least DC_DID_MIN_CALLS_ calls arrived straight and DC_DID_OWNER_SHARE_ of
+// them rang one agent, else "unclear". Per agent: their outside direct calls
+// via their own direct line / another number dialed straight / a menu / a
+// colleague / no dial-in. Dial-in numbers are COMPANY numbers (they are stored
+// plain in inbound_calls); the caller's number is never read or logged.
+var DC_DIAL_COL_ = { DIAL_IN: 16, DEPARTMENTS: 36 };
+var DC_DID_MIN_CALLS_ = 3;
+var DC_DID_OWNER_SHARE_ = 0.8;
+
+/** PURE. One day's straight / menu / colleague reading of every outside direct call. */
+function dcDialInForDay_(rows, maps) {
+  const C = { CALL_ID: 0, START: 2, CALLEE: 10, CALLEE_NAME: 11, CTX: 13, PARENT: 14 };
+  const realParent = function (p) { p = dcClean_(p); return (p && p.toUpperCase() !== 'N/A') ? p : ''; };
+  const byRoot = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    const cid = dcClean_(r[C.CALL_ID]);
+    if (!cid) continue;
+    const root = realParent(r[C.PARENT]) || cid;
+    (byRoot[root] = byRoot[root] || []).push(r);
+  }
+  const res = computeDirectCallMetrics(rows, maps, { events: true });
+  const out = [];
+  (res.events || []).forEach(function (ev) {
+    if (ev.direction !== 'in' || ev.side !== 'ext') return;
+    const legs = (byRoot[ev.callId] || []).slice().sort(function (a, b) {
+      return (dcStartSec_(a[C.START]) || 0) - (dcStartSec_(b[C.START]) || 0);
+    });
+    let dialIn = '';
+    for (let j = 0; j < legs.length && !dialIn; j++) dialIn = String(legs[j][DC_DIAL_COL_.DIAL_IN] == null ? '' : legs[j][DC_DIAL_COL_.DIAL_IN]).replace(/\D/g, '');
+    // The agent's first leg: its callee resolves to them (the build's own rule).
+    let mine = -1;
+    for (let j = 0; j < legs.length; j++) {
+      const callee = dcClean_(legs[j][C.CALLEE]);
+      const res2 = dcResolveAgent_(callee, legs[j][C.CALLEE_NAME], maps);
+      if (res2.agent && res2.agent.name === ev.agent) { mine = j; break; }
+    }
+    let how = 'straight';
+    for (let j = 0; j < (mine < 0 ? legs.length : mine); j++) {
+      const l = legs[j];
+      const callee = dcClean_(l[C.CALLEE]), name = dcClean_(l[C.CALLEE_NAME]);
+      const digits = callee.replace(/\D/g, '');
+      if (digits.length >= 10) continue;                                   // the caller's own side
+      if (/A_Q_|queue|backup csr/i.test(name) || /queue/i.test(String(l[C.CTX] || ''))) continue;
+      if (/record|voice ?mail/i.test(name)) continue;
+      const dept = dcClean_(l[DC_DIAL_COL_.DEPARTMENTS]);
+      const r3 = dcResolveAgent_(callee, name, maps);
+      if (r3.agent && r3.agent.name !== ev.agent) { how = 'colleague'; break; }
+      if (!dept || dept.toUpperCase() === 'N/A') { how = 'menu'; break; }
+    }
+    out.push({ callId: ev.callId, agent: ev.agent, dept: ev.dept, dialIn: dialIn, how: how, inWindow: ev.inWindow, outcome: ev.outcome });
+  });
+  return out;
+}
+
+/** PURE. Folds the days into per-number and per-agent tallies with verdicts and samples. */
+function dcDialInAcrossDays_(days, maps) {
+  const toIso = function (ds) {
+    if (typeof parseDateForNeon === 'function') return parseDateForNeon(ds);
+    const m = String(ds || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2) : ds;
+  };
+  const calls = [];
+  const perDay = [];
+  days.forEach(function (d) {
+    const grid = d.grid || [];
+    const rows = [grid[0] || []];
+    for (let i = 1; i < grid.length; i++) {
+      const ds = dcDateStr_(grid[i] && grid[i][2]);
+      if (!ds || toIso(ds) === d.iso) rows.push(grid[i]);
+    }
+    const day = dcDialInForDay_(rows, maps);
+    // Without the Departments column every non-person leg would read as a menu.
+    const c = { iso: d.iso, total: day.length, straight: 0, menu: 0, colleague: 0, noDialIn: 0,
+                noDeptColumn: !((grid[0] || []).length > DC_DIAL_COL_.DEPARTMENTS) };
+    day.forEach(function (x) { c[x.how]++; if (!x.dialIn) c.noDialIn++; calls.push(x); });
+    perDay.push(c);
+  });
+  const sample = function (arr, id) { if (arr.length < 5 && arr.indexOf(id) === -1) arr.push(id); };
+  // Per dial-in number.
+  const nums = {};
+  calls.forEach(function (x) {
+    if (!x.dialIn) return;
+    const n = nums[x.dialIn] || (nums[x.dialIn] = { number: x.dialIn, calls: 0, straight: 0, menu: 0, colleague: 0, agents: {}, samples: [] });
+    n.calls++; n[x.how]++;
+    if (x.how === 'straight') n.agents[x.agent] = (n.agents[x.agent] || 0) + 1;
+    sample(n.samples, x.callId);
+  });
+  const numbers = Object.keys(nums).map(function (k) {
+    const n = nums[k];
+    const top = Object.keys(n.agents).sort(function (a, b) { return n.agents[b] - n.agents[a] || (a < b ? -1 : 1); })[0] || null;
+    const topN = top ? n.agents[top] : 0;
+    let verdict = 'unclear', owner = null;
+    if (n.menu * 2 >= n.calls) verdict = 'main line';
+    else if (n.straight >= DC_DID_MIN_CALLS_ && topN >= DC_DID_OWNER_SHARE_ * n.straight) { verdict = 'direct line'; owner = top; }
+    return { number: n.number, calls: n.calls, straight: n.straight, menu: n.menu, colleague: n.colleague,
+             agents: Object.keys(n.agents).length, top: top, topCalls: topN, verdict: verdict, owner: owner, samples: n.samples };
+  }).sort(function (a, b) { return b.calls - a.calls || (a.number < b.number ? -1 : 1); });
+  const owners = {};
+  numbers.forEach(function (n) { if (n.owner) (owners[n.owner] = owners[n.owner] || []).push(n.number); });
+  const verdictOf = {};
+  numbers.forEach(function (n) { verdictOf[n.number] = n; });
+  // Per agent.
+  const ag = {};
+  calls.forEach(function (x) {
+    const a = ag[x.agent] || (ag[x.agent] = { agent: x.agent, dept: x.dept, calls: 0, ownLine: 0, otherStraight: 0, menu: 0, colleague: 0, noDialIn: 0,
+      samples: { ownLine: [], otherStraight: [], menu: [], colleague: [], noDialIn: [] } });
+    a.calls++;
+    let k;
+    if (x.how === 'menu') k = 'menu';
+    else if (x.how === 'colleague') k = 'colleague';
+    else if (!x.dialIn) k = 'noDialIn';
+    else k = (verdictOf[x.dialIn] && verdictOf[x.dialIn].owner === x.agent) ? 'ownLine' : 'otherStraight';
+    a[k]++;
+    sample(a.samples[k], x.callId);
+  });
+  const agents = Object.keys(ag).map(function (k) { const a = ag[k]; a.lines = owners[a.agent] || []; return a; })
+    .sort(function (a, b) { return b.calls - a.calls || (a.agent < b.agent ? -1 : 1); });
+  const tot = { calls: calls.length, straight: 0, menu: 0, colleague: 0, noDialIn: 0 };
+  calls.forEach(function (x) { tot[x.how]++; if (!x.dialIn) tot.noDialIn++; });
+  return { days: perDay, total: tot, numbers: numbers, agents: agents };
+}
+
+function dcLogDialIn_(t) {
+  const n = function (v) { return String(Math.round(Number(v) || 0)); };
+  const pct = function (v, d) { return d ? Math.round(v / d * 100) + '%' : '0%'; };
+  t.days.forEach(function (d) {
+    dcLog_('[direct-dialin] %s: %s outside direct call(s) -- straight to the agent %s, through a phone menu %s, through a colleague %s, no dial-in number %s%s',
+      d.iso, n(d.total), n(d.straight), n(d.menu), n(d.colleague), n(d.noDialIn),
+      d.noDeptColumn ? ' -- WARNING: this tab has no Departments column, so "menu" cannot be told from a person here' : '');
+  });
+  const T = t.total;
+  dcLog_('[direct-dialin] TOTAL over %s date(s): %s outside calls the Direct report credits to a person -- straight to them %s (%s), through a phone menu %s (%s), through a colleague %s (%s); no dial-in number on %s.',
+    n(t.days.length), n(T.calls), n(T.straight), pct(T.straight, T.calls), n(T.menu), pct(T.menu, T.calls), n(T.colleague), pct(T.colleague, T.calls), n(T.noDialIn));
+  dcLog_('[direct-dialin] BY NUMBER DIALED (company numbers; "direct line" = %s+ calls arrived straight and %s%% of them rang one person; "main line" = at least half came through a menu):',
+    n(DC_DID_MIN_CALLS_), n(DC_DID_OWNER_SHARE_ * 100));
+  t.numbers.slice(0, 60).forEach(function (x) {
+    dcLog_('[direct-dialin]   %s: %s call(s) -- straight %s, menu %s, colleague %s; rang %s person(s) straight%s -> %s; e.g. %s',
+      x.number, n(x.calls), n(x.straight), n(x.menu), n(x.colleague), n(x.agents),
+      x.top ? ' (most: ' + x.top + ' ' + n(x.topCalls) + ')' : '', x.verdict + (x.owner ? ' of ' + x.owner : ''), x.samples.join(', '));
+  });
+  dcLog_('[direct-dialin] BY AGENT (their outside direct calls): via their own direct line / another number dialed straight / a phone menu / a colleague / no dial-in:');
+  t.agents.slice(0, 80).forEach(function (a) {
+    const s = a.samples;
+    const eg = ['ownLine', 'otherStraight', 'menu', 'colleague', 'noDialIn'].filter(function (k) { return s[k].length; })
+      .map(function (k) { return k + ': ' + s[k].slice(0, 2).join(' '); }).join(' | ');
+    dcLog_('[direct-dialin]   %s (%s): %s -- own line %s, other number %s, menu %s, colleague %s, none %s%s%s',
+      a.agent, a.dept, n(a.calls), n(a.ownLine), n(a.otherStraight), n(a.menu), n(a.colleague), n(a.noDialIn),
+      a.lines.length ? '; their line(s): ' + a.lines.join(', ') : '; no direct line found', eg ? '; e.g. ' + eg : '');
+  });
+}
+
+/**
+ * DID-0 (owner 2026-11-06): editor-run, read-only. `dateIso` 'YYYY-MM-DD',
+ * 'all' (every held Call_Legs_* tab), or blank = the latest. Logs how the
+ * outside calls the Direct report credits to each person reached them -- their
+ * own direct number, a main line through a phone menu, or a colleague -- per
+ * number dialed and per agent, with sample call ids to check in Raw Data.
+ * Operator State #91.
+ */
+function diagnoseDirectDialIn(dateIso) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheets = [];
+  ss.getSheets().forEach(function (sh) {
+    const m = sh.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (m) sheets.push({ iso: m[1], sheet: sh });
+  });
+  sheets.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (dateIso && dateIso !== 'all') sheets = sheets.filter(function (x) { return x.iso === dateIso; });
+  else if (!dateIso) sheets = sheets.slice(-1);
+  if (!sheets.length) { dcLog_('[direct-dialin] no Call_Legs sheet for %s.', dateIso || '(latest)'); return { result: 'INCONCLUSIVE (no Call_Legs sheet)' }; }
+  const cfg = SpreadsheetApp.openById(getTargetSsId_()).getSheetByName('DO NOT EDIT!');
+  if (!cfg) throw new Error('DO NOT EDIT! sheet missing.');
+  const res = dcDialInAcrossDays_(sheets.map(function (x) {
+    return { iso: x.iso, grid: x.sheet.getDataRange().getDisplayValues() };
+  }), dcBuildExtMaps_(cfg));
+  dcLogDialIn_(res);
+  return res;
+}
+function diagnoseDirectDialInAllDates() { return diagnoseDirectDialIn('all'); }

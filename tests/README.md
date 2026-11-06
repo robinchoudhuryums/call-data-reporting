@@ -623,7 +623,7 @@ tests/
                               digest-insights, dqe-silence-watch (episode
                               streaks + the OPS-1 confirmed-send rule),
                               direct-call-metrics / direct-call-backfill /
-                              direct-call-report (the direct-extension
+                              direct-call-report (DID-0: the dial-in diagnostic -- straight / menu / colleague, the number verdicts; the direct-extension
                               family: busy carve-out engine, the R39
                               block delete, resumable upsert -- R39 inline
                               literals decoded from the SQL, inline == bound
