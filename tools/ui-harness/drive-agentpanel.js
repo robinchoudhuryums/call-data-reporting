@@ -243,11 +243,47 @@ function record(name, pass, detail) {
     record('ADT-1: the Direct list\'s header row sits at the top of the list, not partway down it',
       hdrOffset !== null && Math.abs(hdrOffset) <= 2, 'offset=' + hdrOffset);
     record('AC-6: the Direct tab lists the agent\'s direct calls -- way, who, outcome, rang, talk',
-      /^Direct calls\s*4$/.test(dc.tab) && JSON.stringify(dc.heads) === JSON.stringify(['Time', 'Way', 'With', 'Outcome', 'Rang', 'Talk'])
-        && dc.rows.length === 4 && dc.rows[0][1] === 'Called' && /^Cal Colleague · internal$/.test(dc.rows[0][2]) && dc.rows[0][3] === 'Connected'
-        && /^Bea Buddy · internal$/.test(dc.rows[1][2]) && dc.rows[1][3] === 'Missed (on another call)'
-        && dc.rows[2][2] === 'Outside caller' && dc.rows[2][1] === 'Called them'
+      /^Direct calls\s*8$/.test(dc.tab) && JSON.stringify(dc.heads) === JSON.stringify(['Time', 'Way', 'With', 'Outcome', 'Rang', 'Talk'])
+        && dc.rows.length === 8 && dc.rows[0][1] === 'Called' && /^Cal Colleague · internal$/.test(dc.rows[0][2]) && dc.rows[0][3] === 'Connected'
+        && /^Bea Buddy · internal$/.test(dc.rows[1][2])
+        && dc.rows[2][2] === 'Outside caller · their direct line' && dc.rows[2][1] === 'Called them'
         && /after hours/.test(dc.rows[3][0]) && !dc.rows.some((r) => /\d{7,}/.test(r.join(' '))), JSON.stringify(dc));
+    // ADT-2 (owner 2026-11-06): a ring missed while on another call names who
+    // that call was with; the summary above the list counts the rows below it.
+    record('ADT-2: a call missed while on another call names who that call was with',
+      dc.rows[1][3] === 'Missed (on a call with an outside caller)' && dc.rows[7][3] === 'Missed (on a call with Cal Colleague)',
+      JSON.stringify([dc.rows[1][3], dc.rows[7][3]]));
+    const sum = await page.evaluate(() => {
+      const box = document.querySelector('#ap-panel .ap-dsum');
+      const hs = box ? Array.from(box.querySelectorAll('.ap-dsum-h strong')).map((x) => Number(x.textContent.replace(/,/g, ''))) : [];
+      const rowsIn = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).filter((tr) => tr.children[1].textContent.trim() === 'Called them').length;
+      const rowsOut = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).filter((tr) => tr.children[1].textContent.trim() === 'Called').length;
+      const listTop = (document.querySelector('#ap-panel .ap-list') || { getBoundingClientRect: () => ({ top: 0 }) }).getBoundingClientRect().top;
+      return { has: !!box, heads: hs, rowsIn: rowsIn, rowsOut: rowsOut,
+        busy: ((box && box.querySelector('.ap-dsum-busy')) || {}).textContent || '',
+        text: box ? box.textContent.replace(/\s+/g, ' ') : '',
+        cols: box ? box.querySelectorAll('.ap-dsum-tbl tbody tr').length : 0,
+        more: ((box && box.querySelector('[data-ap-dsum-all]')) || {}).textContent || '',
+        above: box ? box.getBoundingClientRect().bottom <= listTop + 1 : false };
+    });
+    record('ADT-2: the Direct summary sits above the list and its totals equal the rows below (calls to and from their line)',
+      sum.has && sum.above && sum.heads.length === 2 && sum.heads[0] === sum.rowsIn && sum.heads[1] === sum.rowsOut,
+      JSON.stringify({ heads: sum.heads, rowsIn: sum.rowsIn, rowsOut: sum.rowsOut, above: sum.above }));
+    record('ADT-2: the summary names who the busy calls were with, the outside callers by how they arrived, and work vs after hours',
+      /Cal Colleague/.test(sum.busy) && /an outside caller/.test(sum.busy)
+        && /1 their direct line · 1 a main line/.test(sum.text) && /3 in work hours, 5 after hours/.test(sum.text)
+        && /67% answered when free/.test(sum.text) && !/\d{7,}/.test(sum.text),
+      JSON.stringify({ busy: sum.busy, text: sum.text.slice(0, 400) }));
+    await page.locator('#ap-panel [data-ap-dsum-all]').click();
+    await page.waitForTimeout(250);
+    const all = await page.evaluate(() => ({
+      cols: document.querySelectorAll('#ap-panel .ap-dsum-tbl tbody tr').length,
+      more: ((document.querySelector('#ap-panel [data-ap-dsum-all]')) || {}).textContent || '',
+      focus: document.activeElement && document.activeElement.hasAttribute('data-ap-dsum-all'),
+      tabOn: ((document.querySelector('#ap-panel .ap-tab.is-on')) || { getAttribute: () => '' }).getAttribute('data-ap-tab') }));
+    record('ADT-2: the colleagues list shows the top 5 and "Show all" lists every colleague, keeping focus and the tab',
+      sum.cols === 5 && sum.more === 'Show all 6' && all.cols === 6 && all.more === 'Show the top 5' && all.focus && all.tabOn === 'direct',
+      JSON.stringify({ before: [sum.cols, sum.more], after: all }));
     await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').click();
     await page.waitForTimeout(300);
     await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').focus();

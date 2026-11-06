@@ -3976,7 +3976,15 @@ When something looks wrong, before assuming a code bug, check:
     from `getAgentDay` to ADMINS only, the Direct Calls report's vetting gate;
     the hash is never selected. Joins the Neon backup (#28, monthly files),
     the restore list and the retention prune (#57, the per-call horizon).
-    Pinned by `tests/unit/direct-calls-capture.test.js`.
+    Pinned by `tests/unit/direct-calls-capture.test.js`. **ADT-2 (owner
+    2026-11-06):** a ring missed while the person was on another call stores
+    `busy_with` -- who that call was with: a colleague's roster name, "a queue
+    call", "an outside caller" / "an outside number", never a number
+    (idempotent ADD COLUMN) -- and the Direct tab carries a summary over the
+    day's rows (to / from their line, colleagues each way, who the busy calls
+    were with, work vs after hours). Same steps: push cdr-import, then
+    `rebuildDirectCallHeldDates()`; dates not rebuilt read "Missed (on another
+    call)" with no name.
 
 91. **`diagnoseDirectDialIn(dateIso)` / `diagnoseDirectDialInAllDates()` --
     did an outside caller dial the agent's OWN number? (DID-0, cdr-import,

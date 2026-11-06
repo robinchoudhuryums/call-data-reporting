@@ -146,3 +146,47 @@ test('DID-3: outside callers are labelled their direct line / a main line / via 
   assert.match(gs, /to_jsonb\(d\)->>'via' AS via, to_jsonb\(d\)->>'dial_in' AS dial_in/,
     'read through to_jsonb, so the list still loads before cdr-import adds the columns');
 });
+
+// ── ADT-2 (owner 2026-11-06): the Direct tab's summary + who a busy miss was with ──
+test('ADT-2: the summary counts every row -- in / out, busy excluded from the rate, colleagues each way, who the busy calls were with, hours', function () {
+  const cap = { available: true, directStart: '2026-11-01', mainLines: [], inbound: [], direct: [
+    { call_id: 'a', direction: 'in', side: 'int', call_start: '09:00:00', ring_sec: 6, talk_sec: 60, outcome: 'answered', in_window: true, other_name: 'Bob' },
+    { call_id: 'b', direction: 'in', side: 'int', call_start: '09:10:00', ring_sec: 20, talk_sec: 0, outcome: 'missed_busy', in_window: true, other_name: 'Bob', busy_with: 'Cara' },
+    { call_id: 'c', direction: 'in', side: 'ext', call_start: '09:20:00', ring_sec: 10, talk_sec: 30, outcome: 'answered', in_window: true, via: 'straight', dial_in: '2145550101' },
+    { call_id: 'd', direction: 'in', side: 'ext', call_start: '09:30:00', ring_sec: 25, talk_sec: 0, outcome: 'missed_free', in_window: true, via: 'menu', dial_in: '8005550100' },
+    { call_id: 'e', direction: 'in', side: 'ext', call_start: '09:40:00', ring_sec: 25, talk_sec: 0, outcome: 'missed_busy', in_window: false, busy_with: 'an outside caller' },
+    { call_id: 'f', direction: 'out', side: 'int', call_start: '10:00:00', talk_sec: 90, outcome: 'connected', in_window: true, other_name: 'Cara' },
+    { call_id: 'g', direction: 'out', side: 'int', call_start: '10:10:00', talk_sec: 0, outcome: 'not_connected', in_window: true, other_name: 'Bob' },
+    { call_id: 'h', direction: 'out', side: 'ext', call_start: '10:20:00', talk_sec: 45, outcome: 'connected', in_window: true },
+    // An answered call never carries a busy label, whatever the row says.
+    { call_id: 'i', direction: 'in', side: 'int', call_start: '10:30:00', ring_sec: 4, talk_sec: 20, outcome: 'answered', in_window: true, other_name: 'Dan', busy_with: 'stray' },
+  ] };
+  const d = J(dash.call('agentDayDirect_', cap, 'Anna', '2026-11-03'));
+  assert.deepEqual(d.rows.map((r) => r.busyWith), [null, 'Cara', null, null, 'an outside caller', null, null, null, null]);
+  const s = d.summary;
+  assert.deepEqual(s.in, { total: 6, answered: 3, missedFree: 1, missedBusy: 2, answerRatePct: 75, avgRingSec: 7, talkSec: 110,
+    fromColleagues: 3, fromOutside: 3, outsideVia: { line: 1, main: 1, colleague: 0, unsplit: 1 } },
+    'busy left out of the rate (3 of 4); the average ring is over answered calls only');
+  assert.deepEqual(s.out, { total: 3, connected: 2, toColleagues: 2, toColleaguesConnected: 1, toOutside: 1, toOutsideConnected: 1, talkSec: 135 });
+  assert.deepEqual(s.colleagues, [
+    { name: 'Bob', called: 1, calledConnected: 0, calledBy: 2, calledByAnswered: 1 },
+    { name: 'Cara', called: 1, calledConnected: 1, calledBy: 0, calledByAnswered: 0 },
+    { name: 'Dan', called: 0, calledConnected: 0, calledBy: 1, calledByAnswered: 1 },
+  ], 'most calls first, then by name');
+  assert.deepEqual(s.busyWith, [{ with: 'Cara', n: 1 }, { with: 'an outside caller', n: 1 }]);
+  assert.deepEqual(s.hours, { work: 8, after: 1 });
+  // The pre-capture fallback (outside callers only) has no summary; neither does a manager (no source).
+  const pre = J(dash.call('agentDayDirect_', { available: true, directStart: '2026-11-01', direct: [], inbound: [] }, 'Anna', '2026-10-20'));
+  assert.equal(pre.summary, null);
+  const gs = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'AgentDay.gs'), 'utf8');
+  assert.match(gs, /to_jsonb\(d\)->>'busy_with' AS busy_with/, 'read through to_jsonb -- loads before the cdr-import push');
+  assert.match(gs, /out\.directSummary = dir\.summary \|\| null;/);
+});
+
+test('ADT-2: the summary counts the WHOLE day even when the list is capped', function () {
+  const many = [];
+  for (let i = 0; i < 305; i++) many.push({ call_id: 'x' + i, direction: 'in', side: 'ext', call_start: '09:00:00', ring_sec: 5, talk_sec: 10, outcome: 'answered', in_window: true });
+  const d = J(dash.call('agentDayDirect_', { available: true, directStart: '2026-11-01', direct: many, inbound: [] }, 'Anna', '2026-11-03'));
+  assert.ok(d.truncated && d.rows.length === 300, 'the list is capped (AGENT_DAY_MAX_CALLS_)');
+  assert.equal(d.summary.in.total, 305);
+});

@@ -271,6 +271,20 @@ function dcResolveAgent_(ext, legName, maps) {
   return { agent: null, kind: 'mismatch', name: nm, credited: base };
 }
 
+/**
+ * PURE. ADT-2 (owner 2026-11-06): who a call the agent was ON was with, from
+ * their side ('caller' | 'callee'): the colleague's roster name, "a queue
+ * call", "an outside number" (they dialed out), "an outside caller" (an
+ * outside party rang them) or "another call". Never a number.
+ */
+function dcBusyWithLabel_(mySide, otherAgent, otherRaw, queueCall, exclusions) {
+  if (otherAgent && otherAgent.name && !(exclusions && exclusions.has(otherAgent.name))) return otherAgent.name;
+  if (queueCall) return 'a queue call';
+  const d = String(otherRaw == null ? '' : otherRaw).replace(/\D/g, '');
+  if (d.length >= 7) return mySide === 'caller' ? 'an outside number' : 'an outside caller';
+  return 'another call';
+}
+
 function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   opts = opts || {};
   const W0   = opts.windowStartSec != null ? opts.windowStartSec : DIRECT_WINDOW_START;
@@ -503,8 +517,18 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       const busyS = (connSec != null && connSec >= startSec) ? connSec : startSec;
       const busyE = (stopSec != null && stopSec >= busyS) ? stopSec : startSec + talk + hold;
       const occ = { cid: cid, s: busyS, e: busyE, info: dir + ' ' + caller + '->' + callee };
-      if (callerAgent && !exclusions.has(callerAgent.name)) ensure(callerAgent.name, callerAgent.dept).occ.push(occ);
-      if (calleeAgent && !exclusions.has(calleeAgent.name)) ensure(calleeAgent.name, calleeAgent.dept).occ.push(occ);
+      // ADT-2 (owner 2026-11-06): who this call was WITH, per side, so a
+      // direct ring missed during it can say so -- a colleague by roster name,
+      // never a number (dcBusyWithLabel_).
+      const qc = isQueueCall(cid, parent);
+      if (callerAgent && !exclusions.has(callerAgent.name)) {
+        ensure(callerAgent.name, callerAgent.dept).occ.push(Object.assign({}, occ,
+          { w: dcBusyWithLabel_('caller', calleeAgent, callee, qc, exclusions) }));
+      }
+      if (calleeAgent && !exclusions.has(calleeAgent.name)) {
+        ensure(calleeAgent.name, calleeAgent.dept).occ.push(Object.assign({}, occ,
+          { w: dcBusyWithLabel_('callee', callerAgent, caller, qc, exclusions) }));
+      }
     }
 
     // The WHOLE call belongs to the queue (DQE/QCD) path, not "direct" -- skip
@@ -728,10 +752,16 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
           outcome = (ev.start != null && busyBlocker(a.occ, ring)) ? 'missed_busy' : 'missed_free';
         }
         const o = other(ev, ev.caller, ev.intExt);
+        // ADT-2: who the call that kept them busy was with.
+        let busyWith = null;
+        if (outcome === 'missed_busy') {
+          const bl = busyBlocker(a.occ, { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) });
+          busyWith = bl ? (bl.w || 'another call') : null;
+        }
         events.push({ agent: name, dept: a.dept, direction: 'in', side: ev.intExt, callId: cid, callStart: ev.start == null ? null : secToHms(ev.start),
           ringSec: (ev.start != null && ev.ringEnd != null) ? Math.max(0, ev.ringEnd - ev.start) : null,
           talkSec: ev.answered ? ev.talk : 0, outcome: outcome, inWindow: inWindow(ev.start),
-          otherName: o.name, otherExt: o.ext, otherNumber: o.number });
+          otherName: o.name, otherExt: o.ext, otherNumber: o.number, busyWith: busyWith });
       });
       Object.keys(a.ob).forEach(function (cid) {
         const ev = a.ob[cid];
@@ -1134,10 +1164,12 @@ function dcEnsureEventsTable_(conn) {
   // dialed on (never the caller's). Idempotent ADD COLUMN; older rows stay NULL.
   ddl.execute('ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS via text');
   ddl.execute('ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS dial_in text');
+  // ADT-2: a ring missed while on another call names who that call was with.
+  ddl.execute('ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS busy_with text');
   ddl.close();
 }
 const DIRECT_EVENTS_HEAD_ = 'INSERT INTO direct_calls (call_date, call_id, agent_name, department, direction, side, '
-  + 'call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext, other_hash, via, dial_in) VALUES ';
+  + 'call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext, other_hash, via, dial_in, busy_with) VALUES ';
 const DIRECT_EVENTS_TAIL_ = ' ON CONFLICT (call_date, call_id, agent_name, direction) DO NOTHING';
 /** PURE. One events tuple; `hash` is the outside party's HMAC (or null). */
 function dcEventTuple_(isoDate, e, hash) {
@@ -1146,7 +1178,7 @@ function dcEventTuple_(isoDate, e, hash) {
     neonSqlLit_(e.direction), neonSqlLit_(e.side || null), neonSqlLit_(e.callStart || null), int(e.ringSec), int(e.talkSec),
     neonSqlLit_(e.outcome || null), e.inWindow ? 'TRUE' : 'FALSE', neonSqlLit_(e.otherName || null),
     neonSqlLit_(e.otherExt || null), neonSqlLit_(hash || null),
-    neonSqlLit_(e.via || null), neonSqlLit_(e.dialIn || null)].join(',') + ')';
+    neonSqlLit_(e.via || null), neonSqlLit_(e.dialIn || null), neonSqlLit_(e.busyWith || null)].join(',') + ')';
 }
 /** Writes one date's events on the caller's connection + transaction. Returns the count. */
 function dcWriteEvents_(conn, isoDate, events) {

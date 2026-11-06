@@ -540,11 +540,14 @@ function agentDayDirect_(cap, agentName, dateIso) {
     var rows = cap.direct.map(function (r) {
       return { callId: r.call_id || null, callStart: r.call_start || null, direction: r.direction, side: r.side || null,
         other: label(r), via: viaClass(r), outcome: r.outcome || null,
+        busyWith: r.outcome === 'missed_busy' ? (r.busy_with || null) : null,   // ADT-2
         ringSec: r.ring_sec == null ? null : Number(r.ring_sec), talkSec: Number(r.talk_sec) || 0,
         inWindow: r.in_window !== false };
     });
     var trunc = rows.length > AGENT_DAY_MAX_CALLS_;
-    return { rows: trunc ? rows.slice(0, AGENT_DAY_MAX_CALLS_) : rows, source: 'capture', captureStart: start, truncated: trunc };
+    // ADT-2: the summary counts EVERY row, the list may be capped.
+    return { rows: trunc ? rows.slice(0, AGENT_DAY_MAX_CALLS_) : rows, source: 'capture', captureStart: start, truncated: trunc,
+      summary: agentDayDirectSummary_(rows) };
   }
   if (!cap || !cap.available) return { rows: [], source: null, captureStart: start, truncated: false };
   var ib = (cap.inbound || []).filter(function (r) {
@@ -555,7 +558,77 @@ function agentDayDirect_(cap, agentName, dateIso) {
       outcome: disp === 'answered' ? 'answered' : (disp === 'abandoned' ? 'abandoned' : 'missed'),
       ringSec: null, talkSec: 0, inWindow: true };
   });
-  return { rows: ib, source: 'inbound', captureStart: start, truncated: false };
+  return { rows: ib, source: 'inbound', captureStart: start, truncated: false, summary: null };
+}
+
+/**
+ * PURE. ADT-2 (owner 2026-11-06): the Direct tab's summary, from the day's
+ * direct rows (agentDayDirect_'s shape) -- so every figure is a count of the
+ * rows the list shows:
+ *   in:  calls to their line -- answered / missed while free / missed while on
+ *        another call, the answer rate when free (busy left out, the Direct
+ *        report's rule), average ring before an answer, talk; from colleagues
+ *        vs outside callers, and the outside callers by how they reached them
+ *        (DID-2's line / main / colleague).
+ *   out: calls from their line -- to colleagues connected / not, to outside
+ *        numbers, talk.
+ *   colleagues: per colleague, calls each way and how many got through,
+ *        most first.
+ *   busyWith: who the calls that kept them busy were with, most first.
+ *   hours: work hours vs after hours.
+ */
+function agentDayDirectSummary_(rows) {
+  rows = rows || [];
+  var s = {
+    in: { total: 0, answered: 0, missedFree: 0, missedBusy: 0, answerRatePct: null, avgRingSec: null, talkSec: 0,
+          fromColleagues: 0, fromOutside: 0, outsideVia: { line: 0, main: 0, colleague: 0, unsplit: 0 } },
+    out: { total: 0, connected: 0, toColleagues: 0, toColleaguesConnected: 0, toOutside: 0, toOutsideConnected: 0, talkSec: 0 },
+    colleagues: [], busyWith: [], hours: { work: 0, after: 0 },
+  };
+  var col = {}, busy = {}, ringSum = 0, ringN = 0;
+  rows.forEach(function (r) {
+    if (r.inWindow === false) s.hours.after++; else s.hours.work++;
+    var talk = Number(r.talkSec) || 0;
+    var isInt = r.side === 'int';
+    var who = isInt ? String(r.other || 'A colleague') : null;
+    var c = who ? (col[who] = col[who] || { name: who, called: 0, calledConnected: 0, calledBy: 0, calledByAnswered: 0 }) : null;
+    if (r.direction === 'out') {
+      s.out.total++;
+      s.out.talkSec += talk;
+      var conn = r.outcome === 'connected';
+      if (conn) s.out.connected++;
+      if (isInt) { s.out.toColleagues++; if (conn) s.out.toColleaguesConnected++; c.called++; if (conn) c.calledConnected++; }
+      else { s.out.toOutside++; if (conn) s.out.toOutsideConnected++; }
+      return;
+    }
+    s.in.total++;
+    s.in.talkSec += talk;
+    var ans = r.outcome === 'answered';
+    if (ans) {
+      s.in.answered++;
+      if (r.ringSec != null && isFinite(Number(r.ringSec))) { ringSum += Number(r.ringSec); ringN++; }
+    } else if (r.outcome === 'missed_busy') {
+      s.in.missedBusy++;
+      var w = String(r.busyWith || 'another call (not recorded)');
+      busy[w] = (busy[w] || 0) + 1;
+    } else s.in.missedFree++;   // missed_free, missed, abandoned -- not busy
+    if (isInt) { s.in.fromColleagues++; c.calledBy++; if (ans) c.calledByAnswered++; }
+    else {
+      s.in.fromOutside++;
+      var v = r.via && s.in.outsideVia.hasOwnProperty(r.via) ? r.via : 'unsplit';
+      s.in.outsideVia[v]++;
+    }
+  });
+  var d = s.in.answered + s.in.missedFree;
+  s.in.answerRatePct = d ? Math.round(s.in.answered / d * 100) : null;
+  s.in.avgRingSec = ringN ? Math.round(ringSum / ringN) : null;
+  s.colleagues = Object.keys(col).map(function (k) { return col[k]; }).sort(function (a, b) {
+    return (b.called + b.calledBy) - (a.called + a.calledBy) || (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
+  });
+  s.busyWith = Object.keys(busy).map(function (k) { return { with: k, n: busy[k] }; }).sort(function (a, b) {
+    return b.n - a.n || (a.with < b.with ? -1 : (a.with > b.with ? 1 : 0));
+  });
+  return s;
 }
 
 /** Empty payload skeleton -- one shape whatever happened, so the client never branches on undefined. */
@@ -577,6 +650,7 @@ function emptyAgentDay_(scope, horizons) {
     inbound: [],
     outbound: [],
     direct: [],   // AC-6
+    directSummary: null,   // ADT-2
     missedRings: [],
   };
 }
@@ -702,7 +776,7 @@ function agentDayFetchCapture_(agentName, dateIso, opts) {
         // DID-3: `via` / `dial_in` read through to_jsonb so this list still
         // loads before cdr-import has added the two columns (they read null).
         + "SELECT call_id, direction, side, call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext, "
-        + "to_jsonb(d)->>'via' AS via, to_jsonb(d)->>'dial_in' AS dial_in "
+        + "to_jsonb(d)->>'via' AS via, to_jsonb(d)->>'dial_in' AS dial_in, to_jsonb(d)->>'busy_with' AS busy_with "
         + 'FROM direct_calls d WHERE call_date = ?::date AND agent_name = ? '
         + 'LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t), '
         + "'start', (SELECT MIN(call_date)::text FROM direct_calls))::text AS j");
@@ -890,6 +964,7 @@ function getAgentDay(req) {
   var dir = isAdmin ? agentDayDirect_(cap, scope.agentName, scope.date)
     : { rows: [], source: null, captureStart: null, truncated: false };
   out.direct = dir.rows;
+  out.directSummary = dir.summary || null;   // ADT-2 (admin-only, with the list)
   out.meta.directSource = dir.source;
   out.meta.directCaptureStart = dir.captureStart;
   if (dir.truncated) out.meta.truncated = true;

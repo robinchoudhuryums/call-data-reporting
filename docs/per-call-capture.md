@@ -936,6 +936,14 @@ in the response.
 > menu step in 120 days). The sheet fallback has no per-call rows, so the
 > split is absent there; dates before DID-1 read as "before the split".
 >
+> **Who a busy miss was with (ADT-2, Operator State #90).** Each occupied
+> interval the busy test reads carries a `dcBusyWithLabel_` label from the
+> agent's side of that call -- a colleague's roster name, "a queue call", "an
+> outside number" / "an outside caller", or "another call" -- so a
+> `missed_busy` row stores `busy_with` on `direct_calls`. Never a number. The
+> agent panel's Direct tab names it and summarizes the day
+> (`agentDayDirectSummary_`, AgentDay.gs).
+>
 > **The report's OUTBOUND is calls to COLLEAGUES (DO-1, owner 2026-11-05).**
 > `getDirectCallReport`'s `obTotal` / `obConnected` / `obTalkSec` / `obAttSec`
 > (kpis, prior, per agent, per dept) sum the `ob_int_*` columns only; calls to

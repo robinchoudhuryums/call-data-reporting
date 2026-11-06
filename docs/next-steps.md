@@ -36,7 +36,7 @@ batch, items are independent unless marked.
 | ∥ | **Owner round 2026-11-02** — Batches 1-4 + DEP-5 IMPLEMENTED (blocks 259-dep5, 259-batch1-esc-tr0, 259-batch2-dv1-tdc1, 259-batch3-ic, 259-batch4-tr1) | DEP-5 version-limit check · ESC-C1..C4 escalation comments kept in the thread (+ the #88 backfill) · TR-0 `diagnoseTransferRetries` (#89) · DV-1 four-view agent table · TDC-1 Team Direct Calls panel · AT-1 / IC-1..IC-4 explainers as ⓘ tooltips, the Direct lines chevron, the brief slide · TR-1 Admin ▾ → Transfer retries | dashboard + cdr-import | push both; #88 backfill; TR-0 census (may move the 8 s decline line, #89) |
 | ∥ | **Owner round 2026-11-02 (2)** — IMPLEMENTED (block 259-dlr3-ovd1) | CBX-1 CSR + Spanish out of the company callback figures (rows kept, marked) · DL-R3 Direct lines in the Agent Call Metrics row shape with a per-department work / after hours switch (`outboundDirect:v5`) · OVD-1 the direct-line answer rate on the Overview tiles, admin-only (`companyOverview:v30`) · OVD-2 no split bar on the tiles | dashboard | done (deploy the dashboard; walk S48, S58, S60) |
 | ∥ | **Owner rounds 2026-11-04/05** — AC batch + DCA-2 + AC-6 SHIPPED (PR #404); DCA-3/4/5 + TD-1/2 + CO-1/2 IMPLEMENTED (blocks 259-dca345, 259-td-co) | AC-1..6 Agent Call Metrics fixes + the Direct tab · DCA-2..5 direct credit follows the person 8x8 names (Parker / call park, Spanish to CSR) · TD-1/2 Transfer detail chips + other destinations · CO-1/2 coaching Save all, flat answer % gate, worklist + email tables | — | cdr-import push + `rebuildDirectCallHeldDates()`; dashboard push |
-| ∥ | **Owner round 2026-11-06** — DID-0 + SPEED-1..4 SHIPPED (PRs #407, #408); DID-1..3 IMPLEMENTED (block 259-did); ADT-1 IMPLEMENTED (block 259-adt1); **ADT-2 QUEUED (next)** | DID-0 dial-in diagnostic (#91) · SPEED faster deploy gate · DID-1..3 outside direct calls split their direct line / a main line (#92) · **ADT-1** the Direct tab's header row sits mid-table · **ADT-2** a summary block for the Direct tab like the Inbound / Outbound tabs' | cdr-import + dashboard | DID: push cdr-import, `rebuildDirectCallHeldDates()`, walk S70; ADT-2: next batch, dashboard + cdr-import (the busy-with field) — see "Owner round 2026-11-06 — the agent panel's Direct tab" below |
+| ∥ | **Owner round 2026-11-06** — DID-0 + SPEED-1..4 SHIPPED (PRs #407, #408); DID-1..3 IMPLEMENTED (block 259-did); ADT-1 IMPLEMENTED (block 259-adt1); ADT-2 IMPLEMENTED (block 259-adt2) | DID-0 dial-in diagnostic (#91) · SPEED faster deploy gate · DID-1..3 outside direct calls split their direct line / a main line (#92) · **ADT-1** the Direct tab's header row sits mid-table · **ADT-2** a summary block for the Direct tab like the Inbound / Outbound tabs' | cdr-import + dashboard | DID: push cdr-import, `rebuildDirectCallHeldDates()`, walk S70; ADT-1/2: push the dashboard + cdr-import, `rebuildDirectCallHeldDates()`, walk S56 — see "Owner round 2026-11-06 — the agent panel's Direct tab" below |
 | ∥ | **Broad scan 2026-10-12** — ALL 11 batches + 3b IMPLEMENTED (blocks 246-258, incl. the WS-1 follow-on, block 255) | 11 batches + 3b; full list in the next section | per batch | dashboard + cdr-report + cdr-import deploys (cdr-import re-consent for SEC-7); only the deferred owner rulings remain |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
@@ -647,7 +647,7 @@ deploy.
   the block sits in the Insights Callbacks fold AND the Overview's Callbacks
   by department (company view). S60 is the walk.
 
-## Owner round 2026-11-06 — the agent panel's Direct tab (ADT-1 done; ADT-2 QUEUED, next batch; dashboard + cdr-import)
+## Owner round 2026-11-06 — the agent panel's Direct tab (ADT-1 + ADT-2 IMPLEMENTED; dashboard + cdr-import)
 
 The owner's screenshot (2026-11-06): an agent's row expanded on My Department,
 Direct calls tab. Both items are admin-only (the Direct tab is). ADT-1 shipped
@@ -672,7 +672,7 @@ assertion -- scroll the Direct list, the header's top equals the list box's top
 (and the same for Inbound / Outbound); a source pin that the AC-1 rule cannot
 reach a nested table.
 
-### ADT-2 — a summary block on the Direct tab, like Inbound and Outbound's (M)
+### ADT-2 — a summary block on the Direct tab, like Inbound and Outbound's (M) — IMPLEMENTED 2026-11-06 (block 259-adt2)
 
 Everything below is already in the day's `direct_calls` rows the tab loads
 (direction, side, outcome incl. missed while free / while on another call,

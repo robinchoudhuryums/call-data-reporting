@@ -490,6 +490,27 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
   dump('direct-meta', { asked: { from: asked[0], to: LATEST }, gap: gap, dataThrough: mxShort });
   h.ctx.getDashboardNeonConn_ = realConn;
 }
+// ADT-2: the agent panel's Direct tab -- rows AND summary from the REAL
+// agentDayDirect_ / agentDayDirectSummary_ over direct_calls-shaped rows, so
+// the rendered block is checked against what the server builds. Four calls as
+// before (AC-6) plus four after-hours colleague calls, so six colleagues
+// exercise the summary's "top 5 / show all".
+{
+  const ad = loadGas({ files: ['Config.gs', 'Util.gs', 'OutboundReport.gs', 'AgentDay.gs'] });
+  const r = (o) => Object.assign({ ring_sec: null, talk_sec: 0, in_window: true, other_name: null, other_ext: null }, o);
+  const cap = { available: true, directStart: '2026-07-01', inbound: [], direct: [
+    r({ call_id: 'dc-1', call_start: '07:05:00', direction: 'out', side: 'int', other_name: 'Cal Colleague', other_ext: '204', outcome: 'connected', talk_sec: 95 }),
+    r({ call_id: 'dc-2', call_start: '08:40:00', direction: 'in', side: 'int', other_name: 'Bea Buddy', other_ext: '311', outcome: 'missed_busy', ring_sec: 18, busy_with: 'an outside caller' }),
+    r({ call_id: 'dc-3', call_start: '10:12:00', direction: 'in', side: 'ext', outcome: 'answered', ring_sec: 9, talk_sec: 210, via: 'straight', dial_in: '12145550101' }),
+    r({ call_id: 'dc-4', call_start: '15:40:00', direction: 'in', side: 'ext', outcome: 'missed_free', ring_sec: 30, in_window: false, via: 'menu', dial_in: '18005550100' }),
+    r({ call_id: 'dc-5', call_start: '15:45:00', direction: 'out', side: 'int', other_name: 'Dee Dial', outcome: 'connected', talk_sec: 40, in_window: false }),
+    r({ call_id: 'dc-6', call_start: '15:50:00', direction: 'in', side: 'int', other_name: 'Eli Ext', outcome: 'answered', ring_sec: 5, talk_sec: 60, in_window: false }),
+    r({ call_id: 'dc-7', call_start: '15:55:00', direction: 'out', side: 'int', other_name: 'Flo Phone', outcome: 'not_connected', in_window: false }),
+    r({ call_id: 'dc-8', call_start: '16:00:00', direction: 'in', side: 'int', other_name: 'Gus Line', outcome: 'missed_busy', ring_sec: 12, in_window: false, busy_with: 'Cal Colleague' }),
+  ] };
+  const d = JSON.parse(JSON.stringify(ad.call('agentDayDirect_', cap, 'Test Agent', '2026-08-19')));
+  dump('agentday-direct', { rows: d.rows, summary: d.summary });
+}
 const yStart = iso(new Date(today.getFullYear(), 0, 1));
 dump('summary-ytd', h.call('getDepartmentSummary', { department: 'CSR', from: yStart, to: LATEST }));
 // Sub-queue scopes. The fixture roster already nests Spanish under CSR (the

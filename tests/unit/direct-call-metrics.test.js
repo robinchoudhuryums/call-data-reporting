@@ -1115,14 +1115,52 @@ test('DID-1: the build stores via + dial_in on direct_calls (idempotent columns)
   const t = hw.call('dcEventTuple_', '2026-03-09', e, 'hash');
   assert.ok(/'menu'|\$nq\$menu\$nq\$/.test(t) && t.indexOf('8005550100') !== -1, t);
   const bare = hw.call('dcEventTuple_', '2026-03-09', Object.assign({}, e, { via: undefined, dialIn: undefined }), 'hash');
-  assert.match(bare, /NULL,NULL\)$/, 'a call with no reading stores NULLs');
+  assert.match(bare, /NULL,NULL,NULL\)$/, 'a call with no reading stores NULLs (via, dial_in; busy_with since ADT-2)');
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'directCallMetrics.js'), 'utf8');
   assert.match(src, /ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS via text/);
   assert.match(src, /ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS dial_in text/);
-  assert.match(src, /other_name, other_ext, other_hash, via, dial_in\) VALUES /);
+  assert.match(src, /other_name, other_ext, other_hash, via, dial_in, busy_with\) VALUES /);
   const b = src.indexOf('function buildDirectCallFromRaw_');
   const body = src.slice(b, src.indexOf('\nfunction ', b + 10));
   assert.match(body, /try \{\s*const ann = dcDialInAnnotate_\(dayRows, result\.events \|\| \[\], maps\);[\s\S]{0,300}\} catch \(eVia\)/,
     'the reading is wrapped, inside the build, on the same day rows');
   assert.ok(body.indexOf('dcDialInAnnotate_') < body.indexOf('writeDirectCallRowsToNeon_('), 'annotated before the write');
+});
+
+// ── ADT-2 (owner 2026-11-06): a ring missed while on another call names who that call was with ──
+test('ADT-2: a missed_busy ring carries who the blocking call was with -- a colleague by name, an outside party in words, never a number', function () {
+  const res = compute(grid([
+    // Anna dials an outside number, 10:00-10:05.
+    row({ cid: 'O1', start: D + '10:00:00', dir: 'Outgoing', talk: '0:05:00', callTime: '0:05:00', caller: '101', callee: '+15559990000', answered: true }),
+    // Bob rings Anna at 10:02 -- she is busy on O1.
+    row({ cid: 'I1', start: D + '10:02:00', dir: 'Internal', callTime: '0:00:20', caller: '102', callee: '101', missed: true }),
+    // Anna on a call with Bob, 11:00-11:05.
+    row({ cid: 'C1', start: D + '11:00:00', dir: 'Internal', talk: '0:05:00', callTime: '0:05:00', caller: '102', callee: '101', answered: true }),
+    // An outside caller rings Anna at 11:02 -- busy with Bob.
+    row({ cid: 'E1', start: D + '11:02:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551112222', callee: '101', calleeName: 'Anna', missed: true }),
+    // An outside caller rings Anna at 12:00 -- she is free.
+    row({ cid: 'E2', start: D + '12:00:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15553334444', callee: '101', calleeName: 'Anna', missed: true }),
+  ]), MAPS, { events: true });
+  const anna = J(res.events).filter((e) => e.agent === 'Anna' && e.direction === 'in');
+  const by = {};
+  anna.forEach((e) => { by[e.callId] = e; });
+  assert.deepEqual([by.I1.outcome, by.I1.busyWith], ['missed_busy', 'an outside number'], 'she had dialed out');
+  assert.deepEqual([by.E1.outcome, by.E1.busyWith], ['missed_busy', 'Bob'], 'a colleague by roster name');
+  assert.deepEqual([by.E2.outcome, by.E2.busyWith], ['missed_free', null], 'free: nothing named');
+  assert.ok(!JSON.stringify(anna.map((e) => e.busyWith)).match(/\d{7,}/), 'never a number');
+  // The counts are unchanged by the label.
+  const annaRow = res.rows.find((r) => r.agent === 'Anna');
+  assert.equal(annaRow.ib_int_missed_busy + annaRow.ib_ext_missed_busy, 2);
+});
+
+test('ADT-2: the busy-with label -- colleague, queue call, outside number / caller by side, else "another call"', function () {
+  const ex = new Set(['QueueBot']);
+  assert.equal(h.call('dcBusyWithLabel_', 'caller', { name: 'Bob' }, '102', false, ex), 'Bob');
+  assert.equal(h.call('dcBusyWithLabel_', 'callee', { name: 'QueueBot' }, '103', true, ex), 'a queue call', 'an excluded pseudo-agent is never named');
+  assert.equal(h.call('dcBusyWithLabel_', 'callee', null, '+15551112222', true, ex), 'a queue call');
+  assert.equal(h.call('dcBusyWithLabel_', 'caller', null, '+15551112222', false, ex), 'an outside number');
+  assert.equal(h.call('dcBusyWithLabel_', 'callee', null, '+15551112222', false, ex), 'an outside caller');
+  assert.equal(h.call('dcBusyWithLabel_', 'callee', null, '455', false, ex), 'another call');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'directCallMetrics.js'), 'utf8');
+  assert.match(src, /ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS busy_with text/);
 });
