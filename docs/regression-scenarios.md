@@ -729,3 +729,15 @@ S69 | Transfer retries: the admin list of transfers tried again in the same depa
     - As a MANAGER: no Transfer retries item in any menu; in the console `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getTransferRetries({ from: '2026-10-01', to: '2026-10-30' })` is refused (admin-only).
   Expected: as described; no phone number appears anywhere on the page; with Neon unreachable the modal says the list is unavailable.
   Fails if: a call whose second attempt went to the same person, or to someone in the sender's own department, is listed; a sub-queue (e.g. PAP) counts as a different department from its parent; the department filter keeps other departments; or a manager can open it.
+
+S70 | Direct calls split by how the outside caller arrived: their direct line vs a main line (DID-2, DID-3) | Subsystem: Department Dashboard + CDR Import
+  Steps:
+    - After the cdr-import push and `rebuildDirectCallHeldDates()` (Operator State #92), as the ADMIN open the Direct Calls report on the last 7 days for a department with direct lines (Sales or Power). Under "From colleagues / From outside callers" a line reads "Outside callers: N on their direct line (X% answered) · M from a main line (Y% answered)".
+    - In the agent table, each agent's Answered cell carries "Outside answered: A their line · B main line" under its int / ext split. Hailey Good or Austin Wheeling: almost all on their line; Stella (Sweta) Agarwal: all on a main line.
+    - Download CSV: four columns at the end -- on their direct line, from a main line, via a colleague, before the split -- and each agent's first two equal the line's figures.
+    - My Department → Team Direct Calls card: the same "Outside answered" line under the answered bar.
+    - Open an agent's row → Direct calls tab on a rebuilt date: an outside call reads "Outside caller · their direct line", "· a main line" or "· via a colleague"; a date before the split reads plain "Outside caller".
+    - Pick a window older than the held days: the line is absent or small, and its tooltip says how many calls came before the split was recorded.
+    - As a MANAGER: the report is not reachable (admin-only, as before).
+  Expected: as described; no caller number anywhere.
+  Fails if: a call that came in on a main-line number is counted as "their direct line" (check one of Nathan (Naman) Solanki's calls on 18667759594 once that number is in DIAL_IN_LABELS); the line's two figures exceed the outside calls the report counts; or the report goes blank or onto the sheet fallback when the split cannot be read.

@@ -272,5 +272,5 @@ test('DO-1: the Neon query sums the colleague (int) outbound columns only -- out
     && src.indexOf('ob_int_talk_sec+ob_ext_talk_sec') === -1, 'no outbound figure adds the outside calls back in');
   assert.match(src, /"sum\(ob_int_total\) AS ob_total, " \+/);
   assert.match(src, /"'obTotal', COALESCE\(sum\(ob_int_total\),0\), " \+/);
-  assert.match(src, /DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v6'/);
+  assert.match(src, /DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v7'/);   // DID-2 bumped it
 });

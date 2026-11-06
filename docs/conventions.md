@@ -578,7 +578,7 @@ complete set of prefixes.
 | `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
-| `DirectCallReport.gs` | `directCall:vN:` | `v6` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v7` |
 | `OutboundReport.gs` | `outboundReport:vN:` | `v10` |
 | `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v5` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v3` |

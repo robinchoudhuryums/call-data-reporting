@@ -219,7 +219,9 @@ const MODALS = [
         return { note: n && n.style.display !== 'none' ? n.textContent : '', to: document.getElementById('direct-call-to').value,
                  preset: document.getElementById('direct-call-preset').value, date: (document.getElementById('direct-call-results-date') || {}).textContent || '',
                  split: tr ? Array.from(tr.querySelectorAll('.dc-split')).map((x) => x.textContent) : [],
-                 ext: tr ? Array.from(tr.querySelectorAll('.dc-ext-line')).map((x) => x.textContent) : [],
+                 ext: tr ? Array.from(tr.querySelectorAll('.dc-ext-line:not(.dc-via-line)')).map((x) => x.textContent) : [],
+                 via: tr ? Array.from(tr.querySelectorAll('.dc-via-line')).map((x) => x.textContent) : [],
+                 viaSum: (document.querySelector('#direct-call-kpi-row .ob-split-sub .dc-via-line') || {}).textContent || '',
                  chips: document.querySelectorAll('#direct-call-kpi-row .pr-delta').length };
       }, P30.agents[0].agent);
       record('Direct: an end past the last imported day is corrected -- the note says so and the End date moves back',
@@ -236,6 +238,13 @@ const MODALS = [
           && (ox.total ? (c.ext.length === 2 && c.ext[0] === '+' + ox.total + ' to outside numbers' && c.ext[1] === '+' + ox.connected + ' outside')
                        : c.ext.length === 0),
         JSON.stringify({ split: c.split, ext: c.ext, obExt: ox }));
+      // DID-2 (owner 2026-11-06): outside callers split by how they reached the person.
+      const v0 = a0.via || {};
+      const vl = (v0.line || {}).answered, vm = (v0.main || {}).answered;
+      record('Direct (DID-2): each agent\'s outside answered calls show their direct line vs a main line, and the summary says how outside callers arrived with each rate',
+        c.via.length === 1 && c.via[0] === 'Outside answered: ' + vl + ' their line · ' + vm + ' main line'
+          && /^Outside callers: \d+ on their direct line \(\d+% answered\) · \d+ from a main line \(\d+% answered\)$/.test(c.viaSum),
+        JSON.stringify({ via: c.via, viaSum: c.viaSum, want: [vl, vm] }));
     } } },
 ];
 

@@ -623,7 +623,7 @@ tests/
                               digest-insights, dqe-silence-watch (episode
                               streaks + the OPS-1 confirmed-send rule),
                               direct-call-metrics / direct-call-backfill /
-                              direct-call-report (DID-0: the dial-in diagnostic -- straight / menu / colleague, the number verdicts; the direct-extension
+                              direct-call-report (DID-0: the dial-in diagnostic -- straight / menu / colleague, the number verdicts; DID-1: the capture stores via + dial_in, no reading without the Departments column; DID-2: the report's their-line / main-line split, folded per (agent, dept), a failed read never costs the report; the direct-extension
                               family: busy carve-out engine, the R39
                               block delete, resumable upsert -- R39 inline
                               literals decoded from the SQL, inline == bound
@@ -654,7 +654,7 @@ tests/
                               as its own neon-rename row, and the Neon-only
                               retry of a failed mirror),
                               orphan-roster-add (the New-hire flow),
-                              direct-calls-capture (AC-6: the per-call direct
+                              direct-calls-capture (DID-3: the Direct tab's via labels, main lines included, read through to_jsonb; AC-6: the per-call direct
                               list -- cdr-import emits one record per direct call
                               from the SAME events as the daily counts, colleagues
                               by roster name, an outside party only as a number the

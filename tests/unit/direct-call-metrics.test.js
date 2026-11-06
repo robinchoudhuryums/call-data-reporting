@@ -1068,3 +1068,61 @@ test('DID-0: the log names the verdicts, prints whole numbers, never a caller nu
   assert.match(text, /their line\(s\): \| 2145550101|their line\(s\): 2145550101/);
   assert.ok(!/\d\.0\b/.test(text), 'no ".0" counts: ' + text);
 });
+
+// ── DID-1 (owner 2026-11-06): the capture stores how each outside call arrived ──
+function didGrid_() {
+  const g = [];
+  g.push(wideRow({ cid: 'S1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+    caller: '+15551230001', callee: '101', calleeName: 'Anna', answered: true, dialIn: '+1 (214) 555-0101', depts: 'CSR' }));
+  g.push(wideRow({ cid: 'M1', start: D + '11:00:00', dir: 'Incoming', callTime: '0:00:10', caller: '+15552220001',
+    callee: '2000', calleeName: 'Main Menu', dialIn: '8005550100', depts: 'N/A' }));
+  g.push(wideRow({ cid: 'M1b', parent: 'M1', start: D + '11:00:12', dir: 'Incoming', callTime: '0:00:25', caller: '+15552220001',
+    callee: '101', calleeName: 'Anna', missed: true, dialIn: '8005550100', depts: 'CSR' }));
+  g.push(wideRow({ cid: 'T1', start: D + '12:00:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15553330000',
+    callee: '102', calleeName: 'Bob', missed: true, dialIn: '2145550102', depts: 'CSR' }));
+  g.push(wideRow({ cid: 'T1b', parent: 'T1', start: D + '12:00:25', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+    caller: '+15553330000', callee: '101', calleeName: 'Anna', answered: true, dialIn: '2145550102', depts: 'CSR' }));
+  return wideGrid(g);
+}
+
+test('DID-1: each outside inbound direct call is read as straight / menu / colleague with its dial-in digits -- the DID-0 rule', function () {
+  const gr = didGrid_();
+  const res = compute(gr, MAPS, { events: true });
+  const ann = J(h.call('dcDialInAnnotate_', gr, res.events, MAPS));
+  assert.deepEqual(ann['S1|Anna'], { dialIn: '12145550101', via: 'straight' }, 'digits only -- the company number as dialed');
+  assert.deepEqual(ann['M1|Anna'], { dialIn: '8005550100', via: 'menu' });
+  assert.deepEqual(ann['T1|Anna'], { dialIn: '2145550102', via: 'colleague' });
+  assert.deepEqual(ann['T1|Bob'], { dialIn: '2145550102', via: 'straight' });
+  // Internal calls and outbound calls carry nothing.
+  Object.keys(ann).forEach((k) => assert.ok(/^(S1|M1|T1)\|/.test(k), k));
+  // The diagnostic reads the same annotation (one rule, two callers).
+  const day = J(h.call('dcDialInForDay_', gr, MAPS));
+  assert.deepEqual(day.filter((x) => x.agent === 'Anna').map((x) => [x.callId, x.how]).sort(),
+    [['M1', 'menu'], ['S1', 'straight'], ['T1', 'colleague']]);
+});
+
+test('DID-1: a grid that stops short of the Departments column yields NO reading, never a guessed "menu"', function () {
+  const narrow = grid([row({ cid: 'S1', start: D + '10:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+    caller: '+15551230001', callee: '101', calleeName: 'Anna', answered: true })]);
+  const res = compute(narrow, MAPS, { events: true });
+  assert.deepEqual(J(h.call('dcDialInAnnotate_', narrow, res.events, MAPS)), {});
+});
+
+test('DID-1: the build stores via + dial_in on direct_calls (idempotent columns), guarded so a defect never costs the day', function () {
+  const e = { callId: 'S1', agent: 'Anna', dept: 'CSR', direction: 'in', side: 'ext', callStart: '10:00:00', ringSec: 5, talkSec: 60,
+    outcome: 'answered', inWindow: true, otherName: null, otherExt: null, via: 'menu', dialIn: '8005550100' };
+  const hw = loadGas({ project: 'cdr-import', files: ['neonWrite.js', 'directCallMetrics.js'] });
+  const t = hw.call('dcEventTuple_', '2026-03-09', e, 'hash');
+  assert.ok(/'menu'|\$nq\$menu\$nq\$/.test(t) && t.indexOf('8005550100') !== -1, t);
+  const bare = hw.call('dcEventTuple_', '2026-03-09', Object.assign({}, e, { via: undefined, dialIn: undefined }), 'hash');
+  assert.match(bare, /NULL,NULL\)$/, 'a call with no reading stores NULLs');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'directCallMetrics.js'), 'utf8');
+  assert.match(src, /ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS via text/);
+  assert.match(src, /ALTER TABLE direct_calls ADD COLUMN IF NOT EXISTS dial_in text/);
+  assert.match(src, /other_name, other_ext, other_hash, via, dial_in\) VALUES /);
+  const b = src.indexOf('function buildDirectCallFromRaw_');
+  const body = src.slice(b, src.indexOf('\nfunction ', b + 10));
+  assert.match(body, /try \{\s*const ann = dcDialInAnnotate_\(dayRows, result\.events \|\| \[\], maps\);[\s\S]{0,300}\} catch \(eVia\)/,
+    'the reading is wrapped, inside the build, on the same day rows');
+  assert.ok(body.indexOf('dcDialInAnnotate_') < body.indexOf('writeDirectCallRowsToNeon_('), 'annotated before the write');
+});

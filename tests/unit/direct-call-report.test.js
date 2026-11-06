@@ -266,3 +266,57 @@ test('D1: dcMissingWorkdays_ lists at most 60 but counts all', function () {
   assert.equal(r.dates.length, 60);
   assert.ok(r.count > 250);
 });
+
+// ── DID-2 (owner 2026-11-06): outside calls split by how they reached the person ──
+test('DID-2: the via rows fold onto the totals and each agent; unreadable leaves every split null', function () {
+  const J = (x) => JSON.parse(JSON.stringify(x));
+  const payload = { meta: {}, kpis: {}, agents: [{ agent: 'Anna', dept: 'CSR' }, { agent: 'Bob', dept: 'CSR' }] };
+  h.call('directCallApplyVia_', payload, [
+    { agent: 'Anna', dept: 'CSR', cls: 'line', outcome: 'answered', n: 5 },
+    { agent: 'Anna', dept: 'CSR', cls: 'line', outcome: 'missed_free', n: 1 },
+    { agent: 'Anna', dept: 'CSR', cls: 'main', outcome: 'missed_busy', n: 2 },
+    { agent: 'Anna', dept: 'Sales', cls: 'main', outcome: 'answered', n: 9 },   // another dept's row: not Anna/CSR's
+    { agent: 'Bob', dept: 'CSR', cls: 'unsplit', outcome: 'answered', n: 3 },
+    { agent: 'Bob', dept: 'CSR', cls: 'line', outcome: 'mystery', n: 7 },        // an unknown outcome is ignored
+  ]);
+  const p = J(payload);
+  assert.equal(p.meta.viaAvailable, true);
+  assert.deepEqual(p.kpis.via.line, { answered: 5, missedFree: 1, missedBusy: 0 });
+  assert.deepEqual(p.kpis.via.main, { answered: 9, missedFree: 0, missedBusy: 2 });
+  assert.deepEqual(p.agents[0].via.main, { answered: 0, missedFree: 0, missedBusy: 2 }, 'per (agent, dept), never merged across depts');
+  assert.deepEqual(p.agents[1].via.unsplit, { answered: 3, missedFree: 0, missedBusy: 0 });
+  const off = { meta: {}, kpis: {}, agents: [{ agent: 'Anna', dept: 'CSR' }] };
+  h.call('directCallApplyVia_', off, null);
+  assert.deepEqual(J(off), { meta: { viaAvailable: false }, kpis: { via: null }, agents: [{ agent: 'Anna', dept: 'CSR', via: null }] });
+});
+
+test('DID-2: the report reads the split from direct_calls -- work window, outside, inbound -- and a failed read never costs the report', function () {
+  // A fake whose via read returns rows.
+  const viaRows = [{ agent: 'Anna', dept: 'CSR', cls: 'line', outcome: 'answered', n: 4 }];
+  const conn = fakeConn(PAYLOAD);
+  const base = conn.createStatement;
+  conn.createStatement = function () {
+    const st = base.call(conn);
+    const q = st.executeQuery;
+    st.executeQuery = function (sql) {
+      if (sql.indexOf('WITH m AS') === 0) { conn.sql.push(sql); return rsFor(JSON.stringify(viaRows)); }
+      return q(sql);
+    };
+    return st;
+  };
+  installAdmin(function () { return conn; });
+  const res = JSON.parse(JSON.stringify(h.call('getDirectCallReport', REQ)));
+  assert.equal(res.meta.viaAvailable, true);
+  assert.equal(res.agents.find((a) => a.agent === 'Anna').via.line.answered, 4);
+  const sql = conn.sql.find((x) => x.indexOf('WITH m AS') === 0);
+  assert.match(sql, /c\.direction = 'in' AND c\.side = 'ext' AND c\.in_window/);
+  assert.match(sql, /WHEN c\.via = 'menu' THEN 'main'/);
+  assert.match(sql, /c\.dial_in = ANY\(ARRAY\[\]::text\[\]\) OR c\.dial_in IN \(SELECT n FROM m\)/, 'labelled main lines + every number seen with a menu');
+  // The default fake throws on the via SQL: the report still comes back from Neon, split marked unavailable.
+  installAdmin(function () { return fakeConn(PAYLOAD); });
+  const res2 = JSON.parse(JSON.stringify(h.call('getDirectCallReport', REQ)));
+  assert.equal(res2.meta.available, true);
+  assert.ok(!res2.meta.fallbackSource, 'not knocked onto the sheet fallback');
+  assert.equal(res2.meta.viaAvailable, false);
+  assert.equal(res2.kpis.via, null);
+});

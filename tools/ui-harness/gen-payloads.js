@@ -448,11 +448,26 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
   const gap = asked[10];                               // one workday with no rows
   const mxShort = days[days.length - 2];               // the data stops a workday early
   const presentShort = days.filter(function (d) { return d <= mxShort && d !== gap; });
+  // DID-2: the via read (direct_calls) answers with per-(agent, dept) rows:
+  // each agent's outside answered calls split between their direct line and a
+  // main line, the outside misses on the main line, plus a few unsplit calls.
+  const viaRowsFor = function (as) {
+    const out = [];
+    as.forEach(function (a, i) {
+      const line = Math.ceil(a.ib_ext_answered * 0.6), main = a.ib_ext_answered - line;
+      out.push({ agent: a.agent, dept: a.dept, cls: 'line', outcome: 'answered', n: line });
+      out.push({ agent: a.agent, dept: a.dept, cls: 'main', outcome: 'answered', n: main });
+      out.push({ agent: a.agent, dept: a.dept, cls: 'main', outcome: 'missed_free', n: a.ib_ext_missed_free });
+      if (i === 0) out.push({ agent: a.agent, dept: a.dept, cls: 'unsplit', outcome: 'answered', n: 2 });
+    });
+    return out;
+  };
   const connFor = function (cov, body) {
     return function () {
       return { createStatement: function () {
         return { executeQuery: function (sql) {
-          const j = String(sql).indexOf("'mx'") !== -1 ? JSON.stringify(cov) : JSON.stringify(body);
+          const j = String(sql).indexOf("'mx'") !== -1 ? JSON.stringify(cov)
+            : (String(sql).indexOf('WITH m AS') === 0 ? JSON.stringify(viaRowsFor(body.agents || [])) : JSON.stringify(body));
           let n = 0;
           return { next: function () { return n++ === 0; }, getString: function () { return j; }, close: function () {} };
         }, close: function () {} };

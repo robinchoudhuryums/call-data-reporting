@@ -515,14 +515,31 @@ function agentDayReconcile_(counts, day, tier) {
  */
 function agentDayDirect_(cap, agentName, dateIso) {
   var start = cap && cap.directStart ? String(cap.directStart) : null;
+  // DID-3 (owner 2026-11-06): an outside caller is labelled by how they
+  // reached the agent -- their direct line, or a main line (the caller typed
+  // the extension at the menu, or the line routed there) -- the DID-2 rule.
+  var main = {};
+  (cap && cap.mainLines || []).forEach(function (n) { main[String(n)] = true; });
+  if (typeof inboundDialInLabels_ === 'function') {
+    try { Object.keys(inboundDialInLabels_()).forEach(function (n) { main[String(n)] = true; }); } catch (eL) {}
+  }
+  var viaClass = function (r) {
+    if (r.side !== 'ext' || r.direction !== 'in' || !r.via) return null;
+    if (r.via === 'colleague') return 'colleague';
+    if (r.via === 'menu' || (r.dial_in && main[String(r.dial_in)])) return 'main';
+    return 'line';
+  };
+  var VIA_LABEL = { line: 'their direct line', main: 'a main line', colleague: 'via a colleague' };
   var label = function (r) {
     if (r.side === 'int') return r.other_name || (r.other_ext ? 'Extension ' + r.other_ext : 'A colleague');
-    return r.direction === 'in' ? 'Outside caller' : 'Outside number';
+    if (r.direction !== 'in') return 'Outside number';
+    var v = viaClass(r);
+    return v ? 'Outside caller · ' + VIA_LABEL[v] : 'Outside caller';
   };
   if (cap && cap.direct && (cap.direct.length || (start && dateIso >= start))) {
     var rows = cap.direct.map(function (r) {
       return { callId: r.call_id || null, callStart: r.call_start || null, direction: r.direction, side: r.side || null,
-        other: label(r), outcome: r.outcome || null,
+        other: label(r), via: viaClass(r), outcome: r.outcome || null,
         ringSec: r.ring_sec == null ? null : Number(r.ring_sec), talkSec: Number(r.talk_sec) || 0,
         inWindow: r.in_window !== false };
     });
@@ -682,8 +699,11 @@ function agentDayFetchCapture_(agentName, dateIso, opts) {
     // selected.
     try {
       var dq = conn.prepareStatement("SELECT json_build_object('rows', (SELECT COALESCE(json_agg(t ORDER BY t.call_start), '[]') FROM ("
-        + 'SELECT call_id, direction, side, call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext '
-        + 'FROM direct_calls WHERE call_date = ?::date AND agent_name = ? '
+        // DID-3: `via` / `dial_in` read through to_jsonb so this list still
+        // loads before cdr-import has added the two columns (they read null).
+        + "SELECT call_id, direction, side, call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext, "
+        + "to_jsonb(d)->>'via' AS via, to_jsonb(d)->>'dial_in' AS dial_in "
+        + 'FROM direct_calls d WHERE call_date = ?::date AND agent_name = ? '
         + 'LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t), '
         + "'start', (SELECT MIN(call_date)::text FROM direct_calls))::text AS j");
       dq.setString(1, dateIso);
@@ -695,6 +715,24 @@ function agentDayFetchCapture_(agentName, dateIso, opts) {
       var dobj = JSON.parse(dj || '{}');
       out.direct = dobj.rows || [];
       out.directStart = dobj.start || null;
+      // DID-3: the main lines (DIAL_IN_LABELS + every number seen with a menu
+      // step lately -- the Direct report's DID-2 rule) for the via labels.
+      // Read only when a row carries `via`, so the column exists.
+      out.mainLines = null;
+      if (out.direct.some(function (r) { return r && r.via; })) {
+        try {
+          var mq = conn.prepareStatement("SELECT COALESCE(json_agg(DISTINCT dial_in), '[]')::text AS j FROM direct_calls "
+            + "WHERE via = 'menu' AND dial_in IS NOT NULL AND call_date >= ?::date - " + (typeof DIRECT_VIA_MAIN_LOOKBACK_DAYS !== 'undefined' ? DIRECT_VIA_MAIN_LOOKBACK_DAYS : 120));
+          mq.setString(1, dateIso);
+          var mrs = mq.executeQuery();
+          var mj = mrs.next() ? mrs.getString('j') : null;
+          mrs.close(); mq.close();
+          if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(mj ? mj.length : 0, 'agentDay');
+          out.mainLines = JSON.parse(mj || '[]');
+        } catch (eM) {
+          Logger.log('agentDayFetchCapture_ main-line read skipped (DID-3): ' + (eM && eM.message ? eM.message : eM));
+        }
+      }
     } catch (eD) {
       Logger.log('agentDayFetchCapture_ direct read skipped: ' + (eD && eD.message ? eD.message : eD));
       out.direct = null;

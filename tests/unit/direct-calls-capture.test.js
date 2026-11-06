@@ -121,3 +121,28 @@ test('AC-6: admin-only, the hash is never selected, and the client tab shows onl
   assert.match(cl, /const showDirect = !!meta\.directSource;/);
   assert.match(cl, /\(showDirect \? tabBtn\('direct', 'Direct calls', direct\.length\) : ''\)/);
 });
+
+// ── DID-3 (owner 2026-11-06): the Direct tab names how an outside caller reached the agent ──
+test('DID-3: outside callers are labelled their direct line / a main line / via a colleague; older rows stay plain', function () {
+  const cap = { available: true, directStart: '2026-11-01', mainLines: ['8005550100'], inbound: [], direct: [
+    { call_id: 'A', direction: 'in', side: 'ext', call_start: '09:00:00', talk_sec: 60, outcome: 'answered', in_window: true, via: 'straight', dial_in: '2145550101' },
+    { call_id: 'B', direction: 'in', side: 'ext', call_start: '09:10:00', talk_sec: 0, outcome: 'missed_free', in_window: true, via: 'menu', dial_in: '8005550100' },
+    // Straight onto a MAIN line (the line's own routing) is still a main line.
+    { call_id: 'C', direction: 'in', side: 'ext', call_start: '09:20:00', talk_sec: 30, outcome: 'answered', in_window: true, via: 'straight', dial_in: '8005550100' },
+    { call_id: 'D', direction: 'in', side: 'ext', call_start: '09:30:00', talk_sec: 30, outcome: 'answered', in_window: true, via: 'colleague', dial_in: '2145550102' },
+    { call_id: 'E', direction: 'in', side: 'ext', call_start: '09:40:00', talk_sec: 30, outcome: 'answered', in_window: true },
+    { call_id: 'F', direction: 'out', side: 'ext', call_start: '09:50:00', talk_sec: 30, outcome: 'connected', in_window: true },
+  ] };
+  const d = J(dash.call('agentDayDirect_', cap, 'Anna', '2026-11-03'));
+  assert.deepEqual(d.rows.map((r) => [r.callId, r.other, r.via]), [
+    ['A', 'Outside caller · their direct line', 'line'],
+    ['B', 'Outside caller · a main line', 'main'],
+    ['C', 'Outside caller · a main line', 'main'],
+    ['D', 'Outside caller · via a colleague', 'colleague'],
+    ['E', 'Outside caller', null],
+    ['F', 'Outside number', null],
+  ]);
+  const gs = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'AgentDay.gs'), 'utf8');
+  assert.match(gs, /to_jsonb\(d\)->>'via' AS via, to_jsonb\(d\)->>'dial_in' AS dial_in/,
+    'read through to_jsonb, so the list still loads before cdr-import adds the columns');
+});

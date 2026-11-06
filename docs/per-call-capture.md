@@ -923,12 +923,18 @@ in the response.
 
 ### Direct-extension call metrics
 
-> **Own number or main line? (DID-0, Operator State #91.)** The direct
-> metrics do not record the dial-in number, so the Direct report cannot yet
-> split outside callers by how they reached the person.
-> `diagnoseDirectDialIn` (read-only) measures it from the held `Call_Legs_*`
-> tabs -- the call's first legs (straight / menu / colleague) and col Q's
-> dial-in number -- before any report change.
+> **Own number or main line? (DID-0..3, Operator State #91 / #92.)**
+> `diagnoseDirectDialIn` (read-only) measured it: about half the outside calls
+> credited to a person dialed their own number, the rest came through a main
+> line's menu (the caller typed the extension). Since DID-1 the capture stores
+> each outside inbound direct call's `via` (straight / menu / colleague) and
+> `dial_in` (the company number) on `direct_calls` -- one shared rule,
+> `dcDialInAnnotate_`, for the build and the diagnostic. The Direct Calls
+> report (DID-2), the Team Direct Calls card and the agent panel's Direct tab
+> (DID-3) call a call "their direct line" only when it arrived straight on a
+> number that is not a main line (`DIAL_IN_LABELS` + every number seen with a
+> menu step in 120 days). The sheet fallback has no per-call rows, so the
+> split is absent there; dates before DID-1 read as "before the split".
 >
 > **The report's OUTBOUND is calls to COLLEAGUES (DO-1, owner 2026-11-05).**
 > `getDirectCallReport`'s `obTotal` / `obConnected` / `obTalkSec` / `obAttSec`
@@ -937,7 +943,7 @@ in the response.
 > attSec}` (`directCallObExt_`) and render as a small "+N to outside numbers"
 > line -- the Outbound view owns them. Storage is unchanged (both halves are
 > still captured), the missed-while-busy rule still counts every call, and the
-> direct-LINE figures (Overview, Insights) are inbound-only. `directCall:v6`.
+> direct-LINE figures (Overview, Insights) are inbound-only. `directCall:v7`.
 
 > **An extension AND the name on the leg (DCA-1, Operator State #83).**
 > Former employees stay on `DO NOT EDIT!` with their old extension, and 8x8
@@ -1020,7 +1026,7 @@ date's sheet rows as contiguous blocks rather than one `deleteRow` per row
 `direct-call-metrics.test.js` the block delete). Dashboard read
 surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
 (ONE json_build_object round-trip; answer rate EXCLUDES the busy
-carve-out; cached `directCall:v6` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
+carve-out; cached `directCall:v7` (D1: coverage-aware); R11-M `kpisPrior`/`deptsPrior` feed
 the client delta chips). **D1 (2026-10-21): the report covers only days that
 exist** -- a coverage read first (`max(call_date)` + the dates with rows), the
 window CLAMPED to the last date with data (`meta.to`, the asked end in
