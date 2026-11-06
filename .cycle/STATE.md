@@ -13,6 +13,8 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-06 (4) -- DID-1..3 IMPLEMENTED (block 259-did; owner: build the direct-line split, admin-only).** cdr-import stores `via` + `dial_in` on `direct_calls`; the Direct Calls report (`directCall:v7`), Team Direct Calls card and the agent panel's Direct tab split outside calls into their direct line / a main line. **Owner-side:** push cdr-import -> `rebuildDirectCallHeldDates()`; check `DIAL_IN_LABELS` lists the five main lines (#92); push the dashboard; walk S70. **Queued next (planned, not built):** ADT-1 the Direct tab header mid-table (AC-1 sticky rule reaches nested tables), ADT-2 a Direct tab summary block -- docs/next-steps.md.
+  **Where I left off:** committed + pushed on the branch; no PR (not asked).
 - **2026-11-06 (3) -- SHIPPED: PR #408 merged (a125e6f) on CI green** -- SPEED-1..4 (parallel ci:ui drivers, smoke role shards, sibling deploys skip ci:ui, once-per-commit `.last-gated`). CI's ui-harness job ran 4 min 26 s (was ~14.5). No owner action; the next `scripts/deploy.sh` uses it. Branch restarted from main.
 - **2026-11-06 (2) -- SPEED-1..4 IMPLEMENTED (block 259-speed-broad-implement; owner: faster deploys without checking less).** ci:ui drivers run 4 at a time (UI_HARNESS_JOBS), drive-smoke as admin + manager shards, sibling deploys skip ci:ui (dashboard-only harness, pinned), and a gate passed at a clean commit is not re-run for it (.last-gated, REGATE=1). Measured ci:ui 877 s -> 240 s. Tooling only.
   **Where I left off:** committed + pushed; PR to merge on CI green.
