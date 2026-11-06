@@ -27,6 +27,10 @@
 #                    re-roll a deployment after an editor-side change.
 #   STRICT_DEPLOY=1  refuse a deploy from a dirty tree or a branch other than
 #                    main (both only WARN by default; DEP-3).
+#   REGATE=1         re-run the CI gates even when they already passed at
+#                    this clean commit (SPEED-4; see `.last-gated` below).
+#   UI_HARNESS_JOBS  how many rendered-UI drivers run at once (default 4;
+#                    1 = one after another; SPEED-1, tools/ui-harness/ci.mjs).
 #   VERSION_WARN_AT  warn when the project holds this many versions (default
 #                    180); Apps Script's cap is 200 and a deploy at it is
 #                    refused before anything runs (DEP-5).
@@ -183,25 +187,77 @@ fi
 # exported, so nothing downstream picks it up by accident (the build stamp
 # is `date -u` and stays UTC either way). CI_TZ overrides it.
 CI_TZ="${CI_TZ:-America/Chicago}"
+
+# SPEED-4 (owner 2026-11-06): run the gates ONCE PER COMMIT. Deploying two or
+# three projects from the same commit re-ran identical checks on identical code
+# each time. A gate that passed is recorded in the gitignored `.last-gated`
+# (repo root) as "<sha> <gate> tz=<CI_TZ> node=<ver> eslint=<ver> playwright=<ver>",
+# and a later deploy SKIPS that gate only when the WHOLE repo is clean (git
+# status --porcelain, untracked files included -- node --test picks up a new
+# untracked test) at that same commit, in the same zone, on the same tool
+# versions. Any uncommitted change anywhere, a new commit, or REGATE=1 runs
+# every gate in full. A gate is recorded only AFTER it passes (set -e exits
+# before the record on a failure), and DEPLOY_SKIP_CI=1 records nothing.
+# GATE-MARK-BEGIN
+GATE_FILE="$ROOT_ABS/.last-gated"
+GATE_SHA=""
+if [ -n "$(git -C "$ROOT_ABS" rev-parse HEAD 2>/dev/null)" ] && [ -z "$(git -C "$ROOT_ABS" status --porcelain 2>/dev/null)" ]; then
+  GATE_SHA="$(git -C "$ROOT_ABS" rev-parse HEAD)"
+fi
+GATE_TOOLS="$(node -e 'const v=(f)=>{try{return require(f).version}catch(e){return "none"}};const[r]=process.argv.slice(1);process.stdout.write("node="+process.version+" eslint="+v(r+"/node_modules/eslint/package.json")+" playwright="+v(r+"/tools/ui-harness/node_modules/playwright/package.json"))' "$ROOT_ABS" 2>/dev/null || echo 'node=?')"
+gate_key_() { printf '%s %s tz=%s %s' "$GATE_SHA" "$1" "$CI_TZ" "$GATE_TOOLS"; }
+gate_done_() {
+  [ -n "$GATE_SHA" ] && [ "${REGATE:-}" != "1" ] && [ -f "$GATE_FILE" ] && grep -qxF "$(gate_key_ "$1")" "$GATE_FILE"
+}
+gate_record_() {
+  [ -n "$GATE_SHA" ] || return 0
+  # Keep only THIS commit's lines -- a new commit starts the file over.
+  { grep -F "$GATE_SHA " "$GATE_FILE" 2>/dev/null | grep -vxF "$(gate_key_ "$1")" || true
+    gate_key_ "$1"; printf '\n'; } > "$GATE_FILE.tmp" 2>/dev/null \
+    && mv -f "$GATE_FILE.tmp" "$GATE_FILE" 2>/dev/null || rm -f "$GATE_FILE.tmp" 2>/dev/null || true
+}
+# GATE-MARK-END
+
 if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
-  echo "==> npm run ci   (tests + INV-16 guard + module-deps --check; TZ=$CI_TZ, matching ci.yml; DEPLOY_SKIP_CI=1 to skip)"
-  TZ="$CI_TZ" npm run ci
-  # T-5 (2026-09-18): the LIVE push runs the SAME THREE jobs ci.yml runs, and
-  # a missing tool FAILS the gate instead of skipping it. lint:gas and ci:ui
-  # both exit 0 when eslint / playwright are absent so they are safe to run
-  # anywhere -- EXCEPT under CI=true, where absence FAILS (the F-9 rule). A
-  # developer box without either tool could therefore push live through this
-  # "gated" path while the PR's blocking `lint` and `ui-harness` jobs would
-  # have gone red. CI=1 here makes the gate mean what CI means; the one
-  # escape hatch stays DEPLOY_SKIP_CI=1 (emergencies only). Install the tools
-  # with `npm ci` and `cd tools/ui-harness && npm i playwright@1.62.1`.
-  echo "==> npm run lint:gas   (undeclared-identifier net, H3; eslint REQUIRED -- CI=1)"
-  CI=1 TZ="$CI_TZ" npm run lint:gas
+  if gate_done_ unit; then
+    echo "==> npm run ci + lint:gas already PASSED at ${GATE_SHA:0:9} (clean tree, same zone + tools) -- skipped (REGATE=1 re-runs)"
+  else
+    echo "==> npm run ci   (tests + INV-16 guard + module-deps --check; TZ=$CI_TZ, matching ci.yml; DEPLOY_SKIP_CI=1 to skip)"
+    TZ="$CI_TZ" npm run ci
+    # T-5 (2026-09-18): the LIVE push runs the SAME THREE jobs ci.yml runs, and
+    # a missing tool FAILS the gate instead of skipping it. lint:gas and ci:ui
+    # both exit 0 when eslint / playwright are absent so they are safe to run
+    # anywhere -- EXCEPT under CI=true, where absence FAILS (the F-9 rule). A
+    # developer box without either tool could therefore push live through this
+    # "gated" path while the PR's blocking `lint` and `ui-harness` jobs would
+    # have gone red. CI=1 here makes the gate mean what CI means; the one
+    # escape hatch stays DEPLOY_SKIP_CI=1 (emergencies only). Install the tools
+    # with `npm ci` and `cd tools/ui-harness && npm i playwright@1.62.1`.
+    echo "==> npm run lint:gas   (undeclared-identifier net, H3; eslint REQUIRED -- CI=1)"
+    CI=1 TZ="$CI_TZ" npm run lint:gas
+    gate_record_ unit
+  fi
   # F-10: the rendered-UI gate -- the only automated coverage of ~20K lines
   # of script.html; both production bugs it has caught shipped through paths
   # `node --test` structurally cannot see.
-  echo "==> npm run ci:ui   (rendered-UI gate, F-10; playwright REQUIRED -- CI=1)"
-  CI=1 TZ="$CI_TZ" npm run ci:ui
+  # SPEED-3 (owner 2026-11-06): it drives ONLY the dashboard -- every server
+  # file tools/ui-harness loads is a dashboard file (pinned in
+  # deploy-tooling.test.js) -- so a cdr-import / cdr-report deploy, which ships
+  # none of that code, skips it. Their code is covered by the two gates above.
+  case "$DIR" in
+    apps-script/cdr-import|apps-script/cdr-report)
+      echo "==> npm run ci:ui   SKIPPED for $DIR: the rendered-UI gate drives only dashboard code, none of which this deploy ships"
+      ;;
+    *)
+      if gate_done_ ui; then
+        echo "==> npm run ci:ui already PASSED at ${GATE_SHA:0:9} (clean tree, same zone + tools) -- skipped (REGATE=1 re-runs)"
+      else
+        echo "==> npm run ci:ui   (rendered-UI gate, F-10; playwright REQUIRED -- CI=1)"
+        CI=1 TZ="$CI_TZ" npm run ci:ui
+        gate_record_ ui
+      fi
+      ;;
+  esac
 fi
 
 # Batch 4 (Operator State #29): `clasp push -f` never DELETES remote files

@@ -8,6 +8,10 @@
 # script last fully deployed from this checkout (the redundant-run guard).
 .deployment-id
 .last-deployed
+# SPEED-4: .last-gated records the CI gates that already passed at a clean
+# commit, so deploying a second project from it skips re-running them.
+.last-gated
+.last-gated.tmp
 
 # Node tooling (clasp install footprint, etc.)
 node_modules/

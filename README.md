@@ -177,6 +177,17 @@ MISSING tool fail the gate rather than skip it, so a fresh clone needs
 before it can deploy. `DEPLOY_SKIP_CI=1 scripts/deploy.sh …` skips all three,
 for emergencies only.
 
+Three things keep those gates quick without checking less (SPEED-1..4):
+- the rendered-UI drivers run four at a time (`UI_HARNESS_JOBS`, default 4;
+  `1` = one after another) -- about 4 minutes instead of 15;
+- a `cdr-import` / `cdr-report` deploy skips `ci:ui`, which drives only
+  dashboard code -- none of what those deploys ship (a test fails if the
+  harness ever loads a sibling's code);
+- a gate that passed at a CLEAN commit is recorded in the gitignored
+  `.last-gated`, so deploying a second project from the same commit skips it.
+  Any uncommitted or untracked file, a new commit, a different `CI_TZ` or tool
+  version runs it again; `REGATE=1` forces a re-run.
+
 The helper accepts the project dir in any spelling (`.`, `./`, an absolute
 path) and normalizes it, so the right build stamp is always written (DEP-2).
 It WARNS when the tree is dirty (uncommitted or untracked files -- `clasp push`
