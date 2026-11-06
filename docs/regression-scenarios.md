@@ -516,6 +516,8 @@ S56 | Inline agent panel on My Department (Batch B) | Subsystem: Department Dash
     - Pick an older day: the view below changes to it. Switch the tabs (Inbound calls / Outbound calls; Missed rings only on a day past the journey horizon) -- each shows its own list.
     - Sort the table by another column: the panel stays open under the same agent. Open a second agent: the first closes (one panel at a time). Collapse the sub-queue group holding the open agent: the panel closes.
     - (Step 2 1b) Inbound calls show a From column: a colleague by name and dept for an internal call, "Outside caller · <line name>" for an outside one (as ADMIN, the insurer's name when the number is a known insurer line). Outbound calls show a To column (a colleague, or "Outside number" / the insurer for an admin) and, under it, "↩ callback to HH:MM inbound (answered|abandoned...)" when that number called in earlier the same day. Check one callback against Caller Lookup. No phone number appears anywhere.
+    - (ADT-2, after the cdr-import push and `rebuildDirectCallHeldDates()`) As the ADMIN, the Direct calls tab shows a summary above its list: calls to their line (answered / missed while free / while on another call, % answered when free, from colleagues vs outside callers, and the outside ones by their direct line / a main line), calls from their line (to colleagues / to outside numbers), a Colleagues table (top 5, "Show all N"), who the busy calls were with, talk and work vs after hours. Its two totals equal the "Called them" / "Called" rows below. A missed call while on another call reads "Missed (on a call with <colleague>)" / "(on a call with an outside caller)" / "(on a queue call)" -- never a number; a date not rebuilt reads "Missed (on another call)".
+    - (ADT-1) On a wide screen, each tab's list (Inbound, Outbound, Direct) shows its header row (Time / From or Way / ...) at the TOP of the list, above the first call, and it stays there as the list scrolls -- never partway down the rows.
     - Click "Individual report ↗": the Individual Report opens for that agent over the same window.
     - Export CSV / Copy for spreadsheet with the panel open: the output is the table only, unchanged.
     - Set the window to ONE day and open a row: no strip, the day view directly.
@@ -729,3 +731,15 @@ S69 | Transfer retries: the admin list of transfers tried again in the same depa
     - As a MANAGER: no Transfer retries item in any menu; in the console `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).getTransferRetries({ from: '2026-10-01', to: '2026-10-30' })` is refused (admin-only).
   Expected: as described; no phone number appears anywhere on the page; with Neon unreachable the modal says the list is unavailable.
   Fails if: a call whose second attempt went to the same person, or to someone in the sender's own department, is listed; a sub-queue (e.g. PAP) counts as a different department from its parent; the department filter keeps other departments; or a manager can open it.
+
+S70 | Direct calls split by how the outside caller arrived: their direct line vs a main line (DID-2, DID-3) | Subsystem: Department Dashboard + CDR Import
+  Steps:
+    - After the cdr-import push and `rebuildDirectCallHeldDates()` (Operator State #92), as the ADMIN open the Direct Calls report on the last 7 days for a department with direct lines (Sales or Power). Under "From colleagues / From outside callers" a line reads "Outside callers: N on their direct line (X% answered) · M from a main line (Y% answered)".
+    - In the agent table, each agent's Answered cell carries "Outside answered: A their line · B main line" under its int / ext split. Hailey Good or Austin Wheeling: almost all on their line; Stella (Sweta) Agarwal: all on a main line.
+    - Download CSV: four columns at the end -- on their direct line, from a main line, via a colleague, before the split -- and each agent's first two equal the line's figures.
+    - My Department → Team Direct Calls card: the same "Outside answered" line under the answered bar.
+    - Open an agent's row → Direct calls tab on a rebuilt date: an outside call reads "Outside caller · their direct line", "· a main line" or "· via a colleague"; a date before the split reads plain "Outside caller".
+    - Pick a window older than the held days: the line is absent or small, and its tooltip says how many calls came before the split was recorded.
+    - As a MANAGER: the report is not reachable (admin-only, as before).
+  Expected: as described; no caller number anywhere.
+  Fails if: a call that came in on a main-line number is counted as "their direct line" (check one of Nathan (Naman) Solanki's calls on 18667759594 once that number is in DIAL_IN_LABELS); the line's two figures exceed the outside calls the report counts; or the report goes blank or onto the sheet fallback when the split cannot be read.

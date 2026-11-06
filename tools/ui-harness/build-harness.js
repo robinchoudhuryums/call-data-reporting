@@ -493,13 +493,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
             to: { kind: 'staff', name: 'Cal Colleague', dept: 'CSR' }, callback: null },
         ],
         missedRings: [],
-        // AC-6: direct calls -- a colleague dialled, a colleague who rang, an outside caller, one after hours.
-        direct: ${JSON.stringify(role)} === 'admin' ? [
-          { callId: 'dc-1', callStart: '07:05:00', direction: 'out', side: 'int', other: 'Cal Colleague', outcome: 'connected', ringSec: null, talkSec: 95, inWindow: true },
-          { callId: 'dc-2', callStart: '08:40:00', direction: 'in', side: 'int', other: 'Bea Buddy', outcome: 'missed_busy', ringSec: 18, talkSec: 0, inWindow: true },
-          { callId: 'dc-3', callStart: '10:12:00', direction: 'in', side: 'ext', other: 'Outside caller', outcome: 'answered', ringSec: 9, talkSec: 210, inWindow: true },
-          { callId: 'dc-4', callStart: '15:40:00', direction: 'in', side: 'ext', other: 'Outside caller', outcome: 'missed_free', ringSec: 30, talkSec: 0, inWindow: false },
-        ] : [],
+        // AC-6 / ADT-2: the Direct tab's rows and summary, from the REAL
+        // agentDayDirect_ (gen-payloads 'agentday-direct'). Admin-only.
+        direct: ${JSON.stringify(role)} === 'admin' ? P['agentday-direct'].rows : [],
+        directSummary: ${JSON.stringify(role)} === 'admin' ? P['agentday-direct'].summary : null,
       };
     },
     // Batch B: the inline agent panel's day strip -- every WEEKDAY in the

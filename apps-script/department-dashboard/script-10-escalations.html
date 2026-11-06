@@ -2708,7 +2708,8 @@
   //     never disagree about what a day means.
 
   var AP_ = { agent: null, idx: 0, from: '', to: '', seq: 0, strip: null,
-              date: null, tab: 'in', days: {}, node: null, dept: '' };
+              date: null, tab: 'in', days: {}, node: null, dept: '',
+              dsumAll: false };   // ADT-2: the Direct summary lists every colleague
 
   function apWindow_() {
     const m = (state && state.meta) || {};
@@ -3150,12 +3151,79 @@
     return '<p class="ap-note">Only outside callers who rang this person’s line are listed for this day: calls with colleagues are recorded '
       + (meta.directCaptureStart ? 'from ' + escapeHtml(meta.directCaptureStart) : 'once the direct-call capture begins') + '.</p>';
   }
+  // ADT-2 (owner 2026-11-06): a ring missed while on another call says who
+  // that call was with -- a colleague by name, never a number.
+  function adBusyText_(w) {
+    if (!w) return 'Missed (on another call)';
+    if (w === 'a queue call') return 'Missed (on a queue call)';
+    if (w === 'another call' || /not recorded/.test(w)) return 'Missed (on another call)';
+    return 'Missed (on a call with ' + w + ')';
+  }
+  var AD_DSUM_TOP_ = 5;
+  // ADT-2: the Direct tab's summary, above its list -- every figure counts the
+  // rows the list shows (agentDayDirectSummary_). Admin-only with the list.
+  function apDirectSummaryHtml_(s, showAll) {
+    if (!s) return '';
+    const i = s.in || {}, o = s.out || {};
+    const pct = function (n, d) { return d ? ' (' + Math.round(n / d * 100) + '%)' : ''; };
+    const inParts = [{ cls: 'good', n: i.answered || 0, label: 'answered' },
+                     { cls: 'bad', n: i.missedFree || 0, label: 'missed while free' },
+                     { cls: 'soft', n: i.missedBusy || 0, label: 'missed while on another call' }];
+    const outParts = [{ cls: 'good', n: o.connected || 0, label: 'connected' },
+                      { cls: 'bad', n: Math.max(0, (o.total || 0) - (o.connected || 0)), label: 'did not connect' }];
+    const v = i.outsideVia || {};
+    const viaTxt = (v.line || v.main || v.colleague)
+      ? ' (' + [v.line ? fmtNumber(v.line) + ' their direct line' : '', v.main ? fmtNumber(v.main) + ' a main line' : '',
+                v.colleague ? fmtNumber(v.colleague) + ' via a colleague' : ''].filter(Boolean).join(' · ') + ')' : '';
+    let html = '<div class="ap-dsum" role="region" aria-label="Direct calls summary">';
+    html += '<div class="ap-dsum-blk"><div class="ap-dsum-h"><strong>' + fmtNumber(i.total || 0) + '</strong> calls to their line</div>'
+      + (typeof obSplitMiniHtml_ === 'function' ? obSplitMiniHtml_(inParts, i.total || 0,
+          fmtNumber(i.total || 0) + ' calls to their line: ' + inParts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '),
+          escapeHtml(fmtNumber(i.answered || 0) + ' answered · ' + fmtNumber(i.missedFree || 0) + ' missed while free · '
+            + fmtNumber(i.missedBusy || 0) + ' while on another call'
+            + (i.answerRatePct != null ? ' · ' + i.answerRatePct + '% answered when free' : ''))) : '')
+      + '<div class="ap-dsum-line">' + escapeHtml(fmtNumber(i.fromColleagues || 0) + ' from colleagues · '
+          + fmtNumber(i.fromOutside || 0) + ' from outside callers' + viaTxt
+          + (i.avgRingSec != null ? ' · avg ring ' + fmtDuration(i.avgRingSec) + ' before answering' : '')) + '</div>';
+    if ((s.busyWith || []).length) {
+      html += '<div class="ap-dsum-line ap-dsum-busy">Missed while on a call with: ' + s.busyWith.map(function (b) {
+        return escapeHtml(b.with) + (b.n > 1 ? ' ×' + fmtNumber(b.n) : ''); }).join(' · ') + '</div>';
+    }
+    html += '</div>';
+    html += '<div class="ap-dsum-blk"><div class="ap-dsum-h"><strong>' + fmtNumber(o.total || 0) + '</strong> calls from their line</div>'
+      + (typeof obSplitMiniHtml_ === 'function' ? obSplitMiniHtml_(outParts, o.total || 0,
+          fmtNumber(o.total || 0) + ' calls from their line: ' + outParts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '),
+          escapeHtml(fmtNumber(o.connected || 0) + ' connected' + pct(o.connected || 0, o.total || 0))) : '')
+      + '<div class="ap-dsum-line">' + escapeHtml(fmtNumber(o.toColleagues || 0) + ' to colleagues ('
+          + fmtNumber(o.toColleaguesConnected || 0) + ' connected) · ' + fmtNumber(o.toOutside || 0) + ' to outside numbers ('
+          + fmtNumber(o.toOutsideConnected || 0) + ' connected)') + '</div></div>';
+    const cols = s.colleagues || [];
+    if (cols.length) {
+      const shown = showAll ? cols : cols.slice(0, AD_DSUM_TOP_);
+      html += '<div class="ap-dsum-blk ap-dsum-cols"><div class="ap-dsum-h">Colleagues</div>'
+        + '<table class="ap-dsum-tbl"><thead><tr><th>Colleague</th><th>They called</th><th>Called them</th></tr></thead><tbody>'
+        + shown.map(function (c) {
+            return '<tr><td>' + escapeHtml(c.name) + '</td>'
+              + '<td class="m">' + (c.called ? fmtNumber(c.called) + ' <span class="ap-path">(' + fmtNumber(c.calledConnected) + ' connected)</span>' : '–') + '</td>'
+              + '<td class="m">' + (c.calledBy ? fmtNumber(c.calledBy) + ' <span class="ap-path">(' + fmtNumber(c.calledByAnswered) + ' answered)</span>' : '–') + '</td></tr>';
+          }).join('')
+        + '</tbody></table>'
+        + (cols.length > AD_DSUM_TOP_ ? '<button type="button" class="ap-dsum-more" data-ap-dsum-all aria-expanded="' + (showAll ? 'true' : 'false') + '">'
+            + (showAll ? 'Show the top ' + AD_DSUM_TOP_ : 'Show all ' + fmtNumber(cols.length)) + '</button>' : '')
+        + '</div>';
+    }
+    const h = s.hours || {};
+    html += '<div class="ap-dsum-line ap-dsum-foot">' + escapeHtml('Talk: ' + fmtDuration(i.talkSec || 0) + ' in · ' + fmtDuration(o.talkSec || 0) + ' out · '
+      + fmtNumber(h.work || 0) + ' in work hours, ' + fmtNumber(h.after || 0) + ' after hours') + '</div>';
+    return html + '</div>';
+  }
   function apDirectTableHtml_(rows, meta) {
     const note = adDirectNoteHtml_(meta);
     if (!rows || !rows.length) return note + '<div class="ds-note">No direct calls to or from this agent’s line on this day.</div>';
     return note + '<table class="ap-calls ap-direct"><thead><tr><th>Time</th><th>Way</th><th>With</th><th>Outcome</th><th>Rang</th><th>Talk</th></tr></thead><tbody>'
       + rows.map(function (c) {
-          const oc = AD_DIRECT_OUTCOME_[c.outcome] || ['muted', c.outcome || '–'];
+          const oc0 = AD_DIRECT_OUTCOME_[c.outcome] || ['muted', c.outcome || '–'];
+          const oc = c.outcome === 'missed_busy' ? [oc0[0], adBusyText_(c.busyWith)] : oc0;   // ADT-2
           const way = c.direction === 'out' ? 'Called' : 'Called them';
           return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?')
             + (c.inWindow === false ? ' <span class="ap-path">· after hours</span>' : '') + '</td>'
@@ -3209,6 +3277,9 @@
       +   (showDirect ? tabBtn('direct', 'Direct calls', direct.length) : '')
       +   (showRings ? tabBtn('rings', 'Missed rings', rings.length) : '')
       + '</div>'
+      // ADT-2: the Direct tab's summary sits above its list, outside the
+      // list's scroll box so it stays in view while the calls scroll.
+      + (tab === 'direct' ? apDirectSummaryHtml_((data && data.directSummary) || null, !!AP_.dsumAll) : '')
       + '<div class="ap-list" role="tabpanel" aria-labelledby="ap-tab-' + tab + '">' + list + '</div>';
   }
 
@@ -3225,6 +3296,14 @@
         if (typeof irDrillToAgent_ === 'function') {
           irDrillToAgent_(AP_.agent, AP_.from, AP_.to, { returnFocus: t.closest('[data-ap-ir]') });
         }
+        return;
+      }
+      // ADT-2: show all / the top colleagues in the Direct summary.
+      if (t.closest('[data-ap-dsum-all]')) {
+        AP_.dsumAll = !AP_.dsumAll;
+        if (AP_.days[AP_.date]) apRenderDay_(AP_.days[AP_.date]);
+        const btn = AP_.node && AP_.node.querySelector('[data-ap-dsum-all]');
+        if (btn) btn.focus();
         return;
       }
       const day = t.closest('[data-ap-date]');

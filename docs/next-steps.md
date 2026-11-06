@@ -36,6 +36,7 @@ batch, items are independent unless marked.
 | ∥ | **Owner round 2026-11-02** — Batches 1-4 + DEP-5 IMPLEMENTED (blocks 259-dep5, 259-batch1-esc-tr0, 259-batch2-dv1-tdc1, 259-batch3-ic, 259-batch4-tr1) | DEP-5 version-limit check · ESC-C1..C4 escalation comments kept in the thread (+ the #88 backfill) · TR-0 `diagnoseTransferRetries` (#89) · DV-1 four-view agent table · TDC-1 Team Direct Calls panel · AT-1 / IC-1..IC-4 explainers as ⓘ tooltips, the Direct lines chevron, the brief slide · TR-1 Admin ▾ → Transfer retries | dashboard + cdr-import | push both; #88 backfill; TR-0 census (may move the 8 s decline line, #89) |
 | ∥ | **Owner round 2026-11-02 (2)** — IMPLEMENTED (block 259-dlr3-ovd1) | CBX-1 CSR + Spanish out of the company callback figures (rows kept, marked) · DL-R3 Direct lines in the Agent Call Metrics row shape with a per-department work / after hours switch (`outboundDirect:v5`) · OVD-1 the direct-line answer rate on the Overview tiles, admin-only (`companyOverview:v30`) · OVD-2 no split bar on the tiles | dashboard | done (deploy the dashboard; walk S48, S58, S60) |
 | ∥ | **Owner rounds 2026-11-04/05** — AC batch + DCA-2 + AC-6 SHIPPED (PR #404); DCA-3/4/5 + TD-1/2 + CO-1/2 IMPLEMENTED (blocks 259-dca345, 259-td-co) | AC-1..6 Agent Call Metrics fixes + the Direct tab · DCA-2..5 direct credit follows the person 8x8 names (Parker / call park, Spanish to CSR) · TD-1/2 Transfer detail chips + other destinations · CO-1/2 coaching Save all, flat answer % gate, worklist + email tables | — | cdr-import push + `rebuildDirectCallHeldDates()`; dashboard push |
+| ∥ | **Owner round 2026-11-06** — DID-0 + SPEED-1..4 SHIPPED (PRs #407, #408); DID-1..3 IMPLEMENTED (block 259-did); ADT-1 IMPLEMENTED (block 259-adt1); ADT-2 IMPLEMENTED (block 259-adt2) | DID-0 dial-in diagnostic (#91) · SPEED faster deploy gate · DID-1..3 outside direct calls split their direct line / a main line (#92) · **ADT-1** the Direct tab's header row sits mid-table · **ADT-2** a summary block for the Direct tab like the Inbound / Outbound tabs' | cdr-import + dashboard | DID: push cdr-import, `rebuildDirectCallHeldDates()`, walk S70; ADT-1/2: push the dashboard + cdr-import, `rebuildDirectCallHeldDates()`, walk S56 — see "Owner round 2026-11-06 — the agent panel's Direct tab" below |
 | ∥ | **Broad scan 2026-10-12** — ALL 11 batches + 3b IMPLEMENTED (blocks 246-258, incl. the WS-1 follow-on, block 255) | 11 batches + 3b; full list in the next section | per batch | dashboard + cdr-report + cdr-import deploys (cdr-import re-consent for SEC-7); only the deferred owner rulings remain |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
@@ -645,6 +646,61 @@ deploy.
   callbacks split "by the person" (a line the caller tried) / "by their team";
   the block sits in the Insights Callbacks fold AND the Overview's Callbacks
   by department (company view). S60 is the walk.
+
+## Owner round 2026-11-06 — the agent panel's Direct tab (ADT-1 + ADT-2 IMPLEMENTED; dashboard + cdr-import)
+
+The owner's screenshot (2026-11-06): an agent's row expanded on My Department,
+Direct calls tab. Both items are admin-only (the Direct tab is). ADT-1 shipped
+alone (dashboard CSS); ADT-2 needs a cdr-import push too, for the busy-with
+field.
+
+### ADT-1 — the list's header row sits in the middle of the table (bug, S) — IMPLEMENTED 2026-11-06 (block 259-adt1)
+
+**Cause (found 2026-11-06).** AC-1 made the Agent Call Metrics header stick
+under the dept controls: `#dept-page .agents thead th { top: var(--dept-sticky-h, 84px); }`
+(styles.html, the `@media (min-width: 1200px)` block). The agent panel's call
+lists are tables INSIDE the `.agents` table, so the descendant selector also
+matches their `thead th`; and those lists scroll in their own box, so their
+header sticks 84 px BELOW the top of that box -- the middle of the visible rows.
+The Inbound and Outbound tabs share the shape, so they are affected too;
+the Direct tab simply has the most rows.
+**Fix.** Scope AC-1's rule to the outer table's own header
+(`#dept-page .agents > thead > tr > th`) or reset it inside the panel
+(`#dept-page .agents .ap thead th { top: 0; }`); keep the panel lists' header
+sticky at the top of their own scroll box. **Pin:** a drive-agentpanel
+assertion -- scroll the Direct list, the header's top equals the list box's top
+(and the same for Inbound / Outbound); a source pin that the AC-1 rule cannot
+reach a nested table.
+
+### ADT-2 — a summary block on the Direct tab, like Inbound and Outbound's (M) — IMPLEMENTED 2026-11-06 (block 259-adt2)
+
+Everything below is already in the day's `direct_calls` rows the tab loads
+(direction, side, outcome incl. missed while free / while on another call,
+ring and talk seconds, the colleague's name, and since DID-1 `via`), so it is
+computed from those rows: no new Neon read, no capture change.
+- **Calls to their line** -- a split bar of answered / missed while free /
+  missed while busy (the outcome is already `missed_busy` when they were on
+  another call), the answer rate when free, average ring before answer;
+  split from colleagues vs outside callers, and the outside callers by their
+  direct line / a main line (DID-2's rule).
+- **Calls from their line** -- to colleagues connected / not, with the calls
+  to outside numbers as a small line (DO-1's rule: the Outbound tab counts
+  those).
+- **Colleagues** -- who they called and who called them, per colleague: calls
+  each way and connected / answered, sorted by total, top 5 with "show all"
+  (the "from the agent to a colleague and vice versa" ask).
+- **Talk time** -- total and average, inbound and outbound.
+- **Work hours vs after hours** -- one line, since the list carries both.
+Built with the shared split-bar renderers the other tabs use, so the three tabs
+read alike. **Pins:** a pure summary builder in AgentDay.gs with a unit test
+(the counts equal the list's rows), and a drive-agentpanel assertion that the
+block's figures equal the rows below it. **Owner ruling (2026-11-06): a call
+"missed while on another call" names who that other call was with** -- the
+colleague by name, or "an outside caller" / "an outside number" (never a
+number). The capture's busy test already finds the overlapping call
+(`busyBlocker`); it now has to return it, so this needs a new `direct_calls`
+field (e.g. `busy_with`, the other call's id and counterpart label) written by
+cdr-import -- not retroactive past the held days (`rebuildDirectCallHeldDates()`).
 
 ## Broad scan 2026-10-12 — the batch plan
 

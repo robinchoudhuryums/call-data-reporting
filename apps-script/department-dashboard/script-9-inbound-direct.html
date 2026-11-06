@@ -1592,6 +1592,46 @@
     return '<div class="dc-ext-line" title="Calls from their own line to outside numbers. The Outbound view counts these (all day; this report counts work hours).">+'
       + escapeHtml(fmtNumber(t)) + ' to outside numbers' + (compact ? '' : ' (' + escapeHtml(fmtNumber(c)) + ' connected)') + '</div>';
   }
+  // DID-2 (owner 2026-11-06): how the OUTSIDE callers reached the person --
+  // dialing their direct line, or a main line (typing the extension at the
+  // menu, or routed there by the line). Each with its answer rate (missed
+  // while on another call left out, like every rate here). Admin-only, as the
+  // whole report is; nothing when the split is unavailable or empty.
+  function directViaCounts_(via) {
+    const n = function (o) { return o ? (Number(o.answered) || 0) + (Number(o.missedFree) || 0) + (Number(o.missedBusy) || 0) : 0; };
+    const rate = function (o) {
+      const d = o ? (Number(o.answered) || 0) + (Number(o.missedFree) || 0) : 0;
+      return d ? Math.round((Number(o.answered) || 0) / d * 100) : null;
+    };
+    via = via || {};
+    return { line: n(via.line), main: n(via.main), colleague: n(via.colleague), unsplit: n(via.unsplit),
+      lineRate: rate(via.line), mainRate: rate(via.main) };
+  }
+  // compact (a table cell, the side card): ANSWERED calls only, under an
+  // "answered" figure; full (the summary): every call that rang, with rates.
+  function directViaLineHtml_(via, compact) {
+    if (!via) return '';
+    const c = directViaCounts_(via);
+    if (!(c.line + c.main + c.colleague)) return '';
+    const ans = function (o) { return o ? (Number(o.answered) || 0) : 0; };
+    const rateTxt = function (r) { return r == null ? '' : ' (' + r + '% answered)'; };
+    let bits;
+    if (compact) {
+      if (!(ans(via.line) + ans(via.main) + ans(via.colleague))) return '';
+      bits = [fmtNumber(ans(via.line)) + ' their line', fmtNumber(ans(via.main)) + ' main line'];
+      if (ans(via.colleague)) bits.push(fmtNumber(ans(via.colleague)) + ' via colleague');
+    } else {
+      bits = [fmtNumber(c.line) + ' on their direct line' + rateTxt(c.lineRate),
+              fmtNumber(c.main) + ' from a main line' + rateTxt(c.mainRate)];
+      if (c.colleague) bits.push(fmtNumber(c.colleague) + ' via a colleague');
+    }
+    const tip = 'How outside callers reached the person: dialing their own direct number, or a company main line '
+      + '(typing the extension at the phone menu, or routed there by the line).'
+      + (compact ? ' Answered calls.' : '')
+      + (c.unsplit ? ' ' + fmtNumber(c.unsplit) + ' call' + (c.unsplit === 1 ? '' : 's') + ' in this window came before the split was recorded.' : '');
+    return '<div class="dc-ext-line dc-via-line" title="' + escapeHtml(tip) + '">'
+      + (compact ? 'Outside answered: ' : 'Outside callers: ') + escapeHtml(bits.join(' · ')) + '</div>';
+  }
   function directSummaryHtml_(k, p, mode) {
     k = k || {};
     const ibParts = directIbParts_(k);
@@ -1611,6 +1651,7 @@
         + ' <span class="tdc-split-of">of ' + fmtNumber(rung) + ' answered</span></div>'
         + obSplitMiniHtml_(ibParts, rung, aria, escapeHtml(fmtNumber(ibParts[1].n) + ' missed while free · '
             + fmtNumber(ibParts[2].n) + ' while busy · ' + rateTxt + ' when free'))
+        + directViaLineHtml_(k.via, true)
         + '<div class="tdc-split-head tdc-split-head--out"><span class="tdc-split-num">' + fmtNumber(obTotal) + '</span>'
         + ' <span class="tdc-split-of">calls to colleagues</span></div>'
         + obSplitMiniHtml_(obParts, obTotal, obAria, escapeHtml(fmtNumber(obConn) + ' connected'
@@ -1636,7 +1677,8 @@
           + '<span class="num"><strong>' + fmtNumber(n) + '</strong></span>';
       };
       rows = '<div class="ob-split-sub"><div class="ob-split-rows dc-split-rows">'
-        + row('From colleagues', 'int') + row('From outside callers', 'ext') + '</div></div>';
+        + row('From colleagues', 'int') + row('From outside callers', 'ext') + '</div>'
+        + directViaLineHtml_(k.via, false) + '</div>';
     }
     if (p) ibParts[0].deltaHtml = inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false);
     const rateCls = k.ibAnswerRate != null ? benchValueCls_('% answered', k.ibAnswerRate + '%', true, 'direct') : '';
@@ -1716,7 +1758,8 @@
     const sp = function (n, key) { return fmtNumber(n) + directSplitHtml_(r.split, key); };
     return '<tr>'
       + '<td>' + escapeHtml(r.agent) + '</td>'
-      + '<td class="num">' + sp(r.ibAnswered, 'ibAnswered') + '</td>'
+      // DID-2: the outside answered calls by how they arrived, under Answered.
+      + '<td class="num">' + sp(r.ibAnswered, 'ibAnswered') + directViaLineHtml_(r.via, true) + '</td>'
       + '<td class="num">' + sp(r.ibMissedFree, 'ibMissedFree') + '</td>'
       + '<td class="num">' + sp(r.ibMissedBusy, 'ibMissedBusy') + '</td>'
       + '<td class="num' + rateCls + '">' + rateStr + '</td>'
@@ -1865,7 +1908,8 @@
       'Answer %', 'IB ATT sec', 'OB calls to colleagues', 'OB connected (colleagues)', 'OB ATT sec (colleagues)',
       'IB int answered', 'IB ext answered', 'OB int calls', 'OB ext calls',
       'IB int missed (free)', 'IB ext missed (free)', 'IB int missed (busy)', 'IB ext missed (busy)',
-      'OB int connected', 'OB ext connected', 'OB ATT sec (outside numbers)']));
+      'OB int connected', 'OB ext connected', 'OB ATT sec (outside numbers)',
+      'IB ext on their direct line', 'IB ext from a main line', 'IB ext via a colleague', 'IB ext before the split']));
     (d.agents || []).forEach(function (r) {
       const sp = r.split || {};
       const g = function (k, side) { return (sp[k] && sp[k][side] != null) ? sp[k][side] : ''; };
@@ -1873,7 +1917,9 @@
         r.ibAnswerRate != null ? r.ibAnswerRate : '', r.ibAttSec, r.obTotal, r.obConnected, r.obAttSec,
         r.ibIntAnswered, r.ibExtAnswered, r.obIntTotal, r.obExtTotal,
         g('ibMissedFree', 'int'), g('ibMissedFree', 'ext'), g('ibMissedBusy', 'int'), g('ibMissedBusy', 'ext'),
-        g('obConnected', 'int'), g('obConnected', 'ext'), r.obExt ? r.obExt.attSec : '']));
+        g('obConnected', 'int'), g('obConnected', 'ext'), r.obExt ? r.obExt.attSec : '']
+        // DID-2: blank when the split is unavailable (the sheet fallback).
+        .concat(r.via ? (function (c) { return [c.line, c.main, c.colleague, c.unsplit]; })(directViaCounts_(r.via)) : ['', '', '', ''])));
     });
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');

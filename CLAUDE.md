@@ -234,7 +234,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# EIGHTEEN ASSERTING stages gate it (`tools/ui-harness/ci.mjs`; one line each
+# SEVENTEEN ASSERTING drivers gate it, eighteen runs (drive-smoke as two role
+# shards, SPEED-2) (`tools/ui-harness/ci.mjs`; one line each
 # in tools/ui-harness/README.md "Asserting drivers" -- the per-driver list
 # lives there, not here; SPEED-1: they run 4 at a time, UI_HARNESS_JOBS). Two pins ride on them: `cross-file-pins.test.js`
 # fails when a `kind:'modal'` route in script-4-nav.html is neither driven by
@@ -2179,6 +2180,7 @@ items for anything it flags or doesn't cover.)
 89. `diagnoseTransferRetries` (TR-0, cdr-import, read-only): a call where an agent tried a person in another department, got no answer, then tried someone else there -- the incorrect-rejection check; on the dashboard as Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned)
 90. The per-call direct list (AC-6): Neon `direct_calls` behind the agent panel's admin-only Direct tab; run `rebuildDirectCallHeldDates()` (cdr-import) after each cdr-import push that changes direct credit -- it re-applies DCA-1..5 (#83) to the held dates
 91. `diagnoseDirectDialIn` (DID-0, cdr-import, read-only): did an outside caller dial the agent's OWN number, or a main line routed through a phone menu (or a colleague)? Per number dialed and per agent, with sample call ids
+92. Outside direct calls split by how they arrived (DID-1..3, admin-only): cdr-import stores `via` + `dial_in` on `direct_calls`; push cdr-import, run `rebuildDirectCallHeldDates()`, and keep `DIAL_IN_LABELS` listing every main line
 
 ## Cycle Workflow Config
 
@@ -2353,6 +2355,7 @@ S66 | Queue figures follow their period: My Department queue chips, Overview aba
 S67 | Direct Calls report covers only days that exist: the clamp, missing workdays, the int / ext split (D1) | Subsystem: Department Dashboard
 S68 | Exception days: one outage day left out everywhere, said everywhere, and an admin can put it back (#81) | Subsystem: Department Dashboard
 S69 | Transfer retries: the admin list of transfers tried again in the same department (TR-1) | Subsystem: Department Dashboard
+S70 | Direct calls split by how the outside caller arrived: their direct line vs a main line (DID-2, DID-3) | Subsystem: Department Dashboard + CDR Import
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

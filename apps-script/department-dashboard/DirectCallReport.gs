@@ -48,7 +48,8 @@
 // v5 (D1, owner 2026-10-21): coverage-aware -- the window is clamped to the
 // last date with data, workdays with no rows are listed, the prior comparison
 // is dropped when either window has a gap, and the full int/ext split ships.
-const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v6';   // DO-1: outbound = colleagues
+// v7 (DID-2): the outside inbound calls split by how they arrived (`via`).
+const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v7';   // DID-2: their line vs a main line
 const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 
 /**
@@ -378,6 +379,9 @@ function computeDirectCallReport_(scope) {
 
     const shaped = directCallShapePayload_(scope, JSON.parse(json));
     shaped.meta.to = effTo;
+    // DID-2: its own best-effort read -- a failure (cdr-import not yet
+    // deployed, so no `via` column) leaves the split null, never the report.
+    directCallApplyVia_(shaped, directCallViaRows_(conn, scope, from, effTo));
     return dcApplyCoverageMeta_(shaped, cov);
   } catch (e) {
     Logger.log('computeDirectCallReport_ failed: ' + (e && e.message ? e.message : e));
@@ -439,6 +443,93 @@ function directCallShapePayload_(scope, obj) {
     }),
     agents: agents,
   };
+}
+
+// ── DID-2 (owner 2026-11-06): how an OUTSIDE call reached the agent ──────────
+// cdr-import's direct_calls stores, per outside inbound direct call, `via`
+// (straight / menu / colleague) and the company number it was dialed on
+// (`dial_in`). A call counts as "their direct line" only when it arrived
+// straight on a number that is NOT a main line; everything that came in on a
+// main line -- through its phone menu (the caller typed the extension; no menu
+// option routes to one person) or routed there by the line itself -- counts
+// as "a main line". Main lines = the DIAL_IN_LABELS keys (Operator State #33)
+// plus every number seen with a menu step in the last DIRECT_VIA_MAIN_LOOKBACK_DAYS
+// (a personal number has no menu). Work-window calls only, so the split
+// reconciles with the report's outside figures. Calls captured before DID-1
+// have no `via` and count as `unsplit`. Admin-only, like the report.
+var DIRECT_VIA_MAIN_LOOKBACK_DAYS = 120;
+var DIRECT_VIA_CLASSES_ = ['line', 'main', 'colleague', 'unsplit'];
+
+/** Best-effort. Rows { agent, dept, cls, outcome, n } or null when unreadable. */
+function directCallViaRows_(conn, scope, from, to) {
+  try {
+    var labels = (typeof inboundDialInLabels_ === 'function') ? Object.keys(inboundDialInLabels_()) : [];
+    var labelArr = labels.length
+      ? 'ARRAY[' + labels.map(function (n) { return directCallSqlLit_(String(n).replace(/\D/g, '')); }).join(',') + ']::text[]'
+      : 'ARRAY[]::text[]';
+    var deptPred = scope.companyView ? '' : ' AND c.department = ' + directCallSqlLit_(scope.dept);
+    var sql = 'WITH m AS (SELECT DISTINCT dial_in AS n FROM direct_calls '
+      + "WHERE via = 'menu' AND dial_in IS NOT NULL AND call_date >= '" + to + "'::date - " + DIRECT_VIA_MAIN_LOOKBACK_DAYS + '), '
+      + 'k AS (SELECT c.agent_name, c.department, c.outcome, CASE '
+      +   "WHEN c.via IS NULL THEN 'unsplit' WHEN c.via = 'colleague' THEN 'colleague' WHEN c.via = 'menu' THEN 'main' "
+      +   "WHEN c.dial_in = ANY(" + labelArr + ") OR c.dial_in IN (SELECT n FROM m) THEN 'main' ELSE 'line' END AS cls "
+      +   "FROM direct_calls c WHERE c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date"
+      +   " AND c.direction = 'in' AND c.side = 'ext' AND c.in_window" + deptPred + ') '
+      + "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + 'SELECT agent_name AS agent, department AS dept, cls, outcome, count(*) AS n FROM k GROUP BY 1, 2, 3, 4) t';
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery(sql);
+    var j = rs.next() ? rs.getString('j') : null;
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'direct');
+    rs.close(); stmt.close();
+    var parsed = j ? JSON.parse(j) : null;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (e) {
+    Logger.log('directCallViaRows_ skipped (DID-2): ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+/** PURE. One empty split block. */
+function directCallViaEmpty_() {
+  var o = {};
+  DIRECT_VIA_CLASSES_.forEach(function (c) { o[c] = { answered: 0, missedFree: 0, missedBusy: 0 }; });
+  return o;
+}
+
+/**
+ * PURE. Folds the via rows onto the shaped payload: `kpis.via` and each
+ * agent's `via` -- { line, main, colleague, unsplit } x { answered,
+ * missedFree, missedBusy } -- plus `meta.viaAvailable`. Null rows (unreadable)
+ * leave every `via` null.
+ */
+function directCallApplyVia_(payload, rows) {
+  if (!payload) return payload;
+  payload.meta = payload.meta || {};
+  if (!rows) {
+    payload.meta.viaAvailable = false;
+    if (payload.kpis) payload.kpis.via = null;
+    (payload.agents || []).forEach(function (a) { a.via = null; });
+    return payload;
+  }
+  var key = { answered: 'answered', missed_free: 'missedFree', missed_busy: 'missedBusy' };
+  var total = directCallViaEmpty_();
+  var byAgent = {};
+  rows.forEach(function (r) {
+    var cls = DIRECT_VIA_CLASSES_.indexOf(r.cls) >= 0 ? r.cls : 'unsplit';
+    var f = key[r.outcome];
+    if (!f) return;
+    var n = Number(r.n) || 0;
+    total[cls][f] += n;
+    var ak = String(r.agent || '') + '|' + String(r.dept || '');
+    (byAgent[ak] = byAgent[ak] || directCallViaEmpty_())[cls][f] += n;
+  });
+  payload.meta.viaAvailable = true;
+  if (payload.kpis) payload.kpis.via = total;
+  (payload.agents || []).forEach(function (a) {
+    a.via = byAgent[a.agent + '|' + a.dept] || directCallViaEmpty_();
+  });
+  return payload;
 }
 
 /** Inbound answer rate as a 0-100 percent, EXCLUDING the busy carve-out. */
@@ -684,6 +775,7 @@ function directCallSheetFallback_(scope, empty) {
     });
     out.meta.fallbackSource = 'sheet';
     out.meta.to = effTo;
+    directCallApplyVia_(out, null);   // DID-2: the sheet has no per-call `via` -- same shape, split unavailable
     return dcApplyCoverageMeta_(out, cov);
   } catch (e) {
     Logger.log('directCallSheetFallback_ failed (best-effort): '

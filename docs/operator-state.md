@@ -3976,7 +3976,15 @@ When something looks wrong, before assuming a code bug, check:
     from `getAgentDay` to ADMINS only, the Direct Calls report's vetting gate;
     the hash is never selected. Joins the Neon backup (#28, monthly files),
     the restore list and the retention prune (#57, the per-call horizon).
-    Pinned by `tests/unit/direct-calls-capture.test.js`.
+    Pinned by `tests/unit/direct-calls-capture.test.js`. **ADT-2 (owner
+    2026-11-06):** a ring missed while the person was on another call stores
+    `busy_with` -- who that call was with: a colleague's roster name, "a queue
+    call", "an outside caller" / "an outside number", never a number
+    (idempotent ADD COLUMN) -- and the Direct tab carries a summary over the
+    day's rows (to / from their line, colleagues each way, who the busy calls
+    were with, work vs after hours). Same steps: push cdr-import, then
+    `rebuildDirectCallHeldDates()`; dates not rebuilt read "Missed (on another
+    call)" with no name.
 
 91. **`diagnoseDirectDialIn(dateIso)` / `diagnoseDirectDialInAllDates()` --
     did an outside caller dial the agent's OWN number? (DID-0, cdr-import,
@@ -3999,3 +4007,23 @@ When something looks wrong, before assuming a code bug, check:
     from a person there). Read its numbers BEFORE anything changes in the
     reports: it decides whether the Direct report can split outside callers
     by "their direct line" vs "a main line".
+
+92. **Outside direct calls split by how the caller arrived -- their direct line
+    or a main line (DID-1..3, owner 2026-11-06; admin-only).** cdr-import now
+    stores, on each outside inbound row of Neon `direct_calls`, `via`
+    (straight / menu / colleague -- #91's rule) and `dial_in` (the COMPANY
+    number dialed, never the caller's; two idempotent ADD COLUMNs). The Direct
+    Calls report (`directCall:v7`), the Team Direct Calls card and the agent
+    panel's Direct tab call a call **"their direct line"** only when it arrived
+    straight on a number that is NOT a main line; a menu step (the caller typed
+    the extension -- no menu option routes to one person), or any call on a
+    main line, is **"a main line"**. Main lines = the `DIAL_IN_LABELS` keys
+    (#33) plus every number seen with a menu step in the last 120 days. Steps:
+    (1) push cdr-import; (2) run `rebuildDirectCallHeldDates()` once -- the
+    held ~14 days gain the split (NOT retroactive past that; older dates show as
+    "before the split" in the report's tooltip and CSV, or re-import per #56);
+    (3) check `DIAL_IN_LABELS` lists every main line -- 19722281820,
+    18668646332, 18667759594 (PAP Sales), 18083540680, 18883645897 as of
+    2026-11-06 -- because a main line whose calls all route straight (no menu
+    step, e.g. a line ringing one person's extension directly) is only known to
+    be a main line from that list; (4) push the dashboard and walk S70.
