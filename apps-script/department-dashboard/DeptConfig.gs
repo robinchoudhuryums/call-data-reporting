@@ -710,10 +710,17 @@ function getDeptConfigInit() {
   // S1(c): the inbound name-space twin of `discovered` (Neon-backed).
   const inboundDiscovery = discoverInboundQueues_(allDepts);
 
+  // DCD-1: the departments "Save all defaults" would write (and the ones it
+  // leaves alone because their row was deactivated on purpose).
+  let defaultsPlan = { toSave: [], skippedInactive: [] };
+  try { defaultsPlan = dcDefaultRowsToSave_(); } catch (eD) { /* the button just stays hidden */ }
+
   const init = {
     departments:     allDepts,
     rosterByDept:    rosterByDept,
     effective:       effective,
+    defaultsToSave:  defaultsPlan.toSave.map(function (r) { return r.dept; }),
+    defaultsInactive: defaultsPlan.skippedInactive,
     rows:            readDeptConfigRows_(),
     discoveredQueues: discovered,
     inboundDiscovery: inboundDiscovery,
@@ -755,6 +762,17 @@ function getDeptConfigInit() {
  */
 function saveDeptConfig(req) {
   assertAdmin_();
+  return saveDeptConfigRow_(req, false);
+}
+
+/**
+ * saveDeptConfig's body -- every validation, the lock, the write, the cache
+ * bust -- shared with saveDeptConfigDefaults so the bulk save can never accept
+ * a row the single save would refuse. `deferPublish` skips the H2 standards
+ * republish so a bulk run publishes ONCE at the end. Trailing underscore:
+ * RPC-unreachable; both public callers assert admin first.
+ */
+function saveDeptConfigRow_(req, deferPublish) {
   const dept = String((req && req.dept) || '').trim();
   if (!dept) throw new Error('Department is required.');
 
@@ -981,11 +999,94 @@ function saveDeptConfig(req) {
     // H2: Team Avg Excludes is one of the published standards -- republish
     // (best-effort; the Health row reports a failure, the save stands). The
     // typeof guard is for suites that load DeptConfig.gs without Util.gs.
-    if (typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();
+    if (!deferPublish && typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();
   } finally {
     lock.releaseLock();
   }
   return { saved: true, warnings: queueWarnings };
+}
+
+/**
+ * DCD-1 (owner 2026-11-09): which departments "Save all defaults" would write.
+ * A department qualifies when it has NO row at all in the active config
+ * source -- active or not -- and at least one non-empty built-in default
+ * (QCD queues, Overview parent, team-avg excludes, queue-ext overrides). A
+ * department with an INACTIVE row was reverted to the defaults on purpose
+ * (removeDeptConfig), so it is reported and left alone; one with nothing
+ * built in has nothing to save. The values are the EFFECTIVE ones the
+ * dashboard already uses, so saving them moves no figure.
+ */
+function dcDefaultRowsToSave_() {
+  const rows = readDeptConfigRows_();
+  const anyRow = {}, inactive = {};
+  rows.forEach(function (r) {
+    if (!r || !r.dept) return;
+    anyRow[r.dept] = true;
+    if (!r.active) inactive[r.dept] = true;
+  });
+  const parentMap = getOverviewParentMap_();
+  const toSave = [], skippedInactive = [];
+  getAllDepartments_().forEach(function (d) {
+    if (anyRow[d]) {
+      if (inactive[d] && !getActiveDeptConfigMap_()[d]) skippedInactive.push(d);
+      return;
+    }
+    const rec = {
+      dept:              d,
+      qcdQueues:         getDeptQcdQueues_(d).slice(),
+      overviewParent:    parentMap[d] || '',
+      teamAvgExcludes:   getTeamAvgExcludes_(d).slice(),
+      queueExtOverrides: getDeptQueueExtsOverride_(d).slice(),
+    };
+    if (rec.qcdQueues.length || rec.overviewParent || rec.teamAvgExcludes.length || rec.queueExtOverrides.length) {
+      toSave.push(rec);
+    }
+  });
+  return { toSave: toSave, skippedInactive: skippedInactive };
+}
+
+/**
+ * DCD-1: "Save all defaults as sheet rows" -- one click instead of an Edit +
+ * Save per department. The CDR Import pipeline reads only saved Dept Config
+ * rows (icDeptConfigActiveRows_), so a department running on the dashboard's
+ * built-in defaults is invisible to its call capture and diagnostics (CLN-6).
+ * INV-01 carve-out (DeptConfig.gs): admin gate here, then each row goes
+ * through saveDeptConfigRow_ -- the single save's validation, script lock,
+ * Updated By/At stamp and cache bust -- with the standards republished once.
+ * A row the validation refuses is reported, never forced; the rest still save.
+ * Returns { saved: [dept], failed: [{dept, error}], skippedInactive: [dept],
+ * warnings: [string] }.
+ */
+function saveDeptConfigDefaults() {
+  assertAdmin_();
+  const plan = dcDefaultRowsToSave_();
+  const out = { saved: [], failed: [], skippedInactive: plan.skippedInactive, warnings: [] };
+  plan.toSave.forEach(function (rec) {
+    try {
+      const res = saveDeptConfigRow_({
+        dept: rec.dept,
+        qcdQueues: rec.qcdQueues,
+        overviewParent: rec.overviewParent,
+        teamAvgExcludes: rec.teamAvgExcludes,
+        queueExtOverrides: rec.queueExtOverrides,
+        inboundAliases: [],
+        finalDeptLabels: [],
+        active: true,
+        notes: 'Saved from the built-in default (Save all defaults)',
+      }, true);
+      out.saved.push(rec.dept);
+      ((res && res.warnings) || []).forEach(function (w) { out.warnings.push(rec.dept + ': ' + w); });
+    } catch (e) {
+      out.failed.push({ dept: rec.dept, error: (e && e.message) ? e.message : String(e) });
+    }
+  });
+  if (out.saved.length && typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();
+  try {
+    Logger.log('[dept-config] Save all defaults by ' + Session.getActiveUser().getEmail() + ': saved '
+      + (out.saved.join(', ') || 'none') + (out.failed.length ? '; refused ' + out.failed.map(function (f) { return f.dept; }).join(', ') : '')
+      + (out.skippedInactive.length ? '; left inactive ' + out.skippedInactive.join(', ') : ''));
+  } catch (eL) { /* audit line is best-effort */ }
+  return out;
 }
 
 /**

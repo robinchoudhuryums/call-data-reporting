@@ -44,7 +44,33 @@ const IGNORABLE = /favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i;
 const MODALS = [
   { name: 'Alerts',         btn: '#alerts-btn',          sel: '#alerts-modal',         adminMenu: true },
   { name: 'Outlier Fix',    btn: '#orphan-fix-btn',      sel: '#orphan-fix-modal',     adminMenu: true },
-  { name: 'Dept Config',    btn: '#dept-config-btn',     sel: '#dept-config-modal',    adminMenu: true },
+  // DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows". The init is the
+  // REAL getDeptConfigInit's (gen-phase3), so the bar names the departments the
+  // server would write; the click asks first, then sends ONE request (no list
+  // from the client -- the server re-derives it).
+  { name: 'Dept Config',    btn: '#dept-config-btn',     sel: '#dept-config-modal',    adminMenu: true,
+    probe: async function (page, record) {
+      const bar = await page.evaluate(() => {
+        const b = document.getElementById('dc-defaults-bar');
+        return { shown: !!b && getComputedStyle(b).display !== 'none', text: ((document.getElementById('dc-defaults-text') || {}).textContent) || '',
+          note: !!document.getElementById('dc-source-note') };
+      });
+      record('Dept Config (DCD-1): the bar names the departments still on built-in defaults, under the CLN-6 note',
+        bar.shown && bar.note && /run on built-in defaults only: \S/.test(bar.text), JSON.stringify(bar));
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.click('#dc-save-defaults-btn');
+      await page.waitForTimeout(400);
+      const dlg = await page.evaluate(() => ({ open: !!document.querySelector('.ds-confirm-ok'),
+        body: ((document.querySelector('.ds-confirm-body') || {}).textContent) || '' }));
+      record('Dept Config (DCD-1): Save all asks first, naming the departments', dlg.open && /Writes a Dept Config row for/.test(dlg.body), JSON.stringify(dlg));
+      await page.click('.ds-confirm-ok');
+      await page.waitForTimeout(1200);
+      const after = await page.evaluate(() => ({
+        sent: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'saveDeptConfigDefaults').map((c) => c.args),
+        status: ((document.getElementById('dc-run-status') || {}).textContent) || '' }));
+      record('Dept Config (DCD-1): one saveDeptConfigDefaults request with no arguments, and the result says what was saved',
+        after.sent.length === 1 && after.sent[0].length === 0 && /^Saved \d+ row/.test(after.status), JSON.stringify(after));
+    } },
   { name: 'Access Control', btn: '#access-control-btn',  sel: '#access-control-modal', adminMenu: true },
   // NB: the id is `health-modal`, NOT `system-health-modal`. It is taken from
   // the ROUTER TABLE in script-4-nav.html ('/admin/health' -> modalId), which

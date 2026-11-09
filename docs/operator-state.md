@@ -3871,8 +3871,10 @@ When something looks wrong, before assuming a code bug, check:
     ignored and counted on its own ("answered by an outside party"), never an
     "answerer not on the roster". **Seeing the rows:** in Admin ▾ → Dept
     Config a row whose Source reads "default" is the dashboard's built-in
-    setting and NOT a sheet row -- open it with Edit and Save it so cdr-import
-    can read it (CLN-6 says so under the table).
+    setting and NOT a sheet row -- cdr-import cannot read it. **Save all
+    defaults as sheet rows** (DCD-1, the bar under the table) writes every
+    such row at once with the values already in force, through the single
+    Save's validation; a row you deactivated on purpose is left alone.
 
 87. **Is the "N." step a real leg? -- `diagnoseOutsideNumberLegs` (NX-0,
     cdr-import, read-only, owner 2026-10-29).** The path's "N." bubble was a

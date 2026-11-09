@@ -3050,6 +3050,8 @@
     if (deactivateBtn) deactivateBtn.addEventListener('click', dcDeactivate_);
     const cancelBtn = $('dc-cancel-btn');
     if (cancelBtn) cancelBtn.addEventListener('click', dcCloseEdit_);
+    const defaultsBtn = $('dc-save-defaults-btn');
+    if (defaultsBtn) defaultsBtn.addEventListener('click', dcSaveDefaults_);   // DCD-1
   }
 
   // CL-15: preserveStatus -- see acLoadInit_. The save's message carries the
@@ -3087,6 +3089,66 @@
     dcRenderDiscovered_(data.discoveredQueues || [], data.unmappedCount || 0);
     dcRenderInboundDiscovered_(data.inboundDiscovery || null);
     dcRenderEffective_(data.effective || []);
+    dcRenderDefaultsBar_(data);   // DCD-1
+  }
+
+  // DCD-1 (owner 2026-11-09): one click instead of an Edit + Save per
+  // "default" row. Shown only while some department runs on built-in values
+  // the CDR Import pipeline cannot see; the server re-derives the list (the
+  // client sends nothing) and validates each row as the single save does.
+  function dcRenderDefaultsBar_(data) {
+    const bar = $('dc-defaults-bar');
+    if (!bar) return;
+    const list = (data && data.defaultsToSave) || [];
+    const inactive = (data && data.defaultsInactive) || [];
+    if (!list.length) { bar.style.display = 'none'; return; }
+    $('dc-defaults-text').textContent = list.length + ' department' + (list.length === 1 ? '' : 's')
+      + ' run on built-in defaults only: ' + list.join(', ') + '.'
+      + (inactive.length ? ' Left alone (deactivated on purpose): ' + inactive.join(', ') + '.' : '');
+    bar.style.display = '';
+  }
+
+  function dcSaveDefaults_() {
+    if (dcBusy_) return;
+    const list = (dcLastInit && dcLastInit.defaultsToSave) || [];
+    if (!list.length) return;
+    dsConfirm_({
+      title: 'Save ' + list.length + ' default' + (list.length === 1 ? '' : 's') + ' as sheet rows?',
+      messageHtml: 'Writes a Dept Config row for <strong>' + escapeHtml(list.join(', '))
+        + '</strong> with the values shown now, so the CDR Import pipeline sees the same mapping. '
+        + 'No dashboard figure changes. Each row is checked as a single Save would check it.',
+      confirmLabel: 'Save all',
+    }).then(function (ok) {
+      if (!ok || dcBusy_) return;
+      const btn = $('dc-save-defaults-btn');
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
+      dcSetBusy_(true);
+      dcSetStatus_('loading', 'Saving ' + list.length + ' default row' + (list.length === 1 ? '' : 's') + '…');
+      const done = function () {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save all defaults as sheet rows'; }
+        dcSetBusy_(false);
+      };
+      google.script.run
+        .withSuccessHandler(function (res) {
+          done();
+          res = res || {};
+          const saved = res.saved || [], failed = res.failed || [], warns = res.warnings || [];
+          let msg = 'Saved ' + saved.length + ' row' + (saved.length === 1 ? '' : 's')
+            + (saved.length ? ' (' + saved.join(', ') + ')' : '') + '.';
+          if (failed.length) {
+            msg += ' Not saved: ' + failed.map(function (f) { return f.dept + ' -- ' + f.error; }).join('; ') + '.';
+          }
+          if (warns.length) msg += ' ⚠ ' + warns.join(' ');
+          dcSetStatus_(failed.length ? 'error' : 'success', msg);
+          showToast('Saved ' + saved.length + ' default row' + (saved.length === 1 ? '' : 's'), failed.length ? 'error' : 'success');
+          dcLoadInit_(true);   // CL-15
+        })
+        .withFailureHandler(function (err) {
+          done();
+          dcSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+        })
+        .saveDeptConfigDefaults();
+    });
   }
 
   // S1(c): the inbound name-space twin of dcRenderDiscovered_. Neon-backed,
@@ -3208,7 +3270,7 @@
   let dcBusy_ = false;
   function dcSetBusy_(on) {
     dcBusy_ = !!on;
-    ['dc-cancel-btn', 'dc-deactivate-btn'].forEach(function (id) {
+    ['dc-cancel-btn', 'dc-deactivate-btn', 'dc-save-defaults-btn'].forEach(function (id) {
       const b = $(id); if (b) b.disabled = dcBusy_;
     });
     document.querySelectorAll('#dc-effective-tbody .dc-row-edit').forEach(function (b) {
