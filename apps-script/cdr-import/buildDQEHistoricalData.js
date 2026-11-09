@@ -1252,8 +1252,30 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     Logger.log('DQE: post-write sort SKIPPED -- a cdr-import bulk run / Manual Export is in progress '
       + '(CR-5 marker); the nightly sort check orders the sheet later.');
   } else if (newLastRow > 2) {
-    dqeSheet.getRange(2, 1, newLastRow - 1, dqeSheet.getLastColumn())
-            .sort({ column: 2, ascending: true });
+    // CAP-7 (broad-scan 2026-11-09): the rows above are already written. A
+    // throw from this sort used to escape the build, so the caller logged a
+    // `:DQE` failure and emailed "DQE was NOT refreshed" (false), and the
+    // Neon mirror and the success row below never ran. Log the sort failure
+    // under the nightly sort check's step (processBatchArchive's pattern --
+    // that check re-sorts the sheet and supersedes the row) and carry on.
+    try {
+      dqeSheet.getRange(2, 1, newLastRow - 1, dqeSheet.getLastColumn())
+              .sort({ column: 2, ascending: true });
+    } catch (sortErr) {
+      Logger.log('DQE: post-write sort threw (rows are written): %s', sortErr);
+      try {
+        logPipelineHealth_(dqeSheet.getParent(), {
+          step:       'historicalSort:DQE',
+          status:     'failure',
+          rows:       null,
+          durationMs: null,
+          notes:      'callDate=' + callDateStr + ' | post-write sort threw: '
+                    + (sortErr && sortErr.message ? sortErr.message : sortErr)
+                    + ' -- the rows are written; the sheet may be out of date order until the '
+                    + 'nightly sort check runs (Operator State #61)',
+        });
+      } catch (pipelineLogErr) { /* best-effort */ }
+    }
   }
 
   Logger.log('DQE: Wrote ' + outputRows.length + ' agent rows for ' + callDateStr + '.');
@@ -1334,6 +1356,29 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     } catch (pipelineLogErr) { /* best-effort */ }
   }
   }  // end else (skipNeon)
+
+  // CAP-2 (broad-scan 2026-11-09): the rows above were written WITHOUT the
+  // roster canonicalization (or without the alias overrides) because that
+  // read threw twice. The build still runs -- a day of slightly wrong names
+  // beats a day with none -- but it must not pass as a clean success: this
+  // failure-only row (INV-44) names the date and the repair.
+  if (ROSTER_CANONICAL.readError || ROSTER_CANONICAL.aliasError) {
+    try {
+      logPipelineHealth_(dqeSheet.getParent(), {
+        step:       'buildDQE:roster',
+        status:     'failure',
+        rows:       outputRows.length,
+        durationMs: null,
+        notes:      'callDate=' + callDateStr + ' | '
+                  + (ROSTER_CANONICAL.readError
+                      ? 'the DO NOT EDIT! roster could not be read (' + ROSTER_CANONICAL.readError
+                        + ') -- agent names were written AS RECEIVED, not matched to the roster'
+                      : 'the Agent Alias Overrides sheet could not be read (' + ROSTER_CANONICAL.aliasError
+                        + ') -- alias overrides were NOT applied')
+                  + '. Force re-import this date to rebuild it with the right names.',
+      });
+    } catch (pipelineLogErr) { /* best-effort */ }
+  }
 
   // Pipeline Health: append a success row so the admin can see at a
   // glance "the daily DQE rebuild ran for 2026-05-19 and wrote 240
@@ -1449,6 +1494,15 @@ function canonicalizeAgentNameWith_(rosterCanonical, rawName) {
 // Returns empty maps if the roster sheet is missing or empty so the
 // build still runs (just without name canonicalization).
 //
+// CAP-2 (broad-scan 2026-11-09): a read that THROWS is a different thing
+// from a sheet that is not there. It used to return the same empty maps with
+// only a Logger line, so one transient Sheets error wrote a whole day of
+// un-canonicalized names under a plain success row (and the dup-guard then
+// kept a non-force re-import from healing it). Each read is now tried twice;
+// if it still fails the result carries `readError` (the roster) or
+// `aliasError` (the overrides sheet) and the DQE build logs a failure row.
+// The function still never throws -- every caller keeps its contract.
+//
 // Roster layout pinned by the dashboard's Config.gs ROSTER constants:
 //   HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6 (F).
 // Dept block ends at the first blank cell in the header row; columns
@@ -1456,8 +1510,24 @@ function canonicalizeAgentNameWith_(rosterCanonical, rawName) {
 // Agent cells are formatted "Name, ext1, ext2" -- name is everything
 // before the first comma.
 function loadRosterCanonicalNames_(anySheet) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return loadRosterCanonicalNamesOnce_(anySheet);
+    } catch (e) {
+      lastErr = e;
+      Logger.log('loadRosterCanonicalNames_ failed (attempt %s of 2): %s', attempt + 1, e);
+    }
+  }
+  return { canonicalSet: {}, strippedMap: {}, aliasMap: {},
+           readError: String(lastErr && lastErr.message ? lastErr.message : lastErr) };
+}
+
+// One read attempt. THROWS on a roster read error (the caller retries);
+// returns empty maps for a missing / empty roster, exactly as before.
+function loadRosterCanonicalNamesOnce_(anySheet) {
   const empty = { canonicalSet: {}, strippedMap: {}, aliasMap: {} };
-  try {
+  {
     // PC-1: a Spreadsheet works too (the per-call writers hold no sheet).
     const ss = !anySheet ? SpreadsheetApp.getActive()
       : (typeof anySheet.getSheetByName === 'function' ? anySheet : anySheet.getParent());
@@ -1514,35 +1584,41 @@ function loadRosterCanonicalNames_(anySheet) {
     // imports get canonicalized without further admin action.
     // Best-effort: missing or empty sheet leaves aliasMap = {} and
     // the build behaves exactly as before this feature shipped.
-    const aliasMap = {};
-    try {
-      const aliasSheet = ss.getSheetByName('Agent Alias Overrides');
-      if (aliasSheet) {
-        const aLastRow = aliasSheet.getLastRow();
-        if (aLastRow >= 2) {
-          const aRows = aliasSheet.getRange(2, 1, aLastRow - 1, 3).getValues();
-          for (let i = 0; i < aRows.length; i++) {
-            const oldName = String(aRows[i][0] || '').trim();
-            const canonical = String(aRows[i][1] || '').trim();
-            if (!oldName || !canonical) continue;
-            const rawActive = aRows[i][2];
-            const active = !(rawActive === false || rawActive === 'FALSE'
-                          || rawActive === 'false' || rawActive === 0
-                          || rawActive === 'no' || rawActive === 'No');
-            if (!active) continue;
-            // First write wins on duplicate oldName entries.
-            if (!aliasMap[oldName]) aliasMap[oldName] = canonical;
+    let aliasMap = {};
+    let aliasError = null;
+    for (let aliasTry = 0; aliasTry < 2; aliasTry++) {
+      aliasMap = {};
+      aliasError = null;
+      try {
+        const aliasSheet = ss.getSheetByName('Agent Alias Overrides');
+        if (aliasSheet) {
+          const aLastRow = aliasSheet.getLastRow();
+          if (aLastRow >= 2) {
+            const aRows = aliasSheet.getRange(2, 1, aLastRow - 1, 3).getValues();
+            for (let i = 0; i < aRows.length; i++) {
+              const oldName = String(aRows[i][0] || '').trim();
+              const canonical = String(aRows[i][1] || '').trim();
+              if (!oldName || !canonical) continue;
+              const rawActive = aRows[i][2];
+              const active = !(rawActive === false || rawActive === 'FALSE'
+                            || rawActive === 'false' || rawActive === 0
+                            || rawActive === 'no' || rawActive === 'No');
+              if (!active) continue;
+              // First write wins on duplicate oldName entries.
+              if (!aliasMap[oldName]) aliasMap[oldName] = canonical;
+            }
           }
         }
+        break;
+      } catch (aliasErr) {
+        aliasError = String(aliasErr && aliasErr.message ? aliasErr.message : aliasErr);
+        Logger.log('loadRosterCanonicalNames_: alias overrides read failed (attempt %s of 2): %s', aliasTry + 1, aliasErr);
       }
-    } catch (aliasErr) {
-      Logger.log('loadRosterCanonicalNames_: alias overrides read failed: %s', aliasErr);
     }
 
-    return { canonicalSet: canonicalSet, strippedMap: strippedMap, aliasMap: aliasMap };
-  } catch (e) {
-    Logger.log('loadRosterCanonicalNames_ failed: %s', e);
-    return empty;
+    const loaded = { canonicalSet: canonicalSet, strippedMap: strippedMap, aliasMap: aliasError ? {} : aliasMap };
+    if (aliasError) loaded.aliasError = aliasError;
+    return loaded;
   }
 }
 

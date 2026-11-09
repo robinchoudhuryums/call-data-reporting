@@ -64,6 +64,7 @@ var HEALTH_FAILURE_ONLY_STEPS_ = [
   'neonMirror:enqueue',             // PIPE-6: a deferred-mirror date that was never queued
   'bulkBackfill:DQE-guard',         // RB-1: a bulk date whose DQE rebuild failed (the per-date
   'bulkBackfill:Direct-guard',      //      :DQE / :Direct rows are superseded by the next date's success)
+  'buildDQE:roster',                // CAP-2: a DQE build that ran without the roster / alias read
 ];
 
 function healthFailureOnlyStep_(step) {

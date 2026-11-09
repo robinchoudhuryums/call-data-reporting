@@ -344,10 +344,21 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // the agent ONLY on that leg). PASS A guarded this for queue calls only, so
   // on a NON-queue direct call that leg became a fake connected outbound and
   // its talk counted twice. Same id discipline as queueCallIds (cid + parent).
+  // CAP-1 (broad-scan 2026-11-09): "Incoming" here means a caller CALLING IN
+  // -- the captures' NX-2 test (icIsCallerIncoming_), never a bare Direction
+  // check. 8x8 marks its CallRecording leg Incoming on OUTBOUND calls too, so
+  // the bare test filed such a call as inbound: the agent's Outgoing leg took
+  // the "own talk on an inbound call" branch below, no inbound event existed
+  // to credit, and the call vanished from Direct altogether (~26 a day,
+  // Operator State #87). The typeof guard is for suites that load this file
+  // without inboundCalls.js; lint:gas proves the name exists in the project.
+  const callerIncoming = (typeof icIsCallerIncoming_ === 'function')
+    ? icIsCallerIncoming_
+    : function (leg) { return String(leg[C.DIR] || '') === 'Incoming'; };
   const incomingCallIds = new Set();
   for (let ii = 1; ii < rawDisplayData.length; ii++) {
     const q = rawDisplayData[ii];
-    if (!q || String(q[C.DIR] || '') !== 'Incoming') continue;
+    if (!q || !callerIncoming(q)) continue;
     const icid = dcClean_(q[C.CALL_ID]);
     const ipar = realParent(dcClean_(q[C.PARENT]));
     if (icid) incomingCallIds.add(icid);
@@ -574,11 +585,12 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (calleeAgent && !exclusions.has(calleeAgent.name) && ibCaller && !queueExtSet.has(caller)) {
       const b = ensure(calleeAgent.name, calleeAgent.dept);
       let ev = b.ib[root];
-      if (!ev) { ev = b.ib[root] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid, otherName: dcClean_(r[C.CALLER_NAME]), otherAgent: extOnly ? undefined : (callerRes.agent || null) }; }
+      if (!ev) { ev = b.ib[root] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, rings: [], answered: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid, otherName: dcClean_(r[C.CALLER_NAME]), otherAgent: extOnly ? undefined : (callerRes.agent || null) }; }
       ev.legs[cid] = true;
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       const ringEnd = (startSec != null) ? startSec + Math.max(0, dcTimeToSec_(r[C.CALLTIME])) : null;
       if (ringEnd != null && (ev.ringEnd == null || ringEnd > ev.ringEnd)) ev.ringEnd = ringEnd;
+      if (startSec != null) ev.rings.push({ s: startSec, e: ringEnd != null ? ringEnd : startSec });   // CAP-4
       // PC-4: "Answered" needs talk, as in the inbound capture's Talk>0 gate --
       // a zero-talk Answered leg counted as answered and dragged ATT down.
       if (answered && talk > 0) {
@@ -648,6 +660,27 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     return null;
   }
 
+  // CAP-4 (broad-scan 2026-11-09): the busy test for a MISSED event, ring by
+  // ring. D2 made one event of every leg of a root call, with one span from
+  // the first ring's start to the last ring's end -- so a call the agent took
+  // in the GAP between two rings of the same root (rang, went elsewhere, came
+  // back six minutes later) overlapped that span and turned a miss while free
+  // into "missed while busy", naming a call they were on at neither ring. A
+  // miss is excused only when EVERY ring found them busy: free at any ring
+  // and unanswered is a miss. Returns the first ring's blocker (who they were
+  // with) or null. An event with no timed ring keeps the old single-span test.
+  function eventBlocker(occList, ev, cid) {
+    const rings = (ev.rings && ev.rings.length) ? ev.rings
+      : [{ s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) }];
+    let first = null;
+    for (let j = 0; j < rings.length; j++) {
+      const bl = busyBlocker(occList, { cid: cid, s: rings[j].s, e: rings[j].e });
+      if (!bl) return null;
+      if (!first) first = bl;
+    }
+    return first;
+  }
+
   // Sample collection (verification aid): a capped few example events per
   // bucket, with the fields needed to find the row in Raw Data by CALL_ID.
   const collect = !!(opts && opts.collectSamples);
@@ -683,7 +716,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
           caller: ev.caller, callee: ev.callee, talkSec: ev.talk });
       } else {
         const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
-        const blocker = busyBlocker(a.occ, ring);
+        const blocker = eventBlocker(a.occ, ev, cid);   // CAP-4: every ring, not the span
         if (blocker) {
           m['ib_' + k + '_missed_busy']++; missedBusyTotal++;
           addSample('ib_missed_busy', { callId: cid, agent: name, dept: a.dept, dir: k,
@@ -748,14 +781,13 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         const ev = a.ib[cid];
         let outcome = 'answered';
         if (!ev.answered) {
-          const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
-          outcome = (ev.start != null && busyBlocker(a.occ, ring)) ? 'missed_busy' : 'missed_free';
+          outcome = (ev.start != null && eventBlocker(a.occ, ev, cid)) ? 'missed_busy' : 'missed_free';   // CAP-4
         }
         const o = other(ev, ev.caller, ev.intExt);
         // ADT-2: who the call that kept them busy was with.
         let busyWith = null;
         if (outcome === 'missed_busy') {
-          const bl = busyBlocker(a.occ, { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) });
+          const bl = eventBlocker(a.occ, ev, cid);   // CAP-4
           busyWith = bl ? (bl.w || 'another call') : null;
         }
         events.push({ agent: name, dept: a.dept, direction: 'in', side: ev.intExt, callId: cid, callStart: ev.start == null ? null : secToHms(ev.start),
@@ -793,7 +825,18 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       outsideNumber: DGI.outsideNumber, other: DGI.other, talked: DGI.talked,
       topCallees: top(DGI.callee), topContexts: top(DGI.ctx) };
   }
-  return events ? { rows: rows, meta: meta, events: events } : { rows: rows, meta: meta };
+  const out = events ? { rows: rows, meta: meta, events: events } : { rows: rows, meta: meta };
+  // CAP-6 (broad-scan 2026-11-09): the build's OWN per-leg credit rule
+  // (DCA-1..5 with the DCA-2/3 blank-name confirmation, which needs this
+  // pass's ownerSeen) for dcDialInAnnotate_. Non-enumerable: callers that
+  // serialize or compare the result see exactly the shape they always did.
+  try {
+    Object.defineProperty(out, 'resolveLeg', { enumerable: false, value: function (ext, legName) {
+      return extOnly ? { agent: extToAgent[ext] || null, kind: 'blank' }
+        : confirmBlank(ext, dcResolveAgent_(ext, legName, maps));
+    } });
+  } catch (eRes) { /* a frozen result: the annotator falls back to the raw rule */ }
+  return out;
 }
 
 /**
@@ -1510,7 +1553,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   // line, by extension". A defect here never costs the day's write: the calls
   // just stay unsplit (via NULL).
   try {
-    const ann = dcDialInAnnotate_(dayRows, result.events || [], maps);
+    const ann = dcDialInAnnotate_(dayRows, result.events || [], maps, result.resolveLeg);   // CAP-6
     (result.events || []).forEach(function (ev) {
       const a = ann[ev.callId + '|' + ev.agent];
       if (a) { ev.via = a.via; ev.dialIn = a.dialIn || null; }
@@ -2007,9 +2050,16 @@ var DC_DID_OWNER_SHARE_ = 0.8;
  * Departments column (36): without it every pre-agent leg would read as a menu
  * step, so a narrower grid yields {} (unknown) rather than a guess.
  */
-function dcDialInAnnotate_(rows, events, maps) {
+function dcDialInAnnotate_(rows, events, maps, resolveLeg) {
   const out = {};
   if (!rows || rows.length < 2) return out;
+  // CAP-6: who a leg is credited to is the BUILD's answer (resolveLeg, from
+  // computeDirectCallMetrics). The raw extension rule below it credited a
+  // blank-named leg on a reassigned extension to the FORMER employee, so the
+  // agent's own leg read as "a colleague rang first" and a call that reached
+  // them straight was stored via='colleague'.
+  const resolve = (typeof resolveLeg === 'function') ? resolveLeg
+    : function (ext, legName) { return dcResolveAgent_(ext, legName, maps); };
   let width = 0;
   for (let i = 0; i < Math.min(rows.length, 50); i++) width = Math.max(width, (rows[i] || []).length);
   if (width <= DC_DIAL_COL_.DEPARTMENTS) return out;
@@ -2035,7 +2085,7 @@ function dcDialInAnnotate_(rows, events, maps) {
     let mine = -1;
     for (let j = 0; j < legs.length; j++) {
       const callee = dcClean_(legs[j][C.CALLEE]);
-      const res2 = dcResolveAgent_(callee, legs[j][C.CALLEE_NAME], maps);
+      const res2 = resolve(callee, legs[j][C.CALLEE_NAME]);
       if (res2.agent && res2.agent.name === ev.agent) { mine = j; break; }
     }
     let how = 'straight';
@@ -2047,7 +2097,7 @@ function dcDialInAnnotate_(rows, events, maps) {
       if (/A_Q_|queue|backup csr/i.test(name) || /queue/i.test(String(l[C.CTX] || ''))) continue;
       if (/record|voice ?mail/i.test(name)) continue;
       const dept = dcClean_(l[DC_DIAL_COL_.DEPARTMENTS]);
-      const r3 = dcResolveAgent_(callee, name, maps);
+      const r3 = resolve(callee, name);
       if (r3.agent && r3.agent.name !== ev.agent) { how = 'colleague'; break; }
       if (!dept || dept.toUpperCase() === 'N/A') { how = 'menu'; break; }
     }
@@ -2059,7 +2109,7 @@ function dcDialInAnnotate_(rows, events, maps) {
 /** PURE. One day's straight / menu / colleague reading of every outside direct call (DID-0). */
 function dcDialInForDay_(rows, maps) {
   const res = computeDirectCallMetrics(rows, maps, { events: true });
-  const ann = dcDialInAnnotate_(rows, res.events || [], maps);
+  const ann = dcDialInAnnotate_(rows, res.events || [], maps, res.resolveLeg);   // CAP-6
   const out = [];
   (res.events || []).forEach(function (ev) {
     if (ev.direction !== 'in' || ev.side !== 'ext') return;

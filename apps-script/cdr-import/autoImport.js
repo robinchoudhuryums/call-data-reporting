@@ -691,6 +691,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // authoritative Neon replace. DQE and Direct already refuse (F2 / P-4);
     // this is the same check for the other four, from the one grid they all
     // compute from, and it runs BEFORE the Raw Data rewrite and the delete.
+    assertSourceLayout_(cleanData, latestName);   // CAP-3: before the date check, which passes a grid with NO dated row
     assertSourceDateMatchesTab_(cleanData, dateObj, latestName);
 
     // I-6: COMPUTE before the force-delete block too. P-3 moved the source
@@ -3348,6 +3349,62 @@ function assertSourceDateMatchesTab_(grid, dateObj, tabName) {
     + ' but ' + c.counts[top] + ' of its ' + c.total + ' calls are on ' + top
     + ' (only ' + (c.counts[exp] || 0) + ' on ' + exp + '). Nothing was deleted or written -- '
     + 'rename the tab or re-download the right day, then import again.');
+}
+
+// CAP-3 (broad-scan 2026-11-09): every engine reads the feed by FIXED column
+// index (DQE_C, IC_COL, the calc engines) and nothing checked that the
+// provider's export still had those columns there. One column inserted after
+// Start Time gave 48 zero QCD rows, zero DQE rows and zero inbound records,
+// each under a success row -- and the QCD date kept the freshness pill green.
+// The header TEXT is not known to this code, so the check is on the VALUES
+// the engines themselves depend on, and only on PRESENCE (never "every row
+// must match") so an unfamiliar value can never refuse a good day:
+//   col C (2)   holds a call start time on at least half the data rows;
+//   col F (5)   holds at least one Incoming / Outgoing / Internal;
+//   cols X / Z (23 / 25) hold at least one "Missed" or "Answered".
+// A shifted grid has none of the second or third. Grids under
+// SOURCE_LAYOUT_MIN_ROWS_ data rows are not judged (a tiny day proves nothing
+// either way), and the Missed / Answered rule waits for
+// SOURCE_LAYOUT_FLAGS_MIN_ROWS_ rows: a quiet weekend tab can genuinely hold a
+// few dozen legs with neither, a workday (thousands of legs) cannot -- and a
+// format change shifts the workdays too. PURE: returns '' or the sentence the
+// refusal shows.
+var SOURCE_LAYOUT_MIN_ROWS_ = 20;
+var SOURCE_LAYOUT_FLAGS_MIN_ROWS_ = 200;
+function sourceLayoutProblem_(grid) {
+  var rows = 0, dated = 0, dirKnown = 0, flags = 0, sample = '';
+  for (var i = 1; i < (grid || []).length; i++) {
+    var r = grid[i] || [];
+    if (String(r[0] == null ? '' : r[0]).trim() === '' && String(r[2] == null ? '' : r[2]).trim() === '') continue;
+    rows++;
+    if (rawGridDayIso_(r[2])) dated++;
+    var dir = String(r[5] == null ? '' : r[5]).trim();
+    if (dir === 'Incoming' || dir === 'Outgoing' || dir === 'Internal') dirKnown++;
+    else if (!sample && dir) sample = dir;
+    if (String(r[23] == null ? '' : r[23]).trim() === 'Missed' || String(r[25] == null ? '' : r[25]).trim() === 'Answered') flags++;
+  }
+  if (rows < SOURCE_LAYOUT_MIN_ROWS_) return '';
+  if (dated * 2 < rows) {
+    return 'column C should hold each call\'s start time, but only ' + dated + ' of ' + rows + ' rows have one there';
+  }
+  if (!dirKnown) {
+    return 'column F should hold Incoming / Outgoing / Internal, but none of ' + rows + ' rows does'
+      + (sample ? ' (it holds values like "' + sample.slice(0, 40) + '")' : '');
+  }
+  if (!flags && rows >= SOURCE_LAYOUT_FLAGS_MIN_ROWS_) {
+    return 'columns X and Z should hold "Missed" / "Answered", but none of ' + rows + ' rows has either';
+  }
+  return '';
+}
+
+/** CAP-3: refuse a source whose columns are not where the engines read them. */
+function assertSourceLayout_(grid, tabName) {
+  const why = sourceLayoutProblem_(grid);
+  if (!why) return;
+  throw new Error('Source layout mismatch: in ' + (tabName || 'the source tab') + ' ' + why
+    + '. The export\'s columns look moved or missing, so every figure would be computed from the wrong '
+    + 'cells. Nothing was deleted or written -- compare the tab\'s header row with an earlier day\'s, '
+    + 'fix the export, then import again.');
 }
 
 function stageRawDataCell_(cell) {

@@ -1628,7 +1628,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   engine always emits 48 rows); the CSR header-order refusal runs before the
   delete and keeps the date's rows; a bulk date whose DQE / Direct rebuild
   failed returns `PARTIAL` and logs the failure-only `bulkBackfill:DQE-guard`
-  / `:Direct-guard` step (`rebuild-report-truth.test.js`).
+  / `:Direct-guard` step (`rebuild-report-truth.test.js`). **CAP-3:** before
+  all of it, `assertSourceLayout_` refuses a source whose columns moved
+  (presence rules on cols C / F / X / Z; `capture-rules.test.js`).
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
   `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- never NARROWER

@@ -297,6 +297,9 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 > outbound capture's Gate 1, the busy / cross-reference indexes) must use
 > `icIsCallerIncoming_`, never a bare Direction test, or a short outbound call
 > reads as an inbound call answered in a second and vanishes from outbound.
+> The Direct engine's own "is this an inbound call?" index joined the rule in
+> CAP-1 (2026-11-09): with the bare test such a call left Direct altogether.
+> `capture-rules.test.js` pins that no bare group test remains there.
 
 > **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
 > first agent it rings often start in the same second, and 8x8 can give the
@@ -1054,6 +1057,12 @@ internal outbound (only a dial to an EXTENSION -- never the Call Recording /
 Voicemail / CallForking legs the CDR also logs Internal, DC-D2b,
 `dcIsInternalDial_`), anonymous inbound rings kept, extension-length callees
 internal (`dcOutboundSide_`); an outside call keeps its first leg's side.
+**CAP-4 (2026-11-09): a missed event is judged ring by ring.** One event can
+hold several rings of the same root call; it is `missed_busy` only when EVERY
+ring found the agent on another call (free at any ring and unanswered is a
+miss), and `busy_with` names the first ring's call. The old test used one span
+from the first ring to the last, so a call taken in the gap between two rings
+excused the miss.
 NOT retroactive: a date built before the deploy keeps the old counts until it
 is re-imported (Operator State #56), so a window spanning the deploy mixes the
 two -- which is what **D0** (`diagnoseDirectCallCounting`, Operator State #80)

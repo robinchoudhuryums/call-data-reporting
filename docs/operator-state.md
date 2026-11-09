@@ -3997,7 +3997,7 @@ When something looks wrong, before assuming a code bug, check:
     defers Neon (`skipNeon`), so it writes no list. **After the cdr-import
     push, run `rebuildDirectCallHeldDates()` once** (cdr-import editor): it
     reruns the direct build for every held `Call_Legs_*` date (~14 days) --
-    filling the list AND applying the current direct-credit rules (DCA-1..5, #83) to those dates -- and logs a
+    filling the list AND applying the current direct-credit rules (DCA-1..5, #83; since CAP-1 / CAP-4 / CAP-6, 2026-11-09, also the recording-leg rule, the ring-by-ring busy test and the dial-in reading -- run it once after that push) to those dates -- and logs a
     resume date if it hits its 4.5-minute budget
     (`rebuildDirectCallHeldDates("2026-10-28")`). Older dates show only the
     outside callers who rang the person's line (from `inbound_calls`), with a

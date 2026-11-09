@@ -2029,7 +2029,12 @@ function backfillInboundCalls(fromIso, toIso, force) {
     if (typeof logPipelineHealthWithFallback_ === 'function') {
       logPipelineHealthWithFallback_(null, {
         step:       'inboundBackfill',
-        status:     (failures.length || hashlessDates.length) ? 'failure' : 'success',   // F8
+        // CAP-5 (broad-scan 2026-11-09): a run that STOPPED because Neon was
+        // unreachable wrote nothing for the dates it was asked for -- it logged
+        // `success` with "STOPPED: Neon unreachable" in the note, which the Health
+        // page reads as green (the note is not parsed). A time-budget stop stays
+        // a success: it made progress and says where to resume.
+        status:     (failures.length || hashlessDates.length || unreachable) ? 'failure' : 'success',   // F8
         rows:       totalRecords,
         durationMs: Date.now() - startMs,
         notes:      summary.slice('backfillInboundCalls: '.length, 500),
