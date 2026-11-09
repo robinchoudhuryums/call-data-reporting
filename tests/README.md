@@ -218,6 +218,14 @@ tests/
                               queue listed before the agent it rang in the
                               same second, a stable partition inside one
                               second only),
+                              ringcentral-adapter (the RingCentral cutover's
+                              NOT-YET-WIRED Call Records -> 8x8 Raw Data
+                              converter: its layout agrees with IC_COL /
+                              DQE_C / MAX_COLS, columns found by header name,
+                              Central -> Pacific wall time, the 8x8 cell
+                              formats, the summary row skipped, bad cells
+                              reported never guessed, the A1-A10 assumption
+                              mappings; docs/ringcentral-migration-plan.md),
                               abandoned-filter (AF-1: the "Filter abandoned
                               calls…" dialog -- every preset leaves EXACTLY its
                               old item's rows, the OLD engine run against a
