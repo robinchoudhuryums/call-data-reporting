@@ -3866,7 +3866,15 @@ When something looks wrong, before assuming a code bug, check:
     A_Q_Sales_MWC goes in Sales' "Inbound queue aliases". The sister-brand
     main lines (UDC_A_Q_Main, UUC_A_Q_Main) and A_Q_AfterHours are entry
     queues, ignored and counted (`TF_BOUNCE_ENTRY_QUEUES_`). The log's first
-    lines say which sub-queues were folded.
+    lines say which sub-queues were folded. **CLN-5 (2026-11-09):** an answer
+    by "(external number)", "(caller)" or a bare number is an outside party,
+    ignored and counted on its own ("answered by an outside party"), never an
+    "answerer not on the roster". **Seeing the rows:** in Admin ▾ → Dept
+    Config a row whose Source reads "default" is the dashboard's built-in
+    setting and NOT a sheet row -- cdr-import cannot read it. **Save all
+    defaults as sheet rows** (DCD-1, the bar under the table) writes every
+    such row at once with the values already in force, through the single
+    Save's validation; a row you deactivated on purpose is left alone.
 
 87. **Is the "N." step a real leg? -- `diagnoseOutsideNumberLegs` (NX-0,
     cdr-import, read-only, owner 2026-10-29).** The path's "N." bubble was a

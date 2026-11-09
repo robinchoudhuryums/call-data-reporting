@@ -333,6 +333,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     },
     getOrphanFixInit: function () { return P['orphan-init']; },
     getDeptConfigInit: function () { return P['deptconfig-init']; },
+    // DCD-1: the bulk save reports what it wrote (the server re-derives the list).
+    saveDeptConfigDefaults: function () {
+      var l = (P['deptconfig-init'] && P['deptconfig-init'].defaultsToSave) || [];
+      return { saved: l.slice(), failed: [], skippedInactive: [], warnings: [] };
+    },
     getAccessControlInit: function () { return P['access-init']; },
     getSystemHealth: function () { return P['health']; },
     getUiFlags: function () { return P['ui-flags']; },

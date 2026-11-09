@@ -97,7 +97,7 @@ test('CL-15: the Access Control and Dept Config write paths keep their result me
   assert.equal(ac.filter(function (c) { return c === 'acLoadInit_(true);'; }).length, 5,
     'manager + agent save/remove and the G3 welcome send keep it');
   assert.equal(dc.filter(function (c) { return c === 'dcLoadInit_();'; }).length, 1, 'only the modal open clears');
-  assert.equal(dc.filter(function (c) { return c === 'dcLoadInit_(true);'; }).length, 2, 'save + deactivate keep it');
+  assert.equal(dc.filter(function (c) { return c === 'dcLoadInit_(true);'; }).length, 3, 'save + deactivate + DCD-1 Save all defaults keep it');
 });
 
 function linkSandbox(from, to, page) {

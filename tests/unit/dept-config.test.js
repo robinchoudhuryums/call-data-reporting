@@ -525,3 +525,97 @@ test('S2B-7 follow-on: sheetUpsertDeptConfigRow_ neutralizes a formula-leading Q
   });
   assert.equal(grid[1][1], 'A_Q_A', 'an ordinary queue list is written unchanged');
 });
+
+// CLN-6 (2026-11-09): a "default" row is the dashboard's built-in setting, and
+// the CDR Import pipeline reads ONLY saved sheet rows (icDeptConfigActiveRows_)
+// -- so its capture and diagnostics silently miss a department the modal shows
+// as mapped. The modal says so under the table.
+test('CLN-6: the Dept Config modal explains that "default" rows are invisible to CDR Import', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'dashboard.html'), 'utf8');
+  const i = html.indexOf('id="dc-source-note"');
+  assert.ok(i !== -1, 'the note sits under the Per-department config table');
+  const note = html.slice(i, html.indexOf('</p>', i));
+  assert.match(note, /<strong>default<\/strong>/);
+  assert.match(note, /CDR Import pipeline[\s\S]*cannot see/);
+  assert.match(note, /Edit and Save/);
+  const imp = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'inboundCalls.js'), 'utf8');
+  assert.match(imp, /getSheetByName\('Dept Config'\)/, 'the claim it makes: CDR Import reads the sheet itself');
+});
+
+// ---- DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows" -------------
+// The CDR Import pipeline reads only SAVED Dept Config rows, so a department
+// running on the dashboard's built-in defaults is invisible to its capture and
+// diagnostics (CLN-6). One click writes those defaults as rows -- through the
+// single save's own validation, never around it.
+function installDefaultsHarness(rows, opts) {
+  opts = opts || {};
+  setConfig(rows);
+  h.ctx.assertAdmin_ = opts.notAdmin ? function () { throw new Error('Admin only.'); } : function () {};
+  h.ctx.sheetSafeCell_ = function (v) { return v; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales', 'PAP', 'Billing', 'Denials', 'Sales MWC']; };
+  h.ctx.scanQcdQueueNames_ = function () {
+    const out = {};
+    ['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR', 'A_Q_Sales', 'A_Q_PAP', 'A_Q_Billing', 'A_Q_Denials']
+      .forEach(function (q) { out[q] = { rows: 5, lastSeen: '2026-11-06' }; });
+    return out;
+  };
+  const roster = opts.csrRoster || ['Robin Choudhury', 'Anna'];
+  h.ctx.getRosterForDepartment_ = function (d) { return { names: d === 'CSR' ? roster.slice() : ['Someone'] }; };
+  h.ctx.publishDashboardStandards_ = function () { h.ctx.__published = (h.ctx.__published || 0) + 1; };
+  h.ctx.__published = 0;
+}
+
+test('DCD-1: the plan lists departments with NO row and a non-empty default; an inactive row is left alone', function () {
+  installDefaultsHarness([row({ dept: 'Sales', qcd: 'A_Q_Sales' }), row({ dept: 'Billing', qcd: 'A_Q_Billing', active: false })]);
+  const plan = JSON.parse(JSON.stringify(h.call('dcDefaultRowsToSave_')));
+  assert.deepEqual(plan.toSave.map(function (r) { return r.dept; }), ['CSR', 'PAP', 'Denials'],
+    'Sales has a row; Billing was deactivated on purpose; Sales MWC has nothing built in');
+  assert.deepEqual(plan.skippedInactive, ['Billing']);
+  const pap = plan.toSave.filter(function (r) { return r.dept === 'PAP'; })[0];
+  assert.deepEqual(pap, { dept: 'PAP', qcdQueues: ['A_Q_PAP'], overviewParent: 'Sales', teamAvgExcludes: [], queueExtOverrides: [] });
+  const csr = plan.toSave.filter(function (r) { return r.dept === 'CSR'; })[0];
+  assert.deepEqual(csr.teamAvgExcludes, ['Robin Choudhury']);
+  assert.deepEqual(csr.queueExtOverrides, ['103', '108', '1003']);
+});
+
+test('DCD-1: Save all writes each default as an ACTIVE sheet row with the values already in force, and publishes once', function () {
+  installDefaultsHarness([row({ dept: 'Sales', qcd: 'A_Q_Sales' })]);
+  const before = { pap: h.call('getOverviewParentMap_').PAP, csr: JSON.stringify(h.call('getDeptQcdQueues_', 'CSR')) };
+  const res = JSON.parse(JSON.stringify(h.call('saveDeptConfigDefaults')));
+  assert.deepEqual(res.saved, ['CSR', 'PAP', 'Billing', 'Denials']);
+  assert.deepEqual(res.failed, []);
+  assert.equal(h.ctx.__published, 1, 'the standards republish runs once for the whole batch');
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const rows = JSON.parse(JSON.stringify(h.call('readDeptConfigRows_')));
+  const by = {};
+  rows.forEach(function (r) { by[r.dept] = r; });
+  ['CSR', 'PAP', 'Billing', 'Denials'].forEach(function (d) { assert.ok(by[d] && by[d].active, d + ' now has an active row'); });
+  assert.equal(by.PAP.overviewParent, 'Sales');
+  assert.equal(h.call('getOverviewParentMap_').PAP, before.pap, 'no effective value moved');
+  assert.equal(JSON.stringify(h.call('getDeptQcdQueues_', 'CSR')), before.csr);
+  // Run again: nothing left to save.
+  h.ctx.__published = 0;
+  const again = JSON.parse(JSON.stringify(h.call('saveDeptConfigDefaults')));
+  assert.deepEqual(again.saved, []);
+  assert.equal(h.ctx.__published, 0, 'nothing saved, nothing republished');
+});
+
+test('DCD-1: a row the single save would refuse is reported, never forced -- the rest still save', function () {
+  // The CSR default excludes "Robin Choudhury", who is not on this roster.
+  installDefaultsHarness([], { csrRoster: ['Anna'] });
+  const res = JSON.parse(JSON.stringify(h.call('saveDeptConfigDefaults')));
+  assert.deepEqual(res.failed.map(function (f) { return f.dept; }), ['CSR']);
+  assert.match(res.failed[0].error, /not on the CSR roster/);
+  assert.ok(res.saved.indexOf('PAP') !== -1 && res.saved.indexOf('Denials') !== -1);
+});
+
+test('DCD-1: admin-only, and the single Save is unchanged (same body, same publish)', function () {
+  installDefaultsHarness([], { notAdmin: true });
+  assert.throws(function () { h.call('saveDeptConfigDefaults'); }, /Admin only/);
+  installDefaultsHarness([]);
+  const one = h.call('saveDeptConfig', { dept: 'Denials', qcdQueues: 'A_Q_Denials' });
+  assert.equal(one.saved, true);
+  assert.equal(h.ctx.__published, 1, 'a single Save still republishes the standards itself');
+});

@@ -667,12 +667,15 @@ var TF_BOUNCE_ENTRY_QUEUES_ = ['UDC_A_Q_Main', 'UUC_A_Q_Main', 'A_Q_AfterHours']
  * twoDeptQueue, unknownAgent, twoRosterAgent}, unmappedQueues: [names],
  * unknownAgents: [names; a 7+-digit one as '(a number)'],
  * resolved: {byQueue, byStint} (XB-0b's two-roster placements),
- * entryQueues (XB-0c: steps through TF_BOUNCE_ENTRY_QUEUES_, ignored) }.
+ * entryQueues (XB-0c: steps through TF_BOUNCE_ENTRY_QUEUES_, ignored),
+ * outsideParty (CLN-5: answers by an outside number / the caller / any other
+ * capture placeholder -- not a person who could be on a roster, so ignored
+ * and counted like an entry queue, never "answerer not on the roster") }.
  */
 function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
   var out = { stints: [], interDept: false, bounce: null,
     skipped: { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 }, unmappedQueues: [],
-    unknownAgents: [], resolved: { byQueue: 0, byStint: 0 }, entryQueues: 0 };
+    unknownAgents: [], resolved: { byQueue: 0, byStint: 0 }, entryQueues: 0, outsideParty: 0 };
   var entry = {};
   TF_BOUNCE_ENTRY_QUEUES_.forEach(function (q) { entry[q.toLowerCase()] = true; });
   var ringingDept = null;   // the department of the queue that rang the next answerer
@@ -684,6 +687,11 @@ function tfBounceOfJourney_(journey, deptsOfQueue, deptsOfAgent) {
     if (!isQ && !isAns) return;
     var name = String(ev.name == null ? '' : ev.name).trim();
     if (isQ && entry[name.toLowerCase()]) { out.entryQueues++; ringingDept = null; return; }
+    // CLN-5: "(external number)", "(caller)" and the like are the capture's
+    // placeholders for a non-employee, and a bare number is an outside party.
+    if (isAns && (/^\(.*\)$/.test(name) || /\d{7,}/.test(name.replace(/\D/g, '')))) {
+      out.outsideParty++; ringingDept = null; return;
+    }
     var ds = (isQ ? deptsOfQueue(name) : deptsOfAgent(name)) || [];
     var rang = ringingDept;
     if (isQ) ringingDept = ds.length === 1 ? ds[0] : null;
@@ -777,6 +785,7 @@ function tfBounceFold_(st, b, callId) {
   Object.keys(b.resolved || {}).forEach(function (k) { st.resolved[k] += b.resolved[k]; });
   if (Object.keys(b.skipped).some(function (k) { return b.skipped[k] > 0; })) st.callsWithSkip = (st.callsWithSkip || 0) + 1;
   st.entryQueues = (st.entryQueues || 0) + (b.entryQueues || 0);
+  st.outsideParty = (st.outsideParty || 0) + (b.outsideParty || 0);   // CLN-5
   st.sentBack = st.sentBack || 0; st.returnedUnanswered = st.returnedUnanswered || 0;
   st.pairs = st.pairs || {}; st.senders = st.senders || {}; st.samples = st.samples || [];
   if (!b.bounce) return st;
@@ -817,7 +826,8 @@ function tfBounceLine_(st) {
     + ', answerer on two rosters ' + String(sk.twoRosterAgent || 0)
     + ' (calls with any step skipped ' + String(st.callsWithSkip || 0) + '); two-roster answerers placed -- by the queue that rang them '
     + String((st.resolved || {}).byQueue || 0) + ', in the department the call was already in ' + String((st.resolved || {}).byStint || 0)
-    + '; steps through an entry queue (ignored) ' + String(st.entryQueues || 0);
+    + '; steps through an entry queue (ignored) ' + String(st.entryQueues || 0)
+    + '; answered by an outside party, not a person (ignored) ' + String(st.outsideParty || 0);   // CLN-5
 }
 
 /**
@@ -860,7 +870,7 @@ function diagnoseTransferBounces(dateIso) {
     Logger.log('[xb] %s: %s', sheets[i].iso, tfBounceLine_(st));
     total.days++;
     total.captured += st.captured;
-    ['calls', 'interDept', 'sentBack', 'returnedUnanswered', 'callsWithSkip', 'entryQueues'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    ['calls', 'interDept', 'sentBack', 'returnedUnanswered', 'callsWithSkip', 'entryQueues', 'outsideParty'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
     total.resolved = total.resolved || { byQueue: 0, byStint: 0 };
     Object.keys(st.resolved || {}).forEach(function (k) { total.resolved[k] += st.resolved[k]; });
     total.skipped = total.skipped || { unmappedQueue: 0, twoDeptQueue: 0, unknownAgent: 0, twoRosterAgent: 0 };
