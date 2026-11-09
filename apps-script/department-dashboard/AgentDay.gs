@@ -71,6 +71,9 @@
  */
 
 var AGENT_DAY_MAX_CALLS_ = 300;
+// NUM-10: the Direct tab's READ bound. The list shows AGENT_DAY_MAX_CALLS_
+// rows; its summary counts every row read, so the read runs further.
+var AGENT_DAY_DIRECT_READ_MAX_ = 2000;
 
 // Owner (2026-10, Batch A): the outbound capture's first date (Operator State
 // #57: "capture start 2026-07-10"). Before it the outbound_calls table holds
@@ -545,9 +548,12 @@ function agentDayDirect_(cap, agentName, dateIso) {
         inWindow: r.in_window !== false };
     });
     var trunc = rows.length > AGENT_DAY_MAX_CALLS_;
-    // ADT-2: the summary counts EVERY row, the list may be capped.
+    // ADT-2: the summary counts EVERY row, the list may be capped. NUM-10:
+    // "every row" is every row READ -- past the read bound it says so.
+    var sum = agentDayDirectSummary_(rows.length > AGENT_DAY_DIRECT_READ_MAX_ ? rows.slice(0, AGENT_DAY_DIRECT_READ_MAX_) : rows);
+    if (rows.length > AGENT_DAY_DIRECT_READ_MAX_) sum.capped = AGENT_DAY_DIRECT_READ_MAX_;
     return { rows: trunc ? rows.slice(0, AGENT_DAY_MAX_CALLS_) : rows, source: 'capture', captureStart: start, truncated: trunc,
-      summary: agentDayDirectSummary_(rows) };
+      summary: sum };
   }
   if (!cap || !cap.available) return { rows: [], source: null, captureStart: start, truncated: false };
   var ib = (cap.inbound || []).filter(function (r) {
@@ -778,7 +784,10 @@ function agentDayFetchCapture_(agentName, dateIso, opts) {
         + "SELECT call_id, direction, side, call_start, ring_sec, talk_sec, outcome, in_window, other_name, other_ext, "
         + "to_jsonb(d)->>'via' AS via, to_jsonb(d)->>'dial_in' AS dial_in, to_jsonb(d)->>'busy_with' AS busy_with "
         + 'FROM direct_calls d WHERE call_date = ?::date AND agent_name = ? '
-        + 'LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t), '
+        // NUM-10: ordered BEFORE the cap (an unordered LIMIT kept an
+        // arbitrary 301, so the list could open mid-day), and read past the
+        // list's own cap so the summary counts the day, not the first 300.
+        + 'ORDER BY call_start, call_id LIMIT ' + (AGENT_DAY_DIRECT_READ_MAX_ + 1) + ') t), '
         + "'start', (SELECT MIN(call_date)::text FROM direct_calls))::text AS j");
       dq.setString(1, dateIso);
       dq.setString(2, agentName);
@@ -972,7 +981,8 @@ function getAgentDay(req) {
   out.meta.tier = agentDayTier_(cap.inbound.length, anyJourney, cap.outbound.length);
   out.meta.ageDays = agentDayAgeDays_(scope.date,
     Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'));
-  out.meta.degradedReason = agentDayDegradedReason_(out.meta, cap.available);
+  out.meta.degradedReason = agentDayDegradedReason_(out.meta, cap.available,
+    { inbound: cap.inbound.length, outbound: cap.outbound.length });
   out.meta.outboundCaptured = agentDayOutboundCaptured_(out.meta, scope.date);
   out.reconcile = agentDayReconcile_(out.counts, out.day, out.meta.tier);
   // EXC-2 (#81): the day is shown in full -- this page lists what happened --
@@ -1024,11 +1034,15 @@ function agentDayLabelContext_(scope, cap, isAdmin) {
  * they call for different reactions: an outage is temporary, a pruned journey
  * is permanent, and "nothing was captured" may just be a quiet day.
  */
-function agentDayDegradedReason_(meta, neonAvailable) {
+function agentDayDegradedReason_(meta, neonAvailable, rowCounts) {
   if (meta.tier === 'full') return null;
   if (!neonAvailable) return 'neon-down';
   if (meta.ageDays != null && meta.ageDays > meta.captureHorizonDays) return 'before-capture';
   if (meta.ageDays != null && meta.ageDays > meta.journeyHorizonDays) return 'journey-pruned';
+  // NUM-9: a day with outbound calls and no inbound ones is 'degraded' by the
+  // tier rule (no journey), yet the capture DOES hold rows for it -- "no
+  // per-call rows for this day" sat above a list of outbound calls.
+  if (rowCounts && !(Number(rowCounts.inbound) > 0) && Number(rowCounts.outbound) > 0) return 'outbound-only';
   return 'not-captured';
 }
 

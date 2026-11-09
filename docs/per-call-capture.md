@@ -715,7 +715,13 @@ EVENT rows (`obCallbackEventsSql_` -- every abandon counted, the trackable
 queue attempts, the dials to those callers through `to + 3`, their answered
 queue calls), callers keyed by a per-request integer `dense_rank` so no hash
 leaves the database, and the sheet fallback builds the same rows from the two
-export tabs. Pinned by `outbound-episodes.test.js`.
+export tabs. Pinned by `outbound-episodes.test.js`. **A DEPARTMENT view reads
+its callers' attempts on EVERY queue (NUM-3)**: the dept predicate is a `mine`
+column, not a WHERE -- counts and caller keys are the dept's own, the engine
+sees the other teams' episodes (so their own dials are consumed there, exactly
+as in the company view), and `obEpMineOnly_` keeps the dept's episodes
+afterwards. Narrowing the read instead makes a dept's figures disagree with
+its row in Callbacks by department (`manager-numbers.test.js`).
 **A parent dept's inbound/outbound/missed scope rolls in its one-level
 children's raw inbound aliases AND final-dept labels** (PCR-1/PCR-2,
 `inboundQueuesForDept_` / `inboundDeptFinalLabels_`, the same

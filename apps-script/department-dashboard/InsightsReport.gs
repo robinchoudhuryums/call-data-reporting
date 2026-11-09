@@ -180,6 +180,9 @@ function getInsightsReport(req) {
     ? customPriorFrom + '..' + customPriorTo
     : 'auto';
   const cache = CacheService.getScriptCache();
+  // IDLE-2: an agent-free run leaves out agents with no calls in the window.
+  // Computed BEFORE the key, which carries it (NUM-2).
+  const agentFree = !((req && Array.isArray(req.agents)) ? req.agents : []).some(function (n) { return String(n || '').trim(); });
   // CORE-3 (extended for #3): suffix the key with BOTH read sources -- Insights
   // embeds the DQE agent data/trend AND the QCD Queue-health section, so a flip
   // of EITHER DQE_READ_SOURCE or QCD_READ_SOURCE can't serve a cross-source
@@ -192,6 +195,11 @@ function getInsightsReport(req) {
                  + ':' + reportFreshnessTag_() + ':' + answerRateCacheTag_()   // DD-2
                  // DATA-6: + the latest QCD date -- Queue health is embedded.
                  + ':q' + qcdFreshnessTag_()
+                 // NUM-2: + whether the run is agent-free. An agent-free run
+                 // drops idle agents (IDLE-2) and a run that names the whole
+                 // roster keeps them, yet both resolve to the SAME selection --
+                 // one served the other's payload for the TTL.
+                 + (agentFree ? ':af' : '')
                  // DATA-2: + the dept roster (DL-5). An EXPLICIT pick's agentsKey
                  // does not move when the roster does, yet the team average and
                  // the roster-agent count are roster-derived (INV-27).
@@ -208,8 +216,6 @@ function getInsightsReport(req) {
   }
 
   const t0 = Date.now();
-  // IDLE-2: an agent-free run leaves out agents with no calls in the window.
-  const agentFree = !((req && Array.isArray(req.agents)) ? req.agents : []).some(function (n) { return String(n || '').trim(); });
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
                                 customPriorFrom, customPriorTo, { dropIdle: agentFree });
   data.meta.computeMs = Date.now() - t0;

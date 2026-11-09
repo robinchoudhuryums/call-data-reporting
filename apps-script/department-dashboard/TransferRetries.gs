@@ -128,6 +128,12 @@ function trDeptsOfAgentFn_(byAgent, parentOf) {
   };
 }
 
+/** PURE (NUM-5). A department as the cases name it: its one-level parent, or itself. */
+function trFoldDept_(dept, parentOf) {
+  var d = String(dept || '');
+  return (d && parentOf && parentOf[d]) || d;
+}
+
 /**
  * PURE (testable). Rows [{ kind, date, callId, start, agent, journey }] ->
  * the payload's cases + summary, optionally kept to cases whose TRIED
@@ -216,8 +222,15 @@ function getTransferRetries(req) {
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'transfer-retries');
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
-    var fn = trDeptsOfAgentFn_(buildDeptsByAgent_(), getOverviewParentMap_());
-    var built = trBuildFromRows_(Array.isArray(rows) ? rows : [], fn, dept);
+    var parentOf = getOverviewParentMap_() || {};
+    var fn = trDeptsOfAgentFn_(buildDeptsByAgent_(), parentOf);
+    // NUM-5: every case's department is FOLDED to its parent (a sub-queue is
+    // the same team for this question), so the filter folds too -- picking a
+    // sub-queue used to match nothing and read as "no retries". The payload
+    // says which department was counted.
+    var filterDept = dept ? trFoldDept_(dept, parentOf) : '';
+    if (filterDept !== dept) { out.meta.deptAsked = dept; out.meta.dept = filterDept; }
+    var built = trBuildFromRows_(Array.isArray(rows) ? rows : [], fn, filterDept);
     out.summary = built.summary;
     out.cases = built.cases;
     out.meta.truncated = built.truncated;

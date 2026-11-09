@@ -3544,12 +3544,15 @@
     if (res) res.style.display = '';
     const sum = d.summary || {}, bo = sum.byOutcome || {};
     const n = Number(sum.cases) || 0;
+    // NUM-5: a sub-queue is counted with its parent department; say so.
+    const deptNote = m.dept ? ' (' + escapeHtml(m.dept)
+      + (m.deptAsked ? ', which ' + escapeHtml(m.deptAsked) + ' is counted with' : '') + ')' : '';
     $('tr-summary').innerHTML = n
       ? '<strong>' + escapeHtml(fmtNumber(n)) + '</strong> call' + (n === 1 ? '' : 's') + ' where a transfer was tried again in the same department'
-        + (m.dept ? ' (' + escapeHtml(m.dept) + ')' : '') + '. The first attempt: '
+        + deptNote + '. The first attempt: '
         + escapeHtml(fmtNumber(bo.quickDecline || 0)) + ' declined quickly, ' + escapeHtml(fmtNumber(bo.rangOut || 0)) + ' rang out, '
         + escapeHtml(fmtNumber(bo.voicemail || 0)) + ' went to voicemail' + (bo.unknown ? ', ' + escapeHtml(fmtNumber(bo.unknown)) + ' not timed' : '') + '.'
-      : 'No transfer was tried again in the same department in these dates' + (m.dept ? ' (' + escapeHtml(m.dept) + ')' : '') + '.';
+      : 'No transfer was tried again in the same department in these dates' + deptNote + '.';
     const callees = sum.callees || [];
     const cw = document.querySelector('#transfer-retries-modal .tr-callees-wrap');
     if (cw) cw.style.display = callees.length ? '' : 'none';

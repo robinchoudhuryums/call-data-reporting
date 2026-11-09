@@ -2403,6 +2403,11 @@
         + 'every call they touched. Outbound is still exact. This cannot be '
         + 'recovered later.';
     }
+    if (reason === 'outbound-only') {   // NUM-9
+      return '<strong>Outbound calls only.</strong> The capture holds no inbound '
+        + 'call for this agent on this date, so the inbound list is empty; the '
+        + 'outbound calls are listed below. The daily totals stand.';
+    }
     return '<strong>No per-call rows for this day.</strong> The daily totals below '
       + 'stand; the capture simply holds nothing for this agent on this date.';
   }
@@ -3185,6 +3190,8 @@
       ? ' (' + [v.line ? fmtNumber(v.line) + ' their direct line' : '', v.main ? fmtNumber(v.main) + ' a main line' : '',
                 v.colleague ? fmtNumber(v.colleague) + ' via a colleague' : ''].filter(Boolean).join(' · ') + ')' : '';
     let html = '<div class="ap-dsum" role="region" aria-label="Direct calls summary">';
+    // NUM-10: a day past the read bound is summarised from its first calls only.
+    if (s.capped) html += '<div class="ap-dsum-line">Summary of the first ' + escapeHtml(fmtNumber(s.capped)) + ' direct calls of the day.</div>';
     html += '<div class="ap-dsum-blk"><div class="ap-dsum-h"><strong>' + fmtNumber(i.total || 0) + '</strong> calls to their line</div>'
       + (typeof obSplitMiniHtml_ === 'function' ? obSplitMiniHtml_(inParts, i.total || 0,
           fmtNumber(i.total || 0) + ' calls to their line: ' + inParts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '),

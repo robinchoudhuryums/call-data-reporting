@@ -1820,7 +1820,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   MATCH the first (a correction pass over the untouched accumulation, so a
   no-crossover combine is byte-identical BY CONSTRUCTION; L7: a
   changeover-mixed repeat with DIFFERENT figures is left summed -- fail
-  open) and ships `totals.crossoverAgentCount`. Per-dept subtotals
+  open; NUM-7: a repeat that differs only by a one-dept exception day is
+  still dropped) and ships `totals.crossoverAgentCount`. Per-dept subtotals
   stay UN-deduped on purpose -- each must still equal that dept's own view --
   so **the grand total can now be LESS than the sum of the subtotals**, and
   both the totals-row caption and the CSV total row say why (an unexplained
@@ -1873,7 +1874,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   mapped queues match NONE of the splits' RAW queue names, which is a CONFIGURATION fault (the
   canonical-vs-raw name bridge is the admin-populated "Inbound queue
   aliases" column, and nothing verifies it is complete -- fix-history B-1
-  has the mechanism). A PARTIAL mismatch keeps its narrowing and reports
+  has the mechanism; a reader building ONE surface from two windows names
+  the verdict's span, `verdictFromIso` -- the Overview tile, NUM-4,
+  `manager-numbers.test.js`). A PARTIAL mismatch keeps its narrowing and reports
   the dropped queue (`meta.queueSplitUnmatched`); each row carries
   `queueScoped`. `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed (the
   pipeline stamps one per-DAY value on every row), nor are the AD-derived
@@ -1882,8 +1885,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Phase 0 rule:** a `queueScoped` row is never de-duplicated -- two
   narrowed rows PARTITION the agent's day, so summing is correct and
   subtracting would under-count -- EXCEPT against a dept whose whole window
-  fell open (B-1): that row is the all-queue superset, so the narrowed slice
-  is subtracted (DATA-8, `queue-split.test.js`). The relationship bar + `subqSplitChip_`
+  fell open (B-1) or that has no mapped queues (NUM-8): that row is the
+  all-queue superset, so the narrowed slice is subtracted (DATA-8,
+  `queue-split.test.js`, `manager-numbers.test.js`). The relationship bar + `subqSplitChip_`
   are HIDDEN (Round-16 owner; `SUBQ_BAR_HIDDEN_`); the B-1 mismatch signal
   is `auditQueueSplitAttribution()` (Operator State #41).
 - **Scope is locked to `roster` (Phase 14/15 roster-only flip).** Both public

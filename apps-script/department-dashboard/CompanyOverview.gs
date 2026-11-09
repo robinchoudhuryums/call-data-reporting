@@ -875,7 +875,11 @@ function ovAccumulatePeriods_(dqeRows, allDepts, deptsForAgent, w, latestDate) {
       if (!owners || owners.indexOf(d) === -1) continue;
       pRows.push(pr);
     }
-    pRows = queueSplitNarrowedCopy_(pRows, d).rows;
+    // NUM-4: the verdict is the TILE's -- the 30-day pass above reads rows
+    // from trendStartIso only, so this wider pass takes its fail-open verdict
+    // from the same span. Assessed over the whole year, one tile could show a
+    // day narrowed here and un-narrowed there (a queue renamed mid-year).
+    pRows = queueSplitNarrowedCopy_(pRows, d, { verdictFromIso: trendStartIso }).rows;
     const pa = deptPeriodAcc[d];
     const cd = deptChartDaily[d];
     for (let ri = 0; ri < pRows.length; ri++) {
@@ -1624,6 +1628,9 @@ function getOverviewChartTrend(req) {
   // Queue-split adoption: per-dept narrowing over the SHARED row array, so
   // the YTD chart agrees with the tiles and the dept table (clone-per-dept
   // via queueSplitNarrowedCopy_; off = same rows, no clones).
+  // NUM-4: with the tile's own fail-open verdict (its 30-day span), so a
+  // dept's year line and its tile are narrowed, or not, together.
+  const tileVerdictFromIso = ovWindows_(latestDate).trendStartIso;
   allDepts.forEach(function (d) {
     deptDaily[d] = {};
     let deptRows = [];
@@ -1634,7 +1641,7 @@ function getOverviewChartTrend(req) {
       if (!owners || owners.indexOf(d) === -1) continue;
       deptRows.push(r);
     }
-    deptRows = queueSplitNarrowedCopy_(deptRows, d).rows;
+    deptRows = queueSplitNarrowedCopy_(deptRows, d, { verdictFromIso: tileVerdictFromIso }).rows;
     const cd = deptDaily[d];
     deptRows.forEach(function (r) {
       const iso = r.dateIso;

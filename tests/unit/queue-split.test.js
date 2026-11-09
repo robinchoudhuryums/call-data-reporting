@@ -714,7 +714,8 @@ test('L3: CompanyOverview routes all three accumulation passes through queueSpli
   const calls = (src.match(/queueSplitNarrowedCopy_\(/g) || []).length;
   assert.ok(calls >= 3,
     'main per-dept pass + periods/chart pass (L3) + YTD endpoint must all narrow; found ' + calls);
-  assert.match(src, /pRows = queueSplitNarrowedCopy_\(pRows, d\)\.rows/,
+  // NUM-4: the periods pass names the tile's 30-day span for its fail-open verdict.
+  assert.match(src, /pRows = queueSplitNarrowedCopy_\(pRows, d, \{ verdictFromIso: trendStartIso \}\)\.rows/,
     'the periods/90-day-chart pass narrows per dept');
 });
 

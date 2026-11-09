@@ -615,6 +615,9 @@
       // Round-16 (owner): pending-escalations line on the company card --
       // filled from the badge fetch's counts (escApplyBadge_ repaints it in
       // place whenever the badge refreshes, so it follows every mutation).
+      // NUM-6: the snapshot is the latest day; say so when that day is left out.
+      + (ovLatestExceptionNote_(null, true)
+          ? '<div class="ov-dept-nodata-note ov-dept-exc-note">' + escapeHtml(ovLatestExceptionNote_(null, true)) + '</div>' : '')
       + '<div class="ov-agg-esc" id="ov-agg-esc"></div>';
     ovAggEscRender_();
   }
@@ -724,6 +727,29 @@
     return st;
   }
   function ovPeriodCap_() { return (OV_CARD_PERIODS_[ovCardPeriod] || OV_CARD_PERIODS_.yesterday).cap; }
+
+  // NUM-6: the latest data day IS an exception day (#81) for this department
+  // (null = the company). The single-day view then has no figures to show --
+  // the day is left out on purpose -- and a bare dash read as missing data.
+  // Returns the day's { date, depts, reason } from the payload, or null.
+  function ovLatestExceptionFor_(deptName) {
+    const d = ovLastData;
+    if (!d || !d.latestDate || !Array.isArray(d.exceptionDays)) return null;
+    for (let i = 0; i < d.exceptionDays.length; i++) {
+      const e = d.exceptionDays[i];
+      if (!e || e.date !== d.latestDate) continue;
+      if (!e.depts || !e.depts.length || (deptName && e.depts.indexOf(deptName) !== -1)) return e;
+    }
+    return null;
+  }
+  /** NUM-6: the note's text ('' when the latest day is counted, or the card shows a longer window). */
+  function ovLatestExceptionNote_(deptName, single) {
+    if (!single) return '';
+    const e = ovLatestExceptionFor_(deptName);
+    if (!e) return '';
+    return excDateLabel_(e.date) + ' is an exception day' + (e.reason ? ' (' + e.reason + ')' : '')
+      + ' and is left out of the figures. Choose a longer window to see the days around it.';
+  }
 
   // O4: independent period for the bottom AGENT TABLE (re-fetches the dept
   // summary for the selected range), separate from the card period above.
@@ -1102,6 +1128,7 @@
     const viewerBadge = isViewer
       ? '<span class="ov-dept-viewer-badge">' + ((isAllDeptViewer_() && !viewAsDept_) ? 'selected' : 'My Dept') + '</span>'
       : '';
+    const excNote = ovLatestExceptionNote_(dept.name, ovCardPeriod === 'yesterday');   // NUM-6
     const cls = 'ov-dept-tile'
               + (isChild ? ' ov-dept-tile-child' : '')
               + (isViewer ? ' ov-dept-tile-viewer' : '')
@@ -1122,8 +1149,10 @@
          +     ovBuildWowChip_(dept)
          +     ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +   '</div>'
-         +   (st.pctFormatted === '\u2014'
-              ? '<div class="ov-dept-nodata-note">No agent call data in this window yet \u2014 queue stats below still count.</div>' : '')
+         +   (excNote
+              ? '<div class="ov-dept-nodata-note ov-dept-exc-note">' + escapeHtml(excNote) + '</div>'
+              : (st.pctFormatted === '\u2014'
+                ? '<div class="ov-dept-nodata-note">No agent call data in this window yet \u2014 queue stats below still count.</div>' : ''))
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
          +     '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
