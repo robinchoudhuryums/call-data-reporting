@@ -221,6 +221,7 @@ test('CAP-2: the loader never throws, a MISSING sheet is not an error, and Healt
   const health = read('apps-script/department-dashboard/SystemHealth.gs');
   const list = health.slice(health.indexOf('var HEALTH_FAILURE_ONLY_STEPS_ = ['), health.indexOf('function healthFailureOnlyStep_'));
   assert.match(list, /'buildDQE:roster'/, 'failure-only: it never logs a success, so it must age out');
+  assert.match(list, /'buildDQE:sort'/, 'CAP-7\'s step ages out the same way');
 });
 
 test('CAP-7: a post-write sort that throws does not fail the build -- rows written, mirror run, success logged', function () {
@@ -241,7 +242,7 @@ test('CAP-7: a post-write sort that throws does not fail the build -- rows writt
   assert.equal(d.names().length, 2, 'the rows are in the sheet');
   assert.equal(mirrored, 2, 'the Neon mirror still ran');
   const rows = d.health();
-  const sortRow = rows.filter(function (r) { return r.step === 'historicalSort:DQE'; });
+  const sortRow = rows.filter(function (r) { return r.step === 'buildDQE:sort'; });
   assert.equal(sortRow.length, 1);
   assert.equal(sortRow[0].status, 'failure');
   assert.match(sortRow[0].notes, /post-write sort threw: sort service error -- the rows are written/);

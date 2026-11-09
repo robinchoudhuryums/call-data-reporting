@@ -1256,8 +1256,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     // throw from this sort used to escape the build, so the caller logged a
     // `:DQE` failure and emailed "DQE was NOT refreshed" (false), and the
     // Neon mirror and the success row below never ran. Log the sort failure
-    // under the nightly sort check's step (processBatchArchive's pattern --
-    // that check re-sorts the sheet and supersedes the row) and carry on.
+    // under its own FAILURE-ONLY step (INV-44: it ages out after 4 days, so
+    // it does not depend on the optional nightly sort check to clear it;
+    // the next build's sort, or that check, re-orders the sheet) and carry on.
     try {
       dqeSheet.getRange(2, 1, newLastRow - 1, dqeSheet.getLastColumn())
               .sort({ column: 2, ascending: true });
@@ -1265,14 +1266,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       Logger.log('DQE: post-write sort threw (rows are written): %s', sortErr);
       try {
         logPipelineHealth_(dqeSheet.getParent(), {
-          step:       'historicalSort:DQE',
+          step:       'buildDQE:sort',
           status:     'failure',
           rows:       null,
           durationMs: null,
           notes:      'callDate=' + callDateStr + ' | post-write sort threw: '
                     + (sortErr && sortErr.message ? sortErr.message : sortErr)
                     + ' -- the rows are written; the sheet may be out of date order until the '
-                    + 'nightly sort check runs (Operator State #61)',
+                    + 'next build or the nightly sort check re-sorts it (Operator State #61)',
         });
       } catch (pipelineLogErr) { /* best-effort */ }
     }
