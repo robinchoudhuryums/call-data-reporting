@@ -1550,12 +1550,34 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
            dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
 }
 
+/**
+ * RB-2 (broad-scan 2026-11-09): the day a Raw Data grid is FOR, when no caller
+ * knows it -- the day MOST of its dated rows are on (rawGridDay_, the shared
+ * ST2 rule the CSR repair got in ING-7). The editor-run tools below used to
+ * take the grid's FIRST dated row, and a D-1 carry-over leg sorts first: the
+ * build then deleted D-1's correct Direct rows (sheet AND Neon, authoritative)
+ * and replaced them with that one leg, dropped all of day D as "strays", never
+ * wrote day D, and logged success. Returns { iso, date (local noon), strays,
+ * strayByDay } or null when the grid has no dated row. (rawGridDay_ lives in
+ * autoImport.js -- same project, one global scope.)
+ */
+function dcGridMajorityDay_(rawDisp) {
+  const g = rawGridDay_(rawDisp);
+  if (!g || !g.dateIso) return null;
+  const p = String(g.dateIso).split('-');
+  return { iso: g.dateIso, date: new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0),
+           strays: g.strays || 0, strayByDay: g.strayByDay || {} };
+}
+
 // -- Editor-run orchestrator (Phase 1a: manual, numbers-only validation) ------
 /**
  * Computes direct-call metrics for the CURRENT `Raw Data` day and writes the
  * `Direct Call History` sheet + Neon mirror. Run from the cdr-import editor.
  * Best-effort + self-contained: does NOT touch the daily import. (Phase 1b
  * wires the SAME core, buildDirectCallFromRaw_, into processIntegratedHistory.)
+ * RB-2: "the current day" is the day most of the grid's rows are on
+ * (dcGridMajorityDay_), handed to the core as its expectedDate so the ING-1
+ * day pick and the P-4 refusal apply here as they do on the import paths.
  */
 function runDirectCallBuild() {
   const t0 = Date.now();
@@ -1567,14 +1589,25 @@ function runDirectCallBuild() {
   const raw = rawSheet.getDataRange().getDisplayValues();
   if (raw.length < 2) { dcLog_('runDirectCallBuild: Raw Data empty.'); return { rows: 0 }; }
 
-  const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true });
+  const day = dcGridMajorityDay_(raw);
+  if (!day) {
+    // No dated row at all: nothing names the day, so nothing may be deleted.
+    dcLog_('runDirectCallBuild: Raw Data has no dated row -- nothing built.');
+    return { rows: 0 };
+  }
+  if (day.strays) {
+    dcLog_('runDirectCallBuild: building %s (the day most rows are on); %s leg(s) dated on other day(s) are left out: %s',
+      day.iso, String(day.strays), JSON.stringify(day.strayByDay));
+  }
+  const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true, expectedDate: day.date });
   dcLogSamples_(r.meta.samples);
 
   const ms = Date.now() - t0;
   const neonStr = r.neon.unreachable ? 'unreachable' : (r.neon.error ? 'error' : 'ok');
   dcLogPipelineHealth_(ss, 'success', r.wrote, ms,
     'directBuild date=' + r.dateStr + ' agents=' + r.meta.agents +
-    ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr);
+    ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr
+    + (day.strays ? ' strayLegs=' + day.strays : ''));
   dcLog_('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
     r.wrote, r.dateStr, r.meta.missedBusyTotal, r.meta.missedFreeTotal, neonStr, ms);
   return { rows: r.wrote, date: r.dateStr, meta: r.meta, neon: r.neon };
@@ -1601,12 +1634,14 @@ function diagnoseDirectCallCounting() {
   if (!rawSheet || !configSheet) throw new Error('Raw Data or DO NOT EDIT! sheet missing.');
   const raw = rawSheet.getDataRange().getDisplayValues();
   if (raw.length < 2) { dcLog_('diagnoseDirectCallCounting: Raw Data empty.'); return { result: 'INCONCLUSIVE (Raw Data empty)' }; }
-  // The build's own day rule: the first dated row's date, legs from other
-  // dates dropped (S2C-3).
+  // The build's own day rule (RB-2): the day most rows are on, legs from other
+  // dates dropped (S2C-3). (It used to be the first dated row's date, which a
+  // carry-over leg from the day before turned into a one-leg "day".)
   const toIso = function (ds) { return (typeof parseDateForNeon === 'function') ? parseDateForNeon(ds) : ds; };
   let dateStr = '';
   for (let i = 1; i < raw.length && !dateStr; i++) dateStr = dcDateStr_(raw[i][2]);
-  const isoDate = toIso(dateStr);
+  const majority = dcGridMajorityDay_(raw);
+  const isoDate = majority ? majority.iso : toIso(dateStr);
   const dayRows = [raw[0]];
   for (let i = 1; i < raw.length; i++) {
     const ds = dcDateStr_(raw[i] && raw[i][2]);

@@ -2069,7 +2069,12 @@ When something looks wrong, before assuming a code bug, check:
     toast with counts + the Neon status per date. The bulk path (`bulkHistoricalUpdate`)
     passes `skipNeon`, force-deletes every date in range up front and needs
     `backfillDQEHistoryUpsert()` afterwards -- fine for dozens of dates, not for
-    a handful. Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
+    a handful. A bulk date whose DQE or Direct rebuild FAILED is marked ❌ in
+    the closing report and logs the failure-only `bulkBackfill:DQE-guard` /
+    `:Direct-guard` Pipeline Health step -- re-run that date by Manual Export
+    (RB-1); if the final archive fails the run stays OPEN, and Resume Bulk
+    Processing (or Process Batch Archive) retries only the archive (RB-7).
+    Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
     with the tab gone, recreate it from the provider CSV (exact tab name, then
     `holdCallLegsForRecovery()` so the prune keeps it -- #43) or,
     failing that, Neon holds the only intact copy. BEFORE any `backfill*`
@@ -3600,7 +3605,9 @@ When something looks wrong, before assuming a code bug, check:
     dates built between the D2 deploy (2026-10-21) and that push:** their
     OB-internal counts are inflated ~10x. For the date in `Raw Data`, run
     `runDirectCallBuild()` (it deletes and rewrites that date's Direct rows,
-    sheet + Neon); for any other, Manual Export it (#56). Pipeline Health's
+    sheet + Neon -- "that date" is the day MOST Raw Data rows are on, RB-2, so
+    a carry-over leg from the day before no longer picks the day); for any
+    other, Manual Export it (#56). Pipeline Health's
     `directBuild` rows name the dates built. Run the tool after an import on
     three or four days. **Then decide the re-import of older dates:** shares
     under ~1% are not worth one; otherwise re-import the dates the Direct

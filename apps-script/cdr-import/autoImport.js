@@ -315,6 +315,64 @@ function bulkLogGap_(targetSS, queue, index, how) {
   return note;
 }
 
+/**
+ * RB-1 (broad-scan 2026-11-09): a bulk date whose DQE / Direct rebuild failed
+ * as a FAILURE-ONLY Pipeline Health row (`bulkBackfill:DQE-guard` /
+ * `bulkBackfill:Direct-guard`, INV-44). The per-date `bulkBackfill:DQE` /
+ * `:Direct` rows log successes too, so the NEXT date's success superseded a
+ * failed date on the Health page ("latest outcome wins") within seconds --
+ * while that date's rows had already been force-deleted. A failure-only step
+ * stays flagged for its 4-day window whatever the later dates did.
+ * Best-effort; never throws.
+ */
+function bulkDateFailureRow_(targetSS, step, dateObj, deleted, msg) {
+  try {
+    logPipelineHealthWithFallback_(targetSS, {
+      step:       step,
+      status:     'failure',
+      rows:       null,
+      durationMs: null,
+      notes:      (dateObj && dateObj.toDateString ? dateObj.toDateString() : String(dateObj))
+                + ' | the bulk rebuild did NOT produce this date'
+                + (deleted ? ' AFTER its existing rows were deleted' : '')
+                + ': ' + msg + ' -- fix the cause and re-run the date (Manual Processing) before trusting it.',
+    });
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * RB-7: PURE. Counts a bulk report's per-date lines by outcome mark --
+ * { ok, failed, missing, other, trimmed }. Only lines shaped
+ * "<mark> YYYY-MM-DD: ..." count, so the archive / reminder lines are ignored.
+ * `trimmed` is true when the persisted report was tail-trimmed across a pause
+ * (saveBulkReport_), in which case the counts cover the kept lines only.
+ */
+function bulkReportTally_(report) {
+  var t = { ok: 0, failed: 0, missing: 0, other: 0, trimmed: false };
+  (report || []).forEach(function (line, i) {
+    var s = String(line || '');
+    if (i === 0 && s.indexOf('… (') === 0) { t.trimmed = true; return; }
+    var m = /^(\S+) \d{4}-\d{2}-\d{2}:/.exec(s);
+    if (!m) return;
+    if (m[1] === '✅') t.ok++;
+    else if (m[1] === '❌') t.failed++;
+    else if (m[1] === '⚪') t.missing++;
+    else t.other++;
+  });
+  return t;
+}
+
+/** RB-7: PURE. The completion note -- what the run did, not just how long its queue was. */
+function bulkCompleteNote_(queueLength, tally) {
+  var t = tally || { ok: 0, failed: 0, missing: 0, other: 0 };
+  return 'bulk run complete: ' + queueLength + ' date(s) processed -- ' + t.ok + ' rebuilt'
+    + (t.failed ? ', ' + t.failed + ' FAILED or not fully rebuilt (their own rows name them)' : '')
+    + (t.missing ? ', ' + t.missing + ' with no Call_Legs tab' : '')
+    + (t.other ? ', ' + t.other + ' other' : '')
+    + (t.trimmed ? ' (counted from the last ' + BULK_REPORT_MAX_LINES + ' report lines)' : '')
+    + '; the queued rows are archived to the historical sheets.';
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -404,6 +462,13 @@ function processBulkQueue() {
 
       if (result === "MISSING") {
         report.push(`⚪ ${dateStr}: Skipped (No Sheet)`);
+        } else if (result.startsWith("PARTIAL")) {
+        // RB-1: the date's DQE / Direct rebuild failed inside the bulk branch
+        // (which swallows it so the run continues). It used to come back as
+        // a bare "DONE" and print "✅ Success" for a date whose rows had been
+        // deleted and not rebuilt.
+        report.push(`❌ ${dateStr}: NOT fully rebuilt — ${result.split(" | ").slice(1).join("; ")}. `
+          + `Re-run this date before trusting it.`);
         } else if (result.startsWith("DONE")) {
         const time = result.split(" | ")[0].split(": ")[1];
         const counts = result.includes(" | ") ? ` — ${result.split(" | ").slice(1).join(" | ")}` : "";
@@ -432,6 +497,7 @@ function processBulkQueue() {
   }
 
   SpreadsheetApp.getActiveSpreadsheet().toast("Archiving all dates...", "Final Step", -1);
+  const tally = bulkReportTally_(report);   // RB-7: before the archive lines join the report
   try {
     const archiveResult = processBatchArchive(true, /*callerHoldsLock=*/true);
     report.push("---");
@@ -441,15 +507,28 @@ function processBulkQueue() {
       `CDR: +${archiveResult.cdrCount}, QPath: +${archiveResult.qpathCount}, QCD: +${archiveResult.qcdCount}, CSR: +${archiveResult.csrCount}`
     ); 
     // PIPE-2: the archive wrote the held dates -- clear the Health signal.
+    // RB-7: the note used to say "N date(s) archived" with the QUEUE length,
+    // counting dates that failed or had no source tab.
     logPipelineHealthWithFallback_(targetSS, {
-      step: 'bulkBackfill:paused', status: 'success', rows: queue.length,
-      notes: 'bulk run complete: ' + queue.length + ' date(s) archived to the historical sheets.',
+      step: 'bulkBackfill:paused', status: 'success', rows: tally.ok,
+      notes: bulkCompleteNote_(queue.length, tally),
     });
   } catch (e) {
     report.push("---");
     report.push(`⚠️ Archive failed: ${e.message}`);
-    bulkLogGap_(targetSS, queue, queue.length, 'final archive failed (' + e.message + ')');   // PIPE-2
-    ui.alert("⚠️ Archive Warning", `Bulk processing complete, but archive failed:\n${e.message}\n\nYou can retry with 'Process Batch Archive' from the menu.`, ui.ButtonSet.OK);
+    const gap = bulkLogGap_(targetSS, queue, queue.length, 'final archive failed (' + e.message + ')');   // PIPE-2
+    // RB-7: the run is NOT over -- Pending Archive is the only copy of every
+    // processed date's CDR / Q Path / QCD / CSR rows. This used to fall
+    // through to "Bulk Complete" and delete bulkQueue / bulkIndex, which
+    // disarmed clearPendingArchive's refusal (P-13). Keep the queue state so
+    // Resume (index is past the last date) goes straight back to the archive.
+    props.setProperty("bulkIndex", String(queue.length));
+    saveBulkReport_(props, report);
+    ui.alert("⚠️ Archive failed", `Every date was processed, but the final archive failed:\n${e.message}\n\n`
+      + (gap ? `⚠️ ${gap}.\n\n` : '')
+      + `The bulk run stays open so its queued rows cannot be cleared by hand. Click 'Resume Bulk `
+      + `Processing' to retry the archive (or run 'Process Batch Archive').`, ui.ButtonSet.OK);
+    return;
   }
 
   // Reminder: the bulk path rebuilds DQE with the per-date Neon mirror
@@ -478,7 +557,11 @@ function processBulkQueue() {
     + "Run backfillInboundCalls() and backfillOutboundCalls() (THIS project) to fill from surviving "
     + "Call_Legs_* sheets -- reach is limited by their ~14-day retention.");
 
-  ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
+  // RB-1 / RB-7: a run with failed dates must not close under a plain "Complete".
+  ui.alert(tally.failed
+      ? `⚠️ Bulk finished — ${tally.failed} date(s) FAILED or were not fully rebuilt (marked ❌)`
+      : "Bulk Complete",
+    report.join("\n"), ui.ButtonSet.OK);
 
   props.deleteProperty("bulkQueue");
   props.deleteProperty("bulkIndex");
@@ -672,9 +755,33 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       SpreadsheetApp.flush();
     }
 
+    // RB-6 (broad-scan 2026-11-09): the F63 header-order refusal is a
+    // delete-INDEPENDENT validation (it reads the computed CSR headers and the
+    // history sheet's header row), but it ran inside the write step -- AFTER
+    // the force-delete below had removed the date's CSR Transfer rows. A
+    // reordered header therefore cost the date its existing rows and then
+    // refused to write the new ones. Check first: with a header problem the
+    // existing rows are KEPT (no delete, no write) and the failure row says so.
+    let csrKeptForHeader = false;
+    if (force && existsInCSR && results.csrData) {
+      const csrHeaderPre = csrHistoryHeaderProblem_(
+        targetSS.getSheetByName("CSR Transfer Historical Data"), results.csrData.headers);
+      if (csrHeaderPre) {
+        csrKeptForHeader = true;
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: isHistoricalBackfill ? 'bulkBackfill:CSR' : 'processIntegratedHistory:CSR',
+            status: 'failure', rows: 0, durationMs: null,
+            notes: dateObj.toDateString() + ': ' + csrHeaderPre
+              + ' The date\'s EXISTING CSR Transfer rows were kept (nothing was deleted).',
+          });
+        } catch (eH) { /* best-effort */ }
+      }
+    }
+
     if (force) {
       forceDeleted.qcd = !!existsInQCD;
-      forceDeleted.csr = !!existsInCSR;
+      forceDeleted.csr = !!existsInCSR && !csrKeptForHeader;   // RB-6
       forceDeleted.dqe = !!existsInDQE;
       forceDeleted.cdr = !!existsInCDR;   // CR-9
       if (existsInCDR) {
@@ -692,7 +799,9 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         if (qcdHD) { deleteHistoricalRowsForDate(qcdHD, dateObj, 3); if (histDateCache) histDateCache.qcd.delete(dateKey); }
         existsInQCD = false;
       }
-      if (existsInCSR) {
+      // RB-6: `existsInCSR` stays true when the header check refused, so the
+      // write step skips CSR exactly as it does for an already-present date.
+      if (existsInCSR && !csrKeptForHeader) {
         const csrHD = targetSS.getSheetByName("CSR Transfer Historical Data");
         if (csrHD) { deleteHistoricalRowsForDate(csrHD, dateObj, 3); if (histDateCache) histDateCache.csr.delete(dateKey); }
         existsInCSR = false;
@@ -718,6 +827,10 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // DQE but no Direct rows still need the staging write.)
 
     let historyReport = [];
+    // RB-1: what the bulk branch could NOT rebuild for this date. Its DQE and
+    // Direct blocks swallow their own failures so the run continues; without
+    // this the caller got a bare "DONE" and reported the date as a success.
+    const bulkFailures = [];
     if (!isHistoricalBackfill) {
       if (!silent) sourceSS.toast("Archiving...", "Step 6/7", -1);
       historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet, force, forceDeleted);
@@ -737,8 +850,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       // email. Guard at queue time on the same log-only terms (the queued
       // rows are what processBatchArchive will eventually write); the P26
       // forceDeleted gate keeps the signal truthful.
+      // RB-4: count the QCD rows that CARRY A CALL -- the engine emits all 48
+      // rows whatever the input, so the row count alone could never be zero.
+      const queuedQcd = (queued && queued.byType && queued.byType.QCD) || 0;
       guardForceRebuildLoss_(targetSS, 'bulkBackfill:QCD', dateObj,
-        force && forceDeleted.qcd, (queued && queued.byType && queued.byType.QCD) || 0);
+        force && forceDeleted.qcd, (queued && queued.callRows) ? (queued.callRows.QCD || 0) : queuedQcd, queuedQcd);
       guardForceRebuildLoss_(targetSS, 'bulkBackfill:CSR', dateObj,
         force && forceDeleted.csr, (queued && queued.byType && queued.byType.CSR_TRANSFER) || 0);
       guardForceRebuildLoss_(targetSS, 'bulkBackfill:CDR', dateObj,   // CR-9
@@ -793,6 +909,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
                 notes:      dateObj.toDateString() + ' | ' + msg,
               });
             } catch (logErr) { /* best-effort */ }
+            // RB-1: say it where the next date's success cannot supersede it,
+            // and hand it to the caller's report.
+            bulkFailures.push('DQE Historical Data was NOT rebuilt'
+              + (forceDeleted.dqe ? ' (its existing rows for this date were deleted first)' : '') + ': ' + msg);
+            bulkDateFailureRow_(targetSS, 'bulkBackfill:DQE-guard', dateObj, forceDeleted.dqe, msg);
           }
         }
       }
@@ -837,6 +958,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
                               + dres.deletedExisting + ' existing row(s) -- verify before trusting this date',
                 });
               } catch (logErr) { /* best-effort */ }
+              // RB-1: same reason as the DQE block -- the row above is the
+              // step's LATEST outcome only until the next date succeeds.
+              const zmsg = 'the rebuild wrote 0 rows and removed ' + dres.deletedExisting + ' existing row(s)';
+              bulkFailures.push('Direct Call History dropped to zero: ' + zmsg);
+              bulkDateFailureRow_(targetSS, 'bulkBackfill:Direct-guard', dateObj, true, zmsg);
             }
           }
         } catch (directErr) {
@@ -852,6 +978,8 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
               notes:      dateObj.toDateString() + ' | ' + dmsg,
             });
           } catch (logErr) { /* best-effort */ }
+          bulkFailures.push('Direct Call History was NOT rebuilt: ' + dmsg);   // RB-1
+          bulkDateFailureRow_(targetSS, 'bulkBackfill:Direct-guard', dateObj, false, dmsg);
         }
       }
     }
@@ -909,6 +1037,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         // S6: the deployed-build stamp rides the success note (buildStamp.js;
         // "unstamped" = the last push bypassed scripts/deploy.sh's CI gates).
         notes:      latestName + (successCountLine ? ' | ' + successCountLine : '')
+                  + (bulkFailures.length ? ' | PARTIAL: ' + bulkFailures.join('; ') : '')   // RB-1
                   + (typeof PROJECT_BUILD_STAMP_ !== 'undefined'
                       ? ' | build: ' + PROJECT_BUILD_STAMP_ : ''),
       });
@@ -918,6 +1047,8 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       if (!silent) sourceSS.toast(successCountLine, `✅ Done in ${durationSeconds}s`, 8);
       return `DONE: ${durationSeconds}s | ${successCountLine}`;
     }
+    // RB-1: a bulk date whose DQE / Direct rebuild failed is not "DONE".
+    if (bulkFailures.length) return `PARTIAL: ${durationSeconds}s | ` + bulkFailures.join(' | ');
     if (!silent) sourceSS.toast(`Finished in ${durationSeconds}s`, "✅ Step 7/7 — Complete", 6);
     return `DONE: ${durationSeconds}s`;
 
@@ -959,11 +1090,15 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     }
     if (silent) { throw e; }
     else {
-      try {
-        SpreadsheetApp.getUi().alert("❌ Process Failed", e.message, SpreadsheetApp.getUi().ButtonSet.OK);
-      } catch (uiErr) {
-        // No UI in trigger context -- the email notification above
-        // is the durable signal.
+      // RB-3: `noAlert` callers (the pending-import loop, Make a date whole)
+      // report the returned "ERROR: ..." themselves -- no second dialog.
+      if (!noAlert) {
+        try {
+          SpreadsheetApp.getUi().alert("❌ Process Failed", e.message, SpreadsheetApp.getUi().ButtonSet.OK);
+        } catch (uiErr) {
+          // No UI in trigger context -- the email notification above
+          // is the durable signal.
+        }
       }
       // F-55: return an explicit outcome instead of falling off the end --
       // runManualExport's switch previously showed the operator
@@ -1090,8 +1225,16 @@ function logPipelineHealthWithFallback_(ss, event) {
  * emails. A NON-force empty rebuild is a legitimate no-op and is NOT flagged.
  * The rule for any force-path writer: a force rebuild that produces fewer rows
  * than it deleted must be SURFACED, never silently returned.
+ *
+ * RB-4 (broad-scan 2026-11-09): `wroteCount` is the rows that CARRY DATA, which
+ * for QCD is not the rows written -- calcQcdReport emits a numeric value in all
+ * 48 output rows whatever the input, so "wrote zero rows" could never happen
+ * and this guard was structurally silent for the one sheet it was documented
+ * to protect. QCD callers pass the count of rows with any call (qcdRowsWithCalls_)
+ * and, as `emptyRowsWritten`, how many all-zero rows went to the sheet, so the
+ * note says what is actually there.
  */
-function guardForceRebuildLoss_(targetSS, step, dateObj, force, wroteCount) {
+function guardForceRebuildLoss_(targetSS, step, dateObj, force, wroteCount, emptyRowsWritten) {
   if (!force || wroteCount > 0) return;
   try {
     logPipelineHealthWithFallback_(targetSS, {
@@ -1100,10 +1243,25 @@ function guardForceRebuildLoss_(targetSS, step, dateObj, force, wroteCount) {
       rows:       0,
       durationMs: null,
       notes:      (dateObj && dateObj.toDateString ? dateObj.toDateString() : '')
-                + ' | FORCE rebuild produced 0 rows AFTER the date was cleared -- that '
+                + (emptyRowsWritten > 0
+                    ? ' | FORCE rebuild wrote ' + emptyRowsWritten + ' row(s) but NONE carries a call, AFTER the date was cleared -- that '
+                    : ' | FORCE rebuild produced 0 rows AFTER the date was cleared -- that ')
                 + 'date\'s ' + step + ' data may be lost. Re-check Raw Data and re-import.',
     });
   } catch (logErr) { /* best-effort */ }
+}
+
+/**
+ * RB-4: PURE. How many QCD rows carry a call -- total, answered or abandoned
+ * above zero at the given 0-based positions (5,6,7 in a history-shaped row,
+ * 6,7,8 in a Pending Archive row).
+ */
+function qcdRowsWithCalls_(rows, totalIdx) {
+  var n = 0;
+  (rows || []).forEach(function (r) {
+    if ((Number(r[totalIdx]) || 0) + (Number(r[totalIdx + 1]) || 0) + (Number(r[totalIdx + 2]) || 0) > 0) n++;
+  });
+  return n;
 }
 
 // ─────────────────────────────────────────────
@@ -1232,6 +1390,8 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
   }
 
   markProduced("QCD");
+  // RB-4: of those, how many carry a call (the bulk QCD loss guard's count).
+  const qcdCallRows = qcdRowsWithCalls_(rowsToAdd.filter(function (r) { return r[1] === "QCD"; }), 6);
 
   // 4. Add CSR_TRANSFER
   // F63: the bulk path writes these rows positionally too (processBatchArchive),
@@ -1285,7 +1445,7 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
   }
   // P8: counts by type ('CDR' / 'QPATH' / 'QCD' / 'CSR_TRANSFER') so the
   // bulk caller's loss guards can see a rebuild-to-zero at queue time.
-  return { queued: rowsToAdd.length, byType: typeCounts };
+  return { queued: rowsToAdd.length, byType: typeCounts, callRows: { QCD: qcdCallRows } };
 }
 
 // -------------------------------------------------------------------------
@@ -1343,6 +1503,72 @@ function bulkArchiveMirrorGap_(targetSS, type, dates, reason) {
                 + ' -- the sheet rows are written; re-mirror these dates (Operator State #35 / #56)',
     });
   } catch (e) { console.log('bulkArchiveMirrorGap_: could not log (' + (e && e.message || e) + ')'); }
+}
+
+/**
+ * RB-5 (broad-scan 2026-11-09): PURE. The ISO dates a batch holds that the
+ * dedup DROPPED -- dates an earlier, interrupted archive already appended.
+ * Keyed exactly as dedupeAlreadyArchived_ keys them (sheet TZ).
+ */
+function bulkArchiveResumedDates_(batch, kept, tz) {
+  const key = function (d) {
+    return (d && typeof d.getTime === 'function') ? historyDateKey_(d, tz) : historyCellIso_(d, tz);
+  };
+  const keptSet = {};
+  (kept || []).forEach(function (r) { const k = key(r[2]); if (k) keptSet[k] = true; });
+  const out = {};
+  (batch || []).forEach(function (r) { const k = key(r[2]); if (k && !keptSet[k]) out[k] = true; });
+  return Object.keys(out).sort();
+}
+
+/**
+ * RB-5: mirror the RESUMED dates' CDR / QCD rows to Neon from the history
+ * sheet. Both inline mirrors below are gated on the post-dedup row list, and
+ * a re-run after a partial archive (the audit log's own advice: "re-run
+ * processBatchArchive to finish") dedups away every date the first run
+ * appended -- so those dates were never mirrored by either run, with no gap
+ * row. The sheet already holds them, so this re-derives each date from the
+ * sheet (NeonMirror.js's mirrorCdrForDate_ / mirrorQcdForDate_: an
+ * authoritative per-date replace) rather than trusting the queued rows, which
+ * a Manual Export between the two runs could have made stale. Best-effort and
+ * never throws: an unreachable Neon or a mirror error logs the same
+ * failure-only gap row the inline mirrors use. Returns the dates it mirrored.
+ */
+function bulkArchiveMirrorResumed_(targetSS, type, batch, kept) {
+  const done = [];
+  try {
+    if (!batch || !batch.length || batch.length === (kept ? kept.length : 0)) return done;
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return done;   // R8-A2
+    const fn = type === 'CDR'
+      ? (typeof mirrorCdrForDate_ === 'function' ? mirrorCdrForDate_ : null)
+      : (typeof mirrorQcdForDate_ === 'function' ? mirrorQcdForDate_ : null);
+    if (!fn) return done;
+    const isos = bulkArchiveResumedDates_(batch, kept, historySheetTz_(targetSS));
+    const failed = [];
+    let reason = '';
+    isos.forEach(function (iso) {
+      if (reason === 'unreachable') { failed.push(iso); return; }   // one probe is enough
+      try {
+        const res = fn(targetSS, iso);
+        if (res && res.unreachable) { reason = 'unreachable'; failed.push(iso); }
+        else done.push(iso);
+      } catch (e) {
+        failed.push(iso);
+        if (!reason) reason = 'mirror error: ' + (e && e.message ? e.message : e);
+      }
+    });
+    if (failed.length) {
+      bulkArchiveMirrorGap_(targetSS, type, failed,
+        (reason === 'unreachable' ? 'Neon unreachable' : reason) + ' (dates a resumed archive found already in history)');
+    }
+    if (isos.length) {
+      console.log('processBatchArchive: ' + type + ' -- ' + done.length + ' of ' + isos.length
+        + ' already-archived date(s) re-mirrored from the sheet (resume).');
+    }
+  } catch (e) {
+    console.warn('bulkArchiveMirrorResumed_ (' + type + ') failed: ' + (e && e.message ? e.message : e));
+  }
+  return done;
 }
 
 function processBatchArchive(silent = false, callerHoldsLock = false) {
@@ -1558,6 +1784,12 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
           'mirror error: ' + (neonErr && neonErr.message ? neonErr.message : neonErr));
       }
     }
+
+    // RB-5: dates the dedup dropped were appended by an earlier run that never
+    // reached its mirror -- re-mirror them from the sheet (no-op on a normal
+    // run, where the dedup drops nothing).
+    bulkArchiveMirrorResumed_(targetSS, 'CDR', cdrBatch, cdrRows);
+    bulkArchiveMirrorResumed_(targetSS, 'QCD', qcdBatch, qcdRows);
   } catch (writeErr) {
     try {
       appendToAuditLog(targetSS, "processBatchArchive",
@@ -1631,6 +1863,32 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
       `\nPending Archive cleared.`,
       ui.ButtonSet.OK
     );
+  }
+
+  // RB-7: the STANDALONE menu run ("Process Batch Archive") is the documented
+  // retry after a failed final archive, but only processBulkQueue ever logged
+  // the clearing `bulkBackfill:paused` success -- so the Health row stayed red
+  // until some later bulk run completed. Log it here too, and close a bulk
+  // run that had nothing left but this archive (every date processed).
+  if (!callerHoldsLock) {
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'bulkBackfill:paused', status: 'success', rows: totalPendingRows,
+        notes: 'Process Batch Archive wrote the queued rows (' + totalPendingRows
+          + ' pending row(s)) to the historical sheets.',
+      });
+      const bprops = PropertiesService.getScriptProperties();
+      const bIdx = bprops.getProperty("bulkIndex");
+      if (bIdx !== null) {
+        let bQueue = [];
+        try { bQueue = JSON.parse(bprops.getProperty("bulkQueue") || "[]") || []; } catch (eQ) { bQueue = []; }
+        if (parseInt(bIdx, 10) >= bQueue.length) {
+          bprops.deleteProperty("bulkQueue");
+          bprops.deleteProperty("bulkIndex");
+          bprops.deleteProperty("bulkReport");
+        }
+      }
+    } catch (eDone) { /* best-effort: the archive itself is complete */ }
   }
 
   // F-55: report rows ACTUALLY APPENDED (post-dedup), not the pre-dedup
@@ -2332,7 +2590,10 @@ if (!skipCDR && obcHD) {
     // Overview / My Dept snapshot) and was force-deleted above, so a 0-row
     // rebuild silently loses the date -- surface it (no-op unless force + empty).
     // P26: gated on the delete having actually happened for THIS sheet.
-    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:QCD', dateObj, force && fdel.qcd, qcdBatch.length);
+    // RB-4: counted on rows that carry a call -- the engine always emits all
+    // 48 rows, so the row count could never be zero.
+    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:QCD', dateObj, force && fdel.qcd,
+      qcdRowsWithCalls_(qcdBatch, 5), qcdBatch.length);
     if (qcdBatch.length > 0) {
       qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
       qcdCount = qcdBatch.length;
@@ -3752,10 +4013,20 @@ function makeDateWhole_(iso, targetSS) {
       actions.push('could NOT rebuild ' + coreMissing.join(', ') + ' (no Call_Legs tab)');
       settled = false;
     } else {
-      const outcome = processNewImport(false, iso, true, targetSS, null,
+      // RB-3 (broad-scan 2026-11-09): silent=FALSE. `silent` + a date is what
+      // processNewImport reads as the BULK path (isHistoricalBackfill), which
+      // QUEUES CDR / Q Path / QCD / CSR to Pending Archive instead of writing
+      // them and builds DQE / Direct with the Neon mirror skipped -- so this
+      // tool printed "imported the missing sheets" and then "Still owed" for
+      // the same sheets. The daily path writes each missing sheet now (the
+      // per-sheet exists checks still leave present sheets alone), mirrors
+      // inline, and returns "ERROR: ..." instead of throwing. Like a Manual
+      // Export of an older date, it leaves CDR Output / QCDR Output / Raw Data
+      // showing this date until the next import.
+      const outcome = processNewImport(false, iso, false, targetSS, null,
         { noAlert: true, ignoreLastSheets: true });
       actions.push('imported the missing sheets (' + coreMissing.join(', ') + '): ' + outcome);
-      if (String(outcome).indexOf('ERROR') === 0) settled = false;
+      if (String(outcome).indexOf('DONE') !== 0) settled = false;
     }
   }
   const perCallOk = pendingImportPerCallCatchUp_(iso);
