@@ -577,7 +577,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     dailyMissed:   (deptTotal.missed   / dayCount).toFixed(1),
     dailyAnswered: (deptTotal.answered / dayCount).toFixed(1),
     ansPct:        answerRatePct_(deptTotal.answered, deptTotal.missed, deptTotal.rung).toFixed(1) + '%',   // DD-2
-    activeDays:    dayCount,
+    // CLN-4: the DEPARTMENT's active days (any roster agent took a call), the
+    // per-day denominator above -- not computeSummary_'s per-AGENT `daysActive`.
+    deptActiveDays: dayCount,
   };
 
   // Phase D+1 / INV-53: filter out selected names that match neither
@@ -845,7 +847,7 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
       rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00',
       raw: { rung: 0, missed: 0, answered: 0, pctAnswered: 0, ttt: 0, att: 0 },
     },
-    deptStats: { dailyRung: '0.0', dailyMissed: '0.0', dailyAnswered: '0.0', ansPct: '0.0%', activeDays: 0 },
+    deptStats: { dailyRung: '0.0', dailyMissed: '0.0', dailyAnswered: '0.0', ansPct: '0.0%', deptActiveDays: 0 },
     mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
   };
 }

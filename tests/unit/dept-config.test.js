@@ -525,3 +525,21 @@ test('S2B-7 follow-on: sheetUpsertDeptConfigRow_ neutralizes a formula-leading Q
   });
   assert.equal(grid[1][1], 'A_Q_A', 'an ordinary queue list is written unchanged');
 });
+
+// CLN-6 (2026-11-09): a "default" row is the dashboard's built-in setting, and
+// the CDR Import pipeline reads ONLY saved sheet rows (icDeptConfigActiveRows_)
+// -- so its capture and diagnostics silently miss a department the modal shows
+// as mapped. The modal says so under the table.
+test('CLN-6: the Dept Config modal explains that "default" rows are invisible to CDR Import', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'dashboard.html'), 'utf8');
+  const i = html.indexOf('id="dc-source-note"');
+  assert.ok(i !== -1, 'the note sits under the Per-department config table');
+  const note = html.slice(i, html.indexOf('</p>', i));
+  assert.match(note, /<strong>default<\/strong>/);
+  assert.match(note, /CDR Import pipeline[\s\S]*cannot see/);
+  assert.match(note, /Edit and Save/);
+  const imp = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'inboundCalls.js'), 'utf8');
+  assert.match(imp, /getSheetByName\('Dept Config'\)/, 'the claim it makes: CDR Import reads the sheet itself');
+});

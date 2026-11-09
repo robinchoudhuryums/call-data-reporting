@@ -277,8 +277,9 @@ function r44CountReads() {
   const n = { dateCol: 0, extGrid: 0, wide: 0 };
   sheet.getRange = function (startRow, startCol, numRows, numCols) {
     if (numCols === 1) n.dateCol++;
-    else if (numCols === 4) n.extGrid++;
+    else if (startCol === 3 && numCols === 2) n.extGrid++;   // CLN-1: cols C..D only
     else if (numCols > 4) n.wide++;
+    if (numCols === 4) n.oldExtShape = (n.oldExtShape || 0) + 1;
     return real.apply(sheet, arguments);
   };
   return { n: n, restore: function () { sheet.getRange = real; } };
@@ -295,6 +296,7 @@ test('R44: N departments cost ONE date-column read and ONE ext-grid read, not N'
     h.call('computeSummary_', 'Beta',  '2026-03-09', '2026-03-10', 'both');
     assert.equal(c.n.dateCol, 1, 'the date column is read ONCE for both depts');
     assert.equal(c.n.extGrid, 1, 'so is the all-history ext grid');
+    assert.ok(!c.n.oldExtShape, 'CLN-1: the ext grid reads cols C..D only, never the old A..D slice');
     // DATA-5 (Batch 9): the SPAN too. computeSummary_ used to run a private
     // span read per dept, bypassing the R40 memo; it now reads its window via
     // sheetFetchDqeRows_, so a second dept for the same window is a memo hit.

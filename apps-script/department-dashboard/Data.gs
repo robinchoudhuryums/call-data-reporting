@@ -139,7 +139,7 @@ function dqeDateColumnIso_(sheet, lastRow, ssTZ) {
   return iso;
 }
 
-// R44: the cols A..D slice the ext derivation scans, READ ONCE PER EXECUTION.
+// R44: the ext slice (cols C..D since CLN-1) the ext derivation scans, READ ONCE PER EXECUTION.
 // The GRID is dept-independent -- only the rosterSet filter applied to it is
 // per-dept, and that is in-memory -- so a combined sub-queue view was reading
 // ~128k identical cells once per department (~8s each live). Shared by BOTH
@@ -147,10 +147,16 @@ function dqeDateColumnIso_(sheet, lastRow, ssTZ) {
 // sheet fallback (deptQueueExtsForNeonReader_), which have the same repetition.
 var DQE_EXT_GRID_MEMO_ = null;   // { grid: [[...]], rows: n }
 
+// CLN-1: only the two columns the derivation reads -- AGENT (C) and QUEUE_EXT
+// (D) -- so half the cells of the old A..D slice. The grid's rows are therefore
+// [agent, ext]; DQE_EXT_GRID_COLS_ tells getDeptQueueExts_ where to look.
+var DQE_EXT_GRID_COLS_ = { agent: 0, ext: HISTORICAL_COLS.QUEUE_EXT - HISTORICAL_COLS.AGENT };
+
 function dqeExtGrid_(sheet, lastRow) {
   const want = lastRow - 1;
   if (DQE_EXT_GRID_MEMO_ && DQE_EXT_GRID_MEMO_.rows === want) return DQE_EXT_GRID_MEMO_.grid;
-  const grid = sheet.getRange(2, 1, want, HISTORICAL_COLS.QUEUE_EXT).getValues();
+  const grid = sheet.getRange(2, HISTORICAL_COLS.AGENT, want,
+    HISTORICAL_COLS.QUEUE_EXT - HISTORICAL_COLS.AGENT + 1).getValues();
   DQE_EXT_GRID_MEMO_ = { grid: grid, rows: want };
   return grid;
 }
@@ -1343,7 +1349,7 @@ function computeSummary_(dept, from, to, scope, opts) {
   //
   // deptQueueExts (queue-scope match set): its DERIVED path needs ALL
   // history (every ext a roster agent ever used), NOT just the window. So
-  // on the Neon path we still read a cheap cols-A..D slice for
+  // on the Neon path we still read a cheap cols-C..D slice (CLN-1) for
   // getDeptQueueExts_ (no getDisplayValues), while the heavy windowed
   // aggregation comes from Neon; an override dept skips the scan entirely.
   // (A later step can move this derivation to a SELECT DISTINCT Neon query.)
@@ -1381,7 +1387,7 @@ function computeSummary_(dept, from, to, scope, opts) {
     // Queue-scope/Both-scope matching uses this set, NOT roster.allExtensions
     // (personal exts, which never overlap col D's shared-queue exts). See
     // getDeptQueueExts_ docstring. R41: its DERIVED path needs ALL history, so
-    // it reads its own whole-sheet cols-A..D slice -- it must NOT be fed the
+    // it reads its own whole-sheet cols-C..D slice -- it must NOT be fed the
     // windowed rows below, which would shrink the set.
     const dqr = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow);
     deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
@@ -2666,7 +2672,7 @@ function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
     } catch (e) { /* a cache miss is never fatal -- fall through and derive */ }
   }
 
-  const out = getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow));
+  const out = getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow), DQE_EXT_GRID_COLS_);
   if (cache) {
     try { cache.put(key, JSON.stringify(Object.keys(out.exts)), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('deptQueueExtsFromSheet_: cache put failed: %s', e); }
@@ -2674,7 +2680,15 @@ function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
   return out;
 }
 
-function getDeptQueueExts_(dept, rosterSet, values) {
+/**
+ * `cols` (optional, CLN-1): zero-based { agent, ext } positions within each
+ * row of `values`. Omitted = full-width DQE rows (HISTORICAL_COLS), which is
+ * what Diagnostics / the Missed report pass; the shared ext grid passes
+ * DQE_EXT_GRID_COLS_ because it reads only cols C..D.
+ */
+function getDeptQueueExts_(dept, rosterSet, values, cols) {
+  const ai = cols ? cols.agent : HISTORICAL_COLS.AGENT - 1;
+  const ei = cols ? cols.ext : HISTORICAL_COLS.QUEUE_EXT - 1;
   const set = {};
   // Effective override list (Dept Config sheet over the
   // DEPT_QUEUE_EXT_OVERRIDES constant; see DeptConfig.gs). Non-empty
@@ -2687,9 +2701,9 @@ function getDeptQueueExts_(dept, rosterSet, values) {
     return { exts: set, source: 'override' };
   }
   for (let i = 0; i < values.length; i++) {
-    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+    const agent = String(values[i][ai] || '').trim();
     if (!agent || !rosterSet[agent]) continue;
-    const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+    const exts = parseExtensions_(values[i][ei]);
     for (let j = 0; j < exts.length; j++) set[exts[j]] = true;
   }
   return { exts: set, source: 'derived' };

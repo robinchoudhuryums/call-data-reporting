@@ -937,8 +937,8 @@ tripwire. Revisit only after Batch 5 has held.
 - ~~`parseDateForNeon` reads a bare serial ("45726") as the year 45726; the
   census guards it, the resolver does not.~~ DONE in Batch 4 (the resolver
   refuses it; the census's own guard is gone).
-- `IndividualReport.gs` keeps its own `activeDays` beside `daysActive`. →
-  next IR change.
+- ~~`IndividualReport.gs` keeps its own `activeDays` beside `daysActive`.~~
+  DONE 2026-11-09 (CLN-4: renamed `deptStats.deptActiveDays`; no client reads it).
 - ~~`drive-smoke.js` never clicks the QCD period toggle, so Range renders on
   source pins only.~~ DONE with Batch 4 (four rendered checks per role).
 - ~~The three REPORT modals (inbound / direct / outbound) have no rendered
@@ -948,8 +948,9 @@ tripwire. Revisit only after Batch 5 has held.
   drive-exceptions.js now opens the first two too. `DRIVER_MODAL_EXEMPT` is
   empty and a new cross-file pin fails on an exemption for a driven modal.
 - ~~The census's per-instant memo.~~ DONE in Batch 4 (`hdScanOneSheet_`).
-- Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
-  instead of C+D; the all-dept QCD budget being per-run.
+- ~~Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
+  instead of C+D; the all-dept QCD budget being per-run.~~ DONE 2026-11-09
+  (CLN-3 restore, CLN-1 C..D read, CLN-2 slowest-dept projection).
 - ~~`obInstantDerivedRing_` is mis-keyed (2026-09-18, BLOCKS Part 2).~~ FIXED
   2026-09-21, and the 09-18 fix's REASONING was wrong: it read "no masked name
   shape exists in the blobs at all", which was true only of the era it

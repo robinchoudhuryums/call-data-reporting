@@ -430,6 +430,12 @@ function computeQcdAllDepartments_(from, to) {
   let budgetHit = false;
   let deptsSkipped = 0;
   let mapped = 0;
+  // CLN-2: the slowest department so far. The check below asks whether the
+  // NEXT dept could still finish inside the budget, not just whether time is
+  // left -- one slow dept started at 3:50 of a 4:00 budget used to run on past
+  // the ~6 min ceiling, whose kill skips every catch block. 0 until the first
+  // dept finishes, so the first dept always runs.
+  let slowestDeptMs = 0;
 
   allDepts.forEach(function (dept) {
     // Own queues only -- children listed under their own dept.
@@ -440,7 +446,7 @@ function computeQcdAllDepartments_(from, to) {
     // accumulate per dept), and those are the figures the verdict band reads.
     // Stopping on a clean dept boundary keeps every number that IS reported
     // exactly as correct as a full run's.
-    if (budgetHit || Date.now() - t0 > budgetMs) {
+    if (budgetHit || Date.now() - t0 + slowestDeptMs > budgetMs) {
       budgetHit = true;
       deptsSkipped++;
       return;
@@ -468,6 +474,7 @@ function computeQcdAllDepartments_(from, to) {
       ? rep
       : computeQcdReport_(dept, priorFrom, priorTo, false, false, true);
     timing.depts[dept] = { rangeMs: tRange - tDept, mtdMs: tMtdDone - tRange, priorMs: Date.now() - tMtdDone };
+    if (Date.now() - tDept > slowestDeptMs) slowestDeptMs = Date.now() - tDept;   // CLN-2
     Logger.log('[qcdAll] dept=' + dept + ' rangeMs=' + (tRange - tDept) + ' mtdMs=' + (tMtdDone - tRange)
       + ' priorMs=' + (Date.now() - tMtdDone));
     (mtdRep.queueBreakdown || []).forEach(function (r) {

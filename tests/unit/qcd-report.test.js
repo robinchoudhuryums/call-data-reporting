@@ -641,6 +641,18 @@ test('Batch 6: a REAL clean run reports clean + the rows it compared', function 
 // Driven through the real qcdAllDeptCachedData_ with the compute stubbed, so
 // the pins are about the KEY and the PUT, not the report.
 
+// CLN-3: the D-1 tests stub two REAL functions of the shared vm context --
+// `computeQcdAllDepartments_` and `getLatestDataDates`. They used to `delete`
+// them afterwards, which removed the real ones for every later test (the R43
+// tests had to keep a load-time copy to work at all). Captured once here and
+// put BACK by d1Restore_ instead.
+const REAL_ALLDEPT_ = h.ctx.computeQcdAllDepartments_;
+const REAL_LATEST_DATES_ = h.ctx.getLatestDataDates;
+function d1Restore_() {
+  h.ctx.computeQcdAllDepartments_ = REAL_ALLDEPT_;
+  h.ctx.getLatestDataDates = REAL_LATEST_DATES_;
+}
+
 function d1Install_(deptsOut) {
   install(rosterGrid({ Alpha: ['Anna, 201'] }), [dcRow('Alpha', 'A_Q_Alpha')],
     [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1)]);
@@ -665,7 +677,7 @@ test('D-1: an EMPTY payload is served but NEVER cached; the next request recompu
   const b = h.call('qcdAllDeptCachedData_', '2026-06-11', '2026-06-11');
   assert.equal(b.cacheHit, false, 'recomputed, not served from a pinned empty blob');
   assert.equal(computes(), 2);
-  delete h.ctx.computeQcdAllDepartments_;
+  d1Restore_();
 });
 
 test('D-1: a non-empty payload is cached under a key ANCHORED on the latest QCD date', function () {
@@ -685,8 +697,7 @@ test('D-1: a non-empty payload is cached under a key ANCHORED on the latest QCD 
   const c = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
   assert.equal(c.cacheHit, false, 'anchor moved -> recompute');
   assert.equal(computes(), 2);
-  delete h.ctx.getLatestDataDates;
-  delete h.ctx.computeQcdAllDepartments_;
+  d1Restore_();
 });
 
 test('D-1: in a trigger context (getLatestDataDates throws) the trigger-safe sheet scan anchors the key', function () {
@@ -698,8 +709,7 @@ test('D-1: in a trigger context (getLatestDataDates throws) the trigger-safe she
   // queueReportQcdLatestIso_ (QueueReportEmail.gs) scans the fixture's QCD sheet.
   assert.match(keys[0], /:sheet:2026-06-10$/);
   assert.equal(h.call('qcdAllFreshnessAnchor_'), '2026-06-10');
-  delete h.ctx.getLatestDataDates;
-  delete h.ctx.computeQcdAllDepartments_;
+  d1Restore_();
 });
 
 test('D-1: opts.fresh skips the cache READ but still warms the key', function () {
@@ -712,8 +722,7 @@ test('D-1: opts.fresh skips the cache READ but still warms the key', function ()
   const b = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
   assert.equal(b.cacheHit, true, 'the fresh compute re-warmed the key');
   assert.equal(computes(), 2);
-  delete h.ctx.getLatestDataDates;
-  delete h.ctx.computeQcdAllDepartments_;
+  d1Restore_();
 });
 
 
@@ -753,13 +762,6 @@ test('timing: the all-departments payload carries per-phase timings, and the she
   });
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;
 });
-
-// Captured at FILE LOAD, before any test body runs: the D-1 cache tests above
-// stub `computeQcdAllDepartments_` and then `delete` it, which removes the REAL
-// function from the shared vm context rather than restoring it. Anything after
-// them would otherwise call a deleted global. (Pre-existing; noted as a
-// follow-on rather than fixed here.)
-const REAL_ALLDEPT_ = h.ctx.computeQcdAllDepartments_;
 
 // ── R43: the all-dept whole-run budget ────────────────────────────────────
 //
@@ -828,7 +830,7 @@ test('R43: a PARTIAL payload is served but NEVER cached', function () {
     'but no qcdAll key is written for it');
   const b = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
   assert.equal(b.cacheHit, false, 'recomputed, not served from a pinned partial blob');
-  delete h.ctx.computeQcdAllDepartments_;
+  d1Restore_();
   void computes;
 });
 
@@ -844,6 +846,67 @@ test('R43: the budget is Script-Property tunable, with a sane default', function
   h.state.props.QCD_ALLDEPT_BUDGET_MS = '-5';
   assert.equal(h.call('qcdAllDeptBudgetMs_'), def, 'a negative would skip every dept -- refused');
   delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+});
+
+test('CLN-3: after the D-1 stubs, the REAL functions are back in the shared context', function () {
+  assert.equal(h.ctx.computeQcdAllDepartments_, REAL_ALLDEPT_, 'restored, never deleted');
+  assert.equal(h.ctx.getLatestDataDates, REAL_LATEST_DATES_);
+  assert.equal(typeof h.ctx.getLatestDataDates, 'function');
+});
+
+test('CLN-2: a dept that could not finish inside the budget is not started (slowest-so-far projection)', function () {
+  // Three depts, each costing ~180 s of a 240 s budget (the stub advances a fake
+  // clock by 60 s per computeQcdReport_ call; a dept makes three -- range, MTD,
+  // prior). The old check (time left > 0) started dept 2 at 180 s and ran to
+  // 360 s, past the ~6 min ceiling. Now 180 + 180 > 240 stops it.
+  h.ctx.computeQcdAllDepartments_ = REAL_ALLDEPT_;
+  install(rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Bob, 202'], Gamma: ['Gus, 203'] }),
+          [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta'), dcRow('Gamma', 'A_Q_Gamma')],
+          [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1),
+           qcdRow('2026-06-10', 'A_Q_Beta', 40, 35, 5, 0),
+           qcdRow('2026-06-10', 'A_Q_Gamma', 30, 25, 5, 0)]);
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = '240000';
+  const realNow = Date.now;
+  const realReport = h.ctx.computeQcdReport_;
+  let clock = realNow.call(Date);
+  Date.now = function () { return clock; };
+  h.ctx.computeQcdReport_ = function () { clock += 60000; return realReport.apply(null, arguments); };
+  let data;
+  try {
+    data = h.call('computeQcdAllDepartments_', '2026-06-10', '2026-06-10');
+  } finally {
+    Date.now = realNow;
+    h.ctx.computeQcdReport_ = realReport;
+    delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+  }
+  assert.equal(data.meta.partial, true);
+  assert.equal(data.depts.length, 1, 'only the first dept ran');
+  assert.equal(data.meta.partialDeptsSkipped, 2, 'the second would have ended at 360 s -- not started');
+});
+
+test('CLN-2: fast depts still all run (the projection only bites near the budget)', function () {
+  h.ctx.computeQcdAllDepartments_ = REAL_ALLDEPT_;
+  install(rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Bob, 202'], Gamma: ['Gus, 203'] }),
+          [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta'), dcRow('Gamma', 'A_Q_Gamma')],
+          [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1),
+           qcdRow('2026-06-10', 'A_Q_Beta', 40, 35, 5, 0),
+           qcdRow('2026-06-10', 'A_Q_Gamma', 30, 25, 5, 0)]);
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = '240000';
+  const realNow = Date.now;
+  const realReport = h.ctx.computeQcdReport_;
+  let clock = realNow.call(Date);
+  Date.now = function () { return clock; };
+  h.ctx.computeQcdReport_ = function () { clock += 10000; return realReport.apply(null, arguments); };
+  let data;
+  try {
+    data = h.call('computeQcdAllDepartments_', '2026-06-10', '2026-06-10');
+  } finally {
+    Date.now = realNow;
+    h.ctx.computeQcdReport_ = realReport;
+    delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+  }
+  assert.equal(data.meta.partial, undefined, '3 x 30 s fits a 240 s budget');
+  assert.equal(data.depts.length, 3);
 });
 
 // ---- D-8 (broad-scan 2026-09-17): MTD violations follow the WINDOW END --------

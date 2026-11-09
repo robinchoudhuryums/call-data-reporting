@@ -510,8 +510,11 @@ test('XB-0b: a two-roster agent goes to the department of the queue that rang th
 
 test('XB-0b: answerers on no roster are listed by name, a number never', function () {
   const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'New Hire'), ans('3', '12145550123'), ans('4', '+1 (214) 555-0199')]);
-  assert.equal(b.skipped.unknownAgent, 3);
-  assert.deepEqual(b.unknownAgents, ['New Hire', '(a number)']);
+  // CLN-5: a number is an outside party, not a person missing from a roster --
+  // ignored and counted, so only the real name is a skipped step.
+  assert.equal(b.skipped.unknownAgent, 1);
+  assert.deepEqual(b.unknownAgents, ['New Hire']);
+  assert.equal(b.outsideParty, 2);
   let st = h.call('tfBounceFold_', {}, h.call('tfBounceOfJourney_', [q('1', 'A_Q_Sales'), ans('2', 'New Hire')], XB.deptsOfQueue, XB.deptsOfAgent), 'C1');
   st = h.call('tfBounceFold_', st, h.call('tfBounceOfJourney_', [q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi')], XB.deptsOfQueue, XB.deptsOfAgent), 'C2');
   st = JSON.parse(JSON.stringify(st));
@@ -546,6 +549,22 @@ test('XB-0c: a sub-queue folds into its Overview Parent -- Sales <-> PAP is no m
   assert.deepEqual(JSON.parse(JSON.stringify(bare.parentOf)), {});
 });
 
+test('CLN-5: "(external number)" / "(caller)" answers are an outside party -- ignored and counted, never "not on the roster"', function () {
+  const b = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Peter (Praneeth) Gummadi'), ans('3', '(external number)'), ans('4', '(caller)')]);
+  assert.equal(b.skipped.unknownAgent, 0, 'not a skipped step');
+  assert.deepEqual(b.unknownAgents, []);
+  assert.equal(b.outsideParty, 2);
+  // A name merely CONTAINING parentheses is a person (the roster's nickname shape).
+  const p = xbOf([q('1', 'A_Q_Sales'), ans('2', 'Roman (Robin) Paulose')]);
+  assert.equal(p.outsideParty, 0);
+  assert.equal(p.skipped.unknownAgent, 1, 'an unrostered nickname-shaped name is still a person');
+  let st = h.call('tfBounceFold_', {}, h.call('tfBounceOfJourney_', [q('1', 'A_Q_Sales'), ans('2', '(external number)')], XB.deptsOfQueue, XB.deptsOfAgent), 'C1');
+  st = JSON.parse(JSON.stringify(st));
+  st.captured = 1;
+  assert.equal(st.callsWithSkip || 0, 0);
+  assert.match(h.call('tfBounceLine_', st), /answered by an outside party, not a person \(ignored\) 1$/);
+});
+
 test('XB-0c: an entry queue (sister-brand main lines, after hours) is ignored and counted, never "not placed"', function () {
   const b = xbOf([q('1', 'UDC_A_Q_Main'), q('2', 'A_Q_Sales'), ans('3', 'Peter (Praneeth) Gummadi'), q('4', 'a_q_afterhours')]);
   assert.equal(b.entryQueues, 2);
@@ -555,7 +574,7 @@ test('XB-0c: an entry queue (sister-brand main lines, after hours) is ignored an
   st = JSON.parse(JSON.stringify(st));
   st.captured = 1;
   assert.equal(st.callsWithSkip || 0, 0, 'an entry queue is not a skipped step');
-  assert.match(h.call('tfBounceLine_', st), /steps through an entry queue \(ignored\) 1$/);
+  assert.match(h.call('tfBounceLine_', st), /steps through an entry queue \(ignored\) 1;/);
 });
 
 test('XB-0: the canonicalizer places an agent whose journey name is a feed variant', function () {

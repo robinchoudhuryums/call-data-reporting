@@ -235,13 +235,14 @@ test('D-2: deptStats + share keep the excluded manager\'s volume; only teamAvg d
 // DD-3: a 0/0/0 roster row (an agent whose only legs fell outside the
 // window) must not add a day to the per-day denominator -- the same
 // activity gate activeAgentSet already applies.
-test('DD-3: activeDays counts only days with a call event', function () {
+test('DD-3: deptActiveDays counts only days with a call event', function () {
   install([
     dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, answered: 8, missed: 2, att: '0:03:00' }),
     dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 0,  answered: 0, missed: 0 }),
   ]);
   const data = h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'] });
-  assert.equal(data.deptStats.activeDays, 1, 'the idle day is not an active day');
+  assert.equal(data.deptStats.deptActiveDays, 1, 'the idle day is not an active day');
+  assert.equal(data.deptStats.activeDays, undefined, 'CLN-4: one name per meaning -- the old spelling is gone');
   assert.equal(data.deptStats.dailyRung, '10.0', 'per-day figures divide by the active day only');
 });
 

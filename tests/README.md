@@ -108,7 +108,7 @@ tests/
     harness-strictness.test.js  the fakes' platform limits themselves (HT-2/3/4/5): setValues shape + display update, cache caps, formatDate tokens, triggers / lock / property limits -- loosening a fake fails here
     deploy-tooling.test.js    scripts/: deploy.sh dir normalization + one dirtiness flag + STRICT_DEPLOY (DEP-2/3), the orphan check's placeholder shapes (DEP-4), bite.sh's EXIT trap (an earlier scan's DEP-1), CI on Node 22 (HT-6); broad-scan 2026-10-12: the sanitized build-stamp branch + copy-restoring trap (DEP-2) and the pinned playwright version everywhere (DEP-1); DEP-5: the version-limit check -- every clasp output shape, warn from 180, refuse at 200, never block on an unreadable count, and run before the gates and the push; SPEED-1..4: ci.mjs builds first then runs every asserting driver concurrently (drive-smoke as admin + manager shards, every drive-*.js on disk listed), the ci:ui skip for a sibling deploy and the harness-loads-only-dashboard warrant behind it, and the once-per-commit gate marker (run for real in a scratch repo: clean commit / zone / tools only, dirt or a new commit re-runs, records only after the gate passes)
     workbook-memo.test.js     Config.gs: DL-7 per-execution openSpreadsheet_ + roster-block memo (one open + one roster read per execution, fresh objects, the appendRosterEntry_ bust, the harness execution boundary)
-    dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
+    dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators; CLN-6 the modal's "default" source note
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window, summary v24 idle rows (an all-zero agent gets no My Department row, from the build or the queue split),
     individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
@@ -122,7 +122,7 @@ tests/
                               trim pass): dal-cutover parity (+ the R40
                               per-execution sheet-DAL row memo: hit parity,
                               per-caller row ownership, key separation,
-                              bounded retention), dqe-span-readers (R41: the
+                              bounded retention), dqe-span-readers (CLN-1: the ext grid reads cols C..D only; R41: the
                               five readers that bypassed the DAL now share
                               dqeWindowRowSpan_ -- out-of-order/backfill rows,
                               span-vs-full-scan equivalence, the ALL-HISTORY
@@ -236,7 +236,7 @@ tests/
                               sub-queue folding, the outbound sender, unknown
                               names skipped and counted, the grid pass with
                               its Cause / Last Leg Disposition census and no
-                              number anywhere; XB-0: transfers that came back,
+                              number anywhere; XB-0: transfers that came back (CLN-5: an outside-party answer is ignored, not unrostered),
                               on the owner's 10/22 Sales -> CSR -> Sales call
                               -- sender / returner, a consult or a stayed
                               transfer is no bounce, came back unanswered,
@@ -478,7 +478,7 @@ tests/
                               company-overview (getCompanyOverview
                               end-to-end: crossover partition, no
                               cross-dept leak, all-queue hero invariance),
-                              trend-window, qcd-report (F-15/F-36),
+                              trend-window, qcd-report (F-15/F-36; CLN-2 the slowest-dept budget projection, CLN-3 stubs restored never deleted),
                               neon-mirror tail/IMP-11,
                               qcd-sidebar-parity (the Extraction Sidebar and
                               calcQcdReport driven from ONE fixture — the
