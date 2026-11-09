@@ -112,7 +112,8 @@ Health bullet; per-call table semantics are in
   Operator State #57 has the why, the runbook and the tests.
   (6) **DDL runs in AUTOCOMMIT, before `setAutoCommit(false)` (P-9 in
   fix-history: `ADD COLUMN IF NOT EXISTS` takes ACCESS EXCLUSIVE even when the
-  column exists); the three writer suites pin the order.**
+  column exists); the three writer suites pin the order, and the two direct
+  writers' order is pinned in `direct-call-backfill.test.js` (ADT-3).**
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script

@@ -975,6 +975,12 @@ function getAgentDay(req) {
   out.meta.degradedReason = agentDayDegradedReason_(out.meta, cap.available);
   out.meta.outboundCaptured = agentDayOutboundCaptured_(out.meta, scope.date);
   out.reconcile = agentDayReconcile_(out.counts, out.day, out.meta.tier);
+  // EXC-2 (#81): the day is shown in full -- this page lists what happened --
+  // but a day the reports leave out says so (absent when it is not one).
+  if (typeof exceptionDayMark_ === 'function') {
+    var exMark = exceptionDayMark_(scope.date, scope.dept || null);
+    if (exMark) out.meta.exceptionDay = exMark;
+  }
   out.meta.computeMs = new Date().getTime() - t0;
 
   try { logReportUsage_('agentDay', scope.dept || '(unrostered)', scope.user, false); } catch (e3) {}
@@ -1185,6 +1191,13 @@ function getAgentDayStrip(req) {
     outboundAvailable: ob.available, captureStart: AGENT_DAY_OUTBOUND_CAPTURE_START_,
     maxDays: AGENT_DAY_STRIP_MAX_DAYS_,
   });
+  // EXC-2 (#81): mark (never drop) a strip day the reports leave out.
+  if (typeof exceptionDayMark_ === 'function') {
+    (folded.days || []).forEach(function (d) {
+      var m = d && d.date ? exceptionDayMark_(d.date, scope.dept || null) : null;
+      if (m) d.exceptionDay = m.reason || 'exception day';
+    });
+  }
   return {
     meta: {
       agentName: scope.agentName, department: scope.dept || '',

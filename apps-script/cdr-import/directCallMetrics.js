@@ -1180,9 +1180,13 @@ function dcEventTuple_(isoDate, e, hash) {
     neonSqlLit_(e.otherExt || null), neonSqlLit_(hash || null),
     neonSqlLit_(e.via || null), neonSqlLit_(e.dialIn || null), neonSqlLit_(e.busyWith || null)].join(',') + ')';
 }
-/** Writes one date's events on the caller's connection + transaction. Returns the count. */
+/**
+ * Writes one date's events on the caller's connection + transaction. Returns
+ * the count. The table's DDL (dcEnsureEventsTable_) is the CALLER's job, in
+ * autocommit BEFORE the transaction (P-9: ADD COLUMN IF NOT EXISTS takes an
+ * ACCESS EXCLUSIVE lock even when the column exists, held to commit).
+ */
 function dcWriteEvents_(conn, isoDate, events) {
-  dcEnsureEventsTable_(conn);
   const del = conn.prepareStatement('DELETE FROM direct_calls WHERE call_date = ?::date');
   del.setString(1, isoDate);
   del.execute();
@@ -1219,9 +1223,20 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate, events) {
   if ((!rows || !rows.length) && !isoDate) return { inserted: 0, skipped: 0 };
   const conn = getReachableNeonConn_();
   if (!conn) { dcLog_('writeDirectCallRowsToNeon_: Neon unreachable -- skipping %s rows.', rows.length); return { inserted: 0, unreachable: true }; }
-  conn.setAutoCommit(false);
+  // P-9 (ADT-3, owner 2026-11-06): DDL in AUTOCOMMIT, before the transaction
+  // opens -- ADD COLUMN IF NOT EXISTS takes ACCESS EXCLUSIVE even when the
+  // column exists, and inside the transaction it held that lock on
+  // direct_calls for the whole write (the Direct tab's reads waited).
   try {
     dcEnsureNeonTable_(conn);
+    if (events !== undefined) dcEnsureEventsTable_(conn);
+  } catch (eDdl) {
+    try { conn.close(); } catch (ce0) {}
+    dcLog_('writeDirectCallRowsToNeon_ DDL failed: ' + (eDdl && eDdl.message ? eDdl.message : eDdl));
+    return { inserted: 0, error: String(eDdl && eDdl.message ? eDdl.message : eDdl) };
+  }
+  conn.setAutoCommit(false);
+  try {
     // IMP-5: this daily writer's rows are the COMPLETE per-agent set for
     // isoDate (the sheet side is refresh-in-window for the same date), so
     // replace the date authoritatively -- an agent who drops out of a
@@ -1334,6 +1349,13 @@ function backfillDirectCallToNeon() {
 
   const conn = getReachableNeonConn_();
   if (!conn) { dcLog_('Direct upsert: Neon unreachable (NEON_* Script Properties set?).'); return { upserted: 0, unreachable: true }; }
+  // P-9 (ADT-3): the table's DDL in autocommit, before the transaction.
+  try { dcEnsureNeonTable_(conn); }
+  catch (eDdl) {
+    try { conn.close(); } catch (ce0) {}
+    dcLog_('Direct upsert: DDL failed: ' + (eDdl && eDdl.message ? eDdl.message : eDdl));
+    return { upserted: 0, error: String(eDdl && eDdl.message ? eDdl.message : eDdl) };
+  }
   conn.setAutoCommit(false);
 
   const BATCH_SIZE = 50;
@@ -1342,7 +1364,6 @@ function backfillDirectCallToNeon() {
   let totalUpserted = 0;
   let i = startIndex;
   try {
-    dcEnsureNeonTable_(conn);
     while (i < data.length) {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
         dcResumeWrite_(props, i, data);

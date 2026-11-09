@@ -499,8 +499,10 @@ test('Batch D: the report and the view read ONE SQL definition and ONE sheet agg
   const report = src.slice(src.indexOf('function computeOutboundReport_('), src.indexOf('function outboundShapeReport_('));
   const view = src.slice(src.indexOf('function computeDeptOutbound_('), src.indexOf('function getDeptOutboundSummary('));
   assert.match(report, /const agentsSel = outboundAgentsSel_;/);
-  assert.match(view, /outboundAgentsSel_\(scope\.from, scope\.to\)/);
-  assert.match(view, /obAgentsFromGrid_\(ob\.grid, scope\.from, scope\.to\)/);
+  // EXC-2: the view passes its exception-day clause / skip test -- still the
+  // ONE definition, one extra argument each.
+  assert.match(view, /outboundAgentsSel_\(scope\.from, scope\.to, exc\.sql\)/);
+  assert.match(view, /obAgentsFromGrid_\(ob\.grid, scope\.from, scope\.to, exc\.skip\)/);
   assert.match(src, /var agentsFor = function \(fromIso, toIso\) \{ return obAgentsFromGrid_\(obGrid, fromIso, toIso\); \};/);
   assert.match(view, /neonNoteEgress_\(json \? json\.length : 0, 'deptOutbound'\)/);
   // The mocked connection never runs SQL, so the "/ day" denominator's clause

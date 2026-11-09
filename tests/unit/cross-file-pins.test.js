@@ -796,7 +796,11 @@ const DRIVER_MODAL_EXEMPT = {
   // runbook whose last step is "add the driver afterwards" is how a surface
   // reaches managers with no rendered coverage at all. The driver goes in
   // BEFORE the release, not after it.
-  'inbound-modal':     'report modal — admin-only while vetted; no harness fixture yet',
+  //
+  // EXC-2 (2026-11-06): 'inbound-modal' LEFT too. drive-admin.js has driven it
+  // since SB-5 (its mock is in build-harness.js) and drive-exceptions.js since
+  // EXC-2, so the entry only hid that the hole had closed. The third F1 pin
+  // below now fails on an exemption for a modal a driver opens.
 };
 
 test('F1: every modal route in the router is driven by drive-admin.js or documented as exempt', function () {
@@ -835,6 +839,19 @@ test('F1: every modal route in the router is driven by drive-admin.js or documen
     + 'RPCs must be mocked in build-harness.js first), or add it to '
     + 'DRIVER_MODAL_EXEMPT here with the reason. A modal nothing ever OPENS is '
     + 'how the header dept-selector ReferenceError reached production.');
+});
+
+test('F1: no DRIVER_MODAL_EXEMPT entry names a modal an asserting driver already opens', function () {
+  const ci = read('tools/ui-harness/ci.mjs');
+  const driverFiles = [...new Set([...ci.matchAll(/\['node',\s*\['(drive-[a-z0-9-]+\.js)'/g)].map((m) => m[1]))];
+  const driven = new Set();
+  for (const df of driverFiles) {
+    for (const m of read('tools/ui-harness/' + df).matchAll(/#([a-z0-9-]+-modal)\b/g)) driven.add(m[1]);
+  }
+  const covered = Object.keys(DRIVER_MODAL_EXEMPT).filter((id) => driven.has(id));
+  assert.deepEqual(covered, [],
+    'DRIVER_MODAL_EXEMPT lists modal(s) a driver already opens: ' + covered.join(', ')
+    + '. Drop the exemption -- it documents a hole that has closed.');
 });
 
 test('F1: every DRIVER_MODAL_EXEMPT entry still names a real modal route', function () {

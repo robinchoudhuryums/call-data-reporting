@@ -1089,8 +1089,40 @@ function ovOutboundPeriodStarts_(w, latestDate) {
            last90: w.last90StartIso, ytd: w.ytdStartIso };
 }
 
+/**
+ * EXC-2 (#81 phase 2): the one-department exception days in [from, to] as
+ * { iso: [dept, ...] } -- the Overview's outbound line is grouped per AGENT and
+ * attributed to depts afterwards, so a day scoped to some departments cannot
+ * be a WHERE clause; it is grouped out separately and dropped per owner in the
+ * shape. {} when there are none (or an admin includes them, or Util.gs is not
+ * loaded), which keeps the SQL exactly what it was.
+ */
+function ovScopedExceptionDays_(from, to) {
+  const out = {};
+  if (typeof getExceptionDays_ !== 'function' || typeof exceptionIncludeOn_ !== 'function' || exceptionIncludeOn_()) return out;
+  try {
+    getExceptionDays_().forEach(function (d) {
+      if (d.depts.length && d.date >= from && d.date <= to && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) out[d.date] = d.depts.slice();
+    });
+  } catch (e) { return {}; }
+  return out;
+}
+
+/** PURE. The first date the outbound read covers: the earliest card period or prior window. */
+function ovOutboundReadFrom_(w, priorWindows) {
+  let lo = w.readFromIso;
+  const pw = priorWindows || {};
+  OV_OUTBOUND_PERIODS_.forEach(function (k) { if (pw[k] && pw[k].from < lo) lo = pw[k].from; });
+  return lo;
+}
+
+/** EXC-2: the all-department exception days as a clause on call_date ('' when none). */
+function ovAllDeptExceptionSql_(from, to) {
+  return (typeof exceptionNotInSql_ === 'function') ? exceptionNotInSql_('call_date', from, to, null) : '';
+}
+
 /** PURE. The grouped SQL. Every date is an internal validated ISO string. */
-function ovOutboundSql_(w, latestDate, priorWindows) {
+function ovOutboundSql_(w, latestDate, priorWindows, scopedDays) {
   const starts = ovOutboundPeriodStarts_(w, latestDate);
   const pw = priorWindows || {};
   let lo = w.readFromIso;
@@ -1108,10 +1140,18 @@ function ovOutboundSql_(w, latestDate, priorWindows) {
     }
     return sel;
   }).join(', ');
+  // EXC-2 (#81): an all-department exception day leaves the read; a scoped
+  // one is grouped out (`xd`) so the shape can drop it for its departments.
+  const scopedIsos = Object.keys(scopedDays || {}).sort();
+  const xd = scopedIsos.length
+    ? ", CASE WHEN call_date IN (" + scopedIsos.map(function (d) { return "'" + d + "'::date"; }).join(', ')
+      + ') THEN call_date::text END AS xd'
+    : '';
   return "SELECT json_build_object('agents', (SELECT COALESCE(json_agg(t), '[]') FROM ("
-    + 'SELECT agent_name AS agent, ' + cols + ' FROM outbound_calls '
-    + "WHERE call_date BETWEEN '" + lo + "'::date AND '" + latestDate + "'::date "
-    + 'GROUP BY agent_name) t), '
+    + 'SELECT agent_name AS agent' + xd + ', ' + cols + ' FROM outbound_calls '
+    + "WHERE call_date BETWEEN '" + lo + "'::date AND '" + latestDate + "'::date"
+    + ovAllDeptExceptionSql_(lo, latestDate) + ' '
+    + 'GROUP BY agent_name' + (xd ? ', 2' : '') + ') t), '
     + "'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls))::text AS j";
 }
 
@@ -1120,7 +1160,7 @@ function ovOutboundSql_(w, latestDate, priorWindows) {
  * that starts before capture began (outbound_calls has no rows before its
  * coverage start, so a YTD figure there is "since <coverageStart>").
  */
-function ovOutboundShape_(raw, allDepts, deptsForAgent, w, latestDate, priorWindows) {
+function ovOutboundShape_(raw, allDepts, deptsForAgent, w, latestDate, priorWindows, scopedDays) {
   const starts = ovOutboundPeriodStarts_(w, latestDate);
   const cov = (raw && raw.coverageStart) || null;
   const pw = priorWindows || {};
@@ -1139,7 +1179,10 @@ function ovOutboundShape_(raw, allDepts, deptsForAgent, w, latestDate, priorWind
   ((raw && raw.agents) || []).forEach(function (a) {
     const owners = deptsForAgent[a.agent];
     if (!owners) return;   // off-roster: no dept to attribute it to
+    // EXC-2: an `xd` row is one scoped exception day's calls -- not for its depts.
+    const skip = (a.xd && scopedDays && scopedDays[a.xd]) || null;
     owners.forEach(function (d) {
+      if (skip && skip.indexOf(d) !== -1) return;
       const b = byDept[d];
       if (!b) return;
       OV_OUTBOUND_PERIODS_.forEach(function (k) {
@@ -1177,12 +1220,13 @@ function ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, shared) {
     if (!conn) return null;
     const stmt = conn.createStatement();
     const priorWindows = ovOutboundPriorWindows_(w, latestDate);
-    const rs = stmt.executeQuery(ovOutboundSql_(w, latestDate, priorWindows));
+    const scopedDays = ovScopedExceptionDays_(ovOutboundReadFrom_(w, priorWindows), latestDate);   // EXC-2
+    const rs = stmt.executeQuery(ovOutboundSql_(w, latestDate, priorWindows, scopedDays));
     const json = rs.next() ? rs.getString('j') : null;
     rs.close(); stmt.close();
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'overviewOutbound');
     if (!json) return null;
-    return ovOutboundShape_(JSON.parse(json), allDepts, deptsForAgent, w, latestDate, priorWindows);
+    return ovOutboundShape_(JSON.parse(json), allDepts, deptsForAgent, w, latestDate, priorWindows, scopedDays);
   } catch (e) {
     Logger.log('Overview outbound read failed (tiles render without the line): '
       + (e && e.message ? e.message : e));
@@ -1237,9 +1281,13 @@ function ovDirectSql_(w, latestDate, priorWindows) {
     }
     return sel;
   }).join(', ');
+  // EXC-2 (#81): rows carry their department, so a one-department exception
+  // day leaves that department's rows only (an all-department day leaves all).
+  const exc = (typeof exceptionNotInSql_ === 'function')
+    ? exceptionNotInSql_('call_date', lo, latestDate, null, 'department') : '';
   return "SELECT json_build_object('depts', (SELECT COALESCE(json_agg(t), '[]') FROM ("
     + 'SELECT department AS dept, ' + cols + ' FROM direct_call_history '
-    + "WHERE call_date BETWEEN '" + lo + "'::date AND '" + latestDate + "'::date "
+    + "WHERE call_date BETWEEN '" + lo + "'::date AND '" + latestDate + "'::date" + exc + ' '
     + 'GROUP BY department) t), '
     + "'coverageStart', (SELECT MIN(call_date)::text FROM direct_call_history), "
     + "'through', (SELECT MAX(call_date)::text FROM direct_call_history))::text AS j";

@@ -1166,6 +1166,27 @@
     el.style.display = '';
   }
 
+  /**
+   * EXC-2 (#81 phase 2): the call-level views (Caller Lookup, the call path
+   * drill, Agent Day and its strip) keep every call -- they list what
+   * happened -- and MARK one on an exception day. `mark` is the server's
+   * { date, reason } (or a bare reason string). '' when there is none.
+   */
+  function excMarkText_(mark) {
+    if (!mark) return '';
+    var reason = typeof mark === 'string' ? mark : (mark.reason || '');
+    return 'Exception day' + (reason ? ' (' + reason + ')' : '') + ' — left out of report figures';
+  }
+  function excMarkChipHtml_(mark) {
+    if (!mark) return '';
+    return '<span class="cl-chip exc-mark" title="' + escapeHtml(excMarkText_(mark)) + '">Exception day</span>';
+  }
+  function excMarkNoteHtml_(mark, tail) {
+    if (!mark) return '';
+    return '<div class="ds-note exc-note exc-mark-note" role="status">' + escapeHtml(excMarkText_(mark))
+      + '. ' + escapeHtml(tail || 'Every call that day is still listed here.') + '</div>';
+  }
+
   /** The note as the first child of a report's results host (IR, Insights). */
   function excNoteUpsert_(hostId, list) {
     var host = $(hostId);

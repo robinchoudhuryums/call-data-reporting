@@ -198,8 +198,13 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       };
       const k = dept ? kp(1200, 1050, 90, 60, 0, 0, 22, 5) : kp(4120, 3410, 402, 308, 120, 38, 61, 14);
       const p = dept ? kp(1150, 1001, 95, 54, 0, 0, 20, 6) : kp(3990, 3300, 410, 280, 118, 36, 58, 12);
+      // EXC-2: the fixture's exception day, when the asked window spans it
+      // (the server's exceptionDaysNoteFor_ shape; the SQL side is unit-pinned).
+      const excD = ${JSON.stringify(meta.excDate)};
+      const excIn = req && req.from && req.to && req.from <= excD && excD <= req.to && !req.includeExceptionDays;
       return { meta: { from: (req && req.from) || '2026-09-28', to: (req && req.to) || '2026-10-27', department: dept || null,
-          companyView: !dept, available: true, unmapped: false, priorFrom: '2026-08-28', priorTo: '2026-09-25' },
+          companyView: !dept, available: true, unmapped: false, priorFrom: '2026-08-28', priorTo: '2026-09-25',
+          exceptionDays: excIn ? [{ date: excD, reason: '8x8 outage' }] : undefined },
         kpis: k, kpisPrior: p, byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [],
         outsideWindow: { calls: 0, abandoned: 0, answered: 0, abandonedPct: 0, beforeCalls: 0, beforeAbandoned: 0, afterCalls: 0, afterAbandoned: 0 } };
     },
@@ -462,7 +467,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           journeyHorizonDays: 90, captureHorizonDays: 400, ageDays: 3,
           truncated: false, neonAvailable: true, outboundCaptured: true, outboundCaptureStart: '2026-07-10', tzLabel: 'CST', computeMs: 18,
           // AC-6: the Direct tab is admin-only (the server sends no source otherwise).
-          directSource: ${JSON.stringify(role)} === 'admin' ? 'capture' : null, directCaptureStart: ${JSON.stringify(role)} === 'admin' ? '2026-07-01' : null },
+          directSource: ${JSON.stringify(role)} === 'admin' ? 'capture' : null, directCaptureStart: ${JSON.stringify(role)} === 'admin' ? '2026-07-01' : null,
+          // EXC-2: the day is listed in full, and says the reports leave it out.
+          exceptionDay: (req && req.date) === ${JSON.stringify(meta.excDate)} ? { date: ${JSON.stringify(meta.excDate)}, reason: '8x8 outage' } : undefined },
         day: { rung: 14, missed: 3, answered: 11, tttSec: 2640, attSec: 240, source: 'dqe' },
         counts: { inboundTotal: 3, answered: 1, missed: 1, rang: 1,
           outboundTotal: 2, outboundConnected: 1, talkSec: 540,
@@ -725,7 +732,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getCallJourney: function (req) {
       req = req || {};
       if (String(req.kind || '') === 'outbound') {
-        return { available: true, found: true, kind: 'outbound', call: {
+        return { available: true, found: true, kind: 'outbound',
+          // EXC-2: a call on the fixture's exception day carries the server's mark.
+          exceptionDay: String(req.date || '') === ${JSON.stringify(meta.excDate)} ? { date: req.date, reason: '8x8 outage' } : undefined,
+          call: {
           callDate: '2026-08-21', callStart: '07:14:29', callId: 'OB-777',
           agentName: 'Marie (Muskaan) Jindal', agentExt: '279',
           department: 'Field Operations (Market Activity)',
@@ -735,6 +745,14 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       }
       if (/000$/.test(String(req.callId || ''))) {
         return { available: true, found: false, reason: 'not-entitled' };
+      }
+      // EXC-2: a call on the fixture's exception day carries the server's mark.
+      if (String(req.date || '') === ${JSON.stringify(meta.excDate)}) {
+        return { available: true, found: true, exceptionDay: { date: req.date, reason: '8x8 outage' }, call: {
+          callDate: req.date, callStart: '07:41:00', callId: String(req.callId || 'IN-EXC'),
+          disposition: 'answered', abandonStage: null, abandonedOnHold: false, holdSeconds: 0, waitSeconds: 31,
+          entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', isInternal: false, numQueues: 1, numTransfers: 0,
+          journey: [{ t: '07:41:00', name: 'A_Q_CSR', kind: 'queue' }, { t: '07:41:31', name: 'Test Agent', kind: 'answer', talk: 240 }] } };
       }
       return { available: true, found: true, call: {
         callDate: '2026-08-21', callStart: '07:14:57', callId: String(req.callId || 'IN-1'),

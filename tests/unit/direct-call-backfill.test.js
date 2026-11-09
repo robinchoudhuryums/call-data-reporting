@@ -396,3 +396,48 @@ test('IG-2: backfillDirectCallToNeon honours a valid pointer and restarts on a s
   cap = { executed: [], prepared: [], commits: 0, rollbacks: 0, closes: 0, ddl: 0 };
   assert.equal(h.call('backfillDirectCallToNeon').upserted, 2, 'stale pointer -> every row from the top');
 });
+
+// ---- ADT-3 (owner 2026-11-06): P-9 for the direct writers -----------------
+// ADD COLUMN IF NOT EXISTS takes an ACCESS EXCLUSIVE lock even when the column
+// exists; inside the write transaction it held direct_calls locked for the
+// whole per-date write. Every CREATE / ALTER must run before setAutoCommit(false).
+function seqConn(seq) {
+  return {
+    setAutoCommit: function (v) { seq.push('AUTOCOMMIT:' + v); },
+    createStatement: function () { return { execute: function (sql) { seq.push(String(sql).slice(0, 40)); return true; }, close: function () {} }; },
+    prepareStatement: function (sql) {
+      return { setString: function () {}, setInt: function () {}, execute: function () { seq.push(String(sql).slice(0, 40)); return true; }, close: function () {} };
+    },
+    commit: function () { seq.push('COMMIT'); }, rollback: function () { seq.push('ROLLBACK'); }, close: function () {},
+  };
+}
+test('ADT-3 (P-9): the daily direct writer runs every CREATE / ALTER in autocommit before the transaction opens', function () {
+  const seq = [];
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(seq); };
+  const rows = [{ agent: 'Anna', dept: 'CSR', ib_int_answered: 1, ib_int_missed_free: 0, ib_int_missed_busy: 0, ib_int_talk_sec: 30,
+    ib_ext_answered: 0, ib_ext_missed_free: 0, ib_ext_missed_busy: 0, ib_ext_talk_sec: 0,
+    ob_int_total: 0, ob_int_connected: 0, ob_int_talk_sec: 0, ob_ext_total: 0, ob_ext_connected: 0, ob_ext_talk_sec: 0 }];
+  const events = [{ agent: 'Anna', dept: 'CSR', direction: 'in', side: 'int', callId: 'C1', callStart: '09:00:00', ringSec: 4, talkSec: 30,
+    outcome: 'answered', inWindow: true, otherName: 'Bob', otherExt: '102', otherNumber: null }];
+  const res = JSON.parse(JSON.stringify(h.call('writeDirectCallRowsToNeon_', rows, 'March 2026', '2026-03-09', events)));
+  assert.equal(res.events, 1, JSON.stringify(res));
+  const iAuto = seq.indexOf('AUTOCOMMIT:false');
+  const ddl = seq.map((s, i) => (/^(CREATE TABLE|CREATE INDEX|ALTER TABLE)/.test(s) ? i : -1)).filter((i) => i >= 0);
+  const dels = seq.map((s, i) => (/^DELETE FROM/.test(s) ? i : -1)).filter((i) => i >= 0);
+  assert.ok(iAuto > 0, 'the transaction opens');
+  assert.ok(ddl.length >= 6 && ddl.every((i) => i < iAuto),
+    'both tables\' CREATE + the index + every ADD COLUMN (via, dial_in, busy_with) precede setAutoCommit(false): ' + JSON.stringify(seq));
+  assert.ok(dels.length === 2 && dels.every((i) => i > iAuto) && seq.indexOf('COMMIT') > Math.max.apply(null, dels),
+    'the two per-date DELETEs + inserts stay inside the one transaction');
+});
+
+test('ADT-3 (P-9): the multi-date backfill also creates its table before the transaction', function () {
+  const seq = [];
+  h.state.props = {};
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'Direct Call History': [HEADERS].concat(SHEET_ROWS) } });
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(seq); };
+  h.call('backfillDirectCallToNeon');
+  const iAuto = seq.indexOf('AUTOCOMMIT:false');
+  const iDdl = seq.findIndex((s) => /^CREATE TABLE/.test(s));
+  assert.ok(iDdl >= 0 && iAuto > iDdl, JSON.stringify(seq.slice(0, 6)));
+});

@@ -2896,10 +2896,16 @@ rules: Operator State #81.
   day left out (Mon Sep 21: 8x8 outage) — N calls not counted. Every figure
   here excludes it." Hosts: `#dept-exc-note` (My Department, with the switch),
   `#insights-results` / `#individual-results` (upserted as the first child),
-  `#ov-exc-note` under the Overview trend (`fixed`: a surface the switch does
+  `#inbound-body` / `#direct-call-body` (EXC-2), `#ov-exc-note` under the
+  Overview trend (`fixed`: a surface the switch does
   not reach, so it never claims the days are INCLUDED). The agent app renders its own
   (`renderExceptions`, agentApp.html: "Not counted: ..."). An empty list hides
   the note -- never a blank box.
+- **The mark (EXC-2).** The call-level views list what happened, so they keep
+  every call and MARK an exception day instead: `excMarkChipHtml_` (a striped
+  "Exception day" chip on Caller Lookup cards), `excMarkNoteHtml_` (the call
+  path drill and the agent panel's day), `#ad-exc-note` (Agent Day), and
+  `.ap-day.is-exception` on the strip -- from the server's `exceptionDay`.
 - **The admin switch.** The note's `[data-exc-toggle]` button carries
   `data-admin-only`, so View-as hides it; the server ignores a non-admin's
   `includeExceptionDays` anyway (`setExceptionIncludeFromReq_`). It flips

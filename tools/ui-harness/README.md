@@ -110,7 +110,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   calls left out), one striped untinted bar per day-bar card with an
   "Excluded" readout, the admin-only include switch re-asking the summary and
   the missed calls WITH the flag and back, View-as and a manager never seeing
-  it, the Overview trend's shaded band + bridged lines, 360 px.
+  it, the Overview trend's shaded band + bridged lines, 360 px; EXC-2: the
+  Inbound and Direct Calls reports' notes, Agent Day on the day listing its
+  calls with the "reports leave it out" note, and the call path drill's mark.
 - `drive-notify.js` — the **Notifications** page: sentence rules, History,
   Test send, the manager-layer switch, a manager's Settings section off and
   on (Step 5a); the coaching gates, Met / Rotated / Dismissed and the held
