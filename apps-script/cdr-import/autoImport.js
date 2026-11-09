@@ -4020,9 +4020,13 @@ function makeDateWhole_(iso, targetSS) {
       // tool printed "imported the missing sheets" and then "Still owed" for
       // the same sheets. The daily path writes each missing sheet now (the
       // per-sheet exists checks still leave present sheets alone), mirrors
-      // inline, and returns "ERROR: ..." instead of throwing. Like a Manual
-      // Export of an older date, it leaves CDR Output / QCDR Output / Raw Data
-      // showing this date until the next import.
+      // inline, and returns "ERROR: ..." instead of throwing. Two things the
+      // daily path does that the queue did not: like a Manual Export of an
+      // older date it leaves CDR Output / QCDR Output / Raw Data showing this
+      // date until the next import, and its Direct and per-call blocks run as
+      // on any daily import -- the date's Direct rows and inbound / outbound
+      // records are re-derived from the Call_Legs tab under the current rules
+      // (the prompt and Operator State #56 say so).
       const outcome = processNewImport(false, iso, false, targetSS, null,
         { noAlert: true, ignoreLastSheets: true });
       actions.push('imported the missing sheets (' + coreMissing.join(', ') + '): ' + outcome);
@@ -4053,7 +4057,9 @@ function makeDateWhole() {
   const ui = SpreadsheetApp.getUi();
   const res = ui.prompt('Make a date whole',
     'Enter the date (YYYY-MM-DD). Runs only what that date is missing -- sheets, Direct, per-call, '
-    + 'Neon mirrors -- and never deletes rows.', ui.ButtonSet.OK_CANCEL);
+    + 'Neon mirrors. History-sheet rows that exist are never deleted. When a core sheet is missing, '
+    + 'the import that writes it also refreshes the date\'s Direct and per-call records from its '
+    + 'Call_Legs tab, as any daily import does.', ui.ButtonSet.OK_CANCEL);
   if (res.getSelectedButton() !== ui.Button.OK) return;
   const iso = res.getResponseText().trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { ui.alert('Invalid format. Use YYYY-MM-DD.'); return; }

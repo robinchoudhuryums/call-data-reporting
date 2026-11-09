@@ -2056,9 +2056,13 @@ When something looks wrong, before assuming a code bug, check:
     WRONG: it reads a per-date ledger (the Call_Legs tab, the date's rows in
     the six history sheets, its row count in the six Neon tables), runs only
     what is owed -- a NON-force import for missing core sheets (it never
-    deletes; like Manual Export it re-stages Raw Data with that date), then
-    the per-call and Direct / mirror catch-ups -- and shows the ledger before
-    and after. A date that ends whole leaves the failed-import ledger (so it
+    deletes a history-sheet row that exists; like Manual Export it re-stages
+    Raw Data and the two Output sheets with that date, and -- since RB-3,
+    when it takes the daily write path instead of the bulk queue -- that
+    import also refreshes the date's Direct rows and per-call records from
+    the Call_Legs tab under the current rules, as any daily import does),
+    then the per-call and Direct / mirror catch-ups -- and shows the ledger
+    before and after. A date that ends whole leaves the failed-import ledger (so it
     un-parks a parked date) and is remembered. Without the Call_Legs tab it
     can still re-mirror from the sheets but says which sheets it could not
     rebuild. In deferred mirror mode it queues the mirrors and says so. For

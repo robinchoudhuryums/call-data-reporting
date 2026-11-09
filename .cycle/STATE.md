@@ -2,7 +2,7 @@
 
 ## Current
 Cycle: 260
-Phase: audit
+Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
@@ -13,6 +13,9 @@ numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-09 (5) -- BROAD SCAN (cycle 260) + Batch 1 IMPLEMENTED (block 260-batch1-rb-broad-implement).** The scan: 82 findings, none Critical, two High; the plan is 11 fix batches + 5 expansion batches, tracked on the checklist page https://claude.ai/artifact/KLTK3S1vprAy48Q8RDggwF (the scan report itself is in the session record). Batch 1 = RB-1..7, cdr-import: a failed bulk date is reported ❌ and logged under a failure-only step; the editor-run Direct build uses the day most rows are on; Make a date whole writes through the daily path; the QCD force-loss guard counts rows that carry a call; a resumed batch archive re-mirrors from the sheet; the CSR header check runs before the force-delete; honest bulk bookkeeping. 2895 tests, bites 11/11, ci:ui green. NET 1 - 2 = -1 (two disclosed behaviour changes).
+  **Owner-side:** push cdr-import; deploy the dashboard (two Health step names). Nothing retroactive.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au; no PR (not asked). Next in the plan: Batch 2 (capture rules: scan F3, F60, F58, F4, F62, F6, F63).
 - **2026-11-09 (4) -- SHIPPED: PR #411 merged (116b7b1) on CI green** -- CLN-1..6 + DCD-1 (Save all Dept Config defaults as sheet rows). **Owner-side:** deploy the dashboard + push cdr-import; Dept Config → Save all defaults, then A_Q_Sales_MWC on Sales' aliases and A_Q_BackUp_FieldOps on Field Ops'; DIAL_IN_LABELS (five main lines); roster updates from the 11-09 logs; re-run `diagnoseTransferBouncesAllDates` + `rebuildDirectCallHeldDates()`; walk S36 / S68. Open for later: the 6c Outbound release (#63), exception days for callbacks / heatmap / emails / team-tools, rulings SEC-1 / SEC-2 / PIPE-8. Branch restarted from main.
   **Where I left off:** nothing open on the branch; owner resumes in a fresh session.
 - **2026-11-09 (3) -- DCD-1 IMPLEMENTED (owner: one-click save of Dept Config defaults).** Admin ▾ → Dept Config shows a bar naming the departments on built-in defaults only; **Save all defaults as sheet rows** writes them (`saveDeptConfigDefaults`, through `saveDeptConfig`'s own body via `saveDeptConfigRow_`), leaves a deactivated row alone, reports a refused one, republishes the standards once. **Owner-side:** deploy the dashboard, click the button, then add `A_Q_Sales_MWC` to Sales' Inbound queue aliases and `A_Q_BackUp_FieldOps` to Field Ops' (the button only saves what is already built in), re-run `diagnoseTransferBouncesAllDates`; walk S36's DCD-1 step.
