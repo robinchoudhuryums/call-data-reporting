@@ -223,6 +223,10 @@ test('NUM-3: obEpMineOnly_ keeps every episode when no row is flagged, and drops
 test('NUM-3: the event SQL reads every queue in a department view and counts only its own', function () {
   const deptSql = ob.call('obCallbackEventsSql_', { dept: 'Sales' }, ['A_Q_Sales'], '2026-10-05', '2026-10-05', '2026-10-05', null);
   assert.match(deptSql.with, /AS mine FROM inbound_calls c WHERE /, 'the predicate is a column');
+  // The column is inboundDeptPredicate_'s text minus its leading AND: if that
+  // function's shape changes, this fails here rather than as a SQL error.
+  assert.match(deptSql.with, /COALESCE\(\(+c\.disposition='answered'/, 'the expression opens on the predicate itself');
+  assert.doesNotMatch(deptSql.with, /COALESCE\(\(\s*AND\b/);
   assert.doesNotMatch(deptSql.with.split(' AS mine FROM inbound_calls c WHERE ')[1].split('), cb_k')[0], /a_q_sales/,
     'and no longer narrows the read');
   assert.match(deptSql.with, /'a_q_sales'/, 'the predicate itself is still the shared one');

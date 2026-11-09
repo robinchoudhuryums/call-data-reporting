@@ -1217,7 +1217,9 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
-  const cacheKey = 'summary:v25:' + dept + ':' + scope + ':' + subScope
+  // v26 (NUM-1 / NUM-7 / NUM-8): csrTransfer leaves out exception days; the
+  // combined grand total drops two more kinds of crossover repeat.
+  const cacheKey = 'summary:v26:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor

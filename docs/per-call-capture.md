@@ -647,7 +647,7 @@ period's INV-28 prior (`ovOutboundPriorWindows_`), plus `coverageStart` and
 `through`. The rate is answered ÷ (answered + missed while free), the Direct
 Calls report's rule; busy rings are shown, not rated. A prior is kept only
 when its window starts on or after capture. Metered as `overviewDirect`, no
-sheet fallback, `companyOverview:v30`. It is ADMIN-ONLY like the Direct Calls
+sheet fallback, `companyOverview:v31`. It is ADMIN-ONLY like the Direct Calls
 report, with no release switch: `personalizeOverview_` strips `dept.direct`,
 `directCoverageStart`, `directThrough` and `directPriorWindows` for every
 non-admin, whatever `OUTBOUND_VETTING_GATE_` says. Exception days (#81) are not
@@ -829,7 +829,7 @@ of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
 disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
 whose rows name the line rung: rows exported before FO-2 are blank there and
 would read as "no direct calls"). Cached
-`outboundReport:v10` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
+`outboundReport:v11` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since

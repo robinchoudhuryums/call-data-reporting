@@ -90,7 +90,9 @@
 // v9: B1 (broad-scan 2026-10-12) episodes join across the window's edges (PC-1),
 //     "pending" is judged against the loaded calls (PC-2); + meta.unmapped (PC-5)
 //     and the roster hash on the key (DATA-3)
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v10';
+// v11: NUM-3 (broad-scan 2026-11-09) a DEPARTMENT view's episodes are decided with the
+//     other teams' attempts in view, so its outcomes match its Callbacks-by-department row
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v11';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday

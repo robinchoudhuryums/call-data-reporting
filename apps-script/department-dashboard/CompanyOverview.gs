@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v30` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v31` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -108,7 +108,9 @@
 // direct-line answer rate per card period, from Neon direct_call_history, +
 // its prior) and the blob `directCoverageStart` / `directThrough` /
 // `directPriorWindows`; admin-only, stripped for everyone else.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v30';
+// v31 (NUM-4): under QUEUE_SPLIT_SCOPE=dept the card periods take the tile's
+// own fail-open verdict (its 30-day span), so a tile is narrowed, or not, as one.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v31';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -150,7 +152,8 @@ var OV_CHART_TREND_DAYS = 90;
 // v2 (6b): the YTD payload's per-dept block gained `trendAnswered` alongside
 // trend / trendAbandoned / trendAbandonedPct -- its own prefix, because this
 // payload is cached separately from the Overview blob.
-var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v3';
+// v4 (NUM-4): the dept lines take the tile's fail-open verdict (see v31 above).
+var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v4';
 
 // F6: CacheService's documented per-value ceiling, and the tripwire below it.
 // The Overview blob is the biggest cached payload in the app and its
