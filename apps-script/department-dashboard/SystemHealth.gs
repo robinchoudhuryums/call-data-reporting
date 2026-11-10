@@ -247,6 +247,7 @@ function getSystemHealth(req) {
     healthPropsInventoryRows_(add);
     healthSetupSheetsRow_(add);
     healthWorkbookCellsRow_(add);
+    healthFallbackTabRows_(add, ctx);   // OFB-2
     healthUsageRows_(add);
   }
 
@@ -1376,6 +1377,140 @@ function healthWorkbookCellsRow_(add) {
       + 'CDR Report → CDR Tools → Workbook Cell Space → Audit, then Preview trim '
       + '(Operator State #62).');
   } catch (e) { add('sheets', 'workbook-cells', 'Workbook cell usage (10M cap)', 'warn', 'probe failed', String(e && e.message || e)); }
+}
+
+// OFB-2 (broad-scan 2026-11-09, Batch 7): the two tabs every per-call surface
+// degrades to when Neon is down. Nothing watched them: a stale copy, a tab an
+// interrupted export left out of date order (OFB-1), or an export trigger that
+// was never installed was discovered DURING the outage, when the dashboard was
+// already serving it. cdr-report's triggers are not this project's to list, so
+// the trigger's proof of life is its `inboundExport` / `outboundExport`
+// Pipeline Health row. Sheet-only reads (a bounded date-column tail + grid
+// metadata), so the rows render in the fast half and mid-outage.
+var HEALTH_FALLBACK_TABS_ = [
+  { sheet: 'Inbound Calls',  key: 'fallback-inbound',  step: 'inboundExport',  item: '#49', menu: 'Inbound Calls Tab' },
+  { sheet: 'Outbound Calls', key: 'fallback-outbound', step: 'outboundExport', item: '#50', menu: 'Outbound Calls Tab' },
+];
+var HEALTH_FALLBACK_TAIL_ROWS_ = 500;
+// The export runs once a morning and the import can land after it, so the copy
+// is routinely one workday behind the daily data; two is a missed run.
+var HEALTH_FALLBACK_MAX_LAG_WORKDAYS_ = 1;
+
+/** OFB-2: business days d with afterIso < d <= throughIso (weekends + company holidays skipped; capped). */
+function healthWorkdaysAfter_(afterIso, throughIso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(afterIso || ''));
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(String(throughIso || '')) || afterIso >= throughIso) return 0;
+  var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1, 12);
+  var n = 0;
+  for (var i = 0; i < 400; i++) {
+    var iso = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    if (iso > throughIso) break;
+    var dow = d.getDay();
+    if (dow !== 0 && dow !== 6 && !(typeof isCompanyHoliday_ === 'function' && isCompanyHoliday_(iso))) n++;
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 12);
+  }
+  return n;
+}
+
+/**
+ * OFB-2 (PURE): one outage-copy tab's Health verdict.
+ * info: { sheet, item, menu, step, neonConfigured, exists, rows, latestIso,
+ *         outOfOrder, anchorIso, lag, lastRun: {status, timestamp, notes}|null,
+ *         scanRows, cells, capPct, spareCols }
+ */
+function healthFallbackTabVerdict_(info) {
+  var where = 'CDR Report → CDR Tools → ' + info.menu;
+  if (!info.exists && !info.neonConfigured) {
+    // No Neon, no per-call capture: there is nothing for a copy to stand in for.
+    return { status: 'muted', value: 'not in use (Neon not configured)', hint: '' };
+  }
+  if (!info.exists || !info.rows || !info.latestIso) {
+    return { status: 'warn', value: !info.exists ? 'tab not found' : 'no dated rows',
+      hint: 'There is no copy to fall back on: with Neon down, every surface that reads ' + info.sheet
+        + ' has nothing to show. ' + where + ' → Refresh now, then Install daily export (Operator State '
+        + info.item + ').' };
+  }
+  var size = info.rows + ' rows · ' + info.cells + ' cells (' + info.capPct + '% of the 10M cap)';
+  var run = info.lastRun
+    ? 'Last ' + info.step + ' run: ' + String(info.lastRun.status || '') + (info.lastRun.timestamp ? ' @ ' + info.lastRun.timestamp : '')
+      + (String(info.lastRun.status || '').toLowerCase() === 'failure' && info.lastRun.notes ? ' — ' + info.lastRun.notes : '') + '.'
+    : 'No ' + info.step + ' run in the last ' + info.scanRows + ' Pipeline Health entries — the daily export is probably not installed ('
+      + where + ' → Install daily export, Operator State ' + info.item + ').';
+  var spare = info.spareCols > 0
+    ? ' ' + info.spareCols + ' empty column(s) right of the data count against the cell cap on every row; the next export run removes them.'
+    : '';
+  if (info.outOfOrder) {
+    return { status: 'warn', value: 'through ' + info.latestIso + ' · rows OUT OF DATE ORDER',
+      hint: 'The outage readers read this tab from the bottom and stop early when an older date sits below a newer one, '
+        + 'so they would serve the wrong rows. ' + where + ' → Refresh now re-sorts it before it connects, so it works '
+        + 'with Neon down. ' + run };
+  }
+  if (info.anchorIso && info.lag > HEALTH_FALLBACK_MAX_LAG_WORKDAYS_) {
+    return { status: 'warn',
+      value: 'through ' + info.latestIso + ' · ' + info.lag + ' workdays behind the daily data (' + info.anchorIso + ')',
+      hint: 'An outage today would serve per-call figures that stop at ' + info.latestIso + '. ' + run
+        + ' A run that succeeds while the copy stays behind means Neon itself is behind — see the per-call capture rows above.' };
+  }
+  return { status: 'ok',
+    value: 'through ' + info.latestIso + (info.lag === 1 ? ' (1 workday behind ' + info.anchorIso + ')' : '') + ' · ' + size,
+    hint: run + ' Cells are rows × columns whether or not they hold anything; the keep window ('
+      + (info.step === 'inboundExport' ? 'INBOUND' : 'OUTBOUND') + '_EXPORT_KEEP_DAYS in cdr-report, default 400 days) is what sets the rows.'
+      + spare };
+}
+
+/** OFB-2: Health section -- the Neon-outage copies (reads ctx.phRows for the export runs). */
+function healthFallbackTabRows_(add, ctx) {
+  var label = function (t) { return 'Outage copy: ' + t.sheet + ' tab'; };
+  var ss = null, anchorIso = null;
+  try { ss = openSpreadsheet_(); } catch (eOpen) { ss = null; }
+  // The anchor is the latest daily (DQE) date -- the 5-minute cached value the
+  // header pill reads on every page load, so this is normally free.
+  try {
+    var latest = (typeof getLatestDataDate === 'function') ? getLatestDataDate() : null;
+    anchorIso = /^\d{4}-\d{2}-\d{2}$/.test(String(latest || '')) ? String(latest) : null;
+  } catch (eAnchor) { anchorIso = null; }
+  HEALTH_FALLBACK_TABS_.forEach(function (t) {
+    try {
+      if (!ss) throw new Error('workbook unavailable');
+      var info = { sheet: t.sheet, item: t.item, menu: t.menu, step: t.step,
+                   neonConfigured: !!ctx.neonConfigured, exists: false, rows: 0, latestIso: null,
+                   outOfOrder: false, anchorIso: anchorIso, lag: 0, lastRun: null,
+                   scanRows: HEALTH_PIPELINE_SCAN_ROWS, cells: 0, capPct: 0, spareCols: 0 };
+      var sh = ss.getSheetByName(t.sheet);
+      if (sh) {
+        info.exists = true;
+        var lastRow = sh.getLastRow();
+        info.rows = Math.max(0, lastRow - 1);
+        info.cells = sh.getMaxRows() * sh.getMaxColumns();
+        info.capPct = Math.round((info.cells / WORKBOOK_CELL_CAP_) * 1000) / 10;
+        info.spareCols = Math.max(0, sh.getMaxColumns() - sh.getLastColumn());
+        if (lastRow >= 2) {
+          var start = Math.max(2, lastRow - HEALTH_FALLBACK_TAIL_ROWS_ + 1);
+          var disp = sh.getRange(start, 1, lastRow - start + 1, 1).getDisplayValues();
+          var prev = '';
+          for (var i = 0; i < disp.length; i++) {
+            // ncCellDateIso_ (NeonCoverage.gs) is the shared date-cell reader
+            // the outage readers themselves use; the bare-ISO arm only serves
+            // a selective-load suite.
+            var raw = String(disp[i][0] == null ? '' : disp[i][0]).trim();
+            var d = (typeof ncCellDateIso_ === 'function') ? ncCellDateIso_(raw)
+                  : (/^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null);
+            if (!d) continue;
+            if (prev && d < prev) info.outOfOrder = true;
+            prev = d;
+            if (info.latestIso === null || d > info.latestIso) info.latestIso = d;
+          }
+        }
+      }
+      if (info.latestIso && anchorIso) info.lag = healthWorkdaysAfter_(info.latestIso, anchorIso);
+      (ctx.phRows || []).some(function (r) {   // newest first
+        if (r && r.step === t.step) { info.lastRun = { status: r.status, timestamp: String(r.timestamp || ''), notes: String(r.notes || '') }; return true; }
+        return false;
+      });
+      var v = healthFallbackTabVerdict_(info);
+      add('sheets', t.key, label(t), v.status, v.value, v.hint);
+    } catch (e) { add('sheets', t.key, label(t), 'warn', 'probe failed', String(e && e.message || e)); }
+  });
 }
 
 /** CH-4: Health section -- report usage + per-user rollup. */

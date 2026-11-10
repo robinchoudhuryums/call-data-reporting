@@ -990,6 +990,90 @@ test('R47: past 80% the row warns and leads with what breaks at 100%', function 
   assert.match(row.hint, /^Near the cap: at 100% every WRITE to this workbook fails/);
 });
 
+// ── OFB-2 (broad-scan 2026-11-09, Batch 7): the Neon-outage copies ───────────
+// The Inbound / Outbound Calls tabs are what every per-call surface serves
+// while Neon is down, and nothing watched them: a stale copy, a tab left out
+// of date order, or an export that was never installed was found DURING the
+// outage. Sheet-only, so the rows render in the fast half.
+function installFallbackTabs(inboundDates, outboundDates, phRows) {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const sheets = {};
+  h.state.spreadsheet.getSheets().forEach(function (sh) { sheets[sh.getName()] = [['h']]; });
+  if (inboundDates) sheets['Inbound Calls'] = [['Call Date', 'Call ID']].concat(inboundDates.map(function (d, i) { return [d, 'i' + i]; }));
+  if (outboundDates) sheets['Outbound Calls'] = [['Call Date', 'Call ID']].concat(outboundDates.map(function (d, i) { return [d, 'o' + i]; }));
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
+  h.ctx.getLatestDataDate = function () { return '2026-11-06'; };   // a Friday
+  h.ctx.readPipelineHealth_ = function () { return phRows || []; };  // newest first
+}
+function clearFallbackStubs() { h.ctx.getLatestDataDate = undefined; h.ctx.readPipelineHealth_ = undefined; }
+
+test('OFB-2: a current, ordered copy reads ok, in the FAST half, with its size against the cell cap', function () {
+  installFallbackTabs(['2026-11-05', '2026-11-06', '2026-11-06'], ['2026-11-05'], [
+    { step: 'inboundExport', status: 'success', timestamp: '2026-11-07 09:01', notes: '2 replaced, 0 pruned' },
+    { step: 'outboundExport', status: 'success', timestamp: '2026-11-07 09:02', notes: '' },
+  ]);
+  let opened = 0;
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return { close: function () {} }; };
+  try {
+    const data = h.call('getSystemHealth', { part: 'fast' });
+    const ib = rowByKey(data, 'fallback-inbound'), ob = rowByKey(data, 'fallback-outbound');
+    assert.equal(ib.section, 'sheets');
+    assert.equal(ib.status, 'ok');
+    assert.match(ib.value, /^through 2026-11-06 · 3 rows · \d+ cells \([\d.]+% of the 10M cap\)/);
+    assert.match(ib.hint, /Last inboundExport run: success @ 2026-11-07 09:01/);
+    assert.match(ib.hint, /INBOUND_EXPORT_KEEP_DAYS/);
+    assert.equal(ob.status, 'ok', 'one workday behind is the routine morning gap, and it is said');
+    assert.match(ob.value, /^through 2026-11-05 \(1 workday behind 2026-11-06\)/);
+    assert.equal(opened, 0, 'sheet-only: it must render mid-outage');
+  } finally { clearFallbackStubs(); }
+});
+
+test('OFB-2: a copy two workdays behind warns and says whether the export ran; a weekend is not a workday', function () {
+  // Latest daily data Fri 11-06; inbound copy stops Wed 11-04 (2 workdays), outbound Thu 10-29.
+  installFallbackTabs(['2026-11-03', '2026-11-04'], ['2026-10-29'], [
+    { step: 'inboundExport', status: 'failure', timestamp: '2026-11-07 09:01', notes: 'Neon unreachable (expected; copy kept): timeout' },
+  ]);
+  try {
+    const data = h.call('getSystemHealth', { part: 'fast' });
+    const ib = rowByKey(data, 'fallback-inbound'), ob = rowByKey(data, 'fallback-outbound');
+    assert.equal(ib.status, 'warn');
+    assert.match(ib.value, /through 2026-11-04 · 2 workdays behind the daily data \(2026-11-06\)/);
+    assert.match(ib.hint, /Last inboundExport run: failure @ 2026-11-07 09:01 — Neon unreachable/);
+    assert.equal(ob.status, 'warn');
+    assert.match(ob.value, /6 workdays behind/, 'Oct 30, Nov 2-6: the weekend is not counted');
+    assert.match(ob.hint, /No outboundExport run in the last \d+ Pipeline Health entries — the daily export is probably not installed/);
+    assert.match(ob.hint, /Operator State #50/);
+    // A Monday anchor: Friday's copy is zero workdays behind on a weekend-only gap.
+    assert.equal(h.call('healthWorkdaysAfter_', '2026-11-06', '2026-11-08'), 0);
+    assert.equal(h.call('healthWorkdaysAfter_', '2026-11-06', '2026-11-09'), 1);
+  } finally { clearFallbackStubs(); }
+});
+
+test('OFB-2: rows out of date order warn (the outage readers stop early); a missing tab warns only when Neon is in use', function () {
+  installFallbackTabs(['2026-11-05', '2026-11-06', '2026-10-20'], null, []);
+  try {
+    const data = h.call('getSystemHealth', { part: 'fast' });
+    const ib = rowByKey(data, 'fallback-inbound'), ob = rowByKey(data, 'fallback-outbound');
+    assert.equal(ib.status, 'warn');
+    assert.match(ib.value, /through 2026-11-06 · rows OUT OF DATE ORDER/);
+    assert.match(ib.hint, /Refresh now re-sorts it before it connects/);
+    assert.equal(ob.status, 'warn');
+    assert.equal(ob.value, 'tab not found');
+    // No Neon at all: nothing for a copy to stand in for.
+    installHealth({});
+    const quiet = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'fallback-outbound');
+    assert.equal(quiet.status, 'muted');
+  } finally { clearFallbackStubs(); }
+});
+
+test('OFB-2 / OFB-5: empty columns right of the data are named as cap cost', function () {
+  const v = h.call('healthFallbackTabVerdict_', { sheet: 'Outbound Calls', item: '#50', menu: 'Outbound Calls Tab',
+    step: 'outboundExport', neonConfigured: true, exists: true, rows: 1000, latestIso: '2026-11-06', outOfOrder: false,
+    anchorIso: '2026-11-06', lag: 0, lastRun: null, scanRows: 250, cells: 26026, capPct: 0.3, spareCols: 14 });
+  assert.equal(v.status, 'ok');
+  assert.match(v.hint, /14 empty column\(s\) right of the data count against the cell cap/);
+});
+
 // ── Storage by table: the THIRD capacity row (roadmap parallel track) ────────
 // Rides the shared connection like retention-risk; helpers live in
 // NeonRetention.gs (not loaded here) so the row is typeof-gated and both are

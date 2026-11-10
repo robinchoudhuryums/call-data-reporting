@@ -156,7 +156,7 @@ tests/
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
                               cache-pin drift), heatmap drill,
-                              system-health (incl. the neon-storage row's
+                              system-health (OFB-2: the two Outage copy rows -- through-date, workdays behind the daily data, out-of-order, the last export run, cells against the cap, sheet-only; incl. the neon-storage row's
                               four branches: shared-conn read, unreachable
                               -> muted, throw -> warn, absent/fast/unconfigured
                               -> no row; PROPS-1: the Script Properties
@@ -416,7 +416,7 @@ tests/
                               America/Chicago only; an intended change
                               regenerates it with UPDATE_SNAPSHOTS=1;
                               CH4_SNAP_FILE points a run at another golden,
-                              e.g. a one-off UTC copy taken before a refactor),
+                              e.g. a one-off UTC copy taken before a refactor; OFB-3: a multi-part month is written last part first, so a run that fails midway never stamps it final),
                               neon-backup-scrub (ESC-D8: a permanent
                               escalation delete rewrites every snapshot +
                               activity file without the deleted rows, in
@@ -455,7 +455,7 @@ tests/
                               inbound-export (the "Inbound Calls" tab's
                               cols 16-17 + coercion guards feeding that
                               fallback, and FO-2's First Agent / First Ring
-                              Sec at 23-24, the ring read via to_jsonb), freshness-weekend (the OPS-7
+                              Sec at 23-24, the ring read via to_jsonb; OFB-1: a failed run still sorts, an out-of-order tab is re-sorted before the connect, per-date PENDING progress, on both tabs; OFB-5: empty columns right of the headers are dropped, a used one kept), freshness-weekend (the OPS-7
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
@@ -796,7 +796,7 @@ tests/
                               14-day cutoff is exclusive, P18 fails LOUDLY
                               rather than reporting 0, the Pipeline Health
                               row is accurate -- plus a CHARACTERIZATION of
-                              the DST fall-back early deletion),
+                              the DST fall-back early deletion; OFB-4: the last-chance check before a delete -- a failed DQE build, a failed Direct or per-call catch-up keeps and names the tab, a rows:0 DQE success does not, Neon probed once, a busy lock waits a night),
                               dqe-drilldown-parity (the FOURTH hand-mirrored
                               rule set: one fixture drives the real build AND
                               the real drill sidebar, and the drill's Found-N

@@ -842,6 +842,17 @@ When something looks wrong, before assuming a code bug, check:
     both take a short-lived file lease (CacheService, ~5-10 min); a scrub
     that finds a backup mid-write leaves its ids queued and the backup's own
     scrub step (or `runNeonBackupScrubNow()` afterwards) picks them up.
+    **A month written in parts is final only once every part landed (OFB-3,
+    broad-scan 2026-11-09).** A month over ~8M characters is written as
+    `<table>-<ym>.partN.jsonl` files, and part1's date is what marks a closed
+    month final. The parts are now written last-first, part1 last, so a run
+    that fails midway leaves the month unstamped and the next run writes it
+    again; before, a failure after part1 froze the month with its later parts
+    missing while every later run said `ok`. **A month frozen that way before
+    this deploy is not detected:** if a closed month's part files look short
+    (compare a `restoreNeonBackupFile` preview with the Neon row count), trash
+    its `part1` file and run the backup -- it is rewritten in full while Neon
+    still holds the month (#57). Pinned by `tests/unit/neon-backup.test.js`.
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -1659,6 +1670,28 @@ When something looks wrong, before assuming a code bug, check:
     the drain or the catch-up finishes the date; a PARKED ledger date stays
     until you fix it (above) or delete the tab. A failed read of either list
     keeps the tab and fails the row, like the history check.
+
+    **And a last check right before the delete (OFB-4, broad-scan 2026-11-09).**
+    Three things can fail inside an import that otherwise succeeded -- so the
+    tab was remembered and nothing was queued: the DQE build (while QCD
+    wrote), the Direct Call History build, and the per-call capture on a
+    Neon-unreachable day in the default inline mode. A tab that has passed
+    every check above is now looked at once more: DQE must hold the date, or
+    Pipeline Health must show its newest DQE build for that date as a success
+    (a rows:0 success is a day with nothing to build); Direct is rebuilt from
+    the tab if its sheet lacks the date; the per-call backfill is run for the
+    date if Neon lacks it. The tab is deleted only when all three are whole,
+    else it is kept and named in the row with what it owes ("KEPT N still owed
+    something built from the tab"). **To clear one:** CDR Tools -> Make a date
+    whole for that date (#56), or delete the tab by hand if the date is not
+    wanted. While Neon is down every over-age tab is kept (one probe a run,
+    no failed backfill per tab), so a long outage grows the import workbook --
+    the price of not losing per-call history that exists nowhere else. The
+    check runs under the import's script lock; with an import running, or
+    past ~2.5 minutes of checks, the remaining tabs wait a night ("wait for
+    the next run's last-chance check"). It adds an `inboundBackfill` /
+    `outboundBackfill` row most nights, which is normal. Pinned by
+    `tests/unit/retention-prune.test.js`.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1897,8 +1930,30 @@ When something looks wrong, before assuming a code bug, check:
     HEAVY one (0.2–6 KB/cell), so it is populated only within
     `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property, default 90) — older
     rows keep a blank cell and the drill serves the entry→final summary,
-    disclosed in the overlay caption. Sized against the whole-spreadsheet
-    10M-cell ceiling; raise the window only with that number in view.
+    disclosed in the overlay caption. **What that window does NOT bound
+    (OFB-5, broad-scan 2026-11-09):** the tab's share of the 10M-cell cap
+    (#62). Cells are rows x columns whether or not they hold anything, so the
+    journey window limits stored bytes and read time only; the cell cost is
+    set by `INBOUND_EXPORT_KEEP_DAYS` alone -- calls a day x workdays kept x
+    24 columns -- and the same holds for the Outbound tab at 12 columns (#50).
+    The export now drops the EMPTY columns right of its headers on every run
+    (a new tab is 26 wide; a column holding anything is left alone), and the
+    Health page's two "Outage copy" rows show each tab's cells and percent of
+    the cap. If those rows grow toward the cap, lower the keep days: the
+    prune then removes the oldest rows on the next run.
+    **The copy is watched, and repairs its own order (OFB-1 / OFB-2).** The
+    Health page (Sheets section) has a row per tab: the date the copy runs
+    through, how many workdays that is behind the daily data (one is the
+    normal morning gap; two warns), whether its rows are out of date order,
+    and the last `inboundExport` / `outboundExport` run -- "no run in the last
+    250 entries" means the daily export is not installed. Order matters
+    because the outage readers read from the bottom and stop early when an
+    older date sits below a newer one. A run that fails after appending an
+    older date now still sorts, and a no-argument run re-sorts an
+    out-of-order tab BEFORE it connects -- so CDR Tools -> Inbound Calls Tab
+    -> Refresh now repairs the order even while Neon is down. A failed run
+    also keeps its place: the older dates it had not reached stay in
+    `INBOUND_EXPORT_PENDING` and the next run starts there.
     **Deploy order matters on a fresh/empty tab:** push the 24-col export
     BEFORE installing the trigger or running the seed, or the first run
     writes narrower rows whose new cells stay blank until a manual
@@ -1958,7 +2013,10 @@ When something looks wrong, before assuming a code bug, check:
     path drill past that window renders the summary rather than the timeline
     (the Inbound tab's cols 18–22 rule). Column order is a CONTRACT — the
     dashboard readers index this tab BY POSITION, so append any future column
-    at the END, never between.
+    at the END, never between. The watch, the self-repairing sort, the
+    per-date progress and the cell-cap sizing are the Inbound tab's, word for
+    word (#49, OFB-1 / OFB-2 / OFB-5): this tab is the larger of the two by
+    rows, so its Health row is the one to watch against the cap.
     The fallbacks themselves need no flag: they fire only when the Neon read
     fails, are never cached, and disclose `fallbackSource`/`fallbackThrough`.
     The journey drill's outbound arm additionally RE-DERIVES its two-arm
@@ -2478,7 +2536,10 @@ When something looks wrong, before assuming a code bug, check:
     `Daily Queue Report` → 400×20, frees 641,844 (its 13 conditional-format
     rules all sit inside rows 1–93, cols C–G). `Raw Data`'s spare rows are
     deliberate headroom — the importer `clearContents` then writes one day's
-    legs into a fixed range, so a busier day needs them. Pinned by
+    legs into a fixed range, so a busier day needs them. **The two export
+    tabs (`Inbound Calls`, `Outbound Calls`) are not trim targets** -- they
+    grow by rows every day, so their size is set by their keep days, and
+    their exporter keeps the grid column-tight itself (#49, OFB-5). Pinned by
     `tests/unit/sheet-space.test.js` + `system-health.test.js`.
 
 63. **Outbound report — the RELEASE runbook (6c).** The report is

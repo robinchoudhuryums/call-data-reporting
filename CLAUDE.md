@@ -1670,7 +1670,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   label pin; unlabeled folds into `other`); `neonStorageVerdict_` names the
   top 5 tables (neon-retention.test.js). Every other row is described in its Operator State item
   (`build-stamp` / `deploy-currency` #2, `retention-risk` #40/#43, `workbook-cells` #62,
-  `backup-scrub` #28, ...).
+  `backup-scrub` #28, `fallback-inbound` / `fallback-outbound` #49/#50, ...).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -2145,14 +2145,14 @@ items for anything it flags or doesn't cover.)
 40. Per-queue split backfill -- cheap inside the 14-day `Call_Legs_*` window, an operator job outside it; nothing is lost for good
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates a working de-dup from a queue mapped to no dept
 42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`), its flip checklist, and what each mode makes the numbers mean -- `dept` in production (owner, confirmed 2026-10-20)
-43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window rests on it
+43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window rests on it; a tab goes only once DQE, Direct and the per-call capture are whole (OFB-4)
 44. DQE-silence watchdog -- the queue-active-agents-dark cross-check; `installDqeSilenceWatchTrigger()`, with thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; when set, an Access Control `agent` row opens the separate agent app -- off, agents get access-denied)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching; per-dept gates (`COACHING_DEPT_RULES`, team-relative or a flat answer %; Save all), Met / Rotated / Dismissed and the manager email HELD for admins since Step 5b
 49. Inbound Calls tab export trigger -- keeps the heatmap's and the direct-line callbacks' SHEET FALLBACK fresh, plus the one-time re-exports and the BF-1 ring backfill from stored journeys
-50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable
+50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable; both copies are watched on Health and re-sort themselves (#49, OFB-1/2)
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use for an emailed Individual Report; prefer adding the agent to Access Control
 52. Sheet coverage check -- business days with ZERO rows in a dashboard-read sheet, the interior gap every other signal misses; needs no Neon, so it works mid-outage
 53. Script Properties past the settings page's 50-row cap -- set or clear one from a TEMPORARY editor-run function; the Health inventory is the complete read view

@@ -49,8 +49,10 @@ function fakeSheet(dataRows, opts) {
     },
     getMaxColumns: function () { return self._maxCols; },
     getMaxRows: function () { return self._maxRows; },
-    getLastColumn: function () { return self._maxCols; },
+    getLastColumn: function () { return opts.lastCol || self._maxCols; },
     insertColumnsAfter: function (after, n) { self._maxCols += n; },
+    deleteColumns: function (start, n) { self._colDeletes = (self._colDeletes || []).concat([[start, n]]); self._maxCols -= n; },
+    _sorts: 0,
     insertRowsAfter: function (after, n) { self._maxRows += n; },
     deleteRows: function (start, n) { self._deleted.push([start, n]); self._rows.splice(start - 1, n); },
     setFrozenRows: function () {},
@@ -87,7 +89,15 @@ function fakeSheet(dataRows, opts) {
         },
         setFontWeight: function () { return rng; },
         setBackground: function () { return rng; },
-        sort: function () { return rng; },   // order is not under test here
+        // OFB-1: a real (stable) sort of the data rows by the given column, counted.
+        sort: function (spec) {
+          self._sorts++;
+          const c = (spec && spec.column ? spec.column : 1) - 1;
+          const block = self._rows.slice(row - 1, row - 1 + numRows);
+          block.sort(function (a, b) { return String(a[c]) < String(b[c]) ? -1 : String(a[c]) > String(b[c]) ? 1 : 0; });
+          for (let i = 0; i < block.length; i++) self._rows[row - 1 + i] = block[i];
+          return rng;
+        },
       };
       return rng;
     },
@@ -467,7 +477,9 @@ test('TOOL-1: the outbound twin queries outbound_calls with the same plan and pr
   assert.match(src, /SELECT DISTINCT o\.call_date::text AS d FROM outbound_calls o "/);
   assert.match(src, /"WHERE o\.updated_at > \?::timestamptz AND o\.call_date < \?::date AND o\.call_date >= \?::date\) x"/);
   assert.match(src, /props\.setProperty\('OUTBOUND_EXPORT_WATERMARK', runStartIso\);/);
-  assert.match(src, /props\.setProperty\('OUTBOUND_EXPORT_PENDING', JSON\.stringify\(changedLater\)\);/);
+  // OFB-1: progress is stored per date (the whole plan first, then what is left).
+  assert.match(src, /props\.setProperty\('OUTBOUND_EXPORT_PENDING', JSON\.stringify\(plan\.now\.concat\(plan\.later\)\)\);/);
+  assert.match(src, /props\.setProperty\('OUTBOUND_EXPORT_PENDING', JSON\.stringify\(plan\.now\.slice\(ci \+ 1\)\.concat\(plan\.later\)\)\);/);
   assert.match(src, /ic_planChangedDates_\(changed, pending\.filter/);
 });
 
@@ -547,4 +559,121 @@ test('TOOL-1 / TOOL-3: the outbound twin refreshes a changed older date and repl
   assert.deepEqual(idsOn(sheet, today), ['new-t']);
   assert.equal(h.state.props.OUTBOUND_EXPORT_PENDING, '[]');
   assert.ok(h.state.props.OUTBOUND_EXPORT_WATERMARK > '2026-01-01');
+});
+
+// ── OFB-1 / OFB-5 (broad-scan 2026-11-09, Batch 7) ───────────────────────────
+// The dashboard's outage readers read these tabs from the BOTTOM and stop once
+// their window's first row is older than the date they want, so a tab left out
+// of date order answers with the wrong rows -- during the very outage the copy
+// exists for.
+function datesOf(sheet) { return sheet._rows.slice(1).map(function (r) { return r[0]; }); }
+function isAscending(list) { return !h.call('ic_datesOutOfOrder_', list); }
+
+test('OFB-1: a run that fails after appending a changed OLDER date still leaves the tab sorted', function () {
+  const today = h.call('ic_isoToday_');
+  const d5 = h.call('ic_isoDaysAgo_', 5), d9 = h.call('ic_isoDaysAgo_', 9);
+  const sheet = fakeSheet([sheetRow(d9, 'old-9'), sheetRow(d5, 'old-5'), sheetRow(today, 'old-t')], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.state.props.INBOUND_EXPORT_WATERMARK = '2026-01-01T00:00:00.000Z';
+  delete h.state.props.INBOUND_EXPORT_PENDING;
+  const inner = routedConn({
+    [d5]: [neonRow({ date: d5, id: 'new-5' })],
+    [d9]: [neonRow({ date: d9, id: 'new-9' })],
+    [today]: [neonRow({ date: today, id: 'new-t' })],
+  }, [d9, d5], []);
+  let fetches = 0;
+  h.ctx.getNeonConn = function () {
+    return Object.assign({}, inner, {
+      prepareStatement: function (sql) {
+        // Neon drops on the THIRD window read: today and d5 landed, d9 did not.
+        if (!/SELECT DISTINCT/.test(sql) && ++fetches === 3) throw new Error('connection reset');
+        return inner.prepareStatement(sql);
+      },
+    });
+  };
+  assert.throws(function () { h.call('exportInboundCalls'); }, /connection reset/);
+  assert.deepEqual(idsOn(sheet, d5), ['new-5'], 'the older date that landed is the fresh copy');
+  assert.ok(isAscending(datesOf(sheet)), 'sorted although the run failed: ' + datesOf(sheet).join(','));
+  assert.equal(datesOf(sheet)[datesOf(sheet).length - 1], today, 'the newest date is back at the bottom');
+  // Per-date progress: d5 is done, d9 is what is left; the watermark moved, so
+  // nothing the changed-dates query found depends on asking it again.
+  assert.deepEqual(JSON.parse(h.state.props.INBOUND_EXPORT_PENDING), [d9]);
+  assert.ok(h.state.props.INBOUND_EXPORT_WATERMARK > '2026-01-01');
+  // The next run finishes d9 from PENDING with no changed dates reported.
+  h.ctx.getNeonConn = function () {
+    return routedConn({ [d9]: [neonRow({ date: d9, id: 'new-9' })], [today]: [neonRow({ date: today, id: 'new-t' })] }, [], []);
+  };
+  const res = h.call('exportInboundCalls');
+  assert.deepEqual(JSON.parse(JSON.stringify(res.changedDates)), [d9]);
+  assert.deepEqual(idsOn(sheet, d9), ['new-9']);
+  assert.equal(h.state.props.INBOUND_EXPORT_PENDING, '[]');
+});
+
+test('OFB-1: an out-of-order tab is re-sorted BEFORE the connect, so the repair works while Neon is down', function () {
+  const today = h.call('ic_isoToday_');
+  const d5 = h.call('ic_isoDaysAgo_', 5);
+  // What a run killed at the execution ceiling leaves: an older block at the bottom.
+  const sheet = fakeSheet([sheetRow(today, 't1'), sheetRow(today, 't2'), sheetRow(d5, 'late-5')], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.ctx.getNeonConn = function () { throw new Error('The database connection failed'); };
+  assert.throws(function () { h.call('exportInboundCalls'); }, /connection failed/);
+  assert.deepEqual(datesOf(sheet), [d5, today, today]);
+  // An already-ordered tab is not sorted again by the pre-connect check.
+  const before = sheet._sorts;
+  assert.throws(function () { h.call('exportInboundCalls'); }, /connection failed/);
+  assert.equal(sheet._sorts, before);
+});
+
+test('OFB-1: the outbound twin sorts on a failed run and re-sorts before its connect', function () {
+  const W = h.ctx.OUTBOUND_EXPORT_HEADERS.length;
+  const obRow = function (iso, id) { return [iso, id, '', 'Ann', '101', 'CSR', true, 30, '', 1, '10:00:00', ''].slice(0, W); };
+  const shRow = function (iso, id) { const r = new Array(W).fill(''); r[0] = iso; r[1] = id; return r; };
+  const today = h.call('oc_isoToday_');
+  const d4 = h.call('oc_isoDaysAgo_', 4), d8 = h.call('oc_isoDaysAgo_', 8);
+  const sheet = fakeSheet([shRow(d8, 'old-8'), shRow(d4, 'old-4'), shRow(today, 'old-t')],
+    { header: h.ctx.OUTBOUND_EXPORT_HEADERS, maxCols: W });
+  h.state.spreadsheet = { getSheetByName: function (n) { return n === 'Outbound Calls' ? sheet : null; } };
+  h.state.props.OUTBOUND_EXPORT_WATERMARK = '2026-01-01T00:00:00.000Z';
+  delete h.state.props.OUTBOUND_EXPORT_PENDING;
+  const inner = routedConn({ [d8]: [obRow(d8, 'n8')], [d4]: [obRow(d4, 'n4')], [today]: [obRow(today, 'nt')] }, [d8, d4], []);
+  let fetches = 0;
+  h.ctx.getNeonConn = function () {
+    return Object.assign({}, inner, {
+      prepareStatement: function (sql) {
+        if (!/SELECT DISTINCT/.test(sql) && ++fetches === 3) throw new Error('connection reset');
+        return inner.prepareStatement(sql);
+      },
+    });
+  };
+  assert.throws(function () { h.call('exportOutboundCalls'); }, /connection reset/);
+  assert.ok(isAscending(datesOf(sheet)), datesOf(sheet).join(','));
+  assert.deepEqual(JSON.parse(h.state.props.OUTBOUND_EXPORT_PENDING), [d8]);
+  // Pre-connect repair.
+  sheet._rows.push(shRow(d8, 'stray'));
+  h.ctx.getNeonConn = function () { throw new Error('The database connection failed'); };
+  assert.throws(function () { h.call('exportOutboundCalls'); }, /connection failed/);
+  assert.ok(isAscending(datesOf(sheet)));
+});
+
+test('OFB-5: empty columns right of the headers are dropped; a column holding anything is kept', function () {
+  const today = h.call('ic_isoToday_');
+  h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: today, id: 'x' })]); };
+  // 26 wide (what insertSheet makes), nothing past the 24 headers.
+  let sheet = fakeSheet([sheetRow(today, 'a')], { header: HEADERS(), maxCols: 26, lastCol: 24 });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.call('exportInboundCalls', today, today);
+  assert.deepEqual(sheet._colDeletes, [[25, 2]]);
+  assert.equal(sheet.getMaxColumns(), 24);
+  // A hand-added helper column at 26 is never deleted.
+  sheet = fakeSheet([sheetRow(today, 'a')], { header: HEADERS(), maxCols: 28, lastCol: 26 });
+  h.state.spreadsheet = fakeSS(sheet);
+  h.call('exportInboundCalls', today, today);
+  assert.deepEqual(sheet._colDeletes, [[27, 2]]);
+  // The outbound twin: 26 -> 12.
+  const W = h.ctx.OUTBOUND_EXPORT_HEADERS.length;
+  const ob = fakeSheet([], { header: h.ctx.OUTBOUND_EXPORT_HEADERS, maxCols: 26, lastCol: W });
+  h.state.spreadsheet = { getSheetByName: function (n) { return n === 'Outbound Calls' ? ob : null; } };
+  h.ctx.getNeonConn = function () { return routedConn({}, [], []); };
+  h.call('exportOutboundCalls', today, today);
+  assert.deepEqual(ob._colDeletes, [[W + 1, 26 - W]]);
 });
