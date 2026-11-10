@@ -991,5 +991,5 @@ test('RUN-3: a Neon fetch that FAILS on every read stays in the projection (noth
   }
   assert.ok(fetches >= 1);
   assert.equal(data.meta.partial, true, 'each department pays the failed fetches again, so the budget still stops the run');
-  assert.ok(data.depts.length < 3);
+  assert.equal(data.depts.length, 1, 'the second department (180 s more) is not started -- discounting the failed fetches would start it');
 });
