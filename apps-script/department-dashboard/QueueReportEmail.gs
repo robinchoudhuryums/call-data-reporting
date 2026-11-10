@@ -101,14 +101,22 @@ function queueReportClaimSend_(props, iso, force) {
     if (cur[0] === iso && (Date.now() - Number(cur[1] || 0)) < QUEUE_REPORT_SENDING_STALE_MS_) {
       return { ok: false, reason: 'in-flight' };
     }
-    props.setProperty(QUEUE_REPORT_SENDING_PROP, iso + '|' + Date.now());
-    return { ok: true };
+    const token = iso + '|' + Date.now();
+    props.setProperty(QUEUE_REPORT_SENDING_PROP, token);
+    return { ok: true, token: token };
   } finally {
     lock.releaseLock();
   }
 }
-function queueReportReleaseSend_(props) {
-  try { props.deleteProperty(QUEUE_REPORT_SENDING_PROP); } catch (e) { /* stale-claim rule covers it */ }
+// RUN-7: release only YOUR claim. A send that outlives the stale window has
+// its claim taken over by the next sender; releasing unconditionally then
+// deleted THAT sender's claim, and a third could start while it was still
+// sending. `token` is the value queueReportClaimSend_ returned.
+function queueReportReleaseSend_(props, token) {
+  try {
+    if (token && String(props.getProperty(QUEUE_REPORT_SENDING_PROP) || '') !== String(token)) return;
+    props.deleteProperty(QUEUE_REPORT_SENDING_PROP);
+  } catch (e) { /* stale-claim rule covers it */ }
 }
 
 function queueReportGateDecision_(ctx) {
@@ -209,7 +217,7 @@ function runDailyQueueReport_() {
         props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
       }
     }
-    finally { queueReportReleaseSend_(props); }
+    finally { queueReportReleaseSend_(props, claim.token); }
     const failed = result.failed || [];
 
     // O-9: a run with NO ACTIVE SUBSCRIBERS is not a send, and must never
@@ -1588,7 +1596,7 @@ function sendQcdAllDeptToSubscribers(req) {
       } catch (e) { /* best-effort -- worst case the morning poll re-sends */ }
     }
   }
-  finally { queueReportReleaseSend_(props); }
+  finally { queueReportReleaseSend_(props, claim.token); }
   // D-1: surface the empty-report refusal to the admin instead of "0 sent".
   if (result.emptyReport) throw new Error('Not sent: ' + result.reason + '.');
   // ENG-8 (broad-scan 2026-09-23): a PARTIAL compute is the same kind of

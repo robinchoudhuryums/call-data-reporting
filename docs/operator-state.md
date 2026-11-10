@@ -212,6 +212,11 @@ When something looks wrong, before assuming a code bug, check:
     Department matches a `DO NOT EDIT!` header exactly (an unknown dept is
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
+    RUN-5: a `WARN <iso>: ... the subscriber list came from the Digest Config
+    SHEET` entry means `CONFIG_SOURCE=neon` (#25) but Neon was unreachable at
+    send time, so the run used the sheet's list -- which is no longer written
+    under that setting. Someone removed since the flip may have been mailed
+    and someone added may not; check the list, and re-send by hand if needed.
     ENG-6: a cadence with no active subscribers records `IDLE <iso>`, shown
     muted on the Health page, not as a failure (it was `NO-SUBSCRIBERS`).
     ENG-5: the Health page's `out-digest-<cadence>` row now warns
@@ -1813,6 +1818,10 @@ When something looks wrong, before assuming a code bug, check:
     recovered agents are reported but NEVER auto-closed — the coach decides),
     and emails **admins only** (owner ruling — managers are not copied until
     release) and only when there are NEW flags (MailApp quota is shared, B3).
+    A run whose admin email OR a held manager email did not send records
+    `NOTIFY-FAILED` (RUN-2); its note says how many flags were really kept
+    pending for the next run (RUN-6: as many as fit one Script Property --
+    the rest are on the worklist only).
     **First armed run emails one larger batch** — every currently-qualifying
     agent lands as NEW; consider "Run now" (dsConfirm-gated, full run) to see
     it land before trusting the schedule. Outcomes in
@@ -3553,7 +3562,19 @@ When something looks wrong, before assuming a code bug, check:
     ignore them, and the Health outcome line counts them separately
     ("reasons: N checked, M fired"). Preview shows them. Clear a reason by
     saving its boxes blank. Pinned by `tests/unit/alert-reasons.test.js` and
-    `drive-notify.js`; walk S65.
+    `drive-notify.js`; walk S65. **Since RUN-1 / RUN-2 / RUN-4 (2026-11-10):**
+    the callbacks reason is judged against the calls actually loaded, so a
+    caller who tried again on the assessed day is a MISS (it used to make the
+    whole department read "cannot be judged yet", and that caller was then
+    never counted); only per-call data not loaded through the assessed day
+    leaves it unjudged, and the note says what is loaded. A reason that could
+    not be checked (Neon unreachable, calls not loaded) leads the run's
+    Health outcome `INCONCLUSIVE` with "N not checked". The daily trigger
+    marks the date run and, while a reason rule exists, records an interim
+    `INCONCLUSIVE ... the alert reasons had not finished` outcome BEFORE the
+    reasons start: if you see that line on the Health page, the department
+    alerts WERE sent and the run stopped inside the reasons -- do not re-send
+    the alerts; check Neon. Pinned by `tests/unit/engine-runs.test.js`.
 79. **Outbound call mix -- `probeOutboundCallMix` (2026-10-21; dashboard,
     editor-run, read-only).** Answers "are these agents' outbound calls
     really customers?" The capture already drops extension-to-extension

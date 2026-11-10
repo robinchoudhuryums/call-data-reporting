@@ -596,3 +596,65 @@ test('F3: coaching close connects + checks the schema BEFORE taking the script l
   assert.equal(c3.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); }).length, 0);
   assert.equal(c3.closed, true);
 });
+
+// ── RUN-2 / RUN-6 (broad-scan 2026-11-09, Batch 5) ─────────────────────────
+
+test('RUN-2: a held manager email that did not send makes the run NOTIFY-FAILED, not ok', function () {
+  installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
+  const real = h.ctx.coachingSendHeldManagerEmails_;
+  h.ctx.coachingSendHeldManagerEmails_ = function () { return { sent: 0, failed: 1 }; };
+  let out;
+  try { out = h.call('coachingDeliveryRun_'); } finally { h.ctx.coachingSendHeldManagerEmails_ = real; }
+  assert.match(out.result, /^NOTIFY-FAILED 1 new, /, 'the admin summary went out, the held manager email did not');
+  assert.match(out.result, /1 held manager email\(s\) not sent/);
+  assert.match(out.result, /emailed admins/);
+});
+
+test('RUN-6: the pending payload is cut to what the email reads and to what FITS a property', function () {
+  const longFlag = function (i) {
+    return { dept: 'Customer Success Department', agent: 'Agent With A Long Name Number ' + i, ratePct: 21.4,
+      teamRatePct: 77.7, teamRatioPct: 27.6, gapPts: 56.2, missed: 55, rung: 70, answered: 15,
+      // fields a full flag record carries that the email never reads
+      daily: new Array(10).fill({ date: '2026-07-07', rung: 7, answered: 2, missed: 5 }), notes: 'x'.repeat(120) };
+  };
+  const flags = [];
+  for (let i = 0; i < 80; i++) flags.push(longFlag(i));
+  const win = { from: '2026-07-07', to: '2026-07-20' };
+  assert.ok(JSON.stringify({ window: win, flags: flags.slice(0, 40) }).length > 9000,
+    'the old payload (40 full records) did not fit the ~9 KB limit');
+  const p = h.call('coachingPendingPayload_', win, flags);
+  assert.ok(p.json.length <= 8000, 'fits: ' + p.json.length);
+  const back = JSON.parse(p.json);
+  assert.equal(back.flags.length, p.kept);
+  assert.ok(p.kept >= 40 && p.kept < 80, 'slim records: more than the old 40 fit, not all 80 (' + p.kept + ')');
+  assert.deepEqual(Object.keys(back.flags[0]).sort(),
+    ['agent', 'dept', 'gapPts', 'missed', 'ratePct', 'rung', 'teamRatePct', 'teamRatioPct']);
+  assert.deepEqual(back.window, win);
+  const flat = JSON.parse(h.call('coachingPendingPayload_', win, [Object.assign(flag_('CSR', 'A'), { flatRatePct: 60 })]).json);
+  assert.equal(flat.flags[0].flatRatePct, 60, 'the flat-floor figure the email shows is kept');
+  assert.equal(h.call('coachingPendingPayload_', win, []).kept, 0);
+});
+
+test('RUN-6: a failed send says how many flags were REALLY kept pending, and when none could be', function () {
+  const many = [];
+  for (let i = 0; i < 80; i++) many.push(flag_('Customer Success Department', 'Agent With A Long Name Number ' + i));
+  installDeliveryStubs_(many, '[]');
+  const realMail = h.ctx.MailApp;
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('Service invoked too many times'); } };
+  let out;
+  try { out = h.call('coachingDeliveryRun_'); } finally { h.ctx.MailApp = realMail; }
+  const kept = JSON.parse(h.state.props.COACHING_NOTIFY_PENDING).flags.length;
+  assert.ok(kept > 0 && kept < 80);
+  assert.match(out.result, new RegExp(kept + ' flag\\(s\\) kept pending, re-emailed on the next run \\(' + (80 - kept)
+    + ' more did not fit and are on the worklist only\\)'));
+
+  // The save itself failing is said, not papered over.
+  installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('quota'); } };
+  const realPayload = h.ctx.coachingPendingPayload_;
+  h.ctx.coachingPendingPayload_ = function () { return { json: 'x'.repeat(20000), kept: 1 }; };   // over the property limit
+  try { out = h.call('coachingDeliveryRun_'); }
+  finally { h.ctx.MailApp = realMail; h.ctx.coachingPendingPayload_ = realPayload; }
+  assert.match(out.result, /the 1 flag\(s\) could NOT be kept pending -- they are on the worklist only/);
+  assert.equal(h.state.props.COACHING_NOTIFY_PENDING, undefined);
+});

@@ -184,3 +184,20 @@ test('ENG-9: latest-dqe-date drops the cached date first, so a broken source fai
   assert.match(c.note, /unexpected value: null/, 'it failed on the REAL read, not on something else');
   assert.equal(hd.call('latestDateCacheKey_'), 'latestDate:v1:sheet', 'the key getLatestDataDate itself uses');
 });
+
+// RUN-8 (broad-scan 2026-11-09, Batch 5): the insights check returned its
+// note with `queueHealth=ERROR` inside a PASSING line, so a smoke run after a
+// deploy that broke the QCD read reported ok 7/7.
+test('RUN-8: an errored Insights Queue health fails the insights check', function () {
+  install();
+  h.ctx.computeInsights_ = function () { return { teamStats: {}, queueHealth: { error: true } }; };
+  const res = h.call('runLiveSmoke');
+  const c = byName(res, 'insights');
+  assert.equal(c.ok, false);
+  assert.match(c.note, /Queue health ERRORED for CSR/);
+  assert.match(res.summary, /^FAILED /, 'the run leads with the failure');
+  // An unmapped department is still a pass (a config state, not a failed read).
+  install();
+  h.ctx.computeInsights_ = function () { return { teamStats: {}, queueHealth: { unmapped: true } }; };
+  assert.equal(byName(h.call('runLiveSmoke'), 'insights').ok, true);
+});

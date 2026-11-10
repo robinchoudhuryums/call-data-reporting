@@ -461,15 +461,31 @@ function alertsGatedAttempt_(now, source) {
     // row compares this stamp to ALERTS_LAST and reads INTERRUPTED.
     try { props.setProperty('ALERTS_STARTED', new Date().toISOString()); } catch (se) { /* best-effort */ }
     try {
-      const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
+      const lateOpts = late ? { lateLatest: latest || '(none)' } : null;
+      const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger', {
+        // RUN-4: mark the date and record the department outcome BEFORE the
+        // alert reasons run. The interim record leads INCONCLUSIVE when it
+        // would otherwise read ok, and only while reason rules exist; the
+        // final record below replaces it.
+        afterDepts: function (soFar) {
+          try { props.setProperty('ALERTS_RUN_MARKER', dateIso); } catch (me0) { /* best-effort */ }
+          var hasReasons = false;
+          try { hasReasons = typeof readAlertReasonRules_ === 'function' && Object.keys(readAlertReasonRules_() || {}).length > 0; }
+          catch (re) { hasReasons = false; }
+          if (!hasReasons) return;
+          var o = {};
+          if (lateOpts) o.lateLatest = lateOpts.lateLatest;
+          o.reasonsPending = true;
+          recordAlertsOutcome_(alertsOutcomeString_(dateIso, soFar, o));
+        },
+      }) || [];
       try { props.setProperty('ALERTS_RUN_MARKER', dateIso); } catch (me) { /* best-effort */ }
       // O-5 (broad-scan 2026-09-17): the alerts engine is REQUIRED yet had no
       // outcome on the Health page (its outcomes lived only in the Alert Log +
       // the failure email). Record an OPS-8 prefix-coded outcome: ok only when
       // no department errored; a per-dept error leads FAILED-PARTIAL so the
       // classifier paints it amber.
-      recordAlertsOutcome_(alertsOutcomeString_(dateIso, results,
-        late ? { lateLatest: latest || '(none)' } : null));
+      recordAlertsOutcome_(alertsOutcomeString_(dateIso, results, lateOpts));
       if (results.logFailures && results.logFailures.length) alertsNotifyLogFailures_(dateIso, results);   // ENG-7
       alertsClearRetryTriggers_();
       return { decision: late ? 'run-late' : 'run' };
@@ -599,6 +615,9 @@ function alertsOutcomeString_(dateIso, results, opts) {
   });
   var reasonErrors = reasonRows.filter(function (r) { return r.status === 'error'; }).length;
   var reasonFired = reasonRows.filter(function (r) { return r.status === 'sent'; }).length;
+  // RUN-2: a reason that could not be CHECKED (its data was unreachable or not
+  // loaded) is not an ok run -- the row says `skipped`, which read green.
+  var reasonUnchecked = reasonRows.filter(function (r) { return r.unevaluated === true; }).length;
   var n = deptRows.length;
   var errors = counts.error || 0;
   var fired = counts.sent || 0;
@@ -617,10 +636,20 @@ function alertsOutcomeString_(dateIso, results, opts) {
   else if (n - (counts.skipped || 0) > 0 && (counts['no-data'] || 0) === n - (counts.skipped || 0)) {
     lead = 'EMPTY ' + dateIso + ': every dept had no data; ';
   }
+  else if (reasonUnchecked) {
+    lead = 'INCONCLUSIVE ' + dateIso + ': ' + reasonUnchecked + ' alert reason(s) could not be checked (see the Alert Log); ';
+  }
+  // RUN-4: the interim record written between the department alerts and the
+  // reasons. A finished run overwrites it; a run stopped inside the reasons
+  // leaves it, and must not read ok.
+  else if (opts.reasonsPending) {
+    lead = 'INCONCLUSIVE ' + dateIso + ': the alert reasons had not finished when this was recorded; ';
+  }
   else lead = 'ok ' + dateIso + ': ';
   var head = lead + n + ' dept(s) assessed, ' + fired + ' fired'
     + (detail ? ' (' + detail + ')' : '')
-    + (reasonRows.length ? '; reasons: ' + reasonRows.length + ' checked, ' + reasonFired + ' fired' : '');
+    + (reasonRows.length ? '; reasons: ' + (reasonRows.length - reasonUnchecked) + ' checked, ' + reasonFired + ' fired'
+        + (reasonUnchecked ? ', ' + reasonUnchecked + ' not checked' : '') : '');
   return head + '. At ' + new Date();
 }
 
@@ -674,7 +703,7 @@ function recordAlertsOutcome_(outcome) {
  * UI can render. Logs all results to the Alert Log sheet so the
  * full history is queryable independently of UI sessions.
  */
-function runAlertsCore_(dateIso, dryRun, triggeredBy) {
+function runAlertsCore_(dateIso, dryRun, triggeredBy, hooks) {
   // F2: pre-flight the Alert Log BEFORE any email is sent. appendAlertLog_
   // silently no-ops when the sheet is missing (e.g. setup() not re-run),
   // which would let real sends go out with no audit row. Fail fast here so
@@ -929,6 +958,15 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       });
     }
   });
+  // RUN-4: the department alerts are all out. The daily trigger records that
+  // HERE (its `hooks.afterDepts`), before the reasons -- which read Neon, and a
+  // connect that hangs there is killed at the execution ceiling with nothing
+  // recorded, leaving a run whose alerts were sent looking interrupted and
+  // re-sendable. Best-effort: the hook never fails the run.
+  if (hooks && typeof hooks.afterDepts === 'function') {
+    try { hooks.afterDepts(results.slice()); }
+    catch (hookErr) { Logger.log('runAlertsCore_: afterDepts hook failed: %s', hookErr); }
+  }
   // Step 5c: the admin-only alert REASONS ride the same run, date, claim and
   // log. Never throws: a reason's own failure is an `error` row.
   if (typeof runAlertReasons_ === 'function') {

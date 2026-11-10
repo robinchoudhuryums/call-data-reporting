@@ -196,10 +196,26 @@ function alertCallbackMisses_(dept, abandonIso, throughIso) {
     var list = obCallbackListEpisodes_(conn, scope, Math.max(0, win - readWin), win);
     if (!list) return out;
     out.available = true;
+    // RUN-1: the question is fixed -- "not called back by the end of
+    // throughIso" -- so it is judged against the calls actually LOADED. The
+    // engine's `pending` also covers a caller who tried AGAIN inside the
+    // window (the repeat extends their episode's deadline), and reading that
+    // as "cannot be judged yet" skipped the whole department on a false "calls
+    // are not loaded" note -- after which that caller, absorbed into an
+    // episode that started before the next run's day, was never counted on
+    // any run. With both per-call tables loaded through throughIso, a pending
+    // episode is simply one nobody has called back. Only data that is NOT
+    // loaded that far leaves it unjudged.
+    out.dataThrough = list.dataThrough || null;
+    // "Loaded" by the engine's own rule (obEpObservedThrough_: the older
+    // table's newest date, never later than yesterday), so the two agree.
+    var seenThrough = (list.ctx && typeof obEpObservedThrough_ === 'function')
+      ? obEpObservedThrough_(list.ctx) : String(list.dataThrough || '');
+    var loaded = /^\d{4}-\d{2}-\d{2}$/.test(String(seenThrough || '')) && String(seenThrough) >= throughIso;
     (list.eps || []).forEach(function (ep) {
       out.total++;
-      if (ep.outcome === 'pending') out.pending++;
-      else if (ep.outcome === 'none') {
+      if (ep.outcome === 'pending' && !loaded) out.pending++;
+      else if (ep.outcome === 'none' || ep.outcome === 'pending') {
         out.missed.push({ firstHms: ep.firstHms || '', queue: (ep.attempts[0] && ep.attempts[0].q) || '',
                           attempts: ep.attempts.length });
       }
@@ -321,12 +337,14 @@ function runAlertReasons_(dateIso, dryRun, honorSkipDates, cfg, pushAndLog) {
         var abandonIso = two[1];
         var res = alertCallbackMisses_(dept, abandonIso, dateIso);
         if (!res.available) {
-          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers,
+          // RUN-2: `unevaluated` -- the reason could not be checked at all, which
+          // the run outcome reports (a skip date or an exception day is config).
+          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers, unevaluated: true,
             notes: 'Callback data unavailable (Neon unreachable or the read failed)' + (res.error ? ': ' + res.error : '') }));
         } else if (res.pending) {
-          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers,
-            notes: res.pending + ' caller(s) from ' + abandonIso + ' cannot be judged yet -- ' + dateIso
-              + "'s calls are not loaded; not alerting on a partial day" }));
+          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers, unevaluated: true,
+            notes: res.pending + ' caller(s) from ' + abandonIso + ' cannot be judged yet -- the per-call data is loaded through '
+              + (res.dataThrough || '(nothing)') + ', not ' + dateIso + '; not alerting on a partial day' }));
         } else if (res.missed.length < r.callbacks.minCallers) {
           pushAndLog(base('callbacks', { status: 'quiet', threshold: r.callbacks.minCallers,
             notes: res.missed.length + ' of ' + res.total + ' caller(s) who could not get through on ' + abandonIso
