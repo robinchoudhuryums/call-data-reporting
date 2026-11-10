@@ -150,6 +150,24 @@ function runDailyQueueReport_() {
     });
     if (!pre.send) return;   // disabled / pre-6am / weekend / holiday / already sent
 
+    // EXD-3 (#81): the previous business day is an ALL-department exception
+    // day. Its queue figures are left out of every report, so there is no
+    // report to send -- and nothing to wait for. Without this the poll
+    // recomputed an empty report all day and recorded EMPTY, whose remedy
+    // (wait for the import, or add a holiday) is the wrong one. Recorded once
+    // per day; the sent-marker is NOT claimed, so removing the exception day
+    // sends the report on the next poll.
+    const excTarget = (typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(targetIso, null) : null;
+    if (excTarget) {
+      const tag = 'EXCEPTION-DAY ' + targetIso + ' ';
+      if (String(props.getProperty(QUEUE_REPORT_LAST_RESULT_PROP) || '').indexOf(tag) !== 0) {
+        queueReportRecordResult_(props, tag + '— an exception day' + (excTarget.reason ? ' (' + excTarget.reason + ')' : '')
+          + ': its queue figures are left out of every report, so the Daily Call Queue Report was '
+          + 'not sent. Nothing to do; remove the day under Admin → Exception days to send it. At ' + new Date());
+      }
+      return;
+    }
+
     // Readiness gate: has the import finished writing QCD for the target date?
     const latestQcd = queueReportQcdLatestIso_();
     const decision = queueReportGateDecision_({
@@ -366,6 +384,19 @@ function sendQueueReportForDate_(targetIso, opts) {
     // to everyone" -- both used to be count:0-with-no-failures, and the caller
     // reported the first one as a successful send. See runDailyQueueReport_.
     return { count: 0, to: [], failed: [], noRecipients: true };
+  }
+
+  // EXD-3 (#81): an all-department exception day has no queue figures to
+  // report (readQcdGrid_ leaves them out), so say THAT -- the empty-report
+  // refusal below would blame the import. Flagged emptyReport too, so every
+  // caller's "never claim the day" rule applies unchanged.
+  const excDay = (typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(targetIso, null) : null;
+  if (excDay) {
+    const excWhy = targetIso + ' is an exception day' + (excDay.reason ? ' (' + excDay.reason + ')' : '')
+      + ' -- its queue figures are left out of every report';
+    Logger.log('sendQueueReportForDate_(%s): %s. NOT sent.', targetIso, excWhy);
+    if (opts.to) throw new Error('Not sent: ' + excWhy + '. Remove the day under Admin → Exception days to report on it.');
+    return { count: 0, to: [], failed: [], emptyReport: true, exceptionDay: true, reason: excWhy };
   }
 
   // Batch 1 item 2: reuse the 6h-TTL qcdAll cache the web report warms, so an

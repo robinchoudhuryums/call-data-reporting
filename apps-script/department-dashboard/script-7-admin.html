@@ -1215,6 +1215,9 @@
       const verdict = d.verdict === 'would-fire' ? '<span class="al-hist-fire">would fire</span>'
         : d.verdict === 'quiet' ? '<span class="al-hist-quiet">quiet</span>'
         : d.verdict === 'error' ? '<span class="al-hist-quiet" title="' + escapeHtml(d.error || '') + '">error</span>'
+        // EXD-4 (#81): an exception day is not assessed, and says why.
+        : d.verdict === 'exception-day' ? '<span class="al-hist-quiet" title="' + escapeHtml(d.reason || 'Left out of every report figure')
+            + '">exception day</span>'
         : '<span class="al-hist-quiet">no calls</span>';
       const actual = d.logged ? escapeHtml(d.logged.status) + (d.logged.triggeredBy === 'daily-trigger' ? '' : ' (manual)') : '—';
       return '<tr class="' + (d.verdict === 'would-fire' ? 'is-fire' : '') + '">'

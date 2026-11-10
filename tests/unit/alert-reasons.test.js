@@ -207,7 +207,9 @@ test('a reason that throws is an error row, and the run still finishes', functio
   h.ctx.sendAlertEmail_ = function () {};
   h.ctx.computeDeptAnswerRateForDate_ = function (dept) {
     if (dept === 'CSR') throw new Error('boom');
-    return { rung: 1, answered: 1, missed: 0, pct: 100, lowAgents: [], agents: [] };
+    // EXD-4: a day with agent data (an empty agents list now reads no-data, not quiet).
+    return { rung: 1, answered: 1, missed: 0, pct: 100, lowAgents: [],
+             agents: [{ name: 'Sal', rung: 1, answered: 1, missed: 0, pct: 100 }] };
   };
   const res = h.call('runAlertsCore_', '2026-10-14', false, 'daily-trigger');
   const rs = res.filter(function (r) { return r.reason; });

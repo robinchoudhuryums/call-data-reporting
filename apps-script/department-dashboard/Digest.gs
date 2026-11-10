@@ -834,7 +834,18 @@ function digestSummaryHtml_(dept, fromIso, toIso, opts) {
   // R32: a quiet window with FRESH data still explains its zero tiles. (A
   // stale send already carries the data-not-available callout above the
   // tiles -- sendDigestEmail_ -- so this one is skipped then.)
-  const quietNote = (rung === 0 && !opts.stale)
+  // EXD-3 (#81): when the window's days were left out as exception days, the
+  // zero tiles are the rule working, not a roster or mapping fault -- say so.
+  let excDays = [];
+  try {
+    excDays = (typeof exceptionDaysInRange_ === 'function') ? (exceptionDaysInRange_(fromIso, toIso, dept) || []) : [];
+  } catch (eX) { excDays = []; }
+  const quietNote = (rung === 0 && !opts.stale && excDays.length)
+    ? ekCalloutHtml_('Exception day' + (excDays.length === 1 ? '' : 's') + ' left out',
+        excDays.map(function (d) { return ekEsc_(d.date) + (d.reason ? ' (' + ekEsc_(d.reason) + ')' : ''); }).join('; ')
+        + (excDays.length === 1 ? ' is an exception day' : ' are exception days') + ' for ' + ekEsc_(dept)
+        + ': the calls are left out of every report figure, so there is nothing to show for this period.', 'neutral')
+    : (rung === 0 && !opts.stale)
     ? ekCalloutHtml_('No calls recorded',
         'No answered or missed calls were recorded for ' + ekEsc_(dept) + '\'s roster on '
         + ekEsc_(fromIso === toIso ? fromIso : (fromIso + ' – ' + toIso)) + '. If the team was '

@@ -1010,7 +1010,8 @@ When something looks wrong, before assuming a code bug, check:
     (3) The "Last run:" line, which decodes as: blank = the trigger has not had
     a weekday-morning window yet (install after noon → first run is the next
     weekday); `NO-SUBSCRIBERS` = case (2); `MISSED <iso>` = the window closed
-    before the import finished; `FAILED` / `FAILED-ALL` = a send or compute
+    before the import finished; `EXCEPTION-DAY <iso>` = the day is an
+    all-department exception day, so there is no report to send (#81, EXD-3); `FAILED` / `FAILED-ALL` = a send or compute
     error, details in the admin email; `Sent <iso> to N subscribers` with N ≥ 1
     = it really did send, so check spam/filters. (4) Health page → the
     `trg-queuereport` row for the installed-vs-`QUEUE_REPORT_ENABLED` mismatch
@@ -3660,7 +3661,19 @@ When something looks wrong, before assuming a code bug, check:
     anomaly-suggested days. A failed sheet read serves the last-good copy in
     `EXCEPTION_DAYS_SHEET_COPY` (engine state, never set by hand). Pinned by
     `tests/unit/exception-days.test.js`; cross-file-pins fails a DQE reader
-    that applies the queue split without the exception step.
+    that applies the queue split without the exception step. **The engines
+    (EXD-1..5, 2026-11-10):** when the previous business day is an
+    ALL-department exception day the Daily Call Queue Report is not sent and
+    the poll records `EXCEPTION-DAY <iso>` once (a normal outcome on the
+    Health page; the sent-marker is not claimed, so removing the day sends
+    the report on the next poll); a preview or manual send of that day says
+    why. A digest whose whole window was left out says "Exception day left
+    out" with the reason, not the roster / queue-mapping note. The alert
+    rule's History shows the day as `exception day` and leaves it out of
+    both counts. The "Include them" switch did NOT work before EXD-2 (it
+    resolved no user and stayed off for everyone); it does now, and each
+    save / remove audit row names the admin. Pinned by
+    `tests/unit/exception-days-engines.test.js`.
 
 82. **Transfer hand-overs counted as outbound -- the OBX-1 rule and
     `diagnoseOutboundTransfers` (cdr-import, owner 2026-10-23 / 26).** 8x8

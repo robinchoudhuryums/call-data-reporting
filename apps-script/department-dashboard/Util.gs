@@ -615,7 +615,9 @@ function setExceptionIncludeFromReq_(req) {
   EXCEPTION_INCLUDE_MEMO_ = false;
   if (!req || !(req.includeExceptionDays === true || req.includeExceptionDays === 'true')) return false;
   try {
-    const u = resolveUser_();
+    // EXD-2: resolveUser_ takes the caller's EMAIL -- called with none it
+    // returns role 'none', so the switch never engaged for anyone.
+    const u = resolveUser_(Session.getActiveUser().getEmail());
     EXCEPTION_INCLUDE_MEMO_ = !!(u && u.role === 'admin');
   } catch (e) { EXCEPTION_INCLUDE_MEMO_ = false; }
   return EXCEPTION_INCLUDE_MEMO_;

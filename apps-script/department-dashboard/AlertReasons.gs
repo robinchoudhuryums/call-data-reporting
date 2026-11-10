@@ -116,6 +116,31 @@ function saveAlertReasonRule(req) {
 }
 
 /**
+ * PURE (EXD-4). One day's agents with a repeated name folded into ONE entry:
+ * a date with duplicate rows for an agent lists them twice, and the second
+ * entry read as "missed an earlier day", dropping the agent from the check.
+ * Counts are summed and the rate recomputed over the sum (the shared formula
+ * when it is loaded, else answered / (answered + missed)).
+ */
+function alertMergeDayAgents_(agents) {
+  var seen = {}, out = [];
+  (agents || []).forEach(function (a) {
+    if (!a) return;
+    var k = String(a.name);
+    var m = seen[k];
+    if (!m) { m = seen[k] = { name: a.name, rung: a.rung, answered: a.answered, missed: a.missed, pct: a.pct }; out.push(m); return; }
+    m.answered = (Number(m.answered) || 0) + (Number(a.answered) || 0);
+    m.missed = (Number(m.missed) || 0) + (Number(a.missed) || 0);
+    m.rung = (Number(m.rung) || 0) + (Number(a.rung) || 0);
+    var denom = m.answered + m.missed;
+    var p = (typeof answerRatePct_ === 'function') ? answerRatePct_(m.answered, m.missed, m.rung)
+      : (denom > 0 ? (m.answered / denom) * 100 : 0);
+    m.pct = Math.round(p * 10) / 10;
+  });
+  return out;
+}
+
+/**
  * PURE. Agents below `threshold` on EVERY one of `perDay` (newest first,
  * `{iso, agents:[{name, pct, answered, missed}]}`); an agent missing from a
  * day (no answerable calls) does not qualify. `excludes` = exact names left
@@ -128,7 +153,7 @@ function alertAgentLowFindings_(perDay, threshold, excludes) {
   if (!perDay || !perDay.length) return [];
   var byName = {};
   perDay.forEach(function (d, i) {
-    (d.agents || []).forEach(function (a) {
+    alertMergeDayAgents_(d.agents).forEach(function (a) {
       if (ex[a.name]) return;
       var e = byName[a.name] || (byName[a.name] = { name: a.name, days: [], ok: true });
       if (e.days.length !== i) { e.ok = false; return; }   // missed an earlier day: not every day
@@ -261,7 +286,17 @@ function runAlertReasons_(dateIso, dryRun, honorSkipDates, cfg, pushAndLog) {
         var found = alertAgentLowFindings_(perDay, r.agentLow.threshold, ex);
         var what = 'below ' + r.agentLow.threshold + '% on each of the last ' + days.length + ' workdays ('
           + days[days.length - 1] + '..' + days[0] + ')';
-        if (!found.length) {
+        // EXD-4: a workday in the window with NO agent call data cannot be
+        // judged -- nobody can be "below on every day" -- so the run says
+        // no-data (the import has not landed, or the day is missing) instead
+        // of "quiet", which read as "everyone was fine".
+        var noData = perDay.filter(function (d) { return !(d.agents || []).length; })
+          .map(function (d) { return d.iso; });
+        if (noData.length) {
+          pushAndLog(base('agent-low', { status: 'no-data', threshold: r.agentLow.threshold,
+            notes: 'No agent call data for ' + noData.join(', ') + ' -- the ' + days.length
+              + '-workday check was not assessed' }));
+        } else if (!found.length) {
           pushAndLog(base('agent-low', { status: 'quiet', threshold: r.agentLow.threshold,
             notes: 'No agent ' + what }));
         } else {

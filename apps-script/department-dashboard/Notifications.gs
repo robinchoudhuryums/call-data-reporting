@@ -358,6 +358,13 @@ function getAlertHistory(req) {
     var row = { date: iso, rung: 0, answered: 0, missed: 0, pct: null, verdict: 'no-data',
                 skipped: isDateInSkipRanges_(iso, entry.skipDates), logged: logged[iso] || null };
     if (entry.invalidThreshold) { row.verdict = 'invalid-rule'; return row; }
+    // EXD-4 (#81): the daily run never assesses an exception day, so neither
+    // does this -- it is shown as one and left out of both counts. (With
+    // queue narrowing off the day's rows are still read, so it used to count
+    // as a workday the rule would have fired on.)
+    var exc = null;
+    try { exc = (typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(iso, dept) : null; } catch (eX) { exc = null; }
+    if (exc) { row.verdict = 'exception-day'; row.reason = exc.reason || ''; return row; }
     try {
       var st = computeDeptAnswerRateForDate_(dept, iso, roster);
       row.rung = st.rung; row.answered = st.answered; row.missed = st.missed;

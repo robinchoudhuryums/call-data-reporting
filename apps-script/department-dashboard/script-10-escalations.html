@@ -3022,7 +3022,9 @@
       return '<button type="button" class="ap-day' + (on ? ' is-on' : '') + (d.exceptionDay ? ' is-exception' : '') + '" data-ap-date="' + escapeHtml(d.date) + '"'
         + ' aria-pressed="' + (on ? 'true' : 'false') + '"'
         + ' title="' + escapeHtml(d.date) + (d.outboundCaptured ? '' : ' · outbound not captured')
-        + (d.exceptionDay ? ' · ' + excMarkText_(d.exceptionDay) : '') + '">'   // EXC-2 (#81)
+        // EXD-1: the reason is admin-typed free text -- escaped like every
+        // other string that reaches markup (it sat raw inside this attribute).
+        + (d.exceptionDay ? ' · ' + escapeHtml(excMarkText_(d.exceptionDay)) : '') + '">'   // EXC-2 (#81)
         + '<span class="ap-day-top"><span class="ap-day-w">' + escapeHtml(apWeekday_(d.date)) + '</span>'
         +   apDayRateHtml_(d, dept) + '</span>'
         + '<span class="ap-day-d">' + escapeHtml(apShortDate_(d.date)) + '</span>'

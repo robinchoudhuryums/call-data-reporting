@@ -1483,6 +1483,12 @@
     try {
       var clone = JSON.parse(JSON.stringify(req || {}));
       if (Array.isArray(clone.agents)) clone.agents = clone.agents.slice().sort();
+      // EXD-5 (#81): an admin's "include exception days" view is a different
+      // answer for the same request, so it is a different signature -- here,
+      // once, for every report that keeps a last-good copy (the flag is added
+      // to the REQUEST later, by excReq_, after most callers take their sig).
+      // Absent while the switch is off, so every stored signature still matches.
+      if (typeof excIncludeOn_ === 'function' && excIncludeOn_()) clone.exc = true;
       return JSON.stringify(clone);
     } catch (e) { return ''; }
   }
@@ -5562,7 +5568,8 @@
     var m = state.meta || {};
     var dept = getRequestedDept();
     if (!dept || !m.from || !m.to) { obViewRender_(); return; }
-    var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '');
+    var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '')
+      + (excIncludeOn_() ? '|x' : '');   // EXD-5: the include switch is a different outbound answer
     if (OB_VIEW_.key === key && (OB_VIEW_.data || OB_VIEW_.error)) { obViewRender_(); return; }
     // render() can run this again before the reply lands (a Refresh's SWR
     // pre-paint, then its live render): the request for THIS window is
