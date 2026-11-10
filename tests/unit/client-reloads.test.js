@@ -166,7 +166,8 @@ test('CCX-1: a superseded load keeps the drafts; a card that left the list takes
 test('CCX-1: the load captures before it empties the list, and each saving action names what it saved', function () {
   const esc = src('script-10-escalations.html');
   const load = extractFn(esc, 'escLoad_');
-  assert.ok(load.indexOf('escDraftsCapture_();') < load.indexOf("listEl.innerHTML = ''"), 'capture precedes the wipe');
+  const capAt = load.indexOf('escDraftsCapture_();');
+  assert.ok(capAt !== -1 && capAt < load.indexOf("listEl.innerHTML = ''"), 'capture precedes the wipe');
   assert.match(load, /escRenderList_\(resp \|\| \{\}\);\s*\n\s*escDraftsRestore_\(\);/);
   const saved = {
     escSaveComment_: "['esc-comments-text']",
