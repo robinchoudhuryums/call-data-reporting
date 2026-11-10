@@ -203,6 +203,58 @@
       .getEscalationsInit();
   }
 
+  // CCX-1 (broad-scan 2026-11-09): every mutation reloads the list, and the
+  // re-render rebuilt every card's form empty -- "Save comment only" erased a
+  // half-typed resolution on the same card, and an action on one card wiped
+  // what was being typed on the others. Unsaved text is now carried across the
+  // reload: captured before the list is emptied, written back into the same
+  // field of the same card after the render (its panel re-opened, its Save
+  // re-enabled through the list's own input handler). A field an action has
+  // just SAVED is blanked by that action first (escDraftsConsumed_), so it is
+  // not carried. A card that is no longer in the list takes its drafts with it.
+  var ESC_DRAFT_FIELDS_ = ['esc-resolve-text', 'esc-comments-text', 'esc-reopen-text',
+    'esc-reject-text', 'esc-move-note', 'esc-link-note'];
+  var escDrafts_ = {};
+  function escDraftsCapture_() {
+    var list = $('esc-list');
+    if (!list) return;
+    ESC_DRAFT_FIELDS_.forEach(function (cls) {
+      list.querySelectorAll('textarea.' + cls).forEach(function (ta) {
+        var id = ta.getAttribute('data-id');
+        if (id == null || !String(ta.value || '').trim()) return;
+        escDrafts_[cls + '|' + id] = { cls: cls, id: id, value: ta.value };
+      });
+    });
+  }
+  function escDraftsRestore_() {
+    var list = $('esc-list');
+    var drafts = escDrafts_;
+    escDrafts_ = {};
+    if (!list) return;
+    Object.keys(drafts).forEach(function (k) {
+      var d = drafts[k];
+      var ta = list.querySelector('textarea.' + d.cls + '[data-id="' + escCssId_(d.id) + '"]');
+      if (!ta || ta.value) return;
+      ta.value = d.value;
+      // Show what was restored: open the folded form / the toggled panel it sits in.
+      for (var el = ta.parentNode; el && el !== list; el = el.parentNode) {
+        if (el.tagName === 'DETAILS') el.open = true;
+        else if (el.style && el.style.display === 'none'
+                 && /(^|\s)esc-(reopen|reject|move|link)(\s|$)/.test(el.className || '')) el.style.display = '';
+      }
+      // The list's delegated input handler re-enables this field's Save.
+      try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) { /* older engines: Save re-enables on the next keystroke */ }
+    });
+  }
+  /** CCX-1: an action SAVED these fields of card `id` -- blank them so the reload does not carry them. */
+  function escDraftsConsumed_(id, classes) {
+    (classes || []).forEach(function (cls) {
+      var ta = document.querySelector('textarea.' + cls + '[data-id="' + escCssId_(id) + '"]');
+      if (ta) ta.value = '';
+      delete escDrafts_[cls + '|' + id];
+    });
+  }
+
   // Stale-response token: switching the status/dept filter (or hitting
   // Refresh) while a load is in flight must not let the OLDER response
   // repaint the list over the newer filter's result when it lands late.
@@ -228,6 +280,7 @@
     }
     if ($('esc-empty')) $('esc-empty').style.display = 'none';
     if ($('esc-loading')) { $('esc-loading').style.display = ''; $('esc-loading').innerHTML = dsRingsHtml_ ? dsRingsHtml_('Loading escalations…') : 'Loading…'; }
+    escDraftsCapture_();   // CCX-1: before the list is emptied
     if (listEl) listEl.innerHTML = '';
     var __tok = ++escLoadSeq_;
     google.script.run
@@ -235,6 +288,7 @@
         if (__tok !== escLoadSeq_) return;   // superseded by a newer load
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escRenderList_(resp || {});
+        escDraftsRestore_();  // CCX-1
         escRestoreFocus_();   // CL-3
         // F10: refresh the nav badge / Overview strip after every list load --
         // and every mutation reloads the list, so resolving the last escalation
@@ -999,7 +1053,7 @@
     google.script.run
       .withSuccessHandler(function (res) {
         showToast('Moved to ' + ((res && res.to) || to) + ' \u2713', 'success');
-        escLoad_();
+        escDraftsConsumed_(id, ['esc-move-note']); escLoad_();
       })
       .withFailureHandler(function (e) {
         if (btn) { btn.disabled = false; btn.textContent = 'Move escalation'; }
@@ -1021,7 +1075,7 @@
     const btn = document.querySelector('.esc-link-save[data-id="' + escCssId_(id) + '"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Linking…'; }
     google.script.run
-      .withSuccessHandler(function () { showToast('Linked to ' + to + ' \u2713', 'success'); escLoad_(); })
+      .withSuccessHandler(function () { showToast('Linked to ' + to + ' \u2713', 'success'); escDraftsConsumed_(id, ['esc-link-note']); escLoad_(); })
       .withFailureHandler(function (e) {
         if (btn) { btn.disabled = false; btn.textContent = 'Link department'; }
         setErr(e && e.message ? e.message : String(e));
@@ -1114,7 +1168,7 @@
     const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Reopening…'; }
     google.script.run
-      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escDraftsConsumed_(id, ['esc-reopen-text']); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Reopen escalation'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -1145,7 +1199,7 @@
     const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Rejecting…'; }
     google.script.run
-      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escDraftsConsumed_(id, ['esc-reject-text']); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Reject submission'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -1202,7 +1256,10 @@
       .withSuccessHandler(function (resp) { escRenderActivity_(body, resp || {}); })
       .withFailureHandler(function (err) {
         body.setAttribute('data-loaded', '0');
-        body.innerHTML = '<div class="esc-activity-empty">Could not load activity.</div>';
+        // CCX-5: with the reason -- "Could not load activity." alone gave an
+        // admin nothing to act on. Re-opening the section asks again (data-loaded 0).
+        body.innerHTML = '<div class="esc-activity-empty">Could not load activity: '
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
       })
       .getEscalationActivity({ id: id });
   }
@@ -1268,7 +1325,7 @@
     const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Saving…'; }
     google.script.run
-      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escDraftsConsumed_(id, ['esc-resolve-text', 'esc-comments-text']); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Save resolution'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -1282,7 +1339,7 @@
     if (mutationBusy_(busyKey)) return;   // C2-6: one save per row in flight
     escRowError_(id, '');
     google.script.run
-      .withSuccessHandler(function () { mutationDone_(busyKey); showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withSuccessHandler(function () { mutationDone_(busyKey); showToast('Saved \u2713', 'success'); escDraftsConsumed_(id, ['esc-comments-text']); escLoad_(); })
       .withFailureHandler(function (err) { mutationDone_(busyKey); escRowError_(id, (err && err.message ? err.message : String(err))); })
       .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
   }
@@ -2930,6 +2987,13 @@
   var AP_PRE_MAX_ = 24;
   var AP_PRE_DELAY_MS_ = 250;
   var AP_PRE_T_ = null;
+  /** CCX-3: an explicit Refresh drops the HELD strips and days; a request still out stays, to be joined. */
+  function apPreStoreClear_() {
+    AP_PRE_ORDER_ = AP_PRE_ORDER_.filter(function (k) {
+      if (AP_PRE_[k] && AP_PRE_[k].done) { delete AP_PRE_[k]; return false; }
+      return !!AP_PRE_[k];
+    });
+  }
   function apPreFetch_(key, run, ok, fail) {
     let e = AP_PRE_[key];
     if (e && e.done) { if (ok) ok(e.data); return; }

@@ -745,3 +745,14 @@ S70 | Direct calls split by how the outside caller arrived: their direct line vs
     - As a MANAGER: the report is not reachable (admin-only, as before).
   Expected: as described; no caller number anywhere.
   Fails if: a call that came in on a main-line number is counted as "their direct line" (check one of Nathan (Naman) Solanki's calls on 18667759594 once that number is in DIAL_IN_LABELS); the line's two figures exceed the outside calls the report counts; or the report goes blank or onto the sheet fallback when the split cannot be read.
+
+S71 | Links and reloads keep what the user asked for: a digest link loads once, escalation drafts survive, Refresh re-reads every section (CCX) | Subsystem: Department Dashboard
+  Steps:
+    - Open a digest email's "See the full breakdown" link in a FRESH tab, then Apps Script -> Executions for the dashboard. The landing produced about 8-10 executions for a manager (about 15 for an admin), none of them repeated with the same arguments, and no My Department or Insights read for a window ending today. (V6 of the 2026-11-09 scan; before CCX-2 it was 13-22.)
+    - The tab shows the Overview skeleton briefly, then My Department on the link's department and dates with Insights generated for them.
+    - Hand-edit the link's dates to nonsense (`from=2026-13-45&to=x`) and open it: My Department opens on its own latest day with Insights generated, not on a form saying "Pick a start and end date".
+    - Escalations: open "Resolve / comment…" on two cards. Type a resolution on each and a comment on the first, then press "Save comment only" on the first. After the list reloads, both resolutions are still there (the first card's form open, its Save enabled) and the comment box is empty.
+    - My Department as the admin, with Team Direct Calls, Outbound, Callbacks and Direct lines loaded: press Refresh without changing the dates. Each of those sections shows its loading state and re-reads; an open agent panel re-reads its strip the next time it is opened.
+    - Open a day bar's quick view while Neon is unreachable (or on a day whose missed calls fail): the failed part shows "Could not load … Retry"; Retry asks again, and stepping away and back asks again too.
+  Expected: every step as described.
+  Failure looks like: the same My Department request listed two or three times for one landing; a read for today's date range on a link that named another; a resolution or note gone after an unrelated save; a section still showing its pre-Refresh figures; an error note with no way to retry.

@@ -132,8 +132,8 @@ test('B3/CL-1: the latest data dates are re-read while visible, never moving the
 
   assert.match(chrome, /setInterval\(function \(\) \{ refreshLatestDates_\(false\); \}, LATEST_DATES_REFRESH_MS\);/);
   assert.match(chrome, /addEventListener\('visibilitychange', function \(\) \{\s*if \(!document\.hidden && latestDatesFetchedAt_\) refreshLatestDates_\(false\);/);
-  assert.match(chrome, /latestDatesFetchedAt_ = Date\.now\(\);\s*applyLatestDates_\(dates, true\);\s*refresh\(\);/,
-    'the boot fetch goes through the same apply step');
+  assert.match(chrome, /latestDatesFetchedAt_ = Date\.now\(\);\s*applyLatestDates_\(dates, true\);\s*bootRefreshAfterDates_\(\);/,
+    'the boot fetch goes through the same apply step');   // CCX-2: then the boot load
 });
 
 test('B3/CL-2: a cached day claims the sequence, so an older in-flight day cannot paint over it', function () {
@@ -615,7 +615,8 @@ test('F16: a linked dept is applied only when the viewer may see it, and the Ins
   const ins = nav.slice(nav.indexOf("const base = SHARE_STATE_['/report/insights'];"));
   assert.match(ins, /const deptApplied = shareApplyDeptParam_\(params && params\.dept\);\s*base\.apply\(params \|\| \{\}\);/);
   assert.match(ins, /if \(deptMoved && insPageInited_ && typeof insEnsureRoster === 'function'\) insEnsureRoster\(\);/);
-  assert.match(nav, /'\/dept': \{[\s\S]{0,200}if \(shareApplyDeptParam_\(p && p\.dept\)\) refresh\(\);/,
+  // CCX-2: it refreshes only when the link MOVED the department (the page entry loaded the one on screen).
+  assert.match(nav, /'\/dept': \{[\s\S]{0,500}if \(shareApplyDeptParam_\(p && p\.dept\) && getRequestedDept\(\) !== before\) refresh\(\);/,
     'the /dept link keeps its behaviour through the shared helper');
 });
 

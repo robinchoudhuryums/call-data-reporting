@@ -315,7 +315,8 @@ test('CL-3: every escalation reload puts focus back on what was acted on', funct
   const esc = src('script-10-escalations.html');
   assert.match(extractFn(esc, 'escOnListClick_'), /escNoteFocusIntent_\(t\);/, 'the list click records the intent');
   const load = extractFn(esc, 'escLoad_');
-  assert.match(load, /escRenderList_\(resp \|\| \{\}\);\s*\n\s*escRestoreFocus_\(\);/, 'restored right after the render');
+  // CCX-1: the draft restore runs between the render and the focus restore.
+  assert.match(load, /escRenderList_\(resp \|\| \{\}\);\s*\n\s*escDraftsRestore_\(\);[^\n]*\n\s*escRestoreFocus_\(\);/, 'restored right after the render');
   const restore = extractFn(esc, 'escRestoreFocus_');
   assert.match(restore, /ae !== document\.body/, 'never steals focus from somewhere the user went');
   assert.match(restore, /cards\[Math\.min\(Math\.max\(it\.idx, 0\), cards\.length - 1\)\]/,

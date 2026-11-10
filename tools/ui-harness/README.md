@@ -42,6 +42,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 ### Asserting drivers (pass/fail — these gate CI)
 - `drive-smoke.js [admin|manager]` — (SPEED-2: the gate runs it as two
   shards, one per role, side by side; with no argument it checks both)
+  (CCX-2 / CCX-8: three deep-link boots per role -- an Insights link, a
+  department link and one with mangled dates -- asserting no request is sent
+  twice, one report runs for the linked window, and the provisional window
+  ending today is never loaded)
   (since #81 also the generated Individual Report's
   exception-day note) boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
@@ -179,7 +183,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   summary that leads with the unreturned callers and its one-base bar, the
   most-not-called-back default order, and a row's own unreturned-caller list;
   since IC-4 its "How this is counted" ⓘ (no fold).
-- `drive-admin.js` — eleven **modals** (Alerts, Outlier Fix, Dept Config --
+- `drive-admin.js` — (CCX-1: text typed on two escalation cards survives a
+  "Save comment only" reload, the saved comment comes back empty)
+  eleven **modals** (Alerts, Outlier Fix, Dept Config --
   DCD-1: the "default" note, the Save-all-defaults bar from the real init, its
   confirm and the one no-argument request --
   Access Control, System Health, Caller Lookup, Coaching, Transfer Retries --

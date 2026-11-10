@@ -694,6 +694,50 @@ const MODALS = [
       }
     }
 
+    // CCX-1 (broad-scan 2026-11-09): every mutation reloads and re-renders
+    // the cards. Text being typed must survive it -- on the card acted on AND
+    // on the others -- while the field that was just SAVED comes back empty.
+    {
+      const ids = await page.evaluate(() => Array.prototype.map.call(
+        document.querySelectorAll('#esc-list textarea.esc-resolve-text'), (t) => t.getAttribute('data-id')));
+      if (ids.length >= 2) {
+        const a = ids[0], b = ids[1];
+        await page.evaluate((x) => {
+          const set = (sel, v) => {
+            const t = document.querySelector(sel);
+            t.closest('details').open = true;
+            t.value = v;
+            t.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          set('textarea.esc-resolve-text[data-id="' + x.a + '"]', 'half-typed resolution');
+          set('textarea.esc-comments-text[data-id="' + x.a + '"]', 'a progress note');
+          set('textarea.esc-resolve-text[data-id="' + x.b + '"]', 'another card draft');
+        }, { a: a, b: b });
+        const loadsBefore = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'getEscalations').length);
+        await page.click('.esc-comment-save[data-id="' + a + '"]');
+        await page.waitForTimeout(1500);
+        const loadsAfter = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'getEscalations').length);
+        record('CCX-1: the save reloaded the list (the cards were rebuilt)', loadsAfter === loadsBefore + 1,
+          'getEscalations ' + loadsBefore + ' -> ' + loadsAfter);
+        const d = await page.evaluate((x) => {
+          const q = (sel) => document.querySelector(sel);
+          const ra = q('textarea.esc-resolve-text[data-id="' + x.a + '"]');
+          const ca = q('textarea.esc-comments-text[data-id="' + x.a + '"]');
+          const rb = q('textarea.esc-resolve-text[data-id="' + x.b + '"]');
+          const save = q('.esc-resolve-save[data-id="' + x.a + '"]');
+          return { res: ra ? ra.value : null, com: ca ? ca.value : null, other: rb ? rb.value : null,
+                   open: !!(ra && ra.closest('details') && ra.closest('details').open),
+                   saveEnabled: !!(save && !save.disabled) };
+        }, { a: a, b: b });
+        record('CCX-1: "Save comment only" keeps the half-typed resolution on the same card, shown and savable',
+          d.res === 'half-typed resolution' && d.open && d.saveEnabled, JSON.stringify(d));
+        record('CCX-1: the comment that was saved comes back empty', d.com === '', JSON.stringify(d));
+        record('CCX-1: a draft on another card survives the reload', d.other === 'another card draft', JSON.stringify(d));
+      } else {
+        record('CCX-1: the fixture has two cards with a resolve form', false, 'found ' + ids.length);
+      }
+    }
+
     // ESC-C3: the latest comments sit on the card face (author + time, a
     // dept tag on a linked copy), "View all" opens Activity; a row with no
     // thread comments falls back to its own comments field.

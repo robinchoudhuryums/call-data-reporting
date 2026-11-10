@@ -2067,6 +2067,52 @@ behind the removed button.
   onto Overview, and so does a non-admin's deep link to a `data-admin-only`
   route — `initRouter` skips the trigger rather than opening a modal that would
   only surface an "admin-only" server error (F11).
+  **A link that lands on the DEPT page waits for the boot latest-date read
+  (CCX-2, broad-scan 2026-11-09).** `whenLatestDatesSettled_` (script-2) holds
+  the dispatch of a `kind:'page'` route whose page is `dept` or `insights`
+  until `getLatestDataDates` answers (or 10 s pass); the link's department and
+  window are written to the dept controls BEFORE `setPage`, so the swap's own
+  load is the linked view, and `bootRefreshAfterDates_` skips the boot's
+  `refresh()` while that load is out. Modals and Escalations still open at
+  once. The cost is that such a link shows the Overview skeleton until the
+  dates land. Three rules follow: a new dept-page route needs no wiring (the
+  gate keys on the route's `page`); nothing on the dispatch path may call
+  `refresh()` without checking what is already in flight (`summaryReqKey_`
+  names the newest request's dept and window); and `insEnsureRoster` sends one
+  request per (dept, window) while that request is out. A link's dates are
+  validated before they are written (`shareCleanDateParams_`, CCX-8): a pair
+  that is not two real dates in order is dropped, so the page keeps its own
+  window. Pinned by `tests/unit/client-reloads.test.js` and, at the rendered
+  page, by `drive-smoke.js`'s deep-link pass (no request twice, one report, no
+  provisional window).
+
+## What survives a reload, and what Refresh drops (CCX, 2026-11-09)
+
+- **Escalation drafts are carried across the list reload (CCX-1).** Every
+  mutation re-renders every card; `escDraftsCapture_` reads the six draft
+  textareas (`ESC_DRAFT_FIELDS_`) before the list is emptied and
+  `escDraftsRestore_` writes them back after the render, re-opening the form
+  they sit in and firing `input` so the list's own handler re-enables Save. An
+  action that SAVED a field calls `escDraftsConsumed_(id, [...])` before its
+  `escLoad_()`. **A new textarea on a card joins `ESC_DRAFT_FIELDS_`, and a new
+  saving action names what it saved**, or the first loses drafts and the second
+  re-fills a field that was just submitted.
+- **Refresh drops every (dept, window) section store (CCX-3).** `refresh()`
+  clears the Team Rings memo, the outbound view, the outbound summary store and
+  the day quick view; the Refresh BUTTON's click (not `refresh()`, which also
+  runs for a debounced date edit) first calls `refreshClearSectionStores_`,
+  which drops Team Direct
+  Calls, the Outbound summary section, Callbacks, Direct lines and the agent
+  panel's prefetch store -- HELD answers and held errors only: a request
+  already out for the window is left to land, because dropping its key sent
+  the same request twice (`drive-deptoutbound.js` caught exactly that). A new
+  store of the shape `var X_ = { key: null, ...`
+  in script-5 or script-8 must be dropped there too -- `client-reloads.test.js`
+  fails on one that is not.
+- **A failed load is never held as an answer.** The day quick view serves a
+  day with a failed part but does not keep it (CCX-4); the Callbacks section
+  keeps its error on screen with a Retry rather than refetching on every sync
+  (CCX-6); a null Team Direct Calls reply is an error with a Retry (CCX-5).
 
 ## Client accessibility + print contract (Batch 9, 2026-09-18)
 

@@ -3532,8 +3532,16 @@
       })
       .getSystemHealth({ part: 'neon' });
     google.script.run
-      .withSuccessHandler(healthRenderBackup_)
-      .withFailureHandler(function () { /* section stays hidden for non-admins/errors */ })
+      .withSuccessHandler(function (st) {
+        if (st) healthRenderBackup_(st);
+        else healthRenderBackupError_('the server returned nothing');
+      })
+      // CCX-7 (broad-scan 2026-11-09): this handler was empty, so a failed
+      // probe left the Neon backup section hidden -- on an admin-only page,
+      // "no backup section" reads as "no backup feature", not "the check failed".
+      .withFailureHandler(function (err) {
+        healthRenderBackupError_(err && err.message ? err.message : String(err));
+      })
       .getNeonBackupStatus();
   }
 
@@ -3622,6 +3630,17 @@
     }
   }
 
+  /** CCX-7: the backup section, shown with why its status could not be read. */
+  function healthRenderBackupError_(msg) {
+    const sec = $('health-backup-section');
+    if (!sec) return;
+    sec.style.display = '';
+    const el = $('health-backup-status');
+    if (el) {
+      el.textContent = 'Backup status could not be read: ' + String(msg || 'unknown error')
+        + '. Refresh to check again; the last recorded run is on the Neon backup row above.';
+    }
+  }
   function healthRenderBackup_(st) {
     const sec = $('health-backup-section');
     if (!sec || !st) return;

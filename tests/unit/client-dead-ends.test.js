@@ -89,7 +89,9 @@ test('C1-9: a getLatestDataDates failure is SAID, not swallowed', function () {
   const fail = between(s2, /withFailureHandler\(function \(err\) \{\s*\/\/ C1-9/, /\.getLatestDataDates\(\);/);
   assert.ok(/showToast\(/.test(fail), 'the user sees a toast');
   assert.ok(/reportClientIssue_\('load-failure'/.test(fail), 'the admin hears about it (R19 beacon)');
-  assert.ok(/refresh\(\);/.test(fail), 'the range fallback is unchanged');
+  // CCX-2: the boot's load goes through bootRefreshAfterDates_ (which releases a
+  // waiting deep link first and then refreshes unless that link is loading the page).
+  assert.ok(/bootRefreshAfterDates_\(\);/.test(fail), 'the range fallback is unchanged');
 });
 
 test('C1-4: entering/exiting view-as re-fetches the escalation badge so the strip re-scopes', function () {

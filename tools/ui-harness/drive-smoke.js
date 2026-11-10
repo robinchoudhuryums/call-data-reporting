@@ -230,6 +230,73 @@ async function ytdBootPass(browser, role) {
   await page.close();
 }
 
+// CCX-2 (broad-scan 2026-11-09): a deep link that lands on the dept page
+// loads it ONCE, for the linked window. It used to dispatch before the boot
+// latest-date read answered: the page loaded for the provisional window ending
+// today, again for the link's window, and a third time when the dates landed --
+// 13-22 requests, several of them identical, one a full report nobody saw.
+// CCX-8: a link whose dates are mangled runs over the page's own window instead
+// of stranding Insights on its "Pick a start and end date" form.
+function isoDaysAgo(n) {
+  const d = new Date(Date.now() - n * 86400000);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+async function deepLinkBoot(browser, role, hash) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + String(e && e.message ? e.message : e)));
+  await page.addInitScript((h) => {
+    localStorage.setItem('cdr.tour.done', '1');
+    localStorage.setItem('cdr.ins.intro.v1', '1');
+    window.__HARNESS_HASH__ = h;
+  }, hash);
+  await page.goto('file://' + path.join(__dirname, 'site', 'index-' + role + '.html'));
+  await page.waitForTimeout(4500);
+  const s = await page.evaluate(() => {
+    const WATCH = { getDepartmentSummary: 1, getInsightsReportInit: 1, getInsightsReport: 1, getMissedCallsSlice: 1, getMissedCallsReport: 1 };
+    const seen = {}, dups = [], list = [];
+    (window.__HARNESS__.calls || []).forEach((c) => {
+      if (!WATCH[c.fn]) return;
+      const a = c.args[0] || {};
+      const k = c.fn + ' ' + JSON.stringify(a);
+      if (seen[k]) dups.push(k.slice(0, 120));
+      seen[k] = true;
+      list.push({ fn: c.fn, from: a.from || '', to: a.to || '', dept: a.department || '' });
+    });
+    return { dups: dups, list: list, page: document.body.getAttribute('data-page'),
+             from: document.getElementById('from-date').value, to: document.getElementById('to-date').value };
+  });
+  await page.close();
+  return { s: s, errors: errors };
+}
+async function deepLinkPass(browser, role) {
+  const today = isoDaysAgo(0), from = isoDaysAgo(33), to = isoDaysAgo(4);
+  let r = await deepLinkBoot(browser, role, '/report/insights?from=' + from + '&to=' + to + '&dept=CSR');
+  let tag = role + ': an Insights deep link';
+  const reports = r.s.list.filter((c) => c.fn === 'getInsightsReport');
+  record(tag + ' lands on the dept page with the linked window', r.s.page === 'dept' && r.s.from === from && r.s.to === to,
+    JSON.stringify({ page: r.s.page, from: r.s.from, to: r.s.to }));
+  record(tag + ' sends no request twice', r.s.dups.length === 0, r.s.dups.join(' | '));
+  record(tag + ' runs ONE report, for the linked window',
+    reports.length === 1 && reports[0].from === from && reports[0].to === to && reports[0].dept === 'CSR', JSON.stringify(reports));
+  const early = r.s.list.filter((c) => c.to === today);
+  record(tag + ' never loads the provisional window ending today', early.length === 0, JSON.stringify(early));
+  record(tag + ': no page errors', r.errors.length === 0, r.errors.slice(0, 3).join(' | '));
+
+  r = await deepLinkBoot(browser, role, '/dept?dept=CSR');
+  tag = role + ': a department deep link';
+  record(tag + ' sends no request twice and never loads the provisional window',
+    r.s.page === 'dept' && r.s.dups.length === 0 && !r.s.list.some((c) => c.to === today),
+    JSON.stringify({ page: r.s.page, dups: r.s.dups }));
+
+  r = await deepLinkBoot(browser, role, '/report/insights?from=2026-13-45&to=garbage');
+  tag = role + ': an Insights link with mangled dates';
+  const rep2 = r.s.list.filter((c) => c.fn === 'getInsightsReport');
+  record(tag + ' runs over the page\'s own window instead of stopping at the form',
+    r.s.page === 'dept' && /^\d{4}-\d{2}-\d{2}$/.test(r.s.from) && rep2.length === 1 && rep2[0].from === r.s.from,
+    JSON.stringify({ from: r.s.from, to: r.s.to, reports: rep2 }));
+}
+
 // Step 2 #6 (owner 2026-10-16): the Overview chart opens with a MANAGER's
 // default highlight -- the Company line (released to managers as the line
 // only) + their own dept, every other line greyed, the y-axis NOT zoomed --
@@ -1472,6 +1539,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
     await historyPass(browser, role); // CL-23
     await ytdBootPass(browser, role); // F47
     await ovDefaultPinsPass(browser, role); // Step 2 #6
+    await deepLinkPass(browser, role);      // CCX-2 / CCX-8
   }
 
   await browser.close();

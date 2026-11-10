@@ -1442,6 +1442,13 @@
   // cross-dept "stale flash". A SAME-dept refresh keeps its rows (no
   // flash-to-empty); only a genuine switch clears.
   var lastSummaryDept_ = null;
+  // CCX-2: the (dept, window) of the newest summary REQUEST, sent or painted --
+  // lets a deep-link landing tell "the page is already loading this view" from
+  // "something else is in flight" without sending a duplicate to find out.
+  var summaryReqKey_ = '';
+  function summaryViewKey_() {
+    return String(getRequestedDept() || '') + '|' + $('from-date').value + '|' + $('to-date').value;
+  }
 
   // F10: monotonic stale-response tokens for the agent reports. Generate +
   // edit-apply + dept-switch-then-regenerate can leave two fetches in
@@ -1651,6 +1658,30 @@
     if (spec.rerun) spec.rerun();
   });
 
+  /**
+   * CCX-3 (broad-scan 2026-11-09): the per-section client stores the Refresh
+   * BUTTON drops. Five newer sections were never added to refresh()'s clears,
+   * so Refresh re-read the table and left them on their pre-Refresh answer for
+   * the same window. Each is keyed by (dept, window), so dropping the key
+   * makes its own sync fetch again once the summary lands -- a changed window
+   * already did. Called from the button's click, NOT from refresh(): refresh()
+   * also runs for a debounced date edit, and a second one for the same window
+   * would throw away what the first had just loaded. A NEW (dept, window)
+   * store on My Department joins this list in the same commit
+   * (client-reloads.test.js fails on one that does not).
+   */
+  function refreshClearSectionStores_() {
+    // HELD answers only. A request already out for this window is as fresh as
+    // a new one would be: dropping its key orphaned it and sent the same
+    // request again (a date typed, then Refresh pressed -- two loads in a row).
+    if (typeof TDC_ !== 'undefined' && !TDC_.loading) { TDC_.key = null; }                    // Team Direct Calls + the Direct view
+    if (typeof INS_OB_ !== 'undefined' && INS_OB_.cur) { INS_OB_.key = null; }                // Outbound summary section
+    if (typeof INS_CB_ !== 'undefined' && (INS_CB_.data || INS_CB_.error)) { INS_CB_.key = null; }   // Callbacks
+    var dl = (typeof OB_DL_VIEWS_ !== 'undefined') ? OB_DL_VIEWS_['ins-dl'] : null;           // Direct lines
+    if (dl && !dl.inFlight) { dl.key = null; }
+    if (typeof apPreStoreClear_ === 'function') apPreStoreClear_();                           // agent panel
+  }
+
   function refresh() {
     const dept = getRequestedDept();
     // R17g: keep the sticky-strip workday count live from the client mirror
@@ -1756,6 +1787,7 @@
     deptMissedFrostArm_();
 
     var myToken = ++summaryReqSeq;
+    summaryReqKey_ = summaryViewKey_();   // CCX-2: what the newest request is FOR
     // SWR: a repeat request for the exact same (dept, from, to) paints the
     // last-good summary instantly (localStorage, signature-matched) with a
     // visible "refreshing" note; the live response repaints over it (and the
@@ -4022,6 +4054,13 @@
    * rest go out in ONE getDayQuickView request (split only if their
    * exception-day flag differs). A failed request is never kept.
    */
+  /** CCX-4 (PURE): true when any part of one day's reply failed (or the day had no reply). */
+  function dqvDayHasError_(day) {
+    var e = (day && day.errors) || null;
+    if (!day) return true;
+    if (!e) return false;
+    return Object.keys(e).some(function (k) { return !!e[k]; });
+  }
   function dqvFetchDays_(bs, ob, prefetch, ok, fail) {
     var send = { 0: [], 1: [] };
     bs.forEach(function (b) {
@@ -4045,6 +4084,10 @@
           list.forEach(function (x) {
             x.e.done = true;
             x.e.data = days[x.b.from] || { summary: null, missed: null, outbound: null, errors: { summary: 'No reply for this day.' } };
+            // CCX-4: a day with a FAILED part is served to whoever is waiting
+            // but never kept -- held as done, it showed its "Could not load"
+            // note on every return to the day, with nothing able to ask again.
+            if (dqvDayHasError_(x.e.data) && DQV_STORE_[x.k] === x.e) delete DQV_STORE_[x.k];
             var w = x.e.w; x.e.w = [];
             w.forEach(function (y) { y.ok(x.e.data, y.b); });
           });
@@ -4206,8 +4249,10 @@
       dqvBusy_(missedEl, 'missed', lbl);
     }
     var tok = ++DQV_.seq;
+    // CCX-4: with a Retry -- the failed day is not held, so this asks again.
     var errNote = function (where, msg) {
-      return '<div class="ds-note">Could not load ' + where + ': ' + escapeHtml(String(msg)) + '</div>';
+      return '<div class="ds-note">Could not load ' + where + ': ' + escapeHtml(String(msg))
+        + ' <button type="button" class="link-btn day-qv-retry">Retry</button></div>';
     };
     dqvFetchDays_([b], showOb, false, function (day) {
       if (tok !== DQV_.seq) return;
@@ -4462,6 +4507,7 @@
     modal.addEventListener('click', function (e) {
       var t = e.target;
       if (t.closest('[data-close]') || t.closest('#day-qv-close')) { dqvClose_(); return; }
+      if (t.closest('.day-qv-retry')) { dqvShow_(DQV_.i); return; }   // CCX-4
       if (t.closest('#day-qv-prev')) { dqvShow_(DQV_.i - 1); return; }
       if (t.closest('#day-qv-next')) { dqvShow_(DQV_.i + 1); return; }
       if (t.closest('#day-qv-open')) { dqvOpenOnPage_(); return; }
@@ -5251,6 +5297,9 @@
       .withSuccessHandler(function (d) {
         if (tok !== TDC_.seq) return;
         TDC_.loading = false; TDC_.data = d || null;
+        // CCX-5: a null reply left the card blank -- no skeleton, no figures,
+        // no error -- and every later sync asked again. Say so, with the Retry.
+        if (!TDC_.data) TDC_.error = 'the server returned nothing';
         tdcRender_();
       })
       .withFailureHandler(function (err) {

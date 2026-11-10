@@ -8627,6 +8627,11 @@ tr.ob-group-head td {
   border-top: 1px solid var(--line);
 }
 tr.ob-group-head .ob-group-count { font-weight: 500; opacity: .7; font-size: .82em; margin-left: 6px; }
+/* CCX-8 (broad-scan 2026-11-09): the rows are built with BOTH classes (for
+   the shared heading look), so they inherited the toggle's pointer and hover
+   -- a row that looks clickable and does nothing. Undo exactly those two. */
+tr.subq-group-head.ob-group-head { cursor: default; }
+tr.subq-group-head.ob-group-head:hover td { background: var(--accent-soft); }
 /* CE-2: the callback drill lists. One block per contact episode, its status
    on a left rail (warn = still inside the window, bad = missed). */
 .ob-ep { border-left: 2px solid var(--line); padding-left: 8px; margin-top: 8px; }

@@ -3701,10 +3701,15 @@
       tone: 'danger',
     }).then(function (ok) {
       if (!ok) return;
+      // CCX-5: one removal at a time per date -- a second click while the
+      // first was out sent the request again and reported an error for a day
+      // that had just been removed.
+      var busyKey = 'excRemove:' + date;
+      if (mutationBusy_(busyKey)) return;
       excEditorStatus_('', 'Removing…');
       google.script.run
-        .withSuccessHandler(function (data) { excEditorStatus_('', 'Removed.'); excEditorRender_(data); })
-        .withFailureHandler(function (err) { excEditorStatus_('error', (err && err.message) || String(err)); })
+        .withSuccessHandler(function (data) { mutationDone_(busyKey); excEditorStatus_('', 'Removed.'); excEditorRender_(data); })
+        .withFailureHandler(function (err) { mutationDone_(busyKey); excEditorStatus_('error', (err && err.message) || String(err)); })
         .removeExceptionDay({ date: date });
     });
   }

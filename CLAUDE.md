@@ -1063,7 +1063,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   via `SHARE_STATE_`, the F11 non-admin no-op, browser Back/Forward via
   `google.script.history`, CL-23) · the client ACCESSIBILITY +
   PRINT contract (keyboard parity, the ARIA shapes, the focus ring, the
-  on-fill tokens, what never reaches paper).
+  on-fill tokens, what never reaches paper) · what survives a reload and what
+  Refresh drops (CCX: dept-page deep links wait for the latest-date read).
   **The client traps that CAN bite you without warning stayed HERE** and are
   not repeated there: `safeChart_`, `dsConfirm_`, `csvSafeCell_`, the
   datalabels registration, the OKLCH/datalabels fillStyle rule, and the
@@ -2370,6 +2371,7 @@ S67 | Direct Calls report covers only days that exist: the clamp, missing workda
 S68 | Exception days: one outage day left out everywhere, said everywhere, and an admin can put it back (#81) | Subsystem: Department Dashboard
 S69 | Transfer retries: the admin list of transfers tried again in the same department (TR-1) | Subsystem: Department Dashboard
 S70 | Direct calls split by how the outside caller arrived: their direct line vs a main line (DID-2, DID-3) | Subsystem: Department Dashboard + CDR Import
+S71 | Links and reloads keep what the user asked for: a digest link loads once, escalation drafts survive, Refresh re-reads every section (CCX) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
