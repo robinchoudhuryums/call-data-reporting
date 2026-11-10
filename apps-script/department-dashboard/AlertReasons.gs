@@ -193,7 +193,7 @@ function alertCallbackMisses_(dept, abandonIso, throughIso) {
     var win = Math.max(1, alertReasonDaysBetween_(abandonIso, throughIso));
     var scope = { from: abandonIso, to: abandonIso, dept: dept, companyView: false, scopeDepts: [dept] };
     var readWin = (typeof OUTBOUND_CALLBACK_WINDOW_DAYS === 'number') ? OUTBOUND_CALLBACK_WINDOW_DAYS : 3;
-    var list = obCallbackListEpisodes_(conn, scope, Math.max(0, win - readWin), win);
+    var list = obCallbackListEpisodes_(conn, scope, Math.max(0, win - readWin), win, throughIso);   // RUN-9: judged as of throughIso
     if (!list) return out;
     out.available = true;
     // RUN-1: the question is fixed -- "not called back by the end of

@@ -196,16 +196,22 @@ test('Batch 5: the check probes calls with NO entry_queue and splits them by sta
   assert.equal(h.state.props.INBOUND_QCD_PARITY_FROM, '2026-06-01', 'residue keeps the window');
 });
 
-test('prop-registry: an all-attributed run self-clears the INBOUND_QCD_PARITY_* params', function () {
-  const conn = {
-    prepareStatement: function () {
+// GCA-4: the entry-queue scan's rows are what make a run a CHECK. `scan` is
+// what that probe returns; every other query returns [] (or throws, for the
+// no-entry_queue probe, when `noQueueThrows`).
+function parityConn_(scan, noQueueThrows) {
+  return {
+    prepareStatement: function (sql) {
       let done = false;
+      const isScan = /GROUP BY entry_queue/.test(sql);
+      const isNoQueue = /COALESCE\(entry_queue, ''\) = ''/.test(sql);
       return {
         setString: function () {}, setInt: function () {},
         executeQuery: function () {
+          if (isNoQueue && noQueueThrows) throw new Error('statement timeout');
           return {
             next: function () { if (done) return false; done = true; return true; },
-            getString: function () { return JSON.stringify([]); },   // nothing unattributed, empty day joins
+            getString: function () { return JSON.stringify(isScan ? scan : []); },
             close: function () {},
           };
         },
@@ -214,6 +220,12 @@ test('prop-registry: an all-attributed run self-clears the INBOUND_QCD_PARITY_* 
     },
     close: function () {},
   };
+}
+
+test('prop-registry: an all-attributed run self-clears the INBOUND_QCD_PARITY_* params', function () {
+  // The window HOLDS calls, all on a queue CSR claims -- stored in a different
+  // case than the alias (GCA-4: matched the way the report attributes).
+  const conn = parityConn_([{ q: 'a_q_csr', n: 12 }]);
   installStubs([]);
   h.ctx.assertAdmin_ = function () {};
   h.ctx.getDashboardNeonConn_ = function () { return conn; };
@@ -234,4 +246,63 @@ test('prop-registry: an all-attributed run self-clears the INBOUND_QCD_PARITY_* 
   assert.ok(!('INBOUND_QCD_PARITY_FROM' in h.state.props), 'clean run clears FROM');
   assert.ok(!('INBOUND_QCD_PARITY_TO' in h.state.props), 'clean run clears TO');
   assert.ok(!('INBOUND_QCD_PARITY_DEPT' in h.state.props), 'clean run clears DEPT');
+});
+
+// GCA-4 (broad-scan 2026-11-09, Batch 6): this is the check for releasing the
+// Inbound report, and it reported a clean run over nothing.
+/** Runs the check with Logger.log captured; returns { out, logs }. */
+function runParityLogged_() {
+  const logs = [];
+  const real = h.ctx.Logger;
+  h.ctx.Logger = { log: function (fmt) {
+    let i = 1; const args = arguments;
+    logs.push(String(fmt).replace(/%s/g, function () { return String(args[i++]); }));
+  } };
+  try { return { out: h.call('runInboundQcdParityCheck'), logs: logs }; }
+  finally { h.ctx.Logger = real; }
+}
+test('GCA-4: a window with no inbound call on any queue is INCONCLUSIVE and keeps its parameters', function () {
+  installStubs([]);
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.getDashboardNeonConn_ = function () { return parityConn_([]); };
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  h.state.props.INBOUND_QCD_PARITY_FROM = '2026-06-01';
+  h.state.props.INBOUND_QCD_PARITY_TO = '2026-06-03';
+  let cleared = 0;
+  h.ctx.clearToolParamsAfterCleanRun_ = function () { cleared++; };
+  const r = runParityLogged_();
+  const out = r.out;
+  assert.equal(out.inconclusive, true);
+  assert.equal(out.unattributed.length, 0);
+  assert.equal(cleared, 0, 'nothing was checked, so it is not a clean terminus (it used to clear)');
+  assert.ok(r.logs.some(function (l) { return /^INCONCLUSIVE: no inbound call with an entry queue in 2026-06-01\.\.2026-06-03/.test(l); }));
+  assert.ok(!r.logs.some(function (l) { return /All raw entry-queues in the window attribute to a dept/.test(l); }),
+    'no clean line over zero rows');
+});
+
+test('GCA-4: a failed no-entry_queue probe prints no clean line and does not clear the parameters', function () {
+  installStubs([]);
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.getDashboardNeonConn_ = function () { return parityConn_([{ q: 'A_Q_CSR', n: 12 }], true); };
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  h.state.props.INBOUND_QCD_PARITY_FROM = '2026-06-01';
+  let cleared = 0;
+  h.ctx.clearToolParamsAfterCleanRun_ = function () { cleared++; };
+  const r = runParityLogged_();
+  const out = r.out;
+  assert.equal(out.noEntryQueueFailed, true);
+  assert.equal(out.inconclusive, false);
+  assert.equal(cleared, 0);
+  assert.ok(!r.logs.some(function (l) { return /Every inbound call in the window carries an entry_queue/.test(l); }),
+    'the bucket was not checked, so it is not reported clean');
+  assert.ok(r.logs.some(function (l) { return /no-entry_queue probe FAILED -- that bucket was NOT checked/.test(l); }));
+});
+
+test('GCA-4: a queue stored in another case than its alias is attributed, as the report attributes it', function () {
+  installStubs([]);
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.getDashboardNeonConn_ = function () { return parityConn_([{ q: 'a_q_csr', n: 12 }, { q: 'A_Q_Nobody', n: 3 }]); };
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  const out = JSON.parse(JSON.stringify(h.call('runInboundQcdParityCheck')));
+  assert.deepEqual(out.unattributed, [{ queue: 'A_Q_Nobody', calls: 3 }], 'only the queue no department claims');
 });

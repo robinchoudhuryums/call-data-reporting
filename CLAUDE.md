@@ -1770,7 +1770,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   6h (the anchor moves only when the latest date does; the CacheWarm warm is
   freshness-guarded); 5 min (`CACHE_TTL_SECONDS`) on the freshness-sensitive
   `latestDate` / `latestDates` lookups so the morning ingest surfaces
-  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The tradeoff
+  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`); **10 min
+  (`DEGRADED_CACHE_TTL_SECONDS`, GCA) for a payload right to SERVE but known
+  short** (a failed Neon side-read, per-call tables behind the DQE anchor) --
+  never uncached (`gate-cache-anchors.test.js`). The tradeoff
   of the 6 h tier: ad-hoc admin corrections (orphan renames, DQE rebuilds,
   a mid-day force re-import) can lag up to 6 h in cached views not
   explicitly busted on write (Orphan Fix + Dept Config save bust their own

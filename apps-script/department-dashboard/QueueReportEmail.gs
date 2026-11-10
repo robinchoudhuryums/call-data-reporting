@@ -112,11 +112,20 @@ function queueReportClaimSend_(props, iso, force) {
 // its claim taken over by the next sender; releasing unconditionally then
 // deleted THAT sender's claim, and a third could start while it was still
 // sending. `token` is the value queueReportClaimSend_ returned.
+// RUN-11: the compare-then-delete runs under the same script lock the claim
+// takes, so a claim written between the two cannot be deleted. A busy lock
+// falls back to the unlocked form (the stale-claim rule still covers a miss).
 function queueReportReleaseSend_(props, token) {
+  let lock = null, locked = false;
+  try {
+    lock = LockService.getScriptLock();
+    locked = lock.tryLock(5000);
+  } catch (le) { locked = false; }
   try {
     if (token && String(props.getProperty(QUEUE_REPORT_SENDING_PROP) || '') !== String(token)) return;
     props.deleteProperty(QUEUE_REPORT_SENDING_PROP);
   } catch (e) { /* stale-claim rule covers it */ }
+  finally { if (locked) { try { lock.releaseLock(); } catch (re) { /* released */ } } }
 }
 
 function queueReportGateDecision_(ctx) {

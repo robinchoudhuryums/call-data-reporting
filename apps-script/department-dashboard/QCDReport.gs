@@ -319,6 +319,10 @@ function qcdAllDeptCachedData_(from, to, opts) {
       + ' -- NOT cached (R43: an incomplete report must not be pinned for the 6h TTL).');
   } else if (cfgFailed) {
     Logger.log('qcdAllDeptCachedData_: Dept Config read errored -- skipping cache put.');
+  } else {
+    // GCA-8: the remaining case is the size guard, and it was silent.
+    Logger.log('qcdAllDeptCachedData_: payload for ' + from + '..' + to + ' is ' + json.length
+      + ' bytes, over the 100000-byte cache guard -- NOT cached; every request for this window recomputes.');
   }
   return { data: data, cacheHit: false };
 }

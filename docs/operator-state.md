@@ -2503,6 +2503,13 @@ When something looks wrong, before assuming a code bug, check:
        the LIVE Neon report: if the outbound compute was served from the
        sheet copy (Neon unreachable) the run reads `FAILED (outbound served
        from the sheet copy …)` -- re-run when Neon is back (PCR-9).
+       **GCA-1 (2026-11-10): any run between CBX-1 (2026-11-02) and this fix
+       read `MISMATCH ... do NOT un-gate` for a company window holding a CSR
+       or Spanish abandon, or an exception day -- that was the tool comparing
+       two different populations, not the reports disagreeing. It now compares
+       every abandon on both sides (`callback.abandonedTotalAll`), with
+       exception days included on both. Re-run it before reading anything
+       into an older MISMATCH.**
     3. **Read the verdict literally.** Release ONLY on `ok parity`.
        **INCONCLUSIVE is not a pass** — a window with zero abandons reports it
        by construction, so widen the window and re-run. FAILED and MISMATCH
@@ -2522,7 +2529,9 @@ When something looks wrong, before assuming a code bug, check:
        `personalizeOverview_` stops stripping it the moment the gate flips (it
        reads the same switch). The Overview's **Callbacks by department**
        (`#ov-cbdept-fold`, G2) is admin-only FOREVER and is NOT part of this
-       release. The per-dept manager path underneath was kept intact the whole
+       release -- and since GCA-5 the server enforces that: `getOutboundReport`
+       strips `callbackByDept` for every non-admin, so an all-departments
+       manager's company view does not carry it. The per-dept manager path underneath was kept intact the whole
        time, so nothing else changes. `cross-file-pins.test.js` ("6c: the
        outbound vetting gate and the My Department outbound surfaces are
        released TOGETHER") FAILS on any half alone — a visible surface over a

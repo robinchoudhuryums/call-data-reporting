@@ -298,3 +298,39 @@ test('RUN-7: a late sender releases only its own claim, never the one that took 
   assert.equal((src.match(/queueReportReleaseSend_\(props, claim\.token\)/g) || []).length, 2, 'both senders pass their token');
   assert.doesNotMatch(src, /queueReportReleaseSend_\(props\);/);
 });
+
+// ── RUN-9 (Batch 5 follow-on) ───────────────────────────────────────────────
+test('RUN-9: a callback made AFTER the assessed day does not count as handled when the check is run later', function () {
+  // Mon 10-12 a caller cannot get through; they try again Tue 10-13 (which
+  // keeps their episode open a day longer), and Ann calls them back Wed 10-14.
+  // Asked "by the end of Tue 10-13", nobody had.
+  const late = {
+    cbCounts: [],
+    cbAb: [[1, '2026-10-12', '09:00:00', 'a_q_csr', 'c1', true], [1, '2026-10-13', '09:00:00', 'a_q_csr', 'c1b', true]],
+    cbOb: [[1, '2026-10-14', '10:00:00', 'o1', 'Ann', true]],
+    cbAns: [],
+    cbThrough: '2026-10-19',
+  };
+  installCb('2026-10-19');
+  cb.ctx.obTodayIso_ = function () { return '2026-10-20'; };   // a re-run a week later
+  cb.ctx.getDashboardNeonConn_ = function () {
+    return { createStatement: function () {
+      return { executeQuery: function () {
+        let read = false;
+        return { next: function () { if (read) return false; read = true; return true; },
+                 getString: function () { return JSON.stringify(late); }, close: function () {} };
+      }, close: function () {} };
+    }, close: function () {} };
+  };
+  const out = J(cb.call('alertCallbackMisses_', 'CSR', '2026-10-12', '2026-10-13'));
+  assert.equal(out.total, 1);
+  assert.deepEqual(out.missed.map(function (m) { return [m.firstHms, m.attempts]; }), [['09:00:00', 2]],
+    'two attempts and no callback by the end of the 13th (was: counted as handled by the callback on the 14th)');
+  // Without the cutoff the engine would have called it handled.
+  const scope = { from: '2026-10-12', to: '2026-10-12', dept: 'CSR', companyView: false, scopeDepts: ['CSR'] };
+  const all = cb.call('obCallbackListEpisodes_', cb.ctx.getDashboardNeonConn_(), scope, 0, 1);
+  assert.deepEqual(J(all.eps).map(function (e) { return e.outcome; }), ['own']);
+  const cut = cb.call('obCallbackListEpisodes_', cb.ctx.getDashboardNeonConn_(), scope, 0, 1, '2026-10-13');
+  assert.deepEqual(J(cut.eps).map(function (e) { return e.outcome; }), ['none']);
+  assert.equal(cut.ev.ob.length, 0, 'the events themselves are cut, so the lists built from them agree');
+});

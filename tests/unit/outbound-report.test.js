@@ -3352,3 +3352,120 @@ test('OXT-1: the ring probes skip appended transfer events', function () {
   assert.equal(scores.classEvents.unknown, 0);
   assert.equal(scores.rowsWithClass.other, 1);
 });
+
+// ── GCA-1 / GCA-2 / GCA-5 (broad-scan 2026-11-09, Batch 6) ─────────────────
+
+test('GCA-1: the company payload carries every abandon (abandonedTotalAll) beside the CBX-1 figure', function () {
+  const origEx = h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_;
+  h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = ['CSR'];
+  try {
+    const counts = [{ w: 'cur', kind: 'queue', anon: false, q: 'a_q_csr', n: 23 },
+                    { w: 'cur', kind: 'queue', anon: false, q: 'a_q_sales', n: 7 },
+                    { w: 'pri', kind: 'queue', anon: false, q: 'a_q_sales', n: 99 }];
+    const cbDept = { ownersOf: { a_q_csr: ['CSR'], a_q_sales: ['Sales'] }, parentOf: {}, childrenOf: {} };
+    const co = h.call('outboundShapeReport_', { from: '2026-08-01', to: '2026-08-19', dept: '', companyView: true },
+      { agents: [], cbCounts: counts, cbAb: [], cbOb: [], cbAns: [] }, ROSTER_, cbDept, null);
+    assert.equal(co.callback.abandonedTotal, 7, 'CBX-1: CSR\'s callers are out of the company figure');
+    assert.equal(co.callback.abandonedTotalAll, 30, 'the Inbound report\'s population: every abandon in the window');
+    const dept = h.call('outboundShapeReport_', { from: '2026-08-01', to: '2026-08-19', dept: 'CSR', companyView: false },
+      { agents: [], cbCounts: [counts[0]], cbAb: [], cbOb: [], cbAns: [] }, ROSTER_, cbDept, null);
+    assert.equal(dept.callback.abandonedTotal, 23);
+    assert.equal(dept.callback.abandonedTotalAll, undefined, 'a department view has no exclusion to undo');
+  } finally { h.ctx.OB_CB_COMPANY_EXCLUDED_DEPTS_ = origEx; }
+});
+
+test('GCA-1: the vetting check compares like for like -- the whole population, exception days included on both sides', function () {
+  const conn = makeVetConn_(VET_PAIRS_);
+  installVetStubs_(7, 30, conn);
+  // The company payload after CBX-1: 7 without CSR, 30 in all.
+  h.ctx.computeOutboundReport_ = function () {
+    return { meta: { available: true }, callback: { abandonedTotal: 7, abandonedTotalAll: 30 } };
+  };
+  // Read the per-execution switch directly: a nested h.call would reset it
+  // (the harness restores every *MEMO* global per call).
+  const seen = [];
+  h.ctx.computeInboundReport_ = function () {
+    seen.push(['inbound', h.ctx.EXCEPTION_INCLUDE_MEMO_]);
+    return { meta: { available: true }, kpis: { abandoned: 30 } };
+  };
+  h.ctx.getDashboardNeonConn_ = function () { seen.push(['after', h.ctx.EXCEPTION_INCLUDE_MEMO_]); return conn; };
+  try {
+    const out = JSON.parse(JSON.stringify(h.call('runOutboundVettingCheck')));
+    assert.match(out.result, /^ok parity 30 abandons/, 'was: MISMATCH parity: outbound=7 vs inbound=30 ... do NOT un-gate');
+    assert.deepEqual(seen, [['inbound', true], ['after', false]],
+      'the Inbound side is computed with exception days included (callbacks still count them), then the switch is restored');
+    // A real disagreement is still a MISMATCH.
+    h.ctx.computeInboundReport_ = function () { return { meta: { available: true }, kpis: { abandoned: 29 } }; };
+    assert.match(h.call('runOutboundVettingCheck').result, /^MISMATCH parity: outbound=30 vs inbound=29/);
+    // An older payload shape (no abandonedTotalAll) falls back to abandonedTotal.
+    installVetStubs_(25, 25, makeVetConn_(VET_PAIRS_));
+    assert.match(h.call('runOutboundVettingCheck').result, /^ok parity 25 abandons/);
+  } finally { restoreVetStubs_(); }
+});
+
+test('GCA-2: an outbound payload behind the DQE anchor is cached briefly, not for 6 h', function () {
+  const realLatest = h.ctx.getLatestDataDate;
+  try {
+    h.ctx.getLatestDataDate = function () { return '2026-08-19'; };
+    assert.equal(h.call('obCacheTtlFor_', '2026-08-18'), 600, 'the capture has not reached the anchored date');
+    assert.equal(h.call('obCacheTtlFor_', '2026-08-19'), 6 * 3600);
+    assert.equal(h.call('obCacheTtlFor_', '2026-08-20'), 6 * 3600);
+    assert.equal(h.call('obCacheTtlFor_', null), 6 * 3600, 'an unknown through-date keeps the full tier, as before');
+    h.ctx.getLatestDataDate = function () { throw new Error('not signed in'); };
+    assert.equal(h.call('obCacheTtlFor_', '2026-08-18'), 6 * 3600, 'an unreadable anchor never shortens the cache');
+
+    // End to end: the report's own put.
+    const run = function (through) {
+      h.state.cache.clear();
+      Object.keys(h.state.cacheTtls).forEach(function (k) { delete h.state.cacheTtls[k]; });
+      h.ctx.getLatestDataDate = function () { return '2026-08-19'; };
+      h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+      h.ctx.getDashboardNeonConn_ = function () { return makeConn_(JSON.stringify(Object.assign({}, BLOB_, { cbThrough: through }))); };
+      h.ctx.buildDeptsByAgent_ = function () { return ROSTER_; };
+      h.call('getOutboundReport', { from: '2026-08-01', to: '2026-08-19', department: 'CSR' });
+      const keys = Object.keys(h.state.cacheTtls).filter(function (k) { return /^outboundReport:v\d+:CSR:/.test(k); });
+      assert.equal(keys.length, 1);
+      return h.state.cacheTtls[keys[0]];
+    };
+    assert.equal(run('2026-08-18'), 600);
+    assert.equal(run('2026-08-19'), 6 * 3600);
+  } finally {
+    h.ctx.getLatestDataDate = realLatest;
+    h.state.testUser = null;
+    h.state.cache.clear();
+  }
+  // The other two outbound keys use the same rule.
+  assert.match(OB_SRC_EARLY_, /cache\.put\(key, JSON\.stringify\(out\), obCacheTtlFor_\(out\.meta\.dataThrough\)\);/);
+  assert.match(OB_SRC_EARLY_, /cache\.put\(key, JSON\.stringify\(out\), obCacheTtlFor_\(out\.meta\.outboundThrough\)\);/);
+  assert.match(OB_SRC_EARLY_, /'through', \(SELECT MAX\(call_date\)::text FROM outbound_calls\)/);
+});
+
+test('GCA-5: Callbacks by department is stripped on serve for everyone but an admin, fresh or cached', function () {
+  const origGate = h.ctx.OUTBOUND_VETTING_GATE_;
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;   // the 6c release: an all-departments manager reaches the company view
+  h.state.cache.clear();
+  h.ctx.getDashboardNeonConn_ = function () { return makeConn_(JSON.stringify(BLOB_)); };
+  h.ctx.buildDeptsByAgent_ = function () { return ROSTER_; };
+  const req = { from: '2026-08-01', to: '2026-08-19', department: 'ALL' };
+  const admin = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  const allMgr = { email: 'all@x.com', role: 'manager', allDepts: true, departments: ['CSR', 'Sales'] };
+  try {
+    h.state.testUser = allMgr;
+    const fresh = h.call('getOutboundReport', req);
+    assert.notEqual(fresh.meta.cacheHit, true);
+    assert.equal(fresh.callbackByDept, null, 'a fresh compute: not sent to the manager');
+    assert.ok(fresh.callback, 'the rest of the company view is theirs to see');
+    h.state.testUser = admin;
+    const a = h.call('getOutboundReport', req);
+    assert.equal(a.meta.cacheHit, true, 'the shared entry the manager\'s request wrote');
+    assert.ok(a.callbackByDept && typeof a.callbackByDept === 'object', 'and it still holds the table for an admin');
+    h.state.testUser = allMgr;
+    const cached = h.call('getOutboundReport', req);
+    assert.equal(cached.meta.cacheHit, true);
+    assert.equal(cached.callbackByDept, null, 'a cache hit: stripped too');
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = origGate;
+    h.state.testUser = null;
+    h.state.cache.clear();
+  }
+});

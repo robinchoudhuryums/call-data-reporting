@@ -1361,17 +1361,30 @@ function ovReadDirectByDept_(allDepts, w, latestDate, conn) {
  * compute, which the cached blob then serves). Each read fails on its own: a
  * broken direct read never costs the outbound line, or the reverse.
  */
+// GCA-3: set when Neon is CONFIGURED and the tile-line read still came back
+// short (unreachable, or either read failed). The blob is then correct to
+// serve but missing its outbound / direct lines, and ovCacheOverview_ holds it
+// for DEGRADED_CACHE_TTL_SECONDS instead of pinning it for 6 h after Neon is
+// back. An install with no Neon never sets it (there is no line to wait for).
+var OV_TILE_LINES_FAILED_ = false;
+function ovTileLinesFailed_() { return OV_TILE_LINES_FAILED_ === true; }
 function ovReadTileLines_(allDepts, deptsForAgent, w, latestDate) {
   const none = { outbound: null, direct: null };
+  OV_TILE_LINES_FAILED_ = false;
   if (typeof getDashboardNeonConn_ !== 'function') return none;
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { configured = false; }
   let conn = null;
   try {
     conn = getDashboardNeonConn_();
-    if (!conn) return none;
-    return { outbound: ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, conn),
-             direct: ovReadDirectByDept_(allDepts, w, latestDate, conn) };
+    if (!conn) { OV_TILE_LINES_FAILED_ = configured; return none; }
+    const lines = { outbound: ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, conn),
+                    direct: ovReadDirectByDept_(allDepts, w, latestDate, conn) };
+    if (lines.outbound === null || lines.direct === null) OV_TILE_LINES_FAILED_ = configured;
+    return lines;
   } catch (e) {
     Logger.log('Overview tile-line read failed: ' + (e && e.message ? e.message : e));
+    OV_TILE_LINES_FAILED_ = configured;
     return none;
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
@@ -1535,7 +1548,13 @@ function ovCacheOverview_(cache, ovCacheKey, result, dqeRows, depts) {
         json.length, Math.round(json.length / OVERVIEW_CACHE_MAX_BYTES * 100),
         OVERVIEW_CACHE_MAX_BYTES, depts.length);
     }
-    try { cache.put(ovCacheKey, json, REPORT_CACHE_TTL_SECONDS); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
+    // GCA-3: a blob missing its Neon tile lines is held briefly, never pinned.
+    const ovTtl = ovTileLinesFailed_() ? DEGRADED_CACHE_TTL_SECONDS : REPORT_CACHE_TTL_SECONDS;
+    if (ovTtl !== REPORT_CACHE_TTL_SECONDS) {
+      Logger.log('getCompanyOverview: the outbound / direct tile-line read failed -- cached for ' + ovTtl
+        + ' s, not the 6 h tier, so the lines return soon after Neon does.');
+    }
+    try { cache.put(ovCacheKey, json, ovTtl); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
     catch (e) {
       Logger.log('CompanyOverview cache put FAILED at %s bytes (%s depts): %s '
         + '-- the Overview is now UNCACHED: every request pays the full compute. '
@@ -1733,6 +1752,10 @@ function getOverviewChartTrend(req) {
   if (json.length <= 92000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
+  } else {
+    // GCA-8: said, not silent -- past this size every YTD request recomputes.
+    Logger.log('overviewChartTrend: payload is ' + json.length + ' bytes, over the 92000-byte cache guard -- '
+      + 'NOT cached; every YTD chart request recomputes until it shrinks.');
   }
   logReportUsage_('overviewChartYtd', '(all)', realUser, false);   // B-8
   return ovStripChartTrend_(data, user);

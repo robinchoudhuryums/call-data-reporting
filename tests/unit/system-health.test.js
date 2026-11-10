@@ -1835,3 +1835,30 @@ test('G4: deploy.sh stamps every project\'s tree hash, and the hash skips the st
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   assert.equal(spawnSync('bash', ['-c', fn + '\nproject_tree_hash_ /no/such/dir'], { encoding: 'utf8' }).stdout, '');
 });
+
+// RUN-10 (broad-scan 2026-11-09, Batch 5 follow-on): under CONFIG_SOURCE=neon
+// the config sheets are no longer written, so a Neon outage quietly served
+// the sheet's older mappings.
+test('RUN-10: the config-source row warns when this request read Dept Config from the sheet under CONFIG_SOURCE=neon', function () {
+  installHealth();
+  h.ctx.getConfigSource_ = function () { return 'neon'; };
+  h.ctx.readDeptConfigRows_ = function () { return []; };
+  h.ctx.deptConfigFellBack_ = function () { return true; };
+  let row = rowByKey(h.call('getSystemHealth'), 'config-source');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /reading the SHEET \(Neon unreachable\)/);
+  assert.match(row.hint, /may be out of date until Neon is back/);
+  // Neon answered: the plain row.
+  h.ctx.deptConfigFellBack_ = function () { return false; };
+  row = rowByKey(h.call('getSystemHealth'), 'config-source');
+  assert.equal(row.status, 'muted');
+  assert.equal(row.value, 'neon');
+  // CONFIG_SOURCE=sheet never asks.
+  installHealth();
+  h.ctx.readDeptConfigRows_ = function () { throw new Error('must not be read for this row'); };
+  h.ctx.deptConfigFellBack_ = function () { return true; };
+  row = rowByKey(h.call('getSystemHealth'), 'config-source');
+  assert.equal(row.status, 'muted');
+  assert.equal(row.value, 'sheet');
+  delete h.ctx.readDeptConfigRows_; delete h.ctx.deptConfigFellBack_;
+});

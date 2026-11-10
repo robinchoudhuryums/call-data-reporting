@@ -547,6 +547,13 @@ const CACHE_TTL_SECONDS = 5 * 60;
 // views that aren't explicitly busted on write. Orphan Fix already busts
 // the relevant caches; a Dept Config save busts COMPANY_OVERVIEW_CACHE_KEY.
 const REPORT_CACHE_TTL_SECONDS = 6 * 3600;
+// GCA (broad-scan 2026-11-09, Batch 6): the TTL for a payload that is correct
+// to SERVE but known to be short of what the next read would give -- a Neon
+// side-read that failed, or per-call tables that stop before the date the key
+// is anchored on. Not caching it at all would make every request recompute
+// through an outage (and re-read Neon, the R24 transfer cap); pinning it for
+// the 6 h tier hides the recovery. Ten minutes bounds both.
+const DEGRADED_CACHE_TTL_SECONDS = 600;
 
 // Shorter TTL for identity/access lookups so new managers don't have to
 // wait 5 minutes after being added to the Access Control sheet.

@@ -668,8 +668,21 @@ function healthNeonConfigRows_(add, ctx) {
   } catch (e) { add('neon', 'qcd-source', 'QCD read source', 'warn', 'probe failed', String(e && e.message || e)); }
   try {
     var cfgSrc = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
-    add('neon', 'config-source', 'Config source (CONFIG_SOURCE)', 'muted', cfgSrc,
-      cfgSrc === 'neon' ? 'Dept/Alert/Digest Config read+write Neon tables.' : 'Config sheets are authoritative (default).');
+    // RUN-10: under neon, read the Dept Config now and say so when THIS
+    // request had to fall back to the sheet -- which is no longer written
+    // under that setting, so its mappings can be out of date.
+    var cfgFellBack = false;
+    if (cfgSrc === 'neon' && typeof readDeptConfigRows_ === 'function' && typeof deptConfigFellBack_ === 'function') {
+      try { readDeptConfigRows_(); cfgFellBack = deptConfigFellBack_(); } catch (cfe) { cfgFellBack = false; }
+    }
+    if (cfgFellBack) {
+      add('neon', 'config-source', 'Config source (CONFIG_SOURCE)', 'warn', 'neon -- reading the SHEET (Neon unreachable)',
+        'This request read Dept Config from the sheet because the Neon read failed. Under CONFIG_SOURCE=neon the sheets '
+        + 'are not written, so queue mappings, alert rules and digest subscribers may be out of date until Neon is back.');
+    } else {
+      add('neon', 'config-source', 'Config source (CONFIG_SOURCE)', 'muted', cfgSrc,
+        cfgSrc === 'neon' ? 'Dept/Alert/Digest Config read+write Neon tables.' : 'Config sheets are authoritative (default).');
+    }
   } catch (e) { add('neon', 'config-source', 'Config source', 'warn', 'probe failed', String(e && e.message || e)); }
   try {
     var rh = computeNeonReadHealth_();

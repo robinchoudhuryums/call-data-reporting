@@ -277,3 +277,60 @@ test('DO-1: the Neon query sums the colleague (int) outbound columns only -- out
   assert.match(src, /"'obTotal', COALESCE\(sum\(ob_int_total\),0\), " \+/);
   assert.match(src, /DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v7'/);   // DID-2 bumped it
 });
+
+// GCA-7 (broad-scan 2026-11-09, Batch 6): a Neon payload whose direct-line /
+// main-line split could not be read was cached for 6 h, and DIAL_IN_LABELS --
+// which decides what counts as a main line -- was not in the key.
+test('GCA-7: a failed via read is cached briefly; a healthy one for the full tier; the labels are in the key', function () {
+  const pw = PW;
+  const ttlOf = function () {
+    const keys = Object.keys(h.state.cacheTtls).filter(function (k) { return /^directCall:v\d+:/.test(k); });
+    assert.equal(keys.length, 1, 'one report key: ' + keys.join(' | '));
+    return { key: keys[0], ttl: h.state.cacheTtls[keys[0]] };
+  };
+  const reset = function () { Object.keys(h.state.cacheTtls).forEach(function (k) { delete h.state.cacheTtls[k]; }); };
+  // The via query answers with a non-array (this suite's default conn returns
+  // the report blob for every query) -> the split is unreadable.
+  reset();
+  install({ conn: neonConnReturning(neonShapeFor(pw)) });
+  const failed = h.call('getDirectCallReport', REQ);
+  assert.equal(failed.meta.viaAvailable, false);
+  assert.equal(ttlOf().ttl, 600, 'held briefly, so the split returns soon after the read does');
+  // The via query answers: the full tier.
+  const okConn = neonConnReturning(neonShapeFor(pw));
+  const baseCreate = okConn.createStatement;
+  okConn.createStatement = function () {
+    const st = baseCreate();
+    const run = st.executeQuery;
+    st.executeQuery = function (sql) {
+      if (/FROM direct_calls/.test(String(sql))) {
+        let done = false;
+        return { next: function () { if (done) return false; done = true; return true; }, getString: function () { return '[]'; }, close: function () {} };
+      }
+      return run(sql);
+    };
+    return st;
+  };
+  reset();
+  install({ conn: okConn });
+  const ok = h.call('getDirectCallReport', REQ);
+  assert.equal(ok.meta.viaAvailable, true);
+  const plain = ttlOf();
+  assert.equal(plain.ttl, 6 * 3600);
+  assert.doesNotMatch(plain.key, /:dl/, 'no DIAL_IN_LABELS: the key is what it was');
+  // An edit to the labels is a different key.
+  reset();
+  install({ conn: okConn });
+  h.state.props.DIAL_IN_LABELS = '8005551000 = Main line';
+  h.call('getDirectCallReport', REQ);
+  const labelled = ttlOf().key;
+  reset();
+  install({ conn: okConn });
+  h.state.props.DIAL_IN_LABELS = '8005551000 = Main line, 8005552000 = Billing';
+  h.call('getDirectCallReport', REQ);
+  const edited = ttlOf().key;
+  delete h.state.props.DIAL_IN_LABELS;
+  assert.match(labelled, /:dl[0-9a-z]+$/i);
+  assert.notEqual(labelled, edited);
+  assert.notEqual(labelled, plain.key);
+});

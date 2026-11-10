@@ -244,7 +244,8 @@ function getDirectCallReport(req) {
 
   const cache = CacheService.getScriptCache();
   const cacheKey = DIRECT_CALL_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_();
+                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_()
+                 + dcDialInLabelsTag_();   // GCA-7
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -256,6 +257,7 @@ function getDirectCallReport(req) {
   }
 
   const t0 = Date.now();
+  DIRECT_VIA_READ_FAILED_ = false;
   const data = computeDirectCallReport_(scope);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
@@ -266,11 +268,34 @@ function getDirectCallReport(req) {
   // the import filling it in must show at once, not after the TTL.
   if (data.meta.available && !data.meta.fallbackSource && !data.meta.clampedTo
       && !data.meta.missingCount && !data.meta.priorMissingCount) {
-    try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
+    // GCA-7: a payload whose direct-line / main-line split could not be read
+    // is held briefly -- pinned for 6 h it kept showing no split after the
+    // read came back.
+    const dcTtl = DIRECT_VIA_READ_FAILED_ ? DEGRADED_CACHE_TTL_SECONDS : REPORT_CACHE_TTL_SECONDS;
+    try { cache.put(cacheKey, JSON.stringify(data), dcTtl); }
     catch (e) { Logger.log('DirectCallReport cache put failed: %s', e); }
   }
   logReportUsage_('directCall', scope.dept || '(all)', scope.user, false);
   return data;
+}
+
+/**
+ * GCA-7: the DIAL_IN_LABELS dimension of the Direct key. The split counts a
+ * call as "a main line" by those labels, so an edit changes the answer for
+ * the same window -- and the freshness tag does not move. '' while the
+ * property is unset, so every key is what it was.
+ */
+// GCA-7: set by computeDirectCallReport_ when the Neon report read worked but
+// its via-split read did not. A per-execution flag, not a payload field: the
+// payload already says `meta.viaAvailable: false`, which the sheet fallback
+// says too, and the two paths must keep shaping the same payload.
+var DIRECT_VIA_READ_FAILED_ = false;
+function dcDialInLabelsTag_() {
+  try {
+    const raw = String(PropertiesService.getScriptProperties().getProperty('DIAL_IN_LABELS') || '').trim();
+    if (!raw) return '';
+    return ':dl' + ((typeof hashAgents_ === 'function') ? String(hashAgents_([raw])).slice(0, 10) : String(raw.length));
+  } catch (e) { return ''; }
 }
 
 /**
@@ -412,7 +437,9 @@ function computeDirectCallReport_(scope) {
     shaped.meta.to = effTo;
     // DID-2: its own best-effort read -- a failure (cdr-import not yet
     // deployed, so no `via` column) leaves the split null, never the report.
-    directCallApplyVia_(shaped, directCallViaRows_(conn, scope, from, effTo));
+    const viaRows = directCallViaRows_(conn, scope, from, effTo);
+    if (viaRows === null) DIRECT_VIA_READ_FAILED_ = true;   // GCA-7 (see the cache put)
+    directCallApplyVia_(shaped, viaRows);
     return dcApplyCoverageMeta_(shaped, cov);
   } catch (e) {
     Logger.log('computeDirectCallReport_ failed: ' + (e && e.message ? e.message : e));

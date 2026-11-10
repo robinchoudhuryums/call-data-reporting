@@ -673,12 +673,17 @@ the per-agent half rides `getDeptOutboundSummary`, and the legacy route
 `#/report/outbound` lands on the Callbacks fold. TEMPORARILY admin-only while
 vetted (the Inbound/Direct resolver model -- latent per-dept manager path,
 release = the gate + un-hiding the My Department surfaces, Operator State #63). Two CONTRACT rules, both test-enforced
-(`tests/unit/outbound-report.test.js`): (1) the raw abandon count
-(`callback.abandonedTotal`) is exactly the Inbound report's Abandoned
-population for the same scope --
+(`tests/unit/outbound-report.test.js`): (1) the raw abandon count is exactly
+the Inbound report's Abandoned population for the same scope --
 it reuses `inboundDeptPredicate_` + `inboundWindowClause_` + the
 is_internal exclusion verbatim (`outboundAbandonWhere_`), so the two
-reports can never disagree on what an abandon is; (2) agents attribute by
+reports can never disagree on what an abandon is. In a DEPARTMENT view that
+count is `callback.abandonedTotal`; in the COMPANY view `abandonedTotal`
+leaves out the CBX-1 excluded departments' callers, and the whole population
+is `callback.abandonedTotalAll` (GCA-1). Two things the equality does NOT
+cover, which `runOutboundVettingCheck` accounts for: the callback figures
+still count exception days (#81) while the Inbound report's totals leave
+them out, so the check computes the Inbound side with them included; (2) agents attribute by
 ROSTER dept (exact INV-04 match via `buildDeptsByAgent_`), NEVER the raw
 CDR org label in `outbound_calls.department` -- the SQL never reads that
 column. **Since CE-1 (owner 2026-10-09) the callback figures count contact
@@ -722,6 +727,15 @@ sees the other teams' episodes (so their own dials are consumed there, exactly
 as in the company view), and `obEpMineOnly_` keeps the dept's episodes
 afterwards. Narrowing the read instead makes a dept's figures disagree with
 its row in Callbacks by department (`manager-numbers.test.js`).
+**Callbacks by department is an admin surface, stripped SERVER-side (GCA-5)**:
+the company payload is one shared cache entry and an all-departments manager
+reaches the company view once the gate is released, so `getOutboundReport`
+nulls `callbackByDept` on serve for everyone but an admin
+(`obStripForViewer_`, fresh or cached) -- the client hiding it is not the gate.
+**The three outbound keys are anchored on the latest DQE date but read the
+per-call tables (GCA-2)**: a payload computed before the day's capture landed
+(its own through-date is before the anchor) is cached for
+`DEGRADED_CACHE_TTL_SECONDS` (10 min), not 6 h (`obCacheTtlFor_`).
 **A parent dept's inbound/outbound/missed scope rolls in its one-level
 children's raw inbound aliases AND final-dept labels** (PCR-1/PCR-2,
 `inboundQueuesForDept_` / `inboundDeptFinalLabels_`, the same
