@@ -737,3 +737,22 @@ test('OFB-4: a kept tab is named in the Pipeline Health row with what it owes', 
   assert.match(rows[0].notes, /KEPT 1 still owed something built from the tab \(OFB-4\): Call_Legs_2026-06-02 \(DQE build failed\)/);
   assert.match(rows[0].notes, /Make a date whole/);
 });
+
+test('OFB-4: every DQE build log site starts its notes with the date the prune searches for', function () {
+  // retentionDqeOutcome_ finds a date's DQE outcome by step name + a notes
+  // prefix of dateObj.toDateString(). That is a contract with the writers in
+  // autoImport.js: a log site that words its notes differently would read as
+  // "no DQE build on record" and hold the tab for good.
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const re = /step:\s*'(?:processIntegratedHistory|bulkBackfill):DQE',[\s\S]{0,400}?notes:\s*([^\n]+)/g;
+  let m, sites = 0;
+  while ((m = re.exec(src)) !== null) {
+    sites++;
+    assert.match(m[1], /^dateObj\.toDateString\(\)/, 'a DQE log site whose notes do not start with the date: ' + m[1]);
+  }
+  assert.ok(sites >= 5, 'expected the five DQE log sites, found ' + sites);
+  const guard = src.slice(src.indexOf('function bulkDateFailureRow_'));
+  assert.match(guard.slice(0, 1200), /notes:\s*\(dateObj && dateObj\.toDateString \? dateObj\.toDateString\(\) : String\(dateObj\)\)/,
+    'the -guard row (bulkDateFailureRow_) too');
+});
