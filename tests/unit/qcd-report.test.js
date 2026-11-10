@@ -963,3 +963,33 @@ test('RUN-3: the one-off grid read is not part of the next department\'s project
   assert.notEqual(data.meta.partial, true, 'the first department cost 180 s, 150 of it the read (was: stopped after one)');
   assert.equal(data.depts.length, 3);
 });
+
+test('RUN-3: a Neon fetch that FAILS on every read stays in the projection (nothing was memoized)', function () {
+  h.ctx.computeQcdAllDepartments_ = REAL_ALLDEPT_;
+  install(rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Bob, 202'], Gamma: ['Gus, 203'] }),
+          [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta'), dcRow('Gamma', 'A_Q_Gamma')],
+          [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1),
+           qcdRow('2026-06-10', 'A_Q_Beta', 40, 35, 5, 0),
+           qcdRow('2026-06-10', 'A_Q_Gamma', 30, 25, 5, 0)]);
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = '240000';
+  h.state.props.QCD_READ_SOURCE = 'neon';
+  const realNow = Date.now;
+  const realNeon = h.ctx.neonFetchQcdGrid_;
+  let clock = realNow.call(Date);
+  let fetches = 0;
+  Date.now = function () { return clock; };
+  // Every fetch times out after 60 s and returns nothing; the sheet answers.
+  h.ctx.neonFetchQcdGrid_ = function () { fetches++; clock += 60000; return null; };
+  let data;
+  try {
+    data = h.call('computeQcdAllDepartments_', '2026-06-10', '2026-06-10');
+  } finally {
+    Date.now = realNow;
+    h.ctx.neonFetchQcdGrid_ = realNeon;
+    delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+    delete h.state.props.QCD_READ_SOURCE;
+  }
+  assert.ok(fetches >= 1);
+  assert.equal(data.meta.partial, true, 'each department pays the failed fetches again, so the budget still stops the run');
+  assert.ok(data.depts.length < 3);
+});

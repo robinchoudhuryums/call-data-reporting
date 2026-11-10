@@ -822,10 +822,11 @@ function readQcdGrid_(readFrom, readTo, opts) {
   return qcdGridWithoutExceptions_(raw, readFrom, readTo);
 }
 
-// RUN-3: milliseconds this execution has spent in the grid READS themselves
-// (a memo hit adds ~0). The all-department budget subtracts it from a
-// department's cost, because the reads are paid once and the projection is
-// about what the NEXT department will cost.
+// RUN-3: milliseconds this execution has spent in grid reads that were then
+// MEMOIZED (a memo hit adds ~0). The all-department budget subtracts it from a
+// department's cost, because those reads are paid once and the projection is
+// about what the NEXT department will cost. A Neon fetch that FAILED is not
+// counted: nothing was memoized, so the next department may pay it again.
 var QCD_GRID_READ_MS_ = 0;
 function readQcdGridRaw_(readFrom, readTo) {
   if (getQcdReadSource_() === 'neon') {
@@ -834,14 +835,14 @@ function readQcdGridRaw_(readFrom, readTo) {
     if (QCD_NEON_GRID_MEMO_[key]) return QCD_NEON_GRID_MEMO_[key];
     var tNeon = Date.now();
     var grid = neonFetchQcdGrid_(readFrom, readTo);
-    QCD_GRID_READ_MS_ += Date.now() - tNeon;
-    if (grid) { QCD_NEON_GRID_MEMO_[key] = grid; return grid; }
+    if (grid) { QCD_GRID_READ_MS_ += Date.now() - tNeon; QCD_NEON_GRID_MEMO_[key] = grid; return grid; }
     // Unreachable / error -> fall back to the sheet (may itself be missing).
     QCD_NEON_FELL_BACK_ = true;   // DATA-4 (below)
   }
+  var sheetCold = !QCD_SHEET_DATA_MEMO_;
   var tSheet = Date.now();
   var data = readQcdSheetData_();
-  QCD_GRID_READ_MS_ += Date.now() - tSheet;
+  if (sheetCold) QCD_GRID_READ_MS_ += Date.now() - tSheet;
   return data;
 }
 
