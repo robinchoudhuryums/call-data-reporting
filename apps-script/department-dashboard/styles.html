@@ -2378,6 +2378,14 @@
     justify-content: flex-end;
     margin-bottom: 8px;
   }
+  /* F74: the half-hour picker is the keyboard path to the bucket drill. It
+     is clipped until it takes keyboard focus (the skip-link pattern), so the
+     toolbar is unchanged for a mouse user, who has the bars. */
+  .ms-bucket-pick:not(:focus-visible) {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .ms-bucket-pick { margin-right: auto; font: inherit; font-size: .85em; }
   .chart-section {
     background: var(--paper-card);
     border: 1px solid var(--line);

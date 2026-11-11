@@ -66,7 +66,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   admin brief re-runs with the bottom Insights region collapsed, that Insights
   Copy image / Print include the brief's sections, and that a side panel's ⓘ
   shows one circled i on hover.
-- `drive-f13.js` — the S39 keyboard walk: every non-button click target is
+- `drive-f13.js` — (KBF, Batch 9: the half-hour picker opens the missed drill by arrow key and takes focus back on Close; a date chip is pressed exactly when selected; the Insights popover takes focus and returns it; no hover-only label on My Department) the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.
 - `drive-subqueue.js` — the collapsible sub-queue groups, the S35
@@ -183,7 +183,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   summary that leads with the unreturned callers and its one-base bar, the
   most-not-called-back default order, and a row's own unreturned-caller list;
   since IC-4 its "How this is counted" ⓘ (no fold).
-- `drive-admin.js` — (CCX-1: text typed on two escalation cards survives a
+- `drive-admin.js` — (KBF, Batch 9: every modal's Escape returns focus to a VISIBLE control -- the opener or its menu's trigger; Help holds 40 Tabs with its topic folds closed; Help topics and theme chips are pressed exactly when selected; the Inbound report's 20 header labels take focus and open their tooltip)
+  (CCX-1: text typed on two escalation cards survives a
   "Save comment only" reload, the saved comment comes back empty)
   (DCA-6: a new hire on a former employee's extension, named only by the
   Direct build's Pipeline Health note, is on the Outlier Fix list with whose
@@ -239,7 +240,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   invoke their own handler): comparing two reads for identity does *not* catch
   a shared runner, because a fresh Proxy is minted either way. A manager
   gets no overlay even with the localStorage flag hand-set.
-- `build-agent.js` + `drive-agent.js` — the **agent app** (the fourth role's
+- `build-agent.js` + `drive-agent.js` — (KBF-5: the window chip in force is the one pressed chip) the **agent app** (the fourth role's
   separate page): boot, the hidden rank line, rendered teammate-name
   PRIVACY, the History tab, no errors / unmocked RPCs / self-beacons, the
   360 px overflow check on both tabs, and (#81) the "Not counted" exception-day

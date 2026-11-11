@@ -432,7 +432,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -2005,7 +2005,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -2757,7 +2757,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3162,7 +3162,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -3576,7 +3576,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3737,7 +3737,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3861,7 +3861,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);

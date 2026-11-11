@@ -73,22 +73,68 @@
       if (ids.onGridChange) ids.onGridChange();   // R11-M: smooth resize during the column transition
       initClipboardOnce();
       wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      syncPick();
     }
     function hide() {
       active = -1;
       var wrap = $(ids.wrap);
       if (!wrap) return;
+      // F74: closing from INSIDE the panel (its Close button) must not drop
+      // focus to <body> -- it goes back to the half-hour picker.
+      var held = wrap.contains(document.activeElement);
       wrap.style.display = 'none';
       var bodyEl = $(ids.body);
       if (bodyEl) bodyEl.innerHTML = '';
       if (ids.row) { var row = $(ids.row); if (row) row.classList.add('no-detail'); }
       if (ids.onGridChange) ids.onGridChange();   // R11-M
+      syncPick();
+      var pk = ids.pick ? $(ids.pick) : null;
+      if (held && pk && focusShown_(pk)) { try { pk.focus(); } catch (e) { /* ignore */ } }
     }
     function toggle(idx) { if (idx === active) hide(); else show(idx); }
+    // F74 (broad-scan 2026-11-10): the keyboard path to this drill. The bars
+    // are a canvas (mouse only) and the agent cards' ring times are out of
+    // the tab order on purpose (UD-4), so nothing reachable by Tab opened a
+    // half-hour. ONE <select> does: a single tab stop, natively operable,
+    // listing exactly the half-hours that have rings, with the count this
+    // panel will show. It is hidden until focused (styles.html), so the
+    // toolbar looks the same to a mouse user.
+    function ringCounts(data) {
+      var n = {};
+      var add = function (m) { if (m && m.bucket >= 0) n[m.bucket] = (n[m.bucket] || 0) + 1; };
+      ((data && data.agents) || []).forEach(function (a) { (a.missedTimes || []).forEach(add); });
+      ((data && data.queueOnly) || []).forEach(function (q) { (q.entries || []).forEach(add); });
+      return n;
+    }
+    function syncPick() {
+      var pk = ids.pick ? $(ids.pick) : null;
+      if (pk) pk.value = active >= 0 ? String(active) : '';
+    }
+    function fillPick() {
+      var pk = ids.pick ? $(ids.pick) : null;
+      if (!pk) return;
+      var data = getData();
+      var labels = (data && data.chart && data.chart.labels) || [];
+      var n = ringCounts(data);
+      var opts = '';
+      for (var i = 0; i < labels.length; i++) {
+        if (!n[i]) continue;
+        opts += '<option value="' + i + '">' + escapeHtml(labels[i]) + ' · ' + n[i] + ' missed</option>';
+      }
+      pk.innerHTML = '<option value="">Half-hour…</option>' + opts;
+      pk.hidden = !opts;            // no rings: nothing to open, and no tab stop
+      if (!pk.getAttribute('data-wired')) {
+        pk.setAttribute('data-wired', '1');
+        pk.addEventListener('change', function () {
+          if (pk.value === '') hide(); else show(Number(pk.value));
+        });
+      }
+      syncPick();
+    }
     // R17h (Option B): `show` is exposed for the agent-card ring cross-link,
     // which must always OPEN the bucket (toggle would close it when the
     // clicked ring's bucket happens to be the one already on screen).
-    return { toggle: toggle, hide: hide, show: show };
+    return { toggle: toggle, hide: hide, show: show, fillPick: fillPick };
   }
 
   // ── R17h (Option B): cross-links between the missed-call slices ──────────
@@ -102,9 +148,10 @@
   // many tab stops would bury the page's real controls -- but a bare span was
   // mouse-only, with no role for assistive tech to announce or activate. A
   // button announces, takes a virtual-cursor click and programmatic focus.
-  // Nothing is keyboard-unreachable -- both destinations (the agent cards,
-  // the chart's bucket bars) are themselves in the tab order on the same
-  // page; the links are a shortcut, not the route.
+  // Nothing is keyboard-unreachable -- the agent cards are in the tab order,
+  // and the half-hour drill has its own picker (F74: the chart's bars never
+  // were, whatever this comment used to say); the links are a shortcut, not
+  // the route.
   function missedAgentCardEl_(name) {
     var host = $('dept-missed-detail');
     if (!host || !name) return null;
@@ -147,7 +194,8 @@
   const deptMissedBucketDetail_ = makeMissedBucketDetail_(
     function () { return deptMissedLastData; },
     { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body',
-      row: 'dept-missed-chart-row', onGridChange: deptMissedResizeDuringTransition_ });
+      row: 'dept-missed-chart-row', onGridChange: deptMissedResizeDuringTransition_,
+      pick: 'dept-missed-bucket-pick' });
 
   function missedRadarCfg_(chart, onBucketClick) {
     return {
@@ -2280,6 +2328,7 @@
     deptMissedAgentScope_ = null;         // R11-C4: fresh data = dept-wide chart
     subqMissedScopeNote_(m.department || getRequestedDept());
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
+    deptMissedBucketDetail_.fillPick();   // F74: the half-hours this data can open
 
     // Show the section BEFORE the radar is created below: Chart.js measures
     // the canvas's container at construction time, and a chart built while an

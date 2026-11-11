@@ -1358,14 +1358,14 @@
     pop.style.display = '';
     // Reset search + filter state.
     const search = $('ir-edit-search');
-    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    if (search) search.value = '';
+    popoverFocusIn_(pop, search);   // F75: the search box when reachable, else the first control
     irFilterAgentList_(list, '');
   }
 
+  // F75: every close gives focus back to the opener, unless it has moved on.
   function irCloseEditPopover_() {
-    const pop = $('ir-edit-popover');
-    if (!pop) return;
-    pop.style.display = 'none';
+    popoverClose_($('ir-edit-popover'), $('ir-edit-selection-btn'));
   }
 
   function irUpdateEditApplyEnabled_() {

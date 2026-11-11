@@ -804,35 +804,95 @@
     if (rh) rh.remove();
   }
 
+  // -- Focus return (F71, broad-scan 2026-11-10) ---------------------------
+  // Is this element on screen and able to take focus? `getClientRects`, not
+  // `offsetParent`: a position:fixed control (the Help FAB) has no
+  // offsetParent while being perfectly focusable.
+  function focusShown_(el) {
+    return !!(el && el.isConnected && typeof el.focus === 'function'
+      && el.getClientRects && el.getClientRects().length > 0);
+  }
+  // Where focus goes when a layer closes. Eleven modals open from an item in
+  // a header MENU, and the menu closed when the item was picked -- so handing
+  // focus back to the item was a no-op that left it on <body>, and the next
+  // Tab started from the end of the page. In order: the opener itself, the
+  // trigger of the menu the opener lives in (the control the user actually
+  // pressed first), then the page title (a manager who arrived by a drill or
+  // a link has neither).
+  function returnFocusTo_(opener) {
+    var order = [opener];
+    var list = opener && opener.closest ? opener.closest('[role="menu"]') : null;
+    if (list && list.id) order.push(document.querySelector('[aria-controls="' + list.id + '"]'));
+    order.push(document.getElementById('page-title'));
+    for (var i = 0; i < order.length; i++) {
+      if (focusShown_(order[i])) { try { order[i].focus(); } catch (e) { /* ignore */ } return order[i]; }
+    }
+    return null;
+  }
+
+  // -- Popover focus (F75) ---------------------------------------------------
+  // A popover is a role=dialog that is not a modal: no trap, but it still
+  // takes focus when it opens and gives it back when it closes. `preferred`
+  // is used when it can actually be reached (the Insights search box sits in
+  // a fold that is usually closed); else the first control after the Close
+  // button, else Close itself.
+  function popoverFocusIn_(pop, preferred) {
+    setTimeout(function () {
+      if (!pop || getComputedStyle(pop).display === 'none') return;
+      var els = focusablesIn_(pop);
+      var target = (preferred && els.indexOf(preferred) !== -1) ? preferred : null;
+      if (!target) {
+        for (var i = 0; i < els.length && !target; i++) {
+          if (!els[i].classList.contains('ir-edit-popover-close')) target = els[i];
+        }
+      }
+      if (!target) target = els[0];
+      if (target) { try { target.focus(); } catch (e) { /* ignore */ } }
+    }, 0);
+  }
+  // Hide a popover and send focus back to its opener -- only when focus is
+  // still INSIDE it. A click outside has already moved focus (to the control
+  // clicked, or to <body> for plain page): taking it back would undo the
+  // user's click, and focusing the opener would scroll the page to it.
+  function popoverClose_(pop, opener) {
+    if (!pop || pop.style.display === 'none') return;
+    var ae = document.activeElement;
+    var held = !!ae && pop.contains(ae);
+    pop.style.display = 'none';
+    if (held) returnFocusTo_(opener);
+  }
+
   // -- Modal focus trap -----------------------------------------------------
+  // What the browser's Tab would actually stop on inside `root`.
+  // DCA-7: a <details> fold's <summary> is in the browser's tab order too.
+  // Left out, a modal that ENDS with a fold let Tab walk out of the dialog
+  // (the wrap only fires on the last element this list knows).
+  var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),details > summary:first-of-type,[tabindex]:not([tabindex="-1"])';
+  // R12-14: only VISIBLE elements count. The browser skips hidden nodes in
+  // tab order, so if the modal's LAST focusable node is display:none (a
+  // collapsed edit form -- Outlier Fix / Dept Config / Health), focus never
+  // lands on it, the boundary wrap below never fires, and Tab walks out of
+  // the dialog.
+  // DCA-7: and nothing INSIDE a closed fold counts. The browser hides a
+  // closed <details>' content with content-visibility, not display:none,
+  // so offsetParent is still set while Tab skips it -- the same "last
+  // element is unreachable" leak as R12-14. The fold's own summary stays.
+  function inClosedFold(el) {
+    var fold = el.closest('details:not([open])');
+    if (!fold) return false;
+    if (el.tagName === 'SUMMARY' && el.parentElement === fold) {
+      return !!(fold.parentElement && fold.parentElement.closest('details:not([open])'));
+    }
+    return true;
+  }
+  function focusablesIn_(root) {
+    return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE),
+      function (el) { return el.offsetParent !== null && !inClosedFold(el); });
+  }
   var activeFocusTrap_ = null;
   function trapFocus_(modal) {
     releaseFocus_();
-    // DCA-7: a <details> fold's <summary> is in the browser's tab order too.
-    // Left out, a modal that ENDS with a fold let Tab walk out of the dialog
-    // (the wrap only fires on the last element this list knows).
-    var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),details > summary:first-of-type,[tabindex]:not([tabindex="-1"])';
-    // R12-14: only VISIBLE elements count. The browser skips hidden nodes in
-    // tab order, so if the modal's LAST focusable node is display:none (a
-    // collapsed edit form -- Outlier Fix / Dept Config / Health), focus never
-    // lands on it, the boundary wrap below never fires, and Tab walks out of
-    // the dialog.
-    // DCA-7: and nothing INSIDE a closed fold counts. The browser hides a
-    // closed <details>' content with content-visibility, not display:none,
-    // so offsetParent is still set while Tab skips it -- the same "last
-    // element is unreachable" leak as R12-14. The fold's own summary stays.
-    function inClosedFold(el) {
-      var fold = el.closest('details:not([open])');
-      if (!fold) return false;
-      if (el.tagName === 'SUMMARY' && el.parentElement === fold) {
-        return !!(fold.parentElement && fold.parentElement.closest('details:not([open])'));
-      }
-      return true;
-    }
-    function focusables() {
-      return Array.prototype.filter.call(modal.querySelectorAll(FOCUSABLE),
-        function (el) { return el.offsetParent !== null && !inClosedFold(el); });
-    }
+    function focusables() { return focusablesIn_(modal); }
     function handler(e) {
       if (e.key !== 'Tab') return;
       // Self-disarm. The listener lives on the DOCUMENT (see below), so a

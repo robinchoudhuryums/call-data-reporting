@@ -272,6 +272,20 @@ const MODALS = [
       record('Inbound (SB-5): on hold and unanswered transfers are labelled under the bar, not in it; every figure keeps its vs-prior chip',
         /61 hung up while on hold — after an agent answered, so counted inside Answered/.test(v.quality) && /14 transfers nobody picked up/.test(v.quality)
           && v.deltas >= 10, JSON.stringify({ q: v.quality.slice(0, 160), deltas: v.deltas }));
+      // F79: every label that explains itself on hover can take focus, and
+      // focusing one opens the same tooltip (20 here were mouse-only).
+      const g = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll('#inbound-modal .gloss')).filter((e) => e.getClientRects().length > 0);
+        const reach = (e) => e.tabIndex >= 0 || !!e.querySelector('button,a[href],[tabindex]')
+          || !!e.parentElement.closest('button,a[href],summary,[role="button"],[role="tab"],[role="menuitem"]');
+        const first = all.filter((e) => e.tagName === 'TH')[0];
+        if (first) first.focus();
+        const tip = document.getElementById('ds-gloss-tip');
+        return { total: all.length, unreachable: all.filter((e) => !reach(e)).length, focused: !!first && document.activeElement === first,
+                 tip: !!tip && tip.style.display !== 'none' ? tip.textContent.slice(0, 60) : '' };
+      });
+      record('Inbound (F79): every hover-explained label is reachable by keyboard, and focus opens its tooltip',
+        g.total >= 20 && g.unreachable === 0 && g.focused && g.tip.length > 10, JSON.stringify(g));
     } } },
   // D1 (owner 2026-10-21): the Direct Calls report. The company run is clean
   // (full coverage); the probe then runs CSR, whose fixture data stops a
@@ -493,6 +507,20 @@ const MODALS = [
           return modal.offsetParent === null || getComputedStyle(modal).display === 'none';
         }, m.sel);
         record(m.name + ': Escape closes it', closed === true);
+        // F71: the opener is usually an item in a header MENU that closed when
+        // it was picked. Handing focus back to that hidden item was a no-op,
+        // focus sat on <body>, and the next Tab began at the end of the page.
+        // Focus must land on the control the user can see: the opener itself,
+        // or the trigger of the menu it lives in.
+        const back = await page.evaluate(() => {
+          const a = document.activeElement;
+          return { id: a ? a.id : '', onBody: !a || a === document.body,
+                   shown: !!(a && a.getClientRects && a.getClientRects().length) };
+        });
+        const wantId = (menuBtn || m.btn).slice(1);
+        record(m.name + ': closing returns focus to a visible control (F71)',
+          closed === true && !back.onBody && back.shown && back.id === wantId,
+          JSON.stringify(back) + ' want #' + wantId);
       }
     } catch (e) {
       // phase3 recorded this shape and moved on; here it is a failure.
@@ -500,6 +528,60 @@ const MODALS = [
     }
     record(m.name + ': no page/console errors while open', errors.length === before,
       Array.from(new Set(errors.slice(before))).slice(0, 2).join(' | '));
+    await ctx.close();
+  }
+
+  // ── F70 / F71 / F77: Help and Settings, opened from their header buttons ──
+  // Help is a column of FOLDS (the topic categories) -- the shape the focus
+  // trap leaked on: a fold's summary is a tab stop it did not know, and the
+  // links inside a closed fold are ones it wrongly counted.
+  {
+    const { ctx, page, errors } = await boot();
+    const before = errors.length;
+    await page.click('#help-btn'); await page.waitForTimeout(700);
+    const helpOpen = await page.evaluate(() => getComputedStyle(document.getElementById('help-modal')).display !== 'none');
+    record('Help: opens from the header button', helpOpen);
+    // Close every category but one, so closed folds sit in the middle AND at the end.
+    await page.evaluate(() => { document.querySelectorAll('#help-modal .help-cat').forEach((c, i) => { c.open = (i === 0); }); });
+    let out = 0; const seen = {};
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press('Tab');
+      const w = await page.evaluate(() => { const a = document.activeElement; const m = document.getElementById('help-modal');
+        return { inside: m.contains(a), tag: a.tagName, inClosed: !!(a.closest('details:not([open])') && a.tagName !== 'SUMMARY') }; });
+      if (!w.inside || w.inClosed) out++;
+      seen[w.tag] = (seen[w.tag] || 0) + 1;
+    }
+    record('Help (F70): 40 Tabs stay inside the dialog, and stop on the fold headers', out === 0 && (seen.SUMMARY || 0) >= 2,
+      JSON.stringify({ out: out, seen: seen }));
+    const topics = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('#help-modal .help-link'));
+      const state = () => links.map((l) => (l.classList.contains('active') ? 'A' : '-') + (l.getAttribute('aria-pressed') === 'true' ? 'P' : '-')).join(' ');
+      const start = state();
+      links[1].click();
+      return { start: start, after: state(), n: links.length };
+    });
+    const agree = (st) => st.split(' ').every((x) => x === 'AP' || x === '--') && st.split(' ').filter((x) => x === 'AP').length === 1;
+    record('Help (F77): the shown topic is the one pressed link, before and after a pick',
+      topics.n > 3 && agree(topics.start) && agree(topics.after) && topics.start !== topics.after, JSON.stringify(topics));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    const hb = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    record('Help (F71): Escape returns focus to the header button', hb === 'help-btn', 'active=#' + hb);
+
+    await page.click('#settings-btn'); await page.waitForTimeout(500);
+    const themes = await page.evaluate(() => {
+      const chips = Array.from(document.querySelectorAll('#settings-modal .theme-chip'));
+      const state = () => chips.map((c) => (c.classList.contains('active') ? 'A' : '-') + (c.getAttribute('aria-pressed') === 'true' ? 'P' : '-')).join(' ');
+      const start = state();
+      const other = chips.filter((c) => !c.classList.contains('active'))[0];
+      if (other) other.click();
+      return { start: start, after: state(), n: chips.length };
+    });
+    record('Settings (F77): the chosen theme is the one pressed chip, before and after a pick',
+      themes.n > 1 && agree(themes.start) && agree(themes.after) && themes.start !== themes.after, JSON.stringify(themes));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    const sbk = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    record('Settings (F71): Escape returns focus to the header button', sbk === 'settings-btn', 'active=#' + sbk);
+    record('Help / Settings: no page/console errors', errors.length === before, errors.slice(before, before + 2).join(' | '));
     await ctx.close();
   }
 

@@ -2116,11 +2116,31 @@ behind the removed button.
 
 ## Client accessibility + print contract (Batch 9, 2026-09-18)
 
-Six cross-cutting rules. Each was a real defect on this client before it was
+Eight cross-cutting rules. Each was a real defect on this client before it was
 a rule, each is swept by `tests/unit/client-dead-ends.test.js` (the Batch 9
 block) unless noted, and the two behavioural ones are also driven in
 `npm run ci:ui`. Read this before adding an interactive surface.
 
+- **Selection lives in an attribute, not only a class (KBF-5).** A group of
+  buttons where one is "the selected one" writes `aria-pressed` on every
+  write of its selected class -- the date chips, theme chips, Help topics and
+  the agent app's window chips kept it in `.active` / `.on` alone, so a
+  screen reader heard five identical buttons. `keyboard-focus.test.js` sweeps
+  those groups; `ds-seg` groups already carried it.
+- **What a mouse can see or open, Tab can reach (KBF-3, KBF-6).** Two
+  shapes. A chart's click target is a canvas, so a drill opened from a bar
+  needs its own control: the missed-calls half-hour drill has ONE `<select>`
+  (`#dept-missed-bucket-pick`, clipped until it has keyboard focus, listing
+  only half-hours with rings) rather than a tab stop per ring -- the ring
+  times stay `tabindex="-1"` (UD-4). And a label that explains itself on
+  hover must be able to take focus: the glossary tagger makes each label it
+  tags a tab stop unless it already is one, holds one or sits inside one
+  (`glossMakeFocusable_` -- sort headers included, since the sorter only
+  gives them theirs once the table has rows), and a hand-written hint needs BOTH `.gloss` (the
+  class the tooltip listens for) and `tabindex="0"`. The exception is a chip
+  that repeats on every agent card (`.ins-trend-pill`, `.cr-vs-team`): two
+  stops per agent would bury the page's controls, and their wording is on
+  the chip or in Help.
 - **A `<tr>` never carries `role="button"` — the control goes INSIDE the
   cell** (the E-8 rule). The role overrides the implicit `row` role and the
   table stops being a grid for assistive tech, so the row loses its column
@@ -2180,7 +2200,20 @@ block) unless noted, and the two behavioural ones are also driven in
   included -- and must leave out what the browser skips: anything inside a
   CLOSED fold, which is hidden without `display:none`, so `offsetParent`
   alone still counts it (DCA-7: a modal ending in a fold let Tab walk out;
-  drive-admin's 25-tab walk over Outlier Fix proves it). Two traps here:
+  drive-admin's 25-tab walk over Outlier Fix proves it; the list lives in
+  ONE place, `focusablesIn_`, which popovers read too). **"The opener" must
+  be something on screen (KBF-2):** eleven modals open from an item in a
+  header menu that closed when it was picked, so `btn.focus()` was a no-op
+  that left focus on `<body>`. Every closer calls `returnFocusTo_(btn)` --
+  the opener, else the trigger of the menu it lives in, else the page title
+  -- and `keyboard-focus.test.js` fails on a `closeModal` that calls
+  `btn.focus()`. **A popover (a `role="dialog"` that is not a modal) takes
+  focus and gives it back too (KBF-4):** `popoverFocusIn_(pop, preferred)`
+  on open -- `preferred` only when Tab could reach it -- and
+  `popoverClose_(pop, opener)` for every close, which returns focus only
+  while it is still inside the popover (a click elsewhere has already moved
+  it, and focusing the opener would scroll the page back to it). Two traps
+  here:
   a popover with NO focusable child has nothing for the trap to cycle on, so
   give it a real Close control (`.chp-close` on the chart-tips popover); and
   `trapFocus_` releases any trap it finds first, so a dialog opened OVER a

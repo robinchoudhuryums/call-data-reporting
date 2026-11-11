@@ -1240,13 +1240,18 @@
     }
     pop.style.display = '';
     const search = $('ins-edit-search');
-    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    if (search) search.value = '';
+    // F75: take focus on open. The search box sits in the Advanced fold,
+    // which is usually closed -- focusing it there was a no-op that left
+    // focus on the opener behind the popover.
+    popoverFocusIn_(pop, search);
     irFilterAgentList_(list, '');
   }
 
+  // F75: every close (the x, Apply, a click outside, Escape) gives focus back
+  // to the button that opened it, unless focus has already gone elsewhere.
   function insCloseEditPopover_() {
-    const pop = $('ins-edit-popover');
-    if (pop) pop.style.display = 'none';
+    popoverClose_($('ins-edit-popover'), $('ins-edit-selection-btn'));
   }
 
   function insTogglePopoverAgents_(checked) {

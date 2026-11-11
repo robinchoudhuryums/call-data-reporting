@@ -42,7 +42,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -1150,7 +1150,7 @@
     // not a text box -- the box crowded the lens; the explainer still ships
     // WITH the data, one hover away.
     const note = meta.reconcileNote
-      ? ' <span class="side-hint-i" tabindex="0" title="' + escapeHtml(meta.reconcileNote) + '">&#9432;</span>' : '';
+      ? ' <span class="side-hint-i gloss" tabindex="0" title="' + escapeHtml(meta.reconcileNote) + '">&#9432;</span>' : '';   // F79: .gloss, or focus shows nothing
     const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
       + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
@@ -1374,7 +1374,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -3351,7 +3351,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3688,7 +3688,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 

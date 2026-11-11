@@ -1086,7 +1086,28 @@
       el.classList.add('gloss');
       const rich = METRIC_GLOSSARY_RICH_[key];
       if (rich) el.setAttribute('data-gloss-rich', rich);
+      glossMakeFocusable_(el);
     });
+  }
+
+  // F79 (broad-scan 2026-11-10): a definition shown on hover must be
+  // reachable by keyboard. The styled tooltip already opens on focus, but a
+  // plain header or KPI label could never TAKE focus, so 20 labels in the
+  // Inbound report explained themselves to a mouse only. A tagged label
+  // becomes a tab stop unless it already is one, holds one, or sits inside
+  // one (an Overview tile is a button -- a tab stop inside it would be a
+  // control within a control).
+  function glossMakeFocusable_(el) {
+    // A sort header is NOT skipped: the sorter gives it this same tab stop
+    // only once its table has rows, so an empty table's headers (the harness
+    // caught 20 in Inbound) would explain themselves to a mouse only.
+    if (el.hasAttribute('tabindex')) return;
+    if (/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName)) return;
+    if (el.querySelector('a[href], button, input, select, textarea, summary, [tabindex]')) return;
+    // Only a real CONTROL ancestor counts -- every modal panel carries a
+    // tabindex of its own, and that must not switch this off inside a report.
+    if (el.parentElement && el.parentElement.closest('a[href], button, summary, [role="button"], [role="tab"], [role="menuitem"]')) return;
+    el.setAttribute('tabindex', '0');
   }
 
   // Styled tooltip for glossary terms (.gloss) -- replaces the unstyleable

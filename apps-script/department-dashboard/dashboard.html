@@ -812,6 +812,9 @@
           <div class="missed-chart-toolbar">
             <!-- R11-C4: shows "Chart: <agent> ✕" while the hour-of-day chart is
                  scoped to one agent via a card's ■ chart button. -->
+            <!-- F74: the keyboard path to the half-hour drill (the bars are a
+                 canvas). Hidden until focused; filled by fillPick. -->
+            <select id="dept-missed-bucket-pick" class="ms-bucket-pick" aria-label="Open one half-hour's missed calls" hidden></select>
             <span id="dept-missed-scope-chip" class="missed-scope-chip" style="display:none;"></span>
             <button type="button" class="chart-help-btn" data-charthelp="missed" aria-label="Chart tips" title="Chart tips">?</button>
             <!-- no data-admin-only: the admin reveal loop sets display:'' on
@@ -846,7 +849,7 @@
       <div id="dept-missed-detail" style="display:none;">
         <div id="dept-missed-queue-only" class="queue-only-section" style="display:none;">
           <div class="queue-only-header">
-            <strong class="gloss" title="Calls that abandoned in the queue before ringing ANY agent — the caller hung up while still waiting, so no individual was ever alerted. These are attributed to the queue itself, not to an agent, and are separate from the per-agent missed rings above.">🚨 Queue-only abandoned</strong>
+            <strong class="gloss" tabindex="0" title="Calls that abandoned in the queue before ringing ANY agent — the caller hung up while still waiting, so no individual was ever alerted. These are attributed to the queue itself, not to an agent, and are separate from the per-agent missed rings above.">🚨 Queue-only abandoned</strong>
             <span class="muted" id="dept-queue-only-subhead"></span>
           </div>
           <div id="dept-queue-only-body"></div>
