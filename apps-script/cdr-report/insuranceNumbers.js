@@ -119,16 +119,23 @@ function syncInsuranceNumbersToNeon() {
   var hashes = Object.keys(byHash);
 
   var conn = getNeonConn();
-  conn.setAutoCommit(false);
   try {
+    // F54 (broad-scan 2026-11-10): the CREATE runs in AUTOCOMMIT, before the
+    // transaction opens -- write-discipline rule 6 (docs/neon-layer.md). Run
+    // inside it, the DDL took its catalog lock for the whole replace and a
+    // rollback of a failed sync undid the table's creation along with the rows.
     var ddl = conn.createStatement();
     ddl.execute(
       'CREATE TABLE IF NOT EXISTS insurance_numbers (' +
       'phone_hash text PRIMARY KEY, ' +
       'insurance_name text NOT NULL, ' +
       'updated_at timestamptz NOT NULL DEFAULT now())');
-    ddl.execute('DELETE FROM insurance_numbers');   // full curated replace
     ddl.close();
+
+    conn.setAutoCommit(false);   // inside the try, so a throw here still reaches the finally's close()
+    var del = conn.createStatement();
+    del.execute('DELETE FROM insurance_numbers');   // full curated replace
+    del.close();
 
     // insurance_name is admin-entered free text -> parameterized (the hash
     // is hex, but the name must be bound, not inlined).

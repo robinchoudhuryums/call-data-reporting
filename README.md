@@ -572,7 +572,8 @@ ships both, and the stamp says `+dirty`) or the branch is not `main`;
   `NEON_MIRROR_MAX_ATTEMPTS` (default 8) times then parked with a
   `neonMirror:gave-up` row + one final email — a date whose
   `Call_Legs_*` sheet was pruned before it drained fails the same way,
-  since its `inbound_calls` rows are unrecoverable). The daily toast shows
+  since its `inbound_calls` rows cannot be re-derived until that date's
+  source is re-imported -- Operator State #56). The daily toast shows
   `Neon ⏳ queued`; per-type outcomes land as `neonMirror:*` Pipeline
   Health rows.
 - Validate on one import before relying on it: confirm the queue drains,
@@ -586,9 +587,11 @@ ships both, and the stamp says `+dirty`) or the branch is not `main`;
 
 ## Deep links
 
-Phase C (commit ce4220a) added URL hash routing so any report
-modal can be linked to directly. Append one of these fragments to
-the deployed web-app URL to land on that view:
+Phase C (commit ce4220a) added URL hash routing so a page, a report or an
+admin tool can be linked to directly. Append one of these fragments to
+the deployed web-app URL to land on that view (the list mirrors `ROUTES` in
+`script-4-nav.html`; the retired reports keep their old fragments under
+"Legacy" below so an old bookmark still lands somewhere useful):
 
 - `#/overview` — Overview page (default landing)
 - `#/dept` — My Department page
@@ -597,35 +600,41 @@ the deployed web-app URL to land on that view:
 - `#/report/missed` — Missed Calls report (lives inline on the My
   Department page; the deep link opens that page and scrolls to it)
 - `#/report/individual` — Individual Report
-- `#/report/performance` — legacy (Performance Report retired — lands on Insights)
-- `#/report/compare` — legacy (Compare Ranges retired — lands on Insights)
-- `#/report/qcd` — legacy (QCD modal retired — lands on Insights Queue health)
 - `#/report/insights` — Insights (period comparison: team rollup + per-agent
   delta cards; lives as an expandable section on the My Department page —
   the deep link opens that page, expands it, and scrolls to it)
-- `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
+- `#/report/inbound` — Inbound Report (admin-only menu item; Neon-backed)
 - `#/report/direct` — Direct Call Report (admin-only while the busy
   carve-out numbers are vetted; Neon-backed, falling back to the Direct Call
   History sheet (DC-1); a window ends at the last imported day and names any
   missing workday, D1)
-- `#/report/outbound` — legacy (the Outbound report modal is retired, G3 —
-  lands on My Department with the Callbacks section open (the agent table on
-  its default Inbound + outbound view);
-  admin-only until the 6c release, a plain My Department landing for anyone else)
 - `#/report/agent-day` — Agent Day (one agent's calls on one day; admins and
   the manager of that agent's roster department)
-- `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
+- `#/admin/alerts` — Notifications (the low-answer-rate alert rules, digests
+  and standards; admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)
 - `#/admin/access-control` — manager Access editor (admin-only)
 - `#/admin/health` — System Health status page (admin-only)
 - `#/admin/coaching` — the Coaching worklist (admin-only until released; the
   weekly coaching email links here)
+- `#/admin/exception-days` — Exception days (admin-only; Operator State #81)
+- `#/admin/transfer-retries` — Transfer retries (admin-only; Operator State #89)
 - `#/admin/caller-lookup` — Caller Lookup (admin-only): trace every
   inbound call from one phone number — outcome, wait/hold, and the
   leg-by-leg journey for calls captured since the journey extension.
   Requires `HMAC_SECRET` on the dashboard project (same value as CDR
   Import / CDR Report) plus the `NEON_*` properties.
+
+**Legacy fragments** — these reports were retired; each still resolves:
+
+- `#/report/performance` — Performance Report → lands on Insights
+- `#/report/compare` — Compare Ranges → lands on Insights
+- `#/report/qcd` — the QCD modal → lands on Insights Queue health
+- `#/report/outbound` — the Outbound report modal (G3) → lands on My
+  Department with the Callbacks section open (the agent table on its default
+  Inbound + outbound view); admin-only until the 6c release, a plain My
+  Department landing for anyone else
 
 Each report view (the Insights page and each report modal) also
 carries a small `↗` button — clicking it opens the same view in a

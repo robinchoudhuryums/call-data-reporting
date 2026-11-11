@@ -140,7 +140,7 @@ npm run lint:gas
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~160 suites pin the invariants, the report
+# Non-zero exit on failure. ~170 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -463,7 +463,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   agent EVER used -- feed it the span and the set silently shrinks, changing
   which floaters are recognized while every existing test stays green. So each
   concern takes its own read: `deptQueueExtsFromSheet_` (whole sheet, cols
-  A..D) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
+  C..D since CLN-1) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
   R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
   ONE span implementation and a bug in it fails pins in BOTH suites.
 - **A span bounds a dated read's WIDTH; only a per-execution MEMO bounds the
@@ -481,7 +481,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **R44: the two whole-sheet grids a span CANNOT bound are read once per
   EXECUTION** -- `dqeDateColumnIso_` (the date column, returned ISO-normalized;
   shared by `sheetScanDqeDateBounds_` AND every `dqeWindowRowSpan_` call) and
-  `dqeExtGrid_` (the cols-A..D ext slice, shared by both ext derivations).
+  `dqeExtGrid_` (the cols-C..D ext slice, shared by both ext derivations).
   Both grids are DEPT-INDEPENDENT, so a combined sub-queue view was re-reading
   identical bytes per dept (measurements: R44 in fix-history). Read-counts
   pinned in `dqe-span-readers.test.js`; both join `DQE_EXEC_MEMOS`. Making these
@@ -1495,8 +1495,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `formatSecondsHms_`, `generateMonthList_`, `round1_`,
   `escapeHtmlServer_`, `buildTeamInsights_`,
   `computeActiveAgentsInRange_`, `assertDeptAccess_` (the shared
-  none/manager/admin per-dept report authorization gate, used by the
-  8 report endpoints), `computeTrendStartDate_` (the INV-29 shared
+  none/manager/admin per-dept report authorization gate, used by every
+  per-dept report endpoint), `computeTrendStartDate_` (the INV-29 shared
   trend-window helper), `logReportUsage_` (the INV-01 telemetry
   carve-out), and -- since S5 -- the holiday layer
   (`parseSkipDateRanges_` / `isDateInSkipRanges_` moved here from
@@ -1795,7 +1795,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bound. Its key carries the freshness tag AND a `hashAgents_` of the dept
   ROSTER, because the tag does not move when the roster is edited and a stale
   ext set silently changes which floaters are recognized (INV-53). Only the
-  SET is cached; the grid is ~128k cells, past the per-value cap. For the same
+  SET is cached; the grid is ~64k cells, past the per-value cap. For the same
   reason every report key that lists roster agents carries the roster hash as
   a SUFFIX (the CORE-3 pattern, no version bump; D-7, DL-5, DATA-1/2/3/10),
   and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /

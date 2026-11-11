@@ -340,9 +340,10 @@ disclosed via `fallbackSource`/`fallbackThrough` + an overlay caption, a
 path, a miss REASON only for a caller entitled to the unscoped lookup (SEC-7:
 the fallback used to classify before auth, an existence oracle), with NO
 `insurer` on the call (the Neon row has none; the label is the admin-gated
-Inbound report's); journey cells
-are only exported within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
-#49), older dates render the summary; the OUTBOUND arm falls back to the
+Inbound report's); a journey cell is
+written only for a row within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
+#49) when it is exported and is kept after that, so a blank one (a seed or a
+re-export of an old date) renders the summary; the OUTBOUND arm falls back to the
 `Outbound Calls` tab (Op State #50) with its two-arm entitlement
 RE-DERIVED from the Inbound tab's related-call columns, never trusted.
 Pinned by
@@ -495,7 +496,7 @@ and the SQL was run against Postgres 16 on a fixture (both shapes) before it
 shipped.
 
 **"Transfers not answered" is a SEPARATE tile, counted QCD's way (S2C-6,
-owner ruling 2026-09-28, `inbound:v15`).** CSRs are told to drop a transfer
+owner ruling 2026-09-28, `inbound:v16`).** CSRs are told to drop a transfer
 attempt after ~2 minutes on hold when the target never answers, and QCD counts
 that dropped attempt as an abandon for the TARGET queue. "Abandoned on hold"
 above deliberately does not (it counts callers who hung up), so the attempts
@@ -627,7 +628,7 @@ card periods (Yesterday / 30 / 60 / 90 / YTD, the same starts as the inbound
 stats). It attributes through the same `deptsForAgent` roster map as the DQE
 tiles, so an agent on two rosters counts in both and an off-roster dialler in
 none. These are dept TOTALS, so `TEAM_AVG_EXCLUDES` does not apply. The result
-rides the cached `companyOverview:v28` blob, so the 5-minute auto-refresh never
+rides the cached `companyOverview:v31` blob, so the 5-minute auto-refresh never
 reaches Neon. The read is metered as `overviewOutbound`. It has NO sheet
 fallback, on purpose: a YTD tail of the Outbound Calls tab costs far more than
 the line is worth. A failed read omits the field, the tiles show no line, and
@@ -661,7 +662,7 @@ widening the read's lower bound to the earliest prior start -- still ONE
 statement, still metered `overviewOutbound`. Each period's `prior` is null
 when its window starts before `coverageStart` (comparing against an
 uncaptured period would read as pure growth); `outboundPriorWindows` carries
-the windows for the hover text and is stripped with the line (companyOverview:v28).
+the windows for the hover text and is stripped with the line (companyOverview:v31).
 My Department needs no server change: it calls `getDeptOutboundSummary` a
 second time for the summary's own `meta.priorFrom/priorTo`.
 

@@ -156,7 +156,7 @@ tests/
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
                               cache-pin drift), heatmap drill,
-                              system-health (OFB-2: the two Outage copy rows -- through-date, workdays behind the daily data, out-of-order, the last export run, cells against the cap, sheet-only; incl. the neon-storage row's
+                              system-health (HDN-2 / F32: the client-issue beacon reserves its slot under the lock BEFORE the email goes out and does not hold the lock across the send; a failed send has still used its slot. OFB-2: the two Outage copy rows -- through-date, workdays behind the daily data, out-of-order, the last export run, cells against the cap, sheet-only; incl. the neon-storage row's
                               four branches: shared-conn read, unreachable
                               -> muted, throw -> warn, absent/fast/unconfigured
                               -> no row; PROPS-1: the Script Properties
@@ -374,7 +374,7 @@ tests/
                               banded shell, tiles/steps/list/mono, the
                               `notice:` render hook, and the sweep that every
                               plain-text sender is styled),
-                              app-email (R28: the sendAppEmail_ chokepoint --
+                              app-email (HDN-2 / F32: the report-email throttle checks and records under the script lock and releases it, even on a refusal; a busy lock or one this execution already holds never blocks the send and is never released from under its holder. R28: the sendAppEmail_ chokepoint --
                               EML-2's separate [Copy] message To the admin
                               (never a BCC), EMAIL_BCC override/none, dedup,
                               a failed copy never failing the send, both
@@ -832,7 +832,7 @@ tests/
                               plus the COVERAGE tripwire that every Neon
                               reader in that project meters or is allowlisted,
                               which is what the dashboard-only gauge lacked),
-                              insurance-numbers (the insurer-label reference
+                              insurance-numbers (HDN-6 / F54: the table is created before the transaction opens and the replace runs inside it; the insurer-label reference
                               table: every punctuation variant canonicalizes
                               to one form, REP-7's 10-digit country-code fix,
                               the PHI contract that only hash+label reach

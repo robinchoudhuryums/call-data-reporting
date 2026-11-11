@@ -127,6 +127,54 @@ test('SEC-2: the throttle admits up to the cap per user, then refuses with a rea
   h.call('assertReportEmailThrottle_', 'other@x.com');   // a different user is unaffected
 });
 
+// F32 (broad-scan 2026-11-10): the read, the check and the write were three
+// separate cache calls, so parallel requests each read the same count and all
+// passed. They now run under the script lock -- held for those calls only.
+test('F32: the throttle checks and records under the script lock, and releases it', function () {
+  reset();
+  h.state.cache.clear();
+  h.state.locks = 0; h.state.lockReleases = 0; h.state.lockHeld = false; h.state.lockBusy = false;
+  // What the lock state is at the moment the count is WRITTEN.
+  const realCache = h.ctx.CacheService.getScriptCache();
+  const seenAtPut = [];
+  h.ctx.CacheService.getScriptCache = function () {
+    return { get: function (k) { return realCache.get(k); },
+             put: function (k, v, t) { seenAtPut.push(h.state.lockHeld); return realCache.put(k, v, t); } };
+  };
+  try {
+    h.call('assertReportEmailThrottle_', 'mgr@x.com');
+  } finally { h.ctx.CacheService.getScriptCache = function () { return realCache; }; }
+  assert.deepEqual(seenAtPut, [true], 'the count is written while the lock is held');
+  assert.equal(h.state.locks, 1);
+  assert.equal(h.state.lockHeld, false, 'and the lock is released -- the send that follows never holds it');
+  assert.equal(h.state.lockReleases, 1);
+
+  // At the cap the refusal still releases the lock.
+  const cap = h.ctx.USER_REPORT_EMAIL_CAP_;
+  for (let i = 1; i < cap; i++) h.call('assertReportEmailThrottle_', 'mgr@x.com');
+  assert.throws(function () { h.call('assertReportEmailThrottle_', 'mgr@x.com'); }, /report emails in the last 6 hours/);
+  assert.equal(h.state.lockHeld, false, 'a refusal does not leave the lock held');
+});
+
+test('F32: a busy lock or a lock this execution already holds never blocks the send, and is never released from under its holder', function () {
+  reset();
+  h.state.cache.clear();
+  // Another execution holds it (an engine mid-run): fail OPEN, still counted.
+  h.state.lockBusy = true; h.state.lockHeld = false; h.state.lockReleases = 0;
+  h.call('assertReportEmailThrottle_', 'mgr@x.com');
+  assert.equal(JSON.parse(h.state.cache.get('mailThrottle:v1:mgr@x.com')).length, 1, 'the attempt is still recorded');
+  assert.equal(h.state.lockReleases, 0, 'a lock it never got is never released');
+  h.state.lockBusy = false;
+
+  // THIS execution already holds it: the caller's lock is left alone.
+  h.state.lockHeld = true; h.state.locks = 0; h.state.lockReleases = 0;
+  h.call('assertReportEmailThrottle_', 'mgr@x.com');
+  assert.equal(h.state.locks, 0, 'no second acquire');
+  assert.equal(h.state.lockHeld, true, 'the caller still holds its lock');
+  assert.equal(h.state.lockReleases, 0);
+  h.state.lockHeld = false;
+});
+
 test('SEC-2: stamps older than the window fall away', function () {
   reset();
   h.state.cache.clear();

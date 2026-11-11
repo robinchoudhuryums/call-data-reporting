@@ -47,10 +47,12 @@ var INBOUND_EXPORT_HEADERS = [
   // POSITION, like the heatmap's 16-17). Journey is the masked leg-by-leg
   // JSON (starts with '[', so it is NOT formula-leading and needs no '@'
   // format -- unlike Call Start); it is the tab's only HEAVY column
-  // (0.2-6 KB/row), so it is populated only within
-  // INBOUND_EXPORT_JOURNEY_DAYS and blank beyond -- the 400-day row
-  // retention stays cheap while the path fallback covers what the sheet
-  // can afford. The origin/related columns are small and always exported.
+  // (0.2-6 KB/row), so a row is written with it only when its date is within
+  // INBOUND_EXPORT_JOURNEY_DAYS at EXPORT time (a seed or a re-export of old
+  // dates writes blanks). Nothing blanks it later, so rows exported day by
+  // day keep it for the tab's whole retention (scan F53: the old wording,
+  // "blank beyond", described a seed, not steady state).
+  // The origin/related columns are small and always exported.
   'Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind',
   // Cols 23-24 (FO-2): the direct-line callback figures' sheet fallback
   // (OutboundReport.gs::obDirectSheetFallback_ reads them BY POSITION): the
@@ -61,13 +63,16 @@ var INBOUND_EXPORT_HEADERS = [
 ];
 var INBOUND_EXPORT_CALL_START_COL = 16;   // plain-texted every run (see above)
 var INBOUND_EXPORT_SEED_DAYS = 30;   // first-run lookback when the tab is empty
-// Journey-cell retention: rows whose call_date is older than this many days
-// export a BLANK Journey cell (Script Property INBOUND_EXPORT_JOURNEY_DAYS
-// overrides). The path drill's sheet fallback then serves the entry->final
-// SUMMARY for those dates instead of the full timeline -- disclosed, never
-// silently truncated. OFB-5 (broad-scan 2026-11-09): this window bounds the
-// tab's stored BYTES and its read time -- NOT its share of the 10M-cell cap,
-// which counts the ALLOCATED grid (rows x columns, a blank cell costs the
+// Journey-cell window: a row whose call_date is older than this many days
+// WHEN IT IS EXPORTED gets a BLANK Journey cell (Script Property
+// INBOUND_EXPORT_JOURNEY_DAYS overrides). The path drill's sheet fallback
+// then serves the entry->final SUMMARY for it instead of the full timeline --
+// disclosed, never silently truncated. It is an export-time rule, not an
+// ageing one: a row exported while recent keeps its journey (scan F53).
+// OFB-5 (broad-scan 2026-11-09): so this window bounds what a seed or a
+// re-export of old dates writes -- NOT the bytes a year of daily exports
+// holds, and NOT the tab's share of the 10M-cell cap, which counts the
+// ALLOCATED grid (rows x columns, a blank cell costs the
 // same as a full one; Operator State #62). The cell cost is
 // (kept rows) x INBOUND_EXPORT_HEADERS.length, set by INBOUND_EXPORT_KEEP_DAYS
 // alone; the Health page's "Outage copy" rows show it per tab.

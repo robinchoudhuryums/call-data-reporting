@@ -9,13 +9,23 @@
  *   any cross-department access. Admins can request any department
  *   that exists in the dept list; managers are pinned to theirs.
  *
- * Caching: 5-minute (CACHE_TTL_SECONDS) per (dept, from, to) tuple.
- *   Cached payload is the full response with meta.cacheHit overwritten
- *   to true on serve.
+ * Caching: 6 hours (REPORT_CACHE_TTL_SECONDS) per summary key -- the
+ *   versioned `summary:vN` prefix plus dept, window, scope and sub-scope,
+ *   then the suffixes that keep a 6 h key honest: the freshness tag (the
+ *   latest DQE date, so the morning import mints new keys), the queue
+ *   freshness tag, the read-source and queue-split scope, and the roster
+ *   hash (INV-30 has the full list). Only the latest-date lookups are on the
+ *   5-minute tier (CACHE_TTL_SECONDS). Cached payload is the full response
+ *   with meta.cacheHit overwritten to true on serve.
  *
- * Performance: one bulk getValues() over cols A..AH of DQE Historical
- *   Data, in-memory date filter + roster filter + aggregation. Roster
- *   read separately from DO NOT EDIT! (cheap, one column).
+ * Performance: rows come through the DAL (sheetFetchDqeRows_ /
+ *   neonFetchDqeRows_, NeonRead.gs) -- a date-column scan finds the window's
+ *   first and last row and only that span is read at full width, memoized
+ *   per execution; the all-history extension read is separate and narrow
+ *   (dqeExtGrid_, cols C..D since CLN-1). The per-row date filter, roster
+ *   filter and aggregation are in memory. Roster read separately from
+ *   DO NOT EDIT! (cheap, one column). (Scan F53: this header still described
+ *   the 5-minute cache and one whole-sheet A..AH read.)
  */
 
 /**

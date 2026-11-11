@@ -513,6 +513,48 @@ test('R19 beacon: window cap stops emails but keeps accepting reports; empty mes
   assert.throws(function () { h.call('reportClientIssue', { kind: 'x', message: 'y' }); }, /authorized/i);
 });
 
+// F32 (broad-scan 2026-11-10): the caps were read, the email sent, and only
+// then the counts written -- so parallel reports all read the same counts and
+// all sent. The decision and the reservation now happen in one locked step,
+// and the email goes out after it.
+test('F32 beacon: the slot is reserved under the lock BEFORE the email is sent, and the lock is not held across the send', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  h.state.sentEmails.length = 0;
+  h.state.lockHeld = false; h.state.lockBusy = false;
+  const atSend = [];
+  const realSend = h.ctx.sendAppEmail_;
+  h.ctx.sendAppEmail_ = function (spec) {
+    atSend.push({ count: h.state.cache.get('cissue:count'), lockHeld: h.state.lockHeld,
+      users: Array.from(h.state.cache.keys()).filter(function (k) { return /^cissue:user:/.test(k); }).length });
+    return realSend(spec);
+  };
+  try {
+    const out = h.call('reportClientIssue', { kind: 'uncaught', message: 'first' });
+    assert.equal(out.emailed, true);
+    assert.deepEqual(atSend, [{ count: '1', lockHeld: false, users: 1 }],
+      'when the email goes out the window count and the per-user count are already written, and the lock is free');
+
+    // A send that FAILS has still used its slot: a loop of failing sends is bounded.
+    h.ctx.sendAppEmail_ = function () { throw new Error('mail quota'); };
+    const failed = h.call('reportClientIssue', { kind: 'uncaught', message: 'second' });
+    assert.equal(failed.ok, true, 'the beacon never errors back into the client');
+    assert.equal(failed.emailed, false);
+    assert.equal(h.state.cache.get('cissue:count'), '2');
+    assert.equal(h.state.lockHeld, false);
+  } finally { h.ctx.sendAppEmail_ = realSend; }
+
+  // The cap note is reserved the same way: its marker is set before its email.
+  h.state.cache = new Map();
+  h.state.cache.set('cissue:start', String(Date.now() - 60000));
+  h.state.cache.set('cissue:count', '15');
+  const capSeen = [];
+  h.ctx.sendAppEmail_ = function (spec) { capSeen.push(!!h.state.cache.get('cissue:capat') && !h.state.lockHeld); return realSend(spec); };
+  try { h.call('reportClientIssue', { kind: 'uncaught', message: 'over the cap' }); }
+  finally { h.ctx.sendAppEmail_ = realSend; }
+  assert.deepEqual(capSeen, [true]);
+});
+
 test('R19 beacon: oversized fields are capped, not rejected', function () {
   installHealth({});
   h.state.sentEmails.length = 0;

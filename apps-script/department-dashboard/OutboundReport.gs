@@ -886,7 +886,6 @@ function obCallbackDeptMap_() {
 //   ans: [k, isoDate, 'HH:MM:SS'|null, queueLower]            answered inbound
 //        CE-3 appends [.., person]: an answered call to a person's line has no
 //        queue, so its team is that person's roster homes.
-var OB_EP_OUTCOMES_ = ['own', 'gotThrough', 'other', 'pending', 'none'];
 
 /** PURE. The team key + member list for a queue: owners sorted, '+'-joined; '' unmapped.
  *  CE-3: an explicit `teams` list (a direct-line attempt's owner homes) wins. */

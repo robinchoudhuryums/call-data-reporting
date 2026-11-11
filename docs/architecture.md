@@ -200,6 +200,38 @@ See INV-50 / INV-51 in `docs/invariants.md` for the full contract;
 `known-issues.md` → "QCD Report engine" covers the operator
 onboarding flow.
 
+## Exception days: one exclusion step beside every reader
+
+An exception day is a day whose call data is real but unfair to judge by
+(the 2026-09-21 phone-system outage is the case that asked for it). It is a
+READ-side rule only: the pipeline imports and stores the day like any
+other, and nothing in cdr-import or cdr-report knows the list exists. The
+dashboard leaves the day out when it reads.
+
+- **Where the list lives.** The `Exception Days` sheet in the CDR Report
+  workbook (date, departments -- `ALL` or a pick -- reason, active, added
+  by / at), written only by the admin editor in `ExceptionDays.gs`
+  (Admin ▾ → Exception days; an INV-01 carve-out). A failed sheet read
+  serves the last good copy.
+- **Where it is applied.** `Util.gs` owns the reader and the step:
+  `getExceptionDays_`, `applyExceptionDays_`, `exceptionDaysTag_`. Every DQE
+  reader calls `applyExceptionDays_` beside `applyQueueSplitToRows_`; queue
+  data is filtered inside `readQcdGrid_`; the per-call reports (Inbound,
+  Direct, the Overview tiles' outbound and direct lines) leave it out of
+  their totals since EXC-2. Counts go as well as rates, so a screen's
+  numbers still add up, and every surface names the day it left out.
+- **What makes it safe to forget.** `cross-file-pins.test.js` fails a DQE
+  reader that applies the queue split without the exception step, and the
+  list's hash is part of `reportFreshnessTag_`, so a save re-keys every
+  cached report at once.
+- **What does NOT follow it.** Call-level views (Caller Lookup, the call
+  path, Agent Day) list what happened and only mark the day; callbacks, the
+  abandon heatmap and team-tools' own reads of the workbook still count it.
+
+Operator State #81 has the full list of surfaces, the admin "include them"
+switch and the engines' behaviour on such a day; Regression Scenario S68
+walks it.
+
 ## Cross-project writes from the dashboard
 
 Until OrphanFix.gs shipped, the dashboard had ZERO write paths into

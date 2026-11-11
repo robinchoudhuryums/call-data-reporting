@@ -1483,7 +1483,8 @@ does **not** match across the two spaces (Intake happens to).
 been taught a queue shape it was missing, and BOTH times the pre-fix rows are
 identical in shape: `abandon_stage='ivr'` + `entry_queue=NULL`, attributable to
 no dept, healing only via a re-import/`backfillInboundCalls` while the
-`Call_Legs_*` sheets survive (~14 days) -- older dates are unrecoverable.
+`Call_Legs_*` sheets survive (~14 days) -- an older date needs its source
+re-imported first (Operator State #56); nothing is lost for good.
 - **`Backup CSR`** — learned in IMP-1.
 - **`UDC_A_Q_Main` / `UUC_A_Q_Main`** — learned in **F1b** (2026-07-27). The
   `/^A_Q_/i` anchor missed every brand prefix. Measured: a journey leg-name
@@ -1834,8 +1835,10 @@ sample-row shapes incl. the unresolvable-ext guard
 **Repair semantics worth knowing.** Because the fallback reads the RAW data
 as it already exists, the surviving `Call_Legs_*` window heals by plain
 force re-import — no col-W hand-editing. History older than the ~14-day
-retention (#43) is permanently unrecoverable at the per-agent level; QCD
-queue-level history for the gap is intact. After a Neon-read cutover,
+retention (#43) heals the same way once that date's source is re-imported
+(Operator State #56) — an operator job per date, not a permanent loss; until
+then its per-agent figures stay as they were, and QCD queue-level history
+for the gap is intact. After a Neon-read cutover,
 finish with `backfillDQEHistoryUpsert()`.
 
 **Detection if it recurs.** The DQE-silence watchdog (Operator State #44)

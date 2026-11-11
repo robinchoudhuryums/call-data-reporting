@@ -159,12 +159,12 @@ function runSync(columns, opts) {
   h.state.spreadsheet = makeFakeSpreadsheet({
     sheets: { 'DO NOT EDIT!': rosterWithInsurance(columns) },
   });
-  const executed = [], bound = [], events = [];
+  const executed = [], bound = [], events = [], order = [];
   h.ctx.getNeonConn = function () {
     return {
-      setAutoCommit: function () {},
+      setAutoCommit: function (v) { order.push('autocommit:' + v); },
       createStatement: function () {
-        return { execute: function (sql) { executed.push(sql); }, close: function () {} };
+        return { execute: function (sql) { executed.push(sql); order.push(String(sql).split(' ').slice(0, 2).join(' ')); }, close: function () {} };
       },
       prepareStatement: function () {
         let cur = {};
@@ -174,14 +174,21 @@ function runSync(columns, opts) {
           close: function () {},
         };
       },
-      commit: function () { events.push('commit'); },
+      commit: function () { events.push('commit'); order.push('commit'); },
       rollback: function () { events.push('rollback'); },
       close: function () { events.push('close'); },
     };
   };
   h.fn('syncInsuranceNumbersToNeon')();
-  return { executed: executed, bound: bound, events: events };
+  return { executed: executed, bound: bound, events: events, order: order };
 }
+
+// F54 (broad-scan 2026-11-10): write-discipline rule 6 -- DDL runs in
+// autocommit, BEFORE the transaction opens. The CREATE used to run inside it.
+test('F54: the table is created before the transaction opens; the replace runs inside it', function () {
+  const out = runSync([{ name: 'Aetna', numbers: ['+18006334227'] }]);
+  assert.deepEqual(out.order, ['CREATE TABLE', 'autocommit:false', 'DELETE FROM', 'commit']);
+});
 
 test('PHI: only the hash and the label reach Neon -- never the raw number', function () {
   // The entire design rests on this: insurer lines are not PHI, but the

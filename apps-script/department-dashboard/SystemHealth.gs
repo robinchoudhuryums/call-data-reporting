@@ -1776,24 +1776,45 @@ function reportClientIssue(payload) {
   var emailed = false;
   var userCapped = false;
   try {
-    var seen = cache.get(sigKey);
-    var win = clientIssueWindow_(cache);   // ENG-5
-    // AC-6: the per-user sub-cap, checked before the shared window.
-    var userKey = 'cissue:user:' + Utilities.base64Encode(
-      Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(user.email || '').toLowerCase())).slice(0, 24)
-      + ':' + win.start;
-    var userCount = parseInt(cache.get(userKey) || '0', 10) || 0;
-    if (!seen && userCount >= CLIENT_ISSUE_USER_CAP_) { userCapped = true; seen = 'user-capped'; }
-    var count = parseInt(cache.get('cissue:count') || '0', 10) || 0;
-    if (!seen && count >= CLIENT_ISSUE_WINDOW_CAP_ && !cache.get('cissue:capat')) {
-      // O-11 (broad-scan 2026-09-17): the cap used to close silently -- a
-      // broken deploy hits 15 distinct signatures in minutes, and every NEW
-      // signature after that was Logger-only for 6 h with nothing telling the
-      // admin the window was suppressed rather than quiet. ONE "cap reached"
-      // note per window (the marker shares the count's TTL), and the Health
-      // page's client-beacon row reads the same marker.
-      var capAt = new Date().toISOString();
-      cache.put('cissue:capat', capAt, win.ttl);   // ENG-5: closes with the window
+    // F32 (broad-scan 2026-11-10): DECIDE and RESERVE under the script lock,
+    // SEND after it. The signature throttle, the per-user cap and the window
+    // cap were each read, then written only after the email went out -- so
+    // parallel reports all read the same counts and all sent. Now one short
+    // locked step reads the three, decides, and writes the reservation; the
+    // emails follow outside the lock. A send that then fails has still used
+    // its slot, which is the safe direction for a quota guard.
+    var plan = withQuotaGuardLock_(function () {
+      var seen = cache.get(sigKey);
+      var win = clientIssueWindow_(cache);   // ENG-5
+      // AC-6: the per-user sub-cap, checked before the shared window.
+      var userKey = 'cissue:user:' + Utilities.base64Encode(
+        Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(user.email || '').toLowerCase())).slice(0, 24)
+        + ':' + win.start;
+      var userCount = parseInt(cache.get(userKey) || '0', 10) || 0;
+      var out = { send: false, capAt: '', userCapped: false };
+      if (!seen && userCount >= CLIENT_ISSUE_USER_CAP_) { out.userCapped = true; seen = 'user-capped'; }
+      var count = parseInt(cache.get('cissue:count') || '0', 10) || 0;
+      if (!seen && count >= CLIENT_ISSUE_WINDOW_CAP_ && !cache.get('cissue:capat')) {
+        // O-11 (broad-scan 2026-09-17): the cap used to close silently -- a
+        // broken deploy hits 15 distinct signatures in minutes, and every NEW
+        // signature after that was Logger-only for 6 h with nothing telling the
+        // admin the window was suppressed rather than quiet. ONE "cap reached"
+        // note per window (the marker shares the count's TTL), and the Health
+        // page's client-beacon row reads the same marker.
+        out.capAt = new Date().toISOString();
+        cache.put('cissue:capat', out.capAt, win.ttl);   // ENG-5: closes with the window
+      }
+      if (!seen && count < CLIENT_ISSUE_WINDOW_CAP_) {
+        out.send = true;
+        cache.put(sigKey, '1', CLIENT_ISSUE_SIG_TTL_SEC);
+        cache.put('cissue:count', String(count + 1), win.ttl);   // ENG-5: never re-arms the window
+        cache.put(userKey, String(userCount + 1), win.ttl);       // AC-6
+      }
+      return out;
+    });
+    userCapped = plan.userCapped;
+    if (plan.capAt) {
+      var capAt = plan.capAt;
       try {
         var capTo = getAdminEmails_().join(',');
         if (capTo) {
@@ -1818,7 +1839,7 @@ function reportClientIssue(payload) {
         }
       } catch (ce) { /* best-effort */ }
     }
-    if (!seen && count < CLIENT_ISSUE_WINDOW_CAP_) {
+    if (plan.send) {
       var to = getAdminEmails_().join(',');
       if (to) {
         sendAppEmail_({
@@ -1848,9 +1869,6 @@ function reportClientIssue(payload) {
             + 'is in the Apps Script Executions log (reportClientIssue).',
         });
         emailed = true;
-        cache.put(sigKey, '1', CLIENT_ISSUE_SIG_TTL_SEC);
-        cache.put('cissue:count', String(count + 1), win.ttl);   // ENG-5: never re-arms the window
-        cache.put(userKey, String(userCount + 1), win.ttl);       // AC-6
       }
     }
   } catch (e) { /* best-effort -- the beacon must never error back into the client */ }

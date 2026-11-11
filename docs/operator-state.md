@@ -1349,7 +1349,8 @@ When something looks wrong, before assuming a code bug, check:
     F1b pattern already covers it; anything else goes in the dept's Dept
     Config "Inbound queue aliases" field (no redeploy). Then re-import any
     affected dates still inside the ~14-day `Call_Legs` window to heal their
-    `entry_queue`; older dates are unrecoverable. **A recognized queue still
+    `entry_queue`; an older date needs its SOURCE re-imported first (item
+    #56), then the same re-import -- operator time, not lost data. **A recognized queue still
     needs ATTRIBUTION:** `UDC_A_Q_Main` / `UUC_A_Q_Main` belong to separate
     brands with no dashboard dept, so they now surface in the discovery panel
     as unattributed until an owner maps them to a dept (or one is created).
@@ -1927,13 +1928,21 @@ When something looks wrong, before assuming a code bug, check:
     reads the DQE sheet, so it survives the outage); the outbound arm degrades
     to the Outbound Calls tab the same way (`outboundCallJourneySheetFallback_`,
     #50 -- DOC-7: this item used to say it had none). The Journey column is the tab's only
-    HEAVY one (0.2–6 KB/cell), so it is populated only within
-    `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property, default 90) — older
-    rows keep a blank cell and the drill serves the entry→final summary,
-    disclosed in the overlay caption. **What that window does NOT bound
+    HEAVY one (0.2–6 KB/cell), so a row is written with its journey only
+    when its date is within `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property,
+    default 90) **at the time it is exported**. Nothing blanks it afterwards:
+    the daily export writes yesterday's rows with their journey and they
+    keep it for the tab's whole retention, so in steady state the tab holds a
+    journey for every kept row -- a blank cell means the row was written by a
+    seed, a long backfill or a changed-date re-export when it was already
+    older than the window (the drill then serves the entry→final summary,
+    disclosed in the overlay caption). This item used to say rows older than
+    90 days have a blank cell; that is true only of those three cases (scan
+    F53). **What that window does NOT bound
     (OFB-5, broad-scan 2026-11-09):** the tab's share of the 10M-cell cap
-    (#62). Cells are rows x columns whether or not they hold anything, so the
-    journey window limits stored bytes and read time only; the cell cost is
+    (#62). Cells are rows x columns whether or not they hold anything, and --
+    per the above -- the window bounds what a seed or re-export of OLD dates
+    writes, not the bytes a year of daily exports accumulates; the cell cost is
     set by `INBOUND_EXPORT_KEEP_DAYS` alone -- calls a day x workdays kept x
     24 columns -- and the same holds for the Outbound tab at 12 columns (#50).
     The export now drops the EMPTY columns right of its headers on every run
@@ -2008,10 +2017,12 @@ When something looks wrong, before assuming a code bug, check:
     outage already in progress; the copy is a standing insurance policy, not
     a recovery tool.
     Retention: the prune keeps `OUTBOUND_EXPORT_KEEP_DAYS` days (Script
-    Property, default 400); the heavy `journey` column is populated only
-    within `OUTBOUND_EXPORT_JOURNEY_DAYS` (default 90) and blank beyond, so a
-    path drill past that window renders the summary rather than the timeline
-    (the Inbound tab's cols 18–22 rule). Column order is a CONTRACT — the
+    Property, default 400); the heavy `journey` column is written only for a
+    row whose date is within `OUTBOUND_EXPORT_JOURNEY_DAYS` (default 90) when
+    it is exported, and kept thereafter -- so only a seed, a long backfill or
+    a re-export of an old date leaves it blank, and a path drill on such a row
+    renders the summary rather than the timeline (the Inbound tab's cols
+    18–22 rule, #49). Column order is a CONTRACT — the
     dashboard readers index this tab BY POSITION, so append any future column
     at the END, never between. The watch, the self-repairing sort, the
     per-date progress and the cell-cap sizing are the Inbound tab's, word for
@@ -2981,7 +2992,8 @@ When something looks wrong, before assuming a code bug, check:
       the transferring party, so those legs are invisible to every per-agent
       surface while QCD counts them. Whether they SHOULD be credited is an
       owner ruling, not a bug on its face — and changing the gate moves every
-      dept's numbers, cannot be backfilled past the `Call_Legs` window, and is
+      dept's numbers, needs each date past the `Call_Legs` window re-imported
+      from its source before it can be backfilled (item #56), and is
       an INV-16 two-file edit plus the dataFilters + DQEdrilldown mirrors.
     - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js` (one shared fixture
       drives the real `calcQcdReport` and the mirror; no expected numbers are

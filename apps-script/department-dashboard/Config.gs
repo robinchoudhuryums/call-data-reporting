@@ -40,33 +40,59 @@ function getAdminEmails_() {
  * and the MailApp quota is SHARED with alerts, digests and the watchdogs, so
  * a devtools loop on one endpoint could starve every engine for the day.
  * Rolling window in CacheService (6 h, its maximum TTL): at most
- * USER_REPORT_EMAIL_CAP_ sends per user per window. Lossy by design (no
- * lock; a lost write under-counts by one) -- it is a quota guard, not an
- * audit. Admins are capped too: the quota does not care who drains it.
- * Throws a user-facing error at the cap; records the attempt BEFORE the
- * send so a loop of failing sends is bounded as well.
+ * USER_REPORT_EMAIL_CAP_ sends per user per window. Admins are capped too:
+ * the quota does not care who drains it. Throws a user-facing error at the
+ * cap; records the attempt BEFORE the send so a loop of failing sends is
+ * bounded as well.
+ *
+ * F32 (broad-scan 2026-11-10): the read, the check and the write happen under
+ * the script lock. Without it the three were separate cache calls, so parallel
+ * requests each read the same count, each passed, and the cap admitted as many
+ * as arrived together. The lock is held for those cache calls only -- never
+ * across the send. It is a quota guard, not an audit, so it still fails OPEN:
+ * if the lock cannot be had within a few seconds (an engine is mid-run) or
+ * the cache is unavailable, the send goes ahead unchecked.
  */
 var USER_REPORT_EMAIL_CAP_ = 30;
 var USER_REPORT_EMAIL_WINDOW_S_ = 6 * 3600;
+var QUOTA_GUARD_LOCK_MS_ = 4000;
+/**
+ * Run `fn` under the script lock, for a short check-and-record on
+ * CacheService (F32). Returns fn's result. If this execution already holds the
+ * lock it is left alone (releasing here would release the caller's); if the
+ * lock cannot be had in QUOTA_GUARD_LOCK_MS_, fn runs WITHOUT it -- the guards
+ * that use this protect a quota, and must never block the thing they guard.
+ */
+function withQuotaGuardLock_(fn) {
+  var lock = null, mine = false;
+  try {
+    lock = LockService.getScriptLock();
+    if (!(typeof lock.hasLock === 'function' && lock.hasLock())) mine = !!lock.tryLock(QUOTA_GUARD_LOCK_MS_);
+  } catch (le) { mine = false; }
+  try { return fn(); }
+  finally { if (mine) { try { lock.releaseLock(); } catch (re) { /* released */ } } }
+}
 function assertReportEmailThrottle_(email) {
   var who = String(email || '').trim().toLowerCase();
   if (!who) return;
-  var cache, key = 'mailThrottle:v1:' + who.slice(0, 200), now = Date.now(), stamps = [];
-  try {
-    cache = CacheService.getScriptCache();
-    var raw = cache.get(key);
-    stamps = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(stamps)) stamps = [];
-  } catch (e) { return; }   // cache unavailable: fail OPEN (the send itself is authorized)
-  var cutoff = now - USER_REPORT_EMAIL_WINDOW_S_ * 1000;
-  stamps = stamps.filter(function (t) { return Number(t) > cutoff; });
-  if (stamps.length >= USER_REPORT_EMAIL_CAP_) {
-    throw new Error('You have sent ' + stamps.length + ' report emails in the last '
-      + Math.round(USER_REPORT_EMAIL_WINDOW_S_ / 3600) + ' hours -- the limit protects the '
-      + 'shared daily email quota that alerts and digests also use. Try again later.');
-  }
-  stamps.push(now);
-  try { cache.put(key, JSON.stringify(stamps), USER_REPORT_EMAIL_WINDOW_S_); } catch (e2) { /* best-effort */ }
+  withQuotaGuardLock_(function () {
+    var cache, key = 'mailThrottle:v1:' + who.slice(0, 200), now = Date.now(), stamps = [];
+    try {
+      cache = CacheService.getScriptCache();
+      var raw = cache.get(key);
+      stamps = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(stamps)) stamps = [];
+    } catch (e) { return; }   // cache unavailable: fail OPEN (the send itself is authorized)
+    var cutoff = now - USER_REPORT_EMAIL_WINDOW_S_ * 1000;
+    stamps = stamps.filter(function (t) { return Number(t) > cutoff; });
+    if (stamps.length >= USER_REPORT_EMAIL_CAP_) {
+      throw new Error('You have sent ' + stamps.length + ' report emails in the last '
+        + Math.round(USER_REPORT_EMAIL_WINDOW_S_ / 3600) + ' hours -- the limit protects the '
+        + 'shared daily email quota that alerts and digests also use. Try again later.');
+    }
+    stamps.push(now);
+    try { cache.put(key, JSON.stringify(stamps), USER_REPORT_EMAIL_WINDOW_S_); } catch (e2) { /* best-effort */ }
+  });
 }
 
 /**

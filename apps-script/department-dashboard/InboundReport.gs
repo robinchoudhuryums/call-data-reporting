@@ -889,7 +889,7 @@ function callIdInDeptMissedReport_(dept, date, callId) {
 //     miss as on the Neon path (learns nothing).
 //   * The payload is shaped by the SAME callerLookupShapeCall_, so the
 //     client renderers cannot tell the sources apart; a blank Journey cell
-//     (past INBOUND_EXPORT_JOURNEY_DAYS) shapes to journey:null and renders
+//     (a row exported when already past INBOUND_EXPORT_JOURNEY_DAYS) shapes to journey:null and renders
 //     the entry->final summary, exactly like a pre-extension Neon row.
 //   * Discloses itself (fallbackSource / fallbackThrough) and is NEVER
 //     cached (getCallJourney is uncached by design, so this holds trivially).

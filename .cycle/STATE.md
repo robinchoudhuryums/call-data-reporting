@@ -91,13 +91,13 @@ counter starts at 0 here because no earlier count was kept.)
   **Owner-side:** push dashboard + cdr-import; run `rebuildDirectCallHeldDates()` once (applies DCA-2 to held dates + fills the Direct tab); check the Standards editor's Transfer amber (35 -> 32 if saved); optional `diagnoseDirectCallAttributionAllDates()`; walk S56, S57. Older dates keep the old direct credit until re-imported (#56).
   **Where I left off:** committed + pushed on the branch; no PR (not asked).
 - **2026-11-04 -- owner ran the post-deploy steps.** ESC-C2 preview found 0 gaps (backfill added 0; #88 closed). TR-0 all-dates census: 61 retries / 10 days, 49 CSR -> Power; first attempts 1 quick decline / 4 rang out / 56 voicemail, but 20 rang <=8 s -- quick sends to voicemail. **TR-2 implemented:** ring time decides before voicemail in BOTH `tfRetryOutcome_` and `trRetryOutcome_` (8 s line unchanged), modal wording updated. **Owner-side:** push cdr-import + dashboard, re-run `diagnoseTransferRetriesAllDates` (expect ~20 quick declines / ~37 voicemail), open Admin -> Transfer retries.
-- **OWNER-SIDE OUTSTANDING (consolidated 2026-11-04; PRs #400 + #401 are merged, nothing open on the branch):**
-  1. Apps Script version cap (DEP-5): if the deploy refuses at 200, delete old versions in Project History (keep the live one + ~20).
-  2. Push dashboard + cdr-import, roll the dashboard deployment.
-  3. Once after deploy: `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (#88).
-  4. Run `diagnoseTransferRetriesAllDates` (cdr-import) and send the census -- it may move the 8 s decline line, which lives in BOTH `TF_RETRY_QUICK_SECS_` and `TR_QUICK_SECS_` (#89).
-  5. Walk S48, S58, S60, S69 (and S57 for the four-way switch); check Transfer % on the CSR Agent Call Metrics table.
-  **Follow-ons (not started, need an owner call):** exception days (#81 phase 2) are not applied to the Overview tile outbound / direct lines or the Direct Calls report; the tile's direct-line row must be released together with the Direct Calls report (one strip in `personalizeOverview_`).
+- **OWNER-SIDE OUTSTANDING (consolidated 2026-11-04; pruned 2026-11-11 by scan F51 -- three items here were recorded as done by LATER entries and are struck, not deleted):**
+  1. Apps Script version cap (DEP-5): if the deploy refuses at 200, delete old versions in Project History (keep the live one + ~20). STANDING.
+  2. Push dashboard + cdr-import, roll the dashboard deployment. SUPERSEDED: cycle 260's batches each carry their own push / deploy list (the entries at the top of OPEN NOW); deploy once for all of them.
+  3. ~~`previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (#88)~~ DONE 2026-11-04: the preview found 0 gaps, the backfill added 0, #88 closed (the "owner ran the post-deploy steps" entry above).
+  4. ~~`diagnoseTransferRetriesAllDates` and send the census (#89)~~ DONE 2026-11-04: 61 retries / 10 days; it produced TR-2 (ring time decides before voicemail; the 8 s line unchanged). Still open from it: re-run the census after the TR-2 push (expect about 20 quick declines / 37 voicemail).
+  5. Walk S48, S58, S60, S69 (and S57 for the four-way switch); check Transfer % on the CSR Agent Call Metrics table. OPEN.
+  **Follow-ons:** ~~exception days (#81 phase 2) on the Overview tile outbound / direct lines and the Direct Calls report~~ DONE by EXC-2 (PR #410, 2026-11-09; walk S68's EXC-2 step). STILL OPEN, needs an owner call: the tile's direct-line row must be released together with the Direct Calls report (one strip in `personalizeOverview_`).
 - **2026-11-02 (10) -- SHIPPED: [PR #401](https://github.com/robinchoudhuryums/call-data-reporting/pull/401) merged on green CI (merge c609554)** -- CBX-1, DL-R3, OVD-1, OVD-2 + /sync-docs. Branch restarted from main.
   **Owner-side:** push the dashboard and roll the deployment; walk S48, S58, S60.
   **Where I left off:** nothing open on the branch.
