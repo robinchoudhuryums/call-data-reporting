@@ -152,7 +152,7 @@ function dqeDateColumnIso_(sheet, lastRow, ssTZ) {
 // R44: the ext slice (cols C..D since CLN-1) the ext derivation scans, READ ONCE PER EXECUTION.
 // The GRID is dept-independent -- only the rosterSet filter applied to it is
 // per-dept, and that is in-memory -- so a combined sub-queue view was reading
-// ~128k identical cells once per department (~8s each live). Shared by BOTH
+// ~64k identical cells (~128k before CLN-1) once per department. Shared by BOTH
 // derivations: the sheet path (deptQueueExtsFromSheet_) and the Neon path's
 // sheet fallback (deptQueueExtsForNeonReader_), which have the same repetition.
 var DQE_EXT_GRID_MEMO_ = null;   // { grid: [[...]], rows: n }
@@ -2708,7 +2708,7 @@ function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
   // R45: cross-request cache of the DERIVED set. R44's memo already collapses
   // the repeats WITHIN one execution; this removes the read from most requests
   // entirely. What is cached is the derived SET (a few dozen short extension
-  // strings), never the grid -- ~128k cells is far past CacheService's ~100 KB
+  // strings), never the grid -- ~64k cells is still past CacheService's ~100 KB
   // per-value cap, so the grid is not a cacheable unit at all.
   //
   // The set has exactly TWO inputs and the key carries both:

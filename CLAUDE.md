@@ -675,91 +675,6 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (ex-parity gate). NOTE (INV-17): `clasp push -f` does not delete
   remote files -- PerformanceReport.gs must be removed in the Apps
   Script web editor.
-- **Per-row prior-period chips (E5, commit bb77168).** The My
-  Department agent table renders an inline delta chip after the
-  Rung / Missed / Answered values comparing the selected window
-  to the INV-28 prior window immediately preceding it (R24:
-  same working-day count). Three pieces of behavior worth knowing:
-  (1) **Valence map** lives in `script-5-dept::WOW_PRIOR_KEYS`:
-  rung↑ / answered↑ render `wow-chip-good` (sage); missed↑
-  renders `wow-chip-warn` (orange); decreases flip the color so
-  a missed-call drop is green and an answered-call drop is
-  orange. (2) **Noise threshold** `WOW_NOISE_THRESHOLD = 3`
-  applies the muted variant to any |delta| under 3 calls (and to
-  zero deltas) regardless of valence -- day-to-day noise stays
-  visually quiet. Hover title carries the prior window dates +
-  raw prior value + numeric delta from `state.meta.priorFrom` /
-  `state.meta.priorTo` (server-populated). (3) **Server side**
-  `Data.gs::computeSummary_` widens its single Raw Data scan
-  range to `[priorFrom, to]` and uses a sibling `priorAcc`
-  dictionary keyed by agent so the existing user-window
-  accumulator stays untouched; each row carries `priorRung` /
-  `priorMissed` / `priorAnswered` / `priorHasData`. Agents with
-  prior-only activity (no rows in the user window) are silently
-  dropped -- no card exists to render a chip on. CSV export
-  bypasses `fmtCell` via `exportTableCsv_` (using `csvEscape` /
-  `sourceChipCsv_`) so the chip markup is
-  intentionally NOT in CSVs; raw current-window values only.
-  Floaters get chips too -- the chip is a per-agent comparison,
-  independent of the INV-53 team-avg floater-exclusion gate.
-- **Missed-card ordering + severity tiers (Phase 15, commit
-  77441a7).** `missedAgentsHtml_` (the builder for the per-agent
-  missed-call cards in the My Department missed section -- the
-  standalone Missed Calls modal it also served is RETIRED; the
-  inline section is the Missed Calls report now) sorts agents
-  **most-missed first** (stable tiebreak by name) and tags each
-  card with a cohort-RELATIVE severity tier: **Most missed** (warn
-  left-rail + chip), **Moderate** (neutral), **Fewest** (sage).
-  Cutoffs are tertiles of the missed totals among the agents shown
-  (`missedQuantile_`), NOT an absolute standard -- there is no
-  company benchmark for per-agent missed counts. Tiering is GATED
-  OFF for low-signal cohorts (fewer than 3 agents, or a max total
-  under 3 missed) so a 1-missed agent is never branded worst; in
-  that case cards render sorted but untiered. Styles
-  (`.agent-tier`, `.agent-card--tier-*`) live in `styles.html`.
-  **Agent-scoped chart (R11-C4):** each card carries a "■ chart"
-  button (`.agent-scope-btn`; rendered AFTER `</summary>` and pulled onto
-  the header row by CSS -- UD-5) that rebuckets the 18-slot
-  hour-of-day chart above from THAT agent's own timeline entries
-  (pure client rebucket via `missedTimeBucketIdx_` -- the times are
-  already in the payload, no fetch); a toolbar chip
-  (`#dept-missed-scope-chip`) names the active scope with an ✕
-  clear. The bucket drill panel stays DEPT-WIDE by design;
-  scope resets on every fresh fetch (`deptMissedRender_`).
-- **Threshold-drift surface (E10, commit b3a5a51).** The Notifications
-  (Alerts) modal renders a "Last 30 assessed days" chip on each rule card,
-  summarizing the most-recent daily-trigger entries from the
-  Alert Log. Five tunable constants near the top of `Alerts.gs`:
-  `DRIFT_LOOKBACK_ENTRIES` (=30; per-dept window size),
-  `DRIFT_MIN_TOTAL_TO_ASSESS` (=10; below this the chip renders
-  the muted 'cold' / dash variant -- not enough signal),
-  `DRIFT_CHRONIC_FIRE_RATIO` (=0.80; `fired/total` at or above
-  flags 'chronic' = warn-tinted), `DRIFT_LENIENT_HEADROOM_PTS`
-  (=10; `fired === 0` AND `meanRate >= threshold + 10pts` flags
-  'lenient' = muted, informational), `DRIFT_LOG_SCAN_CAP` (=2000;
-  caps the Alert Log read so a runaway log can't blow the script
-  budget -- ~125 days of history at all 16 roster depts × 1
-  trigger/day; ~143 at the 14 Overview-visible ones).
-  Server-side `computeThresholdDrift_` filters to `triggeredBy
-  === 'daily-trigger'` rows AND drops anything whose Triggered
-  By starts with `preview:`, so manual sends from the UI +
-  previews don't pollute the signal. It also counts only
-  ASSESSED days (status `sent` / `above-threshold`) toward
-  `total` -- `no-data` / `skipped` / `no-recipients` / `error`
-  days aren't fire-vs-not decisions, so they don't dilute the
-  `fired/total` chronic ratio or the `DRIFT_MIN_TOTAL_TO_ASSESS`
-  gate (F5). **Self-warming:** a fresh
-  install renders every chip as `cold` until each dept has
-  >= `DRIFT_MIN_TOTAL_TO_ASSESS` daily-trigger entries logged
-  (~10 weekdays after the trigger goes live). **Best-effort:**
-  the helper is wrapped in a try/catch inside
-  `alertConfigSection_` (the shared rows + drift + dept-list builder that
-  `getAlertsInit` and both config write paths read; since Step 5 it also
-  carries the manager layer and the reason rules, each best-effort)
-  so a missing or corrupt Alert Log returns an empty drift map
-  and the rule cards still render -- each chip just shows a dash. Admin-only via the
-  existing modal gating (`assertAdmin_` in `getAlertsInit`);
-  no separate gate needed.
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing. `neonWrite.js` self-contains
@@ -1036,7 +951,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) — READ IT
   before touching `script.html`, `styles.html`, or `dashboard.html`**, and
   re-run `npm run ci:ui` afterwards. Fifteen bullets moved there in the F8/F8b
-  splits (+ seven KDD bullets in DX-6, indexed in Key Design Decisions) because they describe how a SURFACE IS BUILT rather than a trap that
+  splits (+ seven KDD bullets in DX-6, indexed in Key Design Decisions, + three
+  in the 2026-11-11 sync: the per-row prior-period chips (E5), the missed-card
+  ordering + severity tiers, the threshold-drift chip (E10, `DRIFT_*` in
+  `Alerts.gs`)) because they describe how a SURFACE IS BUILT rather than a trap that
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
   incl. the consolidated trend chart + per-agent cards/chart bases + IR
@@ -1063,7 +981,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   via `SHARE_STATE_`, the F11 non-admin no-op, browser Back/Forward via
   `google.script.history`, CL-23) · the client ACCESSIBILITY +
   PRINT contract (keyboard parity, the ARIA shapes, the focus ring, the
-  on-fill tokens, what never reaches paper) · what survives a reload and what
+  on-fill tokens, what never reaches paper; KBF: focus return + popovers +
+  `aria-pressed`; NPS: named charts, tier words, modal print, phone widths) · what survives a reload and what
   Refresh drops (CCX: dept-page deep links wait for the latest-date read).
   **The client traps that CAN bite you without warning stayed HERE** and are
   not repeated there: `safeChart_`, `dsConfirm_`, `csvSafeCell_`, the
@@ -1102,7 +1021,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   supports Enter/Escape/backdrop, a `danger` tone for destructive actions,
   and either `message` (plain, auto-escaped) or `messageHtml` (caller MUST
   escape dynamic values). Wired in the **Outlier Fix** modal
-  (rename / add-to-roster / deactivate-alias) and the **Daily Call Queue
+  (rename / add-to-roster / deactivate-alias / mark-all-not-agents) and the **Daily Call Queue
   Report subscriber blast** (QV-5/R18c -- which also shows the tone-varying
   pattern: neutral normally, `danger` when re-sending an already-sent day);
   the remaining legacy `window.confirm` callsites can adopt it incrementally.
@@ -1696,7 +1615,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   server: one email per signature per 30 min + `CLIENT_ISSUE_WINDOW_CAP_`
   (=15) emails per FIXED 6 h CacheService window (stamped at its first email; counters expire with it, ENG-5) and `CLIENT_ISSUE_USER_CAP_`
   (=5) per signed-in user per 6h (AC-6), with throttled reports
-  still Logger.logged. Public but INV-01-clean (email + cache only, no
+  still Logger.logged. Its check-then-count runs inside `withQuotaGuardLock_`
+  (Config.gs, HDN-2), as does `assertReportEmailThrottle_` -- a new
+  count-based guard goes inside it too (`app-email.test.js`,
+  `system-health.test.js`). Public but INV-01-clean (email + cache only, no
   sheet write). **A new top-level page loader's failure handler should call
   `reportClientIssue_('load-failure', ...)`** — drill/panel fetches with
   their own visible error states should not (noise). Usage-telemetry scope
