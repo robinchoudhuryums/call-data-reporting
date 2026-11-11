@@ -181,6 +181,50 @@ const DC_NON_PERSON_RE_ = /^(n\/?a|none|unknown|anonymous|restricted|private)$|v
 // the second -- the Spanish agents' direct calls go to their CSR row.
 const DC_DEPT_PREFER_ = { 'Spanish': 'CSR' };
 
+// DCA-6 (owner 2026-11-11): a person 8x8 names on a ROSTER extension who is on
+// NO roster -- the new hire on a former employee's extension -- is credited to
+// no one (DCA-1), and until now that showed only in the execution log. The
+// dashboard's orphan check reads DQE Historical Data, which holds QUEUE calls
+// only, so someone who takes no queue calls was never listed or nagged about.
+// Each Direct build now names them at the END of its Pipeline Health notes:
+//   ' | unrostered=[["<name 8x8 shows>","<ext>","<roster name on that ext>",<calls>], ...]'
+// DCA-7 (owner 2026-11-11): the same list also carries a person on an
+// extension NO roster cell lists (a new hire given a new extension), with an
+// EMPTY third element. That set includes every colleague the roster does not
+// track, so the dashboard keeps an ignore list for them; here the two kinds
+// are capped apart, so untracked staff can never crowd out a former
+// employee's extension.
+// The dashboard (OrphanFix.gs::orphanDirectFromHealthRows_) parses exactly
+// this tail; `orphan-direct-line.test.js` drives the real writer into the real
+// reader and keeps the tag equal on both sides. Busiest first, capped, names
+// clipped -- a note is one sheet cell.
+var DC_UNROSTERED_TAG_ = 'unrostered=';
+var DC_UNROSTERED_MAX_ = 20;
+var DC_UNLISTED_MAX_ = 100;
+var DC_UNLISTED_CUT_MARK_ = '+';   // the dashboard's ORPHAN_DIRECT_CUT_MARK_
+/** PURE. The note tail for a build's meta ('' when 8x8 named nobody off-roster). */
+function dcUnrosteredNote_(meta) {
+  const at = meta && meta.attribution;
+  const rows = [];
+  const take = function (list, cap, was) {
+    let n = 0;
+    for (let i = 0; i < (list || []).length && n < cap; i++) {
+      const m = list[i];
+      if (!m || !m.legName || !m.ext) continue;
+      rows.push([String(m.legName).slice(0, 80), String(m.ext), was ? String(m.rosterName || '').slice(0, 80) : '', Number(m.n) || 0]);
+      n++;
+    }
+  };
+  take(at && at.mismatches, DC_UNROSTERED_MAX_, true);
+  const before = rows.length;
+  take(at && at.unlisted, DC_UNLISTED_MAX_, false);
+  // A cut is said, never silent: the dashboard shows "N more were left off".
+  const usable = ((at && at.unlisted) || []).filter(function (m) { return m && m.legName && m.ext; }).length;
+  const cut = usable - (rows.length - before);
+  if (cut > 0) rows.push([DC_UNLISTED_CUT_MARK_, '', '', cut]);
+  return rows.length ? ' | ' + DC_UNROSTERED_TAG_ + JSON.stringify(rows) : '';
+}
+
 /** PURE. The leg's name as a PERSON name, or '' for blank / a label / a number. */
 function dcPersonName_(v) {
   const s = String(v == null ? '' : v).trim();
@@ -256,6 +300,10 @@ function dcResolveAgent_(ext, legName, maps) {
     if (nm && /^\d{1,6}$/.test(d) && !((maps && maps.queueExtSet) || new Set()).has(d)) {
       const cell = dcCellForName_(canonOf(nm), maps);
       if (cell) return { agent: cell, kind: 'namedUnlisted', name: nm };
+      // DCA-7: a PERSON on an extension no roster cell lists, who is on no
+      // roster either. Credit is unchanged (no one) -- the name is only
+      // carried so the build can tell the dashboard's orphan check about it.
+      return { agent: null, kind: 'none', name: '', unlistedName: nm };
     }
     return { agent: null, kind: 'none', name: '' };
   }
@@ -344,10 +392,21 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // the agent ONLY on that leg). PASS A guarded this for queue calls only, so
   // on a NON-queue direct call that leg became a fake connected outbound and
   // its talk counted twice. Same id discipline as queueCallIds (cid + parent).
+  // CAP-1 (broad-scan 2026-11-09): "Incoming" here means a caller CALLING IN
+  // -- the captures' NX-2 test (icIsCallerIncoming_), never a bare Direction
+  // check. 8x8 marks its CallRecording leg Incoming on OUTBOUND calls too, so
+  // the bare test filed such a call as inbound: the agent's Outgoing leg took
+  // the "own talk on an inbound call" branch below, no inbound event existed
+  // to credit, and the call vanished from Direct altogether (~26 a day,
+  // Operator State #87). The typeof guard is for suites that load this file
+  // without inboundCalls.js; lint:gas proves the name exists in the project.
+  const callerIncoming = (typeof icIsCallerIncoming_ === 'function')
+    ? icIsCallerIncoming_
+    : function (leg) { return String(leg[C.DIR] || '') === 'Incoming'; };
   const incomingCallIds = new Set();
   for (let ii = 1; ii < rawDisplayData.length; ii++) {
     const q = rawDisplayData[ii];
-    if (!q || String(q[C.DIR] || '') !== 'Incoming') continue;
+    if (!q || !callerIncoming(q)) continue;
     const icid = dcClean_(q[C.CALL_ID]);
     const ipar = realParent(dcClean_(q[C.PARENT]));
     if (icid) incomingCallIds.add(icid);
@@ -420,7 +479,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // DCA-1: one tally per leg side (call id + side + extension), never a number.
   const extOnly = !!opts.extOnly;
   const AT = { seen: {}, match: 0, blank: 0, otherCell: 0, mismatch: 0, blankUnconfirmed: 0, mismatches: {}, moved: {}, blankExt: {},
-               blankUnconfirmedBy: {}, named: 0, namedUnlisted: 0, blankNamed: 0, reassigned: {} };
+               blankUnconfirmedBy: {}, named: 0, namedUnlisted: 0, blankNamed: 0, reassigned: {}, unlisted: {} };
   // DCA-2 (owner 2026-11-04, "should match with name also"): a BLANK-name
   // leg is credited by extension only when that extension showed its roster
   // person's OWN name on some leg the SAME day -- proof they still use it.
@@ -454,6 +513,15 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     return { agent: null, kind: 'blankUnconfirmed', name: '', credited: res.base || res.agent };
   }
   function atNote(cid, side, ext, res) {
+    if (res && res.kind === 'none' && res.unlistedName) {   // DCA-7: tallied apart, one per leg side like the rest
+      if (exclusions.has(res.unlistedName)) return;
+      const uk = 'u|' + cid + '|' + side + '|' + ext;
+      if (AT.seen[uk]) return;
+      AT.seen[uk] = true;
+      const ue = AT.unlisted[ext + '|' + res.unlistedName] || (AT.unlisted[ext + '|' + res.unlistedName] = { ext: ext, legName: res.unlistedName, n: 0 });
+      ue.n++;
+      return;
+    }
     if (!res || res.kind === 'none') return;
     const key = cid + '|' + side + '|' + ext;
     if (AT.seen[key]) return;
@@ -574,11 +642,12 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (calleeAgent && !exclusions.has(calleeAgent.name) && ibCaller && !queueExtSet.has(caller)) {
       const b = ensure(calleeAgent.name, calleeAgent.dept);
       let ev = b.ib[root];
-      if (!ev) { ev = b.ib[root] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid, otherName: dcClean_(r[C.CALLER_NAME]), otherAgent: extOnly ? undefined : (callerRes.agent || null) }; }
+      if (!ev) { ev = b.ib[root] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, rings: [], answered: false, talk: 0, legTalk: {}, legs: {}, caller: caller, callee: callee, root: root, firstCid: cid, otherName: dcClean_(r[C.CALLER_NAME]), otherAgent: extOnly ? undefined : (callerRes.agent || null) }; }
       ev.legs[cid] = true;
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       const ringEnd = (startSec != null) ? startSec + Math.max(0, dcTimeToSec_(r[C.CALLTIME])) : null;
       if (ringEnd != null && (ev.ringEnd == null || ringEnd > ev.ringEnd)) ev.ringEnd = ringEnd;
+      if (startSec != null) ev.rings.push({ s: startSec, e: ringEnd != null ? ringEnd : startSec });   // CAP-4
       // PC-4: "Answered" needs talk, as in the inbound capture's Talk>0 gate --
       // a zero-talk Answered leg counted as answered and dragged ATT down.
       if (answered && talk > 0) {
@@ -648,6 +717,27 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     return null;
   }
 
+  // CAP-4 (broad-scan 2026-11-09): the busy test for a MISSED event, ring by
+  // ring. D2 made one event of every leg of a root call, with one span from
+  // the first ring's start to the last ring's end -- so a call the agent took
+  // in the GAP between two rings of the same root (rang, went elsewhere, came
+  // back six minutes later) overlapped that span and turned a miss while free
+  // into "missed while busy", naming a call they were on at neither ring. A
+  // miss is excused only when EVERY ring found them busy: free at any ring
+  // and unanswered is a miss. Returns the first ring's blocker (who they were
+  // with) or null. An event with no timed ring keeps the old single-span test.
+  function eventBlocker(occList, ev, cid) {
+    const rings = (ev.rings && ev.rings.length) ? ev.rings
+      : [{ s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) }];
+    let first = null;
+    for (let j = 0; j < rings.length; j++) {
+      const bl = busyBlocker(occList, { cid: cid, s: rings[j].s, e: rings[j].e });
+      if (!bl) return null;
+      if (!first) first = bl;
+    }
+    return first;
+  }
+
   // Sample collection (verification aid): a capped few example events per
   // bucket, with the fields needed to find the row in Raw Data by CALL_ID.
   const collect = !!(opts && opts.collectSamples);
@@ -683,7 +773,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
           caller: ev.caller, callee: ev.callee, talkSec: ev.talk });
       } else {
         const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
-        const blocker = busyBlocker(a.occ, ring);
+        const blocker = eventBlocker(a.occ, ev, cid);   // CAP-4: every ring, not the span
         if (blocker) {
           m['ib_' + k + '_missed_busy']++; missedBusyTotal++;
           addSample('ib_missed_busy', { callId: cid, agent: name, dept: a.dept, dir: k,
@@ -748,14 +838,13 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         const ev = a.ib[cid];
         let outcome = 'answered';
         if (!ev.answered) {
-          const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
-          outcome = (ev.start != null && busyBlocker(a.occ, ring)) ? 'missed_busy' : 'missed_free';
+          outcome = (ev.start != null && eventBlocker(a.occ, ev, cid)) ? 'missed_busy' : 'missed_free';   // CAP-4
         }
         const o = other(ev, ev.caller, ev.intExt);
         // ADT-2: who the call that kept them busy was with.
         let busyWith = null;
         if (outcome === 'missed_busy') {
-          const bl = busyBlocker(a.occ, { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) });
+          const bl = eventBlocker(a.occ, ev, cid);   // CAP-4
           busyWith = bl ? (bl.w || 'another call') : null;
         }
         events.push({ agent: name, dept: a.dept, direction: 'in', side: ev.intExt, callId: cid, callStart: ev.start == null ? null : secToHms(ev.start),
@@ -780,7 +869,8 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     meta.attribution = { match: AT.match, blank: AT.blank, otherCell: AT.otherCell, mismatch: AT.mismatch,
       blankUnconfirmed: AT.blankUnconfirmed, blankUnconfirmedBy: list(AT.blankUnconfirmedBy),
       named: AT.named, namedUnlisted: AT.namedUnlisted, blankNamed: AT.blankNamed, reassigned: list(AT.reassigned),
-      mismatches: list(AT.mismatches), moved: list(AT.moved), blankExt: AT.blankExt };
+      mismatches: list(AT.mismatches), moved: list(AT.moved), blankExt: AT.blankExt,
+      unlisted: list(AT.unlisted) };   // DCA-7
   }
   if (collect) meta.samples = samples;
   if (diagOn) {
@@ -793,7 +883,18 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       outsideNumber: DGI.outsideNumber, other: DGI.other, talked: DGI.talked,
       topCallees: top(DGI.callee), topContexts: top(DGI.ctx) };
   }
-  return events ? { rows: rows, meta: meta, events: events } : { rows: rows, meta: meta };
+  const out = events ? { rows: rows, meta: meta, events: events } : { rows: rows, meta: meta };
+  // CAP-6 (broad-scan 2026-11-09): the build's OWN per-leg credit rule
+  // (DCA-1..5 with the DCA-2/3 blank-name confirmation, which needs this
+  // pass's ownerSeen) for dcDialInAnnotate_. Non-enumerable: callers that
+  // serialize or compare the result see exactly the shape they always did.
+  try {
+    Object.defineProperty(out, 'resolveLeg', { enumerable: false, value: function (ext, legName) {
+      return extOnly ? { agent: extToAgent[ext] || null, kind: 'blank' }
+        : confirmBlank(ext, dcResolveAgent_(ext, legName, maps));
+    } });
+  } catch (eRes) { /* a frozen result: the annotator falls back to the raw rule */ }
+  return out;
 }
 
 /**
@@ -1510,7 +1611,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   // line, by extension". A defect here never costs the day's write: the calls
   // just stay unsplit (via NULL).
   try {
-    const ann = dcDialInAnnotate_(dayRows, result.events || [], maps);
+    const ann = dcDialInAnnotate_(dayRows, result.events || [], maps, result.resolveLeg);   // CAP-6
     (result.events || []).forEach(function (ev) {
       const a = ann[ev.callId + '|' + ev.agent];
       if (a) { ev.via = a.via; ev.dialIn = a.dialIn || null; }
@@ -1550,12 +1651,34 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
            dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
 }
 
+/**
+ * RB-2 (broad-scan 2026-11-09): the day a Raw Data grid is FOR, when no caller
+ * knows it -- the day MOST of its dated rows are on (rawGridDay_, the shared
+ * ST2 rule the CSR repair got in ING-7). The editor-run tools below used to
+ * take the grid's FIRST dated row, and a D-1 carry-over leg sorts first: the
+ * build then deleted D-1's correct Direct rows (sheet AND Neon, authoritative)
+ * and replaced them with that one leg, dropped all of day D as "strays", never
+ * wrote day D, and logged success. Returns { iso, date (local noon), strays,
+ * strayByDay } or null when the grid has no dated row. (rawGridDay_ lives in
+ * autoImport.js -- same project, one global scope.)
+ */
+function dcGridMajorityDay_(rawDisp) {
+  const g = rawGridDay_(rawDisp);
+  if (!g || !g.dateIso) return null;
+  const p = String(g.dateIso).split('-');
+  return { iso: g.dateIso, date: new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0),
+           strays: g.strays || 0, strayByDay: g.strayByDay || {} };
+}
+
 // -- Editor-run orchestrator (Phase 1a: manual, numbers-only validation) ------
 /**
  * Computes direct-call metrics for the CURRENT `Raw Data` day and writes the
  * `Direct Call History` sheet + Neon mirror. Run from the cdr-import editor.
  * Best-effort + self-contained: does NOT touch the daily import. (Phase 1b
  * wires the SAME core, buildDirectCallFromRaw_, into processIntegratedHistory.)
+ * RB-2: "the current day" is the day most of the grid's rows are on
+ * (dcGridMajorityDay_), handed to the core as its expectedDate so the ING-1
+ * day pick and the P-4 refusal apply here as they do on the import paths.
  */
 function runDirectCallBuild() {
   const t0 = Date.now();
@@ -1567,14 +1690,25 @@ function runDirectCallBuild() {
   const raw = rawSheet.getDataRange().getDisplayValues();
   if (raw.length < 2) { dcLog_('runDirectCallBuild: Raw Data empty.'); return { rows: 0 }; }
 
-  const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true });
+  const day = dcGridMajorityDay_(raw);
+  if (!day) {
+    // No dated row at all: nothing names the day, so nothing may be deleted.
+    dcLog_('runDirectCallBuild: Raw Data has no dated row -- nothing built.');
+    return { rows: 0 };
+  }
+  if (day.strays) {
+    dcLog_('runDirectCallBuild: building %s (the day most rows are on); %s leg(s) dated on other day(s) are left out: %s',
+      day.iso, String(day.strays), JSON.stringify(day.strayByDay));
+  }
+  const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true, expectedDate: day.date });
   dcLogSamples_(r.meta.samples);
 
   const ms = Date.now() - t0;
   const neonStr = r.neon.unreachable ? 'unreachable' : (r.neon.error ? 'error' : 'ok');
   dcLogPipelineHealth_(ss, 'success', r.wrote, ms,
     'directBuild date=' + r.dateStr + ' agents=' + r.meta.agents +
-    ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr);
+    ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr
+    + (day.strays ? ' strayLegs=' + day.strays : ''));
   dcLog_('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
     r.wrote, r.dateStr, r.meta.missedBusyTotal, r.meta.missedFreeTotal, neonStr, ms);
   return { rows: r.wrote, date: r.dateStr, meta: r.meta, neon: r.neon };
@@ -1601,12 +1735,14 @@ function diagnoseDirectCallCounting() {
   if (!rawSheet || !configSheet) throw new Error('Raw Data or DO NOT EDIT! sheet missing.');
   const raw = rawSheet.getDataRange().getDisplayValues();
   if (raw.length < 2) { dcLog_('diagnoseDirectCallCounting: Raw Data empty.'); return { result: 'INCONCLUSIVE (Raw Data empty)' }; }
-  // The build's own day rule: the first dated row's date, legs from other
-  // dates dropped (S2C-3).
+  // The build's own day rule (RB-2): the day most rows are on, legs from other
+  // dates dropped (S2C-3). (It used to be the first dated row's date, which a
+  // carry-over leg from the day before turned into a one-leg "day".)
   const toIso = function (ds) { return (typeof parseDateForNeon === 'function') ? parseDateForNeon(ds) : ds; };
   let dateStr = '';
   for (let i = 1; i < raw.length && !dateStr; i++) dateStr = dcDateStr_(raw[i][2]);
-  const isoDate = toIso(dateStr);
+  const majority = dcGridMajorityDay_(raw);
+  const isoDate = majority ? majority.iso : toIso(dateStr);
   const dayRows = [raw[0]];
   for (let i = 1; i < raw.length; i++) {
     const ds = dcDateStr_(raw[i] && raw[i][2]);
@@ -1972,9 +2108,16 @@ var DC_DID_OWNER_SHARE_ = 0.8;
  * Departments column (36): without it every pre-agent leg would read as a menu
  * step, so a narrower grid yields {} (unknown) rather than a guess.
  */
-function dcDialInAnnotate_(rows, events, maps) {
+function dcDialInAnnotate_(rows, events, maps, resolveLeg) {
   const out = {};
   if (!rows || rows.length < 2) return out;
+  // CAP-6: who a leg is credited to is the BUILD's answer (resolveLeg, from
+  // computeDirectCallMetrics). The raw extension rule below it credited a
+  // blank-named leg on a reassigned extension to the FORMER employee, so the
+  // agent's own leg read as "a colleague rang first" and a call that reached
+  // them straight was stored via='colleague'.
+  const resolve = (typeof resolveLeg === 'function') ? resolveLeg
+    : function (ext, legName) { return dcResolveAgent_(ext, legName, maps); };
   let width = 0;
   for (let i = 0; i < Math.min(rows.length, 50); i++) width = Math.max(width, (rows[i] || []).length);
   if (width <= DC_DIAL_COL_.DEPARTMENTS) return out;
@@ -2000,7 +2143,7 @@ function dcDialInAnnotate_(rows, events, maps) {
     let mine = -1;
     for (let j = 0; j < legs.length; j++) {
       const callee = dcClean_(legs[j][C.CALLEE]);
-      const res2 = dcResolveAgent_(callee, legs[j][C.CALLEE_NAME], maps);
+      const res2 = resolve(callee, legs[j][C.CALLEE_NAME]);
       if (res2.agent && res2.agent.name === ev.agent) { mine = j; break; }
     }
     let how = 'straight';
@@ -2012,7 +2155,7 @@ function dcDialInAnnotate_(rows, events, maps) {
       if (/A_Q_|queue|backup csr/i.test(name) || /queue/i.test(String(l[C.CTX] || ''))) continue;
       if (/record|voice ?mail/i.test(name)) continue;
       const dept = dcClean_(l[DC_DIAL_COL_.DEPARTMENTS]);
-      const r3 = dcResolveAgent_(callee, name, maps);
+      const r3 = resolve(callee, name);
       if (r3.agent && r3.agent.name !== ev.agent) { how = 'colleague'; break; }
       if (!dept || dept.toUpperCase() === 'N/A') { how = 'menu'; break; }
     }
@@ -2024,7 +2167,7 @@ function dcDialInAnnotate_(rows, events, maps) {
 /** PURE. One day's straight / menu / colleague reading of every outside direct call (DID-0). */
 function dcDialInForDay_(rows, maps) {
   const res = computeDirectCallMetrics(rows, maps, { events: true });
-  const ann = dcDialInAnnotate_(rows, res.events || [], maps);
+  const ann = dcDialInAnnotate_(rows, res.events || [], maps, res.resolveLeg);   // CAP-6
   const out = [];
   (res.events || []).forEach(function (ev) {
     if (ev.direction !== 'in' || ev.side !== 'ext') return;

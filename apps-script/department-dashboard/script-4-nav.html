@@ -265,6 +265,16 @@
         // CL-23: the landing entry already names this route -- dispatching it
         // must not push a second entry for the same view.
         if (ROUTES_[route]) lastHistoryRoute_ = routeTarget_(route);
+        // CCX-2 (broad-scan 2026-11-09): a link that lands on the DEPT page
+        // waits for the boot latest-date read. Dispatched at once (this
+        // callback is answered by the host page, the dates by the server), it
+        // loaded the page for the provisional window ending TODAY, then again
+        // for the link's window, then a third time when the dates landed --
+        // 13-22 requests against 3-6 for the same view reached by click, one
+        // of them a full report nobody saw. Routes that need no dates (the
+        // modals, Escalations) still open immediately.
+        const landing = ROUTES_[route];
+        const dispatch = function () {
         // C-4: escape the hand-typed hash -- a crafted quote/backslash used
         // to throw a selector SyntaxError inside this callback, silently
         // killing all deep-link handling for the load.
@@ -289,7 +299,10 @@
           if (def && def.kind === 'page') {
             if (def.scrollTo === 'dept-missed-section') deptMissedScrollPending_ = true;
             setPage(def.page);
-            if (def.page === 'dept' && typeof refresh === 'function') refresh();
+            // CCX-2: setPage already loads a dept it has not loaded; a second
+            // refresh() here doubled the summary request.
+            const rbtn = $('refresh-btn');
+            if (def.page === 'dept' && typeof refresh === 'function' && !(rbtn && rbtn.disabled)) refresh();
             if (def.callbacks && typeof insCbDeepLink_ === 'function') insCbDeepLink_();
             if (params) {
               const provider = SHARE_STATE_[route];
@@ -318,6 +331,31 @@
           if (provider) {
             try { provider.apply(params); } catch (e) { /* best-effort */ }
           }
+        }
+        };
+        if (landing && landing.kind === 'page' && (landing.page === 'dept' || landing.page === 'insights')) {
+          whenLatestDatesSettled_(function () {
+            // The user did not wait: they opened something else while the
+            // dates were being read. Their click wins over the link.
+            if (currentRoute !== '/overview' || document.body.getAttribute('data-page') !== 'overview') return;
+            // Point the dept controls at the link's department and window
+            // BEFORE the page swap, so the swap's own load is already the
+            // linked view (the provider's apply below then finds nothing to move).
+            if (params && SHARE_STATE_[route]) {
+              try {
+                shareApplyDeptParam_(params.dept);
+                if (landing.page === 'insights') insCarryLinkWindowToDept_(params);
+              } catch (e) { /* the provider's own apply still runs */ }
+            }
+            dispatch();
+            // Whatever was in flight when the link arrived, the LAST summary
+            // request must be for the linked view -- a load for the previous
+            // department would otherwise paint under the linked one.
+            if (document.body.getAttribute('data-page') === 'dept' && typeof refresh === 'function'
+                && summaryReqKey_ !== summaryViewKey_()) refresh();
+          });
+        } else {
+          dispatch();
         }
       });
     }
@@ -371,6 +409,33 @@
    * exact view" matters; the simpler forms (QCD / Missed / Inbound) are
    * candidates for a follow-on.
    */
+  /** CCX-8 (PURE): true for a real calendar date written YYYY-MM-DD. */
+  function shareIsIsoDate_(v) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v == null ? '' : v));
+    if (!m) return false;
+    var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1
+      && d.getUTCDate() === Number(m[3]);
+  }
+  /**
+   * CCX-8 (PURE): a copy of a link's params with each date PAIR (from/to,
+   * pfrom/pto) removed unless both are real dates in order. Half a window is
+   * no window, so the pair goes together; every other param is untouched.
+   */
+  function shareCleanDateParams_(params) {
+    var out = {};
+    Object.keys(params || {}).forEach(function (k) { out[k] = params[k]; });
+    [['from', 'to'], ['pfrom', 'pto']].forEach(function (pair) {
+      var a = out[pair[0]], b = out[pair[1]];
+      if (a == null && b == null) return;
+      if (!shareIsIsoDate_(a) || !shareIsIsoDate_(b) || String(a) > String(b)) {
+        delete out[pair[0]];
+        delete out[pair[1]];
+      }
+    });
+    return out;
+  }
+
   function shareDatesProvider_(ids, getPending) {
     return {
       collect: function () {
@@ -387,6 +452,11 @@
         return (out.from || out.p1from) ? out : null;
       },
       apply: function (params) {
+        // CCX-8: a date the link mangled is DROPPED, not written. An invalid
+        // value blanks a date input, and Insights then sat on its fallback
+        // form saying "Pick a start and end date" -- the page's own window is
+        // the better answer to a broken link.
+        params = shareCleanDateParams_(params);
         Object.keys(ids.fields).forEach(function (k) {
           shareSetField_(ids.fields[k], params[k]);
         });
@@ -431,7 +501,11 @@
         return d ? { dept: d } : null;
       },
       apply: function (p) {
-        if (shareApplyDeptParam_(p && p.dept)) refresh();
+        // CCX-2: only when the link MOVED the department. The page entry has
+        // already loaded the one on screen, so an unconditional refresh here
+        // re-sent the same summary request.
+        var before = getRequestedDept();
+        if (shareApplyDeptParam_(p && p.dept) && getRequestedDept() !== before) refresh();
       },
     },
   };
@@ -1012,7 +1086,28 @@
       el.classList.add('gloss');
       const rich = METRIC_GLOSSARY_RICH_[key];
       if (rich) el.setAttribute('data-gloss-rich', rich);
+      glossMakeFocusable_(el);
     });
+  }
+
+  // F79 (broad-scan 2026-11-10): a definition shown on hover must be
+  // reachable by keyboard. The styled tooltip already opens on focus, but a
+  // plain header or KPI label could never TAKE focus, so 20 labels in the
+  // Inbound report explained themselves to a mouse only. A tagged label
+  // becomes a tab stop unless it already is one, holds one, or sits inside
+  // one (an Overview tile is a button -- a tab stop inside it would be a
+  // control within a control).
+  function glossMakeFocusable_(el) {
+    // A sort header is NOT skipped: the sorter gives it this same tab stop
+    // only once its table has rows, so an empty table's headers (the harness
+    // caught 20 in Inbound) would explain themselves to a mouse only.
+    if (el.hasAttribute('tabindex')) return;
+    if (/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName)) return;
+    if (el.querySelector('a[href], button, input, select, textarea, summary, [tabindex]')) return;
+    // Only a real CONTROL ancestor counts -- every modal panel carries a
+    // tabindex of its own, and that must not switch this off inside a report.
+    if (el.parentElement && el.parentElement.closest('a[href], button, summary, [role="button"], [role="tab"], [role="menuitem"]')) return;
+    el.setAttribute('tabindex', '0');
   }
 
   // Styled tooltip for glossary terms (.gloss) -- replaces the unstyleable
@@ -1097,15 +1192,50 @@
     window.addEventListener('resize', hide);
   }
 
+  // F80 / NPS-5 (broad-scan 2026-11-10): a benchmark tint is colour alone --
+  // an amber or red Answer % said nothing more than its number to a screen
+  // reader, or to anyone who cannot tell the three hues apart. The words a
+  // screen reader hears are CSS-generated (styles.html, .bm-*::after), so no
+  // builder changes and nothing that reads a cell's text sees them; this pass
+  // only adds the same words as a hover `title`, on the glossary's observer.
+  // Green is the unmarked case and stays silent. Keep the words equal to the
+  // stylesheet's (names-print-narrow.test.js compares them).
+  var BENCH_TIER_TEXT_ = { 'bm-watch': 'just below target', 'bm-bad': 'below target', 'bm-over': 'outside the standard' };
+  function benchTierWord_(el) {
+    if (el.classList.contains('bm-bad')) return BENCH_TIER_TEXT_['bm-bad'];
+    if (el.classList.contains('bm-watch')) return BENCH_TIER_TEXT_['bm-watch'];
+    if (el.classList.contains('bm-over')) return BENCH_TIER_TEXT_['bm-over'];
+    return '';
+  }
+  function applyBenchTierTitle_(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('.bm-watch, .bm-bad, .bm-over').forEach(function (el) {
+      const word = benchTierWord_(el);
+      if (!word) return;
+      const title = word.charAt(0).toUpperCase() + word.slice(1);
+      // A title this pass wrote follows the tier; one a builder wrote (or the
+      // glossary is holding in data-gloss) is left alone.
+      const mine = el.getAttribute('data-bm-title');
+      if (mine != null) {
+        if (el.title === mine && mine !== title) { el.title = title; el.setAttribute('data-bm-title', title); }
+        return;
+      }
+      if (el.title || el.hasAttribute('data-gloss')) return;
+      el.title = title;
+      el.setAttribute('data-bm-title', title);
+    });
+  }
+
   function initMetricGlossary_() {
     applyGlossaryTooltips_(document);
+    applyBenchTierTitle_(document);
     // Report tables/tiles render after async fetches; a debounced
     // childList observer re-applies over the whole document (cheap:
     // a few hundred elements, and already-titled ones short-circuit).
     let timer = null;
     const obs = new MutationObserver(function () {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(function () { applyGlossaryTooltips_(document); }, 250);
+      timer = setTimeout(function () { applyGlossaryTooltips_(document); applyBenchTierTitle_(document); }, 250);
     });
     obs.observe(document.body, { childList: true, subtree: true });
   }

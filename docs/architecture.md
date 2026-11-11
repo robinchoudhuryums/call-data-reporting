@@ -200,6 +200,38 @@ See INV-50 / INV-51 in `docs/invariants.md` for the full contract;
 `known-issues.md` → "QCD Report engine" covers the operator
 onboarding flow.
 
+## Exception days: one exclusion step beside every reader
+
+An exception day is a day whose call data is real but unfair to judge by
+(the 2026-09-21 phone-system outage is the case that asked for it). It is a
+READ-side rule only: the pipeline imports and stores the day like any
+other, and nothing in cdr-import or cdr-report knows the list exists. The
+dashboard leaves the day out when it reads.
+
+- **Where the list lives.** The `Exception Days` sheet in the CDR Report
+  workbook (date, departments -- `ALL` or a pick -- reason, active, added
+  by / at), written only by the admin editor in `ExceptionDays.gs`
+  (Admin ▾ → Exception days; an INV-01 carve-out). A failed sheet read
+  serves the last good copy.
+- **Where it is applied.** `Util.gs` owns the reader and the step:
+  `getExceptionDays_`, `applyExceptionDays_`, `exceptionDaysTag_`. Every DQE
+  reader calls `applyExceptionDays_` beside `applyQueueSplitToRows_`; queue
+  data is filtered inside `readQcdGrid_`; the per-call reports (Inbound,
+  Direct, the Overview tiles' outbound and direct lines) leave it out of
+  their totals since EXC-2. Counts go as well as rates, so a screen's
+  numbers still add up, and every surface names the day it left out.
+- **What makes it safe to forget.** `cross-file-pins.test.js` fails a DQE
+  reader that applies the queue split without the exception step, and the
+  list's hash is part of `reportFreshnessTag_`, so a save re-keys every
+  cached report at once.
+- **What does NOT follow it.** Call-level views (Caller Lookup, the call
+  path, Agent Day) list what happened and only mark the day; callbacks, the
+  abandon heatmap and team-tools' own reads of the workbook still count it.
+
+Operator State #81 has the full list of surfaces, the admin "include them"
+switch and the engines' behaviour on such a day; Regression Scenario S68
+walks it.
+
 ## Cross-project writes from the dashboard
 
 Until OrphanFix.gs shipped, the dashboard had ZERO write paths into
@@ -261,19 +293,19 @@ is canonical and reflects current code.
 
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
-| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v25:` | no |
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v26:` | no |
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v18:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v12:`, `individual_active:v2:` | no |
 | Performance Report | RETIRED (PR->Insights consolidation; `PerformanceReport.gs` deleted -- `deltaBlock_` moved to `Util.gs`; legacy `#/report/performance` deep links land on Insights) | — | — | — |
 | Compare Ranges | RETIRED (CR->Insights consolidation; `CompareRangesReport.gs` deleted -- Insights custom-prior mode + the vs-Prior chart basis replace it; legacy `#/report/compare` deep links land on Insights) | — | — | — |
-| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v30` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields; plus the tiles' `outbound` line while the 6c gate stands) |
-| Overview YTD chart trend (the chart's own payload when the range control is YTD -- the 90-day series ride the Company Overview blob above; the full series would blow its ~100KB cap) | `CompanyOverview.gs` | `getOverviewChartTrend` | `overviewChartYtd:v3` | partial (admin-only `company` -- the Company aggregate LINE, weighted % answered + abandoned %; this endpoint is manager-or-admin with a SHARED cache, so unlike `companyAggregate` it cannot ride a wholesale strip: `ovStripChartTrend_` removes the field on serve, fail-closed, on all three return paths -- cache hit, degraded, fresh) |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v31` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields; plus the tiles' `outbound` line while the 6c gate stands) |
+| Overview YTD chart trend (the chart's own payload when the range control is YTD -- the 90-day series ride the Company Overview blob above; the full series would blow its ~100KB cap) | `CompanyOverview.gs` | `getOverviewChartTrend` | `overviewChartYtd:v4` | partial (admin-only `company` -- the Company aggregate LINE, weighted % answered + abandoned %; this endpoint is manager-or-admin with a SHARED cache, so unlike `companyAggregate` it cannot ride a wholesale strip: `ovStripChartTrend_` removes the field on serve, fail-closed, on all three return paths -- cache hit, degraded, fresh) |
 | DQE-silence watchdog (push twin of the tile badge) | `DqeSilenceWatch.gs` | (trigger-driven; `runDqeSilenceCheckNow` admin RPC) | (no cache; state in `DQE_SILENCE_STREAKS`) | admin-only |
 | QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v6:` | no (all-dept report is company-wide read-only) |
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v26:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap; degrades to the `Inbound Calls` SHEET when Neon is unreachable -- mirrored bucketing + two-arm dept attribution, never cached, disclosed via `meta.fallbackSource`, cell drill suppressed), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4; the inbound arm degrades to the `Inbound Calls` sheet cols 18-22 when Neon is unreachable -- same auth, disclosed, journey cells windowed by INBOUND_EXPORT_JOURNEY_DAYS; the outbound arm has no fallback. `kind:'outbound'` also serves the OUTBOUND call an internal assist was placed from -- the one place a dept sees another dept's customer call, gated by a SERVER-RE-DERIVED capability: an internal record must link to it AND itself be drillable by that manager. Owner ruling in docs/known-issues.md) | `inbound:v16:`, `inboundHeatmap:v4:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
 | Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`; DC-1: degrades to the `Direct Call History` SHEET when Neon is unreachable -- that sheet is the PRIMARY and Neon the mirror, so the fallback's figures are COMPLETE; shared shaper, never cached) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v7:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
-| Outbound Report ("did we call back the ones who abandoned?" + per-agent outbound activity from Neon `outbound_calls`; abandon denominator = the Inbound report's Abandoned population verbatim) | `OutboundReport.gs` | `getOutboundReport`, `getOutboundUncalled` (not-called-back drill, uncached), `getOutboundCalledBack` (the called-back list, CE-2, uncached), `getOutboundDirectCallbacks` + `getOutboundDirectRepeats` (CE-3: unanswered calls to a person's line, misdials out since FO-1; both fall back to the Inbound + Outbound Calls tabs when Neon is unreachable, FO-2), `getDeptOutboundSummary` (the My Department Outbound / Both view, Team Outbound and the Outbound summary under the outbound table (UX-1) -- the report's per-agent half, Batch D), `probeOutboundSourceAgreement` (editor-run, read-only, Operator State #74) | `outboundReport:v10:`, `deptOutbound:v1:`, `outboundDirect:v5:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact) |
+| Outbound Report ("did we call back the ones who abandoned?" + per-agent outbound activity from Neon `outbound_calls`; abandon denominator = the Inbound report's Abandoned population verbatim) | `OutboundReport.gs` | `getOutboundReport`, `getOutboundUncalled` (not-called-back drill, uncached), `getOutboundCalledBack` (the called-back list, CE-2, uncached), `getOutboundDirectCallbacks` + `getOutboundDirectRepeats` (CE-3: unanswered calls to a person's line, misdials out since FO-1; both fall back to the Inbound + Outbound Calls tabs when Neon is unreachable, FO-2), `getDeptOutboundSummary` (the My Department Outbound / Both view, Team Outbound and the Outbound summary under the outbound table (UX-1) -- the report's per-agent half, Batch D), `probeOutboundSourceAgreement` (editor-run, read-only, Operator State #74) | `outboundReport:v11:`, `deptOutbound:v1:`, `outboundDirect:v5:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact) |
 | Day quick view (QV-1/QV-2: a team-card day bar's pop-up -- up to 3 days per call, the open day or both neighbours) | `DayQuickView.gs` | `getDayQuickView` (wraps `getDepartmentSummary`, `getMissedCallsReport` and, when asked, `getDeptOutboundSummary` for one-day windows in one execution; inner usage rows suppressed, one `dayView` row, none for a prefetch) | (none of its own -- each part uses its endpoint's) | no (per-dept gate up front; SEC-1; the outbound part keeps its vetting gate; the pop-up itself is admin-only client-side with the day bars) |
 | Agent Day (one agent's inbound + outbound calls for a day; the inline agent panel's day strip) | `AgentDay.gs` | `getAgentDay` (the modal + the panel's day view, 6d), `getAgentDayStrip` (the agent's days with activity in a window, at most 31, Batch B) | (none -- uncached) | no (per-dept gate on the agent's roster dept, `agentDayAuthorize_`; SEC-1 window cap) |
 | Coaching worklist (weekly answer-rate flags from Neon `coaching_flags`; SEPARATE from Escalations by owner ruling) | `Coaching.gs` | `getCoachingWorklist`, `updateCoachingFlagStatus` (admin Neon write; closes as met / rotated / dismissed), `previewCoachingFlags`, `saveCoachingDeptRule` / `saveCoachingDeptRules` (per-dept gates, Step 5b; Save all + the flat answer-% gate, CO-1), `previewCoachingManagerEmail` (the held manager email, to the caller), trigger RPCs (+ `runCoachingDelivery_` weekly trigger, `COACHING_DELIVERY_ENABLED`-gated) | (uncached) | admin-only until released |
@@ -283,7 +315,7 @@ is canonical and reflects current code.
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger`, `saveAlertConfigRow`/`removeAlertConfigRow` (C3 config editor), `saveAnswerTargets` (R12-25 display standards), `backfillAlertConfigToNeon`/`compareAlertConfigSources` (editor-run C3 gates) (+ `runDailyAlerts_` time trigger, which also runs `AlertReasons.gs::runAlertReasons_`) | (no cache) | yes |
 | Notifications (Step 5) | `Notifications.gs`, `AlertReasons.gs` | `getAlertHistory`, `sendAlertTest`, `setNotifyManagerEdit`, `saveAlertReasonRule` (admin); `getNotifyRules`, `saveNotifyManagerRule` (admin, or a manager once `NOTIFY_MANAGER_EDIT` is on -- the one non-admin write, a Script Property) | (no cache) | admin-only until released |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`, `saveDigestConfigRow`/`removeDigestConfigRow` (C3 config editor), `backfillDigestConfigToNeon`/`compareDigestConfigSources` (editor-run C3 gates) (+ `runDailyDigests_`, `runWeeklyDigests_`, `runMonthlyDigests_` time triggers) | (no cache) | yes |
-| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v30` -- on write) | yes |
+| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v31` -- on write) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —

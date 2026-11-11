@@ -73,22 +73,68 @@
       if (ids.onGridChange) ids.onGridChange();   // R11-M: smooth resize during the column transition
       initClipboardOnce();
       wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      syncPick();
     }
     function hide() {
       active = -1;
       var wrap = $(ids.wrap);
       if (!wrap) return;
+      // F74: closing from INSIDE the panel (its Close button) must not drop
+      // focus to <body> -- it goes back to the half-hour picker.
+      var held = wrap.contains(document.activeElement);
       wrap.style.display = 'none';
       var bodyEl = $(ids.body);
       if (bodyEl) bodyEl.innerHTML = '';
       if (ids.row) { var row = $(ids.row); if (row) row.classList.add('no-detail'); }
       if (ids.onGridChange) ids.onGridChange();   // R11-M
+      syncPick();
+      var pk = ids.pick ? $(ids.pick) : null;
+      if (held && pk && focusShown_(pk)) { try { pk.focus(); } catch (e) { /* ignore */ } }
     }
     function toggle(idx) { if (idx === active) hide(); else show(idx); }
+    // F74 (broad-scan 2026-11-10): the keyboard path to this drill. The bars
+    // are a canvas (mouse only) and the agent cards' ring times are out of
+    // the tab order on purpose (UD-4), so nothing reachable by Tab opened a
+    // half-hour. ONE <select> does: a single tab stop, natively operable,
+    // listing exactly the half-hours that have rings, with the count this
+    // panel will show. It is hidden until focused (styles.html), so the
+    // toolbar looks the same to a mouse user.
+    function ringCounts(data) {
+      var n = {};
+      var add = function (m) { if (m && m.bucket >= 0) n[m.bucket] = (n[m.bucket] || 0) + 1; };
+      ((data && data.agents) || []).forEach(function (a) { (a.missedTimes || []).forEach(add); });
+      ((data && data.queueOnly) || []).forEach(function (q) { (q.entries || []).forEach(add); });
+      return n;
+    }
+    function syncPick() {
+      var pk = ids.pick ? $(ids.pick) : null;
+      if (pk) pk.value = active >= 0 ? String(active) : '';
+    }
+    function fillPick() {
+      var pk = ids.pick ? $(ids.pick) : null;
+      if (!pk) return;
+      var data = getData();
+      var labels = (data && data.chart && data.chart.labels) || [];
+      var n = ringCounts(data);
+      var opts = '';
+      for (var i = 0; i < labels.length; i++) {
+        if (!n[i]) continue;
+        opts += '<option value="' + i + '">' + escapeHtml(labels[i]) + ' · ' + n[i] + ' missed</option>';
+      }
+      pk.innerHTML = '<option value="">Half-hour…</option>' + opts;
+      pk.hidden = !opts;            // no rings: nothing to open, and no tab stop
+      if (!pk.getAttribute('data-wired')) {
+        pk.setAttribute('data-wired', '1');
+        pk.addEventListener('change', function () {
+          if (pk.value === '') hide(); else show(Number(pk.value));
+        });
+      }
+      syncPick();
+    }
     // R17h (Option B): `show` is exposed for the agent-card ring cross-link,
     // which must always OPEN the bucket (toggle would close it when the
     // clicked ring's bucket happens to be the one already on screen).
-    return { toggle: toggle, hide: hide, show: show };
+    return { toggle: toggle, hide: hide, show: show, fillPick: fillPick };
   }
 
   // ── R17h (Option B): cross-links between the missed-call slices ──────────
@@ -102,9 +148,10 @@
   // many tab stops would bury the page's real controls -- but a bare span was
   // mouse-only, with no role for assistive tech to announce or activate. A
   // button announces, takes a virtual-cursor click and programmatic focus.
-  // Nothing is keyboard-unreachable -- both destinations (the agent cards,
-  // the chart's bucket bars) are themselves in the tab order on the same
-  // page; the links are a shortcut, not the route.
+  // Nothing is keyboard-unreachable -- the agent cards are in the tab order,
+  // and the half-hour drill has its own picker (F74: the chart's bars never
+  // were, whatever this comment used to say); the links are a shortcut, not
+  // the route.
   function missedAgentCardEl_(name) {
     var host = $('dept-missed-detail');
     if (!host || !name) return null;
@@ -147,7 +194,8 @@
   const deptMissedBucketDetail_ = makeMissedBucketDetail_(
     function () { return deptMissedLastData; },
     { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body',
-      row: 'dept-missed-chart-row', onGridChange: deptMissedResizeDuringTransition_ });
+      row: 'dept-missed-chart-row', onGridChange: deptMissedResizeDuringTransition_,
+      pick: 'dept-missed-bucket-pick' });
 
   function missedRadarCfg_(chart, onBucketClick) {
     return {
@@ -1442,6 +1490,13 @@
   // cross-dept "stale flash". A SAME-dept refresh keeps its rows (no
   // flash-to-empty); only a genuine switch clears.
   var lastSummaryDept_ = null;
+  // CCX-2: the (dept, window) of the newest summary REQUEST, sent or painted --
+  // lets a deep-link landing tell "the page is already loading this view" from
+  // "something else is in flight" without sending a duplicate to find out.
+  var summaryReqKey_ = '';
+  function summaryViewKey_() {
+    return String(getRequestedDept() || '') + '|' + $('from-date').value + '|' + $('to-date').value;
+  }
 
   // F10: monotonic stale-response tokens for the agent reports. Generate +
   // edit-apply + dept-switch-then-regenerate can leave two fetches in
@@ -1483,6 +1538,12 @@
     try {
       var clone = JSON.parse(JSON.stringify(req || {}));
       if (Array.isArray(clone.agents)) clone.agents = clone.agents.slice().sort();
+      // EXD-5 (#81): an admin's "include exception days" view is a different
+      // answer for the same request, so it is a different signature -- here,
+      // once, for every report that keeps a last-good copy (the flag is added
+      // to the REQUEST later, by excReq_, after most callers take their sig).
+      // Absent while the switch is off, so every stored signature still matches.
+      if (typeof excIncludeOn_ === 'function' && excIncludeOn_()) clone.exc = true;
       return JSON.stringify(clone);
     } catch (e) { return ''; }
   }
@@ -1645,6 +1706,30 @@
     if (spec.rerun) spec.rerun();
   });
 
+  /**
+   * CCX-3 (broad-scan 2026-11-09): the per-section client stores the Refresh
+   * BUTTON drops. Five newer sections were never added to refresh()'s clears,
+   * so Refresh re-read the table and left them on their pre-Refresh answer for
+   * the same window. Each is keyed by (dept, window), so dropping the key
+   * makes its own sync fetch again once the summary lands -- a changed window
+   * already did. Called from the button's click, NOT from refresh(): refresh()
+   * also runs for a debounced date edit, and a second one for the same window
+   * would throw away what the first had just loaded. A NEW (dept, window)
+   * store on My Department joins this list in the same commit
+   * (client-reloads.test.js fails on one that does not).
+   */
+  function refreshClearSectionStores_() {
+    // HELD answers only. A request already out for this window is as fresh as
+    // a new one would be: dropping its key orphaned it and sent the same
+    // request again (a date typed, then Refresh pressed -- two loads in a row).
+    if (typeof TDC_ !== 'undefined' && !TDC_.loading) { TDC_.key = null; }                    // Team Direct Calls + the Direct view
+    if (typeof INS_OB_ !== 'undefined' && INS_OB_.cur) { INS_OB_.key = null; }                // Outbound summary section
+    if (typeof INS_CB_ !== 'undefined' && (INS_CB_.data || INS_CB_.error)) { INS_CB_.key = null; }   // Callbacks
+    var dl = (typeof OB_DL_VIEWS_ !== 'undefined') ? OB_DL_VIEWS_['ins-dl'] : null;           // Direct lines
+    if (dl && !dl.inFlight) { dl.key = null; }
+    if (typeof apPreStoreClear_ === 'function') apPreStoreClear_();                           // agent panel
+  }
+
   function refresh() {
     const dept = getRequestedDept();
     // R17g: keep the sticky-strip workday count live from the client mirror
@@ -1750,6 +1835,7 @@
     deptMissedFrostArm_();
 
     var myToken = ++summaryReqSeq;
+    summaryReqKey_ = summaryViewKey_();   // CCX-2: what the newest request is FOR
     // SWR: a repeat request for the exact same (dept, from, to) paints the
     // last-good summary instantly (localStorage, signature-matched) with a
     // visible "refreshing" note; the live response repaints over it (and the
@@ -2214,7 +2300,7 @@
     // pattern); the square radar keeps its own aspect-driven sizing.
     var hwrapCls = 'missed-chart-hwrap' + (missedChartMode_() === 'bars' ? ' missed-chart-hwrap--bars' : '');
     chartWrap.innerHTML = '<div class="' + hwrapCls + '">'
-      + '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
+      + '<canvas id="dept-missed-chart" role="img" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
     refreshChartTheme();
     const scopedChart = deptMissedScopedChart_(data);   // R11-C4
     const chipEl = $('dept-missed-scope-chip');
@@ -2242,6 +2328,7 @@
     deptMissedAgentScope_ = null;         // R11-C4: fresh data = dept-wide chart
     subqMissedScopeNote_(m.department || getRequestedDept());
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
+    deptMissedBucketDetail_.fillPick();   // F74: the half-hours this data can open
 
     // Show the section BEFORE the radar is created below: Chart.js measures
     // the canvas's container at construction time, and a chart built while an
@@ -4016,6 +4103,13 @@
    * rest go out in ONE getDayQuickView request (split only if their
    * exception-day flag differs). A failed request is never kept.
    */
+  /** CCX-4 (PURE): true when any part of one day's reply failed (or the day had no reply). */
+  function dqvDayHasError_(day) {
+    var e = (day && day.errors) || null;
+    if (!day) return true;
+    if (!e) return false;
+    return Object.keys(e).some(function (k) { return !!e[k]; });
+  }
   function dqvFetchDays_(bs, ob, prefetch, ok, fail) {
     var send = { 0: [], 1: [] };
     bs.forEach(function (b) {
@@ -4039,6 +4133,10 @@
           list.forEach(function (x) {
             x.e.done = true;
             x.e.data = days[x.b.from] || { summary: null, missed: null, outbound: null, errors: { summary: 'No reply for this day.' } };
+            // CCX-4: a day with a FAILED part is served to whoever is waiting
+            // but never kept -- held as done, it showed its "Could not load"
+            // note on every return to the day, with nothing able to ask again.
+            if (dqvDayHasError_(x.e.data) && DQV_STORE_[x.k] === x.e) delete DQV_STORE_[x.k];
             var w = x.e.w; x.e.w = [];
             w.forEach(function (y) { y.ok(x.e.data, y.b); });
           });
@@ -4200,8 +4298,10 @@
       dqvBusy_(missedEl, 'missed', lbl);
     }
     var tok = ++DQV_.seq;
+    // CCX-4: with a Retry -- the failed day is not held, so this asks again.
     var errNote = function (where, msg) {
-      return '<div class="ds-note">Could not load ' + where + ': ' + escapeHtml(String(msg)) + '</div>';
+      return '<div class="ds-note">Could not load ' + where + ': ' + escapeHtml(String(msg))
+        + ' <button type="button" class="link-btn day-qv-retry">Retry</button></div>';
     };
     dqvFetchDays_([b], showOb, false, function (day) {
       if (tok !== DQV_.seq) return;
@@ -4456,6 +4556,7 @@
     modal.addEventListener('click', function (e) {
       var t = e.target;
       if (t.closest('[data-close]') || t.closest('#day-qv-close')) { dqvClose_(); return; }
+      if (t.closest('.day-qv-retry')) { dqvShow_(DQV_.i); return; }   // CCX-4
       if (t.closest('#day-qv-prev')) { dqvShow_(DQV_.i - 1); return; }
       if (t.closest('#day-qv-next')) { dqvShow_(DQV_.i + 1); return; }
       if (t.closest('#day-qv-open')) { dqvOpenOnPage_(); return; }
@@ -5245,6 +5346,9 @@
       .withSuccessHandler(function (d) {
         if (tok !== TDC_.seq) return;
         TDC_.loading = false; TDC_.data = d || null;
+        // CCX-5: a null reply left the card blank -- no skeleton, no figures,
+        // no error -- and every later sync asked again. Say so, with the Retry.
+        if (!TDC_.data) TDC_.error = 'the server returned nothing';
         tdcRender_();
       })
       .withFailureHandler(function (err) {
@@ -5370,7 +5474,7 @@
   }
   function dcThHtml_(key, label, cls) {
     var on = DC_VIEW_.sortKey === key;
-    return '<th data-dc-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
+    return '<th scope="col" data-dc-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
       + (on ? ' aria-sort="' + (DC_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
       + escapeHtml(label) + ' <span class="arrow">' + (on ? (DC_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
   }
@@ -5562,7 +5666,8 @@
     var m = state.meta || {};
     var dept = getRequestedDept();
     if (!dept || !m.from || !m.to) { obViewRender_(); return; }
-    var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '');
+    var key = dept + '|' + m.from + '|' + m.to + '|' + (m.priorFrom || '') + '|' + (m.priorTo || '')
+      + (excIncludeOn_() ? '|x' : '');   // EXD-5: the include switch is a different outbound answer
     if (OB_VIEW_.key === key && (OB_VIEW_.data || OB_VIEW_.error)) { obViewRender_(); return; }
     // render() can run this again before the reply lands (a Refresh's SWR
     // pre-paint, then its live render): the request for THIS window is
@@ -5680,7 +5785,7 @@
 
   function obThHtml_(key, label, cls) {
     var on = OB_VIEW_.sortKey === key;
-    return '<th data-ob-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
+    return '<th scope="col" data-ob-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
       + (on ? ' aria-sort="' + (OB_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
       + escapeHtml(label) + ' <span class="arrow">' + (on ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
   }

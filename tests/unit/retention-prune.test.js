@@ -28,7 +28,11 @@ const h = loadGas({ project: 'cdr-import', files: ['DeleteOldSheets.js'] });
 // PIPE-2: an over-age tab is deleted only when PROVEN imported. The age /
 // blast-radius / DST cases below are about the date arithmetic, so they run
 // with every date "in history"; the PIPE-2 block at the end swaps this stub.
-const ALL_IMPORTED = function () { return { has: function () { return true; } }; };
+// OFB-4: `dqeHas` is the DQE-only half the last-chance check reads; the
+// OFB-4 block at the end swaps it.
+const ALL_IMPORTED = function () {
+  return { has: function () { return true; }, dqeHas: function () { return true; } };
+};
 h.ctx.retentionHistoryIsos_ = ALL_IMPORTED;
 
 // ── Controlling "today" ────────────────────────────────────────────────────
@@ -430,7 +434,9 @@ function withHistory(stub, fn) {
 
 test('PIPE-2: an over-age tab whose date is in NEITHER lastSheets nor history is KEPT and named', function () {
   h.state.props = { lastSheets: JSON.stringify(['Call_Legs_2026-06-02']) };
-  const out = withHistory(function () { return { has: function (iso) { return iso === '2026-06-03'; } }; },
+  const out = withHistory(function () {
+    return { has: function (iso) { return iso === '2026-06-03'; }, dqeHas: function () { return true; } };
+  },
     function () {
       return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
     });
@@ -441,13 +447,20 @@ test('PIPE-2: an over-age tab whose date is in NEITHER lastSheets nor history is
   delete h.state.props.lastSheets;
 });
 
-test('PIPE-2: history is read only when some over-age tab is missing from the memo', function () {
-  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_2026-06-01']) };
+test('PIPE-2 / OFB-4: history is read ONCE, and only when some tab is over-age', function () {
+  // OFB-4 changed this on purpose: the memo proves a tab was imported, not
+  // that DQE was built from it, so a tab about to be deleted always costs the
+  // one history read. A run with nothing over-age still costs none.
+  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02']) };
   let reads = 0;
-  const out = withHistory(function () { reads++; return { has: function () { return false; } }; },
-    function () { return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-08-30']); });
-  assert.equal(reads, 0, 'the common case (every old tab in the memo) costs no history read');
-  assert.equal(out.result.deleted, 1);
+  const stub = function () { reads++; return { has: function () { return false; }, dqeHas: function () { return true; } }; };
+  withHistory(stub, function () { return prune([2026, 8, 31], ['Call_Legs_2026-08-30']); });
+  assert.equal(reads, 0, 'nothing over-age -> no history read');
+  const out = withHistory(stub, function () {
+    return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02', 'Call_Legs_2026-08-30']);
+  });
+  assert.equal(reads, 1, 'one read per run, however many tabs are deleted');
+  assert.equal(out.result.deleted, 2);
   delete h.state.props.lastSheets;
 });
 
@@ -593,4 +606,153 @@ test('F9: the owed read happens only when a tab is about to be deleted', functio
     prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02']);
     assert.equal(reads, 1, 'read ONCE per run, however many tabs are deleted');
   } finally { h.ctx.retentionOwedIsos_ = prev; }
+});
+
+// ── OFB-4 (broad-scan 2026-11-09, Batch 7): the last-chance check ────────────
+// "Imported" and "nothing queued" were still narrower than what is built from
+// a Call_Legs tab: DQE could throw while QCD wrote, Direct could fail, and the
+// per-call capture could fail on a Neon-unreachable day in inline mode -- each
+// inside an import that was remembered as done. The tab is the only source
+// those can be rebuilt from, so it is now kept (and named) while one is owed.
+
+// Pipeline Health in the TARGET workbook, newest row last.
+function withPipelineHealth(rows, fn) {
+  const target = makeFakeSpreadsheet({ sheets: { 'Pipeline Health':
+    [['Timestamp', 'Step', 'Status', 'Rows', 'Duration (ms)', 'Notes']].concat(rows) } });
+  h.ctx.getTargetSsId_ = function () { return 'target-id'; };
+  h.state.spreadsheetsById['target-id'] = target;
+  try { return fn(); } finally {
+    delete h.ctx.getTargetSsId_;
+    delete h.state.spreadsheetsById['target-id'];
+  }
+}
+const DAY = function (iso) { const p = iso.split('-'); return new Date(+p[0], +p[1] - 1, +p[2], 12).toDateString(); };
+const NO_DQE = function (missing) {
+  return function () {
+    return { has: function () { return true; }, dqeHas: function (iso) { return missing.indexOf(iso) === -1; } };
+  };
+};
+
+test('OFB-4: a tab whose DQE build FAILED (QCD wrote, tab remembered) is kept and named', function () {
+  h.state.props = { lastSheets: JSON.stringify(['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02']) };
+  const out = withPipelineHealth([
+    [new Date(), 'processIntegratedHistory:DQE', 'success', 40, '', DAY('2026-06-01')],
+    [new Date(), 'processIntegratedHistory:DQE', 'failure', '', '', DAY('2026-06-02') + ' | Service error: Spreadsheets'],
+  ], function () {
+    return withHistory(NO_DQE(['2026-06-02']), function () {
+      return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02']);
+    });
+  });
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-06-02'], 'the memo and QCD history both "proved" it before');
+  assert.deepEqual(Array.from(out.result.derived), ['Call_Legs_2026-06-02 (DQE build failed)']);
+  assert.equal(out.result.deleted, 1);
+  h.state.props = {};
+});
+
+test('OFB-4: a day DQE had nothing to build (a rows:0 success on record) is still pruned; no record at all is not', function () {
+  h.state.props = {};
+  const out = withPipelineHealth([
+    [new Date(), 'processIntegratedHistory:DQE', 'failure', '', '', DAY('2026-06-01') + ' | first try'],
+    [new Date(), 'processIntegratedHistory:DQE', 'success', 0, '', DAY('2026-06-01') + ' | 0 rows written (already in history or no new data)'],
+    [new Date(), 'processIntegratedHistory:QCD', 'failure', '', '', DAY('2026-06-03')],   // another step never counts
+  ], function () {
+    return withHistory(NO_DQE(['2026-06-01', '2026-06-03']), function () {
+      return prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-03']);
+    });
+  });
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-06-03'], 'the NEWEST DQE outcome for the date decides');
+  assert.match(Array.from(out.result.derived)[0], /no DQE rows and no DQE build on record/);
+});
+
+test('OFB-4: Direct and the per-call capture get their catch-up; a tab is kept while either cannot finish', function () {
+  h.state.props = { NEON_HOST: 'h' };
+  const calls = [];
+  h.ctx.pendingImportDirectCatchUp_ = function (ss, iso) { calls.push('direct ' + iso); return iso !== '2026-06-02'; };
+  h.ctx.pendingImportPerCallCatchUp_ = function (iso) { calls.push('percall ' + iso); return iso !== '2026-06-03'; };
+  h.ctx.getTargetSsId_ = function () { return 'target-id'; };
+  h.state.spreadsheetsById['target-id'] = makeFakeSpreadsheet({ sheets: {} });
+  h.state.lockReleases = 0;
+  try {
+    const out = prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
+    assert.deepEqual(out.survivors, ['Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
+    assert.deepEqual(Array.from(out.result.derived), [
+      'Call_Legs_2026-06-02 (Direct Call History build failed)',
+      'Call_Legs_2026-06-03 (per-call capture not written (a write failed))',
+    ]);
+    assert.equal(calls.filter(function (c) { return /^direct/.test(c); }).length, 3, 'every tab about to go is checked');
+    assert.equal(h.state.lockReleases, 1, 'the catch-ups ran under the script lock, and it was released');
+    // Neon down: probed ONCE, every tab kept, and no backfill is attempted
+    // (a failed one would log a failure row per tab per night of the outage).
+    let probes = 0;
+    h.ctx.getReachableNeonConn_ = function () { probes++; return null; };
+    calls.length = 0;
+    const down = prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-04']);
+    delete h.ctx.getReachableNeonConn_;
+    assert.equal(down.result.deleted, 0);
+    assert.equal(probes, 1);
+    assert.equal(calls.filter(function (c) { return /^percall/.test(c); }).length, 0);
+    assert.match(Array.from(down.result.derived)[0], /per-call capture not confirmed \(Neon unreachable\)/);
+    // Neon not configured: there is nothing to capture to, so the per-call check is skipped.
+    h.state.props = {};
+    calls.length = 0;
+    const out2 = prune([2026, 8, 31], ['Call_Legs_2026-06-03']);
+    assert.equal(out2.result.deleted, 1);
+    assert.equal(calls.filter(function (c) { return /^percall/.test(c); }).length, 0);
+  } finally {
+    delete h.ctx.pendingImportDirectCatchUp_;
+    delete h.ctx.pendingImportPerCallCatchUp_;
+    delete h.ctx.getTargetSsId_;
+    delete h.state.spreadsheetsById['target-id'];
+    h.state.props = {};
+  }
+});
+
+test('OFB-4: with an import holding the lock nothing is deleted or caught up -- the tabs wait a night, and the row says so', function () {
+  h.state.props = {};
+  h.state.spreadsheet = ssWith(['Call_Legs_2026-06-01', 'Call_Legs_2026-08-30']);
+  h.state.lockBusy = true;
+  let rows;
+  try {
+    rows = captureHealthRows(function () {
+      withToday(2026, 8, 31, function () { h.fn('runRetentionPrune_')(); });
+    });
+  } finally { h.state.lockBusy = false; }
+  assert.deepEqual(liveNames(h.state.spreadsheet), ['Call_Legs_2026-06-01', 'Call_Legs_2026-08-30']);
+  assert.equal(rows[0].status, 'success', 'a busy night is not a failure');
+  assert.match(rows[0].notes, /1 over-age tab\(s\) wait for the next run's last-chance check: Call_Legs_2026-06-01/);
+});
+
+test('OFB-4: a kept tab is named in the Pipeline Health row with what it owes', function () {
+  h.state.props = {};
+  h.state.spreadsheet = ssWith(['Call_Legs_2026-06-02']);
+  const rows = withPipelineHealth([
+    [new Date(), 'bulkBackfill:DQE-guard', 'failure', '', '', DAY('2026-06-02') + ' | rebuild wrote nothing'],
+  ], function () {
+    return withHistory(NO_DQE(['2026-06-02']), function () {
+      return captureHealthRows(function () {
+        withToday(2026, 8, 31, function () { h.fn('runRetentionPrune_')(); });
+      });
+    });
+  });
+  assert.match(rows[0].notes, /KEPT 1 still owed something built from the tab \(OFB-4\): Call_Legs_2026-06-02 \(DQE build failed\)/);
+  assert.match(rows[0].notes, /Make a date whole/);
+});
+
+test('OFB-4: every DQE build log site starts its notes with the date the prune searches for', function () {
+  // retentionDqeOutcome_ finds a date's DQE outcome by step name + a notes
+  // prefix of dateObj.toDateString(). That is a contract with the writers in
+  // autoImport.js: a log site that words its notes differently would read as
+  // "no DQE build on record" and hold the tab for good.
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const re = /step:\s*'(?:processIntegratedHistory|bulkBackfill):DQE',[\s\S]{0,400}?notes:\s*([^\n]+)/g;
+  let m, sites = 0;
+  while ((m = re.exec(src)) !== null) {
+    sites++;
+    assert.match(m[1], /^dateObj\.toDateString\(\)/, 'a DQE log site whose notes do not start with the date: ' + m[1]);
+  }
+  assert.ok(sites >= 5, 'expected the five DQE log sites, found ' + sites);
+  const guard = src.slice(src.indexOf('function bulkDateFailureRow_'));
+  assert.match(guard.slice(0, 1200), /notes:\s*\(dateObj && dateObj\.toDateString \? dateObj\.toDateString\(\) : String\(dateObj\)\)/,
+    'the -guard row (bulkDateFailureRow_) too');
 });

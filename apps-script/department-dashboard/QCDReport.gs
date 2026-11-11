@@ -319,6 +319,10 @@ function qcdAllDeptCachedData_(from, to, opts) {
       + ' -- NOT cached (R43: an incomplete report must not be pinned for the 6h TTL).');
   } else if (cfgFailed) {
     Logger.log('qcdAllDeptCachedData_: Dept Config read errored -- skipping cache put.');
+  } else {
+    // GCA-8: the remaining case is the size guard, and it was silent.
+    Logger.log('qcdAllDeptCachedData_: payload for ' + from + '..' + to + ' is ' + json.length
+      + ' bytes, over the 100000-byte cache guard -- NOT cached; every request for this window recomputes.');
   }
   return { data: data, cacheHit: false };
 }
@@ -452,6 +456,7 @@ function computeQcdAllDepartments_(from, to) {
       return;
     }
     const tDept = Date.now();
+    const readMs0 = QCD_GRID_READ_MS_;   // RUN-3
     const rep = computeQcdReport_(dept, from, to,
                                   /*includeSubQueues=*/ false,
                                   /*separateSubQueues=*/ false,
@@ -474,7 +479,12 @@ function computeQcdAllDepartments_(from, to) {
       ? rep
       : computeQcdReport_(dept, priorFrom, priorTo, false, false, true);
     timing.depts[dept] = { rangeMs: tRange - tDept, mtdMs: tMtdDone - tRange, priorMs: Date.now() - tMtdDone };
-    if (Date.now() - tDept > slowestDeptMs) slowestDeptMs = Date.now() - tDept;   // CLN-2
+    // CLN-2, corrected by RUN-3: the projection is the department's COMPUTE
+    // time. The first department also pays the one-off grid reads (memoized
+    // for every later one); counting them made one slow read project every
+    // remaining department as that slow, and the report stopped after one.
+    const deptComputeMs = Math.max(0, (Date.now() - tDept) - (QCD_GRID_READ_MS_ - readMs0));
+    if (deptComputeMs > slowestDeptMs) slowestDeptMs = deptComputeMs;
     Logger.log('[qcdAll] dept=' + dept + ' rangeMs=' + (tRange - tDept) + ' mtdMs=' + (tMtdDone - tRange)
       + ' priorMs=' + (Date.now() - tMtdDone));
     (mtdRep.queueBreakdown || []).forEach(function (r) {
@@ -816,17 +826,28 @@ function readQcdGrid_(readFrom, readTo, opts) {
   return qcdGridWithoutExceptions_(raw, readFrom, readTo);
 }
 
+// RUN-3: milliseconds this execution has spent in grid reads that were then
+// MEMOIZED (a memo hit adds ~0). The all-department budget subtracts it from a
+// department's cost, because those reads are paid once and the projection is
+// about what the NEXT department will cost. A Neon fetch that FAILED is not
+// counted: nothing was memoized, so the next department may pay it again.
+var QCD_GRID_READ_MS_ = 0;
 function readQcdGridRaw_(readFrom, readTo) {
   if (getQcdReadSource_() === 'neon') {
     if (!QCD_NEON_GRID_MEMO_) QCD_NEON_GRID_MEMO_ = {};
     var key = readFrom + '|' + readTo;
     if (QCD_NEON_GRID_MEMO_[key]) return QCD_NEON_GRID_MEMO_[key];
+    var tNeon = Date.now();
     var grid = neonFetchQcdGrid_(readFrom, readTo);
-    if (grid) { QCD_NEON_GRID_MEMO_[key] = grid; return grid; }
+    if (grid) { QCD_GRID_READ_MS_ += Date.now() - tNeon; QCD_NEON_GRID_MEMO_[key] = grid; return grid; }
     // Unreachable / error -> fall back to the sheet (may itself be missing).
     QCD_NEON_FELL_BACK_ = true;   // DATA-4 (below)
   }
-  return readQcdSheetData_();
+  var sheetCold = !QCD_SHEET_DATA_MEMO_;
+  var tSheet = Date.now();
+  var data = readQcdSheetData_();
+  if (sheetCold) QCD_GRID_READ_MS_ += Date.now() - tSheet;
+  return data;
 }
 
 /**

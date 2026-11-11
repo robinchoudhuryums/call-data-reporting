@@ -105,7 +105,7 @@ function saveExceptionDay(req) {
   } finally {
     lock.releaseLock();
   }
-  try { logReportUsage_('exceptionDays:save', depts.length ? depts.join(', ') : 'ALL', resolveUser_(), false); } catch (eU) {}
+  try { logReportUsage_('exceptionDays:save', depts.length ? depts.join(', ') : 'ALL', resolveUser_(Session.getActiveUser().getEmail()), false); } catch (eU) {}   // EXD-2: the audit row names the user
   return getExceptionDaysInit();
 }
 
@@ -133,7 +133,7 @@ function removeExceptionDay(req) {
   } finally {
     lock.releaseLock();
   }
-  try { logReportUsage_('exceptionDays:remove', date, resolveUser_(), false); } catch (eU) {}
+  try { logReportUsage_('exceptionDays:remove', date, resolveUser_(Session.getActiveUser().getEmail()), false); } catch (eU) {}   // EXD-2
   const out = getExceptionDaysInit();
   out.removed = removed;
   return out;

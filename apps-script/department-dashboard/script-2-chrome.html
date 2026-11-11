@@ -287,6 +287,8 @@
     // doubling a converging run -- runInsReport's F10 token also makes the
     // last request win.)
     $('refresh-btn').addEventListener('click', function () {
+      // CCX-3: the button means "fresh numbers for everything on this page".
+      if (typeof refreshClearSectionStores_ === 'function') refreshClearSectionStores_();
       refresh();
       setTimeout(function () {
         try {
@@ -534,7 +536,7 @@
       .withSuccessHandler(function (dates) {
         latestDatesFetchedAt_ = Date.now();
         applyLatestDates_(dates, true);
-        refresh();
+        bootRefreshAfterDates_();
       })
       .withFailureHandler(function (err) {
         // C1-9 (broad-scan 2026-09-17): this failure used to be SILENT -- the
@@ -546,7 +548,7 @@
         if (typeof reportClientIssue_ === 'function') {
           reportClientIssue_('load-failure', 'getLatestDataDates failed: ' + (err && err.message ? err.message : String(err)));
         }
-        refresh();
+        bootRefreshAfterDates_();
       })
       .getLatestDataDates();
 
@@ -566,6 +568,49 @@
   // the Overview auto-refresh's cost, and a hidden tab pays nothing -- CL-3).
   // A re-read updates the clamps, the coverage starts and the pill; it never
   // moves dates the user is looking at (the boot-only snap below).
+  // CCX-2 (broad-scan 2026-11-09): a deep link that lands on the dept page
+  // waits here for the boot latest-date read (success OR failure), so the page
+  // is loaded once, for the right window. A read that has not answered within
+  // DEEP_LINK_DATES_WAIT_MS_ stops holding the link: it dispatches on the
+  // provisional window, as it always used to.
+  var DEEP_LINK_DATES_WAIT_MS_ = 10000;
+  var latestDatesSettled_ = false;
+  var latestDatesWaiters_ = [];
+  function whenLatestDatesSettled_(fn) {
+    if (latestDatesSettled_) { fn(); return; }
+    var done = false;
+    var run = function () {
+      if (done) return false;
+      done = true;
+      try { fn(); } catch (e) {
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'deep link dispatch failed: ' + (e && e.message ? e.message : String(e)));
+        }
+      }
+      return true;
+    };
+    latestDatesWaiters_.push(run);
+    setTimeout(run, DEEP_LINK_DATES_WAIT_MS_);
+  }
+  /** Marks the boot read settled, releases a waiting deep link; true when one ran. */
+  function latestDatesSettle_() {
+    latestDatesSettled_ = true;
+    var ran = false;
+    latestDatesWaiters_.splice(0).forEach(function (run) { if (run()) ran = true; });
+    return ran;
+  }
+  /**
+   * The boot handlers' load of the dept table. A deep link released here has
+   * just loaded the page itself, so the boot's own refresh() is skipped while
+   * that load is in flight -- it was the duplicate summary request.
+   */
+  function bootRefreshAfterDates_() {
+    var ran = latestDatesSettle_();
+    var rb = $('refresh-btn');
+    if (ran && rb && rb.disabled) return;
+    refresh();
+  }
+
   var LATEST_DATES_REFRESH_MS = 5 * 60 * 1000;
   // F25 (broad-scan 2026-10-14): the age gate is stamped when the reply
   // LANDS, so at the next 5-minute tick the answer is a few seconds short of
@@ -657,9 +702,13 @@
       chip.type = 'button';
       chip.className = 'date-preset-chip';
       chip.textContent = p.label;
+      // F77: the selected chip is announced, not only coloured -- every
+      // write of `.active` in this group writes aria-pressed with it.
+      chip.setAttribute('aria-pressed', 'false');
       chip.addEventListener('click', function () {
-        wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+        wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
         chip.classList.add('active');
+        chip.setAttribute('aria-pressed', 'true');
         onPick(p.fn());
       });
       wrap.appendChild(chip);
@@ -788,7 +837,7 @@
   }
   function clearActivePreset_() {
     var wrap = $('date-presets');
-    if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+    if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
   }
   // R17g (owner): the sticky controls strip carries the window's workday
   // count (the Insights header date restatement is retired -- the dept
@@ -1098,7 +1147,7 @@
         trapFocus_(outer);
       } else {
         document.body.style.overflow = '';
-        btn.focus();
+        returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
       }
     }
 
@@ -1123,7 +1172,11 @@
 
     function show(topic) {
       topics.forEach(function (t) { t.hidden = (t.id !== 'help-topic-' + topic); });
-      links.forEach(function (l) { l.classList.toggle('active', l.getAttribute('data-topic') === topic); });
+      links.forEach(function (l) {
+        const on = l.getAttribute('data-topic') === topic;
+        l.classList.toggle('active', on);
+        l.setAttribute('aria-pressed', on ? 'true' : 'false');   // F77
+      });
       const content = $('help-content');
       if (content) content.scrollTop = 0;
       if (empty) empty.hidden = true;
@@ -1135,7 +1188,12 @@
         show(l.getAttribute('data-topic'));
       });
     });
-    links[0].classList.add('active');   // first topic is shown by default (others are [hidden])
+    // First topic is shown by default (others are [hidden]). F77: the
+    // selected topic is announced, so every link starts with a pressed state.
+    links.forEach(function (l, i) {
+      l.classList.toggle('active', i === 0);
+      l.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+    });
 
     const search = $('help-search');
     if (search) {
@@ -1174,7 +1232,9 @@
     function syncChips() {
       const active = (window.__themePref && window.__themePref.get) ? window.__themePref.get() : 'warm';
       document.querySelectorAll('.theme-chip').forEach(function (chip) {
-        chip.classList.toggle('active', chip.getAttribute('data-theme') === active);
+        const on = chip.getAttribute('data-theme') === active;
+        chip.classList.toggle('active', on);
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');   // F77
       });
     }
 
@@ -1201,7 +1261,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 

@@ -38,6 +38,7 @@ function createShim() {
     lockBusy: false,                  // A-6: true -> tryLock/waitLock report the lock as held
     mailQuota: undefined,             // MailApp.getRemainingDailyQuota (B4)
     cacheLimitHits: [],               // HT-3: every CacheService key/value-size refusal
+    cacheTtls: {},                    // GCA: key -> the TTL (seconds) of its last put
     propLimitHits: [],                // HT-5: every Script Properties size refusal
     triggers: [],                     // HT-5: the LIVE trigger set getProjectTriggers returns
     triggerSeq: 0,                    // HT-5: unique-id counter
@@ -138,7 +139,7 @@ function createShim() {
         }
         return {
           get: function (k) { checkKey(k); return state.cache.has(k) ? state.cache.get(k) : null; },
-          put: function (k, v) {
+          put: function (k, v, ttlSeconds) {
             checkKey(k);
             const bytes = Buffer.byteLength(String(v), 'utf8');
             if (bytes > CACHE_MAX_VALUE_BYTES) {
@@ -146,6 +147,9 @@ function createShim() {
               throw new Error('Argument too large: value');
             }
             state.cache.set(k, v);
+            // GCA (Batch 6): RECORDED, so a test can pin WHICH tier a payload
+            // was cached on (a degraded payload must not ride the 6 h tier).
+            state.cacheTtls[k] = ttlSeconds;
           },
           remove: function (k) { checkKey(k); state.cache.delete(k); },
         };

@@ -101,14 +101,31 @@ function queueReportClaimSend_(props, iso, force) {
     if (cur[0] === iso && (Date.now() - Number(cur[1] || 0)) < QUEUE_REPORT_SENDING_STALE_MS_) {
       return { ok: false, reason: 'in-flight' };
     }
-    props.setProperty(QUEUE_REPORT_SENDING_PROP, iso + '|' + Date.now());
-    return { ok: true };
+    const token = iso + '|' + Date.now();
+    props.setProperty(QUEUE_REPORT_SENDING_PROP, token);
+    return { ok: true, token: token };
   } finally {
     lock.releaseLock();
   }
 }
-function queueReportReleaseSend_(props) {
-  try { props.deleteProperty(QUEUE_REPORT_SENDING_PROP); } catch (e) { /* stale-claim rule covers it */ }
+// RUN-7: release only YOUR claim. A send that outlives the stale window has
+// its claim taken over by the next sender; releasing unconditionally then
+// deleted THAT sender's claim, and a third could start while it was still
+// sending. `token` is the value queueReportClaimSend_ returned.
+// RUN-11: the compare-then-delete runs under the same script lock the claim
+// takes, so a claim written between the two cannot be deleted. A busy lock
+// falls back to the unlocked form (the stale-claim rule still covers a miss).
+function queueReportReleaseSend_(props, token) {
+  let lock = null, locked = false;
+  try {
+    lock = LockService.getScriptLock();
+    locked = lock.tryLock(5000);
+  } catch (le) { locked = false; }
+  try {
+    if (token && String(props.getProperty(QUEUE_REPORT_SENDING_PROP) || '') !== String(token)) return;
+    props.deleteProperty(QUEUE_REPORT_SENDING_PROP);
+  } catch (e) { /* stale-claim rule covers it */ }
+  finally { if (locked) { try { lock.releaseLock(); } catch (re) { /* released */ } } }
 }
 
 function queueReportGateDecision_(ctx) {
@@ -149,6 +166,24 @@ function runDailyQueueReport_() {
       latestQcd: '9999-99-99',   // readiness checked below only if the rest pass
     });
     if (!pre.send) return;   // disabled / pre-6am / weekend / holiday / already sent
+
+    // EXD-3 (#81): the previous business day is an ALL-department exception
+    // day. Its queue figures are left out of every report, so there is no
+    // report to send -- and nothing to wait for. Without this the poll
+    // recomputed an empty report all day and recorded EMPTY, whose remedy
+    // (wait for the import, or add a holiday) is the wrong one. Recorded once
+    // per day; the sent-marker is NOT claimed, so removing the exception day
+    // sends the report on the next poll.
+    const excTarget = (typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(targetIso, null) : null;
+    if (excTarget) {
+      const tag = 'EXCEPTION-DAY ' + targetIso + ' ';
+      if (String(props.getProperty(QUEUE_REPORT_LAST_RESULT_PROP) || '').indexOf(tag) !== 0) {
+        queueReportRecordResult_(props, tag + '— an exception day' + (excTarget.reason ? ' (' + excTarget.reason + ')' : '')
+          + ': its queue figures are left out of every report, so the Daily Call Queue Report was '
+          + 'not sent. Nothing to do; remove the day under Admin → Exception days to send it. At ' + new Date());
+      }
+      return;
+    }
 
     // Readiness gate: has the import finished writing QCD for the target date?
     const latestQcd = queueReportQcdLatestIso_();
@@ -191,7 +226,7 @@ function runDailyQueueReport_() {
         props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
       }
     }
-    finally { queueReportReleaseSend_(props); }
+    finally { queueReportReleaseSend_(props, claim.token); }
     const failed = result.failed || [];
 
     // O-9: a run with NO ACTIVE SUBSCRIBERS is not a send, and must never
@@ -366,6 +401,19 @@ function sendQueueReportForDate_(targetIso, opts) {
     // to everyone" -- both used to be count:0-with-no-failures, and the caller
     // reported the first one as a successful send. See runDailyQueueReport_.
     return { count: 0, to: [], failed: [], noRecipients: true };
+  }
+
+  // EXD-3 (#81): an all-department exception day has no queue figures to
+  // report (readQcdGrid_ leaves them out), so say THAT -- the empty-report
+  // refusal below would blame the import. Flagged emptyReport too, so every
+  // caller's "never claim the day" rule applies unchanged.
+  const excDay = (typeof exceptionDayFor_ === 'function') ? exceptionDayFor_(targetIso, null) : null;
+  if (excDay) {
+    const excWhy = targetIso + ' is an exception day' + (excDay.reason ? ' (' + excDay.reason + ')' : '')
+      + ' -- its queue figures are left out of every report';
+    Logger.log('sendQueueReportForDate_(%s): %s. NOT sent.', targetIso, excWhy);
+    if (opts.to) throw new Error('Not sent: ' + excWhy + '. Remove the day under Admin → Exception days to report on it.');
+    return { count: 0, to: [], failed: [], emptyReport: true, exceptionDay: true, reason: excWhy };
   }
 
   // Batch 1 item 2: reuse the 6h-TTL qcdAll cache the web report warms, so an
@@ -1557,7 +1605,7 @@ function sendQcdAllDeptToSubscribers(req) {
       } catch (e) { /* best-effort -- worst case the morning poll re-sends */ }
     }
   }
-  finally { queueReportReleaseSend_(props); }
+  finally { queueReportReleaseSend_(props, claim.token); }
   // D-1: surface the empty-report refusal to the admin instead of "0 sent".
   if (result.emptyReport) throw new Error('Not sent: ' + result.reason + '.');
   // ENG-8 (broad-scan 2026-09-23): a PARTIAL compute is the same kind of

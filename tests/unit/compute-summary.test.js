@@ -412,7 +412,7 @@ test('v24: a build-written all-zero row gets no My Department row, and lands in 
   assert.equal(data.totals.totalAnswered, 3);
   assert.equal(data.totals.rosterAgentCount, 1);
   assert.equal(rowFor(data, 'Anna').daysActive, 1, 'Anna\'s zero day is not a ring-day');
-  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:v25:') === 0; }));
+  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:v26:') === 0; }));
   // The other consumers (agent app, digests, coaching) do not pass the flag:
   // the agent's own zero is a real figure there.
   install([dqeRow({ date: '2026-03-10', agent: 'Ben', ext: '501', rung: 0, missed: 0, answered: 0 })]);

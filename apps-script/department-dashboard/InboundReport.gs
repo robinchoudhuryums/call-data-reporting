@@ -889,7 +889,7 @@ function callIdInDeptMissedReport_(dept, date, callId) {
 //     miss as on the Neon path (learns nothing).
 //   * The payload is shaped by the SAME callerLookupShapeCall_, so the
 //     client renderers cannot tell the sources apart; a blank Journey cell
-//     (past INBOUND_EXPORT_JOURNEY_DAYS) shapes to journey:null and renders
+//     (a row exported when already past INBOUND_EXPORT_JOURNEY_DAYS) shapes to journey:null and renders
 //     the entry->final summary, exactly like a pre-extension Neon row.
 //   * Discloses itself (fallbackSource / fallbackThrough) and is NEVER
 //     cached (getCallJourney is uncached by design, so this holds trivially).
@@ -2419,11 +2419,16 @@ function runInboundQcdParityCheck() {
     // Unattributed raw entry-queues in the window: invisible to EVERY dept's
     // inbound slice -- the usual residual. (Dept Config "Inbound queue
     // aliases" is the no-redeploy fix.)
+    // GCA-4: matched the way the report attributes -- case-insensitively
+    // (inboundDeptPredicate_ lower-cases both sides, B-4). An exact-case lookup
+    // listed a queue as unattributed that the report does attribute.
     const attributed = {};
+    const qKey = function (q) { return String(q == null ? '' : q).trim().toLowerCase(); };
     getAllDepartments_().forEach(function (d) {
-      inboundQueuesForDept_(d).forEach(function (q) { attributed[q] = true; });
+      inboundQueuesForDept_(d).forEach(function (q) { attributed[qKey(q)] = true; });
     });
     const uq = [];
+    let entryQueueCalls = 0;
     const uStmt = conn.prepareStatement(
       "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]')::text AS j FROM ("
       + "SELECT entry_queue AS q, count(*) AS n FROM inbound_calls "
@@ -2436,9 +2441,17 @@ function runInboundQcdParityCheck() {
     uRs.close(); uStmt.close();
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(uJson ? uJson.length : 0, 'inbound-audit');   // OD-3
     JSON.parse(uJson || '[]').forEach(function (r) {
-      if (!attributed[String(r.q)]) uq.push({ queue: String(r.q), calls: Number(r.n) || 0 });
+      entryQueueCalls += Number(r.n) || 0;
+      if (!attributed[qKey(r.q)]) uq.push({ queue: String(r.q), calls: Number(r.n) || 0 });
     });
-    if (uq.length) {
+    // GCA-4: a window with NO inbound call on any queue checked nothing. It
+    // used to print the clean line and clear the tool's parameters.
+    const inconclusive = entryQueueCalls === 0;
+    if (inconclusive) {
+      Logger.log('INCONCLUSIVE: no inbound call with an entry queue in ' + fromIso + '..' + toIso
+        + ' -- nothing was checked. Widen INBOUND_QCD_PARITY_FROM/_TO (or check the capture ran); '
+        + 'never release the Inbound report on this.');
+    } else if (uq.length) {
       Logger.log('UNATTRIBUTED raw entry-queues in window (belong to NO dept\'s inbound union -- '
         + 'add to Dept Config "Inbound queue aliases"): '
         + uq.map(function (u) { return u.queue + ' (' + u.calls + ')'; }).join(', '));
@@ -2459,6 +2472,7 @@ function runInboundQcdParityCheck() {
     // (legitimate), 'ivr' = either a genuine auto-attendant give-up
     // (legitimate) OR an unrecognized queue (the F1 bug class).
     var noQueue = [];
+    var noQueueFailed = false;   // GCA-4
     try {
       var nqStmt = conn.prepareStatement(
         "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]')::text AS j FROM ("
@@ -2478,9 +2492,12 @@ function runInboundQcdParityCheck() {
                        calls: Number(r.n) || 0 });
       });
     } catch (e) {
-      Logger.log('no-entry_queue probe failed (best-effort): %s', (e && e.message) || e);
+      noQueueFailed = true;
+      Logger.log('no-entry_queue probe FAILED -- that bucket was NOT checked this run: %s', (e && e.message) || e);
     }
-    if (noQueue.length) {
+    if (noQueueFailed) {
+      // GCA-4: no clean line over a probe that did not run.
+    } else if (noQueue.length) {
       var nqTotal = noQueue.reduce(function (a, r) { return a + r.calls; }, 0);
       Logger.log('NO entry_queue (attributable to NO dept; counts in the company view only) -- '
         + nqTotal + ' call(s):');
@@ -2504,13 +2521,15 @@ function runInboundQcdParityCheck() {
     // them so the re-run compares the SAME window. The noEntryQueue bucket is
     // informational (Operator State #38 owns its diagnosis) and does not
     // block the clear.
-    if (!uq.length && typeof clearToolParamsAfterCleanRun_ === 'function') {
+    // GCA-4: an empty window or a probe that failed is not a clean terminus.
+    if (!uq.length && !inconclusive && !noQueueFailed && typeof clearToolParamsAfterCleanRun_ === 'function') {
       clearToolParamsAfterCleanRun_(
         ['INBOUND_QCD_PARITY_FROM', 'INBOUND_QCD_PARITY_TO', 'INBOUND_QCD_PARITY_DEPT'],
         'runInboundQcdParityCheck');
     }
     return { available: true, from: fromIso, to: toIso, depts: results,
-             unattributed: uq, noEntryQueue: noQueue };
+             unattributed: uq, noEntryQueue: noQueue,
+             inconclusive: inconclusive, noEntryQueueFailed: noQueueFailed };
   } finally {
     try { conn.close(); } catch (ce) {}
   }

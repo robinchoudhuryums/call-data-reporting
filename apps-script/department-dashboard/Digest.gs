@@ -381,8 +381,11 @@ function sendDigestsForCadence_(cadence, runOpts) {
     return;
   }
   var cfg, window;
+  var cfgFellBack = false;   // RUN-5
   try {
+    DIGEST_CONFIG_FELL_BACK_ = false;
     cfg = readDigestConfig_();
+    cfgFellBack = DIGEST_CONFIG_FELL_BACK_ === true;
     // R31: the daily gate decided freshness for ONE window and hands it in,
     // so the send can never drift onto a different day than the one it
     // checked; every other caller resolves the window from the clock.
@@ -505,8 +508,12 @@ function sendDigestsForCadence_(cadence, runOpts) {
         + 'cleared, so a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next '
         + 'trigger inside the same window) will retry. At ' + new Date());
     } else {
+      // RUN-5: a run sent from the fallback list is not a plain ok -- WARN is a
+      // needs-attention prefix (HEALTH_BAD_PREFIXES_).
       digestRecordResult_(propsOut, cadence,
-        'ok ' + window.toIso + ': sent ' + sent + ' of ' + attempted
+        (cfgFellBack ? 'WARN ' : 'ok ') + window.toIso + ': sent ' + sent + ' of ' + attempted
+        + (cfgFellBack ? ' -- the subscriber list came from the Digest Config SHEET because Neon (CONFIG_SOURCE=neon) '
+            + 'was unreachable; it may be out of date, so check who was mailed' : '')
         + (failures.length ? ' (' + failures.length + ' failure(s) -- see admin email)' : '')
         + (runOpts.staleLatest !== undefined
             ? ' -- sent at the ' + DIGEST_DAILY_CUTOFF_HOUR + ':00 cutoff WITHOUT ' + window.toIso
@@ -834,7 +841,18 @@ function digestSummaryHtml_(dept, fromIso, toIso, opts) {
   // R32: a quiet window with FRESH data still explains its zero tiles. (A
   // stale send already carries the data-not-available callout above the
   // tiles -- sendDigestEmail_ -- so this one is skipped then.)
-  const quietNote = (rung === 0 && !opts.stale)
+  // EXD-3 (#81): when the window's days were left out as exception days, the
+  // zero tiles are the rule working, not a roster or mapping fault -- say so.
+  let excDays = [];
+  try {
+    excDays = (typeof exceptionDaysInRange_ === 'function') ? (exceptionDaysInRange_(fromIso, toIso, dept) || []) : [];
+  } catch (eX) { excDays = []; }
+  const quietNote = (rung === 0 && !opts.stale && excDays.length)
+    ? ekCalloutHtml_('Exception day' + (excDays.length === 1 ? '' : 's') + ' left out',
+        excDays.map(function (d) { return ekEsc_(d.date) + (d.reason ? ' (' + ekEsc_(d.reason) + ')' : ''); }).join('; ')
+        + (excDays.length === 1 ? ' is an exception day' : ' are exception days') + ' for ' + ekEsc_(dept)
+        + ': the calls are left out of every report figure, so there is nothing to show for this period.', 'neutral')
+    : (rung === 0 && !opts.stale)
     ? ekCalloutHtml_('No calls recorded',
         'No answered or missed calls were recorded for ' + ekEsc_(dept) + '\'s roster on '
         + ekEsc_(fromIso === toIso ? fromIso : (fromIso + ' – ' + toIso)) + '. If the team was '
@@ -1038,10 +1056,17 @@ function digestFormatHms_(totalSeconds) {
  * falls back to the sheet on error). readDigestConfig_ applies the SAME
  * parse to either, so parity is exact. Returns [] (never throws).
  */
+// RUN-5: set when CONFIG_SOURCE=neon and the subscriber list had to come from
+// the SHEET instead (Neon unreachable). Under that setting the sheet is no
+// longer written, so its list can be out of date -- the cadence run says so.
+var DIGEST_CONFIG_FELL_BACK_ = false;
 function digestConfigRawValues_() {
   if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') {
     const neon = neonDigestConfigRawValues_();
     if (neon !== null) return neon;
+    DIGEST_CONFIG_FELL_BACK_ = true;
+    Logger.log('digestConfigRawValues_: CONFIG_SOURCE=neon but the Neon read failed -- using the Digest Config SHEET, '
+      + 'which may be out of date (a subscriber removed since the flip is still on it).');
   }
   return sheetDigestConfigRawValues_();
 }

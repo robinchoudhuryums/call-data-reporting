@@ -245,7 +245,13 @@ function neonGetAgentExtPairs_() {
     neonNoteEgress_(json ? json.length : 0, 'dqe-exts');   // F5: meter the read
     rs.close(); stmt.close();
     var arr = JSON.parse(json || '[]');
-    try { cache.put(KEY, json, REPORT_CACHE_TTL_SECONDS); } catch (ce) { /* harmless */ }
+    // GCA-8: a failed put (the ~100 KB value cap) means this DISTINCT scan of
+    // dqe_history runs on every request -- said, not swallowed.
+    try { cache.put(KEY, json, REPORT_CACHE_TTL_SECONDS); }
+    catch (ce) {
+      Logger.log('neonGetAgentExtPairs_: cache put failed at ' + (json ? json.length : 0)
+        + ' bytes -- NOT cached; every request re-reads the agent/extension pairs from Neon: ' + ce);
+    }
     clearNeonReadFailure_();   // F4: a successful read (even empty) means Neon is healthy
     return arr;
   } catch (e) {

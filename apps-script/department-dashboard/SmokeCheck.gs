@@ -193,6 +193,12 @@ function liveSmokeChecks_() {
     var ins = computeInsights_(dept, from, latestIso, agents, roster, '', '');
     if (!ins || !ins.teamStats) throw new Error('insights payload has no teamStats');
     var qh = ins.queueHealth;
+    // RUN-8: Queue health is the manager's only queue surface; an errored one
+    // is a failed read path, not a detail in a passing line.
+    if (qh && qh.error) {
+      throw new Error('Insights computed but its Queue health ERRORED for ' + dept + ' ' + from + '..' + latestIso
+        + ' (the QCD read or compute failed)');
+    }
     return dept + ' ' + from + '..' + latestIso + ': ' + agents.length + ' agents'
       + ', queueHealth=' + (qh ? (qh.error ? 'ERROR' : (qh.unmapped ? 'unmapped' : 'ok')) : 'null');
   });

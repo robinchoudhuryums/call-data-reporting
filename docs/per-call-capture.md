@@ -297,6 +297,9 @@ activity" has NO sheet primary and reports `historyAvailable:false`.
 > outbound capture's Gate 1, the busy / cross-reference indexes) must use
 > `icIsCallerIncoming_`, never a bare Direction test, or a short outbound call
 > reads as an inbound call answered in a second and vanishes from outbound.
+> The Direct engine's own "is this an inbound call?" index joined the rule in
+> CAP-1 (2026-11-09): with the bare test such a call left Direct altogether.
+> `capture-rules.test.js` pins that no bare group test remains there.
 
 > **Queue before its first ring (QF-1, owner 2026-10-28).** A queue and the
 > first agent it rings often start in the same second, and 8x8 can give the
@@ -337,9 +340,10 @@ disclosed via `fallbackSource`/`fallbackThrough` + an overlay caption, a
 path, a miss REASON only for a caller entitled to the unscoped lookup (SEC-7:
 the fallback used to classify before auth, an existence oracle), with NO
 `insurer` on the call (the Neon row has none; the label is the admin-gated
-Inbound report's); journey cells
-are only exported within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
-#49), older dates render the summary; the OUTBOUND arm falls back to the
+Inbound report's); a journey cell is
+written only for a row within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
+#49) when it is exported and is kept after that, so a blank one (a seed or a
+re-export of an old date) renders the summary; the OUTBOUND arm falls back to the
 `Outbound Calls` tab (Op State #50) with its two-arm entitlement
 RE-DERIVED from the Inbound tab's related-call columns, never trusted.
 Pinned by
@@ -492,7 +496,7 @@ and the SQL was run against Postgres 16 on a fixture (both shapes) before it
 shipped.
 
 **"Transfers not answered" is a SEPARATE tile, counted QCD's way (S2C-6,
-owner ruling 2026-09-28, `inbound:v15`).** CSRs are told to drop a transfer
+owner ruling 2026-09-28, `inbound:v16`).** CSRs are told to drop a transfer
 attempt after ~2 minutes on hold when the target never answers, and QCD counts
 that dropped attempt as an abandon for the TARGET queue. "Abandoned on hold"
 above deliberately does not (it counts callers who hung up), so the attempts
@@ -624,7 +628,7 @@ card periods (Yesterday / 30 / 60 / 90 / YTD, the same starts as the inbound
 stats). It attributes through the same `deptsForAgent` roster map as the DQE
 tiles, so an agent on two rosters counts in both and an off-roster dialler in
 none. These are dept TOTALS, so `TEAM_AVG_EXCLUDES` does not apply. The result
-rides the cached `companyOverview:v28` blob, so the 5-minute auto-refresh never
+rides the cached `companyOverview:v31` blob, so the 5-minute auto-refresh never
 reaches Neon. The read is metered as `overviewOutbound`. It has NO sheet
 fallback, on purpose: a YTD tail of the Outbound Calls tab costs far more than
 the line is worth. A failed read omits the field, the tiles show no line, and
@@ -644,7 +648,7 @@ period's INV-28 prior (`ovOutboundPriorWindows_`), plus `coverageStart` and
 `through`. The rate is answered ÷ (answered + missed while free), the Direct
 Calls report's rule; busy rings are shown, not rated. A prior is kept only
 when its window starts on or after capture. Metered as `overviewDirect`, no
-sheet fallback, `companyOverview:v30`. It is ADMIN-ONLY like the Direct Calls
+sheet fallback, `companyOverview:v31`. It is ADMIN-ONLY like the Direct Calls
 report, with no release switch: `personalizeOverview_` strips `dept.direct`,
 `directCoverageStart`, `directThrough` and `directPriorWindows` for every
 non-admin, whatever `OUTBOUND_VETTING_GATE_` says. Exception days (#81) are not
@@ -658,7 +662,7 @@ widening the read's lower bound to the earliest prior start -- still ONE
 statement, still metered `overviewOutbound`. Each period's `prior` is null
 when its window starts before `coverageStart` (comparing against an
 uncaptured period would read as pure growth); `outboundPriorWindows` carries
-the windows for the hover text and is stripped with the line (companyOverview:v28).
+the windows for the hover text and is stripped with the line (companyOverview:v31).
 My Department needs no server change: it calls `getDeptOutboundSummary` a
 second time for the summary's own `meta.priorFrom/priorTo`.
 
@@ -670,12 +674,17 @@ the per-agent half rides `getDeptOutboundSummary`, and the legacy route
 `#/report/outbound` lands on the Callbacks fold. TEMPORARILY admin-only while
 vetted (the Inbound/Direct resolver model -- latent per-dept manager path,
 release = the gate + un-hiding the My Department surfaces, Operator State #63). Two CONTRACT rules, both test-enforced
-(`tests/unit/outbound-report.test.js`): (1) the raw abandon count
-(`callback.abandonedTotal`) is exactly the Inbound report's Abandoned
-population for the same scope --
+(`tests/unit/outbound-report.test.js`): (1) the raw abandon count is exactly
+the Inbound report's Abandoned population for the same scope --
 it reuses `inboundDeptPredicate_` + `inboundWindowClause_` + the
 is_internal exclusion verbatim (`outboundAbandonWhere_`), so the two
-reports can never disagree on what an abandon is; (2) agents attribute by
+reports can never disagree on what an abandon is. In a DEPARTMENT view that
+count is `callback.abandonedTotal`; in the COMPANY view `abandonedTotal`
+leaves out the CBX-1 excluded departments' callers, and the whole population
+is `callback.abandonedTotalAll` (GCA-1). Two things the equality does NOT
+cover, which `runOutboundVettingCheck` accounts for: the callback figures
+still count exception days (#81) while the Inbound report's totals leave
+them out, so the check computes the Inbound side with them included; (2) agents attribute by
 ROSTER dept (exact INV-04 match via `buildDeptsByAgent_`), NEVER the raw
 CDR org label in `outbound_calls.department` -- the SQL never reads that
 column. **Since CE-1 (owner 2026-10-09) the callback figures count contact
@@ -712,7 +721,22 @@ EVENT rows (`obCallbackEventsSql_` -- every abandon counted, the trackable
 queue attempts, the dials to those callers through `to + 3`, their answered
 queue calls), callers keyed by a per-request integer `dense_rank` so no hash
 leaves the database, and the sheet fallback builds the same rows from the two
-export tabs. Pinned by `outbound-episodes.test.js`.
+export tabs. Pinned by `outbound-episodes.test.js`. **A DEPARTMENT view reads
+its callers' attempts on EVERY queue (NUM-3)**: the dept predicate is a `mine`
+column, not a WHERE -- counts and caller keys are the dept's own, the engine
+sees the other teams' episodes (so their own dials are consumed there, exactly
+as in the company view), and `obEpMineOnly_` keeps the dept's episodes
+afterwards. Narrowing the read instead makes a dept's figures disagree with
+its row in Callbacks by department (`manager-numbers.test.js`).
+**Callbacks by department is an admin surface, stripped SERVER-side (GCA-5)**:
+the company payload is one shared cache entry and an all-departments manager
+reaches the company view once the gate is released, so `getOutboundReport`
+nulls `callbackByDept` on serve for everyone but an admin
+(`obStripForViewer_`, fresh or cached) -- the client hiding it is not the gate.
+**The three outbound keys are anchored on the latest DQE date but read the
+per-call tables (GCA-2)**: a payload computed before the day's capture landed
+(its own through-date is before the anchor) is cached for
+`DEGRADED_CACHE_TTL_SECONDS` (10 min), not 6 h (`obCacheTtlFor_`).
 **A parent dept's inbound/outbound/missed scope rolls in its one-level
 children's raw inbound aliases AND final-dept labels** (PCR-1/PCR-2,
 `inboundQueuesForDept_` / `inboundDeptFinalLabels_`, the same
@@ -820,7 +844,7 @@ of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
 disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
 whose rows name the line rung: rows exported before FO-2 are blank there and
 would read as "no direct calls"). Cached
-`outboundReport:v10` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
+`outboundReport:v11` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since
@@ -1054,6 +1078,12 @@ internal outbound (only a dial to an EXTENSION -- never the Call Recording /
 Voicemail / CallForking legs the CDR also logs Internal, DC-D2b,
 `dcIsInternalDial_`), anonymous inbound rings kept, extension-length callees
 internal (`dcOutboundSide_`); an outside call keeps its first leg's side.
+**CAP-4 (2026-11-09): a missed event is judged ring by ring.** One event can
+hold several rings of the same root call; it is `missed_busy` only when EVERY
+ring found the agent on another call (free at any ring and unanswered is a
+miss), and `busy_with` names the first ring's call. The old test used one span
+from the first ring to the last, so a call taken in the gap between two rings
+excused the miss.
 NOT retroactive: a date built before the deploy keeps the old counts until it
 is re-imported (Operator State #56), so a window spanning the deploy mixes the
 two -- which is what **D0** (`diagnoseDirectCallCounting`, Operator State #80)

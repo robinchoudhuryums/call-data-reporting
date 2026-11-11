@@ -244,6 +244,9 @@ function exportOutboundCalls(fromIso, toIso) {
                              OUTBOUND_EXPORT_HEADERS.length - sheet.getMaxColumns());
   }
   sheet.getRange(1, 1, 1, OUTBOUND_EXPORT_HEADERS.length).setValues([OUTBOUND_EXPORT_HEADERS]);
+  // OFB-5: an insertSheet tab is 26 columns wide; this one uses 12, and every
+  // spare column counts against the 10M-cell cap on every kept row.
+  ic_trimEmptyColumns_(sheet, OUTBOUND_EXPORT_HEADERS.length);
   var lastRow = sheet.getLastRow();
   var hasData = lastRow >= 2;
 
@@ -255,6 +258,11 @@ function exportOutboundCalls(fromIso, toIso) {
     var existing = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues()
                         .map(function (r) { return oc_cellDateIso_(r[0]); })
                         .filter(function (s) { return !!s; });
+    // OFB-1: re-sort an out-of-order tab BEFORE connecting (see the inbound twin).
+    if (ic_datesOutOfOrder_(existing)) {
+      ic_sortByDate_(sheet, OUTBOUND_EXPORT_HEADERS.length);
+      Logger.log('exportOutboundCalls: the tab was out of date order (an earlier run stopped before its sort) -- re-sorted.');
+    }
     var maxIso = existing.sort().pop();
     startIso = maxIso || oc_isoDaysAgo_(OUTBOUND_EXPORT_SEED_DAYS);
   } else {
@@ -273,6 +281,10 @@ function exportOutboundCalls(fromIso, toIso) {
     if (eConn && typeof eConn === 'object') eConn.neonUnreachable = true;
     throw eConn;
   }
+  // OFB-1 (see the inbound twin): `appended` is set before the first append,
+  // so the sort below also runs for a run that then failed.
+  var written = 0, replaced = 0, changedDone = [], changedLater = [];
+  var appended = false, runErr = null, result = null;
   try {
     // A not-yet-created outbound_calls table is a CLEAN skip, not an error:
     // the dashboard can be deployed ahead of the capture (the NeonCoverage
@@ -287,53 +299,64 @@ function exportOutboundCalls(fromIso, toIso) {
     } catch (eChk) { exists = false; }
     if (!exists) {
       Logger.log('exportOutboundCalls: outbound_calls does not exist yet — nothing to export.');
-      return { written: 0, replaced: 0, skipped: 'no-table' };
-    }
-
-    var written = 0, replaced = 0, changedDone = [], changedLater = [];
-    var rows = oc_fetchRows_(conn, startIso, endIso);
-    if (rows.length) {
-      // An unexpectedly empty Neon result must NEVER blank the fallback copy.
-      var r0 = oc_writeWindow_(sheet, rows, startIso, endIso);
-      written += r0.written; replaced += r0.replaced;
+      result = { written: 0, replaced: 0, skipped: 'no-table' };
     } else {
-      Logger.log('exportOutboundCalls: no outbound_calls rows for %s..%s — window left untouched.',
-                 startIso, endIso);
-    }
-    if (!fromIso) {
-      // TOOL-1: older dates whose Neon rows changed since the last run.
-      var since = props.getProperty('OUTBOUND_EXPORT_WATERMARK');
-      var pending = [];
-      try { pending = JSON.parse(props.getProperty('OUTBOUND_EXPORT_PENDING') || '[]') || []; } catch (ep) { pending = []; }
-      var floorIso = oc_keepCutoffIso_();
-      var changed = since ? oc_changedDatesSince_(conn, since, startIso, floorIso) : [];
-      // ic_planChangedDates_ is the inbound twin's pure planner (one project scope).
-      var plan = ic_planChangedDates_(changed, pending.filter(function (d) { return d >= floorIso && d < startIso; }),
-                                      OC_EXPORT_MAX_CHANGED_DATES_);
-      for (var ci = 0; ci < plan.now.length; ci++) {
-        var d = plan.now[ci];
-        var dRows = oc_fetchRows_(conn, d, d);
-        if (dRows.length) {
-          var rd = oc_writeWindow_(sheet, dRows, d, d);
-          written += rd.written; replaced += rd.replaced;
-        }
-        changedDone.push(d);
+      var rows = oc_fetchRows_(conn, startIso, endIso);
+      if (rows.length) {
+        // An unexpectedly empty Neon result must NEVER blank the fallback copy.
+        appended = true;
+        var r0 = oc_writeWindow_(sheet, rows, startIso, endIso);
+        written += r0.written; replaced += r0.replaced;
+      } else {
+        Logger.log('exportOutboundCalls: no outbound_calls rows for %s..%s — window left untouched.',
+                   startIso, endIso);
       }
-      changedLater = plan.later;
-      props.setProperty('OUTBOUND_EXPORT_WATERMARK', runStartIso);
-      props.setProperty('OUTBOUND_EXPORT_PENDING', JSON.stringify(changedLater));
+      if (!fromIso) {
+        // TOOL-1: older dates whose Neon rows changed since the last run.
+        var since = props.getProperty('OUTBOUND_EXPORT_WATERMARK');
+        var pending = [];
+        try { pending = JSON.parse(props.getProperty('OUTBOUND_EXPORT_PENDING') || '[]') || []; } catch (ep) { pending = []; }
+        var floorIso = oc_keepCutoffIso_();
+        var changed = since ? oc_changedDatesSince_(conn, since, startIso, floorIso) : [];
+        // ic_planChangedDates_ is the inbound twin's pure planner (one project scope).
+        var plan = ic_planChangedDates_(changed, pending.filter(function (d) { return d >= floorIso && d < startIso; }),
+                                        OC_EXPORT_MAX_CHANGED_DATES_);
+        // OFB-1: per-date progress -- the plan is stored before the first
+        // older date is read and each finished date leaves PENDING as it lands.
+        changedLater = plan.later;
+        props.setProperty('OUTBOUND_EXPORT_WATERMARK', runStartIso);
+        props.setProperty('OUTBOUND_EXPORT_PENDING', JSON.stringify(plan.now.concat(plan.later)));
+        for (var ci = 0; ci < plan.now.length; ci++) {
+          var d = plan.now[ci];
+          var dRows = oc_fetchRows_(conn, d, d);
+          if (dRows.length) {
+            appended = true;
+            var rd = oc_writeWindow_(sheet, dRows, d, d);
+            written += rd.written; replaced += rd.replaced;
+          }
+          changedDone.push(d);
+          props.setProperty('OUTBOUND_EXPORT_PENDING', JSON.stringify(plan.now.slice(ci + 1).concat(plan.later)));
+        }
+      }
+      result = { written: written, replaced: replaced, changedDates: changedDone, pendingDates: changedLater.length };
     }
-    var finalLastRow = sheet.getLastRow();
-    if (written && finalLastRow > 2) {
-      sheet.getRange(2, 1, finalLastRow - 1, OUTBOUND_EXPORT_HEADERS.length)
-           .sort({ column: 1, ascending: true });
-    }
-    Logger.log('exportOutboundCalls: wrote %s rows for %s..%s + %s changed older date(s) (%s replaced; %s still pending; sheet now %s rows).',
-               written, startIso, endIso, changedDone.length, replaced, changedLater.length, finalLastRow - 1);
-    return { written: written, replaced: replaced, changedDates: changedDone, pendingDates: changedLater.length };
-  } finally {
-    try { conn.close(); } catch (ce) {}
+  } catch (eRun) {
+    runErr = eRun || new Error('exportOutboundCalls failed');
   }
+  if (appended) {
+    try { ic_sortByDate_(sheet, OUTBOUND_EXPORT_HEADERS.length); }
+    catch (eSort) {
+      Logger.log('exportOutboundCalls: the final sort failed: ' + ((eSort && eSort.message) || eSort));
+      if (!runErr) runErr = eSort;   // the next no-argument run re-sorts before it connects
+    }
+  }
+  try { conn.close(); } catch (ce) {}
+  if (runErr) throw runErr;
+  if (!result.skipped) {
+    Logger.log('exportOutboundCalls: wrote %s rows for %s..%s + %s changed older date(s) (%s replaced; %s still pending; sheet now %s rows).',
+               written, startIso, endIso, changedDone.length, replaced, changedLater.length, sheet.getLastRow() - 1);
+  }
+  return result;
 }
 
 /**

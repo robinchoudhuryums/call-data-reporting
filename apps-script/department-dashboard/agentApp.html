@@ -225,7 +225,9 @@
   function paintControls() {
     var chips = document.querySelectorAll('.agent-chip[data-preset]');
     Array.prototype.forEach.call(chips, function (c) {
-      c.classList.toggle('on', c.getAttribute('data-preset') === win.preset);
+      var on = c.getAttribute('data-preset') === win.preset;
+      c.classList.toggle('on', on);
+      c.setAttribute('aria-pressed', on ? 'true' : 'false');   // F77: announced, not only coloured
     });
     $('agent-custom').classList.toggle('show', win.preset === 'custom');
     $('agent-dates').textContent = win.from === win.to ? win.from
@@ -415,7 +417,7 @@
             + ' Still showing ' + rangeLabel_(lastGood_) + '.');
           return;
         }
-        showError('Error loading your numbers: ' + msg);
+        showError('Error loading your numbers: ' + msg, true);   // CCX-5: with a Retry
       })
       .getAgentHome(reqParams_({ from: win.from, to: win.to }));
   }
@@ -541,11 +543,24 @@
     }).join('');
     $('agent-hist-months').innerHTML = cards || '<div class="agent-zero">No months to show yet.</div>';
   }
-  function showError(msg) {
+  // CCX-5 (broad-scan 2026-11-09): `retry` adds a Retry button. A failed
+  // FIRST load had no numbers to fall back to and no way to ask again short
+  // of reloading the page (the history tab has had its own since CL-6).
+  function showError(msg, retry) {
     $('agent-loading').style.display = 'none';
     $('agent-body').style.display = 'none';
     var el = $('agent-error');
     el.textContent = msg;
+    if (retry) {
+      el.appendChild(document.createTextNode(' '));
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'agent-chip';
+      b.id = 'agent-home-retry';
+      b.textContent = 'Retry';
+      b.addEventListener('click', function () { load(); });
+      el.appendChild(b);
+    }
     el.style.display = '';
   }
   // C2-8 (broad-scan 2026-09-17): a VALIDATION message must not wipe the

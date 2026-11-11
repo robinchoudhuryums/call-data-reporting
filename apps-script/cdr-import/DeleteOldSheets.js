@@ -94,7 +94,98 @@ function retentionHistoryIsos_() {
   var target = SpreadsheetApp.openById(getTargetSsId_());
   var dqe = buildHistoryDateSet(target, 'DQE Historical Data', 2);
   var qcd = buildHistoryDateSet(target, 'QCD Historical Data', 3);
-  return { has: function (iso) { return dqe.has(iso) || qcd.has(iso); } };
+  return { has: function (iso) { return dqe.has(iso) || qcd.has(iso); },
+           dqeHas: function (iso) { return dqe.has(iso); } };   // OFB-4
+}
+
+// OFB-4 (broad-scan 2026-11-09, Batch 7): "imported" and "nothing queued" are
+// still narrower than what is BUILT from a Call_Legs tab. Three things could
+// fail inside an import that otherwise succeeded -- so the tab was remembered
+// in `lastSheets`, nothing was queued, and the prune deleted the only source
+// they can be rebuilt from:
+//   - the DQE build threw while QCD wrote (the proof above is DQE *or* QCD,
+//     and the memo proves neither);
+//   - the Direct Call History build failed;
+//   - the per-call capture (inbound_calls / outbound_calls) failed on a
+//     Neon-unreachable day in the default inline mode, which queues nothing.
+// So a tab that has passed every check above is examined once more, right
+// before the delete, and KEPT (and named) while any of the three is owed.
+// Direct and the per-call capture are not merely checked: the catch-up the
+// pending-import loop already uses for a half-finished date is run for it
+// (it writes what is missing and is a no-op for a date that is whole), so the
+// normal case is a tab that goes on to be deleted with nothing lost.
+var RETENTION_DERIVED_BUDGET_MS_ = 150000;   // no new last-chance check starts past this much of the run; the rest wait a night
+var RETENTION_PH_SCAN_ROWS_ = 6000;          // newest Pipeline Health rows searched for a date's DQE outcome
+
+/**
+ * OFB-4: the newest DQE build outcome Pipeline Health holds for `iso` --
+ * 'success' (a rows:0 success is a day with nothing to build), 'failure', or
+ * '' when none is on record. `memo` carries the one sheet read across tabs.
+ */
+function retentionDqeOutcome_(iso, memo) {
+  if (!memo.grid) {
+    var sh = SpreadsheetApp.openById(getTargetSsId_()).getSheetByName('Pipeline Health');
+    var last = sh ? sh.getLastRow() : 0;
+    var start = Math.max(2, last - RETENTION_PH_SCAN_ROWS_ + 1);
+    // Step, Status, Rows, Duration, Notes (the dashboard's PIPELINE_HEALTH_HEADERS order).
+    memo.grid = (last >= 2) ? sh.getRange(start, 2, last - start + 1, 5).getValues() : [];
+  }
+  var p = String(iso).split('-');
+  var tag = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0).toDateString();   // the writers' own note prefix
+  for (var i = memo.grid.length - 1; i >= 0; i--) {
+    if (!/^(processIntegratedHistory|bulkBackfill):DQE(-guard)?$/.test(String(memo.grid[i][0]))) continue;
+    if (String(memo.grid[i][4]).indexOf(tag) !== 0) continue;
+    return String(memo.grid[i][1]).toLowerCase() === 'failure' ? 'failure' : 'success';
+  }
+  return '';
+}
+
+/**
+ * OFB-4: what is still owed from Call_Legs_<iso> beyond the history sheets --
+ * a list of short reasons, [] when the tab can go. `historyIsos` is
+ * retentionHistoryIsos_()'s result; `memo` is per-run scratch.
+ */
+function retentionDerivedOwed_(iso, historyIsos, memo) {
+  var owed = [];
+  var p = String(iso).split('-');
+  var dateObj = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+  // 1. DQE. Absent from DQE history is fine only when the build is on record
+  //    as having run clean for that date (a day with nothing to build).
+  if (!historyIsos.dqeHas(iso)) {
+    var outcome = retentionDqeOutcome_(iso, memo);
+    if (outcome === 'failure') owed.push('DQE build failed');
+    else if (outcome !== 'success') owed.push('no DQE rows and no DQE build on record');
+  }
+  // 2. Direct Call History: rebuilt from the tab when the sheet lacks the date (F7's catch-up).
+  if (typeof pendingImportDirectCatchUp_ === 'function') {
+    if (!memo.targetSS) memo.targetSS = SpreadsheetApp.openById(getTargetSsId_());
+    if (!pendingImportDirectCatchUp_(memo.targetSS, iso, dateObj)) owed.push('Direct Call History build failed');
+  }
+  // 3. Per-call capture: written when Neon lacks the date (PIPE-7's catch-up).
+  //    Skipped when Neon is not configured at all -- there is nothing to capture to.
+  if (typeof pendingImportPerCallCatchUp_ === 'function') {
+    if (memo.neonConfigured === undefined) {
+      memo.neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
+    }
+    // Neon is probed ONCE per run: while it is down every over-age tab is
+    // simply kept, without a failed backfill (and its failure row) per tab
+    // per night for the length of the outage.
+    if (memo.neonConfigured && memo.neonUp === undefined) {
+      memo.neonUp = true;
+      if (typeof getReachableNeonConn_ === 'function') {
+        var probe = null;
+        try { probe = getReachableNeonConn_(); } catch (e) { probe = null; }
+        memo.neonUp = !!probe;
+        if (probe) { try { probe.close(); } catch (e) { /* closed */ } }
+      }
+    }
+    if (memo.neonConfigured && !memo.neonUp) {
+      owed.push('per-call capture not confirmed (Neon unreachable)');
+    } else if (memo.neonConfigured && !pendingImportPerCallCatchUp_(iso)) {
+      owed.push('per-call capture not written (a write failed)');
+    }
+  }
+  return owed;
 }
 
 // F9 (broad-scan 2026-10-14): "imported" is not "done". A date in DQE/QCD
@@ -164,6 +255,9 @@ function deleteOldCDRSheets() {
   var deleted = 0, kept = 0, held = 0;
   var unimported = [], historyError = null;   // PIPE-2
   var owedTabs = [], owedIsos = null;         // F9
+  var derivedTabs = [], unchecked = [];       // OFB-4
+  var derivedMemo = {}, derivedLock = null, derivedLockTried = false;
+  var pruneT0 = Date.now();
   var lastSheets = {};
   try {
     JSON.parse(PropertiesService.getScriptProperties().getProperty('lastSheets') || '[]')
@@ -186,6 +280,32 @@ function deleteOldCDRSheets() {
       catch (e) { historyError = 'owed-capture check: ' + ((e && e.message) ? e.message : String(e)); }
     }
     return historyError !== null || !!owedIsos[iso];
+  };
+  // OFB-4: the last-chance check. Returns null when the tab can be deleted,
+  // else why it is kept. The catch-ups WRITE (Direct, Neon), so they run under
+  // the script lock every import takes; a busy lock or the time budget just
+  // leaves the tab for the next night -- kept, never guessed.
+  var derivedHold = function (iso) {
+    if (historyIsos === null && historyError === null) {
+      try { historyIsos = retentionHistoryIsos_(); }
+      catch (e) { historyError = (e && e.message) ? e.message : String(e); }
+    }
+    if (historyError !== null) return 'history check failed';
+    if (!derivedLockTried) {
+      derivedLockTried = true;
+      try {
+        var lk = LockService.getScriptLock();
+        if (lk.tryLock(5000)) derivedLock = lk;
+      } catch (e) { derivedLock = null; }
+    }
+    if (!derivedLock) return 'not checked: an import is running';
+    if (Date.now() - pruneT0 > RETENTION_DERIVED_BUDGET_MS_) return 'not checked this run';
+    try {
+      var why = retentionDerivedOwed_(iso, historyIsos, derivedMemo);
+      return why.length ? why.join('; ') : null;
+    } catch (e) {
+      return 'check failed: ' + ((e && e.message) ? e.message : String(e));
+    }
   };
   // ING-5: recovery holds. Expired holds are dropped on the way.
   var holds = retentionHoldRead_(), holdsChanged = false, nowMs = Date.now();
@@ -235,23 +355,40 @@ function deleteOldCDRSheets() {
       owedTabs.push(name);     // F9: imported, but its per-call capture is still owed -- kept
       Logger.log('Kept over-age sheet whose capture is still owed: ' + name);
     } else if (dayDiff > RETENTION_CUTOFF_DAYS) {
-      ss.deleteSheet(sheet);
-      deleted++;
-      Logger.log('Deleted old sheet: ' + name);
+      // OFB-4: everything above says the tab can go -- look once more at what
+      // is built from it before the irreversible step.
+      var hold = derivedHold(dateMatch[1] + '-' + dateMatch[2] + '-' + dateMatch[3]);
+      if (hold === null) {
+        ss.deleteSheet(sheet);
+        deleted++;
+        Logger.log('Deleted old sheet: ' + name);
+      } else if (/^not checked/.test(hold)) {
+        unchecked.push(name);
+        Logger.log('Kept over-age sheet (' + hold + '): ' + name);
+      } else {
+        derivedTabs.push(name + ' (' + hold + ')');
+        Logger.log('Kept over-age sheet that still owes something built from it: ' + name + ' -- ' + hold);
+      }
     } else {
       kept++;
     }
   }
+  if (derivedLock) { try { derivedLock.releaseLock(); } catch (e) { /* released with the execution */ } }
   if (holdsChanged) retentionHoldWrite_(holds);
   unimported.sort();
   owedTabs.sort();
+  derivedTabs.sort();
+  unchecked.sort();
   Logger.log('deleteOldCDRSheets: deleted ' + deleted + ', kept ' + kept
     + (held ? ', held for recovery ' + held : '')
     + (unimported.length ? ', kept NOT-imported ' + unimported.length + ' (' + unimported.join(', ') + ')' : '')
     + (owedTabs.length ? ', kept capture-OWED ' + owedTabs.length + ' (' + owedTabs.join(', ') + ')' : '')
+    + (derivedTabs.length ? ', kept build-OWED ' + derivedTabs.length + ' (' + derivedTabs.join(', ') + ')' : '')
+    + (unchecked.length ? ', kept not-yet-checked ' + unchecked.length + ' (' + unchecked.join(', ') + ')' : '')
     + (historyError ? ' -- history check FAILED: ' + historyError : '')
     + ' (cutoff ' + RETENTION_CUTOFF_DAYS + 'd).');
-  return { deleted: deleted, kept: kept, held: held, unimported: unimported, owed: owedTabs, historyError: historyError };
+  return { deleted: deleted, kept: kept, held: held, unimported: unimported, owed: owedTabs,
+           derived: derivedTabs, unchecked: unchecked, historyError: historyError };
 }
 
 /** Time-trigger handler: prune + a Pipeline Health row per run (C-3). */
@@ -281,6 +418,16 @@ function runRetentionPrune_() {
             + (res.owed && res.owed.length
               ? ', KEPT ' + res.owed.length + ' still owed a per-call capture (F9: Neon Mirror Queue or the '
                 + 'catch-up ledger): ' + res.owed.join(', ')
+              : '')
+            // OFB-4: named, not failed -- the build or capture that failed
+            // logged its own failure row on the day.
+            + (res.derived && res.derived.length
+              ? ', KEPT ' + res.derived.length + ' still owed something built from the tab (OFB-4): '
+                + res.derived.join(', ') + ' -- CDR Tools -> Make a date whole, or delete the tab by hand'
+              : '')
+            + (res.unchecked && res.unchecked.length
+              ? ', ' + res.unchecked.length + ' over-age tab(s) wait for the next run\'s last-chance check: '
+                + res.unchecked.join(', ')
               : '')
             + (res.historyError ? ' | history check failed, nothing unproven deleted: ' + res.historyError : ''),
         });

@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v30` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v31` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -108,7 +108,9 @@
 // direct-line answer rate per card period, from Neon direct_call_history, +
 // its prior) and the blob `directCoverageStart` / `directThrough` /
 // `directPriorWindows`; admin-only, stripped for everyone else.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v30';
+// v31 (NUM-4): under QUEUE_SPLIT_SCOPE=dept the card periods take the tile's
+// own fail-open verdict (its 30-day span), so a tile is narrowed, or not, as one.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v31';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -150,7 +152,8 @@ var OV_CHART_TREND_DAYS = 90;
 // v2 (6b): the YTD payload's per-dept block gained `trendAnswered` alongside
 // trend / trendAbandoned / trendAbandonedPct -- its own prefix, because this
 // payload is cached separately from the Overview blob.
-var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v3';
+// v4 (NUM-4): the dept lines take the tile's fail-open verdict (see v31 above).
+var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v4';
 
 // F6: CacheService's documented per-value ceiling, and the tripwire below it.
 // The Overview blob is the biggest cached payload in the app and its
@@ -875,7 +878,11 @@ function ovAccumulatePeriods_(dqeRows, allDepts, deptsForAgent, w, latestDate) {
       if (!owners || owners.indexOf(d) === -1) continue;
       pRows.push(pr);
     }
-    pRows = queueSplitNarrowedCopy_(pRows, d).rows;
+    // NUM-4: the verdict is the TILE's -- the 30-day pass above reads rows
+    // from trendStartIso only, so this wider pass takes its fail-open verdict
+    // from the same span. Assessed over the whole year, one tile could show a
+    // day narrowed here and un-narrowed there (a queue renamed mid-year).
+    pRows = queueSplitNarrowedCopy_(pRows, d, { verdictFromIso: trendStartIso }).rows;
     const pa = deptPeriodAcc[d];
     const cd = deptChartDaily[d];
     for (let ri = 0; ri < pRows.length; ri++) {
@@ -1354,17 +1361,30 @@ function ovReadDirectByDept_(allDepts, w, latestDate, conn) {
  * compute, which the cached blob then serves). Each read fails on its own: a
  * broken direct read never costs the outbound line, or the reverse.
  */
+// GCA-3: set when Neon is CONFIGURED and the tile-line read still came back
+// short (unreachable, or either read failed). The blob is then correct to
+// serve but missing its outbound / direct lines, and ovCacheOverview_ holds it
+// for DEGRADED_CACHE_TTL_SECONDS instead of pinning it for 6 h after Neon is
+// back. An install with no Neon never sets it (there is no line to wait for).
+var OV_TILE_LINES_FAILED_ = false;
+function ovTileLinesFailed_() { return OV_TILE_LINES_FAILED_ === true; }
 function ovReadTileLines_(allDepts, deptsForAgent, w, latestDate) {
   const none = { outbound: null, direct: null };
+  OV_TILE_LINES_FAILED_ = false;
   if (typeof getDashboardNeonConn_ !== 'function') return none;
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { configured = false; }
   let conn = null;
   try {
     conn = getDashboardNeonConn_();
-    if (!conn) return none;
-    return { outbound: ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, conn),
-             direct: ovReadDirectByDept_(allDepts, w, latestDate, conn) };
+    if (!conn) { OV_TILE_LINES_FAILED_ = configured; return none; }
+    const lines = { outbound: ovReadOutboundByDept_(allDepts, deptsForAgent, w, latestDate, conn),
+                    direct: ovReadDirectByDept_(allDepts, w, latestDate, conn) };
+    if (lines.outbound === null || lines.direct === null) OV_TILE_LINES_FAILED_ = configured;
+    return lines;
   } catch (e) {
     Logger.log('Overview tile-line read failed: ' + (e && e.message ? e.message : e));
+    OV_TILE_LINES_FAILED_ = configured;
     return none;
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* closed */ } }
@@ -1528,7 +1548,13 @@ function ovCacheOverview_(cache, ovCacheKey, result, dqeRows, depts) {
         json.length, Math.round(json.length / OVERVIEW_CACHE_MAX_BYTES * 100),
         OVERVIEW_CACHE_MAX_BYTES, depts.length);
     }
-    try { cache.put(ovCacheKey, json, REPORT_CACHE_TTL_SECONDS); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
+    // GCA-3: a blob missing its Neon tile lines is held briefly, never pinned.
+    const ovTtl = ovTileLinesFailed_() ? DEGRADED_CACHE_TTL_SECONDS : REPORT_CACHE_TTL_SECONDS;
+    if (ovTtl !== REPORT_CACHE_TTL_SECONDS) {
+      Logger.log('getCompanyOverview: the outbound / direct tile-line read failed -- cached for ' + ovTtl
+        + ' s, not the 6 h tier, so the lines return soon after Neon does.');
+    }
+    try { cache.put(ovCacheKey, json, ovTtl); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
     catch (e) {
       Logger.log('CompanyOverview cache put FAILED at %s bytes (%s depts): %s '
         + '-- the Overview is now UNCACHED: every request pays the full compute. '
@@ -1624,6 +1650,9 @@ function getOverviewChartTrend(req) {
   // Queue-split adoption: per-dept narrowing over the SHARED row array, so
   // the YTD chart agrees with the tiles and the dept table (clone-per-dept
   // via queueSplitNarrowedCopy_; off = same rows, no clones).
+  // NUM-4: with the tile's own fail-open verdict (its 30-day span), so a
+  // dept's year line and its tile are narrowed, or not, together.
+  const tileVerdictFromIso = ovWindows_(latestDate).trendStartIso;
   allDepts.forEach(function (d) {
     deptDaily[d] = {};
     let deptRows = [];
@@ -1634,7 +1663,7 @@ function getOverviewChartTrend(req) {
       if (!owners || owners.indexOf(d) === -1) continue;
       deptRows.push(r);
     }
-    deptRows = queueSplitNarrowedCopy_(deptRows, d).rows;
+    deptRows = queueSplitNarrowedCopy_(deptRows, d, { verdictFromIso: tileVerdictFromIso }).rows;
     const cd = deptDaily[d];
     deptRows.forEach(function (r) {
       const iso = r.dateIso;
@@ -1723,6 +1752,10 @@ function getOverviewChartTrend(req) {
   if (json.length <= 92000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
+  } else {
+    // GCA-8: said, not silent -- past this size every YTD request recomputes.
+    Logger.log('overviewChartTrend: payload is ' + json.length + ' bytes, over the 92000-byte cache guard -- '
+      + 'NOT cached; every YTD chart request recomputes until it shrinks.');
   }
   logReportUsage_('overviewChartYtd', '(all)', realUser, false);   // B-8
   return ovStripChartTrend_(data, user);
@@ -1907,7 +1940,7 @@ function computeOverviewOrphanNag_(rosterNames) {
   try {
     const orphans = computeOrphans_(rosterNames ? { rosterNames: rosterNames } : undefined);
     if (!orphans || !orphans.length) {
-      return { activeCount: 0, totalCount: 0, sampleNames: [] };
+      return { activeCount: 0, totalCount: 0, unlistedCount: 0, sampleNames: [] };
     }
     const cutoff = new Date(Date.now() - OVERVIEW_ORPHAN_NAG_DAYS * 86400000);
     const cutoffIso = Utilities.formatDate(cutoff, TZ, 'yyyy-MM-dd');
@@ -1917,12 +1950,17 @@ function computeOverviewOrphanNag_(rosterNames) {
     return {
       activeCount: active.length,
       totalCount:  orphans.length,
+      // DCA-7: how many of the active ones are known only from an extension
+      // no roster lists -- the banner words those apart (many are simply
+      // staff the roster does not track, until marked "Not an agent").
+      unlistedCount: active.filter(function (o) { return o.directUnlisted && !o.rows; }).length,
       // Surface up to 3 names so the banner can be specific without
       // wrapping. Sorted by row count desc so the highest-impact
       // orphans show first.
       sampleNames: active
         .slice()
-        .sort(function (a, b) { return b.rows - a.rows; })
+        // DCA-6: a direct-line-only person has no DQE rows; rank by both.
+        .sort(function (a, b) { return (b.rows + (b.directCalls || 0)) - (a.rows + (a.directCalls || 0)); })
         .slice(0, 3)
         .map(function (o) { return o.name; }),
     };

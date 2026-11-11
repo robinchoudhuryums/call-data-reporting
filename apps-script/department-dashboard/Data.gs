@@ -9,13 +9,23 @@
  *   any cross-department access. Admins can request any department
  *   that exists in the dept list; managers are pinned to theirs.
  *
- * Caching: 5-minute (CACHE_TTL_SECONDS) per (dept, from, to) tuple.
- *   Cached payload is the full response with meta.cacheHit overwritten
- *   to true on serve.
+ * Caching: 6 hours (REPORT_CACHE_TTL_SECONDS) per summary key -- the
+ *   versioned `summary:vN` prefix plus dept, window, scope and sub-scope,
+ *   then the suffixes that keep a 6 h key honest: the freshness tag (the
+ *   latest DQE date, so the morning import mints new keys), the queue
+ *   freshness tag, the read-source and queue-split scope, and the roster
+ *   hash (INV-30 has the full list). Only the latest-date lookups are on the
+ *   5-minute tier (CACHE_TTL_SECONDS). Cached payload is the full response
+ *   with meta.cacheHit overwritten to true on serve.
  *
- * Performance: one bulk getValues() over cols A..AH of DQE Historical
- *   Data, in-memory date filter + roster filter + aggregation. Roster
- *   read separately from DO NOT EDIT! (cheap, one column).
+ * Performance: rows come through the DAL (sheetFetchDqeRows_ /
+ *   neonFetchDqeRows_, NeonRead.gs) -- a date-column scan finds the window's
+ *   first and last row and only that span is read at full width, memoized
+ *   per execution; the all-history extension read is separate and narrow
+ *   (dqeExtGrid_, cols C..D since CLN-1). The per-row date filter, roster
+ *   filter and aggregation are in memory. Roster read separately from
+ *   DO NOT EDIT! (cheap, one column). (Scan F53: this header still described
+ *   the 5-minute cache and one whole-sheet A..AH read.)
  */
 
 /**
@@ -142,7 +152,7 @@ function dqeDateColumnIso_(sheet, lastRow, ssTZ) {
 // R44: the ext slice (cols C..D since CLN-1) the ext derivation scans, READ ONCE PER EXECUTION.
 // The GRID is dept-independent -- only the rosterSet filter applied to it is
 // per-dept, and that is in-memory -- so a combined sub-queue view was reading
-// ~128k identical cells once per department (~8s each live). Shared by BOTH
+// ~64k identical cells (~128k before CLN-1) once per department. Shared by BOTH
 // derivations: the sheet path (deptQueueExtsFromSheet_) and the Neon path's
 // sheet fallback (deptQueueExtsForNeonReader_), which have the same repetition.
 var DQE_EXT_GRID_MEMO_ = null;   // { grid: [[...]], rows: n }
@@ -536,6 +546,12 @@ function applyQueueSplitToRows_(srcRows, dept, opts) {
   const observedQueues = {};
   const matchedQueues  = {};
   const rollback = [];
+  // NUM-4: a caller that builds ONE surface from two windows (the Overview
+  // tile: a 30-day pass and a year-to-date pass) names the window the verdict
+  // belongs to. Evidence dated on or after `opts.verdictFromIso` decides for
+  // the whole row set; with none in that span, every row decides, as before.
+  const verdictFrom = (opts && opts.verdictFromIso) ? String(opts.verdictFromIso) : '';
+  const vObserved = {}, vMatched = {};
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -548,11 +564,14 @@ function applyQueueSplitToRows_(srcRows, dept, opts) {
 
     let u = 0, r = 0, m = 0, a = 0, t = 0, n = 0;
     const isEvidence = !assessSet || assessSet[row.agent] === true;
+    const inVerdict = isEvidence && !!verdictFrom && String(row.dateIso || '') >= verdictFrom;
     Object.keys(split).forEach(function (qName) {
       const key = String(qName).trim().toLowerCase();
       if (key && isEvidence) observedQueues[key] = qName;   // keep the RAW spelling for the report
+      if (key && inVerdict) vObserved[key] = true;
       if (!want[key]) return;
       if (isEvidence) matchedQueues[key] = true;
+      if (inVerdict) vMatched[key] = true;
       const e = split[qName] || {};
       u += Number(e.u) || 0;
       r += Number(e.r) || 0;
@@ -619,7 +638,10 @@ function applyQueueSplitToRows_(srcRows, dept, opts) {
   // would render a department as zero (or, when only some of its queues are
   // mapped, quietly short) with nothing on screen saying so.
   const observedKeys = Object.keys(observedQueues);
-  if (observedKeys.length && !Object.keys(matchedQueues).length) {
+  const fellOpen = Object.keys(vObserved).length
+    ? !Object.keys(vMatched).length                                  // NUM-4: the named window decides
+    : (observedKeys.length > 0 && !Object.keys(matchedQueues).length);
+  if (fellOpen) {
     rollback.forEach(function (snap) {
       const r = snap.row;
       r.totalUnique   = snap.totalUnique;
@@ -855,7 +877,9 @@ function combineSummaries_(primary, parts) {
   const scopedRosterRows = {};
   const supersetRoster = {};
   parts.forEach(function (p) {
-    const fellOpen = !!(p && p.meta && p.meta.queueSplitFellOpen);
+    // NUM-8: a dept with NO mapped queues (fail-open #1) is all-queue for its
+    // whole window too -- the same superset, reached without a B-1 verdict.
+    const fellOpen = !!(p && p.meta && (p.meta.queueSplitFellOpen || p.meta.queueSplitMapped === false));
     (p.rows || []).forEach(function (r) {
       const name = String(r.agent || '');
       if (!name || !r.matchedViaRoster) return;
@@ -863,6 +887,34 @@ function combineSummaries_(primary, parts) {
       else if (fellOpen && !supersetRoster[name]) supersetRoster[name] = r;
     });
   });
+  // NUM-7: one repeat appearance out of the grand total (the statements the
+  // equal-figures rule below has always run, shared with the exception rule).
+  const dropRepeat = function (r, pairCounted) {
+    crossoverAgentCount++;
+    if (pairCounted) {
+      grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
+      grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+    }
+    grand.totalUnique   -= Number(r.totalUnique) || 0;
+    grand.totalRung     -= Number(r.totalRung) || 0;
+    grand.totalMissed   -= Number(r.totalMissed) || 0;
+    grand.totalAnswered -= Number(r.totalAnswered) || 0;
+    grand.tttSeconds    -= Number(r.tttSeconds) || 0;
+    grand.rosterAgentCount -= 1;
+    dropDays(r);   // Step 4
+  };
+  // NUM-7: a part's exception-day dates (#81), and whether none of its rows
+  // were narrowed (so a figure difference cannot be a split changeover's).
+  const excDatesOf = function (p) {
+    const set = {};
+    ((p && p.meta && p.meta.exceptionDays) || []).forEach(function (e) { if (e && e.date) set[e.date] = true; });
+    return set;
+  };
+  const strictSubset = function (a, b) {
+    const ak = Object.keys(a), bk = Object.keys(b);
+    return ak.length < bk.length && ak.every(function (k) { return b[k]; });
+  };
+  const allQueuePart = function (p) { return !(p && p.meta && Number(p.meta.queueSplitApplied) > 0); };
   parts.forEach(function (p) {
     (p.rows || []).forEach(function (r) {
       const name = String(r.agent || '');
@@ -884,7 +936,8 @@ function combineSummaries_(primary, parts) {
           seenRoster[name] = { u: Number(r.totalUnique) || 0, rg: Number(r.totalRung) || 0,
                                m: Number(r.totalMissed) || 0, a: Number(r.totalAnswered) || 0,
                                t: Number(r.tttSeconds) || 0,
-                               inTeam: !teamAvgExcludeSet_(r.dept)[name] };
+                               inTeam: !teamAvgExcludeSet_(r.dept)[name],
+                               row: r, part: p };
           return;
         }
         // L7: the subtraction's premise is that both appearances carry the
@@ -900,23 +953,31 @@ function combineSummaries_(primary, parts) {
         if (first.u !== (Number(r.totalUnique) || 0) || first.rg !== (Number(r.totalRung) || 0)
           || first.m !== (Number(r.totalMissed) || 0) || first.a !== (Number(r.totalAnswered) || 0)
           || first.t !== (Number(r.tttSeconds) || 0)) {
+          // NUM-7: the other way two all-queue appearances differ -- an
+          // exception day (#81) that applies to ONE of the two depts. That
+          // dept's row is the other's minus the day, so it is still a repeat:
+          // drop the appearance covering FEWER days. Only when neither part
+          // narrowed anything (else the difference may be L7's) and one
+          // dept's excluded days are a strict subset of the other's; two
+          // depts with different days each stay summed, as before.
+          if (!allQueuePart(first.part) || !allQueuePart(p)) return;
+          const exFirst = excDatesOf(first.part), exThis = excDatesOf(p);
+          const pair = first.inTeam && !teamAvgExcludeSet_(r.dept)[name];
+          if (strictSubset(exFirst, exThis)) {
+            dropRepeat(r, pair);                      // this row covers fewer days
+          } else if (strictSubset(exThis, exFirst)) {
+            dropRepeat(first.row, pair);              // the first one does
+            seenRoster[name] = { u: Number(r.totalUnique) || 0, rg: Number(r.totalRung) || 0,
+                                 m: Number(r.totalMissed) || 0, a: Number(r.totalAnswered) || 0,
+                                 t: Number(r.tttSeconds) || 0,
+                                 inTeam: !teamAvgExcludeSet_(r.dept)[name], row: r, part: p };
+          }
           return;
         }
-        crossoverAgentCount++;
         // The team per-agent-day pair counted this agent once per dept that
         // includes them; drop the repeat only when BOTH appearances counted
         // (a dept that excludes the agent contributed nothing to remove).
-        if (first.inTeam && !teamAvgExcludeSet_(r.dept)[name]) {
-          grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
-          grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
-        }
-        grand.totalUnique   -= Number(r.totalUnique) || 0;
-        grand.totalRung     -= Number(r.totalRung) || 0;
-        grand.totalMissed   -= Number(r.totalMissed) || 0;
-        grand.totalAnswered -= Number(r.totalAnswered) || 0;
-        grand.tttSeconds    -= Number(r.tttSeconds) || 0;
-        grand.rosterAgentCount -= 1;
-        dropDays(r);   // Step 4
+        dropRepeat(r, first.inTeam && !teamAvgExcludeSet_(r.dept)[name]);
       } else if (r.matchedViaQueue) {
         if (!seenQueueOnly[name]) { seenQueueOnly[name] = true; return; }
         grand.queueOnlyAgentCount -= 1;
@@ -1166,7 +1227,9 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
-  const cacheKey = 'summary:v25:' + dept + ':' + scope + ':' + subScope
+  // v26 (NUM-1 / NUM-7 / NUM-8): csrTransfer leaves out exception days; the
+  // combined grand total drops two more kinds of crossover repeat.
+  const cacheKey = 'summary:v26:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
@@ -1926,6 +1989,11 @@ function computeCsrTransferRange_(dept, from, to, ctx) {
     for (let i = 0; i < disp.length; i++) {
       const iso = rowDateIso_(disp[i][2], tz);
       if (!iso || iso < from || iso > to) continue;
+      // NUM-1: an exception day (#81) is left out here as it is out of every
+      // other windowed figure on the page -- this sheet is not a DQE read, so
+      // applyExceptionDays_ never saw it and an outage day's transfer rate
+      // sat beside totals that excluded that day.
+      if (typeof exceptionDayFor_ === 'function' && exceptionDayFor_(iso, dept)) continue;
       const rowCalls = num(disp[i][5]);
       const rowTrans = num(disp[i][6]);
       totalCalls  += rowCalls;
@@ -2640,7 +2708,7 @@ function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
   // R45: cross-request cache of the DERIVED set. R44's memo already collapses
   // the repeats WITHIN one execution; this removes the read from most requests
   // entirely. What is cached is the derived SET (a few dozen short extension
-  // strings), never the grid -- ~128k cells is far past CacheService's ~100 KB
+  // strings), never the grid -- ~64k cells is still past CacheService's ~100 KB
   // per-value cap, so the grid is not a cacheable unit at all.
   //
   // The set has exactly TWO inputs and the key carries both:

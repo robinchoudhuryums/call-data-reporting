@@ -285,7 +285,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v25). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v26). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -2067,14 +2067,80 @@ behind the removed button.
   onto Overview, and so does a non-admin's deep link to a `data-admin-only`
   route — `initRouter` skips the trigger rather than opening a modal that would
   only surface an "admin-only" server error (F11).
+  **A link that lands on the DEPT page waits for the boot latest-date read
+  (CCX-2, broad-scan 2026-11-09).** `whenLatestDatesSettled_` (script-2) holds
+  the dispatch of a `kind:'page'` route whose page is `dept` or `insights`
+  until `getLatestDataDates` answers (or 10 s pass); the link's department and
+  window are written to the dept controls BEFORE `setPage`, so the swap's own
+  load is the linked view, and `bootRefreshAfterDates_` skips the boot's
+  `refresh()` while that load is out. Modals and Escalations still open at
+  once. The cost is that such a link shows the Overview skeleton until the
+  dates land. Three rules follow: a new dept-page route needs no wiring (the
+  gate keys on the route's `page`); nothing on the dispatch path may call
+  `refresh()` without checking what is already in flight (`summaryReqKey_`
+  names the newest request's dept and window); and `insEnsureRoster` sends one
+  request per (dept, window) while that request is out. A link's dates are
+  validated before they are written (`shareCleanDateParams_`, CCX-8): a pair
+  that is not two real dates in order is dropped, so the page keeps its own
+  window. Pinned by `tests/unit/client-reloads.test.js` and, at the rendered
+  page, by `drive-smoke.js`'s deep-link pass (no request twice, one report, no
+  provisional window).
+
+## What survives a reload, and what Refresh drops (CCX, 2026-11-09)
+
+- **Escalation drafts are carried across the list reload (CCX-1).** Every
+  mutation re-renders every card; `escDraftsCapture_` reads the six draft
+  textareas (`ESC_DRAFT_FIELDS_`) before the list is emptied and
+  `escDraftsRestore_` writes them back after the render, re-opening the form
+  they sit in and firing `input` so the list's own handler re-enables Save. An
+  action that SAVED a field calls `escDraftsConsumed_(id, [...])` before its
+  `escLoad_()`. **A new textarea on a card joins `ESC_DRAFT_FIELDS_`, and a new
+  saving action names what it saved**, or the first loses drafts and the second
+  re-fills a field that was just submitted.
+- **Refresh drops every (dept, window) section store (CCX-3).** `refresh()`
+  clears the Team Rings memo, the outbound view, the outbound summary store and
+  the day quick view; the Refresh BUTTON's click (not `refresh()`, which also
+  runs for a debounced date edit) first calls `refreshClearSectionStores_`,
+  which drops Team Direct
+  Calls, the Outbound summary section, Callbacks, Direct lines and the agent
+  panel's prefetch store -- HELD answers and held errors only: a request
+  already out for the window is left to land, because dropping its key sent
+  the same request twice (`drive-deptoutbound.js` caught exactly that). A new
+  store of the shape `var X_ = { key: null, ...`
+  in script-5 or script-8 must be dropped there too -- `client-reloads.test.js`
+  fails on one that is not.
+- **A failed load is never held as an answer.** The day quick view serves a
+  day with a failed part but does not keep it (CCX-4); the Callbacks section
+  keeps its error on screen with a Retry rather than refetching on every sync
+  (CCX-6); a null Team Direct Calls reply is an error with a Retry (CCX-5).
 
 ## Client accessibility + print contract (Batch 9, 2026-09-18)
 
-Six cross-cutting rules. Each was a real defect on this client before it was
+Twelve cross-cutting rules. Each was a real defect on this client before it was
 a rule, each is swept by `tests/unit/client-dead-ends.test.js` (the Batch 9
 block) unless noted, and the two behavioural ones are also driven in
 `npm run ci:ui`. Read this before adding an interactive surface.
 
+- **Selection lives in an attribute, not only a class (KBF-5).** A group of
+  buttons where one is "the selected one" writes `aria-pressed` on every
+  write of its selected class -- the date chips, theme chips, Help topics and
+  the agent app's window chips kept it in `.active` / `.on` alone, so a
+  screen reader heard five identical buttons. `keyboard-focus.test.js` sweeps
+  those groups; `ds-seg` groups already carried it.
+- **What a mouse can see or open, Tab can reach (KBF-3, KBF-6).** Two
+  shapes. A chart's click target is a canvas, so a drill opened from a bar
+  needs its own control: the missed-calls half-hour drill has ONE `<select>`
+  (`#dept-missed-bucket-pick`, clipped until it has keyboard focus, listing
+  only half-hours with rings) rather than a tab stop per ring -- the ring
+  times stay `tabindex="-1"` (UD-4). And a label that explains itself on
+  hover must be able to take focus: the glossary tagger makes each label it
+  tags a tab stop unless it already is one, holds one or sits inside one
+  (`glossMakeFocusable_` -- sort headers included, since the sorter only
+  gives them theirs once the table has rows), and a hand-written hint needs BOTH `.gloss` (the
+  class the tooltip listens for) and `tabindex="0"`. The exception is a chip
+  that repeats on every agent card (`.ins-trend-pill`, `.cr-vs-team`): two
+  stops per agent would bury the page's controls, and their wording is on
+  the chip or in Help.
 - **A `<tr>` never carries `role="button"` — the control goes INSIDE the
   cell** (the E-8 rule). The role overrides the implicit `row` role and the
   table stops being a grid for assistive tech, so the row loses its column
@@ -2123,12 +2189,56 @@ block) unless noted, and the two behavioural ones are also driven in
 - **A page's loading and error lines are live regions (UI-2).** An error is
   `role="alert"`, a loading line `role="status" aria-live="polite"`, so a
   screen reader hears the swap the eye sees. The agent page carries both on
-  each tab.
+  each tab. **Since NPS-4 the manager page's markup is swept:** every element
+  in `dashboard.html` whose id ends `-status` / `-error` / `-loading` /
+  `-loader` must carry `role="status"` or `role="alert"`
+  (`names-print-narrow.test.js`) -- about thirty had neither, so a save, a
+  load or a refused form said nothing. Name a new status line that way and
+  the sweep holds it.
+- **A chart is a named image; a data table is named (NPS-3).** Every
+  `<canvas>` carries `role="img"` and an `aria-label` saying what it plots
+  (the same sweep fails on one without), and the three My Department tables
+  carry an `aria-label` with `scope="col"` on their header cells. Use
+  `aria-label`, not `<caption>`, where a visible caption would change the
+  layout.
+- **A tint is never the only signal (NPS-5).** The benchmark classes
+  (`bm-watch` / `bm-bad` / `bm-over`) are colour alone, written by about
+  twenty builders as a class string. Each now carries its tier as
+  CSS-GENERATED text (`.bm-*::after`, ", below target"): a screen reader
+  reads it after the number, while page code, a copied selection and a
+  print never see it -- which matters, because some code READS these cells
+  (the day quick view's Range line reads `.dts-value`'s text; a first draft
+  appended a hidden span and that line would have printed the words). One
+  pass on the glossary's observer (`applyBenchTierTitle_`) adds the same
+  words as a hover `title`. Green is the unmarked case and stays silent.
+  Two rules if you copy the pattern: the clipped box is NOT
+  `position:absolute` (the `.sr-only` recipe escapes a sideways-scrolling
+  table and widens the whole page -- it did, during this fix), and its ink
+  is `transparent`, so the 1px box leaves no dot on screen or in an image.
 - **A dialog traps Tab, names itself, and gives focus back.** `role="dialog"`
   / `alertdialog` with `aria-modal` promises a boundary the browser does not
   enforce: use the shared `trapFocus_` / `releaseFocus_`, point
   `aria-labelledby` at the title (and `aria-describedby` at the body where
-  there is one), and return focus to the opener on close. Two traps here:
+  there is one), and return focus to the opener on close. The trap wraps at
+  the last element its own selector list knows, so that list must hold every
+  kind of element the browser tabs to -- a `<details>` fold's `<summary>`
+  included -- and must leave out what the browser skips: anything inside a
+  CLOSED fold, which is hidden without `display:none`, so `offsetParent`
+  alone still counts it (DCA-7: a modal ending in a fold let Tab walk out;
+  drive-admin's 25-tab walk over Outlier Fix proves it; the list lives in
+  ONE place, `focusablesIn_`, which popovers read too). **"The opener" must
+  be something on screen (KBF-2):** eleven modals open from an item in a
+  header menu that closed when it was picked, so `btn.focus()` was a no-op
+  that left focus on `<body>`. Every closer calls `returnFocusTo_(btn)` --
+  the opener, else the trigger of the menu it lives in, else the page title
+  -- and `keyboard-focus.test.js` fails on a `closeModal` that calls
+  `btn.focus()`. **A popover (a `role="dialog"` that is not a modal) takes
+  focus and gives it back too (KBF-4):** `popoverFocusIn_(pop, preferred)`
+  on open -- `preferred` only when Tab could reach it -- and
+  `popoverClose_(pop, opener)` for every close, which returns focus only
+  while it is still inside the popover (a click elsewhere has already moved
+  it, and focusing the opener would scroll the page back to it). Two traps
+  here:
   a popover with NO focusable child has nothing for the trap to cycle on, so
   give it a real Close control (`.chp-close` on the chart-tips popover); and
   `trapFocus_` releases any trap it finds first, so a dialog opened OVER a
@@ -2183,6 +2293,12 @@ block) unless noted, and the two behavioural ones are also driven in
   the S2-5 date-chip trap, closed at the token instead. Consumers: the
   success/error toasts and the danger confirm button. **Only S41 can verify
   this** (it is a perceptual property), so the walk carries the step.
+  **NPS-6 extended the family:** `--on-accent` and `--on-dir-out` for text on
+  an `--accent` / `--dir-out` fill (the three filled category segments of
+  the split bars hardcoded white). `names-print-narrow.test.js` sweeps every
+  `.ob-seg-*` rule: its text colour is an `--on-*` token or `--ink`, never a
+  literal. A new fill colour that carries text needs its own on-fill token
+  in the light block, the dark block AND the print block.
 - **Screen-only chrome never reaches paper.** A plain Ctrl+P on any page
   used to print the Help FAB, the admin A/B remote, the dev overlay, toasts,
   the update notice, the tour, the confirm and tooltip layers and the modal
@@ -2191,6 +2307,28 @@ block) unless noted, and the two behavioural ones are also driven in
   and makes the sticky strips static, since a fixed or sticky band either
   repeats on every page or covers content. A new floating or sticky surface
   must join that list.
+- **Ctrl+P with a modal open prints the MODAL (NPS-1).** A modal is a fixed
+  overlay with a capped, scrolling panel, so the browser's own print put the
+  page behind it on paper plus the slice of the panel on screen (the Inbound
+  report lost 571 px). `beforeprint` marks the top open modal
+  (`printModalBegin_`: the one holding the focus trap, so Help over a report
+  prints Help) and `body.modal-printing` makes it the document: everything
+  else is hidden, the panel and its body lose their cap and their scroll
+  boxes, tables go back to tables, the close / open-in-tab / action buttons
+  stay off the page. `afterprint` undoes it. The scripted Individual and
+  Insights prints set their own body class first and are left alone. No
+  modal needs its own Print button for this -- but a new scroll box INSIDE a
+  modal whose class does not end in `-wrap` must be un-scrolled here too.
+- **A modal's wide table scrolls by itself (NPS-2).** At tablet and phone
+  widths a table wider than the panel made the whole modal BODY scroll
+  sideways, taking the form fields and buttons with it. Under 820 px the
+  four modal table classes (`al-config-table`, `al-log-table`,
+  `al-results-table`, `qcd-source-table`) become their own sideways
+  scroller (`display: block; overflow-x: auto`), and under 600 px the modal
+  gives its side padding back. A new table class used in a modal joins that
+  list (`drive-admin.js` measures five modals at 390 and 768 px). The
+  phone-padding rule sits AFTER the wide-variant padding rules on purpose:
+  same specificity, so the later one wins.
 
 Three markup rules from the same batch, one line each: a dense cross-link
 (the missed-list agent-name / ring-time jumps) is a **link-styled `<button>`
@@ -2883,6 +3021,101 @@ stay pinned by INV-39, INV-53 and INV-06.
   button before acting (the F-42 focus-trap discipline). Add a topic = a nav
   `.help-link[data-topic=KEY]` + a `<section id="help-topic-KEY">`; all
   static markup in `dashboard.html`, no server endpoint.
+
+## Moved from CLAUDE.md (docs sync, 2026-11-11)
+
+These three bullets were Common Gotchas in CLAUDE.md. They moved here VERBATIM
+when CLAUDE.md passed 90% of its size cap again, because each describes how a
+surface is built (the F8 rule) -- they are still LIVE TRUTH. CLAUDE.md's
+client-conventions index bullet names all three. The server-side pieces they
+mention (`computeSummary_`'s prior accumulator in `Data.gs`, the `DRIFT_*`
+constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
+
+- **Per-row prior-period chips (E5, commit bb77168).** The My
+  Department agent table renders an inline delta chip after the
+  Rung / Missed / Answered values comparing the selected window
+  to the INV-28 prior window immediately preceding it (R24:
+  same working-day count). Three pieces of behavior worth knowing:
+  (1) **Valence map** lives in `script-5-dept::WOW_PRIOR_KEYS`:
+  rung↑ / answered↑ render `wow-chip-good` (sage); missed↑
+  renders `wow-chip-warn` (orange); decreases flip the color so
+  a missed-call drop is green and an answered-call drop is
+  orange. (2) **Noise threshold** `WOW_NOISE_THRESHOLD = 3`
+  applies the muted variant to any |delta| under 3 calls (and to
+  zero deltas) regardless of valence -- day-to-day noise stays
+  visually quiet. Hover title carries the prior window dates +
+  raw prior value + numeric delta from `state.meta.priorFrom` /
+  `state.meta.priorTo` (server-populated). (3) **Server side**
+  `Data.gs::computeSummary_` widens its single Raw Data scan
+  range to `[priorFrom, to]` and uses a sibling `priorAcc`
+  dictionary keyed by agent so the existing user-window
+  accumulator stays untouched; each row carries `priorRung` /
+  `priorMissed` / `priorAnswered` / `priorHasData`. Agents with
+  prior-only activity (no rows in the user window) are silently
+  dropped -- no card exists to render a chip on. CSV export
+  bypasses `fmtCell` via `exportTableCsv_` (using `csvEscape` /
+  `sourceChipCsv_`) so the chip markup is
+  intentionally NOT in CSVs; raw current-window values only.
+  Floaters get chips too -- the chip is a per-agent comparison,
+  independent of the INV-53 team-avg floater-exclusion gate.
+- **Missed-card ordering + severity tiers (Phase 15, commit
+  77441a7).** `missedAgentsHtml_` (the builder for the per-agent
+  missed-call cards in the My Department missed section -- the
+  standalone Missed Calls modal it also served is RETIRED; the
+  inline section is the Missed Calls report now) sorts agents
+  **most-missed first** (stable tiebreak by name) and tags each
+  card with a cohort-RELATIVE severity tier: **Most missed** (warn
+  left-rail + chip), **Moderate** (neutral), **Fewest** (sage).
+  Cutoffs are tertiles of the missed totals among the agents shown
+  (`missedQuantile_`), NOT an absolute standard -- there is no
+  company benchmark for per-agent missed counts. Tiering is GATED
+  OFF for low-signal cohorts (fewer than 3 agents, or a max total
+  under 3 missed) so a 1-missed agent is never branded worst; in
+  that case cards render sorted but untiered. Styles
+  (`.agent-tier`, `.agent-card--tier-*`) live in `styles.html`.
+  **Agent-scoped chart (R11-C4):** each card carries a "■ chart"
+  button (`.agent-scope-btn`; rendered AFTER `</summary>` and pulled onto
+  the header row by CSS -- UD-5) that rebuckets the 18-slot
+  hour-of-day chart above from THAT agent's own timeline entries
+  (pure client rebucket via `missedTimeBucketIdx_` -- the times are
+  already in the payload, no fetch); a toolbar chip
+  (`#dept-missed-scope-chip`) names the active scope with an ✕
+  clear. The bucket drill panel stays DEPT-WIDE by design;
+  scope resets on every fresh fetch (`deptMissedRender_`).
+- **Threshold-drift surface (E10, commit b3a5a51).** The Notifications
+  (Alerts) modal renders a "Last 30 assessed days" chip on each rule card,
+  summarizing the most-recent daily-trigger entries from the
+  Alert Log. Five tunable constants near the top of `Alerts.gs`:
+  `DRIFT_LOOKBACK_ENTRIES` (=30; per-dept window size),
+  `DRIFT_MIN_TOTAL_TO_ASSESS` (=10; below this the chip renders
+  the muted 'cold' / dash variant -- not enough signal),
+  `DRIFT_CHRONIC_FIRE_RATIO` (=0.80; `fired/total` at or above
+  flags 'chronic' = warn-tinted), `DRIFT_LENIENT_HEADROOM_PTS`
+  (=10; `fired === 0` AND `meanRate >= threshold + 10pts` flags
+  'lenient' = muted, informational), `DRIFT_LOG_SCAN_CAP` (=2000;
+  caps the Alert Log read so a runaway log can't blow the script
+  budget -- ~125 days of history at all 16 roster depts × 1
+  trigger/day; ~143 at the 14 Overview-visible ones).
+  Server-side `computeThresholdDrift_` filters to `triggeredBy
+  === 'daily-trigger'` rows AND drops anything whose Triggered
+  By starts with `preview:`, so manual sends from the UI +
+  previews don't pollute the signal. It also counts only
+  ASSESSED days (status `sent` / `above-threshold`) toward
+  `total` -- `no-data` / `skipped` / `no-recipients` / `error`
+  days aren't fire-vs-not decisions, so they don't dilute the
+  `fired/total` chronic ratio or the `DRIFT_MIN_TOTAL_TO_ASSESS`
+  gate (F5). **Self-warming:** a fresh
+  install renders every chip as `cold` until each dept has
+  >= `DRIFT_MIN_TOTAL_TO_ASSESS` daily-trigger entries logged
+  (~10 weekdays after the trigger goes live). **Best-effort:**
+  the helper is wrapped in a try/catch inside
+  `alertConfigSection_` (the shared rows + drift + dept-list builder that
+  `getAlertsInit` and both config write paths read; since Step 5 it also
+  carries the manager layer and the reason rules, each best-effort)
+  so a missing or corrupt Alert Log returns an empty drift map
+  and the rule cards still render -- each chip just shows a dash. Admin-only via the
+  existing modal gating (`assertAdmin_` in `getAlertsInit`);
+  no separate gate needed.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 

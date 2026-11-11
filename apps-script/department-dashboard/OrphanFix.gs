@@ -47,7 +47,7 @@
  *      row to `Orphan Fix Log` BEFORE returning to the client.
  *      The log is append-only and idempotently created by setup().
  *
- * The downstream cache layers (companyOverview:v30, summary:v25,
+ * The downstream cache layers (companyOverview:v31, summary:v26,
  * individual:v12, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 6 hours (REPORT_CACHE_TTL_SECONDS,
  * R24) after a rename -- though the morning ingest's freshness tag
@@ -103,8 +103,14 @@ function getOrphanFixInit() {
   // DATA-6 follow-on (Batch 10): read every dept's roster ONCE -- the orphan
   // scan and the picker's name list used to each walk all the rosters.
   const rosterNames = collectAllRosterNames_();
+  // DCA-7: the Pipeline Health tail is read ONCE here and shared by the
+  // orphan fold-in and the "list was cut" note.
+  let healthRows = null;
+  try { healthRows = orphanReadDirectHealthRows_(); } catch (eHealth) { healthRows = null; }
   const init = {
-    orphans:        computeOrphans_({ rosterNames: rosterNames }),
+    orphans:        computeOrphans_({ rosterNames: rosterNames, directHealthRows: healthRows }),
+    ignored:        readOrphanIgnore_(),
+    directCut:      healthRows ? orphanDirectCut_(healthRows) : null,
     rosterNames:    rosterNames,
     departments:    getAllDepartments_(),   // for the add-to-roster dept picker
     aliases:        readAgentAliases_(),
@@ -201,6 +207,103 @@ function removeAgentAlias(req) {
   }
   // Item 5a: return refreshed aliases + log for in-place client update.
   return { removed: removed, aliases: readAgentAliases_(), log: readOrphanFixLog_(20) };
+}
+
+// DCA-7 (owner 2026-11-11): the "Not an agent" list. The Direct build names
+// EVERY person 8x8 shows on an extension no roster cell lists -- a new hire on
+// a new extension, and equally every colleague the roster does not track.
+// The admin dismisses the second kind once; the names live in one Script
+// Property (a JSON array). It hides ONLY the unlisted-extension entry: the
+// same name seen in DQE Historical Data, or on an extension the roster lists
+// for someone else (DCA-6), is listed again whatever this says.
+const ORPHAN_IGNORE_PROP_ = 'ORPHAN_IGNORE_NAMES';
+const ORPHAN_IGNORE_MAX_CHARS_ = 8500;    // a property value holds ~9 KB
+const ORPHAN_IGNORE_MAX_PER_CALL_ = 200;
+
+/** The ignored names, sorted. [] when unset or unreadable (fail open: everyone is listed). */
+function readOrphanIgnore_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(ORPHAN_IGNORE_PROP_);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    const seen = {};
+    return list.map(function (n) { return String(n == null ? '' : n).trim(); })
+      .filter(function (n) { if (!n || seen[n]) return false; seen[n] = true; return true; })
+      .sort();
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Admin write (INV-01 carve-out, OrphanFix family): put names on, or take
+ * them off, the "Not an agent" list. req = { names: [..] | name, ignored }.
+ * Admin gate + name validation + script lock + an Orphan Fix Log row
+ * (`ignore` / `unignore`). A name that is on a roster is skipped -- it is not
+ * listed as an outlier in the first place.
+ */
+function setOrphanIgnored(req) {
+  assertAdmin_();
+  const ignore = !(req && req.ignored === false);
+  let raw = (req && req.names) || [];
+  if (!Array.isArray(raw)) raw = [raw];
+  if (req && req.name != null && req.name !== '') raw = raw.concat([req.name]);
+  if (!raw.length) throw new Error('Pick at least one name.');
+  if (raw.length > ORPHAN_IGNORE_MAX_PER_CALL_) {
+    throw new Error('Too many names in one request (' + raw.length + '); the limit is ' + ORPHAN_IGNORE_MAX_PER_CALL_ + '.');
+  }
+  const names = [];
+  const dedupe = {};
+  raw.forEach(function (n) {
+    const s = sanitizeAgentName_(n);
+    if (!dedupe[s]) { dedupe[s] = true; names.push(s); }
+  });
+  assertOrphanFixLogExists_();   // audit trail is mandatory on every write path
+
+  const admin = Session.getActiveUser().getEmail();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let changed = [];
+  let skipped = 0;
+  try {
+    const current = readOrphanIgnore_();
+    const set = {};
+    current.forEach(function (n) { set[n] = true; });
+    if (ignore) {
+      const roster = {};
+      collectAllRosterNames_().forEach(function (n) { roster[n] = true; });
+      names.forEach(function (n) {
+        if (roster[n]) { skipped++; return; }
+        if (!set[n]) { set[n] = true; changed.push(n); }
+      });
+    } else {
+      names.forEach(function (n) { if (set[n]) { delete set[n]; changed.push(n); } });
+    }
+    if (changed.length) {
+      const next = JSON.stringify(Object.keys(set).sort());
+      if (next.length > ORPHAN_IGNORE_MAX_CHARS_) {
+        throw new Error('The "Not an agent" list is full (' + current.length + ' names). '
+          + 'Restore names that no longer take calls, then try again.');
+      }
+      PropertiesService.getScriptProperties().setProperty(ORPHAN_IGNORE_PROP_, next);
+      appendOrphanFixLog_({
+        admin:    admin,
+        action:   ignore ? 'ignore' : 'unignore',
+        fromName: changed.length === 1 ? changed[0] : '(' + changed.length + ' names)',
+        toName:   '',
+        affected: changed.length,
+        notes:    changed.length === 1 ? '' : changed.join('; ').slice(0, 20000),
+      });
+      // The Overview nag counts these people; refresh it with the list.
+      try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
+      catch (e) { /* best-effort */ }
+      bustOrphanFixCache_();
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  return { changed: changed, skipped: skipped, ignored: readOrphanIgnore_(), log: readOrphanFixLog_(20) };
 }
 
 /**
@@ -459,6 +562,11 @@ function addOrphanToRoster(req) {
  * sample dept queue-extensions observed (helps the admin figure
  * out which roster the orphan likely belongs on).
  *
+ * DCA-6: plus the people the Direct build names on a roster extension who
+ * are on no roster (see the fold-in at the end). Those entries carry
+ * `directExt` / `directListedFor` / `directCalls`; one who takes no queue
+ * calls has `rows: 0`.
+ *
  * Bounded to the last ORPHAN_LOOKBACK_DAYS to keep the scan cheap
  * on large history sheets.
  */
@@ -520,12 +628,14 @@ function computeOrphans_(opts) {
     }
   }
 
-  if (!usedNeon) {
+  // DCA-6: an empty DQE window no longer returns early -- the direct-line
+  // fold-in below still has people to add.
+  const scanSheet = function () {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-    if (!sheet) return [];
+    if (!sheet) return;
     const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return [];
+    if (lastRow < 2) return;
     const ssTZ = ss.getSpreadsheetTimeZone();
     // Read Date + Agent + QueueExt cols only.
     const numCols = Math.max(
@@ -538,22 +648,172 @@ function computeOrphans_(opts) {
     // DQE read has usually filled already; the per-row cutoff in accept() STAYS,
     // since the sheet is not reliably date-ordered (the span only bounds the read).
     const span = dqeWindowRowSpan_(sheet, lastRow, cutoffIso, '9999-12-31', ssTZ);
-    if (!span) return [];
+    if (!span) return;
     const values = sheet.getRange(span.startRow, 1, span.numRows, numCols).getValues();
     for (let i = 0; i < values.length; i++) {
       accept(rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1], ssTZ),
              values[i][HISTORICAL_COLS.AGENT - 1],
              values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
     }
+  };
+  if (!usedNeon) scanSheet();
+  // DCA-6 (owner 2026-11-11): people 8x8 names on a ROSTER extension who are
+  // on no roster -- the new hire on a former employee's extension. Their
+  // direct calls are credited to no one, and someone who takes no QUEUE calls
+  // never reaches DQE Historical Data, so the scan above cannot see them. The
+  // Direct build names them on its Pipeline Health rows; fold them in here so
+  // the Outlier Fix list and the Overview nag cover them. Best-effort: a
+  // failed read costs these entries, never the DQE orphans.
+  try {
+    const aliased = {};
+    readAgentAliases_().forEach(function (a) { if (a.active) aliased[a.oldName] = true; });
+    const direct = (opts && opts.directUnrostered)
+      || orphanDirectFromHealthRows_((opts && opts.directHealthRows) || orphanReadDirectHealthRows_(), cutoffIso);
+    // DCA-7: an entry with no `listedFor` is a person on an extension NO
+    // roster cell lists. That includes staff the roster does not track, so
+    // the admin's "Not an agent" list hides those entries -- and only those.
+    const ignored = {};
+    readOrphanIgnore_().forEach(function (n) { ignored[n] = true; });
+    direct.forEach(function (d) {
+      if (rosterSet[d.name] || aliased[d.name]) return;   // since fixed: rostered, or mapped to a roster name
+      if (!d.listedFor && ignored[d.name]) return;
+      if (/^A_Q_/.test(d.name) || d.name === 'Backup CSR') return;
+      let e = byName[d.name];
+      if (!e) e = byName[d.name] = { rows: 0, lastSeen: '', exts: {} };
+      if (d.dateIso > e.lastSeen) e.lastSeen = d.dateIso;
+      const x = e.direct || (e.direct = { ext: d.ext, listedFor: d.listedFor, calls: 0, lastSeen: '' });
+      x.calls += d.calls;
+      if (d.dateIso >= x.lastSeen) { x.lastSeen = d.dateIso; x.ext = d.ext; x.listedFor = d.listedFor; }
+    });
+  } catch (eDirect) {
+    Logger.log('computeOrphans_: direct-line (DCA-6) read failed: ' + (eDirect && eDirect.message ? eDirect.message : eDirect));
   }
-  return Object.keys(byName).sort().map(function (name) {
-    return {
+  // DCA-7: a person known ONLY from an unlisted extension sorts after
+  // everyone else -- there can be many, and they must not bury the rest.
+  const unlistedOnly = function (name) {
+    const e = byName[name];
+    return (!e.rows && e.direct && !e.direct.listedFor) ? 1 : 0;
+  };
+  return Object.keys(byName).sort(function (a, b) {
+    return (unlistedOnly(a) - unlistedOnly(b)) || (a < b ? -1 : (a > b ? 1 : 0));
+  }).map(function (name) {
+    const out = {
       name:       name,
       rows:       byName[name].rows,
       lastSeen:   byName[name].lastSeen,
       sampleExts: Object.keys(byName[name].exts).sort(),
     };
+    const dx = byName[name].direct;
+    if (dx) {
+      // Their OWN extension (what the roster cell needs), who the roster
+      // lists it for, and the direct calls that went uncredited.
+      out.directExt = dx.ext;
+      out.directListedFor = dx.listedFor;
+      out.directCalls = dx.calls;
+      if (!dx.listedFor) out.directUnlisted = true;   // DCA-7
+    }
+    return out;
   });
+}
+
+// DCA-6: the Direct build's note tail (cdr-import/directCallMetrics.js::
+// dcUnrosteredNote_ writes it; orphan-direct-line.test.js keeps the two in step).
+const ORPHAN_DIRECT_TAG_ = 'unrostered=';
+const ORPHAN_DIRECT_CUT_MARK_ = '+';   // DCA-7: the tail's "some were left off" row
+const ORPHAN_DIRECT_STEPS_ = { 'processIntegratedHistory:Direct': true, 'bulkBackfill:Direct': true };
+// Newest Pipeline Health rows searched. The Direct build logs once per
+// imported date, so this reaches back a few weeks -- enough for a person who
+// is still unrostered (they are named again every day they take a call).
+const ORPHAN_DIRECT_SCAN_ROWS_ = 1200;
+const ORPHAN_DIRECT_MONTHS_ = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+                                Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
+
+/** The newest Pipeline Health rows as { step, status, notes }, NEWEST FIRST. [] when the sheet is absent. */
+function orphanReadDirectHealthRows_() {
+  const sheet = openSpreadsheet_().getSheetByName(SHEETS.PIPELINE_HEALTH);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const startRow = Math.max(2, lastRow - ORPHAN_DIRECT_SCAN_ROWS_ + 1);
+  // Timestamp | Step | Status | Rows | Duration (ms) | Notes
+  const grid = sheet.getRange(startRow, 2, lastRow - startRow + 1, 5).getValues();
+  const out = [];
+  for (let i = grid.length - 1; i >= 0; i--) {
+    out.push({ step: String(grid[i][0] || ''), status: String(grid[i][1] || ''), notes: String(grid[i][4] || '') });
+  }
+  return out;
+}
+
+/**
+ * PURE. Pipeline Health rows (NEWEST FIRST) -> one { dateIso, list } per
+ * imported date, newest date first, `list` being that date's parsed note tail
+ * ([] when the row has none). The NEWEST successful Direct row for a date
+ * speaks for that date -- so a re-import after the person was rostered (a row
+ * with no tail) clears it, and a date imported twice is not counted twice.
+ * Rows of other steps, failures and unparseable tails are skipped.
+ */
+function orphanDirectTails_(rows) {
+  const seenDate = {};
+  const out = [];
+  (rows || []).forEach(function (r) {
+    if (!r || !ORPHAN_DIRECT_STEPS_[r.step] || String(r.status).toLowerCase() !== 'success') return;
+    const notes = String(r.notes || '');
+    const m = /^[A-Za-z]{3} ([A-Za-z]{3}) (\d{2}) (\d{4})/.exec(notes);   // the writers' dateObj.toDateString() prefix
+    if (!m || !ORPHAN_DIRECT_MONTHS_[m[1]]) return;
+    const dateIso = m[3] + '-' + ORPHAN_DIRECT_MONTHS_[m[1]] + '-' + m[2];
+    if (seenDate[dateIso]) return;
+    seenDate[dateIso] = true;
+    let list = [];
+    const at = notes.lastIndexOf('| ' + ORPHAN_DIRECT_TAG_);
+    if (at !== -1) {
+      try { list = JSON.parse(notes.slice(at + 2 + ORPHAN_DIRECT_TAG_.length)); } catch (e) { return; }
+      if (!Array.isArray(list)) return;
+    }
+    out.push({ dateIso: dateIso, list: list });
+  });
+  return out;
+}
+
+/**
+ * PURE (DCA-6). Pipeline Health rows (NEWEST FIRST) -> the off-roster people
+ * the Direct build named: [{ name, ext, listedFor, calls, dateIso }].
+ * `listedFor` is '' for a person on an extension no roster cell lists
+ * (DCA-7). Dates before `cutoffIso` are skipped.
+ */
+function orphanDirectFromHealthRows_(rows, cutoffIso) {
+  const out = [];
+  orphanDirectTails_(rows).forEach(function (t) {
+    if (cutoffIso && t.dateIso < cutoffIso) return;
+    t.list.forEach(function (x) {
+      if (!Array.isArray(x)) return;
+      const name = String(x[0] == null ? '' : x[0]).trim();
+      const ext = String(x[1] == null ? '' : x[1]).trim();
+      if (!name || !/^\d{1,6}$/.test(ext)) return;   // also drops the DCA-7 "+" cut marker
+      out.push({ name: name, ext: ext, listedFor: String(x[2] == null ? '' : x[2]).trim(),
+                 calls: Math.max(0, Number(x[3]) || 0), dateIso: t.dateIso });
+    });
+  });
+  return out;
+}
+
+/**
+ * PURE (DCA-7). The newest imported date whose Direct note was CUT -- the
+ * build lists at most a fixed number of people on unlisted extensions and
+ * ends the tail with ["+", "", "", <left off>] when it left some off.
+ * { dateIso, n } or null. Only the newest date is read: an older cut is
+ * history once a later import fit.
+ */
+function orphanDirectCut_(rows) {
+  const tails = orphanDirectTails_(rows);
+  if (!tails.length) return null;
+  const t = tails[0];
+  for (let i = 0; i < t.list.length; i++) {
+    const x = t.list[i];
+    if (Array.isArray(x) && x[0] === ORPHAN_DIRECT_CUT_MARK_ && !x[1] && Number(x[3]) > 0) {
+      return { dateIso: t.dateIso, n: Number(x[3]) };
+    }
+  }
+  return null;
 }
 
 function collectAllRosterNames_() {

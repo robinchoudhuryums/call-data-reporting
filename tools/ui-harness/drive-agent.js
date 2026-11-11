@@ -187,7 +187,12 @@ function record(name, pass, detail) {
     err: document.getElementById('agent-error').style.display !== 'none' ? document.getElementById('agent-error').textContent : '',
     dates: document.getElementById('agent-dates').textContent,
     on: (document.querySelector('.agent-chip.on[data-preset]') || {}).getAttribute ? document.querySelector('.agent-chip.on[data-preset]').getAttribute('data-preset') : null,
+    // F77: the window in force is the one PRESSED chip, not only the coloured one.
+    pressed: Array.from(document.querySelectorAll('.agent-chip[data-preset]')).filter((c) => c.getAttribute('aria-pressed') === 'true').map((c) => c.getAttribute('data-preset')),
+    unpressed: document.querySelectorAll('.agent-chip[data-preset][aria-pressed="false"]').length,
   }));
+  record('F77: the window chip in force is announced as pressed, the other three as not',
+    JSON.stringify(cl6.pressed) === JSON.stringify([cl6.on]) && cl6.unpressed === 3, JSON.stringify({ on: cl6.on, pressed: cl6.pressed, unpressed: cl6.unpressed }));
   record('CL-6: a rejected range keeps the numbers on screen', cl6.body && /142/.test(cl6.kpis), JSON.stringify({ body: cl6.body }));
   record('CL-6: the controls go back to the window being shown, and the refusal is said',
     cl6.dates === before && cl6.on === 'mtd' && /Couldn’t load/.test(cl6.err) && /366 days/.test(cl6.err)

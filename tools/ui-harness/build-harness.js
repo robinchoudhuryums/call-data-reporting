@@ -230,6 +230,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       return a;
     },
     deleteEscalation: function (req) { return { deleted: (req && req.allLinked) ? 2 : 1 }; },   // 2a: drive-admin confirms + deletes one card
+    updateEscalationComment: function () { return { ok: true }; },   // CCX-1: drive-admin saves a comment, then checks the drafts survive the reload
     createEscalation: function (req) {   // ESC-L1: drive-admin logs a two-department linked escalation
       var d = (req && req.departments) || [req && req.department];
       return { id: 'new-1', ids: d.map(function (x, i) { return 'new-' + (i + 1); }), groupId: d.length > 1 ? 'grp-new' : null };
@@ -332,6 +333,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       return d;
     },
     getOrphanFixInit: function () { return P['orphan-init']; },
+    // DCA-7: "Not an agent" -- echoes the names back as the stored list.
+    setOrphanIgnored: function (req) {
+      var names = (req && req.names) || [];
+      return { changed: names.slice(), skipped: 0, ignored: (req && req.ignored === false) ? [] : names.slice().sort(), log: [] };
+    },
     getDeptConfigInit: function () { return P['deptconfig-init']; },
     // DCD-1: the bulk save reports what it wrote (the server re-derives the list).
     saveDeptConfigDefaults: function () {

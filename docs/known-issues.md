@@ -889,7 +889,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v25` |
+| `Data.gs` (main table) | `summary:vN:` | `v26` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
 | `IndividualReport.gs` | `individual:vN:` | `v12` |
@@ -897,7 +897,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v30` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v31` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v16` |
 | `InsightsReport.gs` | `insights:vN:` | `v26` |
@@ -1483,7 +1483,8 @@ does **not** match across the two spaces (Intake happens to).
 been taught a queue shape it was missing, and BOTH times the pre-fix rows are
 identical in shape: `abandon_stage='ivr'` + `entry_queue=NULL`, attributable to
 no dept, healing only via a re-import/`backfillInboundCalls` while the
-`Call_Legs_*` sheets survive (~14 days) -- older dates are unrecoverable.
+`Call_Legs_*` sheets survive (~14 days) -- an older date needs its source
+re-imported first (Operator State #56); nothing is lost for good.
 - **`Backup CSR`** — learned in IMP-1.
 - **`UDC_A_Q_Main` / `UUC_A_Q_Main`** — learned in **F1b** (2026-07-27). The
   `/^A_Q_/i` anchor missed every brand prefix. Measured: a journey leg-name
@@ -1788,8 +1789,8 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v30`) on success. Per-(dept,
-range) caches (`summary:v25`, `individual:v12`,
+constant -- currently `companyOverview:v31`) on success. Per-(dept,
+range) caches (`summary:v26`, `individual:v12`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the
@@ -1834,8 +1835,10 @@ sample-row shapes incl. the unresolvable-ext guard
 **Repair semantics worth knowing.** Because the fallback reads the RAW data
 as it already exists, the surviving `Call_Legs_*` window heals by plain
 force re-import — no col-W hand-editing. History older than the ~14-day
-retention (#43) is permanently unrecoverable at the per-agent level; QCD
-queue-level history for the gap is intact. After a Neon-read cutover,
+retention (#43) heals the same way once that date's source is re-imported
+(Operator State #56) — an operator job per date, not a permanent loss; until
+then its per-agent figures stay as they were, and QCD queue-level history
+for the gap is intact. After a Neon-read cutover,
 finish with `backfillDQEHistoryUpsert()`.
 
 **Detection if it recurs.** The DQE-silence watchdog (Operator State #44)

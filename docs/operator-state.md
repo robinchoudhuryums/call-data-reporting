@@ -212,6 +212,11 @@ When something looks wrong, before assuming a code bug, check:
     Department matches a `DO NOT EDIT!` header exactly (an unknown dept is
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
+    RUN-5: a `WARN <iso>: ... the subscriber list came from the Digest Config
+    SHEET` entry means `CONFIG_SOURCE=neon` (#25) but Neon was unreachable at
+    send time, so the run used the sheet's list -- which is no longer written
+    under that setting. Someone removed since the flip may have been mailed
+    and someone added may not; check the list, and re-send by hand if needed.
     ENG-6: a cadence with no active subscribers records `IDLE <iso>`, shown
     muted on the Health page, not as a failure (it was `NO-SUBSCRIBERS`).
     ENG-5: the Health page's `out-digest-<cadence>` row now warns
@@ -837,6 +842,17 @@ When something looks wrong, before assuming a code bug, check:
     both take a short-lived file lease (CacheService, ~5-10 min); a scrub
     that finds a backup mid-write leaves its ids queued and the backup's own
     scrub step (or `runNeonBackupScrubNow()` afterwards) picks them up.
+    **A month written in parts is final only once every part landed (OFB-3,
+    broad-scan 2026-11-09).** A month over ~8M characters is written as
+    `<table>-<ym>.partN.jsonl` files, and part1's date is what marks a closed
+    month final. The parts are now written last-first, part1 last, so a run
+    that fails midway leaves the month unstamped and the next run writes it
+    again; before, a failure after part1 froze the month with its later parts
+    missing while every later run said `ok`. **A month frozen that way before
+    this deploy is not detected:** if a closed month's part files look short
+    (compare a `restoreNeonBackupFile` preview with the Neon row count), trash
+    its `part1` file and run the backup -- it is rewritten in full while Neon
+    still holds the month (#57). Pinned by `tests/unit/neon-backup.test.js`.
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -1010,7 +1026,8 @@ When something looks wrong, before assuming a code bug, check:
     (3) The "Last run:" line, which decodes as: blank = the trigger has not had
     a weekday-morning window yet (install after noon → first run is the next
     weekday); `NO-SUBSCRIBERS` = case (2); `MISSED <iso>` = the window closed
-    before the import finished; `FAILED` / `FAILED-ALL` = a send or compute
+    before the import finished; `EXCEPTION-DAY <iso>` = the day is an
+    all-department exception day, so there is no report to send (#81, EXD-3); `FAILED` / `FAILED-ALL` = a send or compute
     error, details in the admin email; `Sent <iso> to N subscribers` with N ≥ 1
     = it really did send, so check spam/filters. (4) Health page → the
     `trg-queuereport` row for the installed-vs-`QUEUE_REPORT_ENABLED` mismatch
@@ -1332,7 +1349,8 @@ When something looks wrong, before assuming a code bug, check:
     F1b pattern already covers it; anything else goes in the dept's Dept
     Config "Inbound queue aliases" field (no redeploy). Then re-import any
     affected dates still inside the ~14-day `Call_Legs` window to heal their
-    `entry_queue`; older dates are unrecoverable. **A recognized queue still
+    `entry_queue`; an older date needs its SOURCE re-imported first (item
+    #56), then the same re-import -- operator time, not lost data. **A recognized queue still
     needs ATTRIBUTION:** `UDC_A_Q_Main` / `UUC_A_Q_Main` belong to separate
     brands with no dashboard dept, so they now surface in the discovery panel
     as unattributed until an owner maps them to a dept (or one is created).
@@ -1542,7 +1560,7 @@ When something looks wrong, before assuming a code bug, check:
     the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
     real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
     the canonical pair to spot-check. Reversible
-    either way with no redeploy — the scope is part of the `summary:v25` cache
+    either way with no redeploy — the scope is part of the `summary:v26` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
@@ -1653,6 +1671,28 @@ When something looks wrong, before assuming a code bug, check:
     the drain or the catch-up finishes the date; a PARKED ledger date stays
     until you fix it (above) or delete the tab. A failed read of either list
     keeps the tab and fails the row, like the history check.
+
+    **And a last check right before the delete (OFB-4, broad-scan 2026-11-09).**
+    Three things can fail inside an import that otherwise succeeded -- so the
+    tab was remembered and nothing was queued: the DQE build (while QCD
+    wrote), the Direct Call History build, and the per-call capture on a
+    Neon-unreachable day in the default inline mode. A tab that has passed
+    every check above is now looked at once more: DQE must hold the date, or
+    Pipeline Health must show its newest DQE build for that date as a success
+    (a rows:0 success is a day with nothing to build); Direct is rebuilt from
+    the tab if its sheet lacks the date; the per-call backfill is run for the
+    date if Neon lacks it. The tab is deleted only when all three are whole,
+    else it is kept and named in the row with what it owes ("KEPT N still owed
+    something built from the tab"). **To clear one:** CDR Tools -> Make a date
+    whole for that date (#56), or delete the tab by hand if the date is not
+    wanted. While Neon is down every over-age tab is kept (one probe a run,
+    no failed backfill per tab), so a long outage grows the import workbook --
+    the price of not losing per-call history that exists nowhere else. The
+    check runs under the import's script lock; with an import running, or
+    past ~2.5 minutes of checks, the remaining tabs wait a night ("wait for
+    the next run's last-chance check"). It adds an `inboundBackfill` /
+    `outboundBackfill` row most nights, which is normal. Pinned by
+    `tests/unit/retention-prune.test.js`.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1812,6 +1852,10 @@ When something looks wrong, before assuming a code bug, check:
     recovered agents are reported but NEVER auto-closed — the coach decides),
     and emails **admins only** (owner ruling — managers are not copied until
     release) and only when there are NEW flags (MailApp quota is shared, B3).
+    A run whose admin email OR a held manager email did not send records
+    `NOTIFY-FAILED` (RUN-2); its note says how many flags were really kept
+    pending for the next run (RUN-6: as many as fit one Script Property --
+    the rest are on the worklist only).
     **First armed run emails one larger batch** — every currently-qualifying
     agent lands as NEW; consider "Run now" (dsConfirm-gated, full run) to see
     it land before trusting the schedule. Outcomes in
@@ -1884,11 +1928,41 @@ When something looks wrong, before assuming a code bug, check:
     reads the DQE sheet, so it survives the outage); the outbound arm degrades
     to the Outbound Calls tab the same way (`outboundCallJourneySheetFallback_`,
     #50 -- DOC-7: this item used to say it had none). The Journey column is the tab's only
-    HEAVY one (0.2–6 KB/cell), so it is populated only within
-    `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property, default 90) — older
-    rows keep a blank cell and the drill serves the entry→final summary,
-    disclosed in the overlay caption. Sized against the whole-spreadsheet
-    10M-cell ceiling; raise the window only with that number in view.
+    HEAVY one (0.2–6 KB/cell), so a row is written with its journey only
+    when its date is within `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property,
+    default 90) **at the time it is exported**. Nothing blanks it afterwards:
+    the daily export writes yesterday's rows with their journey and they
+    keep it for the tab's whole retention, so in steady state the tab holds a
+    journey for every kept row -- a blank cell means the row was written by a
+    seed, a long backfill or a changed-date re-export when it was already
+    older than the window (the drill then serves the entry→final summary,
+    disclosed in the overlay caption). This item used to say rows older than
+    90 days have a blank cell; that is true only of those three cases (scan
+    F53). **What that window does NOT bound
+    (OFB-5, broad-scan 2026-11-09):** the tab's share of the 10M-cell cap
+    (#62). Cells are rows x columns whether or not they hold anything, and --
+    per the above -- the window bounds what a seed or re-export of OLD dates
+    writes, not the bytes a year of daily exports accumulates; the cell cost is
+    set by `INBOUND_EXPORT_KEEP_DAYS` alone -- calls a day x workdays kept x
+    24 columns -- and the same holds for the Outbound tab at 12 columns (#50).
+    The export now drops the EMPTY columns right of its headers on every run
+    (a new tab is 26 wide; a column holding anything is left alone), and the
+    Health page's two "Outage copy" rows show each tab's cells and percent of
+    the cap. If those rows grow toward the cap, lower the keep days: the
+    prune then removes the oldest rows on the next run.
+    **The copy is watched, and repairs its own order (OFB-1 / OFB-2).** The
+    Health page (Sheets section) has a row per tab: the date the copy runs
+    through, how many workdays that is behind the daily data (one is the
+    normal morning gap; two warns), whether its rows are out of date order,
+    and the last `inboundExport` / `outboundExport` run -- "no run in the last
+    250 entries" means the daily export is not installed. Order matters
+    because the outage readers read from the bottom and stop early when an
+    older date sits below a newer one. A run that fails after appending an
+    older date now still sorts, and a no-argument run re-sorts an
+    out-of-order tab BEFORE it connects -- so CDR Tools -> Inbound Calls Tab
+    -> Refresh now repairs the order even while Neon is down. A failed run
+    also keeps its place: the older dates it had not reached stay in
+    `INBOUND_EXPORT_PENDING` and the next run starts there.
     **Deploy order matters on a fresh/empty tab:** push the 24-col export
     BEFORE installing the trigger or running the seed, or the first run
     writes narrower rows whose new cells stay blank until a manual
@@ -1943,12 +2017,17 @@ When something looks wrong, before assuming a code bug, check:
     outage already in progress; the copy is a standing insurance policy, not
     a recovery tool.
     Retention: the prune keeps `OUTBOUND_EXPORT_KEEP_DAYS` days (Script
-    Property, default 400); the heavy `journey` column is populated only
-    within `OUTBOUND_EXPORT_JOURNEY_DAYS` (default 90) and blank beyond, so a
-    path drill past that window renders the summary rather than the timeline
-    (the Inbound tab's cols 18–22 rule). Column order is a CONTRACT — the
+    Property, default 400); the heavy `journey` column is written only for a
+    row whose date is within `OUTBOUND_EXPORT_JOURNEY_DAYS` (default 90) when
+    it is exported, and kept thereafter -- so only a seed, a long backfill or
+    a re-export of an old date leaves it blank, and a path drill on such a row
+    renders the summary rather than the timeline (the Inbound tab's cols
+    18–22 rule, #49). Column order is a CONTRACT — the
     dashboard readers index this tab BY POSITION, so append any future column
-    at the END, never between.
+    at the END, never between. The watch, the self-repairing sort, the
+    per-date progress and the cell-cap sizing are the Inbound tab's, word for
+    word (#49, OFB-1 / OFB-2 / OFB-5): this tab is the larger of the two by
+    rows, so its Health row is the one to watch against the cap.
     The fallbacks themselves need no flag: they fire only when the Neon read
     fails, are never cached, and disclose `fallbackSource`/`fallbackThrough`.
     The journey drill's outbound arm additionally RE-DERIVES its two-arm
@@ -2056,9 +2135,13 @@ When something looks wrong, before assuming a code bug, check:
     WRONG: it reads a per-date ledger (the Call_Legs tab, the date's rows in
     the six history sheets, its row count in the six Neon tables), runs only
     what is owed -- a NON-force import for missing core sheets (it never
-    deletes; like Manual Export it re-stages Raw Data with that date), then
-    the per-call and Direct / mirror catch-ups -- and shows the ledger before
-    and after. A date that ends whole leaves the failed-import ledger (so it
+    deletes a history-sheet row that exists; like Manual Export it re-stages
+    Raw Data and the two Output sheets with that date, and -- since RB-3,
+    when it takes the daily write path instead of the bulk queue -- that
+    import also refreshes the date's Direct rows and per-call records from
+    the Call_Legs tab under the current rules, as any daily import does),
+    then the per-call and Direct / mirror catch-ups -- and shows the ledger
+    before and after. A date that ends whole leaves the failed-import ledger (so it
     un-parks a parked date) and is remembered. Without the Call_Legs tab it
     can still re-mirror from the sheets but says which sheets it could not
     rebuild. In deferred mirror mode it queues the mirrors and says so. For
@@ -2069,7 +2152,12 @@ When something looks wrong, before assuming a code bug, check:
     toast with counts + the Neon status per date. The bulk path (`bulkHistoricalUpdate`)
     passes `skipNeon`, force-deletes every date in range up front and needs
     `backfillDQEHistoryUpsert()` afterwards -- fine for dozens of dates, not for
-    a handful. Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
+    a handful. A bulk date whose DQE or Direct rebuild FAILED is marked ❌ in
+    the closing report and logs the failure-only `bulkBackfill:DQE-guard` /
+    `:Direct-guard` Pipeline Health step -- re-run that date by Manual Export
+    (RB-1); if the final archive fails the run stays OPEN, and Resume Bulk
+    Processing (or Process Batch Archive) retries only the archive (RB-7).
+    Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
     with the tab gone, recreate it from the provider CSV (exact tab name, then
     `holdCallLegsForRecovery()` so the prune keeps it -- #43) or,
     failing that, Neon holds the only intact copy. BEFORE any `backfill*`
@@ -2459,7 +2547,10 @@ When something looks wrong, before assuming a code bug, check:
     `Daily Queue Report` → 400×20, frees 641,844 (its 13 conditional-format
     rules all sit inside rows 1–93, cols C–G). `Raw Data`'s spare rows are
     deliberate headroom — the importer `clearContents` then writes one day's
-    legs into a fixed range, so a busier day needs them. Pinned by
+    legs into a fixed range, so a busier day needs them. **The two export
+    tabs (`Inbound Calls`, `Outbound Calls`) are not trim targets** -- they
+    grow by rows every day, so their size is set by their keep days, and
+    their exporter keeps the grid column-tight itself (#49, OFB-5). Pinned by
     `tests/unit/sheet-space.test.js` + `system-health.test.js`.
 
 63. **Outbound report — the RELEASE runbook (6c).** The report is
@@ -2484,6 +2575,13 @@ When something looks wrong, before assuming a code bug, check:
        the LIVE Neon report: if the outbound compute was served from the
        sheet copy (Neon unreachable) the run reads `FAILED (outbound served
        from the sheet copy …)` -- re-run when Neon is back (PCR-9).
+       **GCA-1 (2026-11-10): any run between CBX-1 (2026-11-02) and this fix
+       read `MISMATCH ... do NOT un-gate` for a company window holding a CSR
+       or Spanish abandon, or an exception day -- that was the tool comparing
+       two different populations, not the reports disagreeing. It now compares
+       every abandon on both sides (`callback.abandonedTotalAll`), with
+       exception days included on both. Re-run it before reading anything
+       into an older MISMATCH.**
     3. **Read the verdict literally.** Release ONLY on `ok parity`.
        **INCONCLUSIVE is not a pass** — a window with zero abandons reports it
        by construction, so widen the window and re-run. FAILED and MISMATCH
@@ -2503,7 +2601,9 @@ When something looks wrong, before assuming a code bug, check:
        `personalizeOverview_` stops stripping it the moment the gate flips (it
        reads the same switch). The Overview's **Callbacks by department**
        (`#ov-cbdept-fold`, G2) is admin-only FOREVER and is NOT part of this
-       release. The per-dept manager path underneath was kept intact the whole
+       release -- and since GCA-5 the server enforces that: `getOutboundReport`
+       strips `callbackByDept` for every non-admin, so an all-departments
+       manager's company view does not carry it. The per-dept manager path underneath was kept intact the whole
        time, so nothing else changes. `cross-file-pins.test.js` ("6c: the
        outbound vetting gate and the My Department outbound surfaces are
        released TOGETHER") FAILS on any half alone — a visible surface over a
@@ -2892,7 +2992,8 @@ When something looks wrong, before assuming a code bug, check:
       the transferring party, so those legs are invisible to every per-agent
       surface while QCD counts them. Whether they SHOULD be credited is an
       owner ruling, not a bug on its face — and changing the gate moves every
-      dept's numbers, cannot be backfilled past the `Call_Legs` window, and is
+      dept's numbers, needs each date past the `Call_Legs` window re-imported
+      from its source before it can be backfilled (item #56), and is
       an INV-16 two-file edit plus the dataFilters + DQEdrilldown mirrors.
     - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js` (one shared fixture
       drives the real `calcQcdReport` and the mirror; no expected numbers are
@@ -3543,7 +3644,19 @@ When something looks wrong, before assuming a code bug, check:
     ignore them, and the Health outcome line counts them separately
     ("reasons: N checked, M fired"). Preview shows them. Clear a reason by
     saving its boxes blank. Pinned by `tests/unit/alert-reasons.test.js` and
-    `drive-notify.js`; walk S65.
+    `drive-notify.js`; walk S65. **Since RUN-1 / RUN-2 / RUN-4 (2026-11-10):**
+    the callbacks reason is judged against the calls actually loaded, so a
+    caller who tried again on the assessed day is a MISS (it used to make the
+    whole department read "cannot be judged yet", and that caller was then
+    never counted); only per-call data not loaded through the assessed day
+    leaves it unjudged, and the note says what is loaded. A reason that could
+    not be checked (Neon unreachable, calls not loaded) leads the run's
+    Health outcome `INCONCLUSIVE` with "N not checked". The daily trigger
+    marks the date run and, while a reason rule exists, records an interim
+    `INCONCLUSIVE ... the alert reasons had not finished` outcome BEFORE the
+    reasons start: if you see that line on the Health page, the department
+    alerts WERE sent and the run stopped inside the reasons -- do not re-send
+    the alerts; check Neon. Pinned by `tests/unit/engine-runs.test.js`.
 79. **Outbound call mix -- `probeOutboundCallMix` (2026-10-21; dashboard,
     editor-run, read-only).** Answers "are these agents' outbound calls
     really customers?" The capture already drops extension-to-extension
@@ -3600,7 +3713,9 @@ When something looks wrong, before assuming a code bug, check:
     dates built between the D2 deploy (2026-10-21) and that push:** their
     OB-internal counts are inflated ~10x. For the date in `Raw Data`, run
     `runDirectCallBuild()` (it deletes and rewrites that date's Direct rows,
-    sheet + Neon); for any other, Manual Export it (#56). Pipeline Health's
+    sheet + Neon -- "that date" is the day MOST Raw Data rows are on, RB-2, so
+    a carry-over leg from the day before no longer picks the day); for any
+    other, Manual Export it (#56). Pipeline Health's
     `directBuild` rows name the dates built. Run the tool after an import on
     three or four days. **Then decide the re-import of older dates:** shares
     under ~1% are not worth one; otherwise re-import the dates the Direct
@@ -3649,7 +3764,19 @@ When something looks wrong, before assuming a code bug, check:
     anomaly-suggested days. A failed sheet read serves the last-good copy in
     `EXCEPTION_DAYS_SHEET_COPY` (engine state, never set by hand). Pinned by
     `tests/unit/exception-days.test.js`; cross-file-pins fails a DQE reader
-    that applies the queue split without the exception step.
+    that applies the queue split without the exception step. **The engines
+    (EXD-1..5, 2026-11-10):** when the previous business day is an
+    ALL-department exception day the Daily Call Queue Report is not sent and
+    the poll records `EXCEPTION-DAY <iso>` once (a normal outcome on the
+    Health page; the sent-marker is not claimed, so removing the day sends
+    the report on the next poll); a preview or manual send of that day says
+    why. A digest whose whole window was left out says "Exception day left
+    out" with the reason, not the roster / queue-mapping note. The alert
+    rule's History shows the day as `exception day` and leaves it out of
+    both counts. The "Include them" switch did NOT work before EXD-2 (it
+    resolved no user and stayed off for everyone); it does now, and each
+    save / remove audit row names the admin. Pinned by
+    `tests/unit/exception-days-engines.test.js`.
 
 82. **Transfer hand-overs counted as outbound -- the OBX-1 rule and
     `diagnoseOutboundTransfers` (cdr-import, owner 2026-10-23 / 26).** 8x8
@@ -3755,6 +3882,57 @@ When something looks wrong, before assuming a code bug, check:
     the cell it is listed under, 8x8's name, who it went to). Not
     retroactive: **run `rebuildDirectCallHeldDates()` again after the push**,
     then `diagnoseDirectCallAttributionAllDates()` to see the new split.
+
+    **A new hire on a former employee's extension is on the orphan list
+    (DCA-6, owner 2026-11-11).** When 8x8 names someone on a roster extension
+    who is on NO roster, their direct calls are credited to no one (DCA-1
+    above) -- and the orphan check only read DQE Historical Data, which holds
+    queue calls, so a new hire who takes no queue calls was never listed and
+    nobody was told. Each Direct build now names them at the end of its
+    Pipeline Health note (`| unrostered=[[name, ext, roster name on that ext,
+    calls], ...]`, up to 20, busiest first), and the dashboard folds them
+    into the orphan list: **Admin ▾ → Outlier Fix** shows the person with
+    "Direct line 1234 — the roster lists it for <former employee>", and the
+    Overview's orphan banner counts them. **To clear one:** New Assignment…
+    → pick the department (their own extension is pre-filled) → Add to
+    roster. The former employee keeps the extension in their cell; calls go
+    to whichever of the two 8x8 names. If the name is a misspelling of
+    someone already on a roster, map it to that name instead. They drop off
+    the list at once; their direct calls are credited from the next import,
+    and for the held days after `rebuildDirectCallHeldDates()` (#90). Days
+    imported before the push are not covered: the note is written by each
+    day's import (the held-days rebuild does not write it), so a person
+    appears from the first import after the push on which they take a direct
+    call. Needs the cdr-import push AND the dashboard deploy.
+
+    **A person on an extension NO roster lists is listed too -- and "Not an
+    agent" dismisses the ones who are not agents (DCA-7, owner 2026-11-11).**
+    A new hire given a NEW extension is on no roster cell at all, so DCA-6
+    could not see them. The same note now also carries every person 8x8 names
+    on an extension-length number that no roster cell lists (third element
+    empty; up to 100, busiest first, after the up-to-20 roster-extension
+    names -- and when it leaves some off it ends with `["+","","",<count>]`,
+    which the modal states; the Alerts modal's Pipeline Health panel shows
+    the list as a count). Nothing about credit changes. **The catch: that
+    set is every colleague the roster does not track**, not only new hires,
+    and the import cannot tell them apart -- so expect a long list after the
+    first import. Work it once, in **Admin ▾ → Outlier Fix**: these people
+    sit at the END of the list, noted "no roster lists this extension". (1)
+    Add each call-taking agent with New Assignment… (their extension is
+    pre-filled). (2) Click **Not an agent** on the others, or **Mark all as
+    not agents** once only non-agents remain. Marked names leave the list
+    and the Overview banner, and are kept under "Not an agent (N)" with a
+    Restore link. After that, a new name is a real signal. The list is the
+    `ORPHAN_IGNORE_NAMES` Script Property (a JSON array, ~8.5 KB -- a few
+    hundred names; each change is an `ignore` / `unignore` row in the Orphan
+    Fix Log). **It hides only this kind of entry:** a marked name that shows
+    up in DQE Historical Data, or on an extension the roster lists for
+    someone else, is listed again. The Overview banner counts unmarked
+    people and says how many are of this kind. A shared phone that shows a
+    label such as a room name is listed like a person -- mark it Not an
+    agent. Needs the cdr-import push AND the dashboard
+    deploy. Pinned by `tests/unit/orphan-direct-line.test.js`.
+
 84. **Transfers and consults to a person on the caller's journey -- IXT-1 and
     `diagnosePersonTransfers` (cdr-import, owner 2026-10-27).** Caller Lookup
     (and every journey drill) used to stop at the agent who answered when that
@@ -3986,7 +4164,7 @@ When something looks wrong, before assuming a code bug, check:
     defers Neon (`skipNeon`), so it writes no list. **After the cdr-import
     push, run `rebuildDirectCallHeldDates()` once** (cdr-import editor): it
     reruns the direct build for every held `Call_Legs_*` date (~14 days) --
-    filling the list AND applying the current direct-credit rules (DCA-1..5, #83) to those dates -- and logs a
+    filling the list AND applying the current direct-credit rules (DCA-1..5, #83; since CAP-1 / CAP-4 / CAP-6, 2026-11-09, also the recording-leg rule, the ring-by-ring busy test and the dial-in reading -- run it once after that push) to those dates -- and logs a
     resume date if it hits its 4.5-minute budget
     (`rebuildDirectCallHeldDates("2026-10-28")`). Older dates show only the
     outside callers who rang the person's line (from `inbound_calls`), with a

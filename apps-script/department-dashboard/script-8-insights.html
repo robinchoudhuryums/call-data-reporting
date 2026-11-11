@@ -12,6 +12,7 @@
   // irRosterReqSeq_ pattern): only the newest init/refetch response may
   // write insLastRoster or repaint the picker.
   let insRosterReqSeq_ = 0;
+  let insRosterInFlight_ = null;   // CCX-2: { key, seq } of the newest unanswered roster request
   let insListChangeHandler_ = null;
   let insPendingAgentSelection_ = null;
   let insLastData = null;
@@ -1052,11 +1053,20 @@
     if (insLastRoster.dept === dept && insLastRoster.agents.length && insLastRoster.rangeKey === rangeKey) {
       insRenderAgentList(); return;
     }
+    // CCX-2: the newest roster request is already for this (dept, window) and
+    // has not answered -- its reply renders the picker. Page entry, refresh()'s
+    // window sync and the region open each ask, so one landing sent this three
+    // times over.
+    const flightKey = dept + '|' + rangeKey;
+    if (insRosterInFlight_ && insRosterInFlight_.key === flightKey
+        && insRosterInFlight_.seq === insRosterReqSeq_) return;
     rosterLoaderShowLoading_('ins-agent-loader');   // F52
     $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
     const __rk = ++insRosterReqSeq_;
+    insRosterInFlight_ = { key: flightKey, seq: __rk };
     google.script.run
       .withSuccessHandler(function (data) {
+        if (insRosterInFlight_ && insRosterInFlight_.seq === __rk) insRosterInFlight_ = null;
         if (__rk !== insRosterReqSeq_) return;   // superseded by a newer fetch
         insLastRoster = {
           dept: dept,
@@ -1069,6 +1079,7 @@
         insRenderAgentList();
       })
       .withFailureHandler(function (err) {
+        if (insRosterInFlight_ && insRosterInFlight_.seq === __rk) insRosterInFlight_ = null;
         if (__rk !== insRosterReqSeq_) return;   // a newer fetch owns the picker
         // The launcher AND the first-entry auto-run hide the form behind a
         // loading pane; on a roster failure, cancel the pending auto-run
@@ -1229,13 +1240,18 @@
     }
     pop.style.display = '';
     const search = $('ins-edit-search');
-    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    if (search) search.value = '';
+    // F75: take focus on open. The search box sits in the Advanced fold,
+    // which is usually closed -- focusing it there was a no-op that left
+    // focus on the opener behind the popover.
+    popoverFocusIn_(pop, search);
     irFilterAgentList_(list, '');
   }
 
+  // F75: every close (the x, Apply, a click outside, Escape) gives focus back
+  // to the button that opened it, unless focus has already gone elsewhere.
   function insCloseEditPopover_() {
-    const pop = $('ins-edit-popover');
-    if (pop) pop.style.display = 'none';
+    popoverClose_($('ins-edit-popover'), $('ins-edit-selection-btn'));
   }
 
   function insTogglePopoverAgents_(checked) {
@@ -2937,7 +2953,7 @@
     }
     clearTimeout(INS_CB_PREFETCH_T_);
     if (INS_CB_.data) { insCbRender_(INS_CB_.data); return; }
-    if (INS_CB_.error) { insCbState_('Callbacks could not be loaded: ' + INS_CB_.error); return; }
+    if (INS_CB_.error) { insCbState_('Callbacks could not be loaded: ' + INS_CB_.error, true); return; }
     if (INS_CB_.loadingKey === key) return;   // this window's fetch is already out
     // Step 3 #8 (owner 2026-10-16): PRELOAD. A closed section still loads,
     // once the page has settled (INS_CB_PREFETCH_MS_ after the last sync, so a
@@ -2981,17 +2997,41 @@
         INS_CB_.error = (err && err.message) ? err.message : String(err);
         if (head) head.textContent = 'unavailable';
         insBriefRowFromHead_('callbacks');
-        insCbState_('Callbacks could not be loaded: ' + INS_CB_.error);
+        insCbState_('Callbacks could not be loaded: ' + INS_CB_.error, true);
         insCbScrollIfPending_();
       })
       .getOutboundReport(w);
   }
 
-  function insCbState_(text) {
+  // CCX-6 (broad-scan 2026-11-09): `retry` adds a Retry button. A failed load
+  // (or an "unavailable right now" reply) was held for the window, so the
+  // section stayed on its error until the dates or the department changed --
+  // re-opening it, or waiting out the outage, never asked again.
+  function insCbState_(text, retry) {
     var el = $('ins-cb-state');
     if (!el) return;
     el.style.display = text ? '' : 'none';
     el.textContent = text || '';
+    if (text && retry) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'link-btn';
+      b.id = 'ins-cb-retry';
+      b.textContent = 'Retry';
+      b.addEventListener('click', insCbRetry_);
+      el.appendChild(document.createTextNode(' '));
+      el.appendChild(b);
+    }
+  }
+  function insCbRetry_() {
+    var w = insCbWindow_();
+    if (!w) return;
+    var key = [w.department, w.from, w.to].join('|');
+    INS_CB_.error = null;
+    INS_CB_.data = null;
+    if (key !== INS_CB_.key) { insCbSync_(); return; }   // the window moved meanwhile: the sync owns it
+    if (INS_CB_.loadingKey === key) return;
+    insCbFetch_(w, key);
   }
 
   function insCbResetUncalled_() {
@@ -3034,7 +3074,7 @@
       if (content) content.style.display = 'none';
       if (head) head.textContent = 'unavailable';
       insBriefRowFromHead_('callbacks');
-      insCbState_('Callback data is unavailable right now (Neon and the Outbound Calls tab could not be read).');
+      insCbState_('Callback data is unavailable right now (Neon and the Outbound Calls tab could not be read).', true);
       insCbScrollIfPending_();
       return;
     }

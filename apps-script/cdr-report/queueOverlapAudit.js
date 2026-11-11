@@ -160,7 +160,6 @@ function qoaDeptConfig_(ss) {
   return out;
 }
 
-/** F13. A 'M/D/YYYY' date as a padding-free day key ('3/9/2026' == '03/09/2026'); '' if malformed. */
 /**
  * ST2 (broad-scan 259, E4): THE calendar day of one leg's START_TIME display
  * cell (col C) -- "M/D/YYYY ...", "M/D/YY ..." or ISO -- as 'YYYY-MM-DD';

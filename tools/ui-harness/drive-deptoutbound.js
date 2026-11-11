@@ -433,6 +433,18 @@ async function openDept(page, meta) {
       sent.forEach((k) => { per[k] = (per[k] || 0) + 1; });
       record('Refresh #' + round + ' sends each outbound window ONCE (current + prior), never a duplicate in flight',
         Object.keys(per).length === 2 && Object.keys(per).every((k) => per[k] === 1), JSON.stringify(per));
+      // CCX-3: the button also re-reads the sections that hold their own
+      // answer per window -- Team Direct Calls and Callbacks stayed on their
+      // pre-Refresh figures -- each ONCE.
+      const extra = await pr.evaluate((n) => {
+        const out = {};
+        (window.__HARNESS__.calls || []).slice(n).forEach((c) => {
+          if (c.fn === 'getDirectCallReport' || c.fn === 'getOutboundReport') out[c.fn] = (out[c.fn] || 0) + 1;
+        });
+        return out;
+      }, before);
+      record('CCX-3: Refresh #' + round + ' re-reads Team Direct Calls and Callbacks once each',
+        extra.getDirectCallReport === 1 && extra.getOutboundReport === 1, JSON.stringify(extra));
     }
     await pr.close();
   }

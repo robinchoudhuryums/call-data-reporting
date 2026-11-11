@@ -269,6 +269,90 @@ function record(name, pass, detail) {
     }
   }
 
+  // ---- Batch 9 (broad-scan 2026-11-10): keyboard paths on My Department ----
+  {
+    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const onDept = await page.evaluate(() => document.body.getAttribute('data-page') === 'dept');
+    if (!onDept) { await page.click('#my-dept-btn'); await page.waitForTimeout(4000); }
+    const active = () => page.evaluate(() => { const a = document.activeElement; return a ? a.id : ''; });
+
+    // F74: the half-hour drill. The bars are a canvas and the ring-time links
+    // are out of the tab order (UD-4), so ONE picker is the keyboard path. It
+    // is clipped until it has keyboard focus.
+    const pick0 = await page.evaluate(() => {
+      const p = document.getElementById('dept-missed-bucket-pick');
+      if (!p) return null;
+      p.scrollIntoView({ block: 'center' });
+      return { hidden: p.hidden, w: p.getBoundingClientRect().width, opts: Array.from(p.options).map((o) => o.textContent),
+               links: document.querySelectorAll('#dept-missed-detail .ms-bucket-link:not([tabindex="-1"])').length };
+    });
+    record('F74: the half-hour picker lists the half-hours that have missed rings, and is clipped for a mouse user',
+      !!pick0 && !pick0.hidden && pick0.w <= 1 && pick0.opts.length >= 2 && pick0.opts[0] === 'Half-hour…'
+        && pick0.opts.slice(1).every((o) => /^\d{1,2}:\d{2} [AP]M · \d+ missed$/.test(o)) && pick0.links === 0, JSON.stringify(pick0));
+    if (pick0 && !pick0.hidden) {
+      await page.focus('#dept-missed-bucket-pick');
+      await page.keyboard.press('ArrowDown'); await page.waitForTimeout(800);
+      const opened = await page.evaluate(() => {
+        const p = document.getElementById('dept-missed-bucket-pick'), w = document.getElementById('dept-missed-bucket-detail');
+        const label = p.options[p.selectedIndex].textContent;
+        return { w: p.getBoundingClientRect().width, open: w.style.display !== 'none', label: label,
+                 title: document.getElementById('dept-bucket-detail-title').textContent,
+                 rows: w.querySelectorAll('.heat-drill-row').length, want: Number((/· (\d+) missed/.exec(label) || [])[1]) };
+      });
+      record('F74: an arrow key on the picker opens that half-hour, with the count the option promised',
+        opened.w > 40 && opened.open && opened.title.indexOf(opened.label.split(' · ')[0]) === 0 && opened.rows === opened.want, JSON.stringify(opened));
+      // Tab walks from the picker into the open panel; closing it there comes back.
+      let reached = false;
+      for (let i = 0; i < 4 && !reached; i++) { await page.keyboard.press('Tab'); reached = (await active()) === 'dept-bucket-detail-close'; }
+      record('F74: Tab reaches the open panel from the picker', reached, 'active=#' + await active());
+      await page.keyboard.press('Enter'); await page.waitForTimeout(400);
+      const closedBack = await page.evaluate(() => ({ open: document.getElementById('dept-missed-bucket-detail').style.display !== 'none',
+        val: document.getElementById('dept-missed-bucket-pick').value, active: document.activeElement.id }));
+      record('F74: closing the panel from inside it returns focus to the picker, which resets',
+        !closedBack.open && closedBack.val === '' && closedBack.active === 'dept-missed-bucket-pick', JSON.stringify(closedBack));
+    }
+
+    // F77: the date chips say which one is in force.
+    const chipState = () => page.evaluate(() => Array.from(document.querySelectorAll('#date-presets .date-preset-chip'))
+      .map((c) => (c.classList.contains('active') ? 'A' : '-') + (c.getAttribute('aria-pressed') === 'true' ? 'P' : (c.getAttribute('aria-pressed') === 'false' ? '-' : '?'))).join(' '));
+    const c0 = await chipState();
+    await page.locator('#date-presets .date-preset-chip', { hasText: 'Last 7 days' }).focus();
+    await page.keyboard.press('Enter'); await page.waitForTimeout(2500);
+    const c1 = await chipState();
+    record('F77: a date chip is announced as pressed exactly when it is the selected one',
+      c0.split(' ').every((x) => x === '--') && c1.split(' ').filter((x) => x === 'AP').length === 1
+        && c1.split(' ').every((x) => x === 'AP' || x === '--'), JSON.stringify({ before: c0, after: c1 }));
+
+    // F75: the Insights "Comparison & agents" popover takes focus and gives it back.
+    const editShown = await page.evaluate(() => { const e = document.getElementById('ins-edit-selection-btn');
+      if (e) e.scrollIntoView({ block: 'center' }); return !!e && e.getClientRects().length > 0; });
+    if (editShown) {
+      await page.focus('#ins-edit-selection-btn'); await page.keyboard.press('Enter'); await page.waitForTimeout(500);
+      const inPop = await page.evaluate(() => { const p = document.getElementById('ins-edit-popover'); const a = document.activeElement;
+        return { open: p.style.display !== 'none', inside: p.contains(a), isClose: a.id === 'ins-edit-popover-close', tag: a.tagName }; });
+      record('F75: opening the popover moves focus into it (not onto its Close button)', inPop.open && inPop.inside && !inPop.isClose, JSON.stringify(inPop));
+      await page.focus('#ins-edit-popover-close'); await page.keyboard.press('Enter'); await page.waitForTimeout(400);
+      const afterClose = await page.evaluate(() => ({ open: document.getElementById('ins-edit-popover').style.display !== 'none', active: document.activeElement.id }));
+      record('F75: its Close button returns focus to the button that opened it',
+        !afterClose.open && afterClose.active === 'ins-edit-selection-btn', JSON.stringify(afterClose));
+    } else {
+      record('F75: the Insights edit button is on the page', false, '#ins-edit-selection-btn not visible');
+    }
+
+    // F79: no label on the page explains itself to a mouse only -- bar the two
+    // per-agent-card chips, which repeat on every card (UD-4) and whose
+    // wording is on the chip or in Help.
+    const gl = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('.gloss')).filter((e) => e.getClientRects().length > 0
+        && !e.classList.contains('ins-trend-pill') && !e.classList.contains('cr-vs-team'));
+      const reach = (e) => e.tabIndex >= 0 || !!e.querySelector('button,a[href],[tabindex]')
+        || !!e.parentElement.closest('button,a[href],summary,[role="button"],[role="tab"],[role="menuitem"]');
+      return { total: all.length, unreachable: all.filter((e) => !reach(e)).map((e) => e.textContent.trim().slice(0, 24)) };
+    });
+    record('F79: every hover-explained label on My Department is reachable by keyboard',
+      gl.total > 0 && gl.unreachable.length === 0, JSON.stringify(gl));
+  }
+
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource/i.test(e));
   record('no console/page errors during the walk', realErrors.length === 0,
     realErrors.slice(0, 3).join(' | '));

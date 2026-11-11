@@ -446,3 +446,44 @@ test('F15: a restore never CREATES a store -- with none set it refuses instead o
   assert.equal(h.state.createdSpreadsheets.length, books, 'no workbook either');
   assert.ok(!h.state.props.NEON_BACKUP_FOLDER_ID);
 });
+
+// ── OFB-3 (broad-scan 2026-11-09, Batch 7) ───────────────────────────────────
+// A month too big for one file is written as partN files, and part1's date is
+// what marks a closed month final. Written 1..N, a failure after part1 froze a
+// month with its later parts missing, and every later run said `ok`.
+test('OFB-3: a multi-part closed month whose write fails midway is NOT final -- the next run writes it again', function () {
+  install();
+  const realBudget = h.ctx.NB_FILE_BUDGET_CHARS;
+  const realCreate = folder.createFile;
+  h.ctx.NB_FILE_BUDGET_CHARS = 200;                    // a month of rows no longer fits one file
+  try {
+    inbound = days('2026-09-01', '2026-10-09');
+    let writes = 0;
+    folder.createFile = function (n, c) {
+      // The SECOND September part written fails (a Drive service error).
+      if (/^inbound_calls-2026-09\.part\d+\.jsonl$/.test(n) && ++writes === 2) throw new Error('Service error: Drive');
+      return realCreate(n, c);
+    };
+    const r1 = runAt('2026-10-10');                    // past the grace day: a full write is final
+    assert.match(r1, /^FAILED /);
+    assert.match(r1, /inbound_calls FAILED: Service error: Drive/);
+    assert.ok(!('inbound_calls-2026-09.part1.jsonl' in files),
+      'part1 is the LAST write, so a run that stopped short never stamps the month');
+
+    folder.createFile = realCreate;
+    const r2 = runAt('2026-10-17');
+    assert.match(r2, /^ok /);
+    const parts = Object.keys(files).filter(function (n) { return /^inbound_calls-2026-09\.part\d+\.jsonl$/.test(n); }).sort();
+    assert.ok(parts.length >= 2, 'the month is in parts: ' + parts.join(', '));
+    const got = [];
+    parts.forEach(function (n) { rowsIn(n).forEach(function (d) { got.push(d); }); });
+    assert.deepEqual(got.sort(), days('2026-09-01', '2026-09-30'), 'every September row is in the backup');
+
+    // And a complete parts month IS final afterwards (the stamp still works).
+    const r3 = runAt('2026-10-24');
+    assert.match(r3, /closed skipped/);
+  } finally {
+    h.ctx.NB_FILE_BUDGET_CHARS = realBudget;
+    folder.createFile = realCreate;
+  }
+});

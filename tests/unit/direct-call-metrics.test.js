@@ -1122,7 +1122,8 @@ test('DID-1: the build stores via + dial_in on direct_calls (idempotent columns)
   assert.match(src, /other_name, other_ext, other_hash, via, dial_in, busy_with\) VALUES /);
   const b = src.indexOf('function buildDirectCallFromRaw_');
   const body = src.slice(b, src.indexOf('\nfunction ', b + 10));
-  assert.match(body, /try \{\s*const ann = dcDialInAnnotate_\(dayRows, result\.events \|\| \[\], maps\);[\s\S]{0,300}\} catch \(eVia\)/,
+  // CAP-6: the build hands the annotator its own per-leg resolver (4th argument).
+  assert.match(body, /try \{\s*const ann = dcDialInAnnotate_\(dayRows, result\.events \|\| \[\], maps, result\.resolveLeg\);[^\n]*\n[\s\S]{0,300}\} catch \(eVia\)/,
     'the reading is wrapped, inside the build, on the same day rows');
   assert.ok(body.indexOf('dcDialInAnnotate_') < body.indexOf('writeDirectCallRowsToNeon_('), 'annotated before the write');
 });

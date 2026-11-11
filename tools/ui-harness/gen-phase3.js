@@ -111,7 +111,15 @@ const SHEETS = {
   'Queue Report Subscribers': [['Email','Active','Notes'], ['ops@ums.com','TRUE','']],
   'Pipeline Health': [['Timestamp','Step','Status','Rows','Duration (ms)','Notes'],
     [new Date().toISOString(), 'processIntegratedHistory:DQE', 'success', 42, 1200, ago(1)],
-    [new Date().toISOString(), 'neonMirror:Inbound', 'failure', 0, 300, 'Neon unreachable']],
+    [new Date().toISOString(), 'neonMirror:Inbound', 'failure', 0, 300, 'Neon unreachable'],
+    // DCA-6: the Direct build names a person 8x8 shows on a roster extension
+    // who is on no roster (ext 101 is listed for Anna Reyes) -- drive-admin
+    // asserts she reaches the Outlier Fix list with her own extension.
+    [new Date().toISOString(), 'processIntegratedHistory:Direct', 'success', 6, 900,
+      new Date(ago(1) + 'T12:00:00').toDateString() + ' | agents=6 missedBusy=0 missedFree=1 neon=ok'
+        // DCA-7: plus two people on extensions NO roster lists (third element
+        // empty) -- one gets marked "Not an agent" by drive-admin.
+        + ' | unrostered=[["Nina New","101","Anna Reyes",7],["Omar Unlisted","733","",4],["Pat Porter","744","",2]]']],
   'Agent Alias Overrides': [['Old Name','Canonical Name','Active','Added By','Added At','Notes']],
   'Orphan Fix Log': [['Timestamp','Admin','Action','From Name','To Name','Affected Rows','Notes']],
   'Dept Config': [['Department','QCD Queues','Overview Parent','Team Avg Excludes','Queue Ext Overrides','Active','Updated By','Updated At','Notes','Inbound Queue Aliases']],

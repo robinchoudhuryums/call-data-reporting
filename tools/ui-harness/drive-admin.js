@@ -43,7 +43,74 @@ const IGNORABLE = /favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i;
 
 const MODALS = [
   { name: 'Alerts',         btn: '#alerts-btn',          sel: '#alerts-modal',         adminMenu: true },
-  { name: 'Outlier Fix',    btn: '#orphan-fix-btn',      sel: '#orphan-fix-modal',     adminMenu: true },
+  { name: 'Outlier Fix',    btn: '#orphan-fix-btn',      sel: '#orphan-fix-modal',     adminMenu: true,
+    // DCA-6: a new hire on a former employee's extension takes no queue calls,
+    // so she is in no DQE row -- the list must still carry her (the init is
+    // the REAL getOrphanFixInit's, fed by the Direct build's Pipeline Health
+    // note in gen-phase3), say whose extension it is, and offer HER extension.
+    probe: async function (page, record) {
+      const d = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const tr = rows.filter((r) => /Nina New/.test(r.textContent))[0];
+        if (!tr) return { found: false, names: rows.map((r) => r.children[1] ? r.children[1].textContent : '') };
+        const idx = tr.getAttribute('data-orphan-idx');
+        const note = tr.querySelector('.of-direct-note');
+        const exts = document.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+        return { found: true, note: note ? note.textContent : '', exts: exts ? exts.value : null,
+                 queueOrphan: rows.some((r) => /Jon Smyth/.test(r.textContent)) };
+      });
+      record('DCA-6: a new hire on a former employee\'s extension is on the Outlier Fix list',
+        d.found === true && d.queueOrphan === true, JSON.stringify(d));
+      record('DCA-6: the row says whose extension it is and how many direct calls went uncredited',
+        d.found && /Direct line 101/.test(d.note) && /Anna Reyes/.test(d.note) && /7 direct calls not credited/.test(d.note), JSON.stringify(d));
+      record('DCA-6: New Assignment is pre-filled with HER extension', d.found && d.exts === '101', JSON.stringify(d));
+      // DCA-7: people on an extension NO roster lists are listed too, after
+      // everyone else, each with a "Not an agent" button nobody else gets.
+      const u = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const nameOf = (r) => (r.children[1] && r.children[1].firstChild ? r.children[1].firstChild.textContent : '');
+        const row = (re) => rows.filter((r) => re.test(r.textContent))[0];
+        const omar = row(/Omar Unlisted/);
+        const bar = document.getElementById('of-unlisted-bar');
+        return {
+          order: rows.map(nameOf),
+          omarNote: omar && omar.querySelector('.of-direct-note') ? omar.querySelector('.of-direct-note').textContent : '',
+          omarBtn: !!(omar && omar.querySelector('.of-row-ignore')),
+          otherBtns: rows.filter((r) => /Nina New|Jon Smyth/.test(r.textContent) && r.querySelector('.of-row-ignore')).length,
+          bar: bar && getComputedStyle(bar).display !== 'none' ? bar.textContent : '',
+          ignoredShown: getComputedStyle(document.getElementById('of-ignored')).display !== 'none',
+        };
+      });
+      record('DCA-7: a person on an extension no roster lists is on the list, after the others',
+        u.order.indexOf('Omar Unlisted') > u.order.indexOf('Nina New') && u.order.indexOf('Pat Porter') > u.order.indexOf('Jon Smyth')
+          && u.order.indexOf('Omar Unlisted') !== -1 && /no roster lists this extension/.test(u.omarNote) && /4 direct calls/.test(u.omarNote),
+        JSON.stringify(u));
+      record('DCA-7: only those rows offer "Not an agent"; the bar counts them',
+        u.omarBtn === true && u.otherBtns === 0 && /2 people are on an extension no roster lists/.test(u.bar) && u.ignoredShown === false,
+        JSON.stringify(u));
+      await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        rows.filter((r) => /Omar Unlisted/.test(r.textContent))[0].querySelector('.of-row-ignore').click();
+      });
+      await page.waitForFunction(() => /Not an agent \(1\)/.test((document.getElementById('of-ignored-summary') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+      const a = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'setOrphanIgnored');
+        return {
+          omarGone: !rows.some((r) => /Omar Unlisted/.test(r.textContent)),
+          othersKept: /Pat Porter/.test(document.getElementById('of-orphans-tbody').textContent) && /Nina New/.test(document.getElementById('of-orphans-tbody').textContent),
+          ignored: document.getElementById('of-ignored-list').textContent,
+          ignoredShown: getComputedStyle(document.getElementById('of-ignored')).display !== 'none',
+          bar: document.getElementById('of-unlisted-bar').textContent,
+          calls: calls.map((c) => c.args),
+        };
+      });
+      record('DCA-7: "Not an agent" sends that one name, drops the row, and keeps it restorable',
+        a.omarGone && a.othersKept && a.ignoredShown && /Omar Unlisted/.test(a.ignored) && /Restore/.test(a.ignored)
+          && /1 person is on an extension no roster lists/.test(a.bar)
+          && a.calls.length === 1 && JSON.stringify(a.calls[0]) === JSON.stringify([{ names: ['Omar Unlisted'], ignored: true }]),
+        JSON.stringify(a));
+    } },
   // DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows". The init is the
   // REAL getDeptConfigInit's (gen-phase3), so the bar names the departments the
   // server would write; the click asks first, then sends ONE request (no list
@@ -205,6 +272,20 @@ const MODALS = [
       record('Inbound (SB-5): on hold and unanswered transfers are labelled under the bar, not in it; every figure keeps its vs-prior chip',
         /61 hung up while on hold — after an agent answered, so counted inside Answered/.test(v.quality) && /14 transfers nobody picked up/.test(v.quality)
           && v.deltas >= 10, JSON.stringify({ q: v.quality.slice(0, 160), deltas: v.deltas }));
+      // F79: every label that explains itself on hover can take focus, and
+      // focusing one opens the same tooltip (20 here were mouse-only).
+      const g = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll('#inbound-modal .gloss')).filter((e) => e.getClientRects().length > 0);
+        const reach = (e) => e.tabIndex >= 0 || !!e.querySelector('button,a[href],[tabindex]')
+          || !!e.parentElement.closest('button,a[href],summary,[role="button"],[role="tab"],[role="menuitem"]');
+        const first = all.filter((e) => e.tagName === 'TH')[0];
+        if (first) first.focus();
+        const tip = document.getElementById('ds-gloss-tip');
+        return { total: all.length, unreachable: all.filter((e) => !reach(e)).length, focused: !!first && document.activeElement === first,
+                 tip: !!tip && tip.style.display !== 'none' ? tip.textContent.slice(0, 60) : '' };
+      });
+      record('Inbound (F79): every hover-explained label is reachable by keyboard, and focus opens its tooltip',
+        g.total >= 20 && g.unreachable === 0 && g.focused && g.tip.length > 10, JSON.stringify(g));
     } } },
   // D1 (owner 2026-10-21): the Direct Calls report. The company run is clean
   // (full coverage); the probe then runs CSR, whose fixture data stops a
@@ -426,6 +507,20 @@ const MODALS = [
           return modal.offsetParent === null || getComputedStyle(modal).display === 'none';
         }, m.sel);
         record(m.name + ': Escape closes it', closed === true);
+        // F71: the opener is usually an item in a header MENU that closed when
+        // it was picked. Handing focus back to that hidden item was a no-op,
+        // focus sat on <body>, and the next Tab began at the end of the page.
+        // Focus must land on the control the user can see: the opener itself,
+        // or the trigger of the menu it lives in.
+        const back = await page.evaluate(() => {
+          const a = document.activeElement;
+          return { id: a ? a.id : '', onBody: !a || a === document.body,
+                   shown: !!(a && a.getClientRects && a.getClientRects().length) };
+        });
+        const wantId = (menuBtn || m.btn).slice(1);
+        record(m.name + ': closing returns focus to a visible control (F71)',
+          closed === true && !back.onBody && back.shown && back.id === wantId,
+          JSON.stringify(back) + ' want #' + wantId);
       }
     } catch (e) {
       // phase3 recorded this shape and moved on; here it is a failure.
@@ -434,6 +529,152 @@ const MODALS = [
     record(m.name + ': no page/console errors while open', errors.length === before,
       Array.from(new Set(errors.slice(before))).slice(0, 2).join(' | '));
     await ctx.close();
+  }
+
+  // ── F70 / F71 / F77: Help and Settings, opened from their header buttons ──
+  // Help is a column of FOLDS (the topic categories) -- the shape the focus
+  // trap leaked on: a fold's summary is a tab stop it did not know, and the
+  // links inside a closed fold are ones it wrongly counted.
+  {
+    const { ctx, page, errors } = await boot();
+    const before = errors.length;
+    await page.click('#help-btn'); await page.waitForTimeout(700);
+    const helpOpen = await page.evaluate(() => getComputedStyle(document.getElementById('help-modal')).display !== 'none');
+    record('Help: opens from the header button', helpOpen);
+    // Close every category but one, so closed folds sit in the middle AND at the end.
+    await page.evaluate(() => { document.querySelectorAll('#help-modal .help-cat').forEach((c, i) => { c.open = (i === 0); }); });
+    let out = 0; const seen = {};
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press('Tab');
+      const w = await page.evaluate(() => { const a = document.activeElement; const m = document.getElementById('help-modal');
+        return { inside: m.contains(a), tag: a.tagName, inClosed: !!(a.closest('details:not([open])') && a.tagName !== 'SUMMARY') }; });
+      if (!w.inside || w.inClosed) out++;
+      seen[w.tag] = (seen[w.tag] || 0) + 1;
+    }
+    record('Help (F70): 40 Tabs stay inside the dialog, and stop on the fold headers', out === 0 && (seen.SUMMARY || 0) >= 2,
+      JSON.stringify({ out: out, seen: seen }));
+    const topics = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('#help-modal .help-link'));
+      const state = () => links.map((l) => (l.classList.contains('active') ? 'A' : '-') + (l.getAttribute('aria-pressed') === 'true' ? 'P' : '-')).join(' ');
+      const start = state();
+      links[1].click();
+      return { start: start, after: state(), n: links.length };
+    });
+    const agree = (st) => st.split(' ').every((x) => x === 'AP' || x === '--') && st.split(' ').filter((x) => x === 'AP').length === 1;
+    record('Help (F77): the shown topic is the one pressed link, before and after a pick',
+      topics.n > 3 && agree(topics.start) && agree(topics.after) && topics.start !== topics.after, JSON.stringify(topics));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    const hb = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    record('Help (F71): Escape returns focus to the header button', hb === 'help-btn', 'active=#' + hb);
+
+    await page.click('#settings-btn'); await page.waitForTimeout(500);
+    const themes = await page.evaluate(() => {
+      const chips = Array.from(document.querySelectorAll('#settings-modal .theme-chip'));
+      const state = () => chips.map((c) => (c.classList.contains('active') ? 'A' : '-') + (c.getAttribute('aria-pressed') === 'true' ? 'P' : '-')).join(' ');
+      const start = state();
+      const other = chips.filter((c) => !c.classList.contains('active'))[0];
+      if (other) other.click();
+      return { start: start, after: state(), n: chips.length };
+    });
+    record('Settings (F77): the chosen theme is the one pressed chip, before and after a pick',
+      themes.n > 1 && agree(themes.start) && agree(themes.after) && themes.start !== themes.after, JSON.stringify(themes));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    const sbk = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    record('Settings (F71): Escape returns focus to the header button', sbk === 'settings-btn', 'active=#' + sbk);
+    record('Help / Settings: no page/console errors', errors.length === before, errors.slice(before, before + 2).join(' | '));
+    await ctx.close();
+  }
+
+  // ── Batch 10 (NPS): print, narrow screens, names, live regions, tier text ──
+  {
+    // NPS-1 (F73): the browser's own print with a report open. Paper used to
+    // get the page behind the overlay plus the slice of the panel on screen.
+    const { ctx, page, errors } = await boot();
+    const before = errors.length;
+    await page.click('#reports-menu-btn'); await page.waitForTimeout(200);
+    await page.click('#inbound-report-btn'); await page.waitForTimeout(1200);
+    await page.click('#inbound-generate-btn'); await page.waitForTimeout(2200);
+    const measure = () => page.evaluate(() => {
+      const m = document.getElementById('inbound-modal'), bd = m.querySelector('.modal-panel-body');
+      return { pos: getComputedStyle(m).position, clipped: bd.scrollHeight - bd.clientHeight,
+        behind: getComputedStyle(document.querySelector('body > .container')).display,
+        close: getComputedStyle(m.querySelector('.modal-close')).display, cls: document.body.className };
+    });
+    const scr = await measure();
+    await page.emulateMedia({ media: 'print' });
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    const prt = await measure();
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await page.emulateMedia({ media: 'screen' });
+    const aft = await measure();
+    record('NPS-1: on screen the Inbound report is a clipped, scrolling overlay (the thing print must undo)',
+      scr.pos === 'fixed' && scr.clipped > 100, JSON.stringify(scr));
+    record('NPS-1: printing with the report open prints the whole report and nothing behind it',
+      prt.pos === 'static' && prt.clipped <= 1 && prt.behind === 'none' && prt.close === 'none', JSON.stringify(prt));
+    record('NPS-1: the screen is back as it was after the print',
+      aft.pos === 'fixed' && aft.behind !== 'none' && aft.close !== 'none' && aft.cls.indexOf('modal-printing') === -1, JSON.stringify(aft));
+
+    // NPS-5 / NPS-3 / NPS-4 / NPS-6 on the open report and the page.
+    const names = await page.evaluate(() => {
+      const tinted = Array.from(document.querySelectorAll('.bm-watch, .bm-bad, .bm-over')).filter((e) => e.getClientRects().length);
+      const canv = Array.from(document.querySelectorAll('canvas'));
+      const seg = (cls) => { const d = document.createElement('div'); d.className = 'ob-obar-seg ' + cls; d.textContent = '12';
+        document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; };
+      const light = { cat1: seg('ob-seg-cat1'), cat2: seg('ob-seg-cat2'), cat4: seg('ob-seg-cat4') };
+      document.body.dataset.mode = 'dark';
+      const dark = { cat1: seg('ob-seg-cat1'), cat2: seg('ob-seg-cat2'), cat4: seg('ob-seg-cat4'), good: seg('ob-seg-good') };
+      delete document.body.dataset.mode;
+      return {
+        tinted: tinted.length,
+        // The spoken words are CSS-generated (::after), the hover words a title;
+        // the element's own text must stay just its number.
+        silent: tinted.filter((e) => !/, (just below target|below target|outside the standard)/.test(getComputedStyle(e, '::after').content) || !e.title).length,
+        sample: tinted.length ? (tinted[0].textContent + ' | ' + getComputedStyle(tinted[0], '::after').content + ' | ' + tinted[0].title) : '',
+        textClean: tinted.every((e) => !/target|standard/.test(e.textContent)),
+        greenSaid: Array.from(document.querySelectorAll('.bm-target')).filter((e) => { const c = getComputedStyle(e, '::after').content; return c && c !== 'none' && /target|standard/.test(c); }).length,
+        canvases: canv.length, unnamed: canv.filter((c) => c.getAttribute('role') !== 'img' || !(c.getAttribute('aria-label') || '').trim()).map((c) => c.id),
+        loader: (document.getElementById('ov-loading') || { getAttribute: () => null }).getAttribute('role'),
+        light: light, dark: dark,
+      };
+    });
+    record('NPS-5: every amber or red benchmark value says its tier in words (a title + generated read-aloud text, its own text untouched); green stays silent',
+      names.tinted > 0 && names.silent === 0 && names.greenSaid === 0 && names.textClean === true,
+      JSON.stringify({ tinted: names.tinted, silent: names.silent, sample: names.sample, green: names.greenSaid, textClean: names.textClean }));
+    record('NPS-3: every chart canvas on the page is a named image', names.canvases >= 8 && names.unnamed.length === 0,
+      JSON.stringify({ n: names.canvases, unnamed: names.unnamed }));
+    record('NPS-6: text on the three filled category segments is white in light mode and dark ink in dark mode, like the green one',
+      names.light.cat1 === 'rgb(255, 255, 255)' && names.light.cat2 === 'rgb(255, 255, 255)' && names.light.cat4 === 'rgb(255, 255, 255)'
+        && names.dark.cat1 === names.dark.good && names.dark.cat2 === names.dark.good && names.dark.cat4 === names.dark.good
+        && names.dark.good === 'rgb(16, 20, 24)', JSON.stringify({ light: names.light, dark: names.dark }));
+    record('NPS (print / names): no page/console errors', errors.length === before, errors.slice(before, before + 2).join(' | '));
+    await ctx.close();
+  }
+  // NPS-2 (F81): at phone and tablet widths a wide table used to make the
+  // WHOLE modal body scroll sideways. Each table now scrolls by itself: the
+  // body is exactly as wide as the panel, the page is no wider than the
+  // screen, and Close stays on it.
+  for (const vw of [390, 768]) {
+    for (const m of [['#alerts-btn', '#alerts-modal', '#admin-menu-btn'], ['#orphan-fix-btn', '#orphan-fix-modal', '#admin-menu-btn'],
+      ['#dept-config-btn', '#dept-config-modal', '#admin-menu-btn'], ['#coaching-btn', '#coaching-modal', '#admin-menu-btn'],
+      ['#system-health-btn', '#health-modal', '#admin-menu-btn']]) {
+      const ctx = await browser.newContext({ viewport: { width: vw, height: vw === 390 ? 844 : 1024 } });
+      const page = await ctx.newPage();
+      await page.addInitScript(() => { try { localStorage.setItem('cdr.tour.done', '1'); } catch (e) {} });
+      await page.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
+      await page.waitForTimeout(1500);
+      // Opened by script: at phone width the header's own menu is off-screen, which is not what this measures.
+      await page.evaluate((x) => { document.querySelector(x[2]).click(); document.querySelector(x[0]).click(); }, m);
+      await page.waitForTimeout(1500);
+      const r = await page.evaluate((sel) => {
+        const md = document.querySelector(sel), bd = md.querySelector('.modal-panel-body'), cl = md.querySelector('.modal-close').getBoundingClientRect();
+        const wide = Array.from(bd.querySelectorAll('table')).filter((t) => t.scrollWidth > t.clientWidth + 1).length;
+        return { shown: getComputedStyle(md).display !== 'none', body: bd.scrollWidth - bd.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
+                 close: cl.left >= 0 && cl.right <= innerWidth && cl.top >= 0, ownScroll: wide };
+      }, m[1]);
+      record('NPS-2: ' + m[1] + ' at ' + vw + 'px -- the modal body does not scroll sideways, the page is no wider, Close is on screen',
+        r.shown && r.body <= 1 && r.page <= 1 && r.close && (vw !== 390 || r.ownScroll >= 1), JSON.stringify(r));
+      await ctx.close();
+    }
   }
 
   // ── UI-1 / UI-2: layers stacked OVER a report modal ─────────────────────
@@ -691,6 +932,50 @@ const MODALS = [
         });
         record('CL-3: after the reload, focus returns inside the worklist (not <body>)',
           focusAfter.inList === true, JSON.stringify(focusAfter));
+      }
+    }
+
+    // CCX-1 (broad-scan 2026-11-09): every mutation reloads and re-renders
+    // the cards. Text being typed must survive it -- on the card acted on AND
+    // on the others -- while the field that was just SAVED comes back empty.
+    {
+      const ids = await page.evaluate(() => Array.prototype.map.call(
+        document.querySelectorAll('#esc-list textarea.esc-resolve-text'), (t) => t.getAttribute('data-id')));
+      if (ids.length >= 2) {
+        const a = ids[0], b = ids[1];
+        await page.evaluate((x) => {
+          const set = (sel, v) => {
+            const t = document.querySelector(sel);
+            t.closest('details').open = true;
+            t.value = v;
+            t.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          set('textarea.esc-resolve-text[data-id="' + x.a + '"]', 'half-typed resolution');
+          set('textarea.esc-comments-text[data-id="' + x.a + '"]', 'a progress note');
+          set('textarea.esc-resolve-text[data-id="' + x.b + '"]', 'another card draft');
+        }, { a: a, b: b });
+        const loadsBefore = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'getEscalations').length);
+        await page.click('.esc-comment-save[data-id="' + a + '"]');
+        await page.waitForTimeout(1500);
+        const loadsAfter = await page.evaluate(() => window.__HARNESS__.calls.filter((c) => c.fn === 'getEscalations').length);
+        record('CCX-1: the save reloaded the list (the cards were rebuilt)', loadsAfter === loadsBefore + 1,
+          'getEscalations ' + loadsBefore + ' -> ' + loadsAfter);
+        const d = await page.evaluate((x) => {
+          const q = (sel) => document.querySelector(sel);
+          const ra = q('textarea.esc-resolve-text[data-id="' + x.a + '"]');
+          const ca = q('textarea.esc-comments-text[data-id="' + x.a + '"]');
+          const rb = q('textarea.esc-resolve-text[data-id="' + x.b + '"]');
+          const save = q('.esc-resolve-save[data-id="' + x.a + '"]');
+          return { res: ra ? ra.value : null, com: ca ? ca.value : null, other: rb ? rb.value : null,
+                   open: !!(ra && ra.closest('details') && ra.closest('details').open),
+                   saveEnabled: !!(save && !save.disabled) };
+        }, { a: a, b: b });
+        record('CCX-1: "Save comment only" keeps the half-typed resolution on the same card, shown and savable',
+          d.res === 'half-typed resolution' && d.open && d.saveEnabled, JSON.stringify(d));
+        record('CCX-1: the comment that was saved comes back empty', d.com === '', JSON.stringify(d));
+        record('CCX-1: a draft on another card survives the reload', d.other === 'another card draft', JSON.stringify(d));
+      } else {
+        record('CCX-1: the fixture has two cards with a resolve form', false, 'found ' + ids.length);
       }
     }
 

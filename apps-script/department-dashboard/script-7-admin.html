@@ -432,7 +432,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -1215,6 +1215,9 @@
       const verdict = d.verdict === 'would-fire' ? '<span class="al-hist-fire">would fire</span>'
         : d.verdict === 'quiet' ? '<span class="al-hist-quiet">quiet</span>'
         : d.verdict === 'error' ? '<span class="al-hist-quiet" title="' + escapeHtml(d.error || '') + '">error</span>'
+        // EXD-4 (#81): an exception day is not assessed, and says why.
+        : d.verdict === 'exception-day' ? '<span class="al-hist-quiet" title="' + escapeHtml(d.reason || 'Left out of every report figure')
+            + '">exception day</span>'
         : '<span class="al-hist-quiet">no calls</span>';
       const actual = d.logged ? escapeHtml(d.logged.status) + (d.logged.triggeredBy === 'daily-trigger' ? '' : ' (manual)') : '—';
       return '<tr class="' + (d.verdict === 'would-fire' ? 'is-fire' : '') + '">'
@@ -1983,6 +1986,8 @@
     });
     const batchApply = $('of-batch-apply');
     if (batchApply) batchApply.addEventListener('click', ofBatchApply_);
+    const ignoreAll = $('of-ignore-all');   // DCA-7
+    if (ignoreAll) ignoreAll.addEventListener('click', ofIgnoreAll_);
 
     function openModal() {
       modal.style.display = '';
@@ -2000,7 +2005,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -2036,6 +2041,7 @@
       if (link) link.href = data.spreadsheetUrl;
     }
     ofRenderOrphans_(data.orphans || [], data.rosterNames || []);
+    ofRenderUnlisted_(data);
     ofRenderAliases_(data.aliases || []);
     ofRenderLog_(data.log || []);
   }
@@ -2046,7 +2052,7 @@
     if (!orphans.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
         + 'No outliers in the last 180 days. Every agent name in DQE '
-        + 'Historical Data maps to a roster entry. &#x1F389;'
+        + 'Historical Data maps to a roster entry, and nobody unaccounted for is taking direct calls on another person’s roster extension or on one no roster lists. &#x1F389;'
         + '</td></tr>';
       const bar0 = $('of-batch-bar'); if (bar0) bar0.style.display = 'none';
       const sa0 = $('of-select-all'); if (sa0) { sa0.checked = false; sa0.indeterminate = false; sa0.disabled = true; }
@@ -2072,13 +2078,30 @@
 
     tbody.innerHTML = orphans.map(function (o, idx) {
       const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
+      // DCA-6: someone 8x8 names on an extension the roster lists for another
+      // person (a new hire on a former employee's extension). Their direct
+      // calls are credited to no one until they are on a roster; the
+      // extension shown is THEIR OWN, so it pre-fills the New Assignment form.
+      // DCA-7: or on an extension NO roster lists -- a new hire on a new
+      // extension, or simply someone the roster does not track ("Not an agent").
+      const direct = o.directExt
+        ? '<div class="of-direct-note">Direct line ' + escapeHtml(o.directExt)
+          + (o.directListedFor ? ' — the roster lists it for ' + escapeHtml(o.directListedFor)
+                               : (o.directUnlisted ? ' — no roster lists this extension' : ''))
+          + ' · ' + fmtNumber(o.directCalls || 0) + ' direct call' + ((o.directCalls || 0) === 1 ? '' : 's') + ' not credited to anyone</div>'
+        : '';
+      const ignoreBtn = ofUnlistedOnly_(o)
+        ? ' <button type="button" class="btn btn-secondary of-row-ignore" data-idx="' + idx + '" '
+          + 'title="This person is not a call-taking agent. Leave them off this list and the Overview banner. Reversible under “Not an agent” below.">Not an agent</button>'
+        : '';
+      const addExts = o.directExt ? escapeHtml(o.directExt) : (o.sampleExts || []).map(escapeHtml).join(', ');
       // Two rows per orphan: the main row, plus a hidden inline form for
       // the "this is actually a NEW ASSIGNMENT" flow -- adds them to a
       // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td class="of-check-col"><input type="checkbox" class="of-row-check" data-idx="' + idx + '" '
            +       'title="Select for batch apply (enabled once mapped or a new assignment is filled)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
-           +   '<td>' + escapeHtml(o.name) + '</td>'
+           +   '<td>' + escapeHtml(o.name) + direct + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
            +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
            +   '<td>' + exts + '</td>'
@@ -2090,6 +2113,7 @@
            +       'data-idx="' + idx + '" disabled>Apply</button> '
            +     '<button type="button" class="btn btn-secondary of-row-addnew" data-idx="' + idx + '" '
            +       'title="This isn’t a misspelling of an existing agent — it’s a new assignment (a new employee, or someone being added to this department). Add them to a department’s roster.">New Assignment…</button>'
+           +     ignoreBtn
            +   '</td>'
            + '</tr>'
            + '<tr class="of-add-row" data-add-idx="' + idx + '" style="display:none;">'
@@ -2102,7 +2126,7 @@
            +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
            +         'aria-label="Extensions for ' + escapeHtml(o.name) + '" '
            +         'placeholder="e.g. 1042 — the agent’s own extension" '
-           +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
+           +         'value="' + addExts + '">'
            +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
            +       '<span class="of-add-hint"><strong>Enter the agent’s own individual (direct) extension</strong> — NOT the department queue extension. '
            +         'Digit-only; comma-separate multiple. Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s '
@@ -2132,6 +2156,13 @@
         const canonical = (inp && ofRosterSet_[inp.value]) ? inp.value : '';
         if (!orphan || !canonical) return;
         ofConfirmAndApply_(orphan, canonical);
+      });
+    });
+
+    tbody.querySelectorAll('.of-row-ignore').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const orphan = (ofLastInit.orphans || [])[Number(btn.getAttribute('data-idx'))];
+        if (orphan) ofSetIgnored_([orphan.name], true);
       });
     });
 
@@ -2170,6 +2201,103 @@
     const selAll = $('of-select-all');
     if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
     ofUpdateBatchState_();
+  }
+
+  // DCA-7: a person known ONLY from an extension no roster lists (no DQE
+  // rows, not on another person's roster extension). Only these can be marked
+  // "Not an agent" -- the server hides nothing else whatever the list says.
+  function ofUnlistedOnly_(o) {
+    return !!(o && o.directUnlisted && !o.rows);
+  }
+
+  // The bar under the table (how many such people, and "mark all"), the note
+  // when the import cut its list, and the names already marked.
+  function ofRenderUnlisted_(data) {
+    const unlisted = (data.orphans || []).filter(ofUnlistedOnly_);
+    const bar = $('of-unlisted-bar');
+    if (bar) {
+      bar.style.display = unlisted.length ? '' : 'none';
+      const hint = $('of-unlisted-hint');
+      if (hint) {
+        hint.textContent = fmtNumber(unlisted.length) + (unlisted.length === 1 ? ' person is' : ' people are')
+          + ' on an extension no roster lists. Add the call-taking agents with New Assignment; mark the rest Not an agent.';
+      }
+      const all = $('of-ignore-all');
+      if (all) all.style.display = unlisted.length > 1 ? '' : 'none';
+    }
+    const cutEl = $('of-direct-cut');
+    if (cutEl) {
+      const cut = data.directCut;
+      cutEl.style.display = cut && cut.n ? '' : 'none';
+      cutEl.textContent = cut && cut.n
+        ? 'The import for ' + cut.dateIso + ' left ' + fmtNumber(cut.n) + ' more '
+          + (cut.n === 1 ? 'person' : 'people') + ' on unlisted extensions off its list (it keeps the busiest). '
+          + 'They are listed once the names above are on a roster.'
+        : '';
+    }
+    const ignored = data.ignored || [];
+    const box = $('of-ignored');
+    if (box) box.style.display = ignored.length ? '' : 'none';
+    const sum = $('of-ignored-summary');
+    if (sum) sum.textContent = 'Not an agent (' + fmtNumber(ignored.length) + ')';
+    const ul = $('of-ignored-list');
+    if (ul) {
+      ul.innerHTML = ignored.map(function (n, i) {
+        return '<li><span>' + escapeHtml(n) + '</span>'
+             + '<button type="button" class="link-btn of-ignored-restore" data-i="' + i + '" aria-label="Restore ' + escapeHtml(n) + ' to the outlier list">Restore</button></li>';
+      }).join('');
+      ul.querySelectorAll('.of-ignored-restore').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const n = ignored[Number(btn.getAttribute('data-i'))];
+          if (n) ofSetIgnored_([n], false);
+        });
+      });
+    }
+  }
+
+  function ofIgnoreAll_() {
+    if (ofBusy_ || !ofLastInit) return;
+    const names = (ofLastInit.orphans || []).filter(ofUnlistedOnly_).map(function (o) { return o.name; });
+    if (!names.length) return;
+    dsConfirm_({
+      title: 'Mark all as not agents',
+      messageHtml: 'Mark <strong>' + fmtNumber(names.length) + '</strong> '
+        + (names.length === 1 ? 'person' : 'people') + ' on unlisted extensions as not agents? '
+        + 'Add anyone who takes calls to a roster first — a name marked here stays off this list and the Overview banner '
+        + 'until it is restored. Audited to Orphan Fix Log.',
+      confirmLabel: 'Mark all', cancelLabel: 'Cancel',
+    }).then(function (okc) { if (okc) ofSetIgnored_(names, true); });
+  }
+
+  // Marking is one click (it is reversible, and writes no call data); a
+  // restore re-reads the list, since only the server knows that person's calls.
+  function ofSetIgnored_(names, ignored) {
+    if (ofBusy_ || !names || !names.length) return;
+    ofSetBusy_(true);
+    ofSetStatus_('loading', (ignored ? 'Marking ' : 'Restoring ') + (names.length === 1 ? names[0] : names.length + ' names') + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        ofSetBusy_(false);
+        res = res || {};
+        const n = (res.changed || []).length;
+        ofSetStatus_('success', ignored
+          ? 'Marked ' + n + ' name' + (n === 1 ? '' : 's') + ' as not an agent.'
+            + (res.skipped ? ' ' + res.skipped + ' already on a roster.' : '')
+          : 'Restored ' + n + ' name' + (n === 1 ? '' : 's') + '.');
+        if (!ofLastInit || !ignored) { ofLoadInit_(true); return; }
+        if (res.ignored) ofLastInit.ignored = res.ignored;
+        // Drop exactly the rows the server now hides: unlisted-only people on the list.
+        const gone = {};
+        (res.ignored || []).forEach(function (x) { gone[x] = true; });
+        ofLastInit.orphans = (ofLastInit.orphans || []).filter(function (o) { return !(ofUnlistedOnly_(o) && gone[o.name]); });
+        ofApplyLocalUpdate_(res, []);
+      })
+      .withFailureHandler(function (err) {
+        ofSetBusy_(false);
+        ofSetStatus_('error', (ignored ? 'Could not mark: ' : 'Could not restore: ')
+          + (err && err.message ? err.message : String(err)));
+      })
+      .setOrphanIgnored({ names: names, ignored: !!ignored });
   }
 
   // Batch 4: a row's batch action + readiness. A row is batch-ready when its
@@ -2260,7 +2388,7 @@
       // Re-enable the inputs first, then reconcile each row's Apply /
       // Add-to-roster / checkbox state from its current values (ofSyncRowReady_
       // handles both the rename and new-assignment readiness paths).
-      tbody.querySelectorAll('.of-row-select, .of-row-addnew, .of-add-dept, .of-add-exts')
+      tbody.querySelectorAll('.of-row-select, .of-row-addnew, .of-row-ignore, .of-add-dept, .of-add-exts')
         .forEach(function (el) { el.disabled = false; });
       const seen = {};
       tbody.querySelectorAll('.of-row-select').forEach(function (inp) {
@@ -2629,7 +2757,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3034,7 +3162,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -3448,7 +3576,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3544,12 +3672,15 @@
     if (res) res.style.display = '';
     const sum = d.summary || {}, bo = sum.byOutcome || {};
     const n = Number(sum.cases) || 0;
+    // NUM-5: a sub-queue is counted with its parent department; say so.
+    const deptNote = m.dept ? ' (' + escapeHtml(m.dept)
+      + (m.deptAsked ? ', which ' + escapeHtml(m.deptAsked) + ' is counted with' : '') + ')' : '';
     $('tr-summary').innerHTML = n
       ? '<strong>' + escapeHtml(fmtNumber(n)) + '</strong> call' + (n === 1 ? '' : 's') + ' where a transfer was tried again in the same department'
-        + (m.dept ? ' (' + escapeHtml(m.dept) + ')' : '') + '. The first attempt: '
+        + deptNote + '. The first attempt: '
         + escapeHtml(fmtNumber(bo.quickDecline || 0)) + ' declined quickly, ' + escapeHtml(fmtNumber(bo.rangOut || 0)) + ' rang out, '
         + escapeHtml(fmtNumber(bo.voicemail || 0)) + ' went to voicemail' + (bo.unknown ? ', ' + escapeHtml(fmtNumber(bo.unknown)) + ' not timed' : '') + '.'
-      : 'No transfer was tried again in the same department in these dates' + (m.dept ? ' (' + escapeHtml(m.dept) + ')' : '') + '.';
+      : 'No transfer was tried again in the same department in these dates' + deptNote + '.';
     const callees = sum.callees || [];
     const cw = document.querySelector('#transfer-retries-modal .tr-callees-wrap');
     if (cw) cw.style.display = callees.length ? '' : 'none';
@@ -3606,7 +3737,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);
@@ -3695,10 +3826,15 @@
       tone: 'danger',
     }).then(function (ok) {
       if (!ok) return;
+      // CCX-5: one removal at a time per date -- a second click while the
+      // first was out sent the request again and reported an error for a day
+      // that had just been removed.
+      var busyKey = 'excRemove:' + date;
+      if (mutationBusy_(busyKey)) return;
       excEditorStatus_('', 'Removing…');
       google.script.run
-        .withSuccessHandler(function (data) { excEditorStatus_('', 'Removed.'); excEditorRender_(data); })
-        .withFailureHandler(function (err) { excEditorStatus_('error', (err && err.message) || String(err)); })
+        .withSuccessHandler(function (data) { mutationDone_(busyKey); excEditorStatus_('', 'Removed.'); excEditorRender_(data); })
+        .withFailureHandler(function (err) { mutationDone_(busyKey); excEditorStatus_('error', (err && err.message) || String(err)); })
         .removeExceptionDay({ date: date });
     });
   }
@@ -3725,7 +3861,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
     btn.addEventListener('click', openModal);

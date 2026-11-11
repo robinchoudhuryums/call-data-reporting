@@ -833,16 +833,22 @@ function coachingDeliveryRun_() {
         emailNote = ' — emailed admins'
           + (carried.length ? ' (incl. ' + carried.length + ' retried from a previous failed send)' : '');
       } else {
-        // Never claim notified on an unconfirmed send: park the batch (capped
-        // so the property stays under the 9KB value limit) and say so.
+        // Never claim notified on an unconfirmed send: park the batch and say
+        // so. RUN-6: sized to FIT the ~9 KB property limit (40 full flag
+        // records did not, so the save threw, was swallowed, and the note
+        // still said "kept pending"); the note reports what was really kept.
+        var pend = coachingPendingPayload_(preview.window, toEmail);
+        var keptPending = 0;
         try {
-          propsSvc.setProperty('COACHING_NOTIFY_PENDING', JSON.stringify({
-            window: preview.window, flags: toEmail.slice(0, 40),
-          }));
+          propsSvc.setProperty('COACHING_NOTIFY_PENDING', pend.json);
+          keptPending = pend.kept;
         } catch (se) { Logger.log('coachingDeliveryRun_: pending-notify save failed: %s', se); }
         notifyFailed = true;
-        emailNote = ' — EMAIL NOT SENT (' + (to ? 'send failed' : 'no admin recipients')
-          + '); ' + toEmail.length + ' flag(s) kept pending, re-emailed on the next run';
+        emailNote = ' — EMAIL NOT SENT (' + (to ? 'send failed' : 'no admin recipients') + '); '
+          + (keptPending
+              ? keptPending + ' flag(s) kept pending, re-emailed on the next run'
+                + (keptPending < toEmail.length ? ' (' + (toEmail.length - keptPending) + ' more did not fit and are on the worklist only)' : '')
+              : 'the ' + toEmail.length + ' flag(s) could NOT be kept pending -- they are on the worklist only');
       }
     }
     // Step 5b: each dept's MANAGER email for its NEW flags, held for admins.
@@ -855,7 +861,9 @@ function coachingDeliveryRun_() {
       // old "ok … EMAIL NOT SENT" read green on the Health page while the
       // admins were never told about the new flags. NOTIFY-FAILED carries the
       // failure word the classifier already matches.
-      result: (notifyFailed ? 'NOTIFY-FAILED ' : errors.length ? 'PARTIAL ' : 'ok ') + diff.newFlags.length + ' new, ' + diff.continuing.length
+      // RUN-2: a held MANAGER email that did not send is a failed notification
+      // too -- it read `ok` with the failure only in the tail of the note.
+      result: ((notifyFailed || held.failed) ? 'NOTIFY-FAILED ' : errors.length ? 'PARTIAL ' : 'ok ') + diff.newFlags.length + ' new, ' + diff.continuing.length
         + ' continuing, ' + diff.recoveredOpenRows.length + ' recovered-open ('
         + preview.window.from + '..' + preview.window.to + ')'
         + emailNote + errNote,
@@ -871,6 +879,28 @@ function coachingDeliveryRun_() {
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
     try { conn.close(); } catch (ce) {}
   }
+}
+
+/**
+ * PURE (RUN-6). The COACHING_NOTIFY_PENDING value: the flags the next run
+ * re-emails, each cut to the fields the email reads, and as many as fit under
+ * COACHING_PENDING_MAX_CHARS_ (a Script Property value is capped near 9 KB).
+ * Returns { json, kept }.
+ */
+var COACHING_PENDING_MAX_CHARS_ = 8000;
+function coachingPendingPayload_(window, flags) {
+  var slim = (flags || []).map(function (f) {
+    var o = { dept: f.dept, agent: f.agent, ratePct: f.ratePct, teamRatePct: f.teamRatePct,
+              teamRatioPct: f.teamRatioPct, gapPts: f.gapPts, missed: f.missed, rung: f.rung };
+    if (f.flatRatePct != null) o.flatRatePct = f.flatRatePct;
+    return o;
+  });
+  var n = slim.length, json = '';
+  for (; n >= 0; n--) {
+    json = JSON.stringify({ window: window, flags: slim.slice(0, n) });
+    if (json.length <= COACHING_PENDING_MAX_CHARS_) break;
+  }
+  return { json: json, kept: Math.max(0, n) };
 }
 
 // ── Worklist RPCs (admin-only until released) ─────────────────────────────

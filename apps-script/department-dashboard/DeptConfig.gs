@@ -103,13 +103,24 @@ function getConfigSource_() {
 function readDeptConfigRows_() {
   if (DEPT_CONFIG_ROWS_MEMO_) return DEPT_CONFIG_ROWS_MEMO_;
   let out = null;
+  DEPT_CONFIG_FELL_BACK_ = false;
   if (getConfigSource_() === 'neon') {
     out = neonReadDeptConfigRows_();   // null on error/unreachable -> fall through
+    if (out === null) {
+      // RUN-10: under CONFIG_SOURCE=neon the sheet is no longer written, so
+      // this fallback can serve mappings that are out of date. Said in the
+      // log and on the Health page's config-source row (deptConfigFellBack_).
+      DEPT_CONFIG_FELL_BACK_ = true;
+      Logger.log('readDeptConfigRows_: CONFIG_SOURCE=neon but the Neon read failed -- using the Dept Config SHEET, '
+        + 'which may be out of date.');
+    }
   }
   if (out === null) out = sheetReadDeptConfigRows_();
   DEPT_CONFIG_ROWS_MEMO_ = out;
   return out;
 }
+var DEPT_CONFIG_FELL_BACK_ = false;
+function deptConfigFellBack_() { return DEPT_CONFIG_FELL_BACK_ === true; }
 
 // R8-C4: per-execution flag distinguishing "config sheet ABSENT / empty"
 // (the documented INV-54 constants-fallback, regression-safe) from "the

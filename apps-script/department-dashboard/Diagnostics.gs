@@ -9,7 +9,7 @@
  * known-issues) could not be picked at all. Un-suffixed means RPC-reachable
  * too, so each one starts with assertAdmin_() (the auditQueueSplitAttribution
  * pattern); they only read and Logger.log, so INV-01 is untouched. The
- * helpers below them (typeOfCell_, formatHms_, columnLetter_) stay private.
+ * helpers below them (formatHms_, columnLetter_) stay private.
  */
 
 /**
@@ -236,12 +236,6 @@ function diagnoseTimes() {
                computedAtt, formatHms_(computedAtt));
     Logger.log('');
   }
-}
-
-function typeOfCell_(v) {
-  if (v instanceof Date) return 'Date';
-  if (v === null) return 'null';
-  return typeof v;
 }
 
 function formatHms_(seconds) {

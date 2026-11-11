@@ -207,11 +207,18 @@ function runNeonBackup_() {
               while (partIt.hasNext()) partIt.next().setTrashed(true);
             }
           } else {
-            var part = 0;
-            for (var c2 = 0; c2 < chunks.length; c2++) {
-              if (!chunks[c2]) continue;
-              part++;
-              nbWriteFile_(folder, spec.table + '-' + ym + '.part' + part + '.jsonl', chunks[c2]);
+            // OFB-3 (broad-scan 2026-11-09): written LAST PART FIRST, part1
+            // last. nbMonthMainFile_ reads part1's date as the whole month's
+            // "last written" stamp, so part1 must be the final write: in the
+            // old 1..N order a failure after part1 left a closed month whose
+            // part1 was dated today -- the next run read it as FINAL, skipped
+            // the month forever and reported `ok`, and NeonRetention prunes on
+            // an `ok` backup. Now a run that stops short leaves part1 old (or
+            // absent), so the month is written again.
+            var bodies = chunks.filter(function (s) { return s; });
+            var part = bodies.length;
+            for (var c2 = bodies.length - 1; c2 >= 0; c2--) {
+              nbWriteFile_(folder, spec.table + '-' + ym + '.part' + (c2 + 1) + '.jsonl', bodies[c2]);
             }
             // Remove a stale single-file version so a restore never mixes
             // an old whole-month file with the new parts.

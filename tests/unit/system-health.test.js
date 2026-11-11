@@ -513,6 +513,48 @@ test('R19 beacon: window cap stops emails but keeps accepting reports; empty mes
   assert.throws(function () { h.call('reportClientIssue', { kind: 'x', message: 'y' }); }, /authorized/i);
 });
 
+// F32 (broad-scan 2026-11-10): the caps were read, the email sent, and only
+// then the counts written -- so parallel reports all read the same counts and
+// all sent. The decision and the reservation now happen in one locked step,
+// and the email goes out after it.
+test('F32 beacon: the slot is reserved under the lock BEFORE the email is sent, and the lock is not held across the send', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  h.state.sentEmails.length = 0;
+  h.state.lockHeld = false; h.state.lockBusy = false;
+  const atSend = [];
+  const realSend = h.ctx.sendAppEmail_;
+  h.ctx.sendAppEmail_ = function (spec) {
+    atSend.push({ count: h.state.cache.get('cissue:count'), lockHeld: h.state.lockHeld,
+      users: Array.from(h.state.cache.keys()).filter(function (k) { return /^cissue:user:/.test(k); }).length });
+    return realSend(spec);
+  };
+  try {
+    const out = h.call('reportClientIssue', { kind: 'uncaught', message: 'first' });
+    assert.equal(out.emailed, true);
+    assert.deepEqual(atSend, [{ count: '1', lockHeld: false, users: 1 }],
+      'when the email goes out the window count and the per-user count are already written, and the lock is free');
+
+    // A send that FAILS has still used its slot: a loop of failing sends is bounded.
+    h.ctx.sendAppEmail_ = function () { throw new Error('mail quota'); };
+    const failed = h.call('reportClientIssue', { kind: 'uncaught', message: 'second' });
+    assert.equal(failed.ok, true, 'the beacon never errors back into the client');
+    assert.equal(failed.emailed, false);
+    assert.equal(h.state.cache.get('cissue:count'), '2');
+    assert.equal(h.state.lockHeld, false);
+  } finally { h.ctx.sendAppEmail_ = realSend; }
+
+  // The cap note is reserved the same way: its marker is set before its email.
+  h.state.cache = new Map();
+  h.state.cache.set('cissue:start', String(Date.now() - 60000));
+  h.state.cache.set('cissue:count', '15');
+  const capSeen = [];
+  h.ctx.sendAppEmail_ = function (spec) { capSeen.push(!!h.state.cache.get('cissue:capat') && !h.state.lockHeld); return realSend(spec); };
+  try { h.call('reportClientIssue', { kind: 'uncaught', message: 'over the cap' }); }
+  finally { h.ctx.sendAppEmail_ = realSend; }
+  assert.deepEqual(capSeen, [true]);
+});
+
 test('R19 beacon: oversized fields are capped, not rejected', function () {
   installHealth({});
   h.state.sentEmails.length = 0;
@@ -988,6 +1030,90 @@ test('R47: past 80% the row warns and leads with what breaks at 100%', function 
   assert.equal(row.status, 'warn');
   assert.match(row.value, /\(100%\)/);
   assert.match(row.hint, /^Near the cap: at 100% every WRITE to this workbook fails/);
+});
+
+// ── OFB-2 (broad-scan 2026-11-09, Batch 7): the Neon-outage copies ───────────
+// The Inbound / Outbound Calls tabs are what every per-call surface serves
+// while Neon is down, and nothing watched them: a stale copy, a tab left out
+// of date order, or an export that was never installed was found DURING the
+// outage. Sheet-only, so the rows render in the fast half.
+function installFallbackTabs(inboundDates, outboundDates, phRows) {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const sheets = {};
+  h.state.spreadsheet.getSheets().forEach(function (sh) { sheets[sh.getName()] = [['h']]; });
+  if (inboundDates) sheets['Inbound Calls'] = [['Call Date', 'Call ID']].concat(inboundDates.map(function (d, i) { return [d, 'i' + i]; }));
+  if (outboundDates) sheets['Outbound Calls'] = [['Call Date', 'Call ID']].concat(outboundDates.map(function (d, i) { return [d, 'o' + i]; }));
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
+  h.ctx.getLatestDataDate = function () { return '2026-11-06'; };   // a Friday
+  h.ctx.readPipelineHealth_ = function () { return phRows || []; };  // newest first
+}
+function clearFallbackStubs() { h.ctx.getLatestDataDate = undefined; h.ctx.readPipelineHealth_ = undefined; }
+
+test('OFB-2: a current, ordered copy reads ok, in the FAST half, with its size against the cell cap', function () {
+  installFallbackTabs(['2026-11-05', '2026-11-06', '2026-11-06'], ['2026-11-05'], [
+    { step: 'inboundExport', status: 'success', timestamp: '2026-11-07 09:01', notes: '2 replaced, 0 pruned' },
+    { step: 'outboundExport', status: 'success', timestamp: '2026-11-07 09:02', notes: '' },
+  ]);
+  let opened = 0;
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return { close: function () {} }; };
+  try {
+    const data = h.call('getSystemHealth', { part: 'fast' });
+    const ib = rowByKey(data, 'fallback-inbound'), ob = rowByKey(data, 'fallback-outbound');
+    assert.equal(ib.section, 'sheets');
+    assert.equal(ib.status, 'ok');
+    assert.match(ib.value, /^through 2026-11-06 · 3 rows · \d+ cells \([\d.]+% of the 10M cap\)/);
+    assert.match(ib.hint, /Last inboundExport run: success @ 2026-11-07 09:01/);
+    assert.match(ib.hint, /INBOUND_EXPORT_KEEP_DAYS/);
+    assert.equal(ob.status, 'ok', 'one workday behind is the routine morning gap, and it is said');
+    assert.match(ob.value, /^through 2026-11-05 \(1 workday behind 2026-11-06\)/);
+    assert.equal(opened, 0, 'sheet-only: it must render mid-outage');
+  } finally { clearFallbackStubs(); }
+});
+
+test('OFB-2: a copy two workdays behind warns and says whether the export ran; a weekend is not a workday', function () {
+  // Latest daily data Fri 11-06; inbound copy stops Wed 11-04 (2 workdays), outbound Thu 10-29.
+  installFallbackTabs(['2026-11-03', '2026-11-04'], ['2026-10-29'], [
+    { step: 'inboundExport', status: 'failure', timestamp: '2026-11-07 09:01', notes: 'Neon unreachable (expected; copy kept): timeout' },
+  ]);
+  try {
+    const data = h.call('getSystemHealth', { part: 'fast' });
+    const ib = rowByKey(data, 'fallback-inbound'), ob = rowByKey(data, 'fallback-outbound');
+    assert.equal(ib.status, 'warn');
+    assert.match(ib.value, /through 2026-11-04 · 2 workdays behind the daily data \(2026-11-06\)/);
+    assert.match(ib.hint, /Last inboundExport run: failure @ 2026-11-07 09:01 — Neon unreachable/);
+    assert.equal(ob.status, 'warn');
+    assert.match(ob.value, /6 workdays behind/, 'Oct 30, Nov 2-6: the weekend is not counted');
+    assert.match(ob.hint, /No outboundExport run in the last \d+ Pipeline Health entries — the daily export is probably not installed/);
+    assert.match(ob.hint, /Operator State #50/);
+    // A Monday anchor: Friday's copy is zero workdays behind on a weekend-only gap.
+    assert.equal(h.call('healthWorkdaysAfter_', '2026-11-06', '2026-11-08'), 0);
+    assert.equal(h.call('healthWorkdaysAfter_', '2026-11-06', '2026-11-09'), 1);
+  } finally { clearFallbackStubs(); }
+});
+
+test('OFB-2: rows out of date order warn (the outage readers stop early); a missing tab warns only when Neon is in use', function () {
+  installFallbackTabs(['2026-11-05', '2026-11-06', '2026-10-20'], null, []);
+  try {
+    const data = h.call('getSystemHealth', { part: 'fast' });
+    const ib = rowByKey(data, 'fallback-inbound'), ob = rowByKey(data, 'fallback-outbound');
+    assert.equal(ib.status, 'warn');
+    assert.match(ib.value, /through 2026-11-06 · rows OUT OF DATE ORDER/);
+    assert.match(ib.hint, /Refresh now re-sorts it before it connects/);
+    assert.equal(ob.status, 'warn');
+    assert.equal(ob.value, 'tab not found');
+    // No Neon at all: nothing for a copy to stand in for.
+    installHealth({});
+    const quiet = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'fallback-outbound');
+    assert.equal(quiet.status, 'muted');
+  } finally { clearFallbackStubs(); }
+});
+
+test('OFB-2 / OFB-5: empty columns right of the data are named as cap cost', function () {
+  const v = h.call('healthFallbackTabVerdict_', { sheet: 'Outbound Calls', item: '#50', menu: 'Outbound Calls Tab',
+    step: 'outboundExport', neonConfigured: true, exists: true, rows: 1000, latestIso: '2026-11-06', outOfOrder: false,
+    anchorIso: '2026-11-06', lag: 0, lastRun: null, scanRows: 250, cells: 26026, capPct: 0.3, spareCols: 14 });
+  assert.equal(v.status, 'ok');
+  assert.match(v.hint, /14 empty column\(s\) right of the data count against the cell cap/);
 });
 
 // ── Storage by table: the THIRD capacity row (roadmap parallel track) ────────
@@ -1834,4 +1960,31 @@ test('G4: deploy.sh stamps every project\'s tree hash, and the hash skips the st
     assert.notEqual(hash(), h1, 'a code edit moves it');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   assert.equal(spawnSync('bash', ['-c', fn + '\nproject_tree_hash_ /no/such/dir'], { encoding: 'utf8' }).stdout, '');
+});
+
+// RUN-10 (broad-scan 2026-11-09, Batch 5 follow-on): under CONFIG_SOURCE=neon
+// the config sheets are no longer written, so a Neon outage quietly served
+// the sheet's older mappings.
+test('RUN-10: the config-source row warns when this request read Dept Config from the sheet under CONFIG_SOURCE=neon', function () {
+  installHealth();
+  h.ctx.getConfigSource_ = function () { return 'neon'; };
+  h.ctx.readDeptConfigRows_ = function () { return []; };
+  h.ctx.deptConfigFellBack_ = function () { return true; };
+  let row = rowByKey(h.call('getSystemHealth'), 'config-source');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /reading the SHEET \(Neon unreachable\)/);
+  assert.match(row.hint, /may be out of date until Neon is back/);
+  // Neon answered: the plain row.
+  h.ctx.deptConfigFellBack_ = function () { return false; };
+  row = rowByKey(h.call('getSystemHealth'), 'config-source');
+  assert.equal(row.status, 'muted');
+  assert.equal(row.value, 'neon');
+  // CONFIG_SOURCE=sheet never asks.
+  installHealth();
+  h.ctx.readDeptConfigRows_ = function () { throw new Error('must not be read for this row'); };
+  h.ctx.deptConfigFellBack_ = function () { return true; };
+  row = rowByKey(h.call('getSystemHealth'), 'config-source');
+  assert.equal(row.status, 'muted');
+  assert.equal(row.value, 'sheet');
+  delete h.ctx.readDeptConfigRows_; delete h.ctx.deptConfigFellBack_;
 });

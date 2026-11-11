@@ -116,6 +116,31 @@ function saveAlertReasonRule(req) {
 }
 
 /**
+ * PURE (EXD-4). One day's agents with a repeated name folded into ONE entry:
+ * a date with duplicate rows for an agent lists them twice, and the second
+ * entry read as "missed an earlier day", dropping the agent from the check.
+ * Counts are summed and the rate recomputed over the sum (the shared formula
+ * when it is loaded, else answered / (answered + missed)).
+ */
+function alertMergeDayAgents_(agents) {
+  var seen = {}, out = [];
+  (agents || []).forEach(function (a) {
+    if (!a) return;
+    var k = String(a.name);
+    var m = seen[k];
+    if (!m) { m = seen[k] = { name: a.name, rung: a.rung, answered: a.answered, missed: a.missed, pct: a.pct }; out.push(m); return; }
+    m.answered = (Number(m.answered) || 0) + (Number(a.answered) || 0);
+    m.missed = (Number(m.missed) || 0) + (Number(a.missed) || 0);
+    m.rung = (Number(m.rung) || 0) + (Number(a.rung) || 0);
+    var denom = m.answered + m.missed;
+    var p = (typeof answerRatePct_ === 'function') ? answerRatePct_(m.answered, m.missed, m.rung)
+      : (denom > 0 ? (m.answered / denom) * 100 : 0);
+    m.pct = Math.round(p * 10) / 10;
+  });
+  return out;
+}
+
+/**
  * PURE. Agents below `threshold` on EVERY one of `perDay` (newest first,
  * `{iso, agents:[{name, pct, answered, missed}]}`); an agent missing from a
  * day (no answerable calls) does not qualify. `excludes` = exact names left
@@ -128,7 +153,7 @@ function alertAgentLowFindings_(perDay, threshold, excludes) {
   if (!perDay || !perDay.length) return [];
   var byName = {};
   perDay.forEach(function (d, i) {
-    (d.agents || []).forEach(function (a) {
+    alertMergeDayAgents_(d.agents).forEach(function (a) {
       if (ex[a.name]) return;
       var e = byName[a.name] || (byName[a.name] = { name: a.name, days: [], ok: true });
       if (e.days.length !== i) { e.ok = false; return; }   // missed an earlier day: not every day
@@ -168,13 +193,29 @@ function alertCallbackMisses_(dept, abandonIso, throughIso) {
     var win = Math.max(1, alertReasonDaysBetween_(abandonIso, throughIso));
     var scope = { from: abandonIso, to: abandonIso, dept: dept, companyView: false, scopeDepts: [dept] };
     var readWin = (typeof OUTBOUND_CALLBACK_WINDOW_DAYS === 'number') ? OUTBOUND_CALLBACK_WINDOW_DAYS : 3;
-    var list = obCallbackListEpisodes_(conn, scope, Math.max(0, win - readWin), win);
+    var list = obCallbackListEpisodes_(conn, scope, Math.max(0, win - readWin), win, throughIso);   // RUN-9: judged as of throughIso
     if (!list) return out;
     out.available = true;
+    // RUN-1: the question is fixed -- "not called back by the end of
+    // throughIso" -- so it is judged against the calls actually LOADED. The
+    // engine's `pending` also covers a caller who tried AGAIN inside the
+    // window (the repeat extends their episode's deadline), and reading that
+    // as "cannot be judged yet" skipped the whole department on a false "calls
+    // are not loaded" note -- after which that caller, absorbed into an
+    // episode that started before the next run's day, was never counted on
+    // any run. With both per-call tables loaded through throughIso, a pending
+    // episode is simply one nobody has called back. Only data that is NOT
+    // loaded that far leaves it unjudged.
+    out.dataThrough = list.dataThrough || null;
+    // "Loaded" by the engine's own rule (obEpObservedThrough_: the older
+    // table's newest date, never later than yesterday), so the two agree.
+    var seenThrough = (list.ctx && typeof obEpObservedThrough_ === 'function')
+      ? obEpObservedThrough_(list.ctx) : String(list.dataThrough || '');
+    var loaded = /^\d{4}-\d{2}-\d{2}$/.test(String(seenThrough || '')) && String(seenThrough) >= throughIso;
     (list.eps || []).forEach(function (ep) {
       out.total++;
-      if (ep.outcome === 'pending') out.pending++;
-      else if (ep.outcome === 'none') {
+      if (ep.outcome === 'pending' && !loaded) out.pending++;
+      else if (ep.outcome === 'none' || ep.outcome === 'pending') {
         out.missed.push({ firstHms: ep.firstHms || '', queue: (ep.attempts[0] && ep.attempts[0].q) || '',
                           attempts: ep.attempts.length });
       }
@@ -261,7 +302,17 @@ function runAlertReasons_(dateIso, dryRun, honorSkipDates, cfg, pushAndLog) {
         var found = alertAgentLowFindings_(perDay, r.agentLow.threshold, ex);
         var what = 'below ' + r.agentLow.threshold + '% on each of the last ' + days.length + ' workdays ('
           + days[days.length - 1] + '..' + days[0] + ')';
-        if (!found.length) {
+        // EXD-4: a workday in the window with NO agent call data cannot be
+        // judged -- nobody can be "below on every day" -- so the run says
+        // no-data (the import has not landed, or the day is missing) instead
+        // of "quiet", which read as "everyone was fine".
+        var noData = perDay.filter(function (d) { return !(d.agents || []).length; })
+          .map(function (d) { return d.iso; });
+        if (noData.length) {
+          pushAndLog(base('agent-low', { status: 'no-data', threshold: r.agentLow.threshold,
+            notes: 'No agent call data for ' + noData.join(', ') + ' -- the ' + days.length
+              + '-workday check was not assessed' }));
+        } else if (!found.length) {
           pushAndLog(base('agent-low', { status: 'quiet', threshold: r.agentLow.threshold,
             notes: 'No agent ' + what }));
         } else {
@@ -286,12 +337,14 @@ function runAlertReasons_(dateIso, dryRun, honorSkipDates, cfg, pushAndLog) {
         var abandonIso = two[1];
         var res = alertCallbackMisses_(dept, abandonIso, dateIso);
         if (!res.available) {
-          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers,
+          // RUN-2: `unevaluated` -- the reason could not be checked at all, which
+          // the run outcome reports (a skip date or an exception day is config).
+          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers, unevaluated: true,
             notes: 'Callback data unavailable (Neon unreachable or the read failed)' + (res.error ? ': ' + res.error : '') }));
         } else if (res.pending) {
-          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers,
-            notes: res.pending + ' caller(s) from ' + abandonIso + ' cannot be judged yet -- ' + dateIso
-              + "'s calls are not loaded; not alerting on a partial day" }));
+          pushAndLog(base('callbacks', { status: 'skipped', threshold: r.callbacks.minCallers, unevaluated: true,
+            notes: res.pending + ' caller(s) from ' + abandonIso + ' cannot be judged yet -- the per-call data is loaded through '
+              + (res.dataThrough || '(nothing)') + ', not ' + dateIso + '; not alerting on a partial day' }));
         } else if (res.missed.length < r.callbacks.minCallers) {
           pushAndLog(base('callbacks', { status: 'quiet', threshold: r.callbacks.minCallers,
             notes: res.missed.length + ' of ' + res.total + ' caller(s) who could not get through on ' + abandonIso

@@ -42,6 +42,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 ### Asserting drivers (pass/fail — these gate CI)
 - `drive-smoke.js [admin|manager]` — (SPEED-2: the gate runs it as two
   shards, one per role, side by side; with no argument it checks both)
+  (CCX-2 / CCX-8: three deep-link boots per role -- an Insights link, a
+  department link and one with mangled dates -- asserting no request is sent
+  twice, one report runs for the linked window, and the provisional window
+  ending today is never loaded)
   (since #81 also the generated Individual Report's
   exception-day note) boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
@@ -62,7 +66,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   admin brief re-runs with the bottom Insights region collapsed, that Insights
   Copy image / Print include the brief's sections, and that a side panel's ⓘ
   shows one circled i on hover.
-- `drive-f13.js` — the S39 keyboard walk: every non-button click target is
+- `drive-f13.js` — (KBF, Batch 9: the half-hour picker opens the missed drill by arrow key and takes focus back on Close; a date chip is pressed exactly when selected; the Insights popover takes focus and returns it; no hover-only label on My Department) the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.
 - `drive-subqueue.js` — the collapsible sub-queue groups, the S35
@@ -179,7 +183,17 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   summary that leads with the unreturned callers and its one-base bar, the
   most-not-called-back default order, and a row's own unreturned-caller list;
   since IC-4 its "How this is counted" ⓘ (no fold).
-- `drive-admin.js` — eleven **modals** (Alerts, Outlier Fix, Dept Config --
+- `drive-admin.js` — (NPS, Batch 10: printing with the Inbound report open prints the whole report and nothing behind it, and the screen comes back; five modals at 390 and 768 px do not scroll sideways as a whole and keep Close on screen; every amber or red value says its tier; every canvas is a named image; the three filled category segments use dark ink in dark mode)
+  (KBF, Batch 9: every modal's Escape returns focus to a VISIBLE control -- the opener or its menu's trigger; Help holds 40 Tabs with its topic folds closed; Help topics and theme chips are pressed exactly when selected; the Inbound report's 20 header labels take focus and open their tooltip)
+  (CCX-1: text typed on two escalation cards survives a
+  "Save comment only" reload, the saved comment comes back empty)
+  (DCA-6: a new hire on a former employee's extension, named only by the
+  Direct build's Pipeline Health note, is on the Outlier Fix list with whose
+  extension it is and their own extension pre-filled)
+  (DCA-7: two people on an extension no roster lists sit after the others,
+  only they offer "Not an agent", and one click sends that one name, drops
+  the row and keeps it restorable)
+  eleven **modals** (Alerts, Outlier Fix, Dept Config --
   DCD-1: the "default" note, the Save-all-defaults bar from the real init, its
   confirm and the one no-argument request --
   Access Control, System Health, Caller Lookup, Coaching, Transfer Retries --
@@ -227,7 +241,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   invoke their own handler): comparing two reads for identity does *not* catch
   a shared runner, because a fresh Proxy is minted either way. A manager
   gets no overlay even with the localStorage flag hand-set.
-- `build-agent.js` + `drive-agent.js` — the **agent app** (the fourth role's
+- `build-agent.js` + `drive-agent.js` — (KBF-5: the window chip in force is the one pressed chip) the **agent app** (the fourth role's
   separate page): boot, the hidden rank line, rendered teammate-name
   PRIVACY, the History tab, no errors / unmocked RPCs / self-beacons, the
   360 px overflow check on both tabs, and (#81) the "Not counted" exception-day

@@ -90,7 +90,9 @@
 // v9: B1 (broad-scan 2026-10-12) episodes join across the window's edges (PC-1),
 //     "pending" is judged against the loaded calls (PC-2); + meta.unmapped (PC-5)
 //     and the roster hash on the key (DATA-3)
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v10';
+// v11: NUM-3 (broad-scan 2026-11-09) a DEPARTMENT view's episodes are decided with the
+//     other teams' attempts in view, so its outcomes match its Callbacks-by-department row
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v11';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -257,6 +259,40 @@ function emptyOutboundReport_(scope) {
   };
 }
 
+/**
+ * GCA-2: the TTL for an outbound payload. The three outbound keys are
+ * anchored on the latest DQE date, but they read the per-call tables, which
+ * the capture can fill later than the DQE build. A payload computed in that
+ * gap (its own `through` date is before the anchor) is short of what the next
+ * read will give, so it is held for DEGRADED_CACHE_TTL_SECONDS, not 6 h. An
+ * unknown `through` keeps the full TTL, as before.
+ */
+function obCacheTtlFor_(throughIso) {
+  var t = String(throughIso || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return REPORT_CACHE_TTL_SECONDS;
+  var latest = null;
+  try { latest = (typeof getLatestDataDate === 'function') ? getLatestDataDate() : null; } catch (e) { latest = null; }
+  var l = String(latest || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(l) && t < l) {
+    Logger.log('outbound cache: per-call data is through ' + t + ', the DQE anchor is ' + l
+      + ' -- held for ' + DEGRADED_CACHE_TTL_SECONDS + ' s, not the 6 h tier.');
+    return DEGRADED_CACHE_TTL_SECONDS;
+  }
+  return REPORT_CACHE_TTL_SECONDS;
+}
+
+/**
+ * GCA-5: Callbacks by department is an ADMIN surface (the Overview's company
+ * table). The company payload is one shared cache entry, and an
+ * all-departments manager reaches the company view once the vetting gate is
+ * released -- so it is removed on serve for everyone but an admin (the
+ * personalizeOverview_ pattern), never left to the client to hide.
+ */
+function obStripForViewer_(payload, user) {
+  if (payload && !(user && user.role === 'admin')) payload.callbackByDept = null;
+  return payload;
+}
+
 function getOutboundReport(req) {
   const scope = outboundResolveRequest_(req);
 
@@ -275,7 +311,7 @@ function getOutboundReport(req) {
       const p = JSON.parse(cached);
       p.meta.cacheHit = true;
       logReportUsage_('outbound', scope.dept || '(all)', scope.user, true);
-      return p;
+      return obStripForViewer_(p, scope.user);   // GCA-5
     } catch (e) { /* recompute */ }
   }
 
@@ -288,11 +324,12 @@ function getOutboundReport(req) {
   // for the TTL (the unavailable-uncached rule extended to degraded payloads,
   // same as the Direct report and the heatmap fallback).
   if (data.meta.available && !data.meta.fallbackSource) {
-    try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
+    // GCA-2: a payload behind the DQE anchor is held briefly, not for 6 h.
+    try { cache.put(cacheKey, JSON.stringify(data), obCacheTtlFor_(data.callback && data.callback.dataThrough)); }
     catch (e) { Logger.log('OutboundReport cache put failed: %s', e); }
   }
   logReportUsage_('outbound', scope.dept || '(all)', scope.user, false);
-  return data;
+  return obStripForViewer_(data, scope.user);   // GCA-5 (after the put: the shared entry keeps the table)
 }
 
 /**
@@ -459,7 +496,18 @@ function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, prio
   // tags. The engine's window expiry keeps those events from ever deciding
   // an outcome.
   const rs = obEpReadSpan_(rangeFrom, toIso, extraDays);
-  const where = outboundAbandonWhere_(scope, deptQueues, rs.abFrom, rs.abTo);
+  // NUM-3: a DEPARTMENT view reads its callers' attempts on EVERY queue, and
+  // marks which are its own (`mine`, the shared dept predicate as a column).
+  // Narrowing the read to the dept's queues hid the other teams' episodes, so
+  // a dial that another team made for ITS OWN episode -- consumed there in the
+  // company view -- fell through as "another team contacted them" here, and a
+  // dept's own callback figures disagreed with its row in Callbacks by
+  // department. Counts, caller keys and the episodes kept (obEpMineOnly_) are
+  // still the dept's own; only the engine's view of the other teams widened.
+  const pred = inboundDeptPredicate_(scope.dept, deptQueues);
+  const deptView = !!pred;
+  const mineSql = deptView ? '(' + pred.replace(/^\s*AND\s+/, '') + ')' : 'TRUE';
+  const where = outboundAbandonWhere_({ dept: null }, [], rs.abFrom, rs.abTo);
   // The window label keeps cbCounts' 'cur' / 'pri' rows exactly the windows'
   // own abandons: the edge rows are 'lb' (lookback) and 'post' (trailing),
   // which no count reads.
@@ -474,17 +522,22 @@ function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, prio
       + 'SELECT c.call_date AS d, c.call_start AS st, c.call_id AS cid, c.caller_hash AS h, '
       +   "lower(trim(coalesce(c.entry_queue,''))) AS q, "
       +   "lower(trim(coalesce(c.abandon_stage,''))) AS stage, "
-      +   winCase + ' AS w '
+      +   winCase + ' AS w, '
+      +   'COALESCE(' + mineSql + ', FALSE) AS mine '
       + 'FROM inbound_calls c WHERE ' + where + '), '
       + 'cb_k AS (SELECT x.h, (dense_rank() OVER (ORDER BY x.h))::int AS k FROM ('
-      +   "SELECT DISTINCT h FROM cb_ab WHERE h IS NOT NULL AND q <> '') x)",
+      +   "SELECT DISTINCT h FROM cb_ab WHERE h IS NOT NULL AND q <> '' AND mine) x)",
     fields:
         "'cbCounts', (SELECT COALESCE(json_agg(json_build_object("
       +   "'w', z.w, 'kind', z.kind, 'anon', z.anon, 'q', z.qq, 'n', z.n)), '[]') FROM ("
       +   "SELECT w, CASE WHEN q <> '' THEN 'queue' WHEN stage = 'direct' THEN 'direct' ELSE 'menu' END AS kind, "
       +   "(h IS NULL) AS anon, CASE WHEN q <> '' THEN q ELSE '' END AS qq, count(*) AS n "
-      +   'FROM cb_ab GROUP BY 1, 2, 3, 4) z), '
-      + "'cbAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.q, a.cid) "
+      +   'FROM cb_ab WHERE mine GROUP BY 1, 2, 3, 4) z), '
+      // NUM-3: a dept view's rows carry `mine` as a 6th element (a boolean, so
+      // the engine's CE-3 `teams` read at that index ignores it); the company
+      // view's rows keep their five.
+      + "'cbAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.q, a.cid"
+      +   (deptView ? ', a.mine' : '') + ') '
       +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') "
       +   "FROM cb_ab a JOIN cb_k k ON k.h = a.h WHERE a.q <> ''), "
       + "'cbOb', (SELECT COALESCE(json_agg(json_build_array(k.k, o.call_date::text, o.call_start, "
@@ -657,12 +710,22 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
   ctx.observedThroughIso = obj.cbThrough || null;   // B1/PC-2: pending vs the loaded data
   const cbCounts = obj.cbCounts || [];
   const evRows = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
-  const cur = obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
+  // NUM-3: a dept view runs the engine over its callers' attempts on every
+  // queue and then keeps its own episodes (obEpMineOnly_).
+  const mineOnly = function (eps) { return scope.companyView ? eps : obEpMineOnly_(eps, evRows.ab); };
+  const cur = mineOnly(obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: scope.from, to: scope.to })));
   // CBX-1: the COMPANY figures leave out the excluded departments' callers;
   // the department table keeps their rows (flagged) from the full list.
   const co = scope.companyView ? obCbCompanyScope_(cur, cbCounts, ctx) : { eps: cur, counts: cbCounts };
   out.callback = obEpCallbackBlock_(co.eps, co.counts, 'cur', true);
-  if (scope.companyView) out.callback.excludedDepts = OB_CB_COMPANY_EXCLUDED_DEPTS_.slice();
+  if (scope.companyView) {
+    out.callback.excludedDepts = OB_CB_COMPANY_EXCLUDED_DEPTS_.slice();
+    // GCA-1: CBX-1 took the excluded departments' callers out of
+    // `abandonedTotal`, which made it stop matching the Inbound report's
+    // Abandoned figure -- the comparison runOutboundVettingCheck makes. This
+    // is that figure again: every abandon in the window, before the exclusion.
+    out.callback.abandonedTotalAll = obEpCounts_(cbCounts, 'cur').abandonedTotal;
+  }
   // B1/PC-2: disclosed, so a lagging ingest reads as "calls loaded through X"
   // rather than as a wave of "not called back".
   out.callback.dataThrough = obj.cbThrough || null;
@@ -672,7 +735,7 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
   out.callbackByHour = series.byHour;   // (6) by the first attempt's hour: {hour, episodes, own, ratePct}
   // v2: the prior window through the SAME engine (delta chips compare like with like).
   if (pw && obj.cbAb) {
-    const priAll = obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: pw.from, to: pw.to }));
+    const priAll = mineOnly(obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: pw.from, to: pw.to })));
     const pco = scope.companyView ? obCbCompanyScope_(priAll, cbCounts, ctx) : { eps: priAll, counts: cbCounts };
     const p = obEpCallbackBlock_(pco.eps, pco.counts, 'pri', false);
     out.callbackPrior = {
@@ -823,7 +886,6 @@ function obCallbackDeptMap_() {
 //   ans: [k, isoDate, 'HH:MM:SS'|null, queueLower]            answered inbound
 //        CE-3 appends [.., person]: an answered call to a person's line has no
 //        queue, so its team is that person's roster homes.
-var OB_EP_OUTCOMES_ = ['own', 'gotThrough', 'other', 'pending', 'none'];
 
 /** PURE. The team key + member list for a queue: owners sorted, '+'-joined; '' unmapped.
  *  CE-3: an explicit `teams` list (a direct-line attempt's owner homes) wins. */
@@ -850,6 +912,24 @@ function obEpFamily_(teams, parentOf, childrenOf) {
     ((childrenOf && childrenOf[t]) || []).forEach(function (c) { fam[c] = true; });
   });
   return fam;
+}
+
+/**
+ * PURE (NUM-3). A department view's episodes: those with at least one attempt
+ * on the dept's own queues. `abRows` are the attempt rows the engine ran over;
+ * a row whose 6th element is exactly `false` is another team's attempt (read
+ * only so the engine could consume that team's own dials). A row without the
+ * flag is the dept's own, so five-element rows keep every episode.
+ */
+function obEpMineOnly_(eps, abRows) {
+  var notMine = {}, any = false;
+  (abRows || []).forEach(function (r) {
+    if (r && r[5] === false) { notMine[String(r[1] || '') + '|' + String(r[4] == null ? '' : r[4])] = true; any = true; }
+  });
+  if (!any) return eps || [];
+  return (eps || []).filter(function (ep) {
+    return (ep.attempts || []).some(function (a) { return !notMine[a.iso + '|' + a.id]; });
+  });
 }
 
 /**
@@ -1542,7 +1622,7 @@ function obEpTeamLabel_(agent, homesOf) {
  * `extraDays` past it) + the engine. Returns { eps, ev, ctx } or null when the
  * read produced nothing.
  */
-function obCallbackListEpisodes_(conn, scope, extraDays, windowDays) {
+function obCallbackListEpisodes_(conn, scope, extraDays, windowDays, cutoffIso) {
   const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
   const evSql = obCallbackEventsSql_(scope, deptQueues, scope.from, scope.from, scope.to, null, extraDays);
   const stmt = conn.createStatement();
@@ -1552,13 +1632,22 @@ function obCallbackListEpisodes_(conn, scope, extraDays, windowDays) {
   rs.close(); stmt.close();
   if (json == null) return null;
   const obj = JSON.parse(json) || {};
-  const ev = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
+  let ev = { ab: obj.cbAb || [], ob: obj.cbOb || [], ans: obj.cbAns || [] };
+  // RUN-9: a caller asking "by the end of <cutoffIso>" (the callbacks alert
+  // reason) must not be answered with what happened AFTER it -- a re-run or a
+  // preview for an old date otherwise counted a callback made days later as
+  // handled. Events dated past the cutoff are left out before the engine runs.
+  if (cutoffIso && /^\d{4}-\d{2}-\d{2}$/.test(String(cutoffIso))) {
+    const upTo = function (rows) { return rows.filter(function (r) { return String((r && r[1]) || '') <= cutoffIso; }); };
+    ev = { ab: upTo(ev.ab), ob: upTo(ev.ob), ans: upTo(ev.ans) };
+  }
   const ctx = obEpContext_(obCallbackDeptMap_(), buildDeptsByAgent_());
   ctx.observedThroughIso = obj.cbThrough || null;   // B1/PC-2
   // Step 5c: the "not called back within a business day" alert asks with its
   // own (shorter) window; every other caller keeps OUTBOUND_CALLBACK_WINDOW_DAYS.
   if (windowDays) ctx.windowDays = windowDays;
-  const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
+  let eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
+  if (!scope.companyView) eps = obEpMineOnly_(eps, ev.ab);   // NUM-3
   return { eps: eps, ev: ev, ctx: ctx, dataThrough: obj.cbThrough || null };
 }
 
@@ -2344,7 +2433,7 @@ function getOutboundDirectCallbacks(req) {
   } finally {
     if (src) src.close();
   }
-  try { cache.put(key, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+  try { cache.put(key, JSON.stringify(out), obCacheTtlFor_(out.meta.dataThrough)); }   // GCA-2
   catch (e) { Logger.log('outboundDirect cache put failed: %s', e); }
   logReportUsage_('outbound:direct', scope.dept || '(all)', scope.user, false);
   return out;
@@ -2498,18 +2587,34 @@ function runOutboundVettingCheck() {
     return logStatusReturn_({ result: 'FAILED (outbound served from the ' + ob.meta.fallbackSource
       + ' copy — Neon unreachable; vetting must compare the live Neon paths, re-run when it is back) ' + label });
   }
-  const ib = computeInboundReport_({ from: from, to: to, dept: dept,
-    deptQueues: deptQueues, companyView: scope.companyView });
+  // GCA-1: like for like. The callback figures still count exception days
+  // (#81 phase 2 left them out of the per-call report TOTALS only), so the
+  // Inbound side is computed with them INCLUDED for this comparison -- the
+  // admin include switch, set for this execution and restored after.
+  let ib;
+  const hadInclude = (typeof exceptionIncludeOn_ === 'function') ? exceptionIncludeOn_() : false;
+  try {
+    if (typeof EXCEPTION_INCLUDE_MEMO_ !== 'undefined') EXCEPTION_INCLUDE_MEMO_ = true;
+    ib = computeInboundReport_({ from: from, to: to, dept: dept,
+      deptQueues: deptQueues, companyView: scope.companyView });
+  } finally {
+    if (typeof EXCEPTION_INCLUDE_MEMO_ !== 'undefined') EXCEPTION_INCLUDE_MEMO_ = hadInclude;
+  }
   if (!ib || ib.meta.available === false) {
     return logStatusReturn_({ result: 'FAILED (inbound compute unavailable — Neon unreachable?) ' + label });
   }
   if (ib.meta.unmapped) {
     return logStatusReturn_({ result: 'FAILED (dept has no mapped queues — fix Dept Config before vetting) ' + label });
   }
-  const obAbandoned = Number(ob.callback.abandonedTotal) || 0;
+  // GCA-1: the company view's `abandonedTotal` leaves out the CBX-1 excluded
+  // departments' callers; `abandonedTotalAll` is the whole population the
+  // Inbound report counts. A department view has no exclusion, so its
+  // `abandonedTotal` is already that.
+  const obAbandoned = Number(ob.callback.abandonedTotalAll != null
+    ? ob.callback.abandonedTotalAll : ob.callback.abandonedTotal) || 0;
   const ibAbandoned = Number(ib.kpis.abandoned) || 0;
-  Logger.log('parity: outbound callback.abandonedTotal=%s vs inbound kpis.abandoned=%s (%s)',
-    obAbandoned, ibAbandoned, label);
+  Logger.log('parity: outbound abandons (every department, before the company-view exclusion)=%s vs inbound kpis.abandoned=%s, '
+    + 'exception days included on both sides (%s)', obAbandoned, ibAbandoned, label);
   if (obAbandoned !== ibAbandoned) {
     return logStatusReturn_({
       result: 'MISMATCH parity: outbound=' + obAbandoned + ' vs inbound=' + ibAbandoned
@@ -5625,22 +5730,29 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var winStart = (typeof inboundWindowStartFor_ === 'function')
       ? inboundWindowStartFor_(row[10], earlySet) : INBOUND_WORK_WINDOW_PST.start;
     if (cs && !(cs >= winStart && cs < winEnd)) continue;
-    if (deptFilter && !ihRowInDept_(row, qSet, labels, allLabels)) continue;
+    // NUM-3 (the SQL's `mine`): another team's attempt is kept for the
+    // engine, never counted, and only for a caller the dept also has.
+    var mine = !deptFilter || ihRowInDept_(row, qSet, labels, allLabels);
     var w = winOf(iso);
     var q = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
     var stage = String(row[6] == null ? '' : row[6]).trim().toLowerCase();
     var hash = String(row[3] == null ? '' : row[3]).trim();
-    var kind = q ? 'queue' : (stage === 'direct' ? 'direct' : 'menu');
-    var ck = w + '\u0000' + kind + '\u0000' + (hash ? '0' : '1') + '\u0000' + (q || '');
-    var cr = countsBy[ck] || (countsBy[ck] = { w: w, kind: kind, anon: !hash, q: q || '', n: 0 });
-    cr.n++;
+    if (mine) {
+      var kind = q ? 'queue' : (stage === 'direct' ? 'direct' : 'menu');
+      var ck = w + '\u0000' + kind + '\u0000' + (hash ? '0' : '1') + '\u0000' + (q || '');
+      var cr = countsBy[ck] || (countsBy[ck] = { w: w, kind: kind, anon: !hash, q: q || '', n: 0 });
+      cr.n++;
+    }
     if (!hash || !q) continue;
-    if (!keyOf.hasOwnProperty(hash)) { keyOf[hash] = 0; keyList.push(hash); }
-    abRows.push({ hash: hash, row: [0, iso, cs || null, q, String(row[1] == null ? '' : row[1]).trim()] });
+    if (mine && !keyOf.hasOwnProperty(hash)) { keyOf[hash] = 0; keyList.push(hash); }
+    var abRow = [0, iso, cs || null, q, String(row[1] == null ? '' : row[1]).trim()];
+    if (deptFilter) abRow.push(mine);
+    abRows.push({ hash: hash, row: abRow });
   }
   // dense_rank() OVER (ORDER BY hash): the same integer keys the SQL assigns.
   keyList.sort().forEach(function (hh, idx) { keyOf[hh] = idx + 1; });
-  var cbAb = abRows.map(function (x) { x.row[0] = keyOf[x.hash]; return x.row; });
+  var cbAb = abRows.filter(function (x) { return keyOf.hasOwnProperty(x.hash); })
+    .map(function (x) { x.row[0] = keyOf[x.hash]; return x.row; });
 
   var cbOb = [];
   for (var o = 0; o < obGrid.length; o++) {
@@ -6142,6 +6254,7 @@ function deptOutboundProject_(scope, shaped, excl) {
       available: shaped.meta.available !== false,
       fallbackSource: shaped.meta.fallbackSource || null,
       fallbackThrough: shaped.meta.fallbackThrough || null,
+      outboundThrough: shaped.meta.outboundThrough || null,   // GCA-2
       coverageStart: shaped.meta.coverageStart || null,
       offRosterAgents: shaped.meta.offRosterAgents || 0,
       briefRingSec: OUTBOUND_BRIEF_RING_SEC_,
@@ -6208,13 +6321,20 @@ function computeDeptOutbound_(scope) {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (conn) {
       var sql = "SELECT json_build_object('agents', " + outboundAgentsSel_(scope.from, scope.to, exc.sql)
-        + ", 'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls))::text AS j";
+        + ", 'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls)"
+        // GCA-2: the table's newest date, so the cache can tell a payload
+        // computed before the day's capture landed.
+        + ", 'through', (SELECT MAX(call_date)::text FROM outbound_calls))::text AS j";
       var stmt = conn.createStatement();
       var rs = stmt.executeQuery(sql);
       var json = rs.next() ? rs.getString('j') : null;
       rs.close(); stmt.close();
       if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'deptOutbound');
-      if (json) shaped = outboundShapeReport_(scope, JSON.parse(json), deptsByAgent, null);
+      if (json) {
+        var parsedOb = JSON.parse(json);
+        shaped = outboundShapeReport_(scope, parsedOb, deptsByAgent, null);
+        shaped.meta.outboundThrough = (parsedOb && parsedOb.through) || null;   // GCA-2
+      }
     }
   } catch (e) {
     Logger.log('computeDeptOutbound_ Neon read failed (falling back to the sheet): '
@@ -6278,7 +6398,7 @@ function getDeptOutboundSummary(req) {
   var out = computeDeptOutbound_(scope);
   out.meta.computeMs = Date.now() - t0;
   if (out.meta.available && !out.meta.fallbackSource) {
-    try { cache.put(key, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+    try { cache.put(key, JSON.stringify(out), obCacheTtlFor_(out.meta.outboundThrough)); }   // GCA-2
     catch (e) { Logger.log('deptOutbound cache put failed: %s', e); }
   }
   logReportUsage_('deptOutbound', scope.dept, scope.user, false);

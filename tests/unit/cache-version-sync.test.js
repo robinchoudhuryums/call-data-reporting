@@ -110,7 +110,11 @@ const GS_FILES = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(
 // moves OUT of CLAUDE.md and states a current cache version must be added here.
 const DOC_FILES = ['CLAUDE.md', 'docs/invariants.md', 'docs/operator-state.md',
   'docs/client-ui-conventions.md', 'docs/regression-scenarios.md',
-  'docs/known-issues.md', 'docs/conventions.md', 'docs/architecture.md'];
+  'docs/known-issues.md', 'docs/conventions.md', 'docs/architecture.md',
+  // F50 (broad-scan 2026-11-10): the two subsystem docs split out of CLAUDE.md
+  // name cache prefixes too, and were outside the sync -- per-call-capture.md
+  // said companyOverview:v28 while the code was three versions on.
+  'docs/per-call-capture.md', 'docs/neon-layer.md'];
 
 test('cache-version sync: code defines a version for every tracked prefix', function () {
   SPECS.forEach(function (s) {

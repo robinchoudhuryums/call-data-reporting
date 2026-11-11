@@ -47,10 +47,12 @@ var INBOUND_EXPORT_HEADERS = [
   // POSITION, like the heatmap's 16-17). Journey is the masked leg-by-leg
   // JSON (starts with '[', so it is NOT formula-leading and needs no '@'
   // format -- unlike Call Start); it is the tab's only HEAVY column
-  // (0.2-6 KB/row), so it is populated only within
-  // INBOUND_EXPORT_JOURNEY_DAYS and blank beyond -- the 400-day row
-  // retention stays cheap while the path fallback covers what the sheet
-  // can afford. The origin/related columns are small and always exported.
+  // (0.2-6 KB/row), so a row is written with it only when its date is within
+  // INBOUND_EXPORT_JOURNEY_DAYS at EXPORT time (a seed or a re-export of old
+  // dates writes blanks). Nothing blanks it later, so rows exported day by
+  // day keep it for the tab's whole retention (scan F53: the old wording,
+  // "blank beyond", described a seed, not steady state).
+  // The origin/related columns are small and always exported.
   'Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind',
   // Cols 23-24 (FO-2): the direct-line callback figures' sheet fallback
   // (OutboundReport.gs::obDirectSheetFallback_ reads them BY POSITION): the
@@ -61,12 +63,19 @@ var INBOUND_EXPORT_HEADERS = [
 ];
 var INBOUND_EXPORT_CALL_START_COL = 16;   // plain-texted every run (see above)
 var INBOUND_EXPORT_SEED_DAYS = 30;   // first-run lookback when the tab is empty
-// Journey-cell retention: rows whose call_date is older than this many days
-// export a BLANK Journey cell (Script Property INBOUND_EXPORT_JOURNEY_DAYS
-// overrides). The path drill's sheet fallback then serves the entry->final
-// SUMMARY for those dates instead of the full timeline -- disclosed, never
-// silently truncated. Sized against the whole-spreadsheet 10M-cell ceiling:
-// journey cells are the only ones that matter to it.
+// Journey-cell window: a row whose call_date is older than this many days
+// WHEN IT IS EXPORTED gets a BLANK Journey cell (Script Property
+// INBOUND_EXPORT_JOURNEY_DAYS overrides). The path drill's sheet fallback
+// then serves the entry->final SUMMARY for it instead of the full timeline --
+// disclosed, never silently truncated. It is an export-time rule, not an
+// ageing one: a row exported while recent keeps its journey (scan F53).
+// OFB-5 (broad-scan 2026-11-09): so this window bounds what a seed or a
+// re-export of old dates writes -- NOT the bytes a year of daily exports
+// holds, and NOT the tab's share of the 10M-cell cap, which counts the
+// ALLOCATED grid (rows x columns, a blank cell costs the
+// same as a full one; Operator State #62). The cell cost is
+// (kept rows) x INBOUND_EXPORT_HEADERS.length, set by INBOUND_EXPORT_KEEP_DAYS
+// alone; the Health page's "Outage copy" rows show it per tab.
 var INBOUND_EXPORT_JOURNEY_DAYS_DEFAULT = 90;
 
 function ic_journeyDays_() {
@@ -289,6 +298,49 @@ function ic_writeWindow_(sheet, rows, startIso, endIso) {
   return { written: values.length, replaced: replaced };
 }
 
+// OFB-1 (broad-scan 2026-11-09): the dashboard's outage readers
+// (obSheetTailGrid_ / clSheetTail_) read this tab from the BOTTOM and stop
+// widening once the first row of their window is older than the date they
+// want, so the tab must stay date-ascending. The sort used to be the last
+// statement of a successful run only: a run that appended a changed OLDER
+// date and then failed (Neon dropping mid-run is the common case) left that
+// block at the bottom, and every later run failed at the connect -- before
+// any sort -- for as long as Neon stayed down, which is exactly when the copy
+// is being read. Two repairs, both shared with outboundCallsExport.js:
+//   - the sort now runs whenever a run appended anything, failed or not;
+//   - a no-argument run checks the order BEFORE it connects and re-sorts an
+//     out-of-order tab, so a run killed at the execution ceiling (which skips
+//     every catch and finally) is repaired by the next one, Neon or no Neon.
+/** PURE (OFB-1): true when a list of ISO dates (blanks ignored) ever steps backwards. */
+function ic_datesOutOfOrder_(isos) {
+  var prev = '';
+  for (var i = 0; i < (isos || []).length; i++) {
+    var d = isos[i];
+    if (!d) continue;
+    if (prev && d < prev) return true;
+    prev = d;
+  }
+  return false;
+}
+/** OFB-1: sort the data rows by Call Date, ascending (the tab's standing order). */
+function ic_sortByDate_(sheet, width) {
+  var lr = sheet.getLastRow();
+  if (lr > 2) sheet.getRange(2, 1, lr - 1, width).sort({ column: 1, ascending: true });
+}
+/**
+ * OFB-5: drop EMPTY columns to the right of the headers. A tab made by
+ * insertSheet is 26 columns wide and every one of them counts against the
+ * workbook's 10M-cell cap on every kept row (this tab uses 24, Outbound Calls
+ * 12). Only columns past the last one holding anything are removed, so a
+ * helper column someone added by hand is never touched. Returns the count.
+ */
+function ic_trimEmptyColumns_(sheet, width) {
+  var keep = Math.max(width, sheet.getLastColumn());
+  var extra = sheet.getMaxColumns() - keep;
+  if (extra > 0) sheet.deleteColumns(keep + 1, extra);
+  return extra > 0 ? extra : 0;
+}
+
 function exportInboundCalls(fromIso, toIso) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(INBOUND_EXPORT_SHEET);
@@ -308,6 +360,7 @@ function exportInboundCalls(fromIso, toIso) {
                              INBOUND_EXPORT_HEADERS.length - sheet.getMaxColumns());
   }
   sheet.getRange(1, 1, 1, INBOUND_EXPORT_HEADERS.length).setValues([INBOUND_EXPORT_HEADERS]);
+  ic_trimEmptyColumns_(sheet, INBOUND_EXPORT_HEADERS.length);   // OFB-5
   var lastRow = sheet.getLastRow();
   var hasData = lastRow >= 2;
 
@@ -324,6 +377,13 @@ function exportInboundCalls(fromIso, toIso) {
     var existing = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues()
                         .map(function (r) { return ic_cellDateIso_(r[0]); })
                         .filter(function (s) { return !!s; });
+    // OFB-1: repair a tab an earlier run left out of order BEFORE connecting,
+    // so the repair does not depend on Neon being up. (Checked before the
+    // in-place sort below reorders `existing`.)
+    if (ic_datesOutOfOrder_(existing)) {
+      ic_sortByDate_(sheet, INBOUND_EXPORT_HEADERS.length);
+      Logger.log('exportInboundCalls: the tab was out of date order (an earlier run stopped before its sort) -- re-sorted.');
+    }
     var maxIso = existing.sort().pop();
     startIso = maxIso || ic_isoDaysAgo_(INBOUND_EXPORT_SEED_DAYS);
   } else {
@@ -347,12 +407,16 @@ function exportInboundCalls(fromIso, toIso) {
     if (eConn && typeof eConn === 'object') eConn.neonUnreachable = true;
     throw eConn;
   }
+  // OFB-1: `appended` is set BEFORE the first append, so the sort below runs
+  // for any run that put rows at the bottom -- including one that then failed.
+  var written = 0, replaced = 0, changedDone = [], changedLater = [];
+  var appended = false, runErr = null, result = null;
   try {
-    var written = 0, replaced = 0, changedDone = [], changedLater = [];
     var rows = ic_fetchRows_(conn, startIso, endIso);
     if (rows.length) {
       // Only AFTER a non-empty fetch: an unexpectedly empty Neon result must
       // never blank the fallback copy (dates Neon no longer has keep theirs).
+      appended = true;
       var r0 = ic_writeWindow_(sheet, rows, startIso, endIso);
       written += r0.written; replaced += r0.replaced;
     } else {
@@ -367,33 +431,45 @@ function exportInboundCalls(fromIso, toIso) {
       var changed = since ? ic_changedDatesSince_(conn, since, startIso, floorIso) : [];
       var plan = ic_planChangedDates_(changed, pending.filter(function (d) { return d >= floorIso && d < startIso; }),
                                       IC_EXPORT_MAX_CHANGED_DATES_);
+      // OFB-1: progress is stored PER DATE. The whole plan goes into PENDING
+      // (and the watermark moves) before the first older date is read, and
+      // each finished date leaves PENDING as it lands -- so a run that stops
+      // at date 6 of 10 resumes at date 6 instead of redoing all ten, and
+      // nothing the changed-dates query found can be lost with the watermark.
+      changedLater = plan.later;
+      props.setProperty('INBOUND_EXPORT_WATERMARK', runStartIso);
+      props.setProperty('INBOUND_EXPORT_PENDING', JSON.stringify(plan.now.concat(plan.later)));
       for (var ci = 0; ci < plan.now.length; ci++) {
         var d = plan.now[ci];
         var dRows = ic_fetchRows_(conn, d, d);
         if (dRows.length) {
+          appended = true;
           var rd = ic_writeWindow_(sheet, dRows, d, d);
           written += rd.written; replaced += rd.replaced;
         }
         changedDone.push(d);
+        props.setProperty('INBOUND_EXPORT_PENDING', JSON.stringify(plan.now.slice(ci + 1).concat(plan.later)));
       }
-      changedLater = plan.later;
-      props.setProperty('INBOUND_EXPORT_WATERMARK', runStartIso);
-      props.setProperty('INBOUND_EXPORT_PENDING', JSON.stringify(changedLater));
     }
-    // Keep the tab chronological -- an explicit mid-history range and the
-    // changed older dates are appended at the bottom. Same post-write sort
-    // pattern the historical sheets use.
-    var finalLastRow = sheet.getLastRow();
-    if (written && finalLastRow > 2) {
-      sheet.getRange(2, 1, finalLastRow - 1, INBOUND_EXPORT_HEADERS.length)
-           .sort({ column: 1, ascending: true });
-    }
-    Logger.log('exportInboundCalls: wrote %s rows for %s..%s + %s changed older date(s) (%s replaced; %s still pending; sheet now %s rows).',
-               written, startIso, endIso, changedDone.length, replaced, changedLater.length, finalLastRow - 1);
-    return { written: written, replaced: replaced, changedDates: changedDone, pendingDates: changedLater.length };
-  } finally {
-    try { conn.close(); } catch (ce) {}
+    result = { written: written, replaced: replaced, changedDates: changedDone, pendingDates: changedLater.length };
+  } catch (eRun) {
+    runErr = eRun || new Error('exportInboundCalls failed');
   }
+  // Keep the tab chronological -- an explicit mid-history range and the
+  // changed older dates are appended at the bottom. Same post-write sort
+  // pattern the historical sheets use. OFB-1: reached on a failed run too.
+  if (appended) {
+    try { ic_sortByDate_(sheet, INBOUND_EXPORT_HEADERS.length); }
+    catch (eSort) {
+      Logger.log('exportInboundCalls: the final sort failed: ' + ((eSort && eSort.message) || eSort));
+      if (!runErr) runErr = eSort;   // the next no-argument run re-sorts before it connects
+    }
+  }
+  try { conn.close(); } catch (ce) {}
+  if (runErr) throw runErr;
+  Logger.log('exportInboundCalls: wrote %s rows for %s..%s + %s changed older date(s) (%s replaced; %s still pending; sheet now %s rows).',
+             written, startIso, endIso, changedDone.length, replaced, changedLater.length, sheet.getLastRow() - 1);
+  return result;
 }
 
 // ── Scheduled refresh (heatmap-sheet-fallback Phase 2) ───────────────────────
