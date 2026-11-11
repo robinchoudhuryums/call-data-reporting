@@ -4525,6 +4525,14 @@
   /* DCA-6: the direct-line note under an outlier's name (a new hire on an
      extension the roster lists for someone else). */
   .of-direct-note { margin-top: 2px; font-size: .82em; color: var(--muted); max-width: 46ch; }
+  /* DCA-7: the unlisted-extension group's bar, the cut note and the
+     "Not an agent" list under the outliers table. */
+  .of-unlisted-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .of-direct-cut { margin: 8px 0 0; }
+  .of-ignored { margin-top: 12px; }
+  .of-ignored > summary { cursor: pointer; font-weight: 600; }
+  .of-ignored-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .of-ignored-list li { display: inline-flex; align-items: baseline; gap: 6px; }
   .of-add-hint {
     flex-basis: 100%;
     font-size: 11px;

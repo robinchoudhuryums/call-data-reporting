@@ -333,6 +333,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       return d;
     },
     getOrphanFixInit: function () { return P['orphan-init']; },
+    // DCA-7: "Not an agent" -- echoes the names back as the stored list.
+    setOrphanIgnored: function (req) {
+      var names = (req && req.names) || [];
+      return { changed: names.slice(), skipped: 0, ignored: (req && req.ignored === false) ? [] : names.slice().sort(), log: [] };
+    },
     getDeptConfigInit: function () { return P['deptconfig-init']; },
     // DCD-1: the bulk save reports what it wrote (the server re-derives the list).
     saveDeptConfigDefaults: function () {

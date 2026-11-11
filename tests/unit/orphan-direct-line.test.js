@@ -26,7 +26,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 const { rosterGrid, dqeRow, dqeSheet } = require('../harness/fixtures');
 
 const imp = loadGas({ project: 'cdr-import', files: ['directCallMetrics.js'] });
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'OrphanFix.gs'], capture: ['ORPHAN_DIRECT_TAG_'] });
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'OrphanFix.gs', 'Alerts.gs'], capture: ['ORPHAN_DIRECT_TAG_', 'ORPHAN_DIRECT_CUT_MARK_', 'ORPHAN_IGNORE_PROP_'] });
 const J = function (x) { return JSON.parse(JSON.stringify(x)); };
 
 // ── cdr-import: the note ─────────────────────────────────────────────────────
@@ -148,6 +148,8 @@ function install(opts) {
   if (opts.aliases) {
     sheets['Agent Alias Overrides'] = [['Old Name', 'Canonical Name', 'Active', 'Added By', 'Added At', 'Notes']].concat(opts.aliases);
   }
+  if (opts.log) sheets['Orphan Fix Log'] = [['Timestamp', 'Admin', 'Action', 'From Name', 'To Name', 'Affected Rows', 'Notes']];
+  if (opts.ignored) h.state.props.ORPHAN_IGNORE_NAMES = JSON.stringify(opts.ignored);
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.state.cache.clear();
   ['DQE_DATE_BOUNDS_MEMO_', 'DQE_SHEET_ROWS_MEMO_', 'DQE_DATE_COL_MEMO_', 'DQE_EXT_GRID_MEMO_'].forEach(function (m) {
@@ -219,4 +221,243 @@ test('DCA-6: the Outlier Fix row says whose extension it is and pre-fills the pe
   assert.match(admin, /'value="' \+ addExts \+ '">'/);
   const ov = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'CompanyOverview.gs'), 'utf8');
   assert.match(ov, /\(b\.rows \+ \(b\.directCalls \|\| 0\)\) - \(a\.rows \+ \(a\.directCalls \|\| 0\)\)/);
+});
+
+// ═══ DCA-7 (owner 2026-11-11): a person on an extension NO roster lists ═══════
+//
+// DCA-6 covered a name on an extension some roster cell lists. A new hire given
+// a NEW extension is on none, and so is every colleague the roster does not
+// track -- the build cannot tell the two apart. So the note carries them all
+// (third element empty), and the dashboard keeps an admin "Not an agent" list.
+
+function buildMetaUnlisted() {
+  const res = imp.fn('computeDirectCallMetrics')([new Array(26).fill('')].concat([
+    // Nina on Anna's old extension (DCA-6), twice.
+    row({ cid: 'N1', start: D + '10:00:00', dir: 'Incoming', talk: '0:02:00', callTime: '0:02:10',
+          caller: '+15551230000', callee: '101', calleeName: 'Nina New', answered: true }),
+    row({ cid: 'N2', start: D + '10:10:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:05',
+          caller: '101', callerName: 'Nina New', callee: '+15551230001' }),
+    // Ula on 250, which no roster cell lists: three calls.
+    row({ cid: 'U1', start: D + '10:20:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+          caller: '+15551230003', callee: '250', calleeName: 'Ula Unlisted', answered: true }),
+    row({ cid: 'U2', start: D + '10:30:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:05',
+          caller: '250', callerName: 'Ula Unlisted', callee: '+15551230004' }),
+    row({ cid: 'U3', start: D + '10:40:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:05',
+          caller: '250', callerName: 'Ula Unlisted', callee: '102', calleeName: 'Bob', answered: true }),
+    // NOT people on an unlisted extension: a roster person on one (DCA-3
+    // credits Bob), a named OUTSIDE number, a queue extension, a non-person
+    // label, and a blank name.
+    row({ cid: 'X1', start: D + '11:00:00', dir: 'Outgoing', talk: '0:01:00', callTime: '0:01:05',
+          caller: '260', callerName: 'Bob', callee: '+15551230005' }),
+    row({ cid: 'X2', start: D + '11:10:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+          caller: '+15551230006', callerName: 'Wireless Caller', callee: '102', calleeName: 'Bob', answered: true }),
+    row({ cid: 'X3', start: D + '11:20:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+          caller: '+15551230007', callee: '103', calleeName: 'Some Person', answered: true }),
+    row({ cid: 'X4', start: D + '11:30:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:05',
+          caller: '270', callerName: 'Voicemail Box', callee: '102', calleeName: 'Bob', answered: true }),
+    row({ cid: 'X5', start: D + '11:40:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:05',
+          caller: '280', callerName: '', callee: '102', calleeName: 'Bob', answered: true }),
+  ]), MAPS, {});
+  return res.meta;
+}
+
+test('DCA-7: the Direct build also names a person on an extension NO roster lists, and the dashboard reads it back', function () {
+  const meta = buildMetaUnlisted();
+  assert.deepEqual(J(meta.attribution.unlisted), [{ ext: '250', legName: 'Ula Unlisted', n: 3 }],
+    'one entry: a person name, an extension-length number no cell lists, counted once per call side');
+  const note = imp.call('dcUnrosteredNote_', meta);
+  assert.equal(note, ' | unrostered=[["Nina New","101","Anna",2],["Ula Unlisted","250","",3]]');
+  const got = J(h.call('orphanDirectFromHealthRows_',
+    [{ step: 'processIntegratedHistory:Direct', status: 'success', notes: 'Mon Nov 09 2026 | agents=1 neon=ok' + note }], '2026-05-01'));
+  assert.deepEqual(got, [
+    { name: 'Nina New', ext: '101', listedFor: 'Anna', calls: 2, dateIso: '2026-11-09' },
+    { name: 'Ula Unlisted', ext: '250', listedFor: '', calls: 3, dateIso: '2026-11-09' },
+  ]);
+});
+
+test('DCA-7: naming them changes nobody\'s credit', function () {
+  // The same day with and without the unlisted person's name on the legs:
+  // every agent figure is identical (the name is only carried for the note).
+  const run = function (name) {
+    return imp.fn('computeDirectCallMetrics')([new Array(26).fill('')].concat([
+      row({ cid: 'U3', start: D + '10:40:00', dir: 'Internal', talk: '0:01:00', callTime: '0:01:05',
+            caller: '250', callerName: name, callee: '102', calleeName: 'Bob', answered: true }),
+      row({ cid: 'B1', start: D + '11:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:05',
+            caller: '+15551230002', callee: '102', calleeName: 'Bob', answered: true }),
+    ]), MAPS, {});
+  };
+  const a = run('Ula Unlisted'), b = run('');
+  assert.deepEqual(J(a.rows), J(b.rows));
+  assert.equal(a.meta.attribution.unlisted.length, 1);
+  assert.equal(b.meta.attribution.unlisted.length, 0);
+});
+
+test('DCA-7: the two kinds are capped apart, and a cut list SAYS how many it left off', function () {
+  const mism = [], unl = [];
+  for (let i = 0; i < 30; i++) mism.push({ ext: String(200 + i), rosterName: 'Old ' + i, legName: 'New ' + i, n: 30 - i });
+  const UN = imp.ctx.DC_UNLISTED_MAX_;
+  for (let i = 0; i < UN + 7; i++) unl.push({ ext: String(1000 + i), legName: 'Staff ' + i, n: 500 - i });
+  const note = imp.call('dcUnrosteredNote_', { attribution: { mismatches: mism, unlisted: unl } });
+  const list = JSON.parse(note.slice(note.indexOf('[')));
+  const MM = imp.ctx.DC_UNROSTERED_MAX_;
+  assert.equal(list.length, MM + UN + 1);
+  assert.deepEqual(list[0], ['New 0', '200', 'Old 0', 30], 'former-employee extensions come first');
+  assert.deepEqual(list[MM], ['Staff 0', '1000', '', 500], 'then the busiest on unlisted extensions');
+  assert.deepEqual(list[list.length - 1], [imp.ctx.DC_UNLISTED_CUT_MARK_, '', '', 7], 'and the count left off');
+  assert.equal(imp.ctx.DC_UNLISTED_CUT_MARK_, h.consts.ORPHAN_DIRECT_CUT_MARK_, 'both sides agree on the marker');
+  // Unlisted staff never push a former employee's extension out.
+  assert.equal(list.filter(function (x) { return x[2]; }).length, MM);
+  // The dashboard: the marker is not a person, and the cut is reported for the newest date only.
+  const rows = [
+    { step: OK, status: 'success', notes: 'Tue Nov 10 2026 | agents=1' + note },
+    { step: OK, status: 'success', notes: noteFor('Mon Nov 09 2026', [['Staff 0', '1000', '', 2], ['+', '', '', 99]]) },
+  ];
+  const people = J(h.call('orphanDirectFromHealthRows_', rows, '2026-05-01'));
+  assert.ok(!people.some(function (d) { return d.name === '+'; }));
+  assert.equal(people.filter(function (d) { return d.dateIso === '2026-11-10'; }).length, MM + UN);
+  assert.deepEqual(J(h.call('orphanDirectCut_', rows)), { dateIso: '2026-11-10', n: 7 });
+  assert.equal(h.call('orphanDirectCut_', rows.slice(1).concat([])).n, 99);
+  // A later import that fit clears it; no rows at all is null.
+  assert.equal(h.call('orphanDirectCut_', [{ step: OK, status: 'success', notes: noteFor('Wed Nov 11 2026', [['A B', '1', '', 1]]) }].concat(rows)), null);
+  assert.equal(h.call('orphanDirectCut_', []), null);
+  // No cut, no marker.
+  const fit = imp.call('dcUnrosteredNote_', { attribution: { mismatches: [], unlisted: unl.slice(0, 3) } });
+  assert.equal(JSON.parse(fit.slice(fit.indexOf('['))).length, 3);
+});
+
+test('DCA-7: an unlisted-extension person is listed LAST, flagged, and the "Not an agent" list hides only that kind of entry', function () {
+  const health = [[new Date(), OK, 'success', 5, 100,
+    dayNote(d2, [['Nina New', '101', 'Anna', 4], ['Aaron Staff', '250', '', 6], ['Zed Hire', '251', '', 1]])]];
+  install({ health: health,
+    dqe: [dqeRow({ date: new Date(d2 + 'T12:00:00'), agent: 'Typo Bobb', ext: '103', rung: 2, answered: 2 })] });
+  let got = J(h.call('computeOrphans_'));
+  assert.deepEqual(got.map(function (o) { return o.name; }), ['Nina New', 'Typo Bobb', 'Aaron Staff', 'Zed Hire'],
+    'unlisted-only people sort after the queue orphans and the former-employee extensions');
+  assert.deepEqual(got[2], { name: 'Aaron Staff', rows: 0, lastSeen: d2, sampleExts: [],
+    directExt: '250', directListedFor: '', directCalls: 6, directUnlisted: true });
+  assert.equal(got[0].directUnlisted, undefined, 'a roster-extension entry is not flagged');
+
+  // Everyone but the unlisted entry ignores the list.
+  install({ health: health, ignored: ['Aaron Staff', 'Nina New', 'Typo Bobb'],
+    dqe: [dqeRow({ date: new Date(d2 + 'T12:00:00'), agent: 'Typo Bobb', ext: '103', rung: 2, answered: 2 })] });
+  got = J(h.call('computeOrphans_'));
+  assert.deepEqual(got.map(function (o) { return o.name; }), ['Nina New', 'Typo Bobb', 'Zed Hire']);
+
+  // A name on the list that later shows up on a FORMER EMPLOYEE's extension is listed again.
+  install({ ignored: ['Aaron Staff'], health: [
+    [new Date(), OK, 'success', 5, 100, dayNote(d3, [['Aaron Staff', '250', '', 6]])],
+    [new Date(), OK, 'success', 5, 100, dayNote(d2, [['Aaron Staff', '101', 'Anna', 2]])],
+  ] });
+  got = J(h.call('computeOrphans_'));
+  assert.deepEqual(got, [{ name: 'Aaron Staff', rows: 0, lastSeen: d2, sampleExts: [],
+    directExt: '101', directListedFor: 'Anna', directCalls: 2 }]);
+
+  // An unreadable list hides nobody.
+  install({ health: health });
+  h.state.props.ORPHAN_IGNORE_NAMES = '{not json';
+  assert.equal(J(h.call('computeOrphans_')).length, 3);
+  assert.deepEqual(J(h.call('readOrphanIgnore_')), []);
+});
+
+test('DCA-7: setOrphanIgnored is admin-only, validated, audited, and reversible', function () {
+  const health = [[new Date(), OK, 'success', 5, 100, dayNote(d2, [['Aaron Staff', '250', '', 6], ['Zed Hire', '251', '', 1]])]];
+  install({ health: health, log: true });
+  // Gate first.
+  h.state.userEmail = 'someone@x.com';
+  assert.throws(function () { h.call('setOrphanIgnored', { names: ['Aaron Staff'] }); }, /admin/i);
+  assert.equal(h.state.props.ORPHAN_IGNORE_NAMES, undefined);
+  h.state.userEmail = 'admin@x.com';
+  // Validation: nothing picked, a queue name, an oversized batch.
+  assert.throws(function () { h.call('setOrphanIgnored', { names: [] }); }, /at least one name/);
+  assert.throws(function () { h.call('setOrphanIgnored', { names: ['A_Q_CSR'] }); }, /Queue-sentinel/);
+  const tooMany = []; for (let i = 0; i < 201; i++) tooMany.push('P ' + i);
+  assert.throws(function () { h.call('setOrphanIgnored', { names: tooMany }); }, /Too many names/);
+  assert.equal(h.state.props.ORPHAN_IGNORE_NAMES, undefined, 'a refused request stores nothing');
+
+  // One name: stored, logged, and the init drops the row and returns the list.
+  let res = J(h.call('setOrphanIgnored', { names: ['Aaron Staff'], ignored: true }));
+  assert.deepEqual(res.changed, ['Aaron Staff']);
+  assert.deepEqual(res.ignored, ['Aaron Staff']);
+  assert.equal(h.state.props.ORPHAN_IGNORE_NAMES, '["Aaron Staff"]');
+  const logSheet = h.state.spreadsheet.getSheetByName('Orphan Fix Log');
+  let logRows = logSheet.getDataRange().getValues();
+  assert.deepEqual(logRows[1].slice(1, 6), ['admin@x.com', 'ignore', 'Aaron Staff', '', 1]);
+  let init = J(h.call('getOrphanFixInit'));
+  assert.deepEqual(init.orphans.map(function (o) { return o.name; }), ['Zed Hire']);
+  assert.deepEqual(init.ignored, ['Aaron Staff']);
+  assert.equal(init.directCut, null);
+
+  // A batch: a roster name is skipped, a repeat is not written twice, one log row names them.
+  res = J(h.call('setOrphanIgnored', { names: ['Zed Hire', 'Bob', 'Aaron Staff', 'Pat Staff', 'Zed Hire'] }));
+  assert.deepEqual(res.changed, ['Zed Hire', 'Pat Staff']);
+  assert.equal(res.skipped, 1, 'Bob is on a roster');
+  assert.deepEqual(res.ignored, ['Aaron Staff', 'Pat Staff', 'Zed Hire']);
+  logRows = logSheet.getDataRange().getValues();
+  assert.deepEqual(logRows[2].slice(2, 7), ['ignore', '(2 names)', '', 2, 'Zed Hire; Pat Staff']);
+  assert.deepEqual(J(h.call('getOrphanFixInit')).orphans, [], 'the write busts the cached init');
+
+  // Nothing new: no write, no log row.
+  res = J(h.call('setOrphanIgnored', { names: ['Zed Hire'] }));
+  assert.deepEqual(res.changed, []);
+  assert.equal(logSheet.getDataRange().getValues().length, 3);
+
+  // Restore: off the list, logged, listed again.
+  res = J(h.call('setOrphanIgnored', { name: 'Zed Hire', ignored: false }));
+  assert.deepEqual(res.changed, ['Zed Hire']);
+  assert.deepEqual(res.ignored, ['Aaron Staff', 'Pat Staff']);
+  assert.deepEqual(logSheet.getDataRange().getValues()[3].slice(2, 6), ['unignore', 'Zed Hire', '', 1]);
+  assert.deepEqual(J(h.call('getOrphanFixInit')).orphans.map(function (o) { return o.name; }), ['Zed Hire']);
+
+  // A full list refuses, and keeps what it had.
+  const before = h.state.props.ORPHAN_IGNORE_NAMES;
+  const big = []; for (let i = 0; i < 60; i++) big.push('Person With A Rather Long Display Name Number ' + i + ' ' + 'x'.repeat(100));
+  assert.throws(function () { h.call('setOrphanIgnored', { names: big }); }, /list is full/);
+  assert.equal(h.state.props.ORPHAN_IGNORE_NAMES, before);
+
+  // No audit sheet, no write.
+  install({ health: health });
+  assert.throws(function () { h.call('setOrphanIgnored', { names: ['Aaron Staff'] }); }, /Orphan Fix Log sheet missing/);
+  assert.equal(h.state.props.ORPHAN_IGNORE_NAMES, undefined);
+});
+
+test('DCA-7: the init reports a cut list; the nag counts the unlisted apart; the modal offers "Not an agent" only for them', function () {
+  install({ log: true, health: [[new Date(), OK, 'success', 5, 100,
+    dayNote(d2, [['Aaron Staff', '250', '', 6], ['+', '', '', 12]])]] });
+  assert.deepEqual(J(h.call('getOrphanFixInit')).directCut, { dateIso: d2, n: 12 });
+  const ov = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'CompanyOverview.gs'), 'utf8');
+  assert.match(ov, /unlistedCount: active\.filter\(function \(o\) \{ return o\.directUnlisted && !o\.rows; \}\)\.length,/);
+  assert.match(ov, /return \{ activeCount: 0, totalCount: 0, unlistedCount: 0, sampleNames: \[\] \};/);
+  const admin = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-7-admin.html'), 'utf8');
+  assert.match(admin, /function ofUnlistedOnly_\(o\) \{\s*\n\s*return !!\(o && o\.directUnlisted && !o\.rows\);/);
+  assert.match(admin, /const ignoreBtn = ofUnlistedOnly_\(o\)/);
+  assert.match(admin, /\.setOrphanIgnored\(\{ names: names, ignored: !!ignored \}\);/);
+  // The bulk action asks first; the single one is reversible and does not.
+  assert.match(admin, /function ofIgnoreAll_\(\) \{[\s\S]{0,400}dsConfirm_\(/);
+  // The "Not an agent" fold is the LAST tabbable thing in the modal, and a
+  // fold header is in the browser's tab order: the focus trap must know it,
+  // or Tab walks out of the dialog (drive-admin's 25-tab walk is the proof).
+  const core = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-1-core.html'), 'utf8');
+  assert.match(core, /var FOCUSABLE = '[^']*details > summary:first-of-type[^']*';/);
+  // ...and that nothing inside a CLOSED fold is reachable (the browser hides
+  // it without display:none, so the offsetParent test alone still counts it).
+  assert.match(core, /function \(el\) \{ return el\.offsetParent !== null && !inClosedFold\(el\); \}/);
+  assert.match(core, /var fold = el\.closest\('details:not\(\[open\]\)'\);/);
+  const reg = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Config.gs'), 'utf8');
+  assert.match(reg, /ORPHAN_IGNORE_NAMES: 'operator'/);
+  assert.equal(h.consts.ORPHAN_IGNORE_PROP_, 'ORPHAN_IGNORE_NAMES');
+});
+
+test('DCA-7: the admin Pipeline Health panel shows the list as a count, and the orphan reader still gets the names', function () {
+  const full = dayNote(d2, [['Nina New', '101', 'Anna', 4], ['Aaron Staff', '250', '', 6], ['+', '', '', 3]]);
+  install({ health: [
+    [new Date(), OK, 'success', 5, 100, full],
+    [new Date(), 'processIntegratedHistory:DQE', 'success', 9, 100, 'plain note | rows=9'],
+  ] });
+  const shown = J(h.call('readPipelineHealth_', 20));
+  assert.equal(shown[0].notes, 'plain note | rows=9', 'a note without the tail is untouched');
+  assert.match(shown[1].notes, /neon=ok \| unrostered: 2 names \(Admin → Outlier Fix\)$/);
+  assert.ok(!/Aaron Staff/.test(shown[1].notes));
+  assert.equal(h.call('pipelineNoteForDisplay_', 'x | unrostered=[["broken"'), 'x | unrostered: a list (Admin → Outlier Fix)');
+  // The orphan check reads the sheet itself, in full.
+  assert.deepEqual(J(h.call('computeOrphans_')).map(function (o) { return o.name; }), ['Nina New', 'Aaron Staff']);
 });

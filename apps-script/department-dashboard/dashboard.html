@@ -3445,6 +3445,19 @@
             </tr></thead>
             <tbody id="of-orphans-tbody"></tbody>
           </table>
+          <!-- DCA-7: people on an extension no roster lists. The import's
+               list can be cut (said here), and the names an admin marked
+               "Not an agent" are kept below so one can be put back. -->
+          <p class="al-hint of-direct-cut" id="of-direct-cut" style="display:none;"></p>
+          <div class="of-unlisted-bar" id="of-unlisted-bar" style="display:none;">
+            <span class="al-hint of-batch-hint" id="of-unlisted-hint"></span>
+            <button type="button" class="btn btn-secondary" id="of-ignore-all">Mark all as not agents</button>
+          </div>
+          <details class="of-ignored" id="of-ignored" style="display:none;">
+            <summary id="of-ignored-summary">Not an agent</summary>
+            <p class="al-hint">Names marked &ldquo;Not an agent&rdquo;. They are left off the list above while they are only seen on an extension no roster lists. Restore one to list it again.</p>
+            <ul class="of-ignored-list" id="of-ignored-list"></ul>
+          </details>
         </div>
 
         <div class="al-section">

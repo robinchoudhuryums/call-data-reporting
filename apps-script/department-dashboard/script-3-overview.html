@@ -497,14 +497,23 @@
     const moreClause = moreCount > 0 ? ' and ' + fmtNumber(moreCount) + ' more' : '';
     el.style.display = '';
     el.className = 'ov-status-banner is-warn';
+    // DCA-7: people known only from an extension no roster lists are worded
+    // apart -- some are new hires, the rest are staff the roster does not
+    // track, and the modal's "Not an agent" clears those for good.
+    const unlisted = Math.min(on.activeCount, Number(on.unlistedCount) || 0);
+    const unlistedClause = !unlisted ? ''
+      : (unlisted === on.activeCount
+          ? ' ' + (unlisted === 1 ? 'That person is' : 'They are') + ' on an extension no roster lists: add the agents to a roster and mark the rest Not an agent.'
+          : ' ' + fmtNumber(unlisted) + ' of them ' + (unlisted === 1 ? 'is' : 'are') + ' on an extension no roster lists: add the agents to a roster and mark the rest Not an agent.');
     el.innerHTML =
         '<span class="ov-status-banner-kicker">Orphans</span>'
       + '<span class="ov-status-banner-body">'
       +   '<strong>' + fmtNumber(on.activeCount) + '</strong>'
-      +   ' agent name' + (on.activeCount === 1 ? '' : 's')
-      +   ' written in the last 7 days do not match any roster'
+      +   ' name' + (on.activeCount === 1 ? '' : 's')
+      +   ' seen on calls in the last 7 days ' + (on.activeCount === 1 ? 'does' : 'do') + ' not match any roster'
       +   (names ? ' (' + names + moreClause + ')' : '')
-      +   '. Map them in the Orphan Fix modal so their calls roll up to the right dept.'
+      +   '. Fix them in the Outlier Fix modal so their calls roll up to the right dept.'
+      +   unlistedClause
       + '</span>'
       + '<button type="button" class="ov-status-banner-action" id="ov-orphan-nag-open">Open</button>';
     const btn = $('ov-orphan-nag-open');

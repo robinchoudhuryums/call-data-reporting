@@ -2174,7 +2174,13 @@ block) unless noted, and the two behavioural ones are also driven in
   / `alertdialog` with `aria-modal` promises a boundary the browser does not
   enforce: use the shared `trapFocus_` / `releaseFocus_`, point
   `aria-labelledby` at the title (and `aria-describedby` at the body where
-  there is one), and return focus to the opener on close. Two traps here:
+  there is one), and return focus to the opener on close. The trap wraps at
+  the last element its own selector list knows, so that list must hold every
+  kind of element the browser tabs to -- a `<details>` fold's `<summary>`
+  included -- and must leave out what the browser skips: anything inside a
+  CLOSED fold, which is hidden without `display:none`, so `offsetParent`
+  alone still counts it (DCA-7: a modal ending in a fold let Tab walk out;
+  drive-admin's 25-tab walk over Outlier Fix proves it). Two traps here:
   a popover with NO focusable child has nothing for the trap to cycle on, so
   give it a real Close control (`.chp-close` on the chart-tips popover); and
   `trapFocus_` releases any trap it finds first, so a dialog opened OVER a

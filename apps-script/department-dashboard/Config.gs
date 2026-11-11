@@ -952,6 +952,7 @@ var PROP_REGISTRY_ = Object.freeze({
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     ALL_DEPT_NOTIFY_OPT_IN: 'operator',
+    ORPHAN_IGNORE_NAMES: 'operator',   // DCA-7: the Outlier Fix "Not an agent" list (setOrphanIgnored)
     // Step 5a (Notifications.gs): the manager layer's release switch, and the
     // stored stricter-only values (written by saveNotifyManagerRule).
     NOTIFY_MANAGER_EDIT: 'operator', NOTIFY_MANAGER_RULES: 'operator',

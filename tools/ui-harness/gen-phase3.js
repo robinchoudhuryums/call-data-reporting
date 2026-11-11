@@ -117,7 +117,9 @@ const SHEETS = {
     // asserts she reaches the Outlier Fix list with her own extension.
     [new Date().toISOString(), 'processIntegratedHistory:Direct', 'success', 6, 900,
       new Date(ago(1) + 'T12:00:00').toDateString() + ' | agents=6 missedBusy=0 missedFree=1 neon=ok'
-        + ' | unrostered=[["Nina New","101","Anna Reyes",7]]']],
+        // DCA-7: plus two people on extensions NO roster lists (third element
+        // empty) -- one gets marked "Not an agent" by drive-admin.
+        + ' | unrostered=[["Nina New","101","Anna Reyes",7],["Omar Unlisted","733","",4],["Pat Porter","744","",2]]']],
   'Agent Alias Overrides': [['Old Name','Canonical Name','Active','Added By','Added At','Notes']],
   'Orphan Fix Log': [['Timestamp','Admin','Action','From Name','To Name','Affected Rows','Notes']],
   'Dept Config': [['Department','QCD Queues','Overview Parent','Team Avg Excludes','Queue Ext Overrides','Active','Updated By','Updated At','Notes','Inbound Queue Aliases']],

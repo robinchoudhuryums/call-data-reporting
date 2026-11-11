@@ -188,22 +188,40 @@ const DC_DEPT_PREFER_ = { 'Spanish': 'CSR' };
 // only, so someone who takes no queue calls was never listed or nagged about.
 // Each Direct build now names them at the END of its Pipeline Health notes:
 //   ' | unrostered=[["<name 8x8 shows>","<ext>","<roster name on that ext>",<calls>], ...]'
+// DCA-7 (owner 2026-11-11): the same list also carries a person on an
+// extension NO roster cell lists (a new hire given a new extension), with an
+// EMPTY third element. That set includes every colleague the roster does not
+// track, so the dashboard keeps an ignore list for them; here the two kinds
+// are capped apart, so untracked staff can never crowd out a former
+// employee's extension.
 // The dashboard (OrphanFix.gs::orphanDirectFromHealthRows_) parses exactly
 // this tail; `orphan-direct-line.test.js` drives the real writer into the real
-// reader and keeps the tag equal on both sides. Busiest
-// first, capped, names clipped -- a note is one sheet cell.
+// reader and keeps the tag equal on both sides. Busiest first, capped, names
+// clipped -- a note is one sheet cell.
 var DC_UNROSTERED_TAG_ = 'unrostered=';
 var DC_UNROSTERED_MAX_ = 20;
+var DC_UNLISTED_MAX_ = 100;
+var DC_UNLISTED_CUT_MARK_ = '+';   // the dashboard's ORPHAN_DIRECT_CUT_MARK_
 /** PURE. The note tail for a build's meta ('' when 8x8 named nobody off-roster). */
 function dcUnrosteredNote_(meta) {
   const at = meta && meta.attribution;
-  const list = (at && at.mismatches) || [];
   const rows = [];
-  for (let i = 0; i < list.length && rows.length < DC_UNROSTERED_MAX_; i++) {
-    const m = list[i];
-    if (!m || !m.legName || !m.ext) continue;
-    rows.push([String(m.legName).slice(0, 80), String(m.ext), String(m.rosterName || '').slice(0, 80), Number(m.n) || 0]);
-  }
+  const take = function (list, cap, was) {
+    let n = 0;
+    for (let i = 0; i < (list || []).length && n < cap; i++) {
+      const m = list[i];
+      if (!m || !m.legName || !m.ext) continue;
+      rows.push([String(m.legName).slice(0, 80), String(m.ext), was ? String(m.rosterName || '').slice(0, 80) : '', Number(m.n) || 0]);
+      n++;
+    }
+  };
+  take(at && at.mismatches, DC_UNROSTERED_MAX_, true);
+  const before = rows.length;
+  take(at && at.unlisted, DC_UNLISTED_MAX_, false);
+  // A cut is said, never silent: the dashboard shows "N more were left off".
+  const usable = ((at && at.unlisted) || []).filter(function (m) { return m && m.legName && m.ext; }).length;
+  const cut = usable - (rows.length - before);
+  if (cut > 0) rows.push([DC_UNLISTED_CUT_MARK_, '', '', cut]);
   return rows.length ? ' | ' + DC_UNROSTERED_TAG_ + JSON.stringify(rows) : '';
 }
 
@@ -282,6 +300,10 @@ function dcResolveAgent_(ext, legName, maps) {
     if (nm && /^\d{1,6}$/.test(d) && !((maps && maps.queueExtSet) || new Set()).has(d)) {
       const cell = dcCellForName_(canonOf(nm), maps);
       if (cell) return { agent: cell, kind: 'namedUnlisted', name: nm };
+      // DCA-7: a PERSON on an extension no roster cell lists, who is on no
+      // roster either. Credit is unchanged (no one) -- the name is only
+      // carried so the build can tell the dashboard's orphan check about it.
+      return { agent: null, kind: 'none', name: '', unlistedName: nm };
     }
     return { agent: null, kind: 'none', name: '' };
   }
@@ -457,7 +479,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   // DCA-1: one tally per leg side (call id + side + extension), never a number.
   const extOnly = !!opts.extOnly;
   const AT = { seen: {}, match: 0, blank: 0, otherCell: 0, mismatch: 0, blankUnconfirmed: 0, mismatches: {}, moved: {}, blankExt: {},
-               blankUnconfirmedBy: {}, named: 0, namedUnlisted: 0, blankNamed: 0, reassigned: {} };
+               blankUnconfirmedBy: {}, named: 0, namedUnlisted: 0, blankNamed: 0, reassigned: {}, unlisted: {} };
   // DCA-2 (owner 2026-11-04, "should match with name also"): a BLANK-name
   // leg is credited by extension only when that extension showed its roster
   // person's OWN name on some leg the SAME day -- proof they still use it.
@@ -491,6 +513,15 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     return { agent: null, kind: 'blankUnconfirmed', name: '', credited: res.base || res.agent };
   }
   function atNote(cid, side, ext, res) {
+    if (res && res.kind === 'none' && res.unlistedName) {   // DCA-7: tallied apart, one per leg side like the rest
+      if (exclusions.has(res.unlistedName)) return;
+      const uk = 'u|' + cid + '|' + side + '|' + ext;
+      if (AT.seen[uk]) return;
+      AT.seen[uk] = true;
+      const ue = AT.unlisted[ext + '|' + res.unlistedName] || (AT.unlisted[ext + '|' + res.unlistedName] = { ext: ext, legName: res.unlistedName, n: 0 });
+      ue.n++;
+      return;
+    }
     if (!res || res.kind === 'none') return;
     const key = cid + '|' + side + '|' + ext;
     if (AT.seen[key]) return;
@@ -838,7 +869,8 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     meta.attribution = { match: AT.match, blank: AT.blank, otherCell: AT.otherCell, mismatch: AT.mismatch,
       blankUnconfirmed: AT.blankUnconfirmed, blankUnconfirmedBy: list(AT.blankUnconfirmedBy),
       named: AT.named, namedUnlisted: AT.namedUnlisted, blankNamed: AT.blankNamed, reassigned: list(AT.reassigned),
-      mismatches: list(AT.mismatches), moved: list(AT.moved), blankExt: AT.blankExt };
+      mismatches: list(AT.mismatches), moved: list(AT.moved), blankExt: AT.blankExt,
+      unlisted: list(AT.unlisted) };   // DCA-7
   }
   if (collect) meta.samples = samples;
   if (diagOn) {

@@ -64,6 +64,52 @@ const MODALS = [
       record('DCA-6: the row says whose extension it is and how many direct calls went uncredited',
         d.found && /Direct line 101/.test(d.note) && /Anna Reyes/.test(d.note) && /7 direct calls not credited/.test(d.note), JSON.stringify(d));
       record('DCA-6: New Assignment is pre-filled with HER extension', d.found && d.exts === '101', JSON.stringify(d));
+      // DCA-7: people on an extension NO roster lists are listed too, after
+      // everyone else, each with a "Not an agent" button nobody else gets.
+      const u = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const nameOf = (r) => (r.children[1] && r.children[1].firstChild ? r.children[1].firstChild.textContent : '');
+        const row = (re) => rows.filter((r) => re.test(r.textContent))[0];
+        const omar = row(/Omar Unlisted/);
+        const bar = document.getElementById('of-unlisted-bar');
+        return {
+          order: rows.map(nameOf),
+          omarNote: omar && omar.querySelector('.of-direct-note') ? omar.querySelector('.of-direct-note').textContent : '',
+          omarBtn: !!(omar && omar.querySelector('.of-row-ignore')),
+          otherBtns: rows.filter((r) => /Nina New|Jon Smyth/.test(r.textContent) && r.querySelector('.of-row-ignore')).length,
+          bar: bar && getComputedStyle(bar).display !== 'none' ? bar.textContent : '',
+          ignoredShown: getComputedStyle(document.getElementById('of-ignored')).display !== 'none',
+        };
+      });
+      record('DCA-7: a person on an extension no roster lists is on the list, after the others',
+        u.order.indexOf('Omar Unlisted') > u.order.indexOf('Nina New') && u.order.indexOf('Pat Porter') > u.order.indexOf('Jon Smyth')
+          && u.order.indexOf('Omar Unlisted') !== -1 && /no roster lists this extension/.test(u.omarNote) && /4 direct calls/.test(u.omarNote),
+        JSON.stringify(u));
+      record('DCA-7: only those rows offer "Not an agent"; the bar counts them',
+        u.omarBtn === true && u.otherBtns === 0 && /2 people are on an extension no roster lists/.test(u.bar) && u.ignoredShown === false,
+        JSON.stringify(u));
+      await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        rows.filter((r) => /Omar Unlisted/.test(r.textContent))[0].querySelector('.of-row-ignore').click();
+      });
+      await page.waitForFunction(() => /Not an agent \(1\)/.test((document.getElementById('of-ignored-summary') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+      const a = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'setOrphanIgnored');
+        return {
+          omarGone: !rows.some((r) => /Omar Unlisted/.test(r.textContent)),
+          othersKept: /Pat Porter/.test(document.getElementById('of-orphans-tbody').textContent) && /Nina New/.test(document.getElementById('of-orphans-tbody').textContent),
+          ignored: document.getElementById('of-ignored-list').textContent,
+          ignoredShown: getComputedStyle(document.getElementById('of-ignored')).display !== 'none',
+          bar: document.getElementById('of-unlisted-bar').textContent,
+          calls: calls.map((c) => c.args),
+        };
+      });
+      record('DCA-7: "Not an agent" sends that one name, drops the row, and keeps it restorable',
+        a.omarGone && a.othersKept && a.ignoredShown && /Omar Unlisted/.test(a.ignored) && /Restore/.test(a.ignored)
+          && /1 person is on an extension no roster lists/.test(a.bar)
+          && a.calls.length === 1 && JSON.stringify(a.calls[0]) === JSON.stringify([{ names: ['Omar Unlisted'], ignored: true }]),
+        JSON.stringify(a));
     } },
   // DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows". The init is the
   // REAL getDeptConfigInit's (gen-phase3), so the bar names the departments the

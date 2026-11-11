@@ -219,6 +219,7 @@ S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE 
     - Expected: non-admin call throws "Alerts are admin-only." (the assertAdmin_ guard); admin Apply succeeds; renamed rows appear in subsequent dashboard reports after the 5-min cache TTL; the next daily DQE build does not re-introduce the orphan because the alias is honored by loadRosterCanonicalNames_.
     - Negative test: try renaming to a name not on any dept's roster (e.g. "Garbage Name"); expected: "X is not on any dept roster..." error.
     - Negative test: try renaming a queue-sentinel ("A_Q_CSR") as fromName or toName; expected: "Queue-sentinel names cannot be renamed..." error.
+    - Direct-line people (DCA-6, DCA-7; needs an import since the cdr-import push): a person 8x8 names on a former employee's roster extension is listed with "Direct line N — the roster lists it for <name>"; people on an extension no roster lists sit at the END of the list with "no roster lists this extension" and a "Not an agent" button nobody else has. Click it on one: the row goes, "Not an agent (1)" appears under the table with a Restore link, the Orphan Fix Log gains an `ignore` row, and on the next Overview load the orphan banner's count is one lower. Restore puts the row back. As a non-admin, `google.script.run...setOrphanIgnored({names:['X']})` is refused.
 
 S32 | Queue data end-to-end (Insights Queue health + retained QCD surfaces) | Subsystem: Department Dashboard + CDR Import
   Steps:

@@ -3887,14 +3887,38 @@ When something looks wrong, before assuming a code bug, check:
     to whichever of the two 8x8 names. If the name is a misspelling of
     someone already on a roster, map it to that name instead. They drop off
     the list at once; their direct calls are credited from the next import,
-    and for the held days after `rebuildDirectCallHeldDates()` (#90). **What
-    it does not cover:** a name on an extension NO roster cell lists (it
-    could be any phone), and days imported before this push: the note is
-    written by each day's import (the held-days rebuild does not write it),
-    so a person appears from the first import after the push on which they
-    take a direct call. A shared
-    phone that shows a label such as a room name will be listed too -- there
-    is no ignore list yet. Needs the cdr-import push AND the dashboard
+    and for the held days after `rebuildDirectCallHeldDates()` (#90). Days
+    imported before the push are not covered: the note is written by each
+    day's import (the held-days rebuild does not write it), so a person
+    appears from the first import after the push on which they take a direct
+    call. Needs the cdr-import push AND the dashboard deploy.
+
+    **A person on an extension NO roster lists is listed too -- and "Not an
+    agent" dismisses the ones who are not agents (DCA-7, owner 2026-11-11).**
+    A new hire given a NEW extension is on no roster cell at all, so DCA-6
+    could not see them. The same note now also carries every person 8x8 names
+    on an extension-length number that no roster cell lists (third element
+    empty; up to 100, busiest first, after the up-to-20 roster-extension
+    names -- and when it leaves some off it ends with `["+","","",<count>]`,
+    which the modal states; the Alerts modal's Pipeline Health panel shows
+    the list as a count). Nothing about credit changes. **The catch: that
+    set is every colleague the roster does not track**, not only new hires,
+    and the import cannot tell them apart -- so expect a long list after the
+    first import. Work it once, in **Admin ▾ → Outlier Fix**: these people
+    sit at the END of the list, noted "no roster lists this extension". (1)
+    Add each call-taking agent with New Assignment… (their extension is
+    pre-filled). (2) Click **Not an agent** on the others, or **Mark all as
+    not agents** once only non-agents remain. Marked names leave the list
+    and the Overview banner, and are kept under "Not an agent (N)" with a
+    Restore link. After that, a new name is a real signal. The list is the
+    `ORPHAN_IGNORE_NAMES` Script Property (a JSON array, ~8.5 KB -- a few
+    hundred names; each change is an `ignore` / `unignore` row in the Orphan
+    Fix Log). **It hides only this kind of entry:** a marked name that shows
+    up in DQE Historical Data, or on an extension the roster lists for
+    someone else, is listed again. The Overview banner counts unmarked
+    people and says how many are of this kind. A shared phone that shows a
+    label such as a room name is listed like a person -- mark it Not an
+    agent. Needs the cdr-import push AND the dashboard
     deploy. Pinned by `tests/unit/orphan-direct-line.test.js`.
 
 84. **Transfers and consults to a person on the caller's journey -- IXT-1 and

@@ -808,15 +808,30 @@
   var activeFocusTrap_ = null;
   function trapFocus_(modal) {
     releaseFocus_();
-    var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    // DCA-7: a <details> fold's <summary> is in the browser's tab order too.
+    // Left out, a modal that ENDS with a fold let Tab walk out of the dialog
+    // (the wrap only fires on the last element this list knows).
+    var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),details > summary:first-of-type,[tabindex]:not([tabindex="-1"])';
     // R12-14: only VISIBLE elements count. The browser skips hidden nodes in
     // tab order, so if the modal's LAST focusable node is display:none (a
     // collapsed edit form -- Outlier Fix / Dept Config / Health), focus never
     // lands on it, the boundary wrap below never fires, and Tab walks out of
     // the dialog.
+    // DCA-7: and nothing INSIDE a closed fold counts. The browser hides a
+    // closed <details>' content with content-visibility, not display:none,
+    // so offsetParent is still set while Tab skips it -- the same "last
+    // element is unreachable" leak as R12-14. The fold's own summary stays.
+    function inClosedFold(el) {
+      var fold = el.closest('details:not([open])');
+      if (!fold) return false;
+      if (el.tagName === 'SUMMARY' && el.parentElement === fold) {
+        return !!(fold.parentElement && fold.parentElement.closest('details:not([open])'));
+      }
+      return true;
+    }
     function focusables() {
       return Array.prototype.filter.call(modal.querySelectorAll(FOCUSABLE),
-        function (el) { return el.offsetParent !== null; });
+        function (el) { return el.offsetParent !== null && !inClosedFold(el); });
     }
     function handler(e) {
       if (e.key !== 'Tab') return;

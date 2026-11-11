@@ -188,6 +188,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   (DCA-6: a new hire on a former employee's extension, named only by the
   Direct build's Pipeline Health note, is on the Outlier Fix list with whose
   extension it is and their own extension pre-filled)
+  (DCA-7: two people on an extension no roster lists sit after the others,
+  only they offer "Not an agent", and one click sends that one name, drops
+  the row and keeps it restorable)
   eleven **modals** (Alerts, Outlier Fix, Dept Config --
   DCD-1: the "default" note, the Save-all-defaults bar from the real init, its
   confirm and the one no-argument request --

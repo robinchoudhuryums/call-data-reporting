@@ -1940,7 +1940,7 @@ function computeOverviewOrphanNag_(rosterNames) {
   try {
     const orphans = computeOrphans_(rosterNames ? { rosterNames: rosterNames } : undefined);
     if (!orphans || !orphans.length) {
-      return { activeCount: 0, totalCount: 0, sampleNames: [] };
+      return { activeCount: 0, totalCount: 0, unlistedCount: 0, sampleNames: [] };
     }
     const cutoff = new Date(Date.now() - OVERVIEW_ORPHAN_NAG_DAYS * 86400000);
     const cutoffIso = Utilities.formatDate(cutoff, TZ, 'yyyy-MM-dd');
@@ -1950,6 +1950,10 @@ function computeOverviewOrphanNag_(rosterNames) {
     return {
       activeCount: active.length,
       totalCount:  orphans.length,
+      // DCA-7: how many of the active ones are known only from an extension
+      // no roster lists -- the banner words those apart (many are simply
+      // staff the roster does not track, until marked "Not an agent").
+      unlistedCount: active.filter(function (o) { return o.directUnlisted && !o.rows; }).length,
       // Surface up to 3 names so the banner can be specific without
       // wrapping. Sorted by row count desc so the highest-impact
       // orphans show first.

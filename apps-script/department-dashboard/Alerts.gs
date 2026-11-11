@@ -283,10 +283,28 @@ function readPipelineHealth_(maxRows) {
       status:      String(r[2] || ''),
       rows:        r[3] === '' || r[3] == null ? null : r[3],
       durationMs:  r[4] === '' || r[4] == null ? null : r[4],
-      notes:       String(r[5] || ''),
+      notes:       pipelineNoteForDisplay_(String(r[5] || '')),
     });
   }
   return out;
+}
+
+/**
+ * PURE (DCA-7). A Direct build's note can END with the machine-read list of
+ * people on unrostered extensions (`| unrostered=[[...], ...]`, up to ~120
+ * entries). Nothing that reads THROUGH readPipelineHealth_ parses it
+ * (OrphanFix.gs reads the sheet itself), so for display it becomes a count.
+ */
+function pipelineNoteForDisplay_(notes) {
+  const at = notes.lastIndexOf('| unrostered=[');
+  if (at === -1) return notes;
+  let n = null;
+  try {
+    const list = JSON.parse(notes.slice(at + '| unrostered='.length));
+    if (Array.isArray(list)) n = list.filter(function (x) { return Array.isArray(x) && x[1]; }).length;
+  } catch (e) { n = null; }
+  return notes.slice(0, at) + '| unrostered: ' + (n == null ? 'a list' : n + (n === 1 ? ' name' : ' names'))
+    + ' (Admin → Outlier Fix)';
 }
 
 function previewAlerts(req) {
