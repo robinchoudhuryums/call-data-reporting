@@ -181,6 +181,32 @@ const DC_NON_PERSON_RE_ = /^(n\/?a|none|unknown|anonymous|restricted|private)$|v
 // the second -- the Spanish agents' direct calls go to their CSR row.
 const DC_DEPT_PREFER_ = { 'Spanish': 'CSR' };
 
+// DCA-6 (owner 2026-11-11): a person 8x8 names on a ROSTER extension who is on
+// NO roster -- the new hire on a former employee's extension -- is credited to
+// no one (DCA-1), and until now that showed only in the execution log. The
+// dashboard's orphan check reads DQE Historical Data, which holds QUEUE calls
+// only, so someone who takes no queue calls was never listed or nagged about.
+// Each Direct build now names them at the END of its Pipeline Health notes:
+//   ' | unrostered=[["<name 8x8 shows>","<ext>","<roster name on that ext>",<calls>], ...]'
+// The dashboard (OrphanFix.gs::orphanDirectFromHealthRows_) parses exactly
+// this tail; `orphan-direct-line.test.js` drives the real writer into the real
+// reader and keeps the tag equal on both sides. Busiest
+// first, capped, names clipped -- a note is one sheet cell.
+var DC_UNROSTERED_TAG_ = 'unrostered=';
+var DC_UNROSTERED_MAX_ = 20;
+/** PURE. The note tail for a build's meta ('' when 8x8 named nobody off-roster). */
+function dcUnrosteredNote_(meta) {
+  const at = meta && meta.attribution;
+  const list = (at && at.mismatches) || [];
+  const rows = [];
+  for (let i = 0; i < list.length && rows.length < DC_UNROSTERED_MAX_; i++) {
+    const m = list[i];
+    if (!m || !m.legName || !m.ext) continue;
+    rows.push([String(m.legName).slice(0, 80), String(m.ext), String(m.rosterName || '').slice(0, 80), Number(m.n) || 0]);
+  }
+  return rows.length ? ' | ' + DC_UNROSTERED_TAG_ + JSON.stringify(rows) : '';
+}
+
 /** PURE. The leg's name as a PERSON name, or '' for blank / a label / a number. */
 function dcPersonName_(v) {
   const s = String(v == null ? '' : v).trim();

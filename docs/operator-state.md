@@ -3870,6 +3870,33 @@ When something looks wrong, before assuming a code bug, check:
     the cell it is listed under, 8x8's name, who it went to). Not
     retroactive: **run `rebuildDirectCallHeldDates()` again after the push**,
     then `diagnoseDirectCallAttributionAllDates()` to see the new split.
+
+    **A new hire on a former employee's extension is on the orphan list
+    (DCA-6, owner 2026-11-11).** When 8x8 names someone on a roster extension
+    who is on NO roster, their direct calls are credited to no one (DCA-1
+    above) -- and the orphan check only read DQE Historical Data, which holds
+    queue calls, so a new hire who takes no queue calls was never listed and
+    nobody was told. Each Direct build now names them at the end of its
+    Pipeline Health note (`| unrostered=[[name, ext, roster name on that ext,
+    calls], ...]`, up to 20, busiest first), and the dashboard folds them
+    into the orphan list: **Admin ▾ → Outlier Fix** shows the person with
+    "Direct line 1234 — the roster lists it for <former employee>", and the
+    Overview's orphan banner counts them. **To clear one:** New Assignment…
+    → pick the department (their own extension is pre-filled) → Add to
+    roster. The former employee keeps the extension in their cell; calls go
+    to whichever of the two 8x8 names. If the name is a misspelling of
+    someone already on a roster, map it to that name instead. They drop off
+    the list at once; their direct calls are credited from the next import,
+    and for the held days after `rebuildDirectCallHeldDates()` (#90). **What
+    it does not cover:** a name on an extension NO roster cell lists (it
+    could be any phone), and days imported before this push: the note is
+    written by each day's import (the held-days rebuild does not write it),
+    so a person appears from the first import after the push on which they
+    take a direct call. A shared
+    phone that shows a label such as a room name will be listed too -- there
+    is no ignore list yet. Needs the cdr-import push AND the dashboard
+    deploy. Pinned by `tests/unit/orphan-direct-line.test.js`.
+
 84. **Transfers and consults to a person on the caller's journey -- IXT-1 and
     `diagnosePersonTransfers` (cdr-import, owner 2026-10-27).** Caller Lookup
     (and every journey drill) used to stop at the agent who answered when that

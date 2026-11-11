@@ -43,7 +43,28 @@ const IGNORABLE = /favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i;
 
 const MODALS = [
   { name: 'Alerts',         btn: '#alerts-btn',          sel: '#alerts-modal',         adminMenu: true },
-  { name: 'Outlier Fix',    btn: '#orphan-fix-btn',      sel: '#orphan-fix-modal',     adminMenu: true },
+  { name: 'Outlier Fix',    btn: '#orphan-fix-btn',      sel: '#orphan-fix-modal',     adminMenu: true,
+    // DCA-6: a new hire on a former employee's extension takes no queue calls,
+    // so she is in no DQE row -- the list must still carry her (the init is
+    // the REAL getOrphanFixInit's, fed by the Direct build's Pipeline Health
+    // note in gen-phase3), say whose extension it is, and offer HER extension.
+    probe: async function (page, record) {
+      const d = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const tr = rows.filter((r) => /Nina New/.test(r.textContent))[0];
+        if (!tr) return { found: false, names: rows.map((r) => r.children[1] ? r.children[1].textContent : '') };
+        const idx = tr.getAttribute('data-orphan-idx');
+        const note = tr.querySelector('.of-direct-note');
+        const exts = document.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+        return { found: true, note: note ? note.textContent : '', exts: exts ? exts.value : null,
+                 queueOrphan: rows.some((r) => /Jon Smyth/.test(r.textContent)) };
+      });
+      record('DCA-6: a new hire on a former employee\'s extension is on the Outlier Fix list',
+        d.found === true && d.queueOrphan === true, JSON.stringify(d));
+      record('DCA-6: the row says whose extension it is and how many direct calls went uncredited',
+        d.found && /Direct line 101/.test(d.note) && /Anna Reyes/.test(d.note) && /7 direct calls not credited/.test(d.note), JSON.stringify(d));
+      record('DCA-6: New Assignment is pre-filled with HER extension', d.found && d.exts === '101', JSON.stringify(d));
+    } },
   // DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows". The init is the
   // REAL getDeptConfigInit's (gen-phase3), so the bar names the departments the
   // server would write; the click asks first, then sends ONE request (no list

@@ -459,6 +459,11 @@ function addOrphanToRoster(req) {
  * sample dept queue-extensions observed (helps the admin figure
  * out which roster the orphan likely belongs on).
  *
+ * DCA-6: plus the people the Direct build names on a roster extension who
+ * are on no roster (see the fold-in at the end). Those entries carry
+ * `directExt` / `directListedFor` / `directCalls`; one who takes no queue
+ * calls has `rows: 0`.
+ *
  * Bounded to the last ORPHAN_LOOKBACK_DAYS to keep the scan cheap
  * on large history sheets.
  */
@@ -520,12 +525,14 @@ function computeOrphans_(opts) {
     }
   }
 
-  if (!usedNeon) {
+  // DCA-6: an empty DQE window no longer returns early -- the direct-line
+  // fold-in below still has people to add.
+  const scanSheet = function () {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-    if (!sheet) return [];
+    if (!sheet) return;
     const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return [];
+    if (lastRow < 2) return;
     const ssTZ = ss.getSpreadsheetTimeZone();
     // Read Date + Agent + QueueExt cols only.
     const numCols = Math.max(
@@ -538,22 +545,121 @@ function computeOrphans_(opts) {
     // DQE read has usually filled already; the per-row cutoff in accept() STAYS,
     // since the sheet is not reliably date-ordered (the span only bounds the read).
     const span = dqeWindowRowSpan_(sheet, lastRow, cutoffIso, '9999-12-31', ssTZ);
-    if (!span) return [];
+    if (!span) return;
     const values = sheet.getRange(span.startRow, 1, span.numRows, numCols).getValues();
     for (let i = 0; i < values.length; i++) {
       accept(rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1], ssTZ),
              values[i][HISTORICAL_COLS.AGENT - 1],
              values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
     }
+  };
+  if (!usedNeon) scanSheet();
+  // DCA-6 (owner 2026-11-11): people 8x8 names on a ROSTER extension who are
+  // on no roster -- the new hire on a former employee's extension. Their
+  // direct calls are credited to no one, and someone who takes no QUEUE calls
+  // never reaches DQE Historical Data, so the scan above cannot see them. The
+  // Direct build names them on its Pipeline Health rows; fold them in here so
+  // the Outlier Fix list and the Overview nag cover them. Best-effort: a
+  // failed read costs these entries, never the DQE orphans.
+  try {
+    const aliased = {};
+    readAgentAliases_().forEach(function (a) { if (a.active) aliased[a.oldName] = true; });
+    const direct = (opts && opts.directUnrostered)
+      || orphanDirectFromHealthRows_(orphanReadDirectHealthRows_(), cutoffIso);
+    direct.forEach(function (d) {
+      if (rosterSet[d.name] || aliased[d.name]) return;   // since fixed: rostered, or mapped to a roster name
+      if (/^A_Q_/.test(d.name) || d.name === 'Backup CSR') return;
+      let e = byName[d.name];
+      if (!e) e = byName[d.name] = { rows: 0, lastSeen: '', exts: {} };
+      if (d.dateIso > e.lastSeen) e.lastSeen = d.dateIso;
+      const x = e.direct || (e.direct = { ext: d.ext, listedFor: d.listedFor, calls: 0, lastSeen: '' });
+      x.calls += d.calls;
+      if (d.dateIso >= x.lastSeen) { x.lastSeen = d.dateIso; x.ext = d.ext; x.listedFor = d.listedFor; }
+    });
+  } catch (eDirect) {
+    Logger.log('computeOrphans_: direct-line (DCA-6) read failed: ' + (eDirect && eDirect.message ? eDirect.message : eDirect));
   }
   return Object.keys(byName).sort().map(function (name) {
-    return {
+    const out = {
       name:       name,
       rows:       byName[name].rows,
       lastSeen:   byName[name].lastSeen,
       sampleExts: Object.keys(byName[name].exts).sort(),
     };
+    const dx = byName[name].direct;
+    if (dx) {
+      // Their OWN extension (what the roster cell needs), who the roster
+      // lists it for, and the direct calls that went uncredited.
+      out.directExt = dx.ext;
+      out.directListedFor = dx.listedFor;
+      out.directCalls = dx.calls;
+    }
+    return out;
   });
+}
+
+// DCA-6: the Direct build's note tail (cdr-import/directCallMetrics.js::
+// dcUnrosteredNote_ writes it; orphan-direct-line.test.js keeps the two in step).
+const ORPHAN_DIRECT_TAG_ = 'unrostered=';
+const ORPHAN_DIRECT_STEPS_ = { 'processIntegratedHistory:Direct': true, 'bulkBackfill:Direct': true };
+// Newest Pipeline Health rows searched. The Direct build logs once per
+// imported date, so this reaches back a few weeks -- enough for a person who
+// is still unrostered (they are named again every day they take a call).
+const ORPHAN_DIRECT_SCAN_ROWS_ = 1200;
+const ORPHAN_DIRECT_MONTHS_ = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+                                Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
+
+/** The newest Pipeline Health rows as { step, status, notes }, NEWEST FIRST. [] when the sheet is absent. */
+function orphanReadDirectHealthRows_() {
+  const sheet = openSpreadsheet_().getSheetByName(SHEETS.PIPELINE_HEALTH);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const startRow = Math.max(2, lastRow - ORPHAN_DIRECT_SCAN_ROWS_ + 1);
+  // Timestamp | Step | Status | Rows | Duration (ms) | Notes
+  const grid = sheet.getRange(startRow, 2, lastRow - startRow + 1, 5).getValues();
+  const out = [];
+  for (let i = grid.length - 1; i >= 0; i--) {
+    out.push({ step: String(grid[i][0] || ''), status: String(grid[i][1] || ''), notes: String(grid[i][4] || '') });
+  }
+  return out;
+}
+
+/**
+ * PURE (DCA-6). Pipeline Health rows (NEWEST FIRST) -> the off-roster people
+ * the Direct build named: [{ name, ext, listedFor, calls, dateIso }].
+ * The NEWEST successful Direct row for a date speaks for that date -- so a
+ * re-import after the person was rostered (a row with no tail) clears it, and
+ * a date imported twice is not counted twice. Dates before `cutoffIso`, rows
+ * of other steps, failures and unparseable tails are skipped.
+ */
+function orphanDirectFromHealthRows_(rows, cutoffIso) {
+  const seenDate = {};
+  const out = [];
+  (rows || []).forEach(function (r) {
+    if (!r || !ORPHAN_DIRECT_STEPS_[r.step] || String(r.status).toLowerCase() !== 'success') return;
+    const notes = String(r.notes || '');
+    const m = /^[A-Za-z]{3} ([A-Za-z]{3}) (\d{2}) (\d{4})/.exec(notes);   // the writers' dateObj.toDateString() prefix
+    if (!m || !ORPHAN_DIRECT_MONTHS_[m[1]]) return;
+    const dateIso = m[3] + '-' + ORPHAN_DIRECT_MONTHS_[m[1]] + '-' + m[2];
+    if (seenDate[dateIso]) return;
+    seenDate[dateIso] = true;
+    if (cutoffIso && dateIso < cutoffIso) return;
+    const at = notes.lastIndexOf('| ' + ORPHAN_DIRECT_TAG_);
+    if (at === -1) return;
+    let list;
+    try { list = JSON.parse(notes.slice(at + 2 + ORPHAN_DIRECT_TAG_.length)); } catch (e) { return; }
+    if (!Array.isArray(list)) return;
+    list.forEach(function (x) {
+      if (!Array.isArray(x)) return;
+      const name = String(x[0] == null ? '' : x[0]).trim();
+      const ext = String(x[1] == null ? '' : x[1]).trim();
+      if (!name || !/^\d{1,6}$/.test(ext)) return;
+      out.push({ name: name, ext: ext, listedFor: String(x[2] == null ? '' : x[2]).trim(),
+                 calls: Math.max(0, Number(x[3]) || 0), dateIso: dateIso });
+    });
+  });
+  return out;
 }
 
 function collectAllRosterNames_() {

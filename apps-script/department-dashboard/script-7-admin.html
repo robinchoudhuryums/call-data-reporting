@@ -2049,7 +2049,7 @@
     if (!orphans.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
         + 'No outliers in the last 180 days. Every agent name in DQE '
-        + 'Historical Data maps to a roster entry. &#x1F389;'
+        + 'Historical Data maps to a roster entry, and nobody is taking direct calls on another person’s roster extension. &#x1F389;'
         + '</td></tr>';
       const bar0 = $('of-batch-bar'); if (bar0) bar0.style.display = 'none';
       const sa0 = $('of-select-all'); if (sa0) { sa0.checked = false; sa0.indeterminate = false; sa0.disabled = true; }
@@ -2075,13 +2075,23 @@
 
     tbody.innerHTML = orphans.map(function (o, idx) {
       const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
+      // DCA-6: someone 8x8 names on an extension the roster lists for another
+      // person (a new hire on a former employee's extension). Their direct
+      // calls are credited to no one until they are on a roster; the
+      // extension shown is THEIR OWN, so it pre-fills the New Assignment form.
+      const direct = o.directExt
+        ? '<div class="of-direct-note">Direct line ' + escapeHtml(o.directExt)
+          + (o.directListedFor ? ' — the roster lists it for ' + escapeHtml(o.directListedFor) : '')
+          + ' · ' + fmtNumber(o.directCalls || 0) + ' direct call' + ((o.directCalls || 0) === 1 ? '' : 's') + ' not credited to anyone</div>'
+        : '';
+      const addExts = o.directExt ? escapeHtml(o.directExt) : (o.sampleExts || []).map(escapeHtml).join(', ');
       // Two rows per orphan: the main row, plus a hidden inline form for
       // the "this is actually a NEW ASSIGNMENT" flow -- adds them to a
       // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td class="of-check-col"><input type="checkbox" class="of-row-check" data-idx="' + idx + '" '
            +       'title="Select for batch apply (enabled once mapped or a new assignment is filled)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
-           +   '<td>' + escapeHtml(o.name) + '</td>'
+           +   '<td>' + escapeHtml(o.name) + direct + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
            +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
            +   '<td>' + exts + '</td>'
@@ -2105,7 +2115,7 @@
            +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
            +         'aria-label="Extensions for ' + escapeHtml(o.name) + '" '
            +         'placeholder="e.g. 1042 — the agent’s own extension" '
-           +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
+           +         'value="' + addExts + '">'
            +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
            +       '<span class="of-add-hint"><strong>Enter the agent’s own individual (direct) extension</strong> — NOT the department queue extension. '
            +         'Digit-only; comma-separate multiple. Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s '

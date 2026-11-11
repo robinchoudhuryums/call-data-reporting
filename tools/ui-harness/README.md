@@ -185,6 +185,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   since IC-4 its "How this is counted" ⓘ (no fold).
 - `drive-admin.js` — (CCX-1: text typed on two escalation cards survives a
   "Save comment only" reload, the saved comment comes back empty)
+  (DCA-6: a new hire on a former employee's extension, named only by the
+  Direct build's Pipeline Health note, is on the Outlier Fix list with whose
+  extension it is and their own extension pre-filled)
   eleven **modals** (Alerts, Outlier Fix, Dept Config --
   DCD-1: the "default" note, the Save-all-defaults bar from the real init, its
   confirm and the one no-argument request --

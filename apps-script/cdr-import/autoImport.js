@@ -944,7 +944,8 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
                 rows:       dres.wrote,
                 durationMs: Date.now() - bulkDirectStart,
                 notes:      dateObj.toDateString() + ' | agents=' + dres.meta.agents +
-                            ' missedBusy=' + dres.meta.missedBusyTotal + ' (skipNeon)',
+                            ' missedBusy=' + dres.meta.missedBusyTotal + ' (skipNeon)'
+                            + directUnrosteredNote_(dres),   // DCA-6: must stay the LAST segment
               });
             } catch (logErr) { /* best-effort */ }
             if (dres.wrote === 0 && (dres.deletedExisting || 0) > 0) {
@@ -2858,7 +2859,8 @@ if (!skipCDR && obcHD) {
           durationMs: Date.now() - directStart,
           notes: dateObj.toDateString() + ' | agents=' + dres.meta.agents +
             ' missedBusy=' + dres.meta.missedBusyTotal +
-            ' missedFree=' + dres.meta.missedFreeTotal + ' neon=' + directNeonStr,
+            ' missedFree=' + dres.meta.missedFreeTotal + ' neon=' + directNeonStr
+            + directUnrosteredNote_(dres),   // DCA-6: must stay the LAST segment
         });
         if (dres.wrote === 0 && (dres.deletedExisting || 0) > 0) {
           // C-5 (the S2-2 rule: a dashboard-read sheet's rebuild-to-zero must
@@ -3743,6 +3745,17 @@ function processPendingImports_() {
   return last;
 }
 
+/**
+ * DCA-6: the Direct build's "8x8 names someone on a roster extension who is on
+ * no roster" tail for its Pipeline Health success row ('' when there is none).
+ * The dashboard's orphan check reads it, so it is always the note's LAST segment.
+ */
+function directUnrosteredNote_(dres) {
+  try {
+    return (typeof dcUnrosteredNote_ === 'function') ? dcUnrosteredNote_(dres && dres.meta) : '';
+  } catch (e) { return ''; }
+}
+
 /** PC-10: the per-call writers' "no HMAC_SECRET" note for their Pipeline Health row ('' when hashed). */
 function perCallHashlessNote_(res) {
   return (res && res.hashless)
@@ -3856,7 +3869,8 @@ function pendingImportDirectCatchUp_(targetSS, iso, dateObj) {
       step: 'processIntegratedHistory:Direct', status: 'success', rows: dres.wrote,
       durationMs: Date.now() - t0,
       notes: dateObj.toDateString() + ' | catch-up (F7): the import that wrote this date stopped before Direct'
-        + ' | neon=' + neonStr,
+        + ' | neon=' + neonStr
+        + directUnrosteredNote_(dres),   // DCA-6: must stay the LAST segment
     });
     if (neonStr !== 'ok') {
       let configured = false;

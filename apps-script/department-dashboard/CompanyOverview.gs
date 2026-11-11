@@ -1955,7 +1955,8 @@ function computeOverviewOrphanNag_(rosterNames) {
       // orphans show first.
       sampleNames: active
         .slice()
-        .sort(function (a, b) { return b.rows - a.rows; })
+        // DCA-6: a direct-line-only person has no DQE rows; rank by both.
+        .sort(function (a, b) { return (b.rows + (b.directCalls || 0)) - (a.rows + (a.directCalls || 0)); })
         .slice(0, 3)
         .map(function (o) { return o.name; }),
     };
