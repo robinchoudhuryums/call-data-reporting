@@ -157,7 +157,7 @@
          via body[data-page] from the Overview / My Department
          header buttons. -->
     <section id="overview-page" class="page page-overview">
-      <div id="ov-loading" style="padding: 24px;">
+      <div id="ov-loading" role="status" aria-live="polite" style="padding: 24px;">
         <!-- C3 honest single cold-start loader: one indeterminate bar + one
              label above the skeletons. No faked staged labels (the client
              can't know the real stage). -->
@@ -270,7 +270,7 @@
             </div>
             <div class="ir-chart-wrap" id="ov-chart-wrap">
               <div class="ir-chart-header"><span id="ov-chart-header-label">Answer rate trend per department</span><span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
-              <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+              <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart" role="img" aria-label="Answer rate by department over time"></canvas></div>
               <!-- #81: the exception days this chart leaves out (shaded on it). -->
               <div id="ov-exc-note" class="ds-note exc-note" role="status" style="display:none;"></div>
             </div>
@@ -370,7 +370,7 @@
                     <div id="ov-dl-table"></div>
                     <div class="esc-resolve-actions ob-list-actions">
                       <button class="btn btn-secondary" id="ov-dl-rep-btn" type="button">List repeat unreturned callers</button>
-                      <span id="ov-dl-rep-status" class="al-hint"></span>
+                      <span id="ov-dl-rep-status" role="status" aria-live="polite" class="al-hint"></span>
                       <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ov-dl-howto">&#9432;</span></span>
                     </div>
                     <div id="ov-dl-rep-list" style="display:none;"></div>
@@ -607,20 +607,20 @@
            out, and -- for an admin -- the include / leave-out switch. -->
       <div id="dept-exc-note" class="ds-note exc-note" role="status" style="display:none;"></div>
       <div class="agents-table-wrap" id="agents-in-wrap">
-      <table id="agents-table" class="agents">
+      <table id="agents-table" class="agents" aria-label="Agents: inbound calls">
         <thead>
           <tr>
-            <th data-sort="agent">Agent <span class="arrow"></span></th>
-            <th class="col-extra">Source</th>
-            <th data-sort="totalAnswered">Answered / Missed <span class="arrow"></span></th>
-            <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
-            <th data-sort="transferPct" class="col-xfer"
+            <th scope="col" data-sort="agent">Agent <span class="arrow"></span></th>
+            <th scope="col" class="col-extra">Source</th>
+            <th scope="col" data-sort="totalAnswered">Answered / Missed <span class="arrow"></span></th>
+            <th scope="col" data-sort="answerRate">Answer % <span class="arrow"></span></th>
+            <th scope="col" data-sort="transferPct" class="col-xfer"
                 title="Calls this agent transferred &divide; calls they handled, this range (CSR Transfer Historical Data -- the Transfer % tile's own rows)">Transfer % <span class="arrow"></span></th>
-            <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
-            <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
-            <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
-            <th data-sort="avgAbdWaitSeconds" class="col-extra">Avg Abd Wait <span class="arrow"></span></th>
-            <th data-sort="csrAvgAbdWaitSeconds" class="col-extra">CSR Avg Abd Wait <span class="arrow"></span></th>
+            <th scope="col" data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
+            <th scope="col" data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
+            <th scope="col" data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
+            <th scope="col" data-sort="avgAbdWaitSeconds" class="col-extra">Avg Abd Wait <span class="arrow"></span></th>
+            <th scope="col" data-sort="csrAvgAbdWaitSeconds" class="col-extra">CSR Avg Abd Wait <span class="arrow"></span></th>
           </tr>
         </thead>
         <tbody id="agents-tfoot" class="agents-totals"></tbody>
@@ -632,7 +632,7 @@
            COLUMNS model and its exports stay exactly as they are. -->
       <div id="agents-ob-wrap" class="agents-table-wrap" style="display:none;">
         <div id="agents-ob-note" class="ds-note" style="display:none;"></div>
-        <table id="agents-ob-table" class="agents agents-ob">
+        <table id="agents-ob-table" class="agents agents-ob" aria-label="Agents: outbound calls">
           <thead id="agents-ob-thead"></thead>
           <tbody id="agents-ob-tfoot" class="agents-totals"></tbody>
           <tbody id="agents-ob-tbody"></tbody>
@@ -643,7 +643,7 @@
            with the Team Direct Calls card, TDC_). Rendered by dcViewRender_. -->
       <div id="agents-dc-wrap" class="agents-table-wrap" style="display:none;">
         <div id="agents-dc-note" class="ds-note" style="display:none;"></div>
-        <table id="agents-dc-table" class="agents agents-ob agents-dc">
+        <table id="agents-dc-table" class="agents agents-ob agents-dc" aria-label="Agents: direct calls">
           <thead id="agents-dc-thead"></thead>
           <tbody id="agents-dc-tfoot" class="agents-totals"></tbody>
           <tbody id="agents-dc-tbody"></tbody>
@@ -717,7 +717,7 @@
                 <p id="ins-cb-scope-note" style="display:none;"></p>
               </div>
               <div id="ins-cb-chart-wrap" style="display:none; max-width:100%; height:140px;">
-                <canvas id="ins-cb-chart"></canvas>
+                <canvas id="ins-cb-chart" role="img" aria-label="Callbacks by day"></canvas>
               </div>
               <div id="ins-cb-hour-strip" style="display:none;"></div>
               <!-- IC-1: the two list buttons side by side (the lists open below,
@@ -727,8 +727,8 @@
               <div class="esc-resolve-actions ob-list-actions">
                 <button class="btn btn-secondary" id="ins-cb-uncalled-btn" type="button">List not-called-back calls</button>
                 <button class="btn btn-secondary" id="ins-cb-calledback-btn" type="button">List called-back calls</button>
-                <span id="ins-cb-uncalled-status" class="al-hint"></span>
-                <span id="ins-cb-calledback-status" class="al-hint"></span>
+                <span id="ins-cb-uncalled-status" role="status" aria-live="polite" class="al-hint"></span>
+                <span id="ins-cb-calledback-status" role="status" aria-live="polite" class="al-hint"></span>
                 <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ins-cb-howto">&#9432;</span></span>
               </div>
               <div id="ins-cb-uncalled-list" style="display:none;"></div>
@@ -751,7 +751,7 @@
                     <div id="ins-dl-table"></div>
                     <div class="esc-resolve-actions ob-list-actions">
                       <button class="btn btn-secondary" id="ins-dl-rep-btn" type="button">List repeat unreturned callers</button>
-                      <span id="ins-dl-rep-status" class="al-hint"></span>
+                      <span id="ins-dl-rep-status" role="status" aria-live="polite" class="al-hint"></span>
                       <span class="ob-howto-tip">How this is counted <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="How this is counted" data-gloss-src="ins-dl-howto">&#9432;</span></span>
                     </div>
                     <div id="ins-dl-rep-list" style="display:none;"></div>
@@ -801,7 +801,7 @@
                failed fetch, which read as "no missed calls" / "feature gone";
                now the failure is said out loud with a retry. Populated by
                deptMissedFetch_'s failure handler; hidden on every new fetch. -->
-          <div class="ds-note" id="dept-missed-error" style="display:none;"></div>
+          <div class="ds-note" id="dept-missed-error" role="alert" style="display:none;"></div>
           <div class="ds-note subq-note" id="dept-missed-scope-note" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
           <!-- Round-16 (owner): the Bars/Radar SEGMENT is HIDDEN for everyone
@@ -829,7 +829,7 @@
                detail panel beside it; .no-detail re-centers the chart. -->
           <div id="dept-missed-chart-row" class="chart-row no-detail">
             <div class="chart-section" id="dept-missed-chart-wrap">
-              <canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
+              <canvas id="dept-missed-chart" role="img" aria-label="Hour-of-day distribution of missed calls"></canvas>
             </div>
             <div id="dept-missed-bucket-detail" class="bucket-detail" style="display:none;">
               <div class="bucket-detail-header">
@@ -997,7 +997,7 @@
         <div class="ir-search-row">
           <input type="search" id="ins-agent-search" placeholder="Search agents by name..." aria-label="Search agents by name" autocomplete="off">
         </div>
-        <div id="ins-agent-loader" class="ir-loader">
+        <div id="ins-agent-loader" role="status" aria-live="polite" class="ir-loader">
           <div class="ir-skeleton-grid" aria-hidden="true">
             <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
             <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
@@ -1273,7 +1273,7 @@
         <!-- Cross-agent grouped-bar view (current vs prior) -- toggled from
              the toolbar; complements the per-card cards + mini-bars (#3). -->
         <div class="ir-chart-wrap" id="ins-cards-chart-wrap" style="display:none;">
-          <div class="ir-chart-canvas-wrap"><canvas id="ins-cards-chart"></canvas></div>
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-cards-chart" role="img" aria-label="Agents compared for the selected period"></canvas></div>
         </div>
 
         <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
@@ -1519,7 +1519,7 @@
               <button type="button" class="chart-help-btn" data-charthelp="insTrend" aria-label="Chart tips" title="Chart tips">?</button>
             </div>
           </div>
-          <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+          <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart" role="img" aria-label="Team trend over time"></canvas></div>
           <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no
                Chart.js). Populated by insRenderTrendCalendar_. -->
           <div id="ins-trend-calendar" class="ins-trend-calendar" style="display:none;"></div>
@@ -2040,7 +2040,7 @@
       <!-- Drill-through loader: shown instead of the setup form when IR is
            opened by drilling from Insights / My Department (auto-generates for
            the same date), so the form doesn't flash before the report. -->
-      <div id="ir-drill-loader" class="ir-drill-loader" style="display:none;">
+      <div id="ir-drill-loader" role="status" aria-live="polite" class="ir-drill-loader" style="display:none;">
         <div class="ir-drill-spinner" aria-hidden="true"></div>
         <div class="ir-drill-loader-text">Generating report&hellip;</div>
       </div>
@@ -2095,7 +2095,7 @@
         <div class="ir-search-row">
           <input type="search" id="ir-agent-search" placeholder="Search agents by name..." aria-label="Search agents by name" autocomplete="off">
         </div>
-        <div id="ir-agent-loader" class="ir-loader">
+        <div id="ir-agent-loader" role="status" aria-live="polite" class="ir-loader">
           <div class="ir-skeleton-grid" aria-hidden="true">
             <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
             <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
@@ -2225,15 +2225,15 @@
         <div id="ir-charts-container" class="ir-chart-area">
           <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol" role="tabpanel" aria-labelledby="ir-tab-vol">
             <div class="ir-chart-header">Volume Trends</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart" role="img" aria-label="Volume trends for the selected agents"></canvas></div>
           </div>
           <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" role="tabpanel" aria-labelledby="ir-tab-eff" style="display:none;">
             <div class="ir-chart-header">Efficiency (% Answered)</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart" role="img" aria-label="Efficiency: percent answered, for the selected agents"></canvas></div>
           </div>
           <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" role="tabpanel" aria-labelledby="ir-tab-dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart" role="img" aria-label="Duration: average talk time, for the selected agents"></canvas></div>
           </div>
         </div>
       </div>
@@ -2273,7 +2273,7 @@
                 <span class="qcd-alldept-dash">&ndash;</span>
                 <input type="date" id="qcd-alldept-to" aria-label="End date">
                 <button class="btn btn-secondary" id="qcd-alldept-refresh-btn" type="button" title="Re-generate for the selected range">&#8635; Update</button>
-                <span id="qcd-alldept-form-error" class="status status-error" style="display:none;"></span>
+                <span id="qcd-alldept-form-error" role="alert" class="status status-error" style="display:none;"></span>
               </div>
             </div>
             <!-- R11-B3: Download CSV / Print / Email me consolidated into the
@@ -2592,7 +2592,7 @@
           <div id="health-uiflags-list" class="health-uiflags-list">Loading…</div>
           <div class="esc-resolve-actions">
             <button class="btn" id="health-uiflags-save" type="button">Save toggles</button>
-            <span id="health-uiflags-status" class="al-hint"></span>
+            <span id="health-uiflags-status" role="status" aria-live="polite" class="al-hint"></span>
           </div>
         </div>
         <div class="al-section" id="health-backup-section" style="display:none;">
@@ -2608,7 +2608,7 @@
             <button class="btn" id="health-backup-install" type="button">Install weekly trigger</button>
             <button class="btn btn-ghost" id="health-backup-uninstall" type="button">Uninstall</button>
             <button class="btn btn-secondary" id="health-backup-now" type="button">Back up now</button>
-            <span id="health-backup-status" class="al-hint"></span>
+            <span id="health-backup-status" role="status" aria-live="polite" class="al-hint"></span>
           </div>
         </div>
       </div>
@@ -2793,7 +2793,7 @@
             <button class="btn" id="coaching-install-btn" type="button">Install weekly trigger</button>
             <button class="btn btn-ghost" id="coaching-uninstall-btn" type="button">Uninstall</button>
             <button class="btn btn-secondary" id="coaching-run-now-btn" type="button">Run now</button>
-            <span id="coaching-delivery-status" class="al-hint"></span>
+            <span id="coaching-delivery-status" role="status" aria-live="polite" class="al-hint"></span>
           </div>
         </div>
       </div>
@@ -2841,7 +2841,7 @@
         </div>
         <div id="cl-error" role="status" class="status status-error" style="display:none;"></div>
         <div id="cl-status" role="status" class="status" style="display:none;"></div>
-        <div id="cl-loading" style="display:none;"></div>
+        <div id="cl-loading" role="status" aria-live="polite" style="display:none;"></div>
 
         <div id="cl-unconfigured" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128273;</div>
@@ -2915,7 +2915,7 @@
           recoverable while the capture tables still hold the day.
         </div>
         <div id="ad-error" role="status" class="status status-error" style="display:none;"></div>
-        <div id="ad-loading" style="display:none;"></div>
+        <div id="ad-loading" role="status" aria-live="polite" style="display:none;"></div>
 
         <div id="ad-empty" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128197;</div>
@@ -3002,7 +3002,7 @@
         <h2 id="alerts-modal-title">Notifications</h2>
       </div>
       <div class="modal-panel-body">
-      <div id="al-loading" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading alert configuration&hellip;</div>
+      <div id="al-loading" role="status" aria-live="polite" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading alert configuration&hellip;</div>
 
       <div id="al-body" style="display:none;">
         <div class="al-section">
@@ -3049,7 +3049,7 @@
           <div class="esc-form-actions">
             <button class="btn" id="al-cfg-save" type="button">Save dept</button>
             <button class="btn btn-ghost" id="al-cfg-clear" type="button">Clear</button>
-            <span id="al-cfg-status" class="status" style="display:none;"></span>
+            <span id="al-cfg-status" role="status" aria-live="polite" class="status" style="display:none;"></span>
           </div>
         </div>
 
@@ -3199,12 +3199,12 @@
             </div>
             <button class="btn btn-secondary" id="al-targets-save-btn" type="button">Save standards</button>
           </div>
-          <p class="al-hint" id="al-targets-status" style="margin-top: 8px;"></p>
+          <p class="al-hint" id="al-targets-status" role="status" aria-live="polite" style="margin-top: 8px;"></p>
         </div>
 
         <div class="al-section">
           <h3 class="al-section-title">Daily trigger <span class="al-state-pill" id="al-trigger-pill"></span></h3>
-          <p class="al-hint" id="al-trigger-status"></p>
+          <p class="al-hint" id="al-trigger-status" role="status" aria-live="polite"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-trigger-btn" type="button">Install daily trigger (8 AM)</button>
             <button class="btn btn-secondary" id="al-uninstall-trigger-btn" type="button" style="display:none;">Uninstall trigger</button>
@@ -3218,7 +3218,7 @@
 
         <div class="al-section">
           <h3 class="al-section-title">Neon keep-warm <span class="al-state-pill" id="al-keepwarm-pill"></span></h3>
-          <p class="al-hint" id="al-keepwarm-status"></p>
+          <p class="al-hint" id="al-keepwarm-status" role="status" aria-live="polite"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-keepwarm-btn"   type="button">Enable keep-warm</button>
             <button class="btn btn-secondary" id="al-uninstall-keepwarm-btn" type="button" style="display:none;">Disable keep-warm</button>
@@ -3234,7 +3234,7 @@
 
         <div class="al-section">
           <h3 class="al-section-title">Report cache warming <span class="al-state-pill" id="al-cachewarm-pill"></span></h3>
-          <p class="al-hint" id="al-cachewarm-status"></p>
+          <p class="al-hint" id="al-cachewarm-status" role="status" aria-live="polite"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-cachewarm-btn"   type="button">Enable cache warming</button>
             <button class="btn btn-secondary" id="al-uninstall-cachewarm-btn" type="button" style="display:none;">Disable cache warming</button>
@@ -3337,14 +3337,14 @@
             <button class="btn" id="al-rs-save" type="button">Save subscriber</button>
             <button class="btn btn-ghost" id="al-rs-clear" type="button">Clear</button>
             <button class="btn btn-secondary" id="al-rs-qr-preview" type="button" title="Send yourself a preview of the previous workday's Daily Call Queue Report">Send me a Queue Report preview</button>
-            <span id="al-rs-status" class="status" style="display:none;"></span>
+            <span id="al-rs-status" role="status" aria-live="polite" class="status" style="display:none;"></span>
           </div>
 
           <!-- The two report engines run on independent triggers. -->
           <div class="al-rs-schedules">
             <div class="al-rs-schedule">
               <div class="al-section-subtitle">Manager digest schedule <span class="al-state-pill" id="al-digest-pill"></span></div>
-              <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 6px;"></p>
+              <p class="al-hint" id="al-digest-trigger-status" role="status" aria-live="polite" style="margin-top: 6px;"></p>
               <!-- O-2: last per-cadence run outcome (DIGEST_LAST_RESULT_* Script
                    Properties via getDigestsInit.lastResults). Hidden until a
                    run has recorded something. -->
@@ -3361,7 +3361,7 @@
             <div class="al-rs-schedule">
               <div class="al-section-subtitle">Daily Call Queue Report schedule <span class="al-state-pill" id="al-qr-pill"></span></div>
               <p class="al-hint" style="margin-top: 6px;"><span id="al-qr-window"></span> Emails once each weekday morning, only after the previous workday&rsquo;s data is fully processed.</p>
-              <p class="al-hint" id="al-qr-trigger-status" style="margin-top: 6px;"></p>
+              <p class="al-hint" id="al-qr-trigger-status" role="status" aria-live="polite" style="margin-top: 6px;"></p>
               <div class="al-trigger-actions">
                 <button class="btn btn-secondary" id="al-install-qr-btn"   type="button">Install daily trigger</button>
                 <button class="btn btn-secondary" id="al-uninstall-qr-btn" type="button" style="display:none;">Uninstall trigger</button>
@@ -3411,7 +3411,7 @@
         <h2 id="orphan-fix-modal-title">Outlier Fix</h2>
       </div>
       <div class="modal-panel-body">
-      <div id="of-loading" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading outlier list&hellip;</div>
+      <div id="of-loading" role="status" aria-live="polite" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading outlier list&hellip;</div>
 
       <div id="of-body" style="display:none;">
         <div class="al-section">
@@ -3629,12 +3629,12 @@
           <div class="esc-form-actions">
             <button class="btn" id="esc-c-save" type="button">Save escalation</button>
             <button class="btn btn-ghost" id="esc-c-cancel" type="button">Cancel</button>
-            <span id="esc-c-error" class="status status-error" style="display:none;"></span>
+            <span id="esc-c-error" role="alert" class="status status-error" style="display:none;"></span>
           </div>
         </div>
 
         <div id="esc-error" role="status" class="status status-error" style="display:none;"></div>
-        <div id="esc-loading" style="display:none;"></div>
+        <div id="esc-loading" role="status" aria-live="polite" style="display:none;"></div>
         <div id="esc-empty" class="empty-state" style="display:none;"></div>
         <div id="esc-list"></div>
         </div><!-- /.esc-main -->
@@ -3660,7 +3660,7 @@
         <h2 id="access-control-modal-title">Access Control</h2>
       </div>
       <div class="modal-panel-body">
-        <div id="ac-loading" class="ir-loader" style="text-align:center; padding:24px; color:var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading access&hellip;</div>
+        <div id="ac-loading" role="status" aria-live="polite" class="ir-loader" style="text-align:center; padding:24px; color:var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading access&hellip;</div>
         <div id="ac-body" style="display:none;">
           <div class="al-section">
             <p class="al-hint">
@@ -3749,7 +3749,7 @@
         <h2 id="dept-config-modal-title">Dept Config</h2>
       </div>
       <div class="modal-panel-body">
-      <div id="dc-loading" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading dept config&hellip;</div>
+      <div id="dc-loading" role="status" aria-live="polite" class="ir-loader" style="text-align: center; padding: 24px; color: var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading dept config&hellip;</div>
 
       <div id="dc-body" style="display:none;">
         <div class="al-section">

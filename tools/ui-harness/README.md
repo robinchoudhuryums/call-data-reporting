@@ -183,7 +183,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   summary that leads with the unreturned callers and its one-base bar, the
   most-not-called-back default order, and a row's own unreturned-caller list;
   since IC-4 its "How this is counted" ⓘ (no fold).
-- `drive-admin.js` — (KBF, Batch 9: every modal's Escape returns focus to a VISIBLE control -- the opener or its menu's trigger; Help holds 40 Tabs with its topic folds closed; Help topics and theme chips are pressed exactly when selected; the Inbound report's 20 header labels take focus and open their tooltip)
+- `drive-admin.js` — (NPS, Batch 10: printing with the Inbound report open prints the whole report and nothing behind it, and the screen comes back; five modals at 390 and 768 px do not scroll sideways as a whole and keep Close on screen; every amber or red value says its tier; every canvas is a named image; the three filled category segments use dark ink in dark mode)
+  (KBF, Batch 9: every modal's Escape returns focus to a VISIBLE control -- the opener or its menu's trigger; Help holds 40 Tabs with its topic folds closed; Help topics and theme chips are pressed exactly when selected; the Inbound report's 20 header labels take focus and open their tooltip)
   (CCX-1: text typed on two escalation cards survives a
   "Save comment only" reload, the saved comment comes back empty)
   (DCA-6: a new hire on a former employee's extension, named only by the

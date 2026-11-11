@@ -191,10 +191,11 @@ test('styles.html: the sub-queue CSS is inside the style element', function () {
 // idle agents to the top of an ascending sort.
 test('bar column sorts by totalAnswered, Answer % by answerRate, in both theads + COLUMNS; sortRows idle-sinks both', function () {
   const html = fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8');
-  const bar = html.match(/<th data-sort="([^"]+)">Answered \/ Missed /g) || [];
+  // NPS-3: the dept table's header cells carry scope="col" ahead of data-sort.
+  const bar = html.match(/<th (?:scope="col" )?data-sort="([^"]+)">Answered \/ Missed /g) || [];
   assert.equal(bar.length, 2, 'two Answered / Missed headers (dept table + overview mini-table)');
   bar.forEach(function (m) { assert.ok(/data-sort="totalAnswered"/.test(m), 'bar th sorts by volume: ' + m); });
-  const pct = html.match(/<th data-sort="([^"]+)">Answer % /g) || [];
+  const pct = html.match(/<th (?:scope="col" )?data-sort="([^"]+)">Answer % /g) || [];
   assert.equal(pct.length, 2);
   pct.forEach(function (m) { assert.ok(/data-sort="answerRate"/.test(m), 'Answer % th sorts by rate: ' + m); });
   const core = fs.readFileSync(path.join(DIR, 'script-1-core.html'), 'utf8');

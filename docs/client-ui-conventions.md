@@ -2116,7 +2116,7 @@ behind the removed button.
 
 ## Client accessibility + print contract (Batch 9, 2026-09-18)
 
-Eight cross-cutting rules. Each was a real defect on this client before it was
+Twelve cross-cutting rules. Each was a real defect on this client before it was
 a rule, each is swept by `tests/unit/client-dead-ends.test.js` (the Batch 9
 block) unless noted, and the two behavioural ones are also driven in
 `npm run ci:ui`. Read this before adding an interactive surface.
@@ -2189,7 +2189,32 @@ block) unless noted, and the two behavioural ones are also driven in
 - **A page's loading and error lines are live regions (UI-2).** An error is
   `role="alert"`, a loading line `role="status" aria-live="polite"`, so a
   screen reader hears the swap the eye sees. The agent page carries both on
-  each tab.
+  each tab. **Since NPS-4 the manager page's markup is swept:** every element
+  in `dashboard.html` whose id ends `-status` / `-error` / `-loading` /
+  `-loader` must carry `role="status"` or `role="alert"`
+  (`names-print-narrow.test.js`) -- about thirty had neither, so a save, a
+  load or a refused form said nothing. Name a new status line that way and
+  the sweep holds it.
+- **A chart is a named image; a data table is named (NPS-3).** Every
+  `<canvas>` carries `role="img"` and an `aria-label` saying what it plots
+  (the same sweep fails on one without), and the three My Department tables
+  carry an `aria-label` with `scope="col"` on their header cells. Use
+  `aria-label`, not `<caption>`, where a visible caption would change the
+  layout.
+- **A tint is never the only signal (NPS-5).** The benchmark classes
+  (`bm-watch` / `bm-bad` / `bm-over`) are colour alone, written by about
+  twenty builders as a class string. Each now carries its tier as
+  CSS-GENERATED text (`.bm-*::after`, ", below target"): a screen reader
+  reads it after the number, while page code, a copied selection and a
+  print never see it -- which matters, because some code READS these cells
+  (the day quick view's Range line reads `.dts-value`'s text; a first draft
+  appended a hidden span and that line would have printed the words). One
+  pass on the glossary's observer (`applyBenchTierTitle_`) adds the same
+  words as a hover `title`. Green is the unmarked case and stays silent.
+  Two rules if you copy the pattern: the clipped box is NOT
+  `position:absolute` (the `.sr-only` recipe escapes a sideways-scrolling
+  table and widens the whole page -- it did, during this fix), and its ink
+  is `transparent`, so the 1px box leaves no dot on screen or in an image.
 - **A dialog traps Tab, names itself, and gives focus back.** `role="dialog"`
   / `alertdialog` with `aria-modal` promises a boundary the browser does not
   enforce: use the shared `trapFocus_` / `releaseFocus_`, point
@@ -2268,6 +2293,12 @@ block) unless noted, and the two behavioural ones are also driven in
   the S2-5 date-chip trap, closed at the token instead. Consumers: the
   success/error toasts and the danger confirm button. **Only S41 can verify
   this** (it is a perceptual property), so the walk carries the step.
+  **NPS-6 extended the family:** `--on-accent` and `--on-dir-out` for text on
+  an `--accent` / `--dir-out` fill (the three filled category segments of
+  the split bars hardcoded white). `names-print-narrow.test.js` sweeps every
+  `.ob-seg-*` rule: its text colour is an `--on-*` token or `--ink`, never a
+  literal. A new fill colour that carries text needs its own on-fill token
+  in the light block, the dark block AND the print block.
 - **Screen-only chrome never reaches paper.** A plain Ctrl+P on any page
   used to print the Help FAB, the admin A/B remote, the dev overlay, toasts,
   the update notice, the tour, the confirm and tooltip layers and the modal
@@ -2276,6 +2307,28 @@ block) unless noted, and the two behavioural ones are also driven in
   and makes the sticky strips static, since a fixed or sticky band either
   repeats on every page or covers content. A new floating or sticky surface
   must join that list.
+- **Ctrl+P with a modal open prints the MODAL (NPS-1).** A modal is a fixed
+  overlay with a capped, scrolling panel, so the browser's own print put the
+  page behind it on paper plus the slice of the panel on screen (the Inbound
+  report lost 571 px). `beforeprint` marks the top open modal
+  (`printModalBegin_`: the one holding the focus trap, so Help over a report
+  prints Help) and `body.modal-printing` makes it the document: everything
+  else is hidden, the panel and its body lose their cap and their scroll
+  boxes, tables go back to tables, the close / open-in-tab / action buttons
+  stay off the page. `afterprint` undoes it. The scripted Individual and
+  Insights prints set their own body class first and are left alone. No
+  modal needs its own Print button for this -- but a new scroll box INSIDE a
+  modal whose class does not end in `-wrap` must be un-scrolled here too.
+- **A modal's wide table scrolls by itself (NPS-2).** At tablet and phone
+  widths a table wider than the panel made the whole modal BODY scroll
+  sideways, taking the form fields and buttons with it. Under 820 px the
+  four modal table classes (`al-config-table`, `al-log-table`,
+  `al-results-table`, `qcd-source-table`) become their own sideways
+  scroller (`display: block; overflow-x: auto`), and under 600 px the modal
+  gives its side padding back. A new table class used in a modal joins that
+  list (`drive-admin.js` measures five modals at 390 and 768 px). The
+  phone-padding rule sits AFTER the wide-variant padding rules on purpose:
+  same specificity, so the later one wins.
 
 Three markup rules from the same batch, one line each: a dense cross-link
 (the missed-list agent-name / ring-time jumps) is a **link-styled `<button>`

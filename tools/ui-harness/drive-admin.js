@@ -585,6 +585,98 @@ const MODALS = [
     await ctx.close();
   }
 
+  // ── Batch 10 (NPS): print, narrow screens, names, live regions, tier text ──
+  {
+    // NPS-1 (F73): the browser's own print with a report open. Paper used to
+    // get the page behind the overlay plus the slice of the panel on screen.
+    const { ctx, page, errors } = await boot();
+    const before = errors.length;
+    await page.click('#reports-menu-btn'); await page.waitForTimeout(200);
+    await page.click('#inbound-report-btn'); await page.waitForTimeout(1200);
+    await page.click('#inbound-generate-btn'); await page.waitForTimeout(2200);
+    const measure = () => page.evaluate(() => {
+      const m = document.getElementById('inbound-modal'), bd = m.querySelector('.modal-panel-body');
+      return { pos: getComputedStyle(m).position, clipped: bd.scrollHeight - bd.clientHeight,
+        behind: getComputedStyle(document.querySelector('body > .container')).display,
+        close: getComputedStyle(m.querySelector('.modal-close')).display, cls: document.body.className };
+    });
+    const scr = await measure();
+    await page.emulateMedia({ media: 'print' });
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    const prt = await measure();
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    await page.emulateMedia({ media: 'screen' });
+    const aft = await measure();
+    record('NPS-1: on screen the Inbound report is a clipped, scrolling overlay (the thing print must undo)',
+      scr.pos === 'fixed' && scr.clipped > 100, JSON.stringify(scr));
+    record('NPS-1: printing with the report open prints the whole report and nothing behind it',
+      prt.pos === 'static' && prt.clipped <= 1 && prt.behind === 'none' && prt.close === 'none', JSON.stringify(prt));
+    record('NPS-1: the screen is back as it was after the print',
+      aft.pos === 'fixed' && aft.behind !== 'none' && aft.close !== 'none' && aft.cls.indexOf('modal-printing') === -1, JSON.stringify(aft));
+
+    // NPS-5 / NPS-3 / NPS-4 / NPS-6 on the open report and the page.
+    const names = await page.evaluate(() => {
+      const tinted = Array.from(document.querySelectorAll('.bm-watch, .bm-bad, .bm-over')).filter((e) => e.getClientRects().length);
+      const canv = Array.from(document.querySelectorAll('canvas'));
+      const seg = (cls) => { const d = document.createElement('div'); d.className = 'ob-obar-seg ' + cls; d.textContent = '12';
+        document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; };
+      const light = { cat1: seg('ob-seg-cat1'), cat2: seg('ob-seg-cat2'), cat4: seg('ob-seg-cat4') };
+      document.body.dataset.mode = 'dark';
+      const dark = { cat1: seg('ob-seg-cat1'), cat2: seg('ob-seg-cat2'), cat4: seg('ob-seg-cat4'), good: seg('ob-seg-good') };
+      delete document.body.dataset.mode;
+      return {
+        tinted: tinted.length,
+        // The spoken words are CSS-generated (::after), the hover words a title;
+        // the element's own text must stay just its number.
+        silent: tinted.filter((e) => !/, (just below target|below target|outside the standard)/.test(getComputedStyle(e, '::after').content) || !e.title).length,
+        sample: tinted.length ? (tinted[0].textContent + ' | ' + getComputedStyle(tinted[0], '::after').content + ' | ' + tinted[0].title) : '',
+        textClean: tinted.every((e) => !/target|standard/.test(e.textContent)),
+        greenSaid: Array.from(document.querySelectorAll('.bm-target')).filter((e) => { const c = getComputedStyle(e, '::after').content; return c && c !== 'none' && /target|standard/.test(c); }).length,
+        canvases: canv.length, unnamed: canv.filter((c) => c.getAttribute('role') !== 'img' || !(c.getAttribute('aria-label') || '').trim()).map((c) => c.id),
+        loader: (document.getElementById('ov-loading') || { getAttribute: () => null }).getAttribute('role'),
+        light: light, dark: dark,
+      };
+    });
+    record('NPS-5: every amber or red benchmark value says its tier in words (a title + generated read-aloud text, its own text untouched); green stays silent',
+      names.tinted > 0 && names.silent === 0 && names.greenSaid === 0 && names.textClean === true,
+      JSON.stringify({ tinted: names.tinted, silent: names.silent, sample: names.sample, green: names.greenSaid, textClean: names.textClean }));
+    record('NPS-3: every chart canvas on the page is a named image', names.canvases >= 8 && names.unnamed.length === 0,
+      JSON.stringify({ n: names.canvases, unnamed: names.unnamed }));
+    record('NPS-6: text on the three filled category segments is white in light mode and dark ink in dark mode, like the green one',
+      names.light.cat1 === 'rgb(255, 255, 255)' && names.light.cat2 === 'rgb(255, 255, 255)' && names.light.cat4 === 'rgb(255, 255, 255)'
+        && names.dark.cat1 === names.dark.good && names.dark.cat2 === names.dark.good && names.dark.cat4 === names.dark.good
+        && names.dark.good === 'rgb(16, 20, 24)', JSON.stringify({ light: names.light, dark: names.dark }));
+    record('NPS (print / names): no page/console errors', errors.length === before, errors.slice(before, before + 2).join(' | '));
+    await ctx.close();
+  }
+  // NPS-2 (F81): at phone and tablet widths a wide table used to make the
+  // WHOLE modal body scroll sideways. Each table now scrolls by itself: the
+  // body is exactly as wide as the panel, the page is no wider than the
+  // screen, and Close stays on it.
+  for (const vw of [390, 768]) {
+    for (const m of [['#alerts-btn', '#alerts-modal', '#admin-menu-btn'], ['#orphan-fix-btn', '#orphan-fix-modal', '#admin-menu-btn'],
+      ['#dept-config-btn', '#dept-config-modal', '#admin-menu-btn'], ['#coaching-btn', '#coaching-modal', '#admin-menu-btn'],
+      ['#system-health-btn', '#health-modal', '#admin-menu-btn']]) {
+      const ctx = await browser.newContext({ viewport: { width: vw, height: vw === 390 ? 844 : 1024 } });
+      const page = await ctx.newPage();
+      await page.addInitScript(() => { try { localStorage.setItem('cdr.tour.done', '1'); } catch (e) {} });
+      await page.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
+      await page.waitForTimeout(1500);
+      // Opened by script: at phone width the header's own menu is off-screen, which is not what this measures.
+      await page.evaluate((x) => { document.querySelector(x[2]).click(); document.querySelector(x[0]).click(); }, m);
+      await page.waitForTimeout(1500);
+      const r = await page.evaluate((sel) => {
+        const md = document.querySelector(sel), bd = md.querySelector('.modal-panel-body'), cl = md.querySelector('.modal-close').getBoundingClientRect();
+        const wide = Array.from(bd.querySelectorAll('table')).filter((t) => t.scrollWidth > t.clientWidth + 1).length;
+        return { shown: getComputedStyle(md).display !== 'none', body: bd.scrollWidth - bd.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
+                 close: cl.left >= 0 && cl.right <= innerWidth && cl.top >= 0, ownScroll: wide };
+      }, m[1]);
+      record('NPS-2: ' + m[1] + ' at ' + vw + 'px -- the modal body does not scroll sideways, the page is no wider, Close is on screen',
+        r.shown && r.body <= 1 && r.page <= 1 && r.close && (vw !== 390 || r.ownScroll >= 1), JSON.stringify(r));
+      await ctx.close();
+    }
+  }
+
   // ── UI-1 / UI-2: layers stacked OVER a report modal ─────────────────────
   // Help (via the FAB), the chart tips and the "↳ path" overlay can each
   // open on top of a report. Escape must close ONLY the top layer -- all

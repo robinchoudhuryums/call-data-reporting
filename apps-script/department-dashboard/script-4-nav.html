@@ -1192,15 +1192,50 @@
     window.addEventListener('resize', hide);
   }
 
+  // F80 / NPS-5 (broad-scan 2026-11-10): a benchmark tint is colour alone --
+  // an amber or red Answer % said nothing more than its number to a screen
+  // reader, or to anyone who cannot tell the three hues apart. The words a
+  // screen reader hears are CSS-generated (styles.html, .bm-*::after), so no
+  // builder changes and nothing that reads a cell's text sees them; this pass
+  // only adds the same words as a hover `title`, on the glossary's observer.
+  // Green is the unmarked case and stays silent. Keep the words equal to the
+  // stylesheet's (names-print-narrow.test.js compares them).
+  var BENCH_TIER_TEXT_ = { 'bm-watch': 'just below target', 'bm-bad': 'below target', 'bm-over': 'outside the standard' };
+  function benchTierWord_(el) {
+    if (el.classList.contains('bm-bad')) return BENCH_TIER_TEXT_['bm-bad'];
+    if (el.classList.contains('bm-watch')) return BENCH_TIER_TEXT_['bm-watch'];
+    if (el.classList.contains('bm-over')) return BENCH_TIER_TEXT_['bm-over'];
+    return '';
+  }
+  function applyBenchTierTitle_(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('.bm-watch, .bm-bad, .bm-over').forEach(function (el) {
+      const word = benchTierWord_(el);
+      if (!word) return;
+      const title = word.charAt(0).toUpperCase() + word.slice(1);
+      // A title this pass wrote follows the tier; one a builder wrote (or the
+      // glossary is holding in data-gloss) is left alone.
+      const mine = el.getAttribute('data-bm-title');
+      if (mine != null) {
+        if (el.title === mine && mine !== title) { el.title = title; el.setAttribute('data-bm-title', title); }
+        return;
+      }
+      if (el.title || el.hasAttribute('data-gloss')) return;
+      el.title = title;
+      el.setAttribute('data-bm-title', title);
+    });
+  }
+
   function initMetricGlossary_() {
     applyGlossaryTooltips_(document);
+    applyBenchTierTitle_(document);
     // Report tables/tiles render after async fetches; a debounced
     // childList observer re-applies over the whole document (cheap:
     // a few hundred elements, and already-titled ones short-circuit).
     let timer = null;
     const obs = new MutationObserver(function () {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(function () { applyGlossaryTooltips_(document); }, 250);
+      timer = setTimeout(function () { applyGlossaryTooltips_(document); applyBenchTierTitle_(document); }, 250);
     });
     obs.observe(document.body, { childList: true, subtree: true });
   }

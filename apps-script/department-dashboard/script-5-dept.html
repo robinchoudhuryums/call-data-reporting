@@ -2300,7 +2300,7 @@
     // pattern); the square radar keeps its own aspect-driven sizing.
     var hwrapCls = 'missed-chart-hwrap' + (missedChartMode_() === 'bars' ? ' missed-chart-hwrap--bars' : '');
     chartWrap.innerHTML = '<div class="' + hwrapCls + '">'
-      + '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
+      + '<canvas id="dept-missed-chart" role="img" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
     refreshChartTheme();
     const scopedChart = deptMissedScopedChart_(data);   // R11-C4
     const chipEl = $('dept-missed-scope-chip');
@@ -5474,7 +5474,7 @@
   }
   function dcThHtml_(key, label, cls) {
     var on = DC_VIEW_.sortKey === key;
-    return '<th data-dc-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
+    return '<th scope="col" data-dc-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
       + (on ? ' aria-sort="' + (DC_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
       + escapeHtml(label) + ' <span class="arrow">' + (on ? (DC_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
   }
@@ -5785,7 +5785,7 @@
 
   function obThHtml_(key, label, cls) {
     var on = OB_VIEW_.sortKey === key;
-    return '<th data-ob-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
+    return '<th scope="col" data-ob-sort="' + key + '" tabindex="0"' + (cls ? ' class="' + cls + '"' : '')
       + (on ? ' aria-sort="' + (OB_VIEW_.sortDir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>'
       + escapeHtml(label) + ' <span class="arrow">' + (on ? (OB_VIEW_.sortDir === 'asc' ? '▲' : '▼') : '▽') + '</span></th>';
   }

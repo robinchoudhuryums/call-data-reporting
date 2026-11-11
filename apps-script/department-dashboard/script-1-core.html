@@ -946,6 +946,34 @@
     return !!(el && document.contains(el) && getComputedStyle(el).display !== 'none');
   }
 
+  // -- F73: Ctrl+P with a modal open prints the MODAL --------------------------
+  // The browser's own print (Ctrl+P, File > Print) used to put the page behind
+  // the overlay on paper, plus the slice of the panel that fit on screen. The
+  // top open modal is marked for the print rules in styles.html and unmarked
+  // after. The scripted prints (Individual, Insights) set their own body class
+  // first and are left alone.
+  function printModalTarget_() {
+    var b = document.body;
+    if (b.classList.contains('ir-printing') || b.classList.contains('ins-printing')) return null;
+    var t = activeFocusTrap_ && activeFocusTrap_.modal;
+    if (t && t.classList.contains('modal') && layerIsShown_(t)) return t;   // the layer on top holds the trap
+    var open = Array.prototype.filter.call(document.querySelectorAll('body > .modal'), layerIsShown_);
+    return open.length ? open[open.length - 1] : null;
+  }
+  function printModalBegin_() {
+    var m = printModalTarget_();
+    if (!m) return;
+    m.classList.add('is-printing');
+    document.body.classList.add('modal-printing');
+  }
+  function printModalEnd_() {
+    document.body.classList.remove('modal-printing');
+    Array.prototype.forEach.call(document.querySelectorAll('.modal.is-printing'),
+      function (m) { m.classList.remove('is-printing'); });
+  }
+  window.addEventListener('beforeprint', printModalBegin_);
+  window.addEventListener('afterprint', printModalEnd_);
+
   // -- UI-1: the Escape LAYER STACK -------------------------------------------
   // A layer that opens OVER a modal -- the "↳ path" overlay, the chart tips,
   // Help -- must take Escape for ITSELF. Each used to listen on document in

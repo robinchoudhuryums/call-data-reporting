@@ -477,7 +477,7 @@
       +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab" aria-selected="' + (inboundDrillMetric === 'calls') + '" tabindex="' + (inboundDrillMetric === 'calls' ? '0' : '-1') + '">Volume</button>'
       +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab" aria-selected="' + (inboundDrillMetric === 'rate') + '" tabindex="' + (inboundDrillMetric === 'rate' ? '0' : '-1') + '">Abandon %</button>'
       + '</div>'
-      + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
+      + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart" role="img" aria-label="Daily trend for the selected row"></canvas></div>'
       + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
       + '</td>';
     tr.parentNode.insertBefore(drill, tr.nextSibling);
