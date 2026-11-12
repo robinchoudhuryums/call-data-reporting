@@ -534,7 +534,7 @@
         const st = drill.querySelector('.inbound-drill-status');
         if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
       })
-      .getInboundInsurerDaily({ from: meta.from, to: meta.to, insurer: insurer, department: dept });
+      .getInboundInsurerDaily(excReq_({ from: meta.from, to: meta.to, insurer: insurer, department: dept }));   // EXC-3
   }
 
   function inboundRenderDrillChart_(drillRow, daily) {
@@ -764,7 +764,7 @@
         var retry = el.querySelector('.ds-heatmap-retry');
         if (retry) retry.addEventListener('click', function () { loadAbandonHeatmap_(containerId, dept, from, to); });
       })
-      .getInboundHeatmap({ department: dept || '', from: from, to: to });
+      .getInboundHeatmap(excReq_({ department: dept || '', from: from, to: to }));   // EXC-3
   }
 
   // Cell background via CSS color-mix() -- the browser resolves + mixes the
@@ -1022,7 +1022,7 @@
         if (guard() && inboundSlot) inboundSlot.innerHTML = '<div class="status status-error">'
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
       })
-      .getInboundHeatmapCell({ department: dept, from: from, to: to, dow: dow, slot: slot });
+      .getInboundHeatmapCell(excReq_({ department: dept, from: from, to: to, dow: dow, slot: slot }));   // EXC-3
 
     // Lens 2 -- DQE missed rings for the same weekday × CST hour window. Needs a
     // single department (the missed report is per-dept); the company view
@@ -2095,6 +2095,7 @@
         + days + '-day callback window' : '')
       + (cb.dataLagging && cb.dataThrough ? ' · calls loaded through ' + escapeHtml(cb.dataThrough) : '')
       + '</div></div>';
+    html += excPartHtml_(cb.exceptionDays, 'These callback figures exclude');   // EXC-3 (#81)
     html += obOutcomeBarHtml_(segs, eps, fmtNumber(eps) + ' callers: ' + segs.map(function (p) {
       return fmtNumber(p.n || 0) + ' ' + p.label;
     }).join(', '));
@@ -2603,7 +2604,8 @@
       + (meta.pending ? ' · ' + meta.pending + ' still inside the window' : '')
       + (meta.dataLagging && meta.dataThrough ? ' · calls loaded through ' + escapeHtml(String(meta.dataThrough)) : '')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest shown)</span>' : '')
-      + '</div><div class="heat-drill-list">' + blocks + '</div>';
+      + '</div>' + excPartHtml_(meta.exceptionDays, 'This list excludes')   // EXC-3 (#81)
+      + '<div class="heat-drill-list">' + blocks + '</div>';
   }
 
   // CE-2: the called-back list. One row per episode a dial decided: when the
@@ -2648,7 +2650,8 @@
     return '<div class="heat-drill-head"><strong>Called back</strong> · '
       + fmtNumber(meta.own || 0) + ' by own team · ' + fmtNumber(meta.other || 0) + ' by another team'
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + eps.length + ' shown)</span>' : '')
-      + '</div><div class="heat-drill-list">' + rows + '</div>';
+      + '</div>' + excPartHtml_(meta.exceptionDays, 'This list excludes')   // EXC-3 (#81)
+      + '<div class="heat-drill-list">' + rows + '</div>';
   }
 
   // ── CE-3: Direct lines -- calls to a person's line ─────────────────────
@@ -3038,6 +3041,8 @@
         nb.push('Calls are loaded through ' + meta.dataThrough
           + '; episodes whose window reaches past that still count as in window.');
       }
+      const excDl = excPartText_(meta.exceptionDays, 'These direct-line figures exclude');   // EXC-3 (#81)
+      if (excDl) nb.push(excDl);
       note.style.display = nb.length ? '' : 'none';
       note.textContent = nb.join(' ');
     }
@@ -3075,10 +3080,10 @@
         + 'and the spreadsheet copy could not stand in.</div>';
     }
     const eps = (resp && resp.episodes) || [];
-    const fbNote = meta.fallbackSource === 'sheet'
+    const fbNote = (meta.fallbackSource === 'sheet'
       ? '<div class="ds-note">From the Inbound Calls and Outbound Calls tabs (Neon was unreachable)'
         + (meta.fallbackThrough ? ', through ' + escapeHtml(String(meta.fallbackThrough)) : '') + '.</div>'
-      : '';
+      : '') + excPartHtml_(meta.exceptionDays, 'This list excludes');   // EXC-3 (#81)
     const blocks = eps.map(function (ep) {
       const chips = ['<span class="ds-chip ds-chip--bad">Not called back</span>'];
       if (ep.voicemail) chips.push('<span class="ds-chip ds-chip--neutral">Voicemail box</span>');

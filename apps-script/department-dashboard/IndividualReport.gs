@@ -1125,6 +1125,10 @@ function irAgentEmailFigures_(dept, agentName, req) {
     dateLabel: (data && data.dateLabel) || (from + ' - ' + to),
     from: from, to: to,
     stats: row ? row.stats : { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
+    // EXC-3 (#81): the days these figures leave out ({date, reason} only --
+    // the dept's call volume on them is not the agent's to be shown).
+    exceptionDays: ((data && data.meta && data.meta.exceptionDays) || [])
+      .map(function (e) { return { date: e.date, reason: e.reason }; }),
   };
 }
 
@@ -1139,7 +1143,8 @@ function irAgentFiguresRowsHtml_(f) {
   ]), '18px 26px 4px')
     + ekRow_('<div style="font:12px ' + EK_SANS_ + ';color:' + EK_C_.mut + ';">'
       + 'Figures for ' + ekEsc_(f.dateLabel) + ', from the Call Data dashboard. The image below is the report as '
-      + 'the sender saw it.</div>', '4px 26px 2px');
+      + 'the sender saw it.</div>', '4px 26px 2px')
+    + ekExceptionNoteRow_(f.exceptionDays, 'The figures above exclude ' + ((f.exceptionDays || []).length === 1 ? 'it' : 'them') + '.');
 }
 
 /** A-5: the inline-image cap for the IR email (a rendered report is ~0.3-2 MB). */

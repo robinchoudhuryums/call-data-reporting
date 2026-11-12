@@ -236,6 +236,20 @@ function ekRow_(innerHtml, pad) {
   return '<tr><td style="padding:' + (pad || '16px 26px 4px') + ';">' + innerHtml + '</td></tr>';
 }
 
+/**
+ * EXC-3 (#81): the exception-day note as an email row -- the sentence the
+ * web report shows (exceptionNoteText_, Config-free). '' when the report left
+ * nothing out, so an email with no exception day is byte-identical to before.
+ * A report email whose figures leave days out MUST carry it: the reader has
+ * no screen note beside the numbers (pinned by exception-days-rest.test.js).
+ */
+function ekExceptionNoteRow_(list, tail) {
+  const text = (typeof exceptionNoteText_ === 'function') ? exceptionNoteText_(list, tail) : '';
+  if (!text) return '';
+  return ekRow_('<div style="font:12px ' + EK_SANS_ + ';color:' + EK_C_.mut + ';border-left:3px solid ' + EK_C_.line
+    + ';padding:2px 0 2px 10px;">' + ekEsc_(text) + '</div>', '12px 26px 0');
+}
+
 // ── EmailKit v2 (R29): the notice family ─────────────────────────────────
 //
 // Every admin notice (watchdogs, run failures, sign-in sightings, client

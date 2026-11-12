@@ -899,10 +899,10 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v31` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v16` |
+| `InboundReport.gs` | `inbound:vN:` | `v17` |
 | `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v5` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v7` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the

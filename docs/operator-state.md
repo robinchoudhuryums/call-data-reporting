@@ -3756,12 +3756,30 @@ When something looks wrong, before assuming a code bug, check:
     outbound table and Team Direct Calls card -- and an exception day is not a
     Direct "missing workday". Caller Lookup, the call path drill and Agent Day
     (with its strip) list what HAPPENED, so they keep every call and mark the
-    day ("Exception day (reason) -- left out of report figures"). **Not
-    covered:** callbacks (Overview / My Department / Insights), the abandon
-    heatmap, direct-line callbacks and repeat callers, the insurer daily view,
-    the report emails' own text, team-tools' reads of the workbook (#68 -- it
-    would read the `Exception Days` tab with the same rules), and
-    anomaly-suggested days. A failed sheet read serves the last-good copy in
+    day ("Exception day (reason) -- left out of report figures"). **Phase 3
+    (EXC-3, 2026-11-12):** the callback figures leave it out too -- Callbacks
+    by department on the Overview, the callback summary on My Department /
+    Insights, the direct-line callbacks and repeat unreturned callers, and
+    their drill lists. The rule is the Inbound report's: a department view
+    drops its own days and the all-department ones, the company view only
+    all-department days (so a one-department day stays in the company callback
+    table -- that department's row there then differs from its own view). A
+    caller counts by the day they FIRST hung up: a caller who hung up on an
+    exception day is left out even if they tried again later, and a callback
+    PLACED on an exception day still counts for the caller it answers. The
+    abandon heatmap and its cell lists leave the day out (one clicked day
+    still lists every call on it), as does the Inbound report's insurer daily
+    drill; and the five report emails (My Department, Inbound, Insights,
+    Outbound, an agent's Individual Report) carry the note in their own text.
+    The callback, direct-line and Overview sections say which days THEIR
+    figures leave out ("... These callback figures exclude it."), because
+    they do not follow the admin "Include them" switch; the heatmap and the
+    insurer drill do follow it. Cached reports re-key on deploy (`inbound:v17`,
+    `inboundHeatmap:v5`, `outboundReport:v12`, `outboundDirect:v6`). **Still
+    not covered:** the callbacks alert reason's own miss list (#78 -- it
+    already skips the day as a workday), the admin-only Outbound report's
+    activity table, team-tools' reads of the workbook (#68 -- it would read the
+    `Exception Days` tab with the same rules), and anomaly-suggested days. A failed sheet read serves the last-good copy in
     `EXCEPTION_DAYS_SHEET_COPY` (engine state, never set by hand). Pinned by
     `tests/unit/exception-days.test.js`; cross-file-pins fails a DQE reader
     that applies the queue split without the exception step. **The engines
@@ -3776,7 +3794,8 @@ When something looks wrong, before assuming a code bug, check:
     both counts. The "Include them" switch did NOT work before EXD-2 (it
     resolved no user and stayed off for everyone); it does now, and each
     save / remove audit row names the admin. Pinned by
-    `tests/unit/exception-days-engines.test.js`.
+    `tests/unit/exception-days-engines.test.js`; phase 3 by
+    `tests/unit/exception-days-rest.test.js` and `heatmap-fallback.test.js`.
 
 82. **Transfer hand-overs counted as outbound -- the OBX-1 rule and
     `diagnoseOutboundTransfers` (cdr-import, owner 2026-10-23 / 26).** 8x8

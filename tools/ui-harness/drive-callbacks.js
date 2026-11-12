@@ -147,7 +147,13 @@ async function toggleColumns(page) {
     delaySegs: document.querySelectorAll('#ins-cb-delay-strip .ob-delay-seg').length,
     hourCells: document.querySelectorAll('#ins-cb-hour-strip .ob-hour-cell').length,
     windowDays: (document.getElementById('ins-cb-window') || {}).textContent,
+    // EXC-3 (#81 phase 3): the callback figures' own exception-day note.
+    excPart: (document.querySelector('#ins-cb-kpis .exc-part-note') || {}).textContent || '',
+    excPartIsPageNote: !!document.querySelector('#ins-cb-kpis .exc-note'),
   }));
+  record('EXC-3: the callback summary says which exception day ITS figures leave out',
+    /1 exception day left out \(.*8x8 outage\)\. These callback figures exclude it\./.test(r.excPart)
+      && !r.excPartIsPageNote, r.excPart);
   record('the headline answers the question closed: own-team rate, episodes, median (CE-1)',
     /55\.6% called back by the team/.test(r.head) && /18 contact episodes/.test(r.head) && /median/.test(r.head), r.head);
   record('CB-R1: the headline is the callers NOT called back, out of every episode',

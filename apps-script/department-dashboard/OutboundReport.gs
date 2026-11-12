@@ -92,7 +92,8 @@
 //     and the roster hash on the key (DATA-3)
 // v11: NUM-3 (broad-scan 2026-11-09) a DEPARTMENT view's episodes are decided with the
 //     other teams' attempts in view, so its outcomes match its Callbacks-by-department row
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v11';
+// v12: EXC-3 (#81 phase 3) -- the callback figures leave out the view's exception days.
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v12';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -471,6 +472,52 @@ function outboundAgentsSel_(f, t, excSql) {
     + 'GROUP BY 1) t)';
 }
 
+// ── #81 phase 3 (EXC-3): exception days on the callback figures ─────────────
+// ONE rule, the Inbound report's (inboundExcSql_): a view leaves out an
+// abandon whose date is an exception day FOR THAT VIEW -- a department view,
+// its own days and the all-department ones; the company view, all-department
+// days only. Two halves, so every figure on a screen still adds up:
+//   * the raw COUNTS (cbCounts / dlCounts) drop the day where they are read
+//     (the SQL and its sheet twin) -- `abandonedTotal` therefore stays equal
+//     to the Inbound report's Abandoned figure, which runOutboundVettingCheck
+//     compares it with;
+//   * an EPISODE is left out when its FIRST attempt fell on such a day
+//     (obEpWithoutExceptions_), applied AFTER the engine: the day's events
+//     still join, consume and expire exactly as before, so no other
+//     episode's outcome moves.
+// A callback PLACED on an exception day still counts for the episode it
+// answers. The alert reason (alertCallbackMisses_) is not routed through the
+// episode half. typeof-guarded: the pure suites load this file without Util.gs.
+
+/** The department an outbound view's exception days are read for (null = company). */
+function obExcDept_(scope) {
+  return (scope && !scope.companyView && scope.dept) ? scope.dept : null;
+}
+
+/** fn(iso) -> true when `iso` is an exception day for `dept` (never throws). */
+function obExcDayFn_(dept) {
+  return function (iso) {
+    if (typeof exceptionDayFor_ !== 'function') return false;
+    try { return !!exceptionDayFor_(iso, dept == null ? null : dept); } catch (e) { return false; }
+  };
+}
+
+/** " AND <col> NOT IN (...)" for the view's exception days in [from, to] ('' when none). */
+function obExcSql_(col, from, to, dept) {
+  return (typeof exceptionNotInSql_ === 'function') ? exceptionNotInSql_(col, from, to, dept == null ? null : dept) : '';
+}
+
+/** PURE-ish. The episodes whose FIRST attempt is not on an exception day for `dept`. */
+function obEpWithoutExceptions_(eps, dept) {
+  const isExc = obExcDayFn_(dept);
+  return (eps || []).filter(function (ep) { return !isExc(ep.firstIso); });
+}
+
+/** The note list ([{date, reason}]) for a view's window, or undefined when there is none. */
+function obExcNote_(from, to, dept) {
+  return (typeof exceptionDaysNoteFor_ === 'function') ? exceptionDaysNoteFor_(from, to, dept == null ? null : dept) : undefined;
+}
+
 /**
  * CE-1: the callback EVENT rows, as a WITH prefix + json_build_object fields.
  * One pass over the scope's abandons in [rangeFrom, toIso] (the prior window
@@ -532,7 +579,8 @@ function obCallbackEventsSql_(scope, deptQueues, rangeFrom, curFrom, toIso, prio
       +   "'w', z.w, 'kind', z.kind, 'anon', z.anon, 'q', z.qq, 'n', z.n)), '[]') FROM ("
       +   "SELECT w, CASE WHEN q <> '' THEN 'queue' WHEN stage = 'direct' THEN 'direct' ELSE 'menu' END AS kind, "
       +   "(h IS NULL) AS anon, CASE WHEN q <> '' THEN q ELSE '' END AS qq, count(*) AS n "
-      +   'FROM cb_ab WHERE mine GROUP BY 1, 2, 3, 4) z), '
+      +   'FROM cb_ab WHERE mine' + obExcSql_('d', rangeFrom, toIso, obExcDept_(scope))   // EXC-3
+      +   ' GROUP BY 1, 2, 3, 4) z), '
       // NUM-3: a dept view's rows carry `mine` as a 6th element (a boolean, so
       // the engine's CE-3 `teams` read at that index ignores it); the company
       // view's rows keep their five.
@@ -713,11 +761,15 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
   // NUM-3: a dept view runs the engine over its callers' attempts on every
   // queue and then keeps its own episodes (obEpMineOnly_).
   const mineOnly = function (eps) { return scope.companyView ? eps : obEpMineOnly_(eps, evRows.ab); };
-  const cur = mineOnly(obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: scope.from, to: scope.to })));
+  const excDept = obExcDept_(scope);   // EXC-3 (#81): this view's exception days
+  const cur = obEpWithoutExceptions_(
+    mineOnly(obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: scope.from, to: scope.to }))), excDept);
   // CBX-1: the COMPANY figures leave out the excluded departments' callers;
   // the department table keeps their rows (flagged) from the full list.
   const co = scope.companyView ? obCbCompanyScope_(cur, cbCounts, ctx) : { eps: cur, counts: cbCounts };
   out.callback = obEpCallbackBlock_(co.eps, co.counts, 'cur', true);
+  const excNote = obExcNote_(scope.from, scope.to, excDept);
+  if (excNote) out.callback.exceptionDays = excNote;   // absent when none: the payload is what it was
   if (scope.companyView) {
     out.callback.excludedDepts = OB_CB_COMPANY_EXCLUDED_DEPTS_.slice();
     // GCA-1: CBX-1 took the excluded departments' callers out of
@@ -735,7 +787,8 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
   out.callbackByHour = series.byHour;   // (6) by the first attempt's hour: {hour, episodes, own, ratePct}
   // v2: the prior window through the SAME engine (delta chips compare like with like).
   if (pw && obj.cbAb) {
-    const priAll = mineOnly(obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: pw.from, to: pw.to })));
+    const priAll = obEpWithoutExceptions_(
+      mineOnly(obCallbackEpisodes_(evRows, Object.assign({}, ctx, { from: pw.from, to: pw.to }))), excDept);
     const pco = scope.companyView ? obCbCompanyScope_(priAll, cbCounts, ctx) : { eps: priAll, counts: cbCounts };
     const p = obEpCallbackBlock_(pco.eps, pco.counts, 'pri', false);
     out.callbackPrior = {
@@ -1483,6 +1536,11 @@ function sendOutboundReportEmail(req) {
         (caveats.length
           ? ekRow_(ekCalloutHtml_('Read this first', caveats.map(ekEsc_).join('<br>'), 'warn'), '10px 26px 4px')
           : '')
+      // EXC-3 (#81): the callback figures leave these days out; the outbound
+      // activity table below still counts them, so the sentence says which.
+      + ekExceptionNoteRow_(cb.exceptionDays, 'The callback figures exclude '
+          + ((cb.exceptionDays || []).length === 1 ? 'it' : 'them') + '; the outbound activity below still counts '
+          + ((cb.exceptionDays || []).length === 1 ? 'it' : 'them') + '.')
       + ekRow_('<div style="font-size:13px;color:#6b7280;margin:0 0 6px;">Did we call back the callers who abandoned?</div>'
           + '<table style="border-collapse:collapse;width:100%;max-width:460px;">' + cbRows + '</table>')
       + ekRow_(outboundEmailDelayTable_(cb.delayBuckets, cb.own), '4px 26px 6px')
@@ -1744,7 +1802,10 @@ function getOutboundUncalled(req) {
     if (!list) { out.meta.available = false; return out; }
     out.meta.dataThrough = list.dataThrough;   // B1/PC-2
     out.meta.dataLagging = obEpDataLagging_(list.dataThrough, list.ctx.todayIso);
-    const eps = list.eps
+    // EXC-3 (#81): the list is the tile's own episodes, so it leaves out the same days.
+    const excNoteU = obExcNote_(scope.from, scope.to, obExcDept_(scope));
+    if (excNoteU) out.meta.exceptionDays = excNoteU;
+    const eps = obEpWithoutExceptions_(list.eps, obExcDept_(scope))
       .filter(function (ep) { return ep.outcome === 'none' || ep.outcome === 'pending'; })
       .sort(obEpNewestFirst_);
     out.meta.episodes = eps.length;
@@ -1839,7 +1900,9 @@ function getOutboundCalledBack(req) {
     if (!conn) { out.meta.available = false; return out; }
     const list = obCallbackListEpisodes_(conn, scope, 0);
     if (!list) { out.meta.available = false; return out; }
-    let eps = list.eps
+    const excNoteC = obExcNote_(scope.from, scope.to, obExcDept_(scope));   // EXC-3 (#81)
+    if (excNoteC) out.meta.exceptionDays = excNoteC;
+    let eps = obEpWithoutExceptions_(list.eps, obExcDept_(scope))
       .filter(function (ep) { return ep.outcome === 'own' || ep.outcome === 'other'; })
       .sort(obEpNewestFirst_);
     eps.forEach(function (ep) { out.meta[ep.outcome]++; });
@@ -1898,7 +1961,7 @@ function getOutboundCalledBack(req) {
 //     OUTBOUND_BRIEF_RING_SEC_ (inbound_calls.first_ring_seconds, captured by
 //     cdr-import) is counted and kept OUT of the episodes; an unknown ring
 //     (rows captured before the column) stays in.
-//   * Lazy + separately cached (`outboundDirect:v5`), so the Callbacks
+//   * Lazy + separately cached (`outboundDirect:v6`), so the Callbacks
 //     figures never pay for it. Neon first; when it is unreachable the export
 //     tabs stand in (FO-2, obDirectEventsFromGrids_ mirrors the SQL), never
 //     cached and disclosed -- and with neither, unavailable, never zero.
@@ -1924,7 +1987,8 @@ function obDirectSharedLine_(n) {
 // the per-department / per-line-owner breakdown `byDept` and the after-hours
 // callback time counted from the next work-window open. v5 (DL-R3, owner
 // 2026-11-02): each byDept row and person carries `work` / `after`.
-const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v5:';
+// v6: EXC-3 (#81 phase 3) -- the direct-line figures leave out the view's exception days.
+const OUTBOUND_DIRECT_CACHE_KEY_PREFIX = 'outboundDirect:v6:';
 var OUTBOUND_DIRECT_REPEATS_MAX = 200;   // episodes on the repeat list
 
 /** PURE. A line owner's (or dialer's) homes: the roster, else a shared mailbox's dept. */
@@ -1966,7 +2030,7 @@ function obDirectIsAfterHours_(iso, hms) {
  * obCallbackEventsSql_'s: `names` (a dept view's line owners) narrows the
  * attempts; null = every line (company view).
  */
-function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
+function obDirectEventsSql_(names, fromIso, toIso, extraDays, excDept) {
   // B1/PC-1: the shared widened read (obEpReadSpan_); `inw` keeps dlCounts
   // the window's own calls -- the edge attempts only feed the engine.
   const rs = obEpReadSpan_(fromIso, toIso, extraDays);
@@ -1995,7 +2059,8 @@ function obDirectEventsSql_(names, fromIso, toIso, extraDays) {
     fields:
         "'dlCounts', (SELECT COALESCE(json_agg(json_build_object("
       +   "'disp', z.disp, 'anon', z.anon, 'who', z.who, 'mis', z.mis, 'n', z.n)), '[]') FROM ("
-      +   'SELECT disp, (h IS NULL) AS anon, who, mis, count(*) AS n FROM dl_ab WHERE inw GROUP BY 1, 2, 3, 4) z), '
+      +   'SELECT disp, (h IS NULL) AS anon, who, mis, count(*) AS n FROM dl_ab WHERE inw'
+      +   obExcSql_('d', fromIso, toIso, excDept) + ' GROUP BY 1, 2, 3, 4) z), '   // EXC-3
       + "'dlAb', (SELECT COALESCE(json_agg(json_build_array(k.k, a.d::text, a.st, a.cid, a.who) "
       +   "ORDER BY k.k, a.d, a.st, a.cid), '[]') FROM dl_ab a JOIN dl_k k ON k.h = a.h WHERE NOT a.mis), "
       + "'dlOb', (SELECT COALESCE(json_agg(json_build_array(k.k, o.call_date::text, o.call_start, "
@@ -2033,7 +2098,7 @@ function obDirectIsMisdial_(ring) {
 
 /** The event rows from Neon (obDirectEventsSql_), or null when none came back. */
 function obDirectEventsFromNeon_(conn, scope, names, extraDays) {
-  const evSql = obDirectEventsSql_(names, scope.from, scope.to, extraDays);
+  const evSql = obDirectEventsSql_(names, scope.from, scope.to, extraDays, obExcDept_(scope));
   const stmt = conn.createStatement();
   const rs = stmt.executeQuery(evSql.with + ' SELECT json_build_object(' + evSql.fields + ')::text AS j');
   const json = rs.next() ? rs.getString('j') : null;
@@ -2053,8 +2118,9 @@ var OB_DIRECT_SHEET_COLS_ = 24;
  *   ibGrid: the Inbound Calls tab, cols 1..24 (23 = First Agent, 24 = First Ring Sec)
  *   obGrid: the Outbound Calls tab, cols 1..12
  */
-function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGrid) {
+function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGrid, excDept) {
   var span = obEpReadSpan_(fromIso, toIso, extraDays);   // B1/PC-1: the SQL's widened read
+  var excDay = obExcDayFn_(excDept);                     // EXC-3: the SQL's dlCounts clause
   var who = null;
   if (names) { who = {}; names.forEach(function (n) { who[n] = true; }); }
   var cell = function (row, i) { return String(row[i] == null ? '' : row[i]).trim(); };
@@ -2077,7 +2143,7 @@ function obDirectEventsFromGrids_(names, fromIso, toIso, extraDays, ibGrid, obGr
     if (!line || (who && !who[line])) continue;
     var h = cell(r, 3) || null;
     var mis = obDirectIsMisdial_(r[23]);
-    if (iso >= fromIso && iso <= toIso) {   // the SQL's `WHERE inw`: counts are the window's own
+    if (iso >= fromIso && iso <= toIso && !excDay(iso)) {   // the SQL's `WHERE inw` (+ EXC-3): counts are the window's own
       var ck = disp + '\u0000' + (h ? '0' : '1') + '\u0000' + line + '\u0000' + (mis ? '1' : '0');
       var c = counts[ck] || (counts[ck] = { disp: disp, anon: !h, who: line, mis: mis, n: 0 });
       c.n++;
@@ -2134,9 +2200,13 @@ function obDirectBuild_(obj, scope, deptsByAgent) {
     return [r[0], r[1], r[2], '', r[3], homesOf(r[4]), String(r[4] == null ? '' : r[4])];
   });
   const ev = { ab: ab, ob: obj.dlOb || [], ans: obj.dlAns || [] };
-  const eps = obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to }));
+  // EXC-3 (#81): this view's exception days leave the episodes (the counts
+  // dropped them where they were read).
+  const excDept = obExcDept_(scope);
+  const eps = obEpWithoutExceptions_(
+    obCallbackEpisodes_(ev, Object.assign({}, ctx, { from: scope.from, to: scope.to })), excDept);
   return { eps: eps, ev: ev, ctx: ctx, counts: obj.dlCounts || [], afterById: afterById,
-           dataThrough: obj.dlThrough || null };
+           dataThrough: obj.dlThrough || null, exceptionDays: obExcNote_(scope.from, scope.to, excDept) };
 }
 
 /** PURE (FO-2). The detail rows obCallbackListDetail_ returns, from the Inbound Calls grid. */
@@ -2204,7 +2274,7 @@ function obDirectSource_(scope, extraDays) {
   const ib = obSheetTailGrid_('Inbound Calls', OB_DIRECT_SHEET_COLS_, readFrom);
   const ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, readFrom);
   if (!ib || !ob) return null;
-  const obj = obDirectEventsFromGrids_(names, scope.from, scope.to, extraDays, ib.grid, ob.grid);
+  const obj = obDirectEventsFromGrids_(names, scope.from, scope.to, extraDays, ib.grid, ob.grid, obExcDept_(scope));
   const through = (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
                                              : (ob.through || ib.through || null);
   obj.dlThrough = through;   // B1/PC-2: the SQL's dlThrough twin
@@ -2409,6 +2479,7 @@ function getOutboundDirectCallbacks(req) {
     const d = src.d;
     const isAfter = function (ep) { return !!d.afterById[ep.attempts[0].iso + '|' + ep.attempts[0].id]; };
     out.counts = obDirectCounts_(d.counts, d.ctx.homesOf);
+    if (d.exceptionDays) out.meta.exceptionDays = d.exceptionDays;   // EXC-3 (absent when none)
     out.meta.dataThrough = d.dataThrough;   // B1/PC-2
     out.meta.dataLagging = obEpDataLagging_(d.dataThrough, d.ctx.todayIso);
     out.all = obDirectSummary_(d.eps);
@@ -2471,6 +2542,7 @@ function getOutboundDirectRepeats(req) {
     src = obDirectSource_(scope, OUTBOUND_LATE_HORIZON_DAYS);
     if (!src) { out.meta.available = false; return out; }
     const d = src.d;
+    if (d.exceptionDays) out.meta.exceptionDays = d.exceptionDays;   // EXC-3 (absent when none)
     if (src.fallbackSource) {
       out.meta.fallbackSource = src.fallbackSource;
       out.meta.fallbackThrough = src.fallbackThrough || null;
@@ -5718,6 +5790,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
   var countsBy = {};
   var keyOf = {}, keyList = [];
   var abRows = [];
+  var excDay = obExcDayFn_(obExcDept_(scope));   // EXC-3: the SQL's cbCounts clause
   for (var i = 0; i < ibGrid.length; i++) {
     var row = ibGrid[i];
     var iso = ncCellDateIso_(row[0]);
@@ -5737,7 +5810,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var q = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
     var stage = String(row[6] == null ? '' : row[6]).trim().toLowerCase();
     var hash = String(row[3] == null ? '' : row[3]).trim();
-    if (mine) {
+    if (mine && !excDay(iso)) {
       var kind = q ? 'queue' : (stage === 'direct' ? 'direct' : 'menu');
       var ck = w + '\u0000' + kind + '\u0000' + (hash ? '0' : '1') + '\u0000' + (q || '');
       var cr = countsBy[ck] || (countsBy[ck] = { w: w, kind: kind, anon: !hash, q: q || '', n: 0 });

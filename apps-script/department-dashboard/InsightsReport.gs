@@ -1243,7 +1243,8 @@ function sendInsightsReportEmail(req) {
     title: dept,
     subtitle: dateLabel + ' · vs ' + priorLabel,
     preheader: takeaway || ('Insights for ' + dept + ' · ' + dateLabel),
-    rowsHtml: insEmailReportRows_(data),
+    rowsHtml: ekExceptionNoteRow_(data && data.meta && data.meta.exceptionDays)   // EXC-3 (#81)
+      + insEmailReportRows_(data),
     ctaUrl: dashboardUrl ? dashboardUrl + '#/report/insights' : '',
     ctaLabel: 'Open the Insights report',
     footerHtml: 'Requested from the Insights page — sent only to you, not a subscription. '

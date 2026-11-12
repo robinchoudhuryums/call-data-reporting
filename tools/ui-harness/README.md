@@ -175,7 +175,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the Direct lines summary + department table with its person drill; since
   IC-1..IC-3 the "How this is counted" ⓘ tooltips (bullets + live figures),
   the side-by-side list buttons, the Direct lines chevron and the brief row's
-  slide shut and open.
+  slide shut and open. EXC-3: the callback summary carries its own exception-day note ("These callback figures exclude it.") as `.exc-part-note`, never the page-level `.exc-note`.
 - `drive-cbdept.js` — **Callbacks by department** on the Overview (G2):
   admin-only, lazy (nothing on landing), its own window + sort, grouped rows,
   keyboard expand and sort, CSV bytes, and (CE-3) the company Direct lines

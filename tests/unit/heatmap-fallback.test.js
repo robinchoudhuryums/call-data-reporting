@@ -4,6 +4,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
 
+
+// EXC-3 (#81): the report paths now read the exception-day list, which keeps
+// its own 5-minute cache entry (`excDays:v1`). The rule these suites pin is
+// about the REPORT payload, so that entry is not counted.
+function reportCacheSize(h) {
+  let n = 0;
+  h.state.cache.forEach(function (v, k) { if (k !== 'excDays:v1') n++; });
+  return n;
+}
+
 // Heatmap SHEET FALLBACK (Neon-outage degradation): when getInboundHeatmap's
 // Neon read fails, it degrades to the 'Inbound Calls' export tab
 // (cdr-report/inboundCallsExport.js cols 16-17 exist for this reader). The
@@ -48,11 +58,14 @@ function install(opts) {
     ? function () { install.connCalls++; return opts.conn; }
     : function () { install.connCalls++; return null; };
   install.ssOpened = 0;
+  // EXC-3 (#81): the heatmap also reads the exception-day list, which lives in
+  // the same workbook. `ssOpened` counts reads of the EXPORT TAB -- the thing
+  // "the sheet fallback was not used" is about.
   h.ctx.openSpreadsheet_ = function () {
-    install.ssOpened++;
     return {
       getSheetByName: function (name) {
         if (name !== 'Inbound Calls') return null;
+        install.ssOpened++;
         return opts.sheet || null;
       },
     };
@@ -148,7 +161,7 @@ test('fallback: Neon down -> sheet-bucketed cells with the SQL semantics (shift,
   ]);
   assert.equal(out.meta.rows, 3);
   // NEVER cached: a recovered Neon must not be masked for the TTL.
-  assert.equal(h.state.cache.size, 0);
+  assert.equal(reportCacheSize(h), 0);
 });
 
 test('fallback: two-arm dept attribution mirrors inboundDeptPredicate_', function () {
@@ -206,7 +219,7 @@ test('fallback: a Neon QUERY failure (not just conn-null) degrades to the sheet'
   const out = h.call('getInboundHeatmap', REQ);
   assert.equal(out.meta.fallbackSource, 'sheet');
   assert.equal(out.cells.length, 1);
-  assert.equal(h.state.cache.size, 0);
+  assert.equal(reportCacheSize(h), 0);
 });
 
 test('fallback: missing tab and pre-extension (15-col) tab keep the old hide behavior', function () {
@@ -243,7 +256,7 @@ test('healthy Neon path: sheet never touched, payload still cached, no fallback 
   assert.equal(out.meta.fallbackSource, undefined);
   assert.equal(install.ssOpened, 0);
   assert.deepEqual(cellsOf(out), [{ dow: 2, slot: 1, calls: 5, abandoned: 2 }]);
-  assert.equal(h.state.cache.size, 1);
+  assert.equal(reportCacheSize(h), 1);
 });
 
 test('cell drill does NOT fall back to the sheet (journey is Neon-only)', function () {
@@ -333,4 +346,81 @@ test('F61: an empty label union attributes on-hold calls by entry queue ONLY (no
     h.ctx.getFinalDeptLabels_ = saved.l;
     if (saved.u) h.ctx.getAllFinalDeptLabels_ = saved.u; else delete h.ctx.getAllFinalDeptLabels_;
   }
+});
+
+// ── EXC-3 (#81 phase 3, expansion E1 / G1): exception days on the heatmap ──
+// One outage day paints a whole weekday column, so the grid leaves this
+// scope's exception days out -- in the SQL and in the sheet twin -- and says
+// so in meta.exceptionDays. A CELL's drill list leaves out the same days (it
+// must reconcile with the cell); a RANGE list (one clicked day) lists what
+// happened and keeps them.
+function seedExc(days) { h.state.cache.set('excDays:v1', JSON.stringify(days)); }
+function sqlCapturingConn(json, seen) {
+  return {
+    createStatement: function () {
+      return {
+        executeQuery: function (sql) {
+          seen.push(sql);
+          let done = false;
+          return { next: function () { if (done) return false; done = true; return true; },
+                   getString: function () { return json; }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+test('EXC-3: the sheet twin leaves out an exception day for this scope, and names it', function () {
+  install({ sheet: fakeExportSheet([
+    icRow({ date: '2026-08-19', callStart: '09:00:00' }),   // the outage day
+    icRow({ date: '2026-08-20', callStart: '09:00:00' }),
+  ]) });
+  seedExc([{ date: '2026-08-19', depts: [], reason: '8x8 outage' }]);
+  let out = h.call('getInboundHeatmap', REQ);
+  assert.deepEqual(cellsOf(out), [{ dow: 4, slot: 3, calls: 1, abandoned: 1 }], 'only the Thursday call');
+  assert.deepEqual(JSON.parse(JSON.stringify(out.meta.exceptionDays)), [{ date: '2026-08-19', reason: '8x8 outage' }]);
+
+  // Another department's day does not touch this one.
+  install({ sheet: fakeExportSheet([
+    icRow({ date: '2026-08-19', callStart: '09:00:00' }),
+    icRow({ date: '2026-08-20', callStart: '09:00:00' }),
+  ]) });
+  seedExc([{ date: '2026-08-19', depts: ['Sales'], reason: 'x' }]);
+  out = h.call('getInboundHeatmap', REQ);
+  assert.equal(cellsOf(out).length, 2);
+  assert.equal(out.meta.exceptionDays, undefined, 'no note when nothing was left out');
+
+  // No exception day at all: the payload carries no key (it is what it was).
+  install({ sheet: fakeExportSheet([icRow({ date: '2026-08-19', callStart: '09:00:00' })]) });
+  out = h.call('getInboundHeatmap', REQ);
+  assert.equal('exceptionDays' in out.meta, false);
+});
+
+test('EXC-3: the Neon query carries the same clause; a cell drill has it, a range drill does not', function () {
+  const seen = [];
+  install({ conn: sqlCapturingConn('[]', seen) });
+  seedExc([{ date: '2026-08-19', depts: ['CSR'], reason: 'x' }]);
+  h.call('getInboundHeatmap', REQ);
+  assert.match(seen[0], /c\.call_date NOT IN \('2026-08-19'::date\)/, 'the heatmap');
+
+  seen.length = 0;
+  install({ conn: sqlCapturingConn('[]', seen) });
+  seedExc([{ date: '2026-08-19', depts: ['CSR'], reason: 'x' }]);
+  h.call('getInboundHeatmapCell', { department: 'CSR', from: REQ.from, to: REQ.to, dow: 3, slot: 3 });
+  assert.match(seen[0], /NOT IN \('2026-08-19'::date\)/, 'a cell list reconciles with its cell');
+
+  seen.length = 0;
+  install({ conn: sqlCapturingConn('[]', seen) });
+  seedExc([{ date: '2026-08-19', depts: ['CSR'], reason: 'x' }]);
+  h.call('getInboundHeatmapCell', { department: 'CSR', from: '2026-08-19', to: '2026-08-19' });
+  assert.doesNotMatch(seen[0], /NOT IN/, 'one clicked day lists every call on it');
+
+  // The company view only drops an all-department day.
+  seen.length = 0;
+  install({ conn: sqlCapturingConn('[]', seen) });
+  seedExc([{ date: '2026-08-19', depts: ['CSR'], reason: 'x' }]);
+  h.call('getInboundHeatmap', { department: '', from: REQ.from, to: REQ.to });
+  assert.doesNotMatch(seen[0], /NOT IN/, 'a one-department day stays in the company grid');
 });

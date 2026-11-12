@@ -574,13 +574,13 @@ complete set of prefixes.
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v31` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v16` |
+| `InboundReport.gs` | `inbound:vN:` | `v17` |
 | `InsightsReport.gs` | `insights:vN:` | `v26` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v5` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v7` |
-| `OutboundReport.gs` | `outboundReport:vN:` | `v11` |
-| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v5` |
+| `OutboundReport.gs` | `outboundReport:vN:` | `v12` |
+| `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v6` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v4` |
 | `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |

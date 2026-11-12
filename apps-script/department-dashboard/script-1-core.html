@@ -1290,6 +1290,25 @@
       + '. ' + escapeHtml(tail || 'Every call that day is still listed here.') + '</div>';
   }
 
+  /**
+   * EXC-3 (#81 phase 3): the note for a surface that is only PART of a page
+   * and has its own window or its own rule -- the callback figures, the direct
+   * lines block, a drill list. `what` names it and carries the verb ("These
+   * callback figures exclude"); the page's own note may cover a different
+   * window, or say INCLUDED while this part still leaves the day out. Plain
+   * text ('' when the list is empty) and its `.ds-note` form. Deliberately NOT
+   * `.exc-note`: that class is the page-level note the switch repaints.
+   */
+  function excPartText_(list, what) {
+    var text = excNoteText_(list);
+    if (!text) return '';
+    return text.replace(/Every figure here excludes (it|them)\.$/, function (m, p) { return what + ' ' + p + '.'; });
+  }
+  function excPartHtml_(list, what) {
+    var t = excPartText_(list, what);
+    return t ? '<div class="ds-note exc-part-note" role="status">' + escapeHtml(t) + '</div>' : '';
+  }
+
   /** The note as the first child of a report's results host (IR, Insights). */
   function excNoteUpsert_(hostId, list) {
     var host = $(hostId);

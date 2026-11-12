@@ -199,7 +199,8 @@ function deptSummaryEmailHtml_(data, dept, rangeLabel) {
     title: dept,
     subtitle: rangeLabel + (multiDept ? ' · combined with sub-queues' : ''),
     preheader: preTxt,
-    rowsHtml: ekRow_(kpiRow)
+    rowsHtml: ekExceptionNoteRow_(meta.exceptionDays)   // EXC-3 (#81)
+      + ekRow_(kpiRow)
       + ekRow_('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
           + tbl + '</table>' + legend, '18px 26px 6px'),
     ctaUrl: dashUrl ? dashUrl + '#/dept' : '',
