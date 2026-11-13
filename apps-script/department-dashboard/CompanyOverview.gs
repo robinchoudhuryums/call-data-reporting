@@ -327,7 +327,11 @@ const OVERVIEW_PARENT_OF = Object.freeze({
  * landing view (e.g. "CSR Backup" is a coverage queue, not a
  * department worth surfacing at a glance).
  */
-const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup', 'Sales MWC']);
+// P5: 'Other' is the custodial roster column (Config.gs::CUSTODIAL_DEPTS). It
+// is spelled out here rather than concatenated: a top-level reference to a
+// const in another file depends on file load order. custodial-dept.test.js
+// fails if a custodial department is missing from this list.
+const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup', 'Sales MWC', 'Other']);
 
 /** PURE. Does this dept count toward the COMPANY aggregate? (Not hidden.) */
 function ovDeptVisibleForCompany_(dept) {

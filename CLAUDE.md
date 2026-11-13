@@ -2118,6 +2118,7 @@ items for anything it flags or doesn't cover.)
 90. The per-call direct list (AC-6): Neon `direct_calls` behind the agent panel's admin-only Direct tab; run `rebuildDirectCallHeldDates()` (cdr-import) after each cdr-import push that changes direct credit -- it re-applies DCA-1..5 (#83) to the held dates
 91. `diagnoseDirectDialIn` (DID-0, cdr-import, read-only): did an outside caller dial the agent's OWN number, or a main line routed through a phone menu (or a colleague)? Per number dialed and per agent, with sample call ids
 92. Outside direct calls split by how they arrived (DID-1..3, admin-only): cdr-import stores `via` + `dial_in` on `direct_calls`; push cdr-import, run `rebuildDirectCallHeldDates()`, and keep `DIAL_IN_LABELS` listing every main line
+93. The `Other` roster column (P5): a home for people in no call-handling team (`CUSTODIAL_DEPTS`); header exactly `Other`, one blank column kept before the insurance block; off the Overview, coaching and cache warming, a department by name everywhere else
 
 ## Cycle Workflow Config
 

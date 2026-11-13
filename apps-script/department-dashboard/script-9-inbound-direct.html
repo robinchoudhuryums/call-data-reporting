@@ -1645,6 +1645,14 @@
     return '<div class="dc-ext-line dc-via-line" title="' + escapeHtml(directViaTip_(via, compact)) + '">'
       + (compact ? 'Outside answered: ' : 'Outside callers: ') + escapeHtml(bits.join(' · ')) + '</div>';
   }
+  // The side card prints WHOLE percents, like Team Rings beside it. Computed
+  // from the counts, not by rounding the served one-decimal figure: rounding a
+  // rounded number can land on the wrong side of .5. Same definition as the
+  // server's directCallAnswerRate_ (missed while on another call left out).
+  function directWholeRate_(answered, missedFree) {
+    const a = Number(answered) || 0, d = a + (Number(missedFree) || 0);
+    return d > 0 ? Math.round(a / d * 100) : null;
+  }
   function directSummaryHtml_(k, p, mode) {
     k = k || {};
     const ibParts = directIbParts_(k);
@@ -1672,11 +1680,13 @@
           + '</dt><dd>' + escapeHtml(value) + '</dd></div>';
       };
       const viaBits = directViaAnsweredBits_(k.via);
+      const wholeRate = directWholeRate_(ibParts[0].n, ibParts[1].n);
       return '<div class="tdc-split">'
         + '<div class="tdc-split-head"><span class="tdc-split-num">' + fmtNumber(ibParts[0].n) + '</span>'
         + ' <span class="tdc-split-of">of ' + fmtNumber(rung) + ' answered</span>'
-        + '<span class="tdc-split-rate" title="Answered ÷ (answered + missed while free). A call missed while on another call is left out.">'
-        +   '<strong>' + escapeHtml(rateTxt) + '</strong> when free</span></div>'
+        + '<span class="tdc-split-rate" title="' + escapeHtml('Answered ÷ (answered + missed while free)'
+        +     (k.ibAnswerRate != null ? ' = ' + k.ibAnswerRate + '%' : '') + '. A call missed while on another call is left out.') + '">'
+        +   '<strong>' + escapeHtml(wholeRate == null ? '—' : wholeRate + '%') + '</strong> when free</span></div>'
         + obSplitMiniHtml_(ibParts, rung, aria, '')
         + '<div class="tdc-key">'
         +   '<span class="tdc-key-k"><span class="tly a"></span>answered</span>'

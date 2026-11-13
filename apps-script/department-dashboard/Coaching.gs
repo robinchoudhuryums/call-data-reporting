@@ -243,6 +243,7 @@ function saveCoachingDeptRules(req) {
 function coachingAllDeptGates_() {
   var out = {};
   (getAllDepartments_() || []).forEach(function (d) {
+    if (isCustodialDept_(d)) return;   // P5: not a team to coach
     try { out[d] = coachingEffectiveGates_(d); } catch (e) { /* skip */ }
   });
   return out;
@@ -363,7 +364,10 @@ function computeCoachingPreview_() {
     // #81: a holiday or an ALL-department exception day is not a coaching workday.
     metricsOffDayFn_(null));
   if (!win) return { available: false, reason: 'bad latest date: ' + latest };
-  var flags = [], errors = [], depts = getAllDepartments_();
+  // P5: a custodial department (leadership / administrative roles) is never
+  // scanned -- nobody there is measured against a team answer rate.
+  var flags = [], errors = [];
+  var depts = (getAllDepartments_() || []).filter(function (d) { return !isCustodialDept_(d); });
   depts.forEach(function (dept) {
     try {
       coachingDeptFlags_(dept, win).forEach(function (f) { flags.push(f); });

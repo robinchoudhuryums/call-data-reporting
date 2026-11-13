@@ -72,6 +72,7 @@ function mk(opts) {
     ANS_TALLY_UNITS_: [1, 2, 5, 10], ansTallyBlocks_: function () { return ''; },
     trpShortName_: function (n) { return n; }, escapeHtml: function (x) { return String(x); },
     fmtNumber: function (n) { return String(n); },
+    directWholeRate_: function (a, m) { return (a + m) ? Math.round(a / (a + m) * 100) : null; },
   });
   vm.runInContext('var TDC_ = { key: null, data: null, error: null, loading: false, seq: 0, wired: false,'
     + ' pending: false, pageFailed: false, last: null };\n'
@@ -224,4 +225,141 @@ test('P4: the card form is one headline and one bar, a key line, and one labelle
   assert.ok(!/tdc-legend/.test(HTML) && !/tdc-legend/.test(S5), 'the separate legend row under the table is gone');
   assert.match(HTML, /<div id="tdc-body" style="display:none;">/, 'the part that frosts');
   assert.match(HTML, /<th class="trp-num">Rang <span id="tdc-unit" class="tdc-unit"><\/span><\/th>/, 'the block size sits in the header');
+});
+
+// ── The follow-on items to P4 (owner 2026-11-13) ─────────────────────────────
+
+test('P4 follow-on: the card prints whole percents computed from the counts, never by rounding a rounded figure', function () {
+  const ctx = vm.createContext({});
+  vm.runInContext(extractFn(S9, 'directWholeRate_'), ctx);
+  assert.equal(ctx.directWholeRate_(147, 31), 83);
+  assert.equal(ctx.directWholeRate_(4947, 1053), 82, '82.45% is 82 -- rounding the served 82.5 would have said 83');
+  assert.equal(ctx.directWholeRate_(0, 0), null, 'nothing rang while free: no rate');
+  assert.equal(ctx.directWholeRate_('12', undefined), 100);
+  const fn = extractFn(S9, 'directSummaryHtml_');
+  const card = fn.slice(fn.indexOf("if (mode === 'card') {"), fn.indexOf('const sp = k.split || {};'));
+  assert.match(card, /const wholeRate = directWholeRate_\(ibParts\[0\]\.n, ibParts\[1\]\.n\);/);
+  assert.ok(!/escapeHtml\(rateTxt\)/.test(card), 'the card headline no longer prints the one-decimal figure');
+  assert.match(extractFn(S5, 'tdcRender_'), /var whole = directWholeRate_\(ans, mf\);/);
+});
+
+test('P4 follow-on: the Direct view of the agent table keeps its rows under the frost, on the card\'s own rule', function () {
+  const view = extractFn(S5, 'dcViewRender_');
+  assert.match(view, /var busy = !!\(TDC_\.loading \|\| TDC_\.pending\);\s*var d = TDC_\.data \|\| \(busy \? tdcHeld_\(\) : null\)/);
+  assert.match(view, /if \(busy\) dsFrostShow_\(wrap, 'Loading direct calls…'\); else dsFrostHide_\(wrap\);/);
+  assert.match(view, /if \(TDC_\.error && !busy\) notes\.push/, 'a held error is not shown over a load in flight');
+});
+
+function mkSide() {
+  const els = {};
+  ['dept-team-rings', 'dept-team-outbound'].forEach(function (id) { els[id] = { style: { display: '' }, frosted: false }; });
+  const ctx = vm.createContext({
+    $: function (id) { return els[id] || null; },
+    dsFrostShow_: function (h) { h.frosted = true; },
+    dsFrostHide_: function (h) { h.frosted = false; },
+  });
+  vm.runInContext("var SIDE_BUSY_ = { page: false };\nvar SIDE_BUSY_PANELS_ = ['dept-team-rings', 'dept-team-outbound'];\n"
+    + ['sideFrostArm_', 'sideFrostDisarm_', 'trpUnfrost_'].map(function (n) { return extractFn(S5, n); }).join('\n'), ctx);
+  return { ctx: ctx, els: els };
+}
+
+test('P4 follow-on: Team Rings and Team Outbound frost with the page, and the pre-paint cannot clear it early', function () {
+  const t = mkSide();
+  t.els['dept-team-outbound'].style.display = 'none';      // not on this view
+  t.ctx.sideFrostArm_();
+  assert.equal(t.els['dept-team-rings'].frosted, true);
+  assert.equal(t.els['dept-team-outbound'].frosted, false, 'a hidden panel is left alone');
+  t.ctx.trpUnfrost_(t.els['dept-team-rings']);              // Team Rings repainting from the SWR pre-paint
+  assert.equal(t.els['dept-team-rings'].frosted, true, 'still refreshing: the page request is out');
+  t.ctx.sideFrostDisarm_();
+  assert.equal(t.els['dept-team-rings'].frosted, false);
+  t.els['dept-team-rings'].frosted = true;                  // its own period fetch, page idle
+  t.ctx.trpUnfrost_(t.els['dept-team-rings']);
+  assert.equal(t.els['dept-team-rings'].frosted, false, 'with the page idle its own unfrost works as before');
+});
+
+test('P4 follow-on: refresh() arms the side panels with the table\'s frost; the LIVE repaint and a failure disarm them', function () {
+  assert.match(extractFn(S5, 'refresh'), /if \(__useFrost\) sideFrostArm_\(\);/, 'same-department refresh only, like the table and the strip');
+  const onData = extractFn(S5, 'onData');
+  assert.match(onData, /if \(!\(opts && opts\.swr\)\) \{[\s\S]{0,260}sideFrostDisarm_\(\);/, 'not on the SWR pre-paint');
+  assert.match(extractFn(S5, 'onError'), /sideFrostDisarm_\(\);/);
+  const active = extractFn(S5, 'trpRenderActive_');
+  assert.ok(!/dsFrostHide_\(panel\)/.test(active), 'Team Rings unfrosts through trpUnfrost_ only');
+  assert.equal((active.match(/trpUnfrost_\(panel\)/g) || []).length, 2);
+  const sync = extractFn(S5, 'obViewSync_');
+  assert.match(sync, /if \(tob && tob\.style\.display !== 'none'\) dsFrostShow_\(tob, 'Loading…'\);/, 'Team Outbound is frosted while its own request is out');
+  assert.equal((sync.match(/if \(tob\) dsFrostHide_\(tob\);/g) || []).length, 2, 'cleared on the reply and on the failure');
+});
+
+function mkCollapse(stored, opts) {
+  opts = opts || {};
+  const store = {};
+  if (stored != null) store['cdr.dept.side.collapsed'] = stored;
+  const panels = {}, buttons = [];
+  ['dept-qcd-snapshot', 'dept-team-rings', 'dept-team-outbound', 'dept-team-direct'].forEach(function (id) {
+    const cls = {};
+    panels[id] = { cls: cls, classList: { toggle: function (c, on) { if (on) cls[c] = true; else delete cls[c]; } } };
+    const attrs = { 'data-side-collapse': id };
+    buttons.push({ attrs: attrs, title: '', getAttribute: function (k) { return attrs[k]; }, setAttribute: function (k, v) { attrs[k] = v; } });
+  });
+  let click = null;
+  const side = { addEventListener: function (ev, f) { if (ev === 'click') click = f; } };
+  const ctx = vm.createContext({
+    localStorage: {
+      getItem: function (k) { if (opts.blocked) throw new Error('blocked'); return k in store ? store[k] : null; },
+      setItem: function (k, v) { if (opts.blocked) throw new Error('blocked'); store[k] = v; },
+    },
+    $: function (id) { return panels[id] || null; },
+    document: { querySelector: function () { return side; }, querySelectorAll: function () { return buttons; } },
+    JSON: JSON, Array: Array,
+  });
+  vm.runInContext("var SIDE_COLLAPSE_KEY_ = 'cdr.dept.side.collapsed';\nvar SIDE_COLLAPSE_ = { ids: null, wired: false };\n"
+    + ['sideCollapsedIds_', 'sideCollapseApply_', 'sideCollapseToggle_', 'sideCollapseInit_'].map(function (n) { return extractFn(S5, n); }).join('\n'), ctx);
+  const folded = function () { return Object.keys(panels).filter(function (id) { return panels[id].cls['is-collapsed']; }); };
+  const press = function (id) { click({ target: { closest: function () { return buttons.filter(function (b) { return b.attrs['data-side-collapse'] === id; })[0]; } } }); };
+  return { ctx: ctx, store: store, buttons: buttons, folded: folded, press: press };
+}
+
+test('P4 follow-on: each side panel folds to its header, remembered per viewer', function () {
+  const t = mkCollapse('["dept-team-outbound"]');
+  t.ctx.sideCollapseInit_();
+  assert.deepEqual(t.folded(), ['dept-team-outbound'], 'the stored choice is applied when the page wires up');
+  const btn = function (id) { return t.buttons.filter(function (b) { return b.attrs['data-side-collapse'] === id; })[0]; };
+  assert.equal(btn('dept-team-outbound').attrs['aria-expanded'], 'false');
+  assert.equal(btn('dept-team-rings').attrs['aria-expanded'], 'true');
+  t.press('dept-team-rings');
+  assert.deepEqual(t.folded(), ['dept-team-rings', 'dept-team-outbound']);
+  assert.deepEqual(JSON.parse(t.store['cdr.dept.side.collapsed']).sort(), ['dept-team-outbound', 'dept-team-rings']);
+  assert.equal(btn('dept-team-rings').title, 'Show this panel');
+  t.press('dept-team-outbound');
+  assert.deepEqual(t.folded(), ['dept-team-rings']);
+  t.ctx.sideCollapseInit_();                                 // idempotent: wired once
+  assert.deepEqual(t.folded(), ['dept-team-rings']);
+});
+
+test('P4 follow-on: a garbled or blocked store never breaks the fold control', function () {
+  ['{not json', '"a string"', '{"dept-team-rings":true}', '[1, null, "dept-team-direct"]'].forEach(function (raw) {
+    const t = mkCollapse(raw);
+    t.ctx.sideCollapseInit_();
+    assert.deepEqual(t.folded(), raw.indexOf('[1') === 0 ? ['dept-team-direct'] : [], 'stored: ' + raw);
+  });
+  const b = mkCollapse(null, { blocked: true });
+  b.ctx.sideCollapseInit_();
+  b.press('dept-qcd-snapshot');
+  assert.deepEqual(b.folded(), ['dept-qcd-snapshot'], 'works for the session even when storage throws');
+  b.press('dept-qcd-snapshot');
+  assert.deepEqual(b.folded(), []);
+});
+
+test('P4 follow-on: all four side panels carry the control, and a folded panel gives its height back', function () {
+  ['dept-qcd-snapshot', 'dept-team-rings', 'dept-team-outbound', 'dept-team-direct'].forEach(function (id) {
+    const re = new RegExp('<button type="button" class="side-collapse" data-side-collapse="' + id + '" aria-expanded="true"\\s+aria-label="[^"]+: show or hide this panel"');
+    assert.match(HTML, re, id + ' has a labelled fold button');
+  });
+  assert.equal((HTML.match(/data-side-collapse="/g) || []).length, 4);
+  assert.match(CSS, /\.dept-side > \.dept-qcd-snapshot\.is-collapsed \{ flex: 0 0 auto !important; \}/);
+  assert.match(CSS, /\.dept-side > \.dept-qcd-snapshot\.is-collapsed > :not\(\.dept-qcd-header\) \{ display: none !important; \}/,
+    '!important: the renderers set inline display on the children');
+  assert.match(extractFn(S5, 'obViewSync_'), /obWire_\(\);\s*sideCollapseInit_\(\);/, 'wired for every role, not only where the Direct card is active');
+  assert.match(CSS, /\.update-notice, \.side-collapse,/, 'the control itself never reaches paper');
 });

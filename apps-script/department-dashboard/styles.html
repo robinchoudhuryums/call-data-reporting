@@ -1817,6 +1817,22 @@
     align-self: center;
   }
   .side-hint-i:hover, .side-hint-i:focus-visible { color: var(--accent); }
+  /* Follow-on to P4: each side panel folds to its header (sideCollapse*_ in
+     script-5). The control sits at the end of the header's first line; a
+     folded panel shows its header only and gives its height back to the
+     column (the !important beats the per-panel flex rules and the inline
+     display the renderers set). */
+  .side-collapse {
+    margin-left: auto; align-self: center; border: 0; background: none; cursor: pointer;
+    padding: 2px 5px; font-size: 12px; line-height: 1; color: var(--muted); border-radius: var(--r);
+  }
+  .side-collapse:hover { color: var(--accent); background: var(--paper-2); }
+  .side-collapse > span { display: inline-block; transition: transform 0.15s ease; }
+  .dept-qcd-snapshot.is-collapsed .side-collapse > span { transform: rotate(-90deg); }
+  .dept-side > .dept-qcd-snapshot.is-collapsed { flex: 0 0 auto !important; }
+  .dept-side > .dept-qcd-snapshot.is-collapsed > :not(.dept-qcd-header) { display: none !important; }
+  .dept-side > .dept-qcd-snapshot.is-collapsed > .dept-qcd-header { margin-bottom: 0; }
+  @media (prefers-reduced-motion: reduce) { .side-collapse > span { transition: none; } }
   /* The glyph IS the glossary's circled-i, so it must not grow a second one
      on hover (.gloss::after). */
   .side-hint-i.gloss::after { content: none; }
@@ -6039,7 +6055,7 @@
        confirm/tooltip layers and the modal backdrop are screen-only; the
        sticky strips print in flow (a fixed/sticky band repeats on every
        page or covers content). */
-    #help-fab, #ins-ab-panel, #dev-overlay, .toast-container, .update-notice,
+    #help-fab, #ins-ab-panel, #dev-overlay, .toast-container, .update-notice, .side-collapse,
     .tour-overlay, .ds-confirm-overlay, .ds-tooltip, .chart-help-pop,
     .modal-backdrop, [data-close] { display: none !important; }
     .dash-header, #dept-page .controls, .ir-results-header, .esc-sidebar,

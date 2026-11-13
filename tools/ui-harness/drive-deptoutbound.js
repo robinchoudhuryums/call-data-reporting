@@ -471,6 +471,7 @@ async function openDept(page, meta) {
                head: ((document.querySelector('#tdc-tiles .tdc-split-head') || {}).textContent || '').replace(/\s+/g, ' ').trim(),
                more: Array.from(document.querySelectorAll('#tdc-tiles .tdc-more-row')).map((r) => r.querySelector('dt').textContent + ' = ' + r.querySelector('dd').textContent),
                unit: ((document.getElementById('tdc-unit') || {}).textContent || '').trim(),
+               pcts: Array.from(document.querySelectorAll('#tdc-tbody tr.trp-row td:last-child')).map((c) => c.textContent.trim()),
                wrapW: (function () { const w = document.getElementById('tdc-table-wrap'); return w ? [w.scrollWidth, w.clientWidth] : null; })(),
                layout: (function () { const t = document.querySelector('#dept-team-direct .trp-table'); return t ? getComputedStyle(t).tableLayout : ''; })() };
     });
@@ -496,11 +497,14 @@ async function openDept(page, meta) {
       if (ext.total) wantMore.push('Calls to outside numbers = ' + fmt(ext.total) + ' · ' + fmt(ext.connected || 0) + ' connected');
       const more = card.more.filter((x) => !/^Outside answered/.test(x));
       record('P4: the card is one headline (count + rate when free), one bar, a key line, and one labelled block for the rest',
-        card.head === fmt(k.ibAnswered) + ' of ' + fmt(rung) + ' answered' + k.ibAnswerRate + '% when free'
+        card.head === fmt(k.ibAnswered) + ' of ' + fmt(rung) + ' answered' + Math.round(k.ibAnswered / (k.ibAnswered + k.ibMissedFree) * 100) + '% when free'
           && card.key === 'answered' + fmt(k.ibMissedFree) + ' missed' + fmt(k.ibMissedBusy) + ' busy'
           && JSON.stringify(more) === JSON.stringify(wantMore)
           && (!k.via || card.more.some((x) => /^Outside answered = \d[\d,]* their line · \d[\d,]* main line/.test(x))),
         JSON.stringify({ head: card.head, key: card.key, more: card.more }));
+      record('P4 follow-on: every percent on the card is a whole percent, like Team Rings beside it',
+        card.pcts.length === d30.agents.length && card.pcts.every((x) => /^(\d{1,3}%|–)$/.test(x)) && /answered\d{1,3}% when free$/.test(card.head),
+        JSON.stringify({ pcts: card.pcts, head: card.head }));
       record('P4: the agent table keeps fixed columns inside the card (no sideways overflow) and names its block size once, in the header',
         card.layout === 'fixed' && !!card.wrapW && card.wrapW[0] <= card.wrapW[1] && (card.unit === '' || /^= \d+$/.test(card.unit)),
         JSON.stringify({ layout: card.layout, wrapW: card.wrapW, unit: card.unit }));
@@ -672,6 +676,66 @@ async function openDept(page, meta) {
       record('P4: ...and the new range\'s figures replace them, the frost gone',
         done.body && !done.frost && !done.skel && done.busy === 'false' && done.date.indexOf(meta.from30) === 0
           && done.direct === mid.direct, JSON.stringify(done));
+      // ── P4 follow-ons, same page (Inbound view, Team Rings + Team Direct Calls) ──
+      // Team Rings is busy WITH the page: a same-department Refresh frosts it
+      // from the request, not only once the summary lands.
+      const frosted = (id) => pl.evaluate((pid) => { const e = document.getElementById(pid); const f = e && e.querySelector(':scope > .ds-frost');
+        return !!f && getComputedStyle(f).display !== 'none'; }, id);
+      await pl.evaluate(() => { window.__HARNESS__.delay = { getDepartmentSummary: 1500 }; });
+      await pl.click('#refresh-btn');
+      await pl.waitForTimeout(500);
+      const ringsMid = await frosted('dept-team-rings');
+      await pl.waitForTimeout(2600);
+      const ringsDone = await frosted('dept-team-rings');
+      record('P4 follow-on: Team Rings frosts from the page request on a same-department Refresh, and clears when it lands',
+        ringsMid && !ringsDone, JSON.stringify({ mid: ringsMid, done: ringsDone }));
+      // The Direct view of the table keeps its rows while a new range loads.
+      await pl.evaluate(() => { window.__HARNESS__.delay = {}; });
+      await pl.click('#dept-dir-switch [data-dir-pick="direct"]');
+      await pl.waitForTimeout(500);
+      const dcBefore = await pl.evaluate(() => document.querySelectorAll('#agents-dc-tbody tr[data-agent]').length);
+      await pl.evaluate(() => { window.__HARNESS__.delay = { getDirectCallReport: 1500 }; });
+      await pl.fill('#from-date', meta.latest); await pl.fill('#to-date', meta.latest);
+      await pl.click('#refresh-btn');
+      await pl.waitForTimeout(900);
+      const dcMid = await pl.evaluate(() => ({ rows: document.querySelectorAll('#agents-dc-tbody tr[data-agent]').length,
+        frost: (function () { const f = document.querySelector('#agents-dc-wrap > .ds-frost'); return !!f && getComputedStyle(f).display !== 'none'; })() }));
+      await pl.waitForTimeout(2200);
+      const dcDone = await pl.evaluate(() => ({ rows: document.querySelectorAll('#agents-dc-tbody tr[data-agent]').length,
+        frost: (function () { const f = document.querySelector('#agents-dc-wrap > .ds-frost'); return !!f && getComputedStyle(f).display !== 'none'; })() }));
+      record('P4 follow-on: the Direct view keeps its rows under the frost while a new range loads (it used to blank)',
+        dcBefore > 0 && dcMid.rows === dcBefore && dcMid.frost && dcDone.rows > 0 && !dcDone.frost, JSON.stringify({ before: dcBefore, mid: dcMid, done: dcDone }));
+      await pl.evaluate(() => { window.__HARNESS__.delay = {}; });
+      // Each side panel folds to its header, and the choice survives a reload.
+      const fold = () => pl.evaluate(() => {
+        const p = document.getElementById('dept-team-direct'), b = p.querySelector('.side-collapse');
+        const kids = Array.from(p.children).filter((c) => !c.classList.contains('dept-qcd-header'));
+        return { folded: p.classList.contains('is-collapsed'), expanded: b.getAttribute('aria-expanded'), title: b.title,
+          h: Math.round(p.getBoundingClientRect().height), hidden: kids.every((c) => getComputedStyle(c).display === 'none'),
+          head: getComputedStyle(p.querySelector('.dept-qcd-header')).display !== 'none', label: b.getAttribute('aria-label'),
+          buttons: document.querySelectorAll('.dept-side .side-collapse').length,
+          stored: localStorage.getItem('cdr.dept.side.collapsed') };
+      });
+      const open0 = await fold();
+      await pl.focus('#dept-team-direct .side-collapse');
+      await pl.keyboard.press('Enter');
+      await pl.waitForTimeout(250);
+      const shut = await fold();
+      record('P4 follow-on: a side panel folds to its header from the keyboard -- body hidden, the control says so, the choice stored',
+        open0.buttons === 4 && !open0.folded && open0.expanded === 'true' && /show or hide this panel$/.test(open0.label)
+          && shut.folded && shut.expanded === 'false' && shut.hidden && shut.head && shut.h < 90 && shut.h < open0.h
+          && shut.stored === '["dept-team-direct"]' && shut.title === 'Show this panel', JSON.stringify({ open0: open0, shut: shut }));
+      await pl.reload();
+      await pl.waitForTimeout(1500);
+      await pl.click('#my-dept-btn');
+      await pl.waitForTimeout(2500);
+      const afterReload = await fold();
+      await pl.click('#dept-team-direct .side-collapse');
+      await pl.waitForTimeout(250);
+      const reopened = await fold();
+      record('P4 follow-on: the folded panel is still folded after a reload, and opens again with its figures',
+        afterReload.folded && afterReload.hidden && !reopened.folded && !reopened.hidden && reopened.stored === '[]' && reopened.h > 200,
+        JSON.stringify({ afterReload: afterReload, reopened: reopened }));
       await pl.close();
     }
 

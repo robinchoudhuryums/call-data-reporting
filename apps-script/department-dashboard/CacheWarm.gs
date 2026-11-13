@@ -149,7 +149,9 @@ function warmReportCaches_() {
   catch (e) { failed++; Logger.log('warmReportCaches_: overview failed: ' + e); }
 
   var depts = [];
-  try { depts = getAllDepartments_(); }
+  // P5: a custodial department is not warmed -- nobody opens it first thing,
+  // and each dept costs a summary plus two Insights runs of the budget.
+  try { depts = (getAllDepartments_() || []).filter(function (d) { return !isCustodialDept_(d); }); }
   catch (e) { Logger.log('warmReportCaches_: getAllDepartments_ failed: ' + e); }
   var overBudget_ = function () { return Date.now() - start > CACHE_WARM_TOTAL_BUDGET_MS; };
   var sumSkipped = 0, qcdSkipped = 0;

@@ -1222,13 +1222,82 @@
         // frosted forever; the toggle stays where the user put it so a retry
         // is one click, but the numbers on screen are labelled honestly.
         const panel = $('dept-team-rings');
-        if (panel) dsFrostHide_(panel);
+        if (panel) trpUnfrost_(panel);
         const dateEl = $('trp-date');
         if (dateEl) dateEl.textContent = 'unavailable — showing the selected range';
         trpPaint_(trpRangeState_);
       })
       .getDepartmentSummary(excReq_({ department: dept, from: win.from, to: win.to }));
   }
+
+  // P4 follow-on (owner 2026-11-13): Team Rings and Team Outbound are busy
+  // WITH the page. On a same-department refresh they kept their old figures
+  // with no signal until the summary landed (the table and the team strip
+  // frosted; these did not). refresh() arms this beside the table's frost;
+  // the LIVE repaint (not the SWR pre-paint) and a failed load disarm it.
+  // While armed, Team Rings' own "painted" unfrost is held back (trpUnfrost_)
+  // so the pre-paint cannot clear it early.
+  // Follow-on to P4: each side panel folds to its header. An admin's column
+  // holds up to four panels -- about twice a laptop window -- so the viewer
+  // chooses which stay open. Remembered per viewer in localStorage
+  // (cdr.dept.side.collapsed, a JSON list of panel ids); the in-memory list is
+  // the working copy, so the control still works where storage is blocked.
+  var SIDE_COLLAPSE_KEY_ = 'cdr.dept.side.collapsed';
+  var SIDE_COLLAPSE_ = { ids: null, wired: false };
+  function sideCollapsedIds_() {
+    if (SIDE_COLLAPSE_.ids) return SIDE_COLLAPSE_.ids;
+    var ids = [];
+    try {
+      var v = JSON.parse(localStorage.getItem(SIDE_COLLAPSE_KEY_) || '[]');
+      if (Array.isArray(v)) ids = v.filter(function (x) { return typeof x === 'string'; });
+    } catch (e) { ids = []; }
+    SIDE_COLLAPSE_.ids = ids;
+    return ids;
+  }
+  function sideCollapseApply_() {
+    var ids = sideCollapsedIds_();
+    document.querySelectorAll('.dept-side [data-side-collapse]').forEach(function (b) {
+      var id = b.getAttribute('data-side-collapse');
+      var panel = $(id);
+      var folded = ids.indexOf(id) !== -1;
+      if (panel) panel.classList.toggle('is-collapsed', folded);
+      b.setAttribute('aria-expanded', folded ? 'false' : 'true');
+      b.title = folded ? 'Show this panel' : 'Hide this panel';
+    });
+  }
+  function sideCollapseToggle_(id) {
+    var ids = sideCollapsedIds_();
+    var at = ids.indexOf(id);
+    if (at === -1) ids.push(id); else ids.splice(at, 1);
+    try { localStorage.setItem(SIDE_COLLAPSE_KEY_, JSON.stringify(ids)); } catch (e) { /* this session only */ }
+    sideCollapseApply_();
+  }
+  function sideCollapseInit_() {
+    if (SIDE_COLLAPSE_.wired) return;
+    var side = document.querySelector('.dept-side');
+    if (!side) return;
+    SIDE_COLLAPSE_.wired = true;
+    side.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-side-collapse]');
+      if (b) sideCollapseToggle_(b.getAttribute('data-side-collapse'));
+    });
+    sideCollapseApply_();
+  }
+
+  var SIDE_BUSY_ = { page: false };
+  var SIDE_BUSY_PANELS_ = ['dept-team-rings', 'dept-team-outbound'];
+  function sideFrostArm_() {
+    SIDE_BUSY_.page = true;
+    SIDE_BUSY_PANELS_.forEach(function (id) {
+      var el = $(id);
+      if (el && el.style.display !== 'none') dsFrostShow_(el, 'Refreshing…');
+    });
+  }
+  function sideFrostDisarm_() {
+    SIDE_BUSY_.page = false;
+    SIDE_BUSY_PANELS_.forEach(function (id) { var el = $(id); if (el) dsFrostHide_(el); });
+  }
+  function trpUnfrost_(panel) { if (!SIDE_BUSY_.page) dsFrostHide_(panel); }
 
   // Resolve the active period, paint what we have, and fetch what we don't.
   function trpRenderActive_() {
@@ -1241,10 +1310,10 @@
     const dept = getRequestedDept();
     const win = trpWindowFor_(trpPeriod);
     trpSyncButtons_(win ? trpPeriod : 'range', !trpWindowFor_('yesterday'));
-    if (!win) { dsFrostHide_(panel); trpPaint_(trpRangeState_); return; }
+    if (!win) { trpUnfrost_(panel); trpPaint_(trpRangeState_); return; }
     const key = trpKey_(dept, win);
     if (trpFetched_[key]) {
-      dsFrostHide_(panel);
+      trpUnfrost_(panel);
       trpPaint_(trpFetched_[key], win, trpPeriod);
       return;
     }
@@ -1795,6 +1864,7 @@
     if (__useFrost && __stripHost && __stripHost.style.display !== 'none' && __stripHost.innerHTML) {
       dsFrostShow_(__stripHost, 'Refreshing…');
     }
+    if (__useFrost) sideFrostArm_();   // P4 follow-on: the side panels frost with them
     $('refresh-btn').disabled = true;
     // Page title belongs to the dept page; only update it when
     // we're actually showing that page (otherwise we'd clobber
@@ -1905,6 +1975,7 @@
       if (__fh) dsFrostHide_(__fh);
       var __sh = $('dept-team-strip');
       if (__sh) dsFrostHide_(__sh);
+      sideFrostDisarm_();   // P4 follow-on (render() below re-frosts a panel still loading its own data)
     }
     lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
@@ -2903,6 +2974,7 @@
     if (__fh) dsFrostHide_(__fh);
     var __sh = $('dept-team-strip');
     if (__sh) dsFrostHide_(__sh);
+    sideFrostDisarm_();   // P4 follow-on
     // R7 (M-1): the missed-section frost armed at refresh() start has no
     // deptMissedFetch_ coming to clear it -- unfrost here (content stays as-is).
     var __mw = $('dept-missed-section');
@@ -5471,15 +5543,16 @@
         var ans = Number(a.ibAnswered) || 0, mf = Number(a.ibMissedFree) || 0, mb = Number(a.ibMissedBusy) || 0;
         var tally = (unit > 0 && (ans + mf + mb) > 0) ? '<div class="ans-tally trp-tally" aria-hidden="true">'
           + ansTallyBlocks_(ans, unit, 'a') + ansTallyBlocks_(mf, unit, 'm') + ansTallyBlocks_(mb, unit, 'mb') + '</div>' : '';
+        var whole = directWholeRate_(ans, mf);   // whole percents on the card, like Team Rings
         return '<tr class="trp-row" data-tdc-agent="' + escapeHtml(a.agent) + '" tabindex="0" aria-describedby="tdc-row-action-desc"'
           + ' title="' + escapeHtml(a.agent + ': ' + ans + ' answered · ' + mf + ' missed while free · ' + mb
-            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' calls to colleagues'
+            + ' while on another call · ' + (a.ibAnswerRate != null ? a.ibAnswerRate + '% when free · ' : '') + (Number(a.obTotal) || 0) + ' calls to colleagues'
             + ((a.obExt && a.obExt.total) ? ' (+' + a.obExt.total + ' to outside numbers)' : '') + ' — click for the Direct view') + '">'
           + '<td class="trp-name">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
           + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
           + '<td class="trp-num"><span class="trp-a">' + fmtNumber(ans) + '</span><span class="trp-sep"> / </span>'
           +   '<span class="trp-m">' + fmtNumber(mf) + '</span></td>'
-          + '<td class="trp-num">' + (a.ibAnswerRate != null ? a.ibAnswerRate + '%' : '–') + '</td></tr>';
+          + '<td class="trp-num">' + (whole != null ? whole + '%' : '–') + '</td></tr>';
       }).join('') : '<tr><td colspan="4" class="trp-empty">No direct calls in these dates.</td></tr>';
     }
     // P4: the colours are keyed once, under the bar (.tdc-key); the only
@@ -5635,10 +5708,14 @@
       + '<tr>' + dcThHtml_('agent', 'Agent') + dcThHtml_('rang', 'Answered / missed', 'lb-th-bar')
       + dcThHtml_('ibAnswerRate', 'Ans %', 'num') + dcThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
       + dcThHtml_('obConnectRate', 'Conn %', 'num') + dcThHtml_('att', 'Avg talk', 'num') + '</tr>';
-    var d = TDC_.data, m = (d && d.meta) || {};
-    if (TDC_.loading) dsFrostShow_(wrap, 'Loading direct calls…'); else dsFrostHide_(wrap);
+    // The table and the card share one payload AND one loading rule: while a
+    // window loads (the card's own request, or the page's), the last figures
+    // for this department stay in the table under its frost (tdcHeld_).
+    var busy = !!(TDC_.loading || TDC_.pending);
+    var d = TDC_.data || (busy ? tdcHeld_() : null), m = (d && d.meta) || {};
+    if (busy) dsFrostShow_(wrap, 'Loading direct calls…'); else dsFrostHide_(wrap);
     var notes = [];
-    if (TDC_.error) notes.push('Could not load direct calls: ' + TDC_.error);
+    if (TDC_.error && !busy) notes.push('Could not load direct calls: ' + TDC_.error);
     else if (d) {
       if (m.available === false) notes.push('Direct calls are unavailable right now.');
       else if (m.noDataInRange) notes.push('No direct-call data in these dates yet.');
@@ -5704,6 +5781,7 @@
 
   function obViewSync_() {
     obWire_();
+    sideCollapseInit_();   // the side panels' fold controls (wired once, every role)
     tdcSync_();   // D3: the Team Direct Calls card follows the same renders
     var dir = obEffectiveDir_();
     obSyncButtons_(dir);
@@ -5747,17 +5825,22 @@
       }, function () { /* no chips */ });
     }
     if (obWrap) dsFrostShow_(obWrap, 'Loading outbound…');
+    // P4 follow-on: the panel is the same payload as the table -- it kept the
+    // previous window's figures, unmarked, until this reply landed.
+    if (tob && tob.style.display !== 'none') dsFrostShow_(tob, 'Loading…');
     obSummaryFetch_({ department: dept, from: m.from, to: m.to }, function (data) {
       if (seq !== OB_VIEW_.seq) return;
       OB_VIEW_.inFlight = false;
       OB_VIEW_.data = data || null;
       if (obWrap) dsFrostHide_(obWrap);
+      if (tob) dsFrostHide_(tob);
       obViewRender_();
     }, function (err) {
       if (seq !== OB_VIEW_.seq) return;
       OB_VIEW_.inFlight = false;
       OB_VIEW_.error = (err && err.message) ? err.message : String(err);
       if (obWrap) dsFrostHide_(obWrap);
+      if (tob) dsFrostHide_(tob);
       obViewRender_();
     });
   }

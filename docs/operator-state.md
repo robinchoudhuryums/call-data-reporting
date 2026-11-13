@@ -4268,3 +4268,27 @@ When something looks wrong, before assuming a code bug, check:
     2026-11-06 -- because a main line whose calls all route straight (no menu
     step, e.g. a line ringing one person's extension directly) is only known to
     be a main line from that list; (4) push the dashboard and walk S70.
+
+93. **The `Other` roster column -- a home for people who belong to no
+    call-handling team (P5, owner 2026-11-13).** Add a column to `DO NOT
+    EDIT!` whose header reads exactly `Other` (matched byte-for-byte; the
+    name is `Config.gs::CUSTODIAL_DEPTS`), directly after the last
+    department column, and list the administrative and leadership people who
+    have call records there, in the usual `Name, ext1, ext2` form. **Keep at
+    least one BLANK header column between it and the insurance block** (cols
+    X-AG, #55): every roster reader stops at the first blank header, and with
+    16 departments in F..U the new column is V, leaving W as that blank -- a
+    further department would need the insurance block moved first (#55).
+    What it does: the pipeline canonicalizes those names (INV-24), they leave
+    the Outlier Fix list, and their direct calls are credited to `Other`
+    instead of to nobody. What the dashboard does NOT do with it: no Overview
+    tile or chart line and no share of the company aggregate
+    (`OVERVIEW_HIDDEN_DEPTS`), no coaching flags or gate row, no cache
+    warming. It stays a department by name everywhere else -- an admin can
+    open My Department and the reports for it, and it appears in the
+    department pickers (Access Control, Alerts, Exception days, Transfer
+    retries, the Direct and Outbound company views). Not retroactive for the
+    per-call tables: `direct_calls` rows already stored keep their old
+    credit until `rebuildDirectCallHeldDates()` (#90) or a re-import (#56).
+    The `Dashboard Standards` sheet gains an `Other` row on the next publish
+    (#37); team-tools can ignore it. Pinned by `custodial-dept.test.js`.

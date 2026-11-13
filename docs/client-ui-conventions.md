@@ -830,7 +830,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   superseded `cdr.ov.cardperiod`/`cdr.ov.tableperiod.v1`, migrated
   table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows),
   `cdr.dept.trp.period` (R18 item 1 — the Team Rings panel's
-  Range/Yesterday/MTD period; default `range`), and
+  Range/Yesterday/MTD period; default `range`),
+  `cdr.dept.side.collapsed` (P4 follow-on — a JSON list of the My Department
+  side panels the viewer folded to their header; garbled or blocked storage
+  reads as "none folded" and the control still works for the session), and
   `cdr.dev.overlay` (O-11 dev overlay open/closed; ADMIN-ONLY and read only
   after the role check — it is a display preference, never an entitlement,
   and a manager setting it by hand gets nothing) — the theme
@@ -2573,6 +2576,30 @@ stay pinned by INV-39, INV-53 and INV-06.
   past the card; a coverage caveat is one quiet line (`.tdc-hint`), the boxed
   note only for "nothing to show". Pinned by `team-direct-card.test.js` and
   `drive-deptoutbound.js`.
+  **The follow-ons (same day), four more rules.** (a) **The card prints whole
+  percents**, like Team Rings beside it, through `directWholeRate_(answered,
+  missedFree)` -- computed from the COUNTS, never by rounding the served
+  one-decimal figure (82.45% is 82; rounding 82.5 says 83). The Direct Calls
+  report and the Direct view keep one decimal; the exact figure is in the
+  card's tooltips. (b) **The Direct view of the agent table follows the
+  card's loading rule**: `dcViewRender_` reads `TDC_.data || (busy ?
+  tdcHeld_() : null)` and frosts on `TDC_.loading || TDC_.pending`, so its
+  rows stay under the frost instead of blanking. (c) **Team Rings and Team
+  Outbound are busy with the page.** `refresh()` calls `sideFrostArm_()` on a
+  same-department refresh (the table's `__useFrost` condition); the LIVE
+  repaint in `onData` (never the SWR pre-paint) and `onError` call
+  `sideFrostDisarm_()`. While armed, Team Rings unfrosts only through
+  `trpUnfrost_`, so its pre-paint cannot clear the frost early; Team Outbound
+  is also frosted while its own request is out (`obViewSync_`). A new side
+  panel that paints from the summary joins `SIDE_BUSY_PANELS_`. (d) **Every
+  side panel folds to its header**: a `.side-collapse` button
+  (`data-side-collapse="<panel id>"`, `aria-expanded`) in each
+  `.dept-qcd-header`, wired once for every role by `sideCollapseInit_` (from
+  `obViewSync_`); `.is-collapsed` hides every child but the header and sets
+  `flex: 0 0 auto`, both `!important` because the renderers set inline
+  display and the per-panel flex rules carry an id. Stored in
+  `cdr.dept.side.collapsed`; the control is in the print-hidden list. A new
+  panel in `.dept-side` gets the button in its header.
   The text below describes the original fold. `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
   column: the Direct Calls report's figures for the page's dept and dates,
   through the report's OWN `getDirectCallReport` (admin-only while vetted), so
