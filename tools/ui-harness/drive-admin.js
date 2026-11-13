@@ -110,6 +110,38 @@ const MODALS = [
           && /1 person is on an extension no roster lists/.test(a.bar)
           && a.calls.length === 1 && JSON.stringify(a.calls[0]) === JSON.stringify([{ names: ['Omar Unlisted'], ignored: true }]),
         JSON.stringify(a));
+      // P1 (owner 2026-11-13): "Apply selected" handles Not an agent. A person
+      // on an unlisted extension can be ticked with nothing mapped; an
+      // ordinary outlier still cannot. Applying sends ONE setOrphanIgnored.
+      const tick = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const box = (re) => { const r = rows.filter((x) => re.test(x.textContent))[0]; return r ? r.querySelector('.of-row-check') : null; };
+        const pat = box(/Pat Porter/), other = box(/Jon Smyth/);
+        const out = { patEnabled: !!pat && !pat.disabled, otherDisabled: !!other && other.disabled };
+        if (pat && !pat.disabled) pat.click();
+        out.label = (document.getElementById('of-batch-apply') || {}).textContent || '';
+        return out;
+      });
+      await page.click('#of-batch-apply');
+      await page.waitForSelector('.ds-confirm-ok', { timeout: 3000 }).catch(() => {});
+      const bdlg = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok');
+        return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')),
+          body: ((document.querySelector('.ds-confirm-body') || {}).textContent) || '' }; });
+      if (bdlg.open) await page.click('.ds-confirm-ok');
+      await page.waitForFunction(() => /Not an agent \(2\)/.test((document.getElementById('of-ignored-summary') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+      const b = await page.evaluate(() => {
+        const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'setOrphanIgnored');
+        return { patGone: !/Pat Porter/.test(document.getElementById('of-orphans-tbody').textContent),
+          kept: /Nina New/.test(document.getElementById('of-orphans-tbody').textContent),
+          last: calls.length ? calls[calls.length - 1].args : null, n: calls.length,
+          status: (document.getElementById('of-status') || {}).textContent || '' };
+      });
+      record('P1: a person on an unlisted extension can be ticked with nothing mapped; an ordinary outlier cannot',
+        tick.patEnabled && tick.otherDisabled && /^Apply 1 selected$/.test(tick.label.trim()), JSON.stringify(tick));
+      record('P1: "Apply selected" marks the ticked people Not an agent in one request, after asking (not as a destructive action)',
+        bdlg.open && !bdlg.danger && /1 person marked as not an agent/.test(bdlg.body)
+          && b.n === 2 && JSON.stringify(b.last) === JSON.stringify([{ names: ['Pat Porter'], ignored: true }]) && b.patGone && b.kept,
+        JSON.stringify({ dlg: bdlg, after: b }));
     } },
   // DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows". The init is the
   // REAL getDeptConfigInit's (gen-phase3), so the bar names the departments the
@@ -165,10 +197,39 @@ const MODALS = [
   { name: 'Transfer Retries', btn: '#transfer-retries-btn', sel: '#transfer-retries-modal', adminMenu: true,
     probe: async function (page, record) {
       await page.waitForTimeout(600);
+      // P3 (owner 2026-11-13): the modal opens on "Answered, then redirected"
+      // -- the first person tried ANSWERED and talked, then the call went to a
+      // colleague of theirs. Each row says who answered the caller and when,
+      // how long each talked, and who ended up taking the call.
+      const p3 = await page.evaluate(() => {
+        const vis = (id) => { const e = document.getElementById(id); return !!e && getComputedStyle(e).display !== 'none'; };
+        const rows = Array.from(document.querySelectorAll('#tr-rtbody tr')).map((r) => Array.from(r.cells).map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
+        return { redirectShown: vis('tr-view-redirect'), missedShown: vis('tr-view-missed'),
+          pressed: Array.from(document.querySelectorAll('#tr-views [data-tr-view]')).map((b) => b.getAttribute('data-tr-view') + ':' + b.getAttribute('aria-pressed') + ':' + b.textContent.replace(/\s+/g, ' ').trim()),
+          summary: (document.getElementById('tr-rsummary') || {}).textContent || '',
+          firsts: Array.from(document.querySelectorAll('#tr-rfirsts tr')).map((r) => Array.from(r.cells).map((c) => c.textContent.trim()).join(' | ')),
+          rows: rows, chipsNeutral: Array.from(document.querySelectorAll('#tr-rtbody .parent-id')).every((c) => c.classList.contains('parent-id--neutral')),
+          digits: /\d{10}/.test((document.getElementById('tr-view-redirect') || {}).textContent.replace(/#\d+/g, '')) };
+      });
+      record('P3: Transfer retries opens on "Answered, then redirected", with both lists counted on the switch',
+        p3.redirectShown && !p3.missedShown
+          && JSON.stringify(p3.pressed) === JSON.stringify(['redirect:true:Answered, then redirected (2)', 'missed:false:Not answered first (3)']),
+        JSON.stringify({ shown: [p3.redirectShown, p3.missedShown], pressed: p3.pressed }));
+      record('P3: the summary counts the calls and how many a colleague then took; the person who answered first is ranked',
+        /^2 calls where the first person tried in another department answered and talked, and the call then went to a colleague of theirs\. In 1 of them a colleague took the call\.$/.test(p3.summary.trim())
+          && p3.firsts.length === 1 && p3.firsts[0] === 'Elena Park | Sales | 2 | 0:00:58 | 1', JSON.stringify({ summary: p3.summary, firsts: p3.firsts }));
+      record('P3: a row says who answered the caller and when (Central, like the rest of the dashboard), how long each talked, and who took the call',
+        p3.rows.length === 2 && / 15:02:00$/.test(p3.rows[0][0]) && / 17:01:00$/.test(p3.rows[1][0]) && /^Anna Reyes CSR\s*answered 15:00:10 · A_Q_CSR · 0:01:50 on the call first$/.test(p3.rows[0][2])
+          && /^Elena Park Sales\s*talked 0:01:35$/.test(p3.rows[0][3]) && /^Frank Wu\s*0:03:00 later$/.test(p3.rows[0][4])
+          && /Answered.*talked 0:00:30/.test(p3.rows[0][5]) && p3.rows[0][6] === 'Frank Wu'
+          && /^No one in Sales$/.test(p3.rows[1][6]) && p3.chipsNeutral && !p3.digits, JSON.stringify(p3.rows));
+      await page.click('#tr-views [data-tr-view="missed"]');
+      await page.waitForTimeout(250);
       const st = await page.evaluate(() => ({
         summary: (document.getElementById('tr-summary') || {}).textContent || '',
         callees: Array.from(document.querySelectorAll('#tr-callees tr')).map((r) => Array.from(r.cells).map((c) => c.textContent.trim()).join(' ')),
         rows: document.querySelectorAll('#tr-tbody tr').length,
+        whens: Array.from(document.querySelectorAll('#tr-tbody tr')).map((r) => r.cells[0].textContent.replace(/\s+/g, ' ').trim().split(' ').pop()),
         paths: document.querySelectorAll('#tr-tbody .pid-journey').length,
         outbound: document.querySelectorAll('#tr-tbody .ov-dir-pill').length,
         decline: document.querySelectorAll('#tr-tbody .tr-out--decline').length,
@@ -178,11 +239,31 @@ const MODALS = [
       record('Transfer Retries: opens on a window and lists the three retried calls with their summary',
         /^3 calls where a transfer was tried again in the same department\. The first attempt: 2 declined quickly, 1 rang out, 0 went to voicemail\.$/.test(st.summary.trim())
           && st.rows === 3 && !!st.from && !!st.to, JSON.stringify(st));
+      // Stored 10:02:00 and 14:01:00 Pacific read 12:02:00 and 16:01:00 Central.
+      record('Transfer Retries: the first-attempt times are Central, two hours on from the stored Pacific values',
+        st.whens.indexOf('12:02:00') >= 0 && st.whens.indexOf('16:01:00') >= 0 && st.whens.indexOf('10:02:00') < 0, JSON.stringify(st.whens));
       record('Transfer Retries: the person tried first is tallied, with the quick declines', st.callees.length === 1
         && /^Elena Park Sales 3 2$/.test(st.callees[0]), JSON.stringify(st.callees));
       record('Transfer Retries: every row has its call-path chip; the outbound call is marked; declines are flagged',
         st.paths === 3 && st.outbound === 1 && st.decline === 2, JSON.stringify(st));
       record('Transfer Retries: the department picker lists every department', st.depts > 3, 'options=' + st.depts);
+      // P1 (owner 2026-11-13): the case table's header row stays in view while
+      // its rows scroll, and its call-id chips are neutral (not abandoned calls).
+      const hdr = await page.evaluate(() => {
+        const wrap = document.querySelector('#tr-view-missed .tr-cases-wrap'), th = wrap && wrap.querySelector('thead th');
+        if (!wrap || !th) return null;
+        const cs = getComputedStyle(th);
+        wrap.style.maxHeight = '90px';            // force a scroll in the 3-row fixture
+        wrap.scrollTop = 60;
+        const off = Math.round(th.getBoundingClientRect().top - wrap.getBoundingClientRect().top);
+        const out = { position: cs.position, offset: off, scrolled: wrap.scrollTop > 0,
+          chips: document.querySelectorAll('#tr-tbody .parent-id').length,
+          neutral: Array.from(document.querySelectorAll('#tr-tbody .parent-id')).every((c) => c.classList.contains('parent-id--neutral')) };
+        wrap.scrollTop = 0; wrap.style.maxHeight = '';
+        return out;
+      });
+      record('P1: the Transfer retries header row stays pinned while the cases scroll; its call-id chips are neutral',
+        !!hdr && hdr.position === 'sticky' && hdr.scrolled && Math.abs(hdr.offset) <= 2 && hdr.chips === 3 && hdr.neutral, JSON.stringify(hdr));
       await page.selectOption('#tr-dept', 'Power'); await page.waitForTimeout(500);
       const none = await page.evaluate(() => ({ summary: (document.getElementById('tr-summary') || {}).textContent || '',
         rows: document.querySelectorAll('#tr-tbody tr').length,

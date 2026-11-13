@@ -360,7 +360,7 @@ test('TDC-1 / DV-1: ONE getDirectCallReport per dept + window, shared by the Tea
   assert.ok(!/addEventListener\('toggle'/.test(sync), 'no longer a lazy fold: it loads with the page');
   assert.match(sync, /\$\('tdc-retry'\)/, 'a failed load offers Retry');
   const render = extractFn(S5, 'tdcRender_');
-  assert.match(render, /skel\.style\.display = loading \? '' : 'none'/, 'a skeleton while it loads');
+  assert.match(render, /skel\.style\.display = \(waiting && !d\) \? '' : 'none'/, 'a skeleton while it loads with nothing to keep (P4)');
   assert.match(render, /dcViewRender_\(\);\n  \}$/, 'every paint of the panel repaints the Direct view from the same payload');
   assert.match(HTML, /<div id="dept-team-direct" class="dept-qcd-snapshot" data-admin-only/, 'a panel, admin-only, not a <details>');
 });

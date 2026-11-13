@@ -500,9 +500,14 @@
   // abandoned timestamp. Pasting the parent ID into raw CDR search
   // is the manual verification step, so the copy button is worth
   // the extra DOM. Returns '' for falsy IDs (non-abandoned rows).
-  function parentIdBadge(parentId, date, kind) {
+  // P1 (owner 2026-11-13): the warn tint MEANS "abandoned" -- that is what the
+  // chip was built to mark. A call that was not abandoned gets the neutral
+  // chip: every OUTBOUND call (kind 'outbound'), and any caller that passes
+  // `opts.neutral` (a transferred call, a direct call).
+  function parentIdBadge(parentId, date, kind, opts) {
     if (!parentId) return '';
     const safe = escapeHtml(String(parentId));
+    const chipCls = 'parent-id' + ((kind === 'outbound' || (opts && opts.neutral)) ? ' parent-id--neutral' : '');
     // #3: "view path" affordance on abandoned rings -- the parent call id +
     // date key inbound_calls for the leg-by-leg journey (getCallJourney).
     // `kind` 'outbound' drills an outbound call instead (CE-2's attribute).
@@ -518,9 +523,9 @@
     // verification workflow (paste into raw CDR search); managers only need
     // the journey drill, so non-admins get the "↳ path" button alone.
     if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') {
-      return pathBtn ? ' <span class="parent-id">' + pathBtn + '</span>' : '';
+      return pathBtn ? ' <span class="' + chipCls + '">' + pathBtn + '</span>' : '';
     }
-    return ' <span class="parent-id">'
+    return ' <span class="' + chipCls + '">'
          +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use 📋 to copy)">#' + safe + '</span>'
          +   '<button type="button" class="pid-copy" '
          +     'data-pid="' + safe + '" '
@@ -1217,13 +1222,82 @@
         // frosted forever; the toggle stays where the user put it so a retry
         // is one click, but the numbers on screen are labelled honestly.
         const panel = $('dept-team-rings');
-        if (panel) dsFrostHide_(panel);
+        if (panel) trpUnfrost_(panel);
         const dateEl = $('trp-date');
         if (dateEl) dateEl.textContent = 'unavailable — showing the selected range';
         trpPaint_(trpRangeState_);
       })
       .getDepartmentSummary(excReq_({ department: dept, from: win.from, to: win.to }));
   }
+
+  // P4 follow-on (owner 2026-11-13): Team Rings and Team Outbound are busy
+  // WITH the page. On a same-department refresh they kept their old figures
+  // with no signal until the summary landed (the table and the team strip
+  // frosted; these did not). refresh() arms this beside the table's frost;
+  // the LIVE repaint (not the SWR pre-paint) and a failed load disarm it.
+  // While armed, Team Rings' own "painted" unfrost is held back (trpUnfrost_)
+  // so the pre-paint cannot clear it early.
+  // Follow-on to P4: each side panel folds to its header. An admin's column
+  // holds up to four panels -- about twice a laptop window -- so the viewer
+  // chooses which stay open. Remembered per viewer in localStorage
+  // (cdr.dept.side.collapsed, a JSON list of panel ids); the in-memory list is
+  // the working copy, so the control still works where storage is blocked.
+  var SIDE_COLLAPSE_KEY_ = 'cdr.dept.side.collapsed';
+  var SIDE_COLLAPSE_ = { ids: null, wired: false };
+  function sideCollapsedIds_() {
+    if (SIDE_COLLAPSE_.ids) return SIDE_COLLAPSE_.ids;
+    var ids = [];
+    try {
+      var v = JSON.parse(localStorage.getItem(SIDE_COLLAPSE_KEY_) || '[]');
+      if (Array.isArray(v)) ids = v.filter(function (x) { return typeof x === 'string'; });
+    } catch (e) { ids = []; }
+    SIDE_COLLAPSE_.ids = ids;
+    return ids;
+  }
+  function sideCollapseApply_() {
+    var ids = sideCollapsedIds_();
+    document.querySelectorAll('.dept-side [data-side-collapse]').forEach(function (b) {
+      var id = b.getAttribute('data-side-collapse');
+      var panel = $(id);
+      var folded = ids.indexOf(id) !== -1;
+      if (panel) panel.classList.toggle('is-collapsed', folded);
+      b.setAttribute('aria-expanded', folded ? 'false' : 'true');
+      b.title = folded ? 'Show this panel' : 'Hide this panel';
+    });
+  }
+  function sideCollapseToggle_(id) {
+    var ids = sideCollapsedIds_();
+    var at = ids.indexOf(id);
+    if (at === -1) ids.push(id); else ids.splice(at, 1);
+    try { localStorage.setItem(SIDE_COLLAPSE_KEY_, JSON.stringify(ids)); } catch (e) { /* this session only */ }
+    sideCollapseApply_();
+  }
+  function sideCollapseInit_() {
+    if (SIDE_COLLAPSE_.wired) return;
+    var side = document.querySelector('.dept-side');
+    if (!side) return;
+    SIDE_COLLAPSE_.wired = true;
+    side.addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('[data-side-collapse]');
+      if (b) sideCollapseToggle_(b.getAttribute('data-side-collapse'));
+    });
+    sideCollapseApply_();
+  }
+
+  var SIDE_BUSY_ = { page: false };
+  var SIDE_BUSY_PANELS_ = ['dept-team-rings', 'dept-team-outbound'];
+  function sideFrostArm_() {
+    SIDE_BUSY_.page = true;
+    SIDE_BUSY_PANELS_.forEach(function (id) {
+      var el = $(id);
+      if (el && el.style.display !== 'none') dsFrostShow_(el, 'Refreshing…');
+    });
+  }
+  function sideFrostDisarm_() {
+    SIDE_BUSY_.page = false;
+    SIDE_BUSY_PANELS_.forEach(function (id) { var el = $(id); if (el) dsFrostHide_(el); });
+  }
+  function trpUnfrost_(panel) { if (!SIDE_BUSY_.page) dsFrostHide_(panel); }
 
   // Resolve the active period, paint what we have, and fetch what we don't.
   function trpRenderActive_() {
@@ -1236,10 +1310,10 @@
     const dept = getRequestedDept();
     const win = trpWindowFor_(trpPeriod);
     trpSyncButtons_(win ? trpPeriod : 'range', !trpWindowFor_('yesterday'));
-    if (!win) { dsFrostHide_(panel); trpPaint_(trpRangeState_); return; }
+    if (!win) { trpUnfrost_(panel); trpPaint_(trpRangeState_); return; }
     const key = trpKey_(dept, win);
     if (trpFetched_[key]) {
-      dsFrostHide_(panel);
+      trpUnfrost_(panel);
       trpPaint_(trpFetched_[key], win, trpPeriod);
       return;
     }
@@ -1738,6 +1812,7 @@
     if (typeof updateDeptWorkdays_ === 'function') updateDeptWorkdays_();
     if (!dept) {
       setStatus('error', 'No department available.');
+      tdcDisarm_();   // P4: no load is going out -- Team Direct Calls stops waiting
       return;
     }
     const req = {
@@ -1761,6 +1836,7 @@
     // place; the parameter itself is still honored server-side.
     if (!req.from || !req.to) {
       setStatus('error', 'Pick a from and to date.');
+      tdcDisarm_();   // P4
       return;
     }
     // The missed section's sub-queue override is per (dept, window): a child's
@@ -1788,6 +1864,7 @@
     if (__useFrost && __stripHost && __stripHost.style.display !== 'none' && __stripHost.innerHTML) {
       dsFrostShow_(__stripHost, 'Refreshing…');
     }
+    if (__useFrost) sideFrostArm_();   // P4 follow-on: the side panels frost with them
     $('refresh-btn').disabled = true;
     // Page title belongs to the dept page; only update it when
     // we're actually showing that page (otherwise we'd clobber
@@ -1833,6 +1910,7 @@
     // stays up through deptMissedFetch_ (which re-frosts idempotently) and is
     // cleared by its handlers; a summary FAILURE clears it in onError.
     deptMissedFrostArm_();
+    tdcArm_();   // P4: Team Direct Calls is busy from the same moment
 
     var myToken = ++summaryReqSeq;
     summaryReqKey_ = summaryViewKey_();   // CCX-2: what the newest request is FOR
@@ -1897,6 +1975,7 @@
       if (__fh) dsFrostHide_(__fh);
       var __sh = $('dept-team-strip');
       if (__sh) dsFrostHide_(__sh);
+      sideFrostDisarm_();   // P4 follow-on (render() below re-frosts a panel still loading its own data)
     }
     lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
@@ -2360,11 +2439,11 @@
       head.style.display = lines.length ? '' : 'none';
     }
 
-    // Summary strip (Range / Total missed / Abandoned / No-ring abandons / Agents).
+    // Summary strip (Total missed / Abandoned / No-ring abandons / Agents). P1:
+    // the range is in the section heading beside it, so it is not repeated here.
     const sum = $('dept-missed-summary');
     if (sum) {
       const parts = [
-        '<span class="label">Range:</span><span class="val">' + escapeHtml(from || '') + (from === to ? '' : ' to ' + escapeHtml(to || '')) + '</span>',
         '<span class="label">Total missed:</span><span class="val">' + fmtNumber(m.totalMissed || 0) + '</span>',
         '<span class="label">Abandoned calls:</span><span class="val">' + fmtNumber(m.abandonedCallCount || 0) + '</span>',
       ];
@@ -2895,10 +2974,12 @@
     if (__fh) dsFrostHide_(__fh);
     var __sh = $('dept-team-strip');
     if (__sh) dsFrostHide_(__sh);
+    sideFrostDisarm_();   // P4 follow-on
     // R7 (M-1): the missed-section frost armed at refresh() start has no
     // deptMissedFetch_ coming to clear it -- unfrost here (content stays as-is).
     var __mw = $('dept-missed-section');
     if (__mw) { dsFrostHide_(__mw); __mw.classList.remove('dm-loading'); }
+    tdcDisarm_();   // P4: ...and Team Direct Calls stops waiting on a load that failed
     var msg = (err && err.message ? err.message : String(err));
     // When this request SWR-painted the last-good table, keep it on screen
     // under the error status (the behavior refresh()'s SWR comment promises)
@@ -4444,7 +4525,7 @@
       + (showOb ? '<div class="dqv-ad-h">Outbound calls <span class="ap-tab-n">' + fmtNumber(outbound.length) + '</span></div>'
           + apOutboundTableHtml_(outbound, meta.date) : '')
       // AC-6: direct calls (admins only -- the server sends no source otherwise).
-      + (meta.directSource ? '<div class="dqv-ad-h">Direct calls <span class="ap-tab-n">' + fmtNumber(((data && data.direct) || []).length) + '</span></div>'
+      + (meta.directSource ? '<div class="dqv-ad-h">Direct calls <span class="ap-tab-n">' + fmtNumber(apDirectListRows_((data && data.direct) || []).length) + '</span></div>'
           + apDirectTableHtml_((data && data.direct) || [], meta) : '');
   }
 
@@ -5297,7 +5378,15 @@
   // loads, a Retry on failure; a reply for an older key is dropped (seq).
   // The agent table's Direct view (DV-1, dcViewRender_) reads the SAME TDC_,
   // so the two never send two requests or disagree. Admins only, never View-as.
-  var TDC_ = { key: null, data: null, error: null, loading: false, seq: 0, wired: false };
+  // P4 (owner 2026-11-13): a loader from the first moment, and the last
+  // figures kept while a new range loads. `pending` = the page's own load is
+  // out (tdcArm_, from refresh()), so the card is busy before it has a window
+  // to ask for; `last` = the newest good payload and the key it answered,
+  // shown under a frost while busy -- for the SAME department only, never
+  // another department's figures under this one's title. `data` keeps its
+  // meaning (the payload for `key`, or null), so the Direct view is untouched.
+  var TDC_ = { key: null, data: null, error: null, loading: false, seq: 0, wired: false,
+               pending: false, pageFailed: false, last: null };
   function tdcActive_() {
     return typeof USER !== 'undefined' && !!USER && USER.role === 'admin'
       && document.body.getAttribute('data-view-as') !== 'manager';
@@ -5308,8 +5397,31 @@
     // EXC-2: + the admin include switch (a fourth part the fetch ignores).
     return (dept && m.from && m.to) ? dept + '|' + m.from + '|' + m.to + (excIncludeOn_() ? '|x' : '') : null;
   }
+  // The page's summary request just went out: the card is busy from now.
+  function tdcArm_() {
+    if (!tdcActive_()) return;
+    TDC_.pending = true; TDC_.pageFailed = false;
+    tdcRender_();
+  }
+  // ...and it failed, or never went out (no department, a blank date):
+  // nothing is coming to clear the wait, so stop showing a loader.
+  function tdcDisarm_() {
+    TDC_.pending = false; TDC_.pageFailed = true;
+    if (tdcActive_()) tdcRender_();
+  }
+  // What to show while busy: this department's newest good figures, or null.
+  function tdcHeld_() {
+    var dept = getRequestedDept();
+    var mine = function (key) { return !!key && !!dept && String(key).split('|')[0] === dept; };
+    if (TDC_.data && mine(TDC_.key)) return TDC_.data;
+    return (TDC_.last && TDC_.last.data && mine(TDC_.last.key)) ? TDC_.last.data : null;
+  }
   function tdcSync_() {
     var el = $('dept-team-direct');
+    // P4: with this card in the column a third panel shares it; the class
+    // switches the side column to "every panel keeps its height" (styles.html).
+    var side = el && el.closest ? el.closest('.dept-side') : null;
+    if (side) side.classList.toggle('dept-side--direct', tdcActive_());
     if (!el || !tdcActive_()) return;
     if (!TDC_.wired) {
       TDC_.wired = true;
@@ -5335,6 +5447,7 @@
   }
   function tdcFetch_() {
     var key = tdcKey_();
+    TDC_.pending = false;   // P4: the page's own load has landed (or this is a Retry)
     if (!key) { tdcRender_(); return; }
     if (TDC_.key !== key) { TDC_.key = key; TDC_.data = null; TDC_.error = null; TDC_.loading = false; TDC_.seq++; }
     if (TDC_.data || TDC_.error || TDC_.loading) { tdcRender_(); return; }
@@ -5346,6 +5459,7 @@
       .withSuccessHandler(function (d) {
         if (tok !== TDC_.seq) return;
         TDC_.loading = false; TDC_.data = d || null;
+        if (TDC_.data) TDC_.last = { key: key, data: TDC_.data };   // P4: held for the next load
         // CCX-5: a null reply left the card blank -- no skeleton, no figures,
         // no error -- and every later sync asked again. Say so, with the Retry.
         if (!TDC_.data) TDC_.error = 'the server returned nothing';
@@ -5366,24 +5480,37 @@
   function tdcRender_() {
     var el = $('dept-team-direct');
     var date = $('tdc-date'), note = $('tdc-note'), tiles = $('tdc-tiles'), tb = $('tdc-tbody');
-    var skel = $('tdc-loading'), errBox = $('tdc-error'), wrap = $('tdc-table-wrap'), leg = $('tdc-legend');
+    var skel = $('tdc-loading'), errBox = $('tdc-error'), wrap = $('tdc-table-wrap'), body = $('tdc-body');
+    var unitEl = $('tdc-unit');
     if (!el || !tiles) return;
-    var d = TDC_.data, m = (d && d.meta) || {}, k = (d && d.kpis) || {};
+    // P4: busy = this card's request is out OR the page's own load is (armed
+    // by refresh()). While busy the last figures for this department stay up
+    // under a frost; with none to keep, the skeleton -- which also covers the
+    // moments before the first window is known, so the card is never an empty
+    // box with a title.
+    var busy = !!(TDC_.loading || TDC_.pending);
+    var d = busy ? tdcHeld_() : TDC_.data;
+    var m = (d && d.meta) || {}, k = (d && d.kpis) || {};
     var key = TDC_.key ? TDC_.key.split('|') : null;
     if (date) date.textContent = key ? (key[1] === key[2] ? key[1] : key[1] + ' – ' + key[2]) : '';
-    var loading = !!TDC_.loading;
-    el.setAttribute('aria-busy', loading ? 'true' : 'false');
-    if (skel) skel.style.display = loading ? '' : 'none';
+    var failed = !busy && !!TDC_.error;
+    var waiting = busy || (!d && !failed && !TDC_.last && !TDC_.pageFailed);
+    el.setAttribute('aria-busy', waiting ? 'true' : 'false');
+    if (skel) skel.style.display = (waiting && !d) ? '' : 'none';
     if (errBox) {
-      errBox.style.display = (!loading && TDC_.error) ? '' : 'none';
+      errBox.style.display = failed ? '' : 'none';
       var em = $('tdc-error-msg');
       if (em && TDC_.error) em.textContent = 'Could not load direct calls: ' + TDC_.error;
     }
-    var showBody = !loading && !TDC_.error && !!d;
+    var showBody = !failed && !!d;
+    if (body) {
+      body.style.display = showBody ? '' : 'none';
+      if (showBody && busy) dsFrostShow_(body, 'Loading…'); else dsFrostHide_(body);
+    }
     if (wrap) wrap.style.display = showBody ? '' : 'none';
     if (!showBody) {
       tiles.innerHTML = ''; if (tb) tb.innerHTML = ''; if (note) note.style.display = 'none';
-      if (leg) leg.style.display = 'none';
+      if (unitEl) unitEl.textContent = '';
       dcViewRender_();
       return;
     }
@@ -5392,9 +5519,14 @@
     else if (m.noDataInRange) parts.push('No direct-call data in these dates yet.');
     else if (m.clampedTo) parts.push('Through ' + m.dataThrough + ' (later days not imported yet).');
     if (m.missingCount) parts.push(m.missingCount + ' workday' + (m.missingCount === 1 ? '' : 's') + ' with no data, left out.');
-    if (note) { note.textContent = parts.join(' '); note.style.display = parts.length ? '' : 'none'; }
-    // SB-2: the same split as the Direct Calls report, slim (one bar for the
-    // calls that rang their lines, one for the calls they dialed).
+    if (note) {
+      // P4: "nothing to show" keeps the boxed note; a coverage caveat beside
+      // real figures is one quiet line, not a callout above them.
+      note.className = (m.available === false || m.noDataInRange) ? 'ds-note dtd-note' : 'tdc-hint';
+      note.textContent = parts.join(' '); note.style.display = parts.length ? '' : 'none';
+    }
+    // SB-2 / P4: the Direct Calls report's figures, slim -- one headline and
+    // one bar for the calls that rang their lines, the rest a labelled block.
     tiles.innerHTML = m.available === false ? '' : directSummaryHtml_(k, null, 'card');
     var agents = ((d && d.agents) || []).slice().sort(function (x, y) {
       return dcRang_(y) - dcRang_(x) || String(x.agent).localeCompare(String(y.agent));
@@ -5404,29 +5536,30 @@
     var unit = 0;
     if (max) {
       unit = ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
-      for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) { if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= 12) { unit = ANS_TALLY_UNITS_[i]; break; } }
+      for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) { if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= 10) { unit = ANS_TALLY_UNITS_[i]; break; } }
     }
     if (tb) {
       tb.innerHTML = agents.length ? agents.map(function (a) {
         var ans = Number(a.ibAnswered) || 0, mf = Number(a.ibMissedFree) || 0, mb = Number(a.ibMissedBusy) || 0;
         var tally = (unit > 0 && (ans + mf + mb) > 0) ? '<div class="ans-tally trp-tally" aria-hidden="true">'
           + ansTallyBlocks_(ans, unit, 'a') + ansTallyBlocks_(mf, unit, 'm') + ansTallyBlocks_(mb, unit, 'mb') + '</div>' : '';
+        var whole = directWholeRate_(ans, mf);   // whole percents on the card, like Team Rings
         return '<tr class="trp-row" data-tdc-agent="' + escapeHtml(a.agent) + '" tabindex="0" aria-describedby="tdc-row-action-desc"'
           + ' title="' + escapeHtml(a.agent + ': ' + ans + ' answered · ' + mf + ' missed while free · ' + mb
-            + ' while on another call · ' + (Number(a.obTotal) || 0) + ' calls to colleagues'
+            + ' while on another call · ' + (a.ibAnswerRate != null ? a.ibAnswerRate + '% when free · ' : '') + (Number(a.obTotal) || 0) + ' calls to colleagues'
             + ((a.obExt && a.obExt.total) ? ' (+' + a.obExt.total + ' to outside numbers)' : '') + ' — click for the Direct view') + '">'
           + '<td class="trp-name">' + escapeHtml(trpShortName_(a.agent)) + '</td>'
           + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
           + '<td class="trp-num"><span class="trp-a">' + fmtNumber(ans) + '</span><span class="trp-sep"> / </span>'
           +   '<span class="trp-m">' + fmtNumber(mf) + '</span></td>'
-          + '<td class="trp-num">' + (a.ibAnswerRate != null ? a.ibAnswerRate + '%' : '–') + '</td></tr>';
+          + '<td class="trp-num">' + (whole != null ? whole + '%' : '–') + '</td></tr>';
       }).join('') : '<tr><td colspan="4" class="trp-empty">No direct calls in these dates.</td></tr>';
     }
-    if (leg) {
-      leg.innerHTML = unit > 0 ? '<span class="tdc-leg-k"><span class="tly a"></span> answered</span>'
-        + '<span class="tdc-leg-k"><span class="tly m"></span> missed</span><span class="tdc-leg-k"><span class="tly mb"></span> busy</span>'
-        + (unit > 1 ? '<span class="tdc-leg-k">each block = ' + unit + ' calls</span>' : '') : '';
-      leg.style.display = unit > 0 ? '' : 'none';
+    // P4: the colours are keyed once, under the bar (.tdc-key); the only
+    // thing the table adds is how many calls one block stands for.
+    if (unitEl) {
+      unitEl.innerHTML = unit > 1 ? '<span class="tly a" aria-hidden="true"></span>= ' + unit : '';
+      unitEl.title = unit > 1 ? 'Each block is ' + unit + ' calls' : '';
     }
     dcViewRender_();
   }
@@ -5569,16 +5702,20 @@
     if (!wrap || !thead || !tbody || !tfoot || obEffectiveDir_() !== 'direct') return;
     dcWire_();
     thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
-      + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['soft', 'busy']]) + '</th>'
+      + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['busy', 'busy']]) + '</th>'
       + '<th colspan="2" class="lb-g lb-g--out">Called colleagues ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
       + '<th aria-hidden="true"></th></tr>'
       + '<tr>' + dcThHtml_('agent', 'Agent') + dcThHtml_('rang', 'Answered / missed', 'lb-th-bar')
       + dcThHtml_('ibAnswerRate', 'Ans %', 'num') + dcThHtml_('obTotal', 'Connected / not', 'lb-th-bar')
       + dcThHtml_('obConnectRate', 'Conn %', 'num') + dcThHtml_('att', 'Avg talk', 'num') + '</tr>';
-    var d = TDC_.data, m = (d && d.meta) || {};
-    if (TDC_.loading) dsFrostShow_(wrap, 'Loading direct calls…'); else dsFrostHide_(wrap);
+    // The table and the card share one payload AND one loading rule: while a
+    // window loads (the card's own request, or the page's), the last figures
+    // for this department stay in the table under its frost (tdcHeld_).
+    var busy = !!(TDC_.loading || TDC_.pending);
+    var d = TDC_.data || (busy ? tdcHeld_() : null), m = (d && d.meta) || {};
+    if (busy) dsFrostShow_(wrap, 'Loading direct calls…'); else dsFrostHide_(wrap);
     var notes = [];
-    if (TDC_.error) notes.push('Could not load direct calls: ' + TDC_.error);
+    if (TDC_.error && !busy) notes.push('Could not load direct calls: ' + TDC_.error);
     else if (d) {
       if (m.available === false) notes.push('Direct calls are unavailable right now.');
       else if (m.noDataInRange) notes.push('No direct-call data in these dates yet.');
@@ -5644,6 +5781,7 @@
 
   function obViewSync_() {
     obWire_();
+    sideCollapseInit_();   // the side panels' fold controls (wired once, every role)
     tdcSync_();   // D3: the Team Direct Calls card follows the same renders
     var dir = obEffectiveDir_();
     obSyncButtons_(dir);
@@ -5687,17 +5825,22 @@
       }, function () { /* no chips */ });
     }
     if (obWrap) dsFrostShow_(obWrap, 'Loading outbound…');
+    // P4 follow-on: the panel is the same payload as the table -- it kept the
+    // previous window's figures, unmarked, until this reply landed.
+    if (tob && tob.style.display !== 'none') dsFrostShow_(tob, 'Loading…');
     obSummaryFetch_({ department: dept, from: m.from, to: m.to }, function (data) {
       if (seq !== OB_VIEW_.seq) return;
       OB_VIEW_.inFlight = false;
       OB_VIEW_.data = data || null;
       if (obWrap) dsFrostHide_(obWrap);
+      if (tob) dsFrostHide_(tob);
       obViewRender_();
     }, function (err) {
       if (seq !== OB_VIEW_.seq) return;
       OB_VIEW_.inFlight = false;
       OB_VIEW_.error = (err && err.message) ? err.message : String(err);
       if (obWrap) dsFrostHide_(obWrap);
+      if (tob) dsFrostHide_(tob);
       obViewRender_();
     });
   }

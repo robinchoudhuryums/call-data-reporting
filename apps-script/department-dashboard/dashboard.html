@@ -1585,6 +1585,8 @@
             <!-- R17c (owner): the explainer is a HOVER tooltip on the ⓘ, not
                  visible text -- both side panels must fit one viewport. -->
             <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Daily roll-up across this dept's mapped queues from QCD Historical Data. For a date range, open the Insights report — its Queue health section is the range view.">&#9432;</span>
+            <button type="button" class="side-collapse" data-side-collapse="dept-qcd-snapshot" aria-expanded="true"
+                    aria-label="Queue Call Data: show or hide this panel" title="Hide this panel"><span aria-hidden="true">&#9662;</span></button>
             <span class="dept-qcd-date" id="dept-qcd-date"></span>
           </div>
           <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date) /
@@ -1611,6 +1613,8 @@
             <strong>Team Rings Data</strong>
             <!-- R17c (owner): explainer on hover, same as panel 1. -->
             <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Ring-level rollup + the agent table at a glance. Range follows the page's dates and reconciles with the table above; Yesterday and MTD are fixed windows off the latest data day, independent of the page.">&#9432;</span>
+            <button type="button" class="side-collapse" data-side-collapse="dept-team-rings" aria-expanded="true"
+                    aria-label="Team Rings Data: show or hide this panel" title="Hide this panel"><span aria-hidden="true">&#9662;</span></button>
             <span class="dept-qcd-date" id="trp-date"></span>
           </div>
           <!-- R18 (owner, item 1): period toggle, panel 1's control with a
@@ -1654,6 +1658,8 @@
           <div class="dept-qcd-header">
             <strong>Team Outbound Data</strong>
             <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Outbound calls the team placed in the page's dates, from the same data as the Outbound report. Connected = the far end answered (a person, voicemail or a phone menu).">&#9432;</span>
+            <button type="button" class="side-collapse" data-side-collapse="dept-team-outbound" aria-expanded="true"
+                    aria-label="Team Outbound Data: show or hide this panel" title="Hide this panel"><span aria-hidden="true">&#9662;</span></button>
             <span class="dept-qcd-date" id="tob-date"></span>
           </div>
           <div class="trp-tiles" id="tob-tiles"></div>
@@ -1678,13 +1684,14 @@
           <div class="dept-qcd-header">
             <strong>Team Direct Calls</strong>
             <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Calls to and from the agents’ own extensions (not the department queues) in the page’s dates, work window only -- the Direct Calls report’s figures. A ring missed while already on another call is “busy” and left out of the answer rate.">&#9432;</span>
+            <button type="button" class="side-collapse" data-side-collapse="dept-team-direct" aria-expanded="true"
+                    aria-label="Team Direct Calls: show or hide this panel" title="Hide this panel"><span aria-hidden="true">&#9662;</span></button>
             <span class="dept-qcd-date" id="tdc-date"></span>
           </div>
           <div id="tdc-loading" class="tdc-skel" style="display:none;" aria-hidden="true">
             <div class="skeleton-line tdc-skel-head"></div>
             <div class="skeleton-line tdc-skel-bar"></div>
-            <div class="skeleton-line tdc-skel-head"></div>
-            <div class="skeleton-line tdc-skel-bar"></div>
+            <div class="skeleton-line tdc-skel-key"></div>
             <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
             <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
             <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
@@ -1693,18 +1700,22 @@
             <span id="tdc-error-msg">Could not load direct calls.</span>
             <button type="button" class="link-btn" id="tdc-retry">Retry</button>
           </div>
-          <div id="tdc-note" class="ds-note dtd-note" style="display:none;"></div>
-          <div class="trp-tiles" id="tdc-tiles"></div>
-          <div class="trp-table-wrap" id="tdc-table-wrap">
-            <table class="trp-table">
-              <thead><tr>
-                <th>Agent</th><th class="trp-num">Rang</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
-              </tr></thead>
-              <tbody id="tdc-tbody"></tbody>
-            </table>
-            <span id="tdc-row-action-desc" class="sr-only">Activate to open the Direct view of the agent table at this agent’s row.</span>
+          <!-- P4: #tdc-body is what frosts while a new range loads (the last
+               figures stay under it); the colour key lives under the bar
+               (.tdc-key, in the tiles), so the table adds only its block size. -->
+          <div id="tdc-body" style="display:none;">
+            <div id="tdc-note" class="tdc-hint" style="display:none;"></div>
+            <div class="trp-tiles" id="tdc-tiles"></div>
+            <div class="trp-table-wrap" id="tdc-table-wrap">
+              <table class="trp-table">
+                <thead><tr>
+                  <th>Agent</th><th class="trp-num">Rang <span id="tdc-unit" class="tdc-unit"></span></th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
+                </tr></thead>
+                <tbody id="tdc-tbody"></tbody>
+              </table>
+              <span id="tdc-row-action-desc" class="sr-only">Activate to open the Direct view of the agent table at this agent’s row.</span>
+            </div>
           </div>
-          <div id="tdc-legend" class="ans-tally-legend" style="display:none;"></div>
           <button type="button" class="link-btn dtd-open" id="tdc-open-report">Open the Direct Calls report &#8599;</button>
         </div>
       </aside>
@@ -2678,7 +2689,9 @@
           got no answer, then tried someone else in that department on the same call. A ring of
           <span id="tr-quick-secs">8</span> seconds or less reads as a decline, even when it went on to
           voicemail (someone sent it there); a ring that ran out to voicemail stays voicemail. The list to check
-          for transfers turned away that should not have been.</p>
+          for transfers turned away that should not have been. <strong>Answered, then redirected</strong> lists the
+          other shape: the first person tried <em>answered</em> and talked, and the call then went to a colleague of
+          theirs anyway. Times are Central.</p>
         <div class="ir-form-grid tr-form">
           <div class="ir-col">
             <label for="tr-from">From</label>
@@ -2706,6 +2719,35 @@
         </div>
         <div id="tr-status" role="status" class="status" style="display:none;"></div>
         <div id="tr-results" style="display:none;">
+          <!-- P3 (owner 2026-11-13): two lists, one switch. "Answered, then
+               redirected" is first: it is the case the owner most wants to see. -->
+          <div class="tr-viewbar">
+            <span class="segmented" id="tr-views" role="group" aria-label="Which calls to list">
+              <button type="button" class="seg-btn active" data-tr-view="redirect" aria-pressed="true">Answered, then redirected <span class="tr-view-n" id="tr-view-n-redirect"></span></button>
+              <button type="button" class="seg-btn" data-tr-view="missed" aria-pressed="false">Not answered first <span class="tr-view-n" id="tr-view-n-missed"></span></button>
+            </span>
+          </div>
+          <div id="tr-view-redirect">
+            <p id="tr-rsummary" class="tr-summary"></p>
+            <div class="tr-side">
+              <div class="tr-callees-wrap" id="tr-rfirsts-wrap">
+                <div class="ds-zone-label">Most often answered first, then passed over</div>
+                <table class="al-config-table tr-callees">
+                  <thead><tr><th>Answered first</th><th>Department</th><th class="num">Times</th><th class="num">Avg talk</th><th class="num">A colleague then took the call</th></tr></thead>
+                  <tbody id="tr-rfirsts"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="ds-zone-label">Calls</div>
+            <div class="tr-cases-wrap">
+              <table class="al-config-table tr-cases" id="tr-rcases">
+                <thead><tr><th>When</th><th>Call</th><th>Answered the caller</th><th>Spoke with first</th><th>Then went to</th><th>How that went</th><th>Who took the call</th></tr></thead>
+                <tbody id="tr-rtbody"></tbody>
+              </table>
+            </div>
+            <p id="tr-rnote" class="al-hint" style="display:none;"></p>
+          </div>
+          <div id="tr-view-missed" style="display:none;">
           <p id="tr-summary" class="tr-summary"></p>
           <div class="tr-side">
             <div class="tr-callees-wrap">
@@ -2725,6 +2767,7 @@
             </table>
           </div>
           <p id="tr-note" class="al-hint" style="display:none;"></p>
+          </div>
         </div>
       </div>
     </div>

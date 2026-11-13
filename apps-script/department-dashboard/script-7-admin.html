@@ -2100,7 +2100,10 @@
       // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td class="of-check-col"><input type="checkbox" class="of-row-check" data-idx="' + idx + '" '
-           +       'title="Select for batch apply (enabled once mapped or a new assignment is filled)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
+           +       'title="Select for batch apply (enabled once mapped or a new assignment is filled; a person on an unlisted extension with nothing mapped is marked Not an agent)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply"'
+           // P1: an unlisted-extension row is tickable from the start (ofRowReady_'s
+           // 'ignore' kind) -- the list render does not re-sync each row.
+           +       (ofUnlistedOnly_(o) ? '' : ' disabled') + '></td>'
            +   '<td>' + escapeHtml(o.name) + direct + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
            +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
@@ -2318,6 +2321,12 @@
     let kind = null;
     if (addFilled) kind = 'roster-add';
     else if (canonical) kind = 'rename';
+    // P1 (owner 2026-11-13): a person on an extension no roster lists, with
+    // nothing mapped, can still be ticked -- "Apply selected" then marks them
+    // Not an agent (the only other thing that can be done with such a row).
+    // Before this the box stayed disabled, so several could not be marked at
+    // once short of "Mark all".
+    else if (ofUnlistedOnly_(((ofLastInit && ofLastInit.orphans) || [])[idx])) kind = 'ignore';
     return {
       ready:     !!kind,
       kind:      kind,
@@ -2455,6 +2464,7 @@
     // Batch 4: a checked row is a rename OR a new-assignment (add-to-roster),
     // per ofRowReady_. Collect the right action for each.
     const items = [];
+    const ignoreNames = [];   // P1: ticked unlisted-extension rows with nothing mapped
     tbody.querySelectorAll('.of-row-check:checked').forEach(function (chk) {
       const idx = Number(chk.getAttribute('data-idx'));
       const orphan = (ofLastInit.orphans || [])[idx];
@@ -2465,9 +2475,12 @@
           department: r.department, extensions: r.extensions, rows: orphan.rows || 0 });
       } else if (r.kind === 'rename') {
         items.push({ kind: 'rename', fromName: orphan.name, toName: r.canonical, rows: orphan.rows || 0 });
+      } else if (r.kind === 'ignore') {
+        ignoreNames.push(orphan.name);
       }
     });
-    if (!items.length) return;
+    if (!items.length && !ignoreNames.length) return;
+    const nChanges = items.length + ignoreNames.length;
     const renameItems = items.filter(function (it) { return it.kind === 'rename'; });
     const addItems    = items.filter(function (it) { return it.kind === 'roster-add'; });
     const totalRows   = renameItems.reduce(function (a, b) { return a + (b.rows || 0); }, 0);
@@ -2477,23 +2490,32 @@
       + (totalRows === 1 ? '' : 's'));
     if (addItems.length) parts.push('<strong>' + addItems.length + '</strong> new roster assignment'
       + (addItems.length === 1 ? '' : 's'));
+    if (ignoreNames.length) parts.push('<strong>' + ignoreNames.length + '</strong> '
+      + (ignoreNames.length === 1 ? 'person' : 'people') + ' marked as not an agent');
     dsConfirm_({
-      title: 'Apply ' + items.length + ' change' + (items.length === 1 ? '' : 's'),
-      tone: 'danger',
+      title: 'Apply ' + nChanges + ' change' + (nChanges === 1 ? '' : 's'),
+      // Marking is reversible and writes no call data; a rename or a roster
+      // edit is not, so only those make the dialog a destructive one.
+      tone: items.length ? 'danger' : undefined,
       messageHtml: 'Apply ' + parts.join(' and ') + '? '
         + (renameItems.length ? 'Renames modify past data in DQE Historical Data and add aliases so future imports map correctly. ' : '')
         + (addItems.length ? 'New assignments append a cell to the department roster. ' : '')
+        + (ignoreNames.length ? 'Marking someone as not an agent only takes them off this list; restore them under “Not an agent” below. ' : '')
         + 'All actions are audited to Orphan Fix Log.',
-      confirmLabel: 'Apply ' + items.length, cancelLabel: 'Cancel',
+      confirmLabel: 'Apply ' + nChanges, cancelLabel: 'Cancel',
     }).then(function (okc) {
       if (!okc) return;
       ofSetBusy_(true);
-      ofRunApplySequence_(items, function (k, total, it) {
+      if (ignoreNames.length) ofSetStatus_('loading', 'Marking ' + ignoreNames.length + ' as not an agent…');
+      ofIgnoreNames_(ignoreNames).then(function (ig) {
+       return ofRunApplySequence_(items, function (k, total, it) {
         const label = it.kind === 'roster-add'
           ? (it.fromName + ' → ' + it.department + ' (new)')
           : (it.fromName + ' → ' + it.toName);
         ofSetStatus_('loading', 'Applying ' + (k + 1) + ' of ' + total + ': ' + label + '…');
+       }).then(function (res) { res.ig = ig; return res; });
       }).then(function (res) {
+        const ig = res.ig || { changed: 0, skipped: 0, ignored: null, log: null, err: null };
         ofSetBusy_(false);
         const renamedRows = res.ok.reduce(function (a, b) { return a + (b.renamed || 0); }, 0);
         const okRenames = res.ok.filter(function (o) { return o.item.kind !== 'roster-add'; }).length;
@@ -2514,13 +2536,17 @@
             + '. Merge those days deliberately with the CDR Report project’s previewDqeDuplicateMerge / '
             + 'repairDqeDuplicateMerge (Operator State #56); the alias already routes future imports.'
           : '';
-        if (res.failed.length) {
-          ofSetStatus_('error', 'Applied ' + res.ok.length + ' of ' + items.length + '. '
-            + res.failed.length + ' failed: '
-            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; ')
+        const igText = ig.changed ? 'marked ' + ig.changed + ' as not an agent'
+          + (ig.skipped ? ' (' + ig.skipped + ' already on a roster)' : '') : '';
+        if (res.failed.length || ig.err) {
+          ofSetStatus_('error', 'Applied ' + (res.ok.length + ig.changed) + ' of ' + nChanges + '. '
+            + (res.failed.length ? res.failed.length + ' failed: '
+              + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; ') : '')
+            + (ig.err ? (res.failed.length ? '; ' : '') + 'marking as not an agent failed (' + ig.err + ')' : '')
             + collisionText);
         } else {
           const bits = [];
+          if (igText) bits.push(igText);
           if (okRenames) bits.push('renamed ' + renamedRows + ' row' + (renamedRows === 1 ? '' : 's')
             + ' across ' + okRenames + ' outlier' + (okRenames === 1 ? '' : 's'));
           if (okAdds) bits.push('added ' + okAdds + ' new assignment' + (okAdds === 1 ? '' : 's'));
@@ -2528,8 +2554,9 @@
             + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).'
             + collisionText);
         }
-        showToast('Applied ' + res.ok.length + ' change' + (res.ok.length === 1 ? '' : 's'),
-          res.failed.length ? 'error' : 'success');
+        const nDone = res.ok.length + ig.changed;
+        showToast('Applied ' + nDone + ' change' + (nDone === 1 ? '' : 's'),
+          (res.failed.length || ig.err) ? 'error' : 'success');
         // Seamless refresh (Batch 1): drop applied orphans + merge the freshest
         // aliases / log / rosterNames across the batch (roster-adds return
         // rosterNames+log; renames return aliases+log -- take the latest of each).
@@ -2537,6 +2564,15 @@
         const applied = res.ok.filter(function (o) { return collided.indexOf(o) === -1; })
           .map(function (o) { return o.item.fromName; });
         const merged = {};
+        // P1: the marked people leave the list exactly as the single button
+        // does it (ofSetIgnored_) -- only unlisted-only rows the server hides.
+        if (ig.ignored && ofLastInit) {
+          ofLastInit.ignored = ig.ignored;
+          const gone = {};
+          ig.ignored.forEach(function (x) { gone[x] = true; });
+          ofLastInit.orphans = (ofLastInit.orphans || []).filter(function (o) { return !(ofUnlistedOnly_(o) && gone[o.name]); });
+        }
+        if (ig.log) merged.log = ig.log;
         res.ok.forEach(function (o) {
           const rr = o.res || {};
           if (rr.aliases)     merged.aliases = rr.aliases;
@@ -2545,6 +2581,38 @@
         });
         ofApplyLocalUpdate_(merged, applied);
       });
+    });
+  }
+
+  // P1 (owner 2026-11-13): "Apply selected" for people marked Not an agent.
+  // One setOrphanIgnored call per OF_IGNORE_CHUNK_ names (the server refuses
+  // more than 200 at once), in order. Always RESOLVES -- { changed, skipped,
+  // ignored (the server's full list, or null), log, err } -- so the renames
+  // and roster adds chained after it still run when a chunk fails.
+  var OF_IGNORE_CHUNK_ = 200;
+  function ofIgnoreNames_(names) {
+    return new Promise(function (resolve) {
+      const out = { changed: 0, skipped: 0, ignored: null, log: null, err: null };
+      const list = (names || []).slice();
+      const next = function () {
+        if (!list.length) { resolve(out); return; }
+        const chunk = list.splice(0, OF_IGNORE_CHUNK_);
+        google.script.run
+          .withSuccessHandler(function (res) {
+            res = res || {};
+            out.changed += (res.changed || []).length;
+            out.skipped += Number(res.skipped) || 0;
+            if (res.ignored) out.ignored = res.ignored;
+            if (res.log) out.log = res.log;
+            next();
+          })
+          .withFailureHandler(function (err) {
+            out.err = (err && err.message) ? err.message : String(err);
+            resolve(out);
+          })
+          .setOrphanIgnored({ names: chunk, ignored: true });
+      };
+      next();
     });
   }
 
@@ -3551,7 +3619,7 @@
   // Opens on the last 30 days, every department; a preset or Show re-runs.
   var TR_OUTCOME_TEXT_ = { quickDecline: 'Declined quickly (incl. sent to voicemail)', rangOut: 'Rang out', voicemail: 'Went to voicemail',
                            answered: 'Answered', unknown: 'Not answered' };
-  var TR_STATE_ = { seq: 0, init: false };
+  var TR_STATE_ = { seq: 0, init: false, view: 'redirect' };   // P3: which list is showing
   function initTransferRetries_() {
     const btn = $('transfer-retries-btn');
     const modal = $('transfer-retries-modal');
@@ -3595,6 +3663,12 @@
     });
     if ($('tr-run-btn')) $('tr-run-btn').addEventListener('click', trRun_);
     if ($('tr-dept')) $('tr-dept').addEventListener('change', trRun_);
+    // P3: the two lists' switch (no re-fetch -- both came in one payload).
+    const views = $('tr-views');
+    if (views) views.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('[data-tr-view]') : null;
+      if (b) trSetView_(b.getAttribute('data-tr-view'));
+    });
   }
   function trPresetMark_(v) {
     Array.prototype.forEach.call(document.querySelectorAll('#tr-presets [data-tr-preset]'), function (b) {
@@ -3654,6 +3728,33 @@
       })
       .getTransferRetries({ from: from, to: to, dept: dept });
   }
+  // P3 (owner 2026-11-13): which list shows -- 'redirect' (the first person
+  // answered, then the call went to a colleague of theirs) or 'missed' (the
+  // first person did not answer). The choice survives a re-run.
+  function trSetView_(v) {
+    TR_STATE_.view = v === 'missed' ? 'missed' : 'redirect';
+    const r = $('tr-view-redirect'), m = $('tr-view-missed');
+    if (r) r.style.display = TR_STATE_.view === 'redirect' ? '' : 'none';
+    if (m) m.style.display = TR_STATE_.view === 'missed' ? '' : 'none';
+    document.querySelectorAll('#tr-views [data-tr-view]').forEach(function (b) {
+      const on = b.getAttribute('data-tr-view') === TR_STATE_.view;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  // Stored journey times are Pacific; every time this modal prints goes through
+  // the same Central shift the journey drill and Caller Lookup use.
+  function trWhen_(hms) { return hms ? clCstTime_(hms) : ''; }
+  // Who answered the caller, when, on which queue, and how long they had been
+  // on the call when they first asked. An outbound call has only the name.
+  function trSenderHtml_(c) {
+    const bits = [];
+    if (c.senderAt) bits.push('answered ' + trWhen_(c.senderAt));
+    if (c.queue) bits.push(c.queue);
+    if (c.beforeSecs != null) bits.push(fmtDuration(c.beforeSecs) + ' on the call first');
+    return escapeHtml(c.senderName || '') + ' <span class="al-hint">' + escapeHtml(c.senderDept || '') + '</span>'
+      + (bits.length ? '<div class="al-hint tr-sender-sub">' + escapeHtml(bits.join(' · ')) + '</div>' : '');
+  }
   function trOutcomeHtml_(x) {
     const txt = TR_OUTCOME_TEXT_[x.outcome] || x.outcome;
     const cls = x.outcome === 'quickDecline' ? ' tr-out--decline' : (x.outcome === 'answered' ? ' tr-out--ok' : '');
@@ -3694,10 +3795,10 @@
     $('tr-cases').style.display = cases.length ? '' : 'none';
     $('tr-tbody').innerHTML = cases.map(function (c) {
       return '<tr>'
-        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(c.first.t || c.start || '') + '</span></td>'
+        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(trWhen_(c.first.t || c.start)) + '</span></td>'
         + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
-        +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '') + '</td>'
-        + '<td>' + escapeHtml(c.senderName || '') + ' <span class="al-hint">' + escapeHtml(c.senderDept || '') + '</span></td>'
+        +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '', { neutral: true }) + '</td>'
+        + '<td>' + trSenderHtml_(c) + '</td>'
         + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span></td>'
         + '<td>' + trOutcomeHtml_(c.first) + '</td>'
         + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '') + '</td>'
@@ -3709,6 +3810,52 @@
       note.textContent = m.truncated ? 'Showing the newest ' + cases.length + ' of ' + n + '; narrow the dates or pick a department for the rest.' : '';
       note.style.display = m.truncated ? '' : 'none';
     }
+    // ── P3: answered, then redirected ─────────────────────────────────────
+    const reds = d.redirects || [];
+    const rn = Number(sum.redirects) || 0;
+    const taken = Number(sum.redirectsTaken) || 0;
+    $('tr-rsummary').innerHTML = rn
+      ? '<strong>' + escapeHtml(fmtNumber(rn)) + '</strong> call' + (rn === 1 ? '' : 's') + ' where the first person tried in another department'
+        + ' answered and talked, and the call then went to a colleague of theirs' + deptNote + '. In '
+        + escapeHtml(fmtNumber(taken)) + ' of them a colleague took the call.'
+      : 'No call in these dates had someone answer and then be passed over for a colleague in the same department' + deptNote + '.';
+    const firsts = sum.redirectFirsts || [];
+    const fw = $('tr-rfirsts-wrap');
+    if (fw) fw.style.display = firsts.length ? '' : 'none';
+    $('tr-rfirsts').innerHTML = firsts.map(function (c) {
+      return '<tr><td>' + escapeHtml(c.name) + '</td><td>' + escapeHtml(c.dept) + '</td><td class="num">' + escapeHtml(fmtNumber(c.n))
+        + '</td><td class="num">' + escapeHtml(fmtDuration(c.n ? Math.round((c.talkSecs || 0) / c.n) : 0))
+        + '</td><td class="num">' + escapeHtml(fmtNumber(c.tookByOther || 0)) + '</td></tr>';
+    }).join('');
+    $('tr-rcases').style.display = reds.length ? '' : 'none';
+    $('tr-rtbody').innerHTML = reds.map(function (c) {
+      const took = !c.takenBy
+        ? '<span class="al-hint">No one in ' + escapeHtml(c.dept) + '</span>'
+        : (c.takenBy === c.first.name
+            ? escapeHtml(c.takenBy) + ' <span class="al-hint">the first person, after all</span>'
+            : '<span class="tr-took">' + escapeHtml(c.takenBy) + '</span>');
+      return '<tr>'
+        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(trWhen_(c.first.t || c.start)) + '</span></td>'
+        + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
+        +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '', { neutral: true }) + '</td>'
+        + '<td>' + trSenderHtml_(c) + '</td>'
+        + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span>'
+        +   '<div class="al-hint">talked ' + escapeHtml(fmtDuration(c.first.talk || 0)) + '</div></td>'
+        + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '')
+        +   (c.gapSecs != null ? '<div class="al-hint">' + escapeHtml(fmtDuration(c.gapSecs)) + ' later</div>' : '') + '</td>'
+        + '<td>' + trOutcomeHtml_(c.second)
+        +   (c.second.talk != null ? ' <span class="al-hint">talked ' + escapeHtml(fmtDuration(c.second.talk)) + '</span>' : '') + '</td>'
+        + '<td>' + took + '</td></tr>';
+    }).join('');
+    const rnote = $('tr-rnote');
+    if (rnote) {
+      rnote.textContent = m.redirectsTruncated ? 'Showing the newest ' + reds.length + ' of ' + rn + '; narrow the dates or pick a department for the rest.' : '';
+      rnote.style.display = m.redirectsTruncated ? '' : 'none';
+    }
+    const nr = $('tr-view-n-redirect'), nm = $('tr-view-n-missed');
+    if (nr) nr.textContent = '(' + fmtNumber(rn) + ')';
+    if (nm) nm.textContent = '(' + fmtNumber(n) + ')';
+    trSetView_(TR_STATE_.view);
   }
 
   // ── Exception days editor (owner 2026-10-22, #81) ─────────────────────────

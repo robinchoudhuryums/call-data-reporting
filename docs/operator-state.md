@@ -4171,6 +4171,32 @@ When something looks wrong, before assuming a code bug, check:
     tell them apart. Both copies changed together; after the cdr-import push a
     re-run should read about 20 quick declines and 37 voicemails where the
     first run read 1 and 56.
+    **P3 (2026-11-13, owner: "the most important case"): ANSWERED, THEN
+    REDIRECTED.** A second list, the modal's default view: the first person
+    tried in another department ANSWERED and talked, and the sender then went
+    to a colleague of theirs on the same call ("a CSR calls Power, agent X
+    answers and they discuss, then the CSR has to call agent Y, and Y takes
+    the transfer"). Each row shows who answered the caller, when and on which
+    queue, how long they had been on the call first, how long X talked, how
+    the try to Y went, and who in that department took the caller (a
+    hand-over) -- "No one in <dept>" when nobody did. The summary ranks who is
+    most often the X, with their average talk and how often a colleague then
+    took the call. It is kept apart from the retry list (`redirects` beside
+    `cases`), so no retry figure moved; the retry rows gained the same
+    sender detail. Before P3 these calls were not listed at all: the rule
+    needed an UNANSWERED first attempt, and the SQL prefilter read only
+    journeys holding a missed ring. The read is wider now (a transfer event
+    AND a missed ring OR an answered consult), so expect a larger
+    `transfer-retries` line in the Neon read-volume ranking (#47). Both copies
+    changed together (parity-pinned); `diagnoseTransferRetries` logs the
+    redirect count on its TOTAL line plus who answered first and who took the
+    call. Same limits as TR-1: only what IXT-1 / OXT-1 stored, about 90 days
+    of journeys, and a hand-over is only seen when 8x8 linked the transfer
+    (#84) -- an unlinked one reads "No one". **After the dashboard deploy,
+    push cdr-import too** (the diagnostic is the editor-run twin). The modal
+    prints every time in Central (`trWhen_` -> `clCstTime_`, the journey
+    drill's shift); the stored values and the editor-run diagnostic's log
+    stay Pacific.
 90. **The per-call DIRECT list -- `direct_calls` and the agent panel's Direct
     tab (AC-6, cdr-import + dashboard, owner 2026-11-04).** Every call to or
     from a person's own line (the queues left out): colleagues by roster name,
@@ -4242,3 +4268,27 @@ When something looks wrong, before assuming a code bug, check:
     2026-11-06 -- because a main line whose calls all route straight (no menu
     step, e.g. a line ringing one person's extension directly) is only known to
     be a main line from that list; (4) push the dashboard and walk S70.
+
+93. **The `Other` roster column -- a home for people who belong to no
+    call-handling team (P5, owner 2026-11-13).** Add a column to `DO NOT
+    EDIT!` whose header reads exactly `Other` (matched byte-for-byte; the
+    name is `Config.gs::CUSTODIAL_DEPTS`), directly after the last
+    department column, and list the administrative and leadership people who
+    have call records there, in the usual `Name, ext1, ext2` form. **Keep at
+    least one BLANK header column between it and the insurance block** (cols
+    X-AG, #55): every roster reader stops at the first blank header, and with
+    16 departments in F..U the new column is V, leaving W as that blank -- a
+    further department would need the insurance block moved first (#55).
+    What it does: the pipeline canonicalizes those names (INV-24), they leave
+    the Outlier Fix list, and their direct calls are credited to `Other`
+    instead of to nobody. What the dashboard does NOT do with it: no Overview
+    tile or chart line and no share of the company aggregate
+    (`OVERVIEW_HIDDEN_DEPTS`), no coaching flags or gate row, no cache
+    warming. It stays a department by name everywhere else -- an admin can
+    open My Department and the reports for it, and it appears in the
+    department pickers (Access Control, Alerts, Exception days, Transfer
+    retries, the Direct and Outbound company views). Not retroactive for the
+    per-call tables: `direct_calls` rows already stored keep their old
+    credit until `rebuildDirectCallHeldDates()` (#90) or a re-import (#56).
+    The `Dashboard Standards` sheet gains an `Other` row on the next publish
+    (#37); team-tools can ignore it. Pinned by `custodial-dept.test.js`.

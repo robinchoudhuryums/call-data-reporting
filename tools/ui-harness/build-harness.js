@@ -329,7 +329,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getTransferRetries: function (req) {
       var d = JSON.parse(JSON.stringify(P['transfer-retries']));
       if (req && req.dept) { d.cases = d.cases.filter(function (c) { return c.dept === req.dept; }); d.meta.dept = req.dept;
-        d.summary.cases = d.cases.length; }
+        d.summary.cases = d.cases.length;
+        // P3: the department filter applies to the redirect list too.
+        d.redirects = (d.redirects || []).filter(function (c) { return c.dept === req.dept; });
+        d.summary.redirects = d.redirects.length; d.summary.redirectsTaken = 0; d.summary.redirectFirsts = []; }
       return d;
     },
     getOrphanFixInit: function () { return P['orphan-init']; },
@@ -515,6 +518,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
             callback: { time: '08:02:00', disposition: 'missed', inboundCallId: 'ic-2' } },
           { callId: 'oc-2', callStart: '11:20:00', connected: false, talkSec: 0, ringSec: 26, attempts: 3,
             to: { kind: 'staff', name: 'Cal Colleague', dept: 'CSR' }, callback: null },
+          // P1 (owner 2026-11-13): a connected call that rang 0 s reads "instant".
+          { callId: 'oc-3', callStart: '12:30:00', connected: true, talkSec: 382, ringSec: 0, attempts: 1,
+            to: { kind: 'outside', insurer: null }, callback: null },
         ],
         missedRings: [],
         // AC-6 / ADT-2: the Direct tab's rows and summary, from the REAL

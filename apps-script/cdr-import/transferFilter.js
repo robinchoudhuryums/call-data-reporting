@@ -956,13 +956,23 @@ function tfRetryRingBucket_(secs) {
  * moreInDept}], skipped: {senderUnknown, targetUnknown, targetTwoDepts} }.
  */
 function tfRetriesOfJourney_(journey, deptsOfAgent, sender0) {
-  var out = { attempts: 0, cases: [], skipped: { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 } };
+  var out = { attempts: 0, cases: [], redirects: [], skipped: { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 } };
   var sender = sender0 || null;
-  var att = [];
+  var senderAt = null;   // P3: when the sender answered the caller (inbound; an outbound call has no such event)
+  var queue = null;      // P3: the first queue the call came in on
+  var att = [], hands = [];
+  var secsBetween = function (from, to) {
+    var d = tfHmsToSec_(to) - tfHmsToSec_(from);
+    return isNaN(d) || d < 0 ? null : d;
+  };
   (journey || []).forEach(function (ev) {
     if (!ev || ev.origin) return;
+    if (ev.kind === 'queue' && queue == null) queue = String(ev.name || '').trim() || null;
+    // P3: who TOOK the call -- the colleague's leg with the caller (IXT-1's hand-over).
+    if (ev.handover) hands.push({ name: String(ev.name || '').trim(), t: ev.t });
     if (ev.kind === 'answer' && (!ev.transfer || ev.handover) && (Number(ev.talk) || 0) > 0 && !sender0) {
       sender = String(ev.name || '').trim() || sender;
+      senderAt = ev.t || null;
       return;
     }
     if (!ev.transfer || !(ev.missed || ev.consult)) return;
@@ -974,7 +984,7 @@ function tfRetriesOfJourney_(journey, deptsOfAgent, sender0) {
     if (!td.length) { out.skipped.targetUnknown++; return; }
     if (td.length > 1) { out.skipped.targetTwoDepts++; return; }
     if (sd.indexOf(td[0]) !== -1) return;   // a colleague in the sender's own department
-    att.push({ ev: ev, name: name, dept: td[0], senderName: sender, senderDept: sd[0] });
+    att.push({ ev: ev, name: name, dept: td[0], senderName: sender, senderDept: sd[0], senderAt: senderAt, queue: queue });
   });
   var done = {};
   for (var i = 0; i < att.length; i++) {
@@ -990,11 +1000,47 @@ function tfRetriesOfJourney_(journey, deptsOfAgent, sender0) {
       var gap = tfHmsToSec_(b.ev.t) - tfHmsToSec_(a.ev.t);
       out.cases.push({
         senderName: a.senderName, senderDept: a.senderDept, dept: a.dept,
+        // P3: when the sender answered the caller, the queue it came in on, and
+        // how long they had been on the call when they first tried.
+        senderAt: a.senderAt, queue: a.queue, beforeSecs: a.senderAt ? secsBetween(a.senderAt, a.ev.t) : null,
         first: { name: a.name, t: a.ev.t, secs: a.ev.secs, outcome: tfRetryOutcome_(a.ev) },
         second: { name: b.name, t: b.ev.t, secs: b.ev.secs, outcome: tfRetryOutcome_(b.ev) },
         gapSecs: isNaN(gap) || gap < 0 ? null : gap, moreInDept: more
       });
       done[a.dept] = true;
+      break;
+    }
+  }
+  // P3 (owner 2026-11-13): ANSWERED, THEN REDIRECTED. The first person tried in
+  // department D picked up and talked (a consult), and the sender then went to
+  // someone ELSE in D on the same call -- "X answers and they discuss, then the
+  // CSR has to call Y, and Y takes the call". One per call per department, kept
+  // apart from `cases` (whose first attempt was NOT answered), so every figure
+  // built on `cases` is what it was. `takenBy` is who in D took the caller (a
+  // hand-over at or after the first consult), or null when nobody in D did.
+  var doneR = {};
+  for (var x = 0; x < att.length; x++) {
+    var p = att[x];
+    if (doneR[p.dept] || !p.ev.consult) continue;
+    for (var y = x + 1; y < att.length; y++) {
+      var n2 = att[y];
+      if (n2.dept !== p.dept || n2.name === p.name) continue;
+      var moreR = 0;
+      for (var z = y + 1; z < att.length; z++) if (att[z].dept === p.dept) moreR++;
+      var took = null;
+      for (var hi = 0; hi < hands.length && took === null; hi++) {
+        if (tfHmsToSec_(hands[hi].t) < tfHmsToSec_(p.ev.t)) continue;   // a hand-over before the consult is not about it
+        if ((deptsOfAgent(hands[hi].name) || []).indexOf(p.dept) !== -1) took = hands[hi].name;
+      }
+      out.redirects.push({
+        senderName: p.senderName, senderDept: p.senderDept, dept: p.dept,
+        senderAt: p.senderAt, queue: p.queue, beforeSecs: p.senderAt ? secsBetween(p.senderAt, p.ev.t) : null,
+        first: { name: p.name, t: p.ev.t, talk: Number(p.ev.talk) || 0 },
+        second: { name: n2.name, t: n2.ev.t, secs: n2.ev.secs, outcome: tfRetryOutcome_(n2.ev),
+                  talk: n2.ev.consult ? (Number(n2.ev.talk) || 0) : null },
+        gapSecs: secsBetween(p.ev.t, n2.ev.t), moreInDept: moreR, takenBy: took
+      });
+      doneR[p.dept] = true;
       break;
     }
   }
@@ -1053,6 +1099,25 @@ function tfRetryFold_(st, r, callId, kind, legIdx) {
         + (c.moreInDept ? '; +' + c.moreInDept + ' more in ' + c.dept : ''));
     }
   });
+  // P3 (owner 2026-11-13): answered, then redirected -- counted apart, so every
+  // TR-0 figure above is what it was.
+  st.redirects = st.redirects || 0;
+  st.redirectFirst = st.redirectFirst || {};
+  st.redirectTook = st.redirectTook || {};
+  st.redirectSamples = st.redirectSamples || [];
+  (r.redirects || []).forEach(function (c) {
+    st.redirects++;
+    bump(st.redirectFirst, c.first.name + ' (' + c.dept + ')');
+    bump(st.redirectTook, !c.takenBy ? 'nobody in that department took the call'
+      : (c.takenBy === c.first.name ? 'the first person took it after all'
+        : (c.takenBy === c.second.name ? 'the second person took it' : 'someone else there took it')));
+    if (st.redirectSamples.length < TF_RETRY_SAMPLES_) {
+      st.redirectSamples.push(callId + ' (' + kind + ') ' + c.senderName + ' (' + c.senderDept + ') -> ' + c.first.name
+        + ': answered, talked ' + c.first.talk + 's; ' + (c.gapSecs != null ? c.gapSecs + 's later' : 'then') + ' -> ' + c.second.name
+        + ': ' + tfRetryOutcomeText_(c.second.outcome) + ' (' + c.dept + ')'
+        + (c.takenBy ? '; ' + c.takenBy + ' took the call' : ''));
+    }
+  });
   return st;
 }
 
@@ -1083,7 +1148,8 @@ function tfRetryLine_(st) {
     + String(bk.outbound || 0) + '); first attempt ended -- quick decline incl. sent to voicemail (<=' + TF_RETRY_QUICK_SECS_ + 's) '
     + String(fo.quickDecline || 0) + ', rang out ' + String(fo.rangOut || 0) + ', voicemail after ringing out ' + String(fo.voicemail || 0)
     + ', not timed ' + String(fo.unknown || 0) + '; attempts skipped -- sender on no roster ' + String(sk.senderUnknown || 0)
-    + ', callee on no roster ' + String(sk.targetUnknown || 0) + ', callee on two departments ' + String(sk.targetTwoDepts || 0);
+    + ', callee on no roster ' + String(sk.targetUnknown || 0) + ', callee on two departments ' + String(sk.targetTwoDepts || 0)
+    + '; ANSWERED then redirected in the same department ' + String(st.redirects || 0);
 }
 
 /**
@@ -1093,8 +1159,11 @@ function tfRetryLine_(st) {
  * no answer, and then tried someone else in that same department -- how the
  * first attempt ended (quick decline / rang out / voicemail, with the ring-time
  * buckets and 8x8's Cause + Last Leg Disposition census), the gap before the
- * retry, who declined, and call-id samples for Caller Lookup. Same builders as
- * the capture. Employee and queue names and call ids only. Writes nothing.
+ * retry, who declined, and call-id samples for Caller Lookup. P3 (2026-11-13):
+ * the TOTAL line also counts the calls where the first person ANSWERED and the
+ * sender then went to a colleague of theirs, with who answered first and who
+ * took the call. Same builders as the capture. Employee and queue names and
+ * call ids only. Writes nothing.
  */
 function diagnoseTransferRetries(dateIso) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1125,14 +1194,15 @@ function diagnoseTransferRetries(dateIso) {
     var st = tfRetriesForGrid_(grid, lookups);
     Logger.log('[tr] %s: %s', sheets[i].iso, tfRetryLine_(st));
     total.days++;
-    ['inboundCaptured', 'outboundCaptured', 'calls', 'attempts', 'callsWithAttempts', 'cases'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
+    ['inboundCaptured', 'outboundCaptured', 'calls', 'attempts', 'callsWithAttempts', 'cases', 'redirects'].forEach(function (k) { total[k] = (total[k] || 0) + (st[k] || 0); });
     total.skipped = total.skipped || { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 };
     Object.keys(st.skipped || {}).forEach(function (k) { total.skipped[k] += st.skipped[k]; });
-    ['byKind', 'firstOutcome', 'secondOutcome', 'ring', 'pairs', 'firstCallees', 'census', 'gaps'].forEach(function (k) {
+    ['byKind', 'firstOutcome', 'secondOutcome', 'ring', 'pairs', 'firstCallees', 'census', 'gaps', 'redirectFirst', 'redirectTook'].forEach(function (k) {
       total[k] = total[k] || {};
       Object.keys(st[k] || {}).forEach(function (x) { total[k][x] = (total[k][x] || 0) + st[k][x]; });
     });
     total.samples = (total.samples || []).concat(st.samples || []).slice(0, TF_RETRY_SAMPLES_);
+    total.redirectSamples = (total.redirectSamples || []).concat(st.redirectSamples || []).slice(0, TF_RETRY_SAMPLES_);
   }
   Logger.log('[tr] TOTAL over %s date(s): %s', String(total.days), tfRetryLine_(total));
   var ring = TF_RETRY_RING_BUCKETS_.map(function (b) { return b[0] + ' ' + ((total.ring || {})[b[0]] || 0); });
@@ -1146,6 +1216,12 @@ function diagnoseTransferRetries(dateIso) {
     Logger.log('[tr]   first person tried, who did not answer: %s', tfTopCounts_(total.firstCallees, 12).join('; '));
     Logger.log('[tr]   how the first attempt ended, by 8x8 fields: %s', tfTopCounts_(total.census, 12).join('; '));
     Logger.log('[tr]   e.g.: %s', total.samples.join(' | '));
+  }
+  // P3: the first person ANSWERED and talked, then the sender went to someone else there.
+  if (total.redirects) {
+    Logger.log('[tr]   answered, then redirected -- who answered first: %s', tfTopCounts_(total.redirectFirst, 12).join('; '));
+    Logger.log('[tr]   answered, then redirected -- who took the call: %s', tfTopCounts_(total.redirectTook, 4).join('; '));
+    Logger.log('[tr]   e.g.: %s', (total.redirectSamples || []).join(' | '));
   }
   return total;
 }

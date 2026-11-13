@@ -2779,7 +2779,9 @@
 
   var AP_ = { agent: null, idx: 0, from: '', to: '', seq: 0, strip: null,
               date: null, tab: 'in', days: {}, node: null, dept: '',
-              dsumAll: false };   // ADT-2: the Direct summary lists every colleague
+              dsumAll: false,     // ADT-2: the Direct summary lists every colleague
+              // P2: the Direct list's sort + filter (kept across days and tabs).
+              dview: { sort: 'time', desc: false, way: 'all', outcome: 'all' } };
 
   function apWindow_() {
     const m = (state && state.meta) || {};
@@ -3196,6 +3198,19 @@
     initClipboardOnce();
     return parentIdBadge(c.callId, date || '', 'outbound');
   }
+  // P1 (owner 2026-11-13): a CONNECTED call that rang 0-1 s reads "instant",
+  // not 0:00:00. The stored value is real (Operator State #65 concluded these
+  // calls connect at once), but a bare zero beside six minutes of talk read as
+  // a missing figure. An unanswered call keeps its ring time; unknown is "–".
+  var AP_INSTANT_RING_SEC_ = 1;
+  function apOutboundRingHtml_(c) {
+    if (!c || c.ringSec == null) return '–';
+    if (c.connected && c.ringSec <= AP_INSTANT_RING_SEC_) {
+      return '<span class="ap-instant" title="Connected as soon as it was dialled (rang '
+        + escapeHtml(String(c.ringSec)) + ' s)">instant</span>';
+    }
+    return fmtDuration(c.ringSec);
+  }
   function apOutboundTableHtml_(rows, date) {
     if (!rows.length) return '<div class="ds-note">No outbound calls recorded for this agent on this day.</div>';
     const ids = rows.some(function (c) { return !!adOutboundIdHtml_(c, date); });
@@ -3210,7 +3225,7 @@
             +   (cbText ? '<div class="ap-callback">' + escapeHtml(cbText) + '</div>' : '') + '</td>'
             + '<td>' + outcome + '</td>'
             + '<td class="m">' + (c.connected && c.talkSec > 0 ? fmtDuration(c.talkSec) : '–') + '</td>'
-            + '<td class="m">' + (c.ringSec != null ? fmtDuration(c.ringSec) : '–') + '</td>'
+            + '<td class="m">' + apOutboundRingHtml_(c) + '</td>'
             + '<td class="m">' + fmtNumber(c.attempts || 1) + '</td>' + idCell + '</tr>';
         }).join('')
       + '</tbody></table>';
@@ -3242,15 +3257,20 @@
   var AD_DSUM_TOP_ = 5;
   // ADT-2: the Direct tab's summary, above its list -- every figure counts the
   // rows the list shows (agentDayDirectSummary_). Admin-only with the list.
-  function apDirectSummaryHtml_(s, showAll) {
+  function apDirectSummaryHtml_(s, showAll, listRows) {
     if (!s) return '';
     const i = s.in || {}, o = s.out || {};
+    // P2 (owner 2026-11-13, the DO-1 rule): a call the agent placed to an
+    // OUTSIDE number is an Outbound call -- it is listed and counted on the
+    // Outbound tab. Here it is one "+N" line; the headline, the bar and the
+    // list are the calls to colleagues.
+    const oCol = Number(o.toColleagues) || 0, oColConn = Number(o.toColleaguesConnected) || 0;
     const pct = function (n, d) { return d ? ' (' + Math.round(n / d * 100) + '%)' : ''; };
     const inParts = [{ cls: 'good', n: i.answered || 0, label: 'answered' },
                      { cls: 'bad', n: i.missedFree || 0, label: 'missed while free' },
-                     { cls: 'soft', n: i.missedBusy || 0, label: 'missed while on another call' }];
-    const outParts = [{ cls: 'good', n: o.connected || 0, label: 'connected' },
-                      { cls: 'bad', n: Math.max(0, (o.total || 0) - (o.connected || 0)), label: 'did not connect' }];
+                     { cls: 'busy', n: i.missedBusy || 0, label: 'missed while on another call' }];
+    const outParts = [{ cls: 'good', n: oColConn, label: 'connected' },
+                      { cls: 'bad', n: Math.max(0, oCol - oColConn), label: 'did not connect' }];
     const v = i.outsideVia || {};
     const viaTxt = (v.line || v.main || v.colleague)
       ? ' (' + [v.line ? fmtNumber(v.line) + ' their direct line' : '', v.main ? fmtNumber(v.main) + ' a main line' : '',
@@ -3272,18 +3292,21 @@
         return escapeHtml(b.with) + (b.n > 1 ? ' ×' + fmtNumber(b.n) : ''); }).join(' · ') + '</div>';
     }
     html += '</div>';
-    html += '<div class="ap-dsum-blk"><div class="ap-dsum-h"><strong>' + fmtNumber(o.total || 0) + '</strong> calls from their line</div>'
-      + (typeof obSplitMiniHtml_ === 'function' ? obSplitMiniHtml_(outParts, o.total || 0,
-          fmtNumber(o.total || 0) + ' calls from their line: ' + outParts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '),
-          escapeHtml(fmtNumber(o.connected || 0) + ' connected' + pct(o.connected || 0, o.total || 0))) : '')
-      + '<div class="ap-dsum-line">' + escapeHtml(fmtNumber(o.toColleagues || 0) + ' to colleagues ('
-          + fmtNumber(o.toColleaguesConnected || 0) + ' connected) · ' + fmtNumber(o.toOutside || 0) + ' to outside numbers ('
-          + fmtNumber(o.toOutsideConnected || 0) + ' connected)') + '</div></div>';
+    html += '<div class="ap-dsum-blk"><div class="ap-dsum-h"><strong>' + fmtNumber(oCol) + '</strong> calls to colleagues</div>'
+      + (typeof obSplitMiniHtml_ === 'function' ? obSplitMiniHtml_(outParts, oCol,
+          fmtNumber(oCol) + ' calls to colleagues: ' + outParts.map(function (x) { return fmtNumber(x.n) + ' ' + x.label; }).join(', '),
+          escapeHtml(fmtNumber(oColConn) + ' connected' + pct(oColConn, oCol))) : '')
+      + ((Number(o.toOutside) || 0)
+          ? '<div class="ap-dsum-line ap-dsum-ext">' + escapeHtml('+' + fmtNumber(o.toOutside) + ' to outside numbers ('
+              + fmtNumber(o.toOutsideConnected || 0) + ' connected) — listed under Outbound calls') + '</div>'
+          : '')
+      + '</div>';
     const cols = s.colleagues || [];
     if (cols.length) {
       const shown = showAll ? cols : cols.slice(0, AD_DSUM_TOP_);
       html += '<div class="ap-dsum-blk ap-dsum-cols"><div class="ap-dsum-h">Colleagues</div>'
-        + '<table class="ap-dsum-tbl"><thead><tr><th>Colleague</th><th>They called</th><th>Called them</th></tr></thead><tbody>'
+        // P2: the list's own words (Outgoing = this agent called them).
+        + '<table class="ap-dsum-tbl"><thead><tr><th>Colleague</th><th>Outgoing</th><th>Incoming</th></tr></thead><tbody>'
         + shown.map(function (c) {
             return '<tr><td>' + escapeHtml(c.name) + '</td>'
               + '<td class="m">' + (c.called ? fmtNumber(c.called) + ' <span class="ap-path">(' + fmtNumber(c.calledConnected) + ' connected)</span>' : '–') + '</td>'
@@ -3294,29 +3317,123 @@
             + (showAll ? 'Show the top ' + AD_DSUM_TOP_ : 'Show all ' + fmtNumber(cols.length)) + '</button>' : '')
         + '</div>';
     }
+    // P2: the foot counts the rows the list shows (the outside-number calls
+    // are not among them), so it is taken from those rows when they are given.
     const h = s.hours || {};
-    html += '<div class="ap-dsum-line ap-dsum-foot">' + escapeHtml('Talk: ' + fmtDuration(i.talkSec || 0) + ' in · ' + fmtDuration(o.talkSec || 0) + ' out · '
-      + fmtNumber(h.work || 0) + ' in work hours, ' + fmtNumber(h.after || 0) + ' after hours') + '</div>';
+    let outTalk = o.talkSec || 0, hWork = h.work || 0, hAfter = h.after || 0;
+    if (listRows) {
+      outTalk = 0; hWork = 0; hAfter = 0;
+      listRows.forEach(function (c) {
+        if (c.direction === 'out') outTalk += Number(c.talkSec) || 0;
+        if (c.inWindow === false) hAfter++; else hWork++;
+      });
+    }
+    html += '<div class="ap-dsum-line ap-dsum-foot">' + escapeHtml('Talk: ' + fmtDuration(i.talkSec || 0) + ' in · ' + fmtDuration(outTalk) + ' out · '
+      + fmtNumber(hWork) + ' in work hours, ' + fmtNumber(hAfter) + ' after hours') + '</div>';
     return html + '</div>';
   }
-  function apDirectTableHtml_(rows, meta) {
+  // P2 (owner 2026-11-13): the rows the Direct list shows. A call the agent
+  // placed to an OUTSIDE number is an Outbound call (the DO-1 rule): it is on
+  // the Outbound tab, and the summary above carries it as one "+N" line.
+  function apDirectListRows_(rows) {
+    return (rows || []).filter(function (c) { return !(c && c.direction === 'out' && c.side === 'ext'); });
+  }
+  // The filter's outcome groups, and the sort keys (a missing value sorts last).
+  var AP_DIRECT_OUTCOME_GROUP_ = {
+    answered: 'ok', connected: 'ok', missed_busy: 'busy',
+    missed_free: 'missed', missed: 'missed', abandoned: 'missed', not_connected: 'missed',
+  };
+  var AP_DIRECT_COLS_ = [['time', 'Time'], ['way', 'Direction'], ['with', 'With'], ['outcome', 'Outcome'], ['rang', 'Rang'], ['talk', 'Talk']];
+  function apDirectWay_(c) { return c.direction === 'out' ? 'Outgoing' : 'Incoming'; }
+  function apDirectOutcome_(c) {
+    const oc0 = AD_DIRECT_OUTCOME_[c.outcome] || ['muted', c.outcome || '–'];
+    return c.outcome === 'missed_busy' ? [oc0[0], adBusyText_(c.busyWith)] : oc0;   // ADT-2
+  }
+  function apDirectSortVal_(c, key) {
+    if (key === 'way') return apDirectWay_(c);
+    if (key === 'with') return String(c.other || '').toLowerCase();
+    if (key === 'outcome') return apDirectOutcome_(c)[1].toLowerCase();
+    if (key === 'rang') return c.ringSec == null ? null : Number(c.ringSec);
+    if (key === 'talk') return c.talkSec ? Number(c.talkSec) : null;
+    return c.callStart ? String(c.callStart) : null;
+  }
+  /** PURE. The listed rows through the view's filter and sort (stable; blanks last). */
+  function apDirectView_(rows, view) {
+    const v = view || {};
+    const kept = rows.filter(function (c) {
+      if (v.way === 'in' && c.direction === 'out') return false;
+      if (v.way === 'out' && c.direction !== 'out') return false;
+      if (v.outcome && v.outcome !== 'all' && AP_DIRECT_OUTCOME_GROUP_[c.outcome] !== v.outcome) return false;
+      return true;
+    });
+    const key = v.sort || 'time';
+    const sign = v.desc ? -1 : 1;
+    return kept.map(function (c, i) { return { c: c, i: i, k: apDirectSortVal_(c, key) }; })
+      .sort(function (a, b) {
+        if (a.k == null || b.k == null) return (a.k == null ? 1 : 0) - (b.k == null ? 1 : 0) || (a.i - b.i);
+        return (a.k < b.k ? -sign : a.k > b.k ? sign : 0) || (a.i - b.i);
+      })
+      .map(function (x) { return x.c; });
+  }
+  /**
+   * The Direct list. `view` (the panel's AP_.dview) applies the filter and
+   * makes the headers sortable; without it (the day quick view) the list is
+   * plain and in time order. Admins get each call's id (the list is admin-only).
+   */
+  function apDirectTableHtml_(rows, meta, view) {
     const note = adDirectNoteHtml_(meta);
-    if (!rows || !rows.length) return note + '<div class="ds-note">No direct calls to or from this agent’s line on this day.</div>';
-    return note + '<table class="ap-calls ap-direct"><thead><tr><th>Time</th><th>Way</th><th>With</th><th>Outcome</th><th>Rang</th><th>Talk</th></tr></thead><tbody>'
-      + rows.map(function (c) {
-          const oc0 = AD_DIRECT_OUTCOME_[c.outcome] || ['muted', c.outcome || '–'];
-          const oc = c.outcome === 'missed_busy' ? [oc0[0], adBusyText_(c.busyWith)] : oc0;   // ADT-2
-          const way = c.direction === 'out' ? 'Called' : 'Called them';
+    const all = apDirectListRows_(rows);
+    if (!all.length) return note + '<div class="ds-note">No direct calls to or from this agent’s line on this day.</div>';
+    const shown = view ? apDirectView_(all, view) : all;
+    const isAdmin = typeof USER !== 'undefined' && USER && USER.role === 'admin';
+    const ids = isAdmin && all.some(function (c) { return !!c.callId; });
+    if (ids) initClipboardOnce();
+    const head = AP_DIRECT_COLS_.map(function (col) {
+      if (!view) return '<th>' + col[1] + '</th>';
+      const on = (view.sort || 'time') === col[0];
+      return '<th aria-sort="' + (on ? (view.desc ? 'descending' : 'ascending') : 'none') + '">'
+        + '<button type="button" class="ap-sort' + (on ? ' is-on' : '') + '" data-ap-dsort="' + col[0] + '">' + col[1]
+        + '<span class="ap-sort-ar" aria-hidden="true">' + (on ? (view.desc ? '▼' : '▲') : '') + '</span></button></th>';
+    }).join('') + (ids ? '<th>Call</th>' : '');
+    const body = shown.length ? shown.map(function (c) {
+          const oc = apDirectOutcome_(c);
           return '<tr><td class="m">' + escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?')
             + (c.inWindow === false ? ' <span class="ap-path">· after hours</span>' : '') + '</td>'
-            + '<td>' + escapeHtml(way) + '</td>'
+            + '<td>' + apDirectWay_(c) + '</td>'
             + '<td class="ap-party">' + escapeHtml(c.other || '–')
             +   (c.side === 'int' ? ' <span class="ap-path">· internal</span>' : '') + '</td>'
             + '<td><span class="cl-chip cl-chip-' + oc[0] + '">' + escapeHtml(oc[1]) + '</span></td>'
             + '<td class="m">' + (c.ringSec != null ? fmtDuration(c.ringSec) : '–') + '</td>'
-            + '<td class="m">' + (c.talkSec ? fmtDuration(c.talkSec) : '–') + '</td></tr>';
+            + '<td class="m">' + (c.talkSec ? fmtDuration(c.talkSec) : '–') + '</td>'
+            // No date: a direct call has no path drill, so the chip is the id + copy.
+            + (ids ? '<td class="ap-call-id">' + parentIdBadge(c.callId, '', '', { neutral: true }) + '</td>' : '')
+            + '</tr>';
         }).join('')
-      + '</tbody></table>';
+      : '<tr><td class="ap-dfilter-none" colspan="' + (AP_DIRECT_COLS_.length + (ids ? 1 : 0)) + '">No direct calls match this filter.</td></tr>';
+    return note + '<table class="ap-calls ap-direct"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';
+  }
+  /**
+   * P2: the Direct list's filter row. It sits ABOVE the list's scroll box,
+   * with the summary (ADT-1: the list's header row stays at the top of the
+   * list), and says how many of the day's direct calls are showing.
+   */
+  function apDirectFilterHtml_(rows, view) {
+    const all = apDirectListRows_(rows);
+    if (!view || !all.length) return '';
+    const shown = apDirectView_(all, view);
+    const opt = function (val, label, cur) {
+      return '<option value="' + val + '"' + (cur === val ? ' selected' : '') + '>' + label + '</option>';
+    };
+    return '<div class="ap-dfilter" role="group" aria-label="Filter the direct calls">'
+      + '<label>Direction <select data-ap-dfilter="way">'
+      +   opt('all', 'All', view.way) + opt('in', 'Incoming', view.way) + opt('out', 'Outgoing', view.way) + '</select></label>'
+      + '<label>Outcome <select data-ap-dfilter="outcome">'
+      +   opt('all', 'All', view.outcome) + opt('ok', 'Answered / connected', view.outcome)
+      +   opt('missed', 'Missed / no answer', view.outcome) + opt('busy', 'Missed while on another call', view.outcome) + '</select></label>'
+      + '<span class="ap-dfilter-n" role="status">' + (shown.length === all.length
+          ? fmtNumber(all.length) + ' call' + (all.length === 1 ? '' : 's')
+          : 'showing ' + fmtNumber(shown.length) + ' of ' + fmtNumber(all.length)) + '</span>'
+      + '</div>';
   }
 
   function apDayHtml_(data, tab) {
@@ -3342,7 +3459,7 @@
     };
     let list;
     if (tab === 'out') list = apOutboundTableHtml_(outbound, meta.date);
-    else if (tab === 'direct') list = apDirectTableHtml_(direct, meta);
+    else if (tab === 'direct') list = apDirectTableHtml_(direct, meta, AP_.dview);
     else if (tab === 'rings') list = '<div class="ap-rings">' + rings.map(function (t) { return escapeHtml(String(t)); }).join(' · ') + '</div>';
     else list = apInboundTableHtml_(inbound);
     return '<div class="ap-daybar"><span class="ap-daybar-t">' + escapeHtml(apWeekday_(meta.date) + ' ' + (meta.date || '')) + '</span>'
@@ -3357,12 +3474,13 @@
       + '<div class="ap-tabs" role="tablist" aria-label="Calls on this day">'
       +   tabBtn('in', 'Inbound calls', inbound.length)
       +   tabBtn('out', 'Outbound calls', outbound.length)
-      +   (showDirect ? tabBtn('direct', 'Direct calls', direct.length) : '')
+      +   (showDirect ? tabBtn('direct', 'Direct calls', apDirectListRows_(direct).length) : '')
       +   (showRings ? tabBtn('rings', 'Missed rings', rings.length) : '')
       + '</div>'
       // ADT-2: the Direct tab's summary sits above its list, outside the
       // list's scroll box so it stays in view while the calls scroll.
-      + (tab === 'direct' ? apDirectSummaryHtml_((data && data.directSummary) || null, !!AP_.dsumAll) : '')
+      + (tab === 'direct' ? apDirectSummaryHtml_((data && data.directSummary) || null, !!AP_.dsumAll, apDirectListRows_(direct))
+          + apDirectFilterHtml_(direct, AP_.dview) : '')
       + '<div class="ap-list" role="tabpanel" aria-labelledby="ap-tab-' + tab + '">' + list + '</div>';
   }
 
@@ -3389,6 +3507,17 @@
         if (btn) btn.focus();
         return;
       }
+      // P2: sort the Direct list -- the same column again flips the order.
+      const srt = t.closest('[data-ap-dsort]');
+      if (srt) {
+        const key = srt.getAttribute('data-ap-dsort');
+        AP_.dview.desc = AP_.dview.sort === key ? !AP_.dview.desc : false;
+        AP_.dview.sort = key;
+        if (AP_.days[AP_.date]) apRenderDay_(AP_.days[AP_.date]);
+        const again = AP_.node && AP_.node.querySelector('[data-ap-dsort="' + key + '"]');
+        if (again) again.focus();
+        return;
+      }
       const day = t.closest('[data-ap-date]');
       if (day) { apSelectDay_(day.getAttribute('data-ap-date')); return; }
       const tab = t.closest('[data-ap-tab]');
@@ -3404,6 +3533,16 @@
         const box = AP_.node && AP_.node.querySelector('[data-ap-stripbox]');
         if (box) box.scrollBy({ left: Number(sc.getAttribute('data-ap-scroll')) * box.clientWidth * 0.8, behavior: 'smooth' });
       }
+    });
+    // P2: the Direct list's filter (direction, outcome).
+    row.addEventListener('change', function (e) {
+      const sel = e.target && e.target.closest && e.target.closest('[data-ap-dfilter]');
+      if (!sel) return;
+      const which = sel.getAttribute('data-ap-dfilter');
+      AP_.dview[which] = sel.value;
+      if (AP_.days[AP_.date]) apRenderDay_(AP_.days[AP_.date]);
+      const again = AP_.node && AP_.node.querySelector('[data-ap-dfilter="' + which + '"]');
+      if (again) again.focus();
     });
     row.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); apClose_(true); return; }

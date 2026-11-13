@@ -830,7 +830,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   superseded `cdr.ov.cardperiod`/`cdr.ov.tableperiod.v1`, migrated
   table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows),
   `cdr.dept.trp.period` (R18 item 1 — the Team Rings panel's
-  Range/Yesterday/MTD period; default `range`), and
+  Range/Yesterday/MTD period; default `range`),
+  `cdr.dept.side.collapsed` (P4 follow-on — a JSON list of the My Department
+  side panels the viewer folded to their header; garbled or blocked storage
+  reads as "none folded" and the control still works for the session), and
   `cdr.dev.overlay` (O-11 dev overlay open/closed; ADMIN-ONLY and read only
   after the role check — it is a display preference, never an entitlement,
   and a manager setting it by hand gets nothing) — the theme
@@ -2518,7 +2521,21 @@ stay pinned by INV-39, INV-53 and INV-06.
   line, DID-3), a ring missed while busy naming who that other call was with
   (`busy_with`, never a number) -- under a summary block that counts every
   row of the day (`agentDayDirectSummary_` / `apDirectSummaryHtml_`, ADT-2;
-  it sits outside the list's scroll box, colleagues top 5 with "Show all"); every
+  it sits outside the list's scroll box, colleagues top 5 with "Show all").
+  **P2 (owner 2026-11-13):** the list's column is Direction (Incoming /
+  Outgoing -- "Called / Called them" was ambiguous). A call the agent PLACED
+  to an outside number is an Outbound call (the DO-1 rule): `apDirectListRows_`
+  keeps it out of the list, the tab count and the quick view's count, and the
+  summary shows it as one "+N to outside numbers — listed under Outbound
+  calls" line under a "calls to colleagues" headline; the summary's foot is
+  computed from the listed rows. `apDirectFilterHtml_` (Direction, Outcome;
+  it sits with the summary, above the scroll box, so ADT-1's header-at-top
+  holds) and the sortable headers (`data-ap-dsort`, `aria-sort`, a second
+  click reverses, a missing value sorts last either way) read `AP_.dview`,
+  which survives day and tab changes; the quick view passes no view and gets
+  the plain time-ordered list. Admins get each call's id (`parentIdBadge`
+  with no date, so no path button). Pinned by `panel-direct-tab.test.js`
+  (the helpers run as written) and `drive-agentpanel.js`. In the dept table every
   header sorts by click and keyboard (`obThHtml_`). Still ONE `<tr>` per
   agent, so the agent panel, subtotals and exports keep their shape.
   `drive-deptoutbound.js` pins the cells, the group row, that every bar adds
@@ -2535,6 +2552,54 @@ stay pinned by INV-39, INV-53 and INV-06.
   `aria-busy`), an error line with Retry on a failure (`#tdc-error`,
   `#tdc-retry`), a tally per agent (answered / missed / busy) with its legend,
   and rows that open the agent table's Direct view at that agent (`tdcJump_`).
+  **P4 (owner 2026-11-13), three rules.** (1) **Busy from the first moment,
+  and the last figures stay up.** `refresh()` calls `tdcArm_()` beside
+  `deptMissedFrostArm_()` (`TDC_.pending`), so the card is busy from the
+  page's own request, before it has a window to ask for; `onError` calls
+  `tdcDisarm_()`. While busy `tdcRender_` shows `tdcHeld_()` -- the newest
+  good payload (`TDC_.last`) for the SAME department -- under a frost on
+  `#tdc-body`; with nothing to keep, or after a department switch, the
+  skeleton. `TDC_.data` keeps its meaning (the payload for `TDC_.key`, or
+  null), so the Direct view is untouched. An error never shows old figures.
+  (2) **The side column with three panels.** `tdcSync_` sets
+  `.dept-side--direct` on the aside while the card is active; with it Team
+  Rings and Team Outbound are `flex: 0 0 auto` with a 200px scrolling table
+  (the Both-view rule), because R18b's shrink-to-fit let Rings collapse to
+  nothing and paint over the card below. A fourth panel in this column needs
+  the same treatment. (3) **The card form** (`directSummaryHtml_(k, null,
+  'card')`): ONE headline (answered of rang, the rate when free at its end),
+  ONE bar, a key line (`.tdc-key`: the colours plus the missed and busy
+  counts, which also keys the agent tallies), then one labelled block
+  (`.tdc-more`: Outside answered, Calls to colleagues, Calls to outside
+  numbers). The block size sits in the table header (`#tdc-unit`); the table
+  is `table-layout: fixed` so a long name or a four-digit count cannot push
+  past the card; a coverage caveat is one quiet line (`.tdc-hint`), the boxed
+  note only for "nothing to show". Pinned by `team-direct-card.test.js` and
+  `drive-deptoutbound.js`.
+  **The follow-ons (same day), four more rules.** (a) **The card prints whole
+  percents**, like Team Rings beside it, through `directWholeRate_(answered,
+  missedFree)` -- computed from the COUNTS, never by rounding the served
+  one-decimal figure (82.45% is 82; rounding 82.5 says 83). The Direct Calls
+  report and the Direct view keep one decimal; the exact figure is in the
+  card's tooltips. (b) **The Direct view of the agent table follows the
+  card's loading rule**: `dcViewRender_` reads `TDC_.data || (busy ?
+  tdcHeld_() : null)` and frosts on `TDC_.loading || TDC_.pending`, so its
+  rows stay under the frost instead of blanking. (c) **Team Rings and Team
+  Outbound are busy with the page.** `refresh()` calls `sideFrostArm_()` on a
+  same-department refresh (the table's `__useFrost` condition); the LIVE
+  repaint in `onData` (never the SWR pre-paint) and `onError` call
+  `sideFrostDisarm_()`. While armed, Team Rings unfrosts only through
+  `trpUnfrost_`, so its pre-paint cannot clear the frost early; Team Outbound
+  is also frosted while its own request is out (`obViewSync_`). A new side
+  panel that paints from the summary joins `SIDE_BUSY_PANELS_`. (d) **Every
+  side panel folds to its header**: a `.side-collapse` button
+  (`data-side-collapse="<panel id>"`, `aria-expanded`) in each
+  `.dept-qcd-header`, wired once for every role by `sideCollapseInit_` (from
+  `obViewSync_`); `.is-collapsed` hides every child but the header and sets
+  `flex: 0 0 auto`, both `!important` because the renderers set inline
+  display and the per-panel flex rules carry an id. Stored in
+  `cdr.dept.side.collapsed`; the control is in the print-hidden list. A new
+  panel in `.dept-side` gets the button in its header.
   The text below describes the original fold. `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
   column: the Direct Calls report's figures for the page's dept and dates,
   through the report's OWN `getDirectCallReport` (admin-only while vetted), so
@@ -3116,6 +3181,44 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   and the rule cards still render -- each chip just shows a dash. Admin-only via the
   existing modal gating (`assertAdmin_` in `getAlertsInit`);
   no separate gate needed.
+
+## Call ID chip, busy colour, instant ring (P1, owner 2026-11-13)
+
+- **The Call ID chip's warn tint means ABANDONED.** `parentIdBadge(id, date,
+  kind, opts)` (script-5-dept) was built for abandoned timestamps and was
+  always red; it now adds `.parent-id--neutral` when `kind === 'outbound'` or
+  `opts.neutral` is set. A NEW caller showing an id for a call that was not
+  abandoned (a transfer, a direct call, a connected outbound call) passes one
+  of those; the abandoned callers pass neither and keep the tint.
+- **"Missed while on another call" is `.ob-seg-busy` / `.tly.mb` (light
+  yellow, `--caution`), never `.ob-seg-soft`.** The soft red stays for "rang
+  out or voicemail", "ringing a person's line" and "brief ring"; a new bar
+  showing a busy miss uses `cls: 'busy'`.
+- **A connected outbound call that rang 0-1 s reads "instant"**
+  (`apOutboundRingHtml_`, the agent panel's Outbound list). The stored 0 is
+  real (Operator State #65); an unanswered call keeps its ring time and an
+  unknown ring stays "–".
+- The Missed Calls strip carries no "Range:" (the heading has it); the
+  Transfer retries case table scrolls in `.tr-cases-wrap` with a pinned header
+  (`overflow: clip` on the table, the R10-9 rule).
+- Outlier Fix: an unlisted-extension row is tickable with nothing mapped
+  (`ofRowReady_` kind `ignore`); "Apply selected" sends those names through
+  `ofIgnoreNames_` (chunks of `OF_IGNORE_CHUNK_`, at or under the server's
+  per-call cap) before the renames and roster adds, and the dialog is
+  destructive-toned only when a rename or roster add is in the batch.
+- Pinned by `panel-direct-tab.test.js`, `drive-agentpanel.js`, `drive-admin.js`.
+- **Transfer retries has two lists behind one switch (P3).** `#tr-views`
+  (`aria-pressed`, `trSetView_`, `TR_STATE_.view`, default `redirect`) shows
+  `#tr-view-redirect` (answered, then redirected) or `#tr-view-missed` (the
+  original retry list); both come in one payload, so switching never
+  re-fetches, and the choice survives a re-run. `trSenderHtml_` renders who
+  answered the caller (time, queue, time on the call first) in both tables.
+  Each table sits in its own `.tr-cases-wrap` with the pinned header.
+  **Every time the modal prints is Central**: stored journey times are
+  Pacific, and `trWhen_` runs them through `clCstTime_`, the journey drill's
+  own shift (owner 2026-11-13 -- it printed them as stored). A new time
+  print in this modal goes through `trWhen_`; `transfer-retries.test.js`
+  fails on one that does not. Pinned by `drive-admin.js`.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 

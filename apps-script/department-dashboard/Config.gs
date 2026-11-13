@@ -471,6 +471,24 @@ const ROSTER = Object.freeze({
   QUEUE_EXT_COL: 2,      // column B: comma-separated extensions
 });
 
+// P5 (owner 2026-11-13): CUSTODIAL departments. A roster column that exists
+// so people with call records who belong to no call-handling team
+// (administrative roles, leadership) have a home -- their names canonicalize
+// (INV-24), they leave the Outlier Fix list, and their direct calls are
+// credited to a department. It is NOT a team to be measured, so the
+// surfaces that walk EVERY department skip it: the Overview (it is listed in
+// OVERVIEW_HIDDEN_DEPTS, which also keeps it out of the company aggregate),
+// the coaching flags and gates, and cache warming. Everything keyed on a
+// department by NAME still works for it (My Department, the reports, Access
+// Control). The header must read exactly this; see Operator State #93.
+// ENFORCED by custodial-dept.test.js (the hidden-list membership included).
+const CUSTODIAL_DEPTS = Object.freeze(['Other']);
+
+/** PURE. Is `dept` a custodial roster column (P5)? Exact header match. */
+function isCustodialDept_(dept) {
+  return CUSTODIAL_DEPTS.indexOf(String(dept == null ? '' : dept)) !== -1;
+}
+
 // Column positions in the "DQE Historical Data" sheet (1-indexed).
 // Centralized so a column shift is a one-line edit. Row 1 is headers;
 // data starts in row 2.

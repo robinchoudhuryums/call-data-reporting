@@ -1581,7 +1581,7 @@
     return [
       { cls: 'good', n: Number(k.ibAnswered) || 0, label: 'answered' },
       { cls: 'bad', n: Number(k.ibMissedFree) || 0, label: 'missed while free' },
-      { cls: 'soft', n: Number(k.ibMissedBusy) || 0, label: 'missed while on another call' },
+      { cls: 'busy', n: Number(k.ibMissedBusy) || 0, label: 'missed while on another call' },   // P1: its own (yellow) segment
     ];
   }
   // DO-1 (owner 2026-11-05): the outbound figures here are calls to
@@ -1611,28 +1611,47 @@
   }
   // compact (a table cell, the side card): ANSWERED calls only, under an
   // "answered" figure; full (the summary): every call that rang, with rates.
+  // The ANSWERED outside calls by how they arrived, as short phrases; null
+  // when the split is unavailable or holds no answered call.
+  function directViaAnsweredBits_(via) {
+    if (!via) return null;
+    const ans = function (o) { return o ? (Number(o.answered) || 0) : 0; };
+    if (!(ans(via.line) + ans(via.main) + ans(via.colleague))) return null;
+    const bits = [fmtNumber(ans(via.line)) + ' their line', fmtNumber(ans(via.main)) + ' main line'];
+    if (ans(via.colleague)) bits.push(fmtNumber(ans(via.colleague)) + ' via colleague');
+    return bits;
+  }
+  function directViaTip_(via, compact) {
+    const c = directViaCounts_(via);
+    return 'How outside callers reached the person: dialing their own direct number, or a company main line '
+      + '(typing the extension at the phone menu, or routed there by the line).'
+      + (compact ? ' Answered calls.' : '')
+      + (c.unsplit ? ' ' + fmtNumber(c.unsplit) + ' call' + (c.unsplit === 1 ? '' : 's') + ' in this window came before the split was recorded.' : '');
+  }
   function directViaLineHtml_(via, compact) {
     if (!via) return '';
     const c = directViaCounts_(via);
     if (!(c.line + c.main + c.colleague)) return '';
-    const ans = function (o) { return o ? (Number(o.answered) || 0) : 0; };
     const rateTxt = function (r) { return r == null ? '' : ' (' + r + '% answered)'; };
     let bits;
     if (compact) {
-      if (!(ans(via.line) + ans(via.main) + ans(via.colleague))) return '';
-      bits = [fmtNumber(ans(via.line)) + ' their line', fmtNumber(ans(via.main)) + ' main line'];
-      if (ans(via.colleague)) bits.push(fmtNumber(ans(via.colleague)) + ' via colleague');
+      bits = directViaAnsweredBits_(via);
+      if (!bits) return '';
     } else {
       bits = [fmtNumber(c.line) + ' on their direct line' + rateTxt(c.lineRate),
               fmtNumber(c.main) + ' from a main line' + rateTxt(c.mainRate)];
       if (c.colleague) bits.push(fmtNumber(c.colleague) + ' via a colleague');
     }
-    const tip = 'How outside callers reached the person: dialing their own direct number, or a company main line '
-      + '(typing the extension at the phone menu, or routed there by the line).'
-      + (compact ? ' Answered calls.' : '')
-      + (c.unsplit ? ' ' + fmtNumber(c.unsplit) + ' call' + (c.unsplit === 1 ? '' : 's') + ' in this window came before the split was recorded.' : '');
-    return '<div class="dc-ext-line dc-via-line" title="' + escapeHtml(tip) + '">'
+    return '<div class="dc-ext-line dc-via-line" title="' + escapeHtml(directViaTip_(via, compact)) + '">'
       + (compact ? 'Outside answered: ' : 'Outside callers: ') + escapeHtml(bits.join(' · ')) + '</div>';
+  }
+  // The side card prints WHOLE percents, like Team Rings beside it. Computed
+  // from the counts, not by rounding the served one-decimal figure: rounding a
+  // rounded number can land on the wrong side of .5. Same definition as the
+  // server's directCallAnswerRate_ (missed while on another call left out).
+  function directWholeRate_(answered, missedFree) {
+    const a = Number(answered) || 0, d = a + (Number(missedFree) || 0);
+    return d > 0 ? Math.round(a / d * 100) : null;
   }
   function directSummaryHtml_(k, p, mode) {
     k = k || {};
@@ -1648,18 +1667,39 @@
       + fmtNumber(Math.max(0, obTotal - obConn)) + ' did not connect';
     const rateTxt = k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—';
     if (mode === 'card') {
+      // P4 (owner 2026-11-13): ONE headline and ONE bar. The headline carries
+      // the count and the rate; the line under the bar is the colour key (and
+      // the two counts the headline does not hold) for the bar AND the agent
+      // tallies below; everything else -- how outside callers arrived, calls
+      // placed to colleagues, calls placed to outside numbers -- is a small
+      // labelled block, no second headline or bar.
+      const ext = k.obExt || {};
+      const extTotal = Number(ext.total) || 0;
+      const row = function (label, value, tip) {
+        return '<div class="tdc-more-row"' + (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '><dt>' + escapeHtml(label)
+          + '</dt><dd>' + escapeHtml(value) + '</dd></div>';
+      };
+      const viaBits = directViaAnsweredBits_(k.via);
+      const wholeRate = directWholeRate_(ibParts[0].n, ibParts[1].n);
       return '<div class="tdc-split">'
         + '<div class="tdc-split-head"><span class="tdc-split-num">' + fmtNumber(ibParts[0].n) + '</span>'
-        + ' <span class="tdc-split-of">of ' + fmtNumber(rung) + ' answered</span></div>'
-        + obSplitMiniHtml_(ibParts, rung, aria, escapeHtml(fmtNumber(ibParts[1].n) + ' missed while free · '
-            + fmtNumber(ibParts[2].n) + ' while busy · ' + rateTxt + ' when free'))
-        + directViaLineHtml_(k.via, true)
-        + '<div class="tdc-split-head tdc-split-head--out"><span class="tdc-split-num">' + fmtNumber(obTotal) + '</span>'
-        + ' <span class="tdc-split-of">calls to colleagues</span></div>'
-        + obSplitMiniHtml_(obParts, obTotal, obAria, escapeHtml(fmtNumber(obConn) + ' connected'
-            + (obTotal ? ' (' + Math.round(obConn / obTotal * 100) + '%)' : '')))
-        + directExtLineHtml_(k.obExt, false)
-        + '</div>';
+        + ' <span class="tdc-split-of">of ' + fmtNumber(rung) + ' answered</span>'
+        + '<span class="tdc-split-rate" title="' + escapeHtml('Answered ÷ (answered + missed while free)'
+        +     (k.ibAnswerRate != null ? ' = ' + k.ibAnswerRate + '%' : '') + '. A call missed while on another call is left out.') + '">'
+        +   '<strong>' + escapeHtml(wholeRate == null ? '—' : wholeRate + '%') + '</strong> when free</span></div>'
+        + obSplitMiniHtml_(ibParts, rung, aria, '')
+        + '<div class="tdc-key">'
+        +   '<span class="tdc-key-k"><span class="tly a"></span>answered</span>'
+        +   '<span class="tdc-key-k"><span class="tly m"></span>' + escapeHtml(fmtNumber(ibParts[1].n)) + ' missed</span>'
+        +   '<span class="tdc-key-k" title="Missed while on another call -- left out of the rate"><span class="tly mb"></span>'
+        +     escapeHtml(fmtNumber(ibParts[2].n)) + ' busy</span></div>'
+        + '<dl class="tdc-more">'
+        +   (viaBits ? row('Outside answered', viaBits.join(' · '), directViaTip_(k.via, true)) : '')
+        +   row('Calls to colleagues', fmtNumber(obTotal) + (obTotal ? ' · ' + fmtNumber(obConn) + ' connected' : ''),
+              'Calls the agents placed from their own lines to colleagues, work hours.')
+        +   (extTotal ? row('Calls to outside numbers', fmtNumber(extTotal) + ' · ' + fmtNumber(Number(ext.connected) || 0) + ' connected',
+              'Calls from their own line to outside numbers. The Outbound view counts these (all day; this report counts work hours).') : '')
+        + '</dl></div>';
     }
     const sp = k.split || {};
     const g = function (key, side) { const v = sp[key]; return v ? (Number(v[side]) || 0) : 0; };
@@ -1669,7 +1709,7 @@
         const parts = [
           { cls: 'good', n: g('ibAnswered', side), label: 'answered' },
           { cls: 'bad', n: g('ibMissedFree', side), label: 'missed while free' },
-          { cls: 'soft', n: g('ibMissedBusy', side), label: 'missed while on another call' },
+          { cls: 'busy', n: g('ibMissedBusy', side), label: 'missed while on another call' },
         ];
         const n = parts.reduce(function (a, x) { return a + x.n; }, 0);
         const w = rung ? Math.max(n ? 2 : 0, Math.round(n / rung * 1000) / 10) : 0;

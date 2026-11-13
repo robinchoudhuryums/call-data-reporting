@@ -119,7 +119,9 @@ test('AC-6: admin-only, the hash is never selected, and the client tab shows onl
   assert.ok(!/other_hash/.test(sel), 'the outside party\'s hash never leaves the database');
   const cl = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-10-escalations.html'), 'utf8');
   assert.match(cl, /const showDirect = !!meta\.directSource;/);
-  assert.match(cl, /\(showDirect \? tabBtn\('direct', 'Direct calls', direct\.length\) : ''\)/);
+  // P2 (owner 2026-11-13): the tab counts the rows its list shows -- a call
+  // placed to an outside number is on the Outbound tab, not this one.
+  assert.match(cl, /\(showDirect \? tabBtn\('direct', 'Direct calls', apDirectListRows_\(direct\)\.length\) : ''\)/);
 });
 
 // ── DID-3 (owner 2026-11-06): the Direct tab names how an outside caller reached the agent ──

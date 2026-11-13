@@ -90,7 +90,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the Inbound and Direct lists' header row sitting at the top of its list;
   since ADT-2 the Direct summary (its totals equal the rows below, the busy
   calls named, "Show all" colleagues) -- its rows and summary come from the
-  REAL agentDayDirect_ (gen-payloads 'agentday-direct').
+  REAL agentDayDirect_ (gen-payloads 'agentday-direct'). P1 / P2 (2026-11-13): neutral Call ID chips on outbound and direct calls, the "instant" ring, the yellow busy segment, the Direct tab's Direction wording, its outside-number "+N" line, the filter's count line and the sort with focus kept.
 - `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
@@ -131,7 +131,13 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   agent panel with no second request; AT-1's table ⓘ -- and the D3 / TDC-1 Team
   Direct Calls panel: loaded with the page, one request per window, skeleton,
   error + Retry, rows that open the Direct view, the coverage note, the
-  report button, absent for a manager) the My Department **direction switch** (Inbound + outbound
+  report button, absent for a manager; since P4 the one-headline one-bar card
+  form, the fixed-column table, the loader while the page itself is still
+  loading, Team Rings ending above the card on the Inbound view, and the last
+  figures kept under a frost while a new range loads; the follow-ons: whole
+  percents on the card, the Direct view keeping its rows, Team Rings frosting
+  from the page request, and a side panel folding from the keyboard and
+  staying folded across a reload) the My Department **direction switch** (Inbound + outbound
   by default; four views since DV-1)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
@@ -230,7 +236,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the failure handler. To boot on a DEEP LINK a driver sets
   `window.__HARNESS_HASH__` (e.g. `'/report/outbound'`) in an init script; the
   stubbed `google.script.url.getLocation` answers ASYNCHRONOUSLY like the real
-  one, so the link lands after boot's default page, as in production.
+  one, so the link lands after boot's default page, as in production. P1 (2026-11-13): Outlier Fix's "Apply selected" marking a ticked unlisted-extension person Not an agent in one request, and the pinned Transfer retries header. P3 (2026-11-13): Transfer retries opens on "Answered, then redirected" -- the switch's counts, the summary, the ranked first answerers, and a row's sender detail, talk times and who took the call.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong
