@@ -55,6 +55,10 @@ const CORPUS = [
   [[ans('10:00:05', 'Daniel (Dishant) Sahani', 600), cons('10:02:00', 'Rhea Power'), cons('10:05:00', 'Rhea Power')], null],
   // 17: an OUTBOUND call -- the dialling agent is the sender; there is no answer time.
   [[cons('11:00:00', 'Rhea Power'), cons('11:03:00', 'Omar Power'), ans('11:04:00', 'Omar Power', 90, { transfer: true, handover: true })], 'Camila (Cheshta) Bhutani'],
+  // 18: Power took the caller EARLIER (a hand-over to Omar), the call came back to a CSR, who then
+  // consulted two Power people and nobody took it -- the earlier hand-over is not about this consult.
+  [[ans('09:00:00', 'Sam Seller', 100), ans('09:05:00', 'Omar Power', 60, { transfer: true, handover: true }),
+    ans('09:10:00', 'Daniel (Dishant) Sahani', 300), cons('09:12:00', 'Rhea Power'), cons('09:15:00', 'Sub Rep')], null],
 ];
 
 test('TR-1: PARITY -- the dashboard mirror reads every corpus journey exactly as cdr-import\'s tfRetriesOfJourney_', function () {
@@ -215,8 +219,11 @@ test('P3: who took the call -- nobody, the first person after all, or the second
   assert.equal(readJ(13).redirects[0].second.talk, null, 'a missed ring has no talk');
   assert.equal(readJ(14).redirects[0].takenBy, 'Rhea Power', 'X took it after all');
   assert.equal(readJ(16).redirects.length, 0, 'the same person twice is no redirect');
-  // A hand-over BEFORE the consult is not about it (journey 9: Daniel took a hand-over, then tried Power).
-  assert.equal(readJ(9).redirects.length, 0);
+  // A hand-over BEFORE the consult is not about it: Power took the caller earlier, the call came
+  // back to a CSR, and nobody in Power took it after the two consults.
+  assert.equal(readJ(18).redirects.length, 1);
+  assert.deepEqual([readJ(18).redirects[0].first.name, readJ(18).redirects[0].second.name], ['Rhea Power', 'Sub Rep']);
+  assert.equal(readJ(18).redirects[0].takenBy, null);
 });
 
 test('P3: a retry and a redirect can sit on one call, and the retry is read exactly as before', function () {
