@@ -40,6 +40,21 @@ const CORPUS = [
   [[ans('09:00:00', 'Daniel (Dishant) Sahani', 100, { origin: true }), att('09:06:00', 'Rhea Power', { secs: 1 }), att('09:06:20', 'Omar Power', { secs: 1 })], null],
   // Two colleagues in the sender's OWN department: never a retry.
   [[ans('09:00:00', 'Daniel (Dishant) Sahani', 100), att('09:01:00', 'Camila (Cheshta) Bhutani', { secs: 2 }), att('09:01:30', 'Cleo Desk', { secs: 2 })], null],
+  // ── P3 (owner 2026-11-13): answered, then redirected (indexes 12..17) ──
+  // 12: the owner's example -- X answers and talks, the CSR then goes to Y, and Y takes the caller.
+  [[q('10:00:00', 'A_Q_CSR'), ans('10:00:05', 'Daniel (Dishant) Sahani', 600), cons('10:02:00', 'Rhea Power'), cons('10:05:00', 'Omar Power'),
+    ans('10:06:00', 'Omar Power', 240, { transfer: true, handover: true })], null],
+  // 13: X answered, then Y did not pick up -- nobody in Power took it.
+  [[ans('10:00:05', 'Daniel (Dishant) Sahani', 600), cons('10:02:00', 'Rhea Power'), att('10:05:00', 'Omar Power', { secs: 20 })], null],
+  // 14: X answered, Y was consulted, and X took the call after all.
+  [[ans('10:00:05', 'Daniel (Dishant) Sahani', 600), cons('10:02:00', 'Rhea Power'), cons('10:05:00', 'Omar Power'),
+    ans('10:07:00', 'Rhea Power', 100, { transfer: true, handover: true })], null],
+  // 15: a miss, then two consults -- a retry (Rhea -> Omar) AND a redirect (Omar -> Sub Rep).
+  [[ans('10:00:05', 'Daniel (Dishant) Sahani', 600), att('10:02:00', 'Rhea Power', { secs: 3 }), cons('10:02:30', 'Omar Power'), cons('10:04:00', 'Sub Rep')], null],
+  // 16: the same person consulted twice is no redirect.
+  [[ans('10:00:05', 'Daniel (Dishant) Sahani', 600), cons('10:02:00', 'Rhea Power'), cons('10:05:00', 'Rhea Power')], null],
+  // 17: an OUTBOUND call -- the dialling agent is the sender; there is no answer time.
+  [[cons('11:00:00', 'Rhea Power'), cons('11:03:00', 'Omar Power'), ans('11:04:00', 'Omar Power', 90, { transfer: true, handover: true })], 'Camila (Cheshta) Bhutani'],
 ];
 
 test('TR-1: PARITY -- the dashboard mirror reads every corpus journey exactly as cdr-import\'s tfRetriesOfJourney_', function () {
@@ -155,7 +170,9 @@ test('TR-1: one metered read of both tables, journeys with a transfer AND a miss
   };
   const out = plain(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }));
   assert.equal(seen.length, 1, 'one query');
-  assert.match(seen[0].sql, /FROM inbound_calls WHERE call_date BETWEEN \?::date AND \?::date AND COALESCE\(is_internal, false\) = false AND journey LIKE '%"transfer":true%' AND journey LIKE '%"missed":true%'/);
+  // P3: a missed ring (a retry) OR an answered consult (answered, then redirected).
+  assert.match(seen[0].sql, /FROM inbound_calls WHERE call_date BETWEEN \?::date AND \?::date AND COALESCE\(is_internal, false\) = false AND journey LIKE '%"transfer":true%' AND \(journey LIKE '%"missed":true%' OR journey LIKE '%"consult":true%'\) UNION ALL/);
+  assert.match(seen[0].sql, /FROM outbound_calls WHERE call_date BETWEEN \?::date AND \?::date AND journey LIKE '%"transfer":true%' AND \(journey LIKE '%"missed":true%' OR journey LIKE '%"consult":true%'\)\) t$/);
   assert.match(seen[0].sql, /UNION ALL SELECT 'outbound', call_date::text, call_id, call_start, agent_name, journey FROM outbound_calls/);
   assert.ok(!/caller_hash|callee_hash|dial_in/.test(seen[0].sql), 'no number or hash is selected');
   assert.deepEqual(seen[0].p, ['2026-10-01', '2026-10-30', '2026-10-01', '2026-10-30']);
@@ -167,4 +184,90 @@ test('TR-1: one metered read of both tables, journeys with a transfer AND a miss
   assert.equal(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }).meta.available, false);
   delete dash.ctx.getDashboardNeonConn_;
   delete dash.ctx.neonNoteEgress_;
+});
+
+// ── P3 (owner 2026-11-13): answered, then redirected ─────────────────────────
+// "A CSR calls the Power department, agent X answers and they discuss for some
+// time, then on that same call the CSR has to call another Power agent Y, and Y
+// takes the transfer." The first attempt was ANSWERED, so it is not a retry
+// (`cases`); it is its own list (`redirects`) and no `cases` figure moves.
+const dfnP3 = () => dash.call('trDeptsOfAgentFn_', BY_AGENT, PARENT);
+const readJ = (i) => plain(dash.call('trRetriesOfJourney_', CORPUS[i][0], dfnP3(), CORPUS[i][1]));
+
+test('P3: X answers and talks, the sender goes to Y in the same department, and Y takes the call', function () {
+  const r = readJ(12);
+  assert.equal(r.cases.length, 0, 'the first attempt was answered: not a retry');
+  assert.equal(r.redirects.length, 1);
+  const c = r.redirects[0];
+  assert.deepEqual([c.senderName, c.senderDept, c.dept], ['Daniel (Dishant) Sahani', 'CSR', 'Power']);
+  assert.deepEqual([c.senderAt, c.queue, c.beforeSecs], ['10:00:05', 'A_Q_CSR', 115], 'when the sender answered, the queue, and time on the call before the first try');
+  assert.deepEqual(c.first, { name: 'Rhea Power', t: '10:02:00', talk: 40 });
+  assert.equal(c.second.name, 'Omar Power');
+  assert.equal(c.second.outcome, 'answered');
+  assert.equal(c.second.talk, 40);
+  assert.equal(c.gapSecs, 180);
+  assert.equal(c.takenBy, 'Omar Power');
+});
+
+test('P3: who took the call -- nobody, the first person after all, or the second', function () {
+  assert.equal(readJ(13).redirects[0].takenBy, null, 'Y did not pick up and no one in Power took the caller');
+  assert.equal(readJ(13).redirects[0].second.outcome, 'rangOut');
+  assert.equal(readJ(13).redirects[0].second.talk, null, 'a missed ring has no talk');
+  assert.equal(readJ(14).redirects[0].takenBy, 'Rhea Power', 'X took it after all');
+  assert.equal(readJ(16).redirects.length, 0, 'the same person twice is no redirect');
+  // A hand-over BEFORE the consult is not about it (journey 9: Daniel took a hand-over, then tried Power).
+  assert.equal(readJ(9).redirects.length, 0);
+});
+
+test('P3: a retry and a redirect can sit on one call, and the retry is read exactly as before', function () {
+  const r = readJ(15);
+  assert.equal(r.cases.length, 1);
+  assert.deepEqual([r.cases[0].first.name, r.cases[0].first.outcome, r.cases[0].second.name], ['Rhea Power', 'quickDecline', 'Omar Power']);
+  assert.deepEqual([r.cases[0].senderAt, r.cases[0].beforeSecs], ['10:00:05', 115], 'the retry rows gain the sender detail too');
+  assert.equal(r.redirects.length, 1);
+  assert.deepEqual([r.redirects[0].first.name, r.redirects[0].second.name], ['Omar Power', 'Sub Rep'], 'a sub-queue is the same department');
+  // The original corpus (0..11) holds one two-consult call (#4): no retry there, then or now.
+  assert.equal(readJ(4).cases.length, 0);
+  assert.equal(readJ(4).redirects.length, 1);
+});
+
+test('P3: an outbound call names the dialling agent, with no answer time', function () {
+  const c = readJ(17).redirects[0];
+  assert.deepEqual([c.senderName, c.senderAt, c.beforeSecs, c.queue], ['Camila (Cheshta) Bhutani', null, null, null]);
+  assert.equal(c.takenBy, 'Omar Power');
+});
+
+test('P3: the payload carries the redirects apart from the cases, with who answered first most often', function () {
+  const rows = [12, 13, 14, 15, 0].map(function (i, n) {
+    return { kind: 'inbound', date: '2026-11-0' + (n + 1), callId: 'R' + i, start: '10:00:00', agent: null, journey: JSON.stringify(CORPUS[i][0]) };
+  });
+  const all = plain(dash.call('trBuildFromRows_', rows, dfnP3(), ''));
+  assert.deepEqual(all.redirects.map((c) => c.callId), ['R15', 'R14', 'R13', 'R12'], 'newest first');
+  assert.equal(all.summary.redirects, 4);
+  assert.equal(all.summary.redirectsTaken, 1, 'only R12 ended with someone ELSE in the department taking the call');
+  assert.deepEqual(all.summary.redirectFirsts[0], { name: 'Rhea Power', dept: 'Power', n: 3, talkSecs: 120, tookByOther: 1 });
+  assert.equal(all.redirectsTruncated, false);
+  // The retry figures are what they were: two calls here carry a retry (R15, R0).
+  assert.equal(all.summary.cases, 2);
+  assert.deepEqual(all.cases.map((c) => c.callId), ['R0', 'R15'], 'newest first');
+  assert.deepEqual(all.summary.byOutcome, { quickDecline: 2 });
+  assert.equal(plain(dash.call('trBuildFromRows_', rows, dfnP3(), 'Sales')).redirects.length, 0, 'the department filter applies to both lists');
+  assert.ok(!JSON.stringify(all).match(/\d{10}/), 'no phone-number-shaped value in the payload');
+});
+
+test('P3: the cdr-import diagnostic counts the redirects apart from its retry figures', function () {
+  const lk = imp.call('tfBounceLookups_', imp.call('tfRosterFromGrid_', ['CSR', 'Power'], [
+    ['Daniel (Dishant) Sahani, 352', 'Rhea Power, 401'], ['', 'Omar Power, 402'],
+  ]), [], null);
+  let st = {};
+  [12, 13, 0].forEach(function (i) {
+    st = imp.call('tfRetryFold_', st, imp.call('tfRetriesOfJourney_', CORPUS[i][0], lk.deptsOfAgent, null), 'C' + i, 'inbound', {});
+  });
+  st = plain(st);
+  assert.equal(st.cases, 1, 'the one retry');
+  assert.equal(st.redirects, 2);
+  assert.deepEqual(st.redirectFirst, { 'Rhea Power (Power)': 2 });
+  assert.deepEqual(st.redirectTook, { 'the second person took it': 1, 'nobody in that department took the call': 1 });
+  assert.match(st.redirectSamples[0], /^C12 \(inbound\) Daniel \(Dishant\) Sahani \(CSR\) -> Rhea Power: answered, talked 40s; 180s later -> Omar Power: .*; Omar Power took the call$/);
+  assert.match(imp.call('tfRetryLine_', st), /RETRIED in the same department 1 .*; ANSWERED then redirected in the same department 2$/);
 });

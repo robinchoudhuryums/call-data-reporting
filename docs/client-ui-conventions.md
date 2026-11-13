@@ -3156,6 +3156,14 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   per-call cap) before the renames and roster adds, and the dialog is
   destructive-toned only when a rename or roster add is in the batch.
 - Pinned by `panel-direct-tab.test.js`, `drive-agentpanel.js`, `drive-admin.js`.
+- **Transfer retries has two lists behind one switch (P3).** `#tr-views`
+  (`aria-pressed`, `trSetView_`, `TR_STATE_.view`, default `redirect`) shows
+  `#tr-view-redirect` (answered, then redirected) or `#tr-view-missed` (the
+  original retry list); both come in one payload, so switching never
+  re-fetches, and the choice survives a re-run. `trSenderHtml_` renders who
+  answered the caller (time, queue, time on the call first) in both tables.
+  Each table sits in its own `.tr-cases-wrap` with the pinned header.
+  Pinned by `drive-admin.js`.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 

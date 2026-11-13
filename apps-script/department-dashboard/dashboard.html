@@ -2678,7 +2678,9 @@
           got no answer, then tried someone else in that department on the same call. A ring of
           <span id="tr-quick-secs">8</span> seconds or less reads as a decline, even when it went on to
           voicemail (someone sent it there); a ring that ran out to voicemail stays voicemail. The list to check
-          for transfers turned away that should not have been.</p>
+          for transfers turned away that should not have been. <strong>Answered, then redirected</strong> lists the
+          other shape: the first person tried <em>answered</em> and talked, and the call then went to a colleague of
+          theirs anyway.</p>
         <div class="ir-form-grid tr-form">
           <div class="ir-col">
             <label for="tr-from">From</label>
@@ -2706,6 +2708,35 @@
         </div>
         <div id="tr-status" role="status" class="status" style="display:none;"></div>
         <div id="tr-results" style="display:none;">
+          <!-- P3 (owner 2026-11-13): two lists, one switch. "Answered, then
+               redirected" is first: it is the case the owner most wants to see. -->
+          <div class="tr-viewbar">
+            <span class="segmented" id="tr-views" role="group" aria-label="Which calls to list">
+              <button type="button" class="seg-btn active" data-tr-view="redirect" aria-pressed="true">Answered, then redirected <span class="tr-view-n" id="tr-view-n-redirect"></span></button>
+              <button type="button" class="seg-btn" data-tr-view="missed" aria-pressed="false">Not answered first <span class="tr-view-n" id="tr-view-n-missed"></span></button>
+            </span>
+          </div>
+          <div id="tr-view-redirect">
+            <p id="tr-rsummary" class="tr-summary"></p>
+            <div class="tr-side">
+              <div class="tr-callees-wrap" id="tr-rfirsts-wrap">
+                <div class="ds-zone-label">Most often answered first, then passed over</div>
+                <table class="al-config-table tr-callees">
+                  <thead><tr><th>Answered first</th><th>Department</th><th class="num">Times</th><th class="num">Avg talk</th><th class="num">A colleague then took the call</th></tr></thead>
+                  <tbody id="tr-rfirsts"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="ds-zone-label">Calls</div>
+            <div class="tr-cases-wrap">
+              <table class="al-config-table tr-cases" id="tr-rcases">
+                <thead><tr><th>When</th><th>Call</th><th>Answered the caller</th><th>Spoke with first</th><th>Then went to</th><th>How that went</th><th>Who took the call</th></tr></thead>
+                <tbody id="tr-rtbody"></tbody>
+              </table>
+            </div>
+            <p id="tr-rnote" class="al-hint" style="display:none;"></p>
+          </div>
+          <div id="tr-view-missed" style="display:none;">
           <p id="tr-summary" class="tr-summary"></p>
           <div class="tr-side">
             <div class="tr-callees-wrap">
@@ -2725,6 +2756,7 @@
             </table>
           </div>
           <p id="tr-note" class="al-hint" style="display:none;"></p>
+          </div>
         </div>
       </div>
     </div>

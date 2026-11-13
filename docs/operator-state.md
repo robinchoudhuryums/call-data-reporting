@@ -4171,6 +4171,30 @@ When something looks wrong, before assuming a code bug, check:
     tell them apart. Both copies changed together; after the cdr-import push a
     re-run should read about 20 quick declines and 37 voicemails where the
     first run read 1 and 56.
+    **P3 (2026-11-13, owner: "the most important case"): ANSWERED, THEN
+    REDIRECTED.** A second list, the modal's default view: the first person
+    tried in another department ANSWERED and talked, and the sender then went
+    to a colleague of theirs on the same call ("a CSR calls Power, agent X
+    answers and they discuss, then the CSR has to call agent Y, and Y takes
+    the transfer"). Each row shows who answered the caller, when and on which
+    queue, how long they had been on the call first, how long X talked, how
+    the try to Y went, and who in that department took the caller (a
+    hand-over) -- "No one in <dept>" when nobody did. The summary ranks who is
+    most often the X, with their average talk and how often a colleague then
+    took the call. It is kept apart from the retry list (`redirects` beside
+    `cases`), so no retry figure moved; the retry rows gained the same
+    sender detail. Before P3 these calls were not listed at all: the rule
+    needed an UNANSWERED first attempt, and the SQL prefilter read only
+    journeys holding a missed ring. The read is wider now (a transfer event
+    AND a missed ring OR an answered consult), so expect a larger
+    `transfer-retries` line in the Neon read-volume ranking (#47). Both copies
+    changed together (parity-pinned); `diagnoseTransferRetries` logs the
+    redirect count on its TOTAL line plus who answered first and who took the
+    call. Same limits as TR-1: only what IXT-1 / OXT-1 stored, about 90 days
+    of journeys, and a hand-over is only seen when 8x8 linked the transfer
+    (#84) -- an unlinked one reads "No one". **After the dashboard deploy,
+    push cdr-import too** (the diagnostic is the editor-run twin). Times in
+    this modal are shown as stored (Pacific), as they always were here.
 90. **The per-call DIRECT list -- `direct_calls` and the agent panel's Direct
     tab (AC-6, cdr-import + dashboard, owner 2026-11-04).** Every call to or
     from a person's own line (the queues left out): colleagues by roster name,

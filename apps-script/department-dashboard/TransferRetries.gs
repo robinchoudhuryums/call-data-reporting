@@ -10,6 +10,12 @@
  * consult `{consult, transfer}`), so it needs no new capture and sees exactly
  * what Caller Lookup's path shows.
  *
+ * P3 (owner 2026-11-13) adds a SECOND list, `redirects`: the first person
+ * tried in D ANSWERED and talked, and the sender then went to someone else in
+ * D on the same call ("X answers and they discuss, then the CSR calls Y, and Y
+ * takes the call") -- with how long X talked and who in D took the caller.
+ * It is kept apart from `cases`, so every figure built on `cases` is unchanged.
+ *
  * A RETRY is a missed attempt to X in department D (not the sender's own),
  * followed later on the SAME call by an attempt to Y (not X) in D -- one case
  * per call per department. The sender is the agent who last answered (or took
@@ -64,13 +70,23 @@ function trRetryOutcome_(ev) {
  * skipped: { senderUnknown, targetUnknown, targetTwoDepts } }.
  */
 function trRetriesOfJourney_(journey, deptsOfAgent, sender0) {
-  var out = { attempts: 0, cases: [], skipped: { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 } };
+  var out = { attempts: 0, cases: [], redirects: [], skipped: { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 } };
   var sender = sender0 || null;
-  var att = [];
+  var senderAt = null;   // P3: when the sender answered the caller (inbound; an outbound call has no such event)
+  var queue = null;      // P3: the first queue the call came in on
+  var att = [], hands = [];
+  var secsBetween = function (from, to) {
+    var d = trHmsToSec_(to) - trHmsToSec_(from);
+    return isNaN(d) || d < 0 ? null : d;
+  };
   (journey || []).forEach(function (ev) {
     if (!ev || ev.origin) return;
+    if (ev.kind === 'queue' && queue == null) queue = String(ev.name || '').trim() || null;
+    // P3: who TOOK the call -- the colleague's leg with the caller (IXT-1's hand-over).
+    if (ev.handover) hands.push({ name: String(ev.name || '').trim(), t: ev.t });
     if (ev.kind === 'answer' && (!ev.transfer || ev.handover) && (Number(ev.talk) || 0) > 0 && !sender0) {
       sender = String(ev.name || '').trim() || sender;
+      senderAt = ev.t || null;
       return;
     }
     if (!ev.transfer || !(ev.missed || ev.consult)) return;
@@ -82,7 +98,7 @@ function trRetriesOfJourney_(journey, deptsOfAgent, sender0) {
     if (!td.length) { out.skipped.targetUnknown++; return; }
     if (td.length > 1) { out.skipped.targetTwoDepts++; return; }
     if (sd.indexOf(td[0]) !== -1) return;   // a colleague in the sender's own department
-    att.push({ ev: ev, name: name, dept: td[0], senderName: sender, senderDept: sd[0] });
+    att.push({ ev: ev, name: name, dept: td[0], senderName: sender, senderDept: sd[0], senderAt: senderAt, queue: queue });
   });
   var done = {};
   for (var i = 0; i < att.length; i++) {
@@ -98,11 +114,47 @@ function trRetriesOfJourney_(journey, deptsOfAgent, sender0) {
       var gap = trHmsToSec_(b.ev.t) - trHmsToSec_(a.ev.t);
       out.cases.push({
         senderName: a.senderName, senderDept: a.senderDept, dept: a.dept,
+        // P3: when the sender answered the caller, the queue it came in on, and
+        // how long they had been on the call when they first tried.
+        senderAt: a.senderAt, queue: a.queue, beforeSecs: a.senderAt ? secsBetween(a.senderAt, a.ev.t) : null,
         first: { name: a.name, t: a.ev.t, secs: a.ev.secs, outcome: trRetryOutcome_(a.ev) },
         second: { name: b.name, t: b.ev.t, secs: b.ev.secs, outcome: trRetryOutcome_(b.ev) },
         gapSecs: isNaN(gap) || gap < 0 ? null : gap, moreInDept: more
       });
       done[a.dept] = true;
+      break;
+    }
+  }
+  // P3 (owner 2026-11-13): ANSWERED, THEN REDIRECTED. The first person tried in
+  // department D picked up and talked (a consult), and the sender then went to
+  // someone ELSE in D on the same call -- "X answers and they discuss, then the
+  // CSR has to call Y, and Y takes the call". One per call per department, kept
+  // apart from `cases` (whose first attempt was NOT answered), so every figure
+  // built on `cases` is what it was. `takenBy` is who in D took the caller (a
+  // hand-over at or after the first consult), or null when nobody in D did.
+  var doneR = {};
+  for (var x = 0; x < att.length; x++) {
+    var p = att[x];
+    if (doneR[p.dept] || !p.ev.consult) continue;
+    for (var y = x + 1; y < att.length; y++) {
+      var n2 = att[y];
+      if (n2.dept !== p.dept || n2.name === p.name) continue;
+      var moreR = 0;
+      for (var z = y + 1; z < att.length; z++) if (att[z].dept === p.dept) moreR++;
+      var took = null;
+      for (var hi = 0; hi < hands.length && took === null; hi++) {
+        if (trHmsToSec_(hands[hi].t) < trHmsToSec_(p.ev.t)) continue;   // a hand-over before the consult is not about it
+        if ((deptsOfAgent(hands[hi].name) || []).indexOf(p.dept) !== -1) took = hands[hi].name;
+      }
+      out.redirects.push({
+        senderName: p.senderName, senderDept: p.senderDept, dept: p.dept,
+        senderAt: p.senderAt, queue: p.queue, beforeSecs: p.senderAt ? secsBetween(p.senderAt, p.ev.t) : null,
+        first: { name: p.name, t: p.ev.t, talk: Number(p.ev.talk) || 0 },
+        second: { name: n2.name, t: n2.ev.t, secs: n2.ev.secs, outcome: trRetryOutcome_(n2.ev),
+                  talk: n2.ev.consult ? (Number(n2.ev.talk) || 0) : null },
+        gapSecs: secsBetween(p.ev.t, n2.ev.t), moreInDept: moreR, takenBy: took
+      });
+      doneR[p.dept] = true;
       break;
     }
   }
@@ -140,7 +192,7 @@ function trFoldDept_(dept, parentOf) {
  * department is `dept`.
  */
 function trBuildFromRows_(rows, deptsOfAgent, dept) {
-  var cases = [], calls = 0, attempts = 0;
+  var cases = [], redirects = [], calls = 0, attempts = 0;
   var skipped = { senderUnknown: 0, targetUnknown: 0, targetTwoDepts: 0 };
   (rows || []).forEach(function (r) {
     var j = r.journey;
@@ -154,9 +206,35 @@ function trBuildFromRows_(rows, deptsOfAgent, dept) {
       if (dept && c.dept !== dept) return;
       cases.push({ kind: r.kind, date: r.date, callId: r.callId, start: r.start || '',
         senderName: c.senderName, senderDept: c.senderDept, dept: c.dept,
+        senderAt: c.senderAt, queue: c.queue, beforeSecs: c.beforeSecs,   // P3
         first: c.first, second: c.second, gapSecs: c.gapSecs, moreInDept: c.moreInDept });
     });
+    // P3: answered, then redirected -- its own list (see trRetriesOfJourney_).
+    (res.redirects || []).forEach(function (c) {
+      if (dept && c.dept !== dept) return;
+      redirects.push({ kind: r.kind, date: r.date, callId: r.callId, start: r.start || '',
+        senderName: c.senderName, senderDept: c.senderDept, dept: c.dept,
+        senderAt: c.senderAt, queue: c.queue, beforeSecs: c.beforeSecs,
+        first: c.first, second: c.second, gapSecs: c.gapSecs, moreInDept: c.moreInDept, takenBy: c.takenBy });
+    });
   });
+  var newestFirst = function (x, y) {
+    return (x.date < y.date ? 1 : x.date > y.date ? -1 : 0) || (x.first.t < y.first.t ? 1 : x.first.t > y.first.t ? -1 : 0);
+  };
+  redirects.sort(newestFirst);
+  // Who is most often the person who answered and was then passed over, with
+  // how long they talked and how often a colleague ended up taking the call.
+  var byFirst = {};
+  redirects.forEach(function (c) {
+    var fk = c.first.name + '|' + c.dept;
+    if (!byFirst[fk]) byFirst[fk] = { name: c.first.name, dept: c.dept, n: 0, talkSecs: 0, tookByOther: 0 };
+    byFirst[fk].n++;
+    byFirst[fk].talkSecs += Number(c.first.talk) || 0;
+    if (c.takenBy && c.takenBy !== c.first.name) byFirst[fk].tookByOther++;
+  });
+  var redirectFirsts = Object.keys(byFirst).map(function (k) { return byFirst[k]; })
+    .sort(function (x, y) { return (y.n - x.n) || (y.tookByOther - x.tookByOther) || String(x.name).localeCompare(String(y.name)); });
+  var redirectTotal = redirects.length;
   cases.sort(function (x, y) {
     return (x.date < y.date ? 1 : x.date > y.date ? -1 : 0) || (x.first.t < y.first.t ? 1 : x.first.t > y.first.t ? -1 : 0);
   });
@@ -177,9 +255,13 @@ function trBuildFromRows_(rows, deptsOfAgent, dept) {
   var total = cases.length;
   return {
     summary: { calls: calls, attempts: attempts, cases: total, byOutcome: byOutcome, skipped: skipped,
-               callees: callees.slice(0, 25), pairs: pairs.slice(0, 15) },
+               callees: callees.slice(0, 25), pairs: pairs.slice(0, 15),
+               redirects: redirectTotal, redirectFirsts: redirectFirsts.slice(0, 25),
+               redirectsTaken: redirects.filter(function (c) { return c.takenBy && c.takenBy !== c.first.name; }).length },
     cases: cases.slice(0, TR_MAX_CASES_),
-    truncated: total > TR_MAX_CASES_
+    truncated: total > TR_MAX_CASES_,
+    redirects: redirects.slice(0, TR_MAX_CASES_),
+    redirectsTruncated: redirectTotal > TR_MAX_CASES_
   };
 }
 
@@ -200,14 +282,16 @@ function getTransferRetries(req) {
   if (dept && depts.indexOf(dept) === -1) throw new Error('Unknown department: ' + dept);
   var out = { meta: { from: from, to: to, dept: dept, available: true, quickSecs: TR_QUICK_SECS_,
                       truncated: false, generatedAt: new Date().toISOString() },
-              summary: null, cases: [] };
+              summary: null, cases: [], redirects: [] };
   var conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) { out.meta.available = false; return out; }
-    // Only journeys that hold a person-transfer event AND a missed ring can
-    // carry a retry: a text prefilter keeps the read to a few percent of calls.
-    var pre = " AND journey LIKE '%\"transfer\":true%' AND journey LIKE '%\"missed\":true%'";
+    // Only journeys that hold a person-transfer event AND a missed ring (a
+    // retry) or an answered consult (P3: answered, then redirected) can carry a
+    // case: a text prefilter keeps the read to a few percent of calls.
+    var pre = " AND journey LIKE '%\"transfer\":true%'"
+      + " AND (journey LIKE '%\"missed\":true%' OR journey LIKE '%\"consult\":true%')";
     var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
       + "SELECT 'inbound' AS kind, call_date::text AS date, call_id AS \"callId\", call_start AS start, NULL::text AS agent, journey "
       + "FROM inbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(is_internal, false) = false" + pre
@@ -234,6 +318,8 @@ function getTransferRetries(req) {
     out.summary = built.summary;
     out.cases = built.cases;
     out.meta.truncated = built.truncated;
+    out.redirects = built.redirects;                         // P3
+    out.meta.redirectsTruncated = built.redirectsTruncated;
     try { logReportUsage_('transfer-retries', dept || '(all)', user, false); } catch (eU) { /* best-effort */ }
     return out;
   } catch (e) {

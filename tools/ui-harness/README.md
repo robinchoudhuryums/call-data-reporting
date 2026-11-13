@@ -230,7 +230,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the failure handler. To boot on a DEEP LINK a driver sets
   `window.__HARNESS_HASH__` (e.g. `'/report/outbound'`) in an init script; the
   stubbed `google.script.url.getLocation` answers ASYNCHRONOUSLY like the real
-  one, so the link lands after boot's default page, as in production. P1 (2026-11-13): Outlier Fix's "Apply selected" marking a ticked unlisted-extension person Not an agent in one request, and the pinned Transfer retries header.
+  one, so the link lands after boot's default page, as in production. P1 (2026-11-13): Outlier Fix's "Apply selected" marking a ticked unlisted-extension person Not an agent in one request, and the pinned Transfer retries header. P3 (2026-11-13): Transfer retries opens on "Answered, then redirected" -- the switch's counts, the summary, the ranked first answerers, and a row's sender detail, talk times and who took the call.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong

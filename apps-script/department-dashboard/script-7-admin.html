@@ -3619,7 +3619,7 @@
   // Opens on the last 30 days, every department; a preset or Show re-runs.
   var TR_OUTCOME_TEXT_ = { quickDecline: 'Declined quickly (incl. sent to voicemail)', rangOut: 'Rang out', voicemail: 'Went to voicemail',
                            answered: 'Answered', unknown: 'Not answered' };
-  var TR_STATE_ = { seq: 0, init: false };
+  var TR_STATE_ = { seq: 0, init: false, view: 'redirect' };   // P3: which list is showing
   function initTransferRetries_() {
     const btn = $('transfer-retries-btn');
     const modal = $('transfer-retries-modal');
@@ -3663,6 +3663,12 @@
     });
     if ($('tr-run-btn')) $('tr-run-btn').addEventListener('click', trRun_);
     if ($('tr-dept')) $('tr-dept').addEventListener('change', trRun_);
+    // P3: the two lists' switch (no re-fetch -- both came in one payload).
+    const views = $('tr-views');
+    if (views) views.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('[data-tr-view]') : null;
+      if (b) trSetView_(b.getAttribute('data-tr-view'));
+    });
   }
   function trPresetMark_(v) {
     Array.prototype.forEach.call(document.querySelectorAll('#tr-presets [data-tr-preset]'), function (b) {
@@ -3722,6 +3728,30 @@
       })
       .getTransferRetries({ from: from, to: to, dept: dept });
   }
+  // P3 (owner 2026-11-13): which list shows -- 'redirect' (the first person
+  // answered, then the call went to a colleague of theirs) or 'missed' (the
+  // first person did not answer). The choice survives a re-run.
+  function trSetView_(v) {
+    TR_STATE_.view = v === 'missed' ? 'missed' : 'redirect';
+    const r = $('tr-view-redirect'), m = $('tr-view-missed');
+    if (r) r.style.display = TR_STATE_.view === 'redirect' ? '' : 'none';
+    if (m) m.style.display = TR_STATE_.view === 'missed' ? '' : 'none';
+    document.querySelectorAll('#tr-views [data-tr-view]').forEach(function (b) {
+      const on = b.getAttribute('data-tr-view') === TR_STATE_.view;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  // Who answered the caller, when, on which queue, and how long they had been
+  // on the call when they first asked. An outbound call has only the name.
+  function trSenderHtml_(c) {
+    const bits = [];
+    if (c.senderAt) bits.push('answered ' + c.senderAt);
+    if (c.queue) bits.push(c.queue);
+    if (c.beforeSecs != null) bits.push(fmtDuration(c.beforeSecs) + ' on the call first');
+    return escapeHtml(c.senderName || '') + ' <span class="al-hint">' + escapeHtml(c.senderDept || '') + '</span>'
+      + (bits.length ? '<div class="al-hint tr-sender-sub">' + escapeHtml(bits.join(' · ')) + '</div>' : '');
+  }
   function trOutcomeHtml_(x) {
     const txt = TR_OUTCOME_TEXT_[x.outcome] || x.outcome;
     const cls = x.outcome === 'quickDecline' ? ' tr-out--decline' : (x.outcome === 'answered' ? ' tr-out--ok' : '');
@@ -3765,7 +3795,7 @@
         + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(c.first.t || c.start || '') + '</span></td>'
         + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
         +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '', { neutral: true }) + '</td>'
-        + '<td>' + escapeHtml(c.senderName || '') + ' <span class="al-hint">' + escapeHtml(c.senderDept || '') + '</span></td>'
+        + '<td>' + trSenderHtml_(c) + '</td>'
         + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span></td>'
         + '<td>' + trOutcomeHtml_(c.first) + '</td>'
         + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '') + '</td>'
@@ -3777,6 +3807,52 @@
       note.textContent = m.truncated ? 'Showing the newest ' + cases.length + ' of ' + n + '; narrow the dates or pick a department for the rest.' : '';
       note.style.display = m.truncated ? '' : 'none';
     }
+    // ── P3: answered, then redirected ─────────────────────────────────────
+    const reds = d.redirects || [];
+    const rn = Number(sum.redirects) || 0;
+    const taken = Number(sum.redirectsTaken) || 0;
+    $('tr-rsummary').innerHTML = rn
+      ? '<strong>' + escapeHtml(fmtNumber(rn)) + '</strong> call' + (rn === 1 ? '' : 's') + ' where the first person tried in another department'
+        + ' answered and talked, and the call then went to a colleague of theirs' + deptNote + '. In '
+        + escapeHtml(fmtNumber(taken)) + ' of them a colleague took the call.'
+      : 'No call in these dates had someone answer and then be passed over for a colleague in the same department' + deptNote + '.';
+    const firsts = sum.redirectFirsts || [];
+    const fw = $('tr-rfirsts-wrap');
+    if (fw) fw.style.display = firsts.length ? '' : 'none';
+    $('tr-rfirsts').innerHTML = firsts.map(function (c) {
+      return '<tr><td>' + escapeHtml(c.name) + '</td><td>' + escapeHtml(c.dept) + '</td><td class="num">' + escapeHtml(fmtNumber(c.n))
+        + '</td><td class="num">' + escapeHtml(fmtDuration(c.n ? Math.round((c.talkSecs || 0) / c.n) : 0))
+        + '</td><td class="num">' + escapeHtml(fmtNumber(c.tookByOther || 0)) + '</td></tr>';
+    }).join('');
+    $('tr-rcases').style.display = reds.length ? '' : 'none';
+    $('tr-rtbody').innerHTML = reds.map(function (c) {
+      const took = !c.takenBy
+        ? '<span class="al-hint">No one in ' + escapeHtml(c.dept) + '</span>'
+        : (c.takenBy === c.first.name
+            ? escapeHtml(c.takenBy) + ' <span class="al-hint">the first person, after all</span>'
+            : '<span class="tr-took">' + escapeHtml(c.takenBy) + '</span>');
+      return '<tr>'
+        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(c.first.t || c.start || '') + '</span></td>'
+        + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
+        +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '', { neutral: true }) + '</td>'
+        + '<td>' + trSenderHtml_(c) + '</td>'
+        + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span>'
+        +   '<div class="al-hint">talked ' + escapeHtml(fmtDuration(c.first.talk || 0)) + '</div></td>'
+        + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '')
+        +   (c.gapSecs != null ? '<div class="al-hint">' + escapeHtml(fmtDuration(c.gapSecs)) + ' later</div>' : '') + '</td>'
+        + '<td>' + trOutcomeHtml_(c.second)
+        +   (c.second.talk != null ? ' <span class="al-hint">talked ' + escapeHtml(fmtDuration(c.second.talk)) + '</span>' : '') + '</td>'
+        + '<td>' + took + '</td></tr>';
+    }).join('');
+    const rnote = $('tr-rnote');
+    if (rnote) {
+      rnote.textContent = m.redirectsTruncated ? 'Showing the newest ' + reds.length + ' of ' + rn + '; narrow the dates or pick a department for the rest.' : '';
+      rnote.style.display = m.redirectsTruncated ? '' : 'none';
+    }
+    const nr = $('tr-view-n-redirect'), nm = $('tr-view-n-missed');
+    if (nr) nr.textContent = '(' + fmtNumber(rn) + ')';
+    if (nm) nm.textContent = '(' + fmtNumber(n) + ')';
+    trSetView_(TR_STATE_.view);
   }
 
   // ── Exception days editor (owner 2026-10-22, #81) ─────────────────────────

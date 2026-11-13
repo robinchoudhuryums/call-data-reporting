@@ -329,7 +329,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getTransferRetries: function (req) {
       var d = JSON.parse(JSON.stringify(P['transfer-retries']));
       if (req && req.dept) { d.cases = d.cases.filter(function (c) { return c.dept === req.dept; }); d.meta.dept = req.dept;
-        d.summary.cases = d.cases.length; }
+        d.summary.cases = d.cases.length;
+        // P3: the department filter applies to the redirect list too.
+        d.redirects = (d.redirects || []).filter(function (c) { return c.dept === req.dept; });
+        d.summary.redirects = d.redirects.length; d.summary.redirectsTaken = 0; d.summary.redirectFirsts = []; }
       return d;
     },
     getOrphanFixInit: function () { return P['orphan-init']; },

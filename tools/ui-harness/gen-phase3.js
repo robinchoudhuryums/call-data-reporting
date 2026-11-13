@@ -50,6 +50,18 @@ const TR_ROWS = [
     trAt('09:31:00', 'Elena Park', { secs: 2 }), { t: '09:31:30', name: 'Frank Wu', kind: 'answer', talk: 60, transfer: true, consult: true }]) },
   { kind: 'inbound', date: ago(3), callId: '1783985479400', start: '11:00:00', agent: null, journey: JSON.stringify([
     { t: '11:00:05', name: 'Carla Diaz', kind: 'answer', talk: 200 }, trAt('11:01:00', 'Elena Park', { secs: 30 })]) },
+  // P3 (owner 2026-11-13): answered, then redirected -- Elena answers and
+  // talks, the CSR then goes to Frank, and Frank takes the caller.
+  { kind: 'inbound', date: ago(1), callId: '1783985480101', start: '13:00:00', agent: null, journey: JSON.stringify([
+    { t: '13:00:00', name: 'A_Q_CSR', kind: 'queue' }, { t: '13:00:10', name: 'Anna Reyes', kind: 'answer', talk: 600 },
+    { t: '13:02:00', name: 'Elena Park', kind: 'answer', talk: 95, transfer: true, consult: true },
+    { t: '13:05:00', name: 'Frank Wu', kind: 'answer', talk: 30, transfer: true, consult: true },
+    { t: '13:05:40', name: 'Frank Wu', kind: 'answer', talk: 240, transfer: true, handover: true }]) },
+  // ... and one where the second person did not pick up, so no one in Sales took it.
+  { kind: 'inbound', date: ago(4), callId: '1783985480202', start: '15:00:00', agent: null, journey: JSON.stringify([
+    { t: '15:00:05', name: 'Dev Patel', kind: 'answer', talk: 400 },
+    { t: '15:01:00', name: 'Elena Park', kind: 'answer', talk: 20, transfer: true, consult: true },
+    trAt('15:02:00', 'Frank Wu', { secs: 22 })]) },
 ];
 function mkRs(obj){ let used=false; return { next(){ if(used) return false; used=true; return true; },
   getString(k){ return (obj[k]==null)?null:String(obj[k]); }, getInt(k){ return Number(obj[k])||0; }, close(){} }; }
