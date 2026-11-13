@@ -3742,11 +3742,14 @@
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
   }
+  // Stored journey times are Pacific; every time this modal prints goes through
+  // the same Central shift the journey drill and Caller Lookup use.
+  function trWhen_(hms) { return hms ? clCstTime_(hms) : ''; }
   // Who answered the caller, when, on which queue, and how long they had been
   // on the call when they first asked. An outbound call has only the name.
   function trSenderHtml_(c) {
     const bits = [];
-    if (c.senderAt) bits.push('answered ' + c.senderAt);
+    if (c.senderAt) bits.push('answered ' + trWhen_(c.senderAt));
     if (c.queue) bits.push(c.queue);
     if (c.beforeSecs != null) bits.push(fmtDuration(c.beforeSecs) + ' on the call first');
     return escapeHtml(c.senderName || '') + ' <span class="al-hint">' + escapeHtml(c.senderDept || '') + '</span>'
@@ -3792,7 +3795,7 @@
     $('tr-cases').style.display = cases.length ? '' : 'none';
     $('tr-tbody').innerHTML = cases.map(function (c) {
       return '<tr>'
-        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(c.first.t || c.start || '') + '</span></td>'
+        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(trWhen_(c.first.t || c.start)) + '</span></td>'
         + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
         +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '', { neutral: true }) + '</td>'
         + '<td>' + trSenderHtml_(c) + '</td>'
@@ -3832,7 +3835,7 @@
             ? escapeHtml(c.takenBy) + ' <span class="al-hint">the first person, after all</span>'
             : '<span class="tr-took">' + escapeHtml(c.takenBy) + '</span>');
       return '<tr>'
-        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(c.first.t || c.start || '') + '</span></td>'
+        + '<td>' + escapeHtml(c.date) + ' <span class="al-hint">' + escapeHtml(trWhen_(c.first.t || c.start)) + '</span></td>'
         + '<td>' + (c.kind === 'outbound' ? '<span class="ov-dir-pill">Outbound</span> ' : '')
         +   parentIdBadge(c.callId, c.date, c.kind === 'outbound' ? 'outbound' : '', { neutral: true }) + '</td>'
         + '<td>' + trSenderHtml_(c) + '</td>'

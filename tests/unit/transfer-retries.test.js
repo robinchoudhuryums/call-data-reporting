@@ -278,3 +278,21 @@ test('P3: the cdr-import diagnostic counts the redirects apart from its retry fi
   assert.match(st.redirectSamples[0], /^C12 \(inbound\) Daniel \(Dishant\) Sahani \(CSR\) -> Rhea Power: answered, talked 40s; 180s later -> Omar Power: .*; Omar Power took the call$/);
   assert.match(imp.call('tfRetryLine_', st), /RETRIED in the same department 1 .*; ANSWERED then redirected in the same department 2$/);
 });
+
+// Owner 2026-11-13: the modal printed stored (Pacific) times while every other
+// surface shows Central. Every time it prints now goes through trWhen_, which
+// is the journey drill's own shift -- a second conversion would drift from it.
+test('Transfer retries prints its times in Central, through the journey drill\'s shift', function () {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-7-admin.html'), 'utf8');
+  assert.match(src, /function trWhen_\(hms\) \{ return hms \? clCstTime_\(hms\) : ''; \}/, 'trWhen_ is the journey drill shift');
+  const from = src.indexOf('function trSenderHtml_');
+  const to = src.indexOf("$('tr-rnote')");
+  assert.ok(from > 0 && to > from, 'the render block is where it was');
+  const block = src.slice(from, to);
+  // Every line that reads a stored clock time (.t, .senderAt, .start) wraps it.
+  const lines = block.split('\n').filter(function (l) { return /c\.senderAt|c\.(?:first|second)\.t\b|c\.start\b/.test(l); });
+  assert.equal(lines.length, 3, 'the three time prints (who answered, and each list\'s When cell)');
+  lines.forEach(function (l) { assert.match(l, /trWhen_\(c\.(?:senderAt|first\.t \|\| c\.start)\)/, 'a stored time printed without the Central shift: ' + l.trim()); });
+});

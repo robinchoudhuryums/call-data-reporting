@@ -218,8 +218,8 @@ const MODALS = [
       record('P3: the summary counts the calls and how many a colleague then took; the person who answered first is ranked',
         /^2 calls where the first person tried in another department answered and talked, and the call then went to a colleague of theirs\. In 1 of them a colleague took the call\.$/.test(p3.summary.trim())
           && p3.firsts.length === 1 && p3.firsts[0] === 'Elena Park | Sales | 2 | 0:00:58 | 1', JSON.stringify({ summary: p3.summary, firsts: p3.firsts }));
-      record('P3: a row says who answered the caller and when, how long each talked, and who took the call',
-        p3.rows.length === 2 && /^Anna Reyes CSR\s*answered 13:00:10 · A_Q_CSR · 0:01:50 on the call first$/.test(p3.rows[0][2])
+      record('P3: a row says who answered the caller and when (Central, like the rest of the dashboard), how long each talked, and who took the call',
+        p3.rows.length === 2 && / 15:02:00$/.test(p3.rows[0][0]) && / 17:01:00$/.test(p3.rows[1][0]) && /^Anna Reyes CSR\s*answered 15:00:10 · A_Q_CSR · 0:01:50 on the call first$/.test(p3.rows[0][2])
           && /^Elena Park Sales\s*talked 0:01:35$/.test(p3.rows[0][3]) && /^Frank Wu\s*0:03:00 later$/.test(p3.rows[0][4])
           && /Answered.*talked 0:00:30/.test(p3.rows[0][5]) && p3.rows[0][6] === 'Frank Wu'
           && /^No one in Sales$/.test(p3.rows[1][6]) && p3.chipsNeutral && !p3.digits, JSON.stringify(p3.rows));
@@ -229,6 +229,7 @@ const MODALS = [
         summary: (document.getElementById('tr-summary') || {}).textContent || '',
         callees: Array.from(document.querySelectorAll('#tr-callees tr')).map((r) => Array.from(r.cells).map((c) => c.textContent.trim()).join(' ')),
         rows: document.querySelectorAll('#tr-tbody tr').length,
+        whens: Array.from(document.querySelectorAll('#tr-tbody tr')).map((r) => r.cells[0].textContent.replace(/\s+/g, ' ').trim().split(' ').pop()),
         paths: document.querySelectorAll('#tr-tbody .pid-journey').length,
         outbound: document.querySelectorAll('#tr-tbody .ov-dir-pill').length,
         decline: document.querySelectorAll('#tr-tbody .tr-out--decline').length,
@@ -238,6 +239,9 @@ const MODALS = [
       record('Transfer Retries: opens on a window and lists the three retried calls with their summary',
         /^3 calls where a transfer was tried again in the same department\. The first attempt: 2 declined quickly, 1 rang out, 0 went to voicemail\.$/.test(st.summary.trim())
           && st.rows === 3 && !!st.from && !!st.to, JSON.stringify(st));
+      // Stored 10:02:00 and 14:01:00 Pacific read 12:02:00 and 16:01:00 Central.
+      record('Transfer Retries: the first-attempt times are Central, two hours on from the stored Pacific values',
+        st.whens.indexOf('12:02:00') >= 0 && st.whens.indexOf('16:01:00') >= 0 && st.whens.indexOf('10:02:00') < 0, JSON.stringify(st.whens));
       record('Transfer Retries: the person tried first is tallied, with the quick declines', st.callees.length === 1
         && /^Elena Park Sales 3 2$/.test(st.callees[0]), JSON.stringify(st.callees));
       record('Transfer Retries: every row has its call-path chip; the outbound call is marked; declines are flagged',

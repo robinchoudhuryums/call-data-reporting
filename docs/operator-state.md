@@ -4193,8 +4193,10 @@ When something looks wrong, before assuming a code bug, check:
     call. Same limits as TR-1: only what IXT-1 / OXT-1 stored, about 90 days
     of journeys, and a hand-over is only seen when 8x8 linked the transfer
     (#84) -- an unlinked one reads "No one". **After the dashboard deploy,
-    push cdr-import too** (the diagnostic is the editor-run twin). Times in
-    this modal are shown as stored (Pacific), as they always were here.
+    push cdr-import too** (the diagnostic is the editor-run twin). The modal
+    prints every time in Central (`trWhen_` -> `clCstTime_`, the journey
+    drill's shift); the stored values and the editor-run diagnostic's log
+    stay Pacific.
 90. **The per-call DIRECT list -- `direct_calls` and the agent panel's Direct
     tab (AC-6, cdr-import + dashboard, owner 2026-11-04).** Every call to or
     from a person's own line (the queues left out): colleagues by roster name,

@@ -3163,7 +3163,11 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   re-fetches, and the choice survives a re-run. `trSenderHtml_` renders who
   answered the caller (time, queue, time on the call first) in both tables.
   Each table sits in its own `.tr-cases-wrap` with the pinned header.
-  Pinned by `drive-admin.js`.
+  **Every time the modal prints is Central**: stored journey times are
+  Pacific, and `trWhen_` runs them through `clCstTime_`, the journey drill's
+  own shift (owner 2026-11-13 -- it printed them as stored). A new time
+  print in this modal goes through `trWhen_`; `transfer-retries.test.js`
+  fails on one that does not. Pinned by `drive-admin.js`.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 
