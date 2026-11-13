@@ -6,13 +6,16 @@ Phase: implement
 Scope: broad
 Test Command: node --test
 Subsystem cycles since last Seams audit: 0
-Updated: 2026-11-10
+Updated: 2026-11-13
 (Cycle seeded 2026-10-13 at the /sync-commands to claude-workflow-tools
 v1.43.0: the new CYCLE OPEN step increments this field, and the blocks are
 numbered by session up to 258, so the next audit opens cycle 259. The Seams
 counter starts at 0 here because no earlier count was kept.)
 
 ## OPEN NOW (read this first)
+- **2026-11-13 (3) -- Follow-up plan, batch P4 IMPLEMENTED (block `.cycle/blocks/260-p4-broad-implement.md`), plus Transfer retries times in Central (`P3-TZ`, commit a0aa9cd).** P4a: with Team Direct Calls in the side column, `tdcSync_` sets `.dept-side--direct` and every panel keeps its height (Team Rings had collapsed to 26px on the Inbound view and painted over the card). P4b: `refresh()` arms the card (`tdcArm_`, `TDC_.pending`), a failed or unsent page load disarms it, and while busy the newest good figures for the same department stay under a frost (`TDC_.last`, `tdcHeld_`); `TDC_.data` keeps its meaning. P4c: the card form is one headline + one bar, a key line and a three-row block; fixed-column table; block size in the header. Client only, no figure changed. New suite `team-direct-card.test.js`; `drive-deptoutbound.js` gained 6 checks.
+  **Awaiting the owner:** sign-off on the new card form (before/after images were sent in the session: `p4-card-before-after.png`, `p4-side-column-before-after.png`). Known trade: an admin's side column now scrolls on a short window instead of overlapping.
+  **Where I left off:** P1-P4 + P3-TZ committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Next in sequence: P5 ("Other" department; the owner adds the roster column first). P7 needs the owner to confirm the partial-day rule; P11 needs the privacy decision.
 - **2026-11-13 (2) -- Follow-up plan, batch P3 IMPLEMENTED (block `.cycle/blocks/260-p3-broad-implement.md`).** Transfer retries has a second list, `redirects` (answered, then redirected): an ANSWERED consult to X in another department, then an attempt to a colleague of X on the same call, with `takenBy` (a hand-over at or after the first consult). In BOTH copies (`trRetriesOfJourney_` / `tfRetriesOfJourney_`, written from one body, parity corpus 0..18); `cases` unchanged apart from the added sender detail (`senderAt`, `queue`, `beforeSecs`). SQL prefilter: a transfer event AND (a missed ring OR an answered consult). Modal: `#tr-views` switch, default `redirect`. cdr-import's `tfRetryFold_` / TOTAL line count the redirects apart. 3059 unit tests, ci:ui green, 7 bites.
   **Confirmed on the way in:** the capture records one consult per internal call, so X-then-Y is two consult events, and a linked transfer adds a hand-over event naming who took the caller; before P3 such calls were never cases (the rule needed a missed first attempt) and were only read when the journey also held a missed ring.
   **Where I left off:** P1 + P2 + P3 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard, push cdr-import, walk S56 / S31 / S69 / S4's new steps. Next in sequence: P4 (Team Direct Calls card) -- the remaining batches are listed in the entry below.
