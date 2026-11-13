@@ -2798,6 +2798,10 @@
           + fmtNumber(cb.phoneMenuAbandons || 0) + ' in the phone menu, ' + fmtNumber(cb.directLineAbandons || 0)
           + ' on a person’s line — those are in Direct lines below).');
       }
+      // EXC-3 (#81): this section has its own date range, so it says which
+      // exception days ITS figures leave out (all-department days only here).
+      var excCb = excPartText_(cb.exceptionDays, 'These callback figures exclude');
+      if (excCb) bits.push(excCb);
       // CBX-1: the excluded departments' callers, counted and named.
       if ((t.excludedDepts || []).length && tot.excludedEpisodes) {
         bits.push(fmtNumber(tot.excludedEpisodes) + ' callers on ' + t.excludedDepts.join(' and ') + '\u2019s queues are left out of every company figure here: '

@@ -3139,6 +3139,18 @@ rules: Operator State #81.
   "Exception day" chip on Caller Lookup cards), `excMarkNoteHtml_` (the call
   path drill and the agent panel's day), `#ad-exc-note` (Agent Day), and
   `.ap-day.is-exception` on the strip -- from the server's `exceptionDay`.
+- **The part-of-page note (EXC-3).** A section with its own window or its
+  own rule says which days ITS figures leave out: `excPartHtml_(list, what)` /
+  `excPartText_(list, what)` (script-1-core), where `what` carries the verb
+  ("These callback figures exclude", "This list excludes"). Used by the
+  callback summary (`outboundCallbackSummaryHtml_`), the three callback drill
+  lists, the direct-lines note and the Overview's Callbacks by department
+  (which has its own date range). It is `.ds-note.exc-part-note`, deliberately
+  NOT `.exc-note` -- that class is the page-level note the switch repaints.
+  These sections do not follow the include switch, so their note is how an
+  admin who has switched it on learns the callbacks still leave the day out.
+  The heatmap, its cell drill and the insurer daily drill DO follow it (their
+  calls go through `excReq_`) and sit under their report's own note.
 - **The admin switch.** The note's `[data-exc-toggle]` button carries
   `data-admin-only`, so View-as hides it; the server ignores a non-admin's
   `includeExceptionDays` anyway (`setExceptionIncludeFromReq_`). It flips
@@ -3160,5 +3172,6 @@ rules: Operator State #81.
   department's days; the company line only all-department days. (The owner's
   "hollow gray point" became the band: a point at the real value would sit on a
   line that no longer passes through it.)
-- Pinned by `drive-exceptions.js` (note, switch, bars, band, 360 px, manager),
+- Pinned by `drive-callbacks.js` (the callback summary's part note) and
+  `drive-exceptions.js` (note, switch, bars, band, 360 px, manager),
   `drive-admin.js` (the editor), `drive-smoke.js` (IR note), `drive-agent.js`.

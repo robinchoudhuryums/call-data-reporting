@@ -409,7 +409,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v16`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v17`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -496,7 +496,7 @@ and the SQL was run against Postgres 16 on a fixture (both shapes) before it
 shipped.
 
 **"Transfers not answered" is a SEPARATE tile, counted QCD's way (S2C-6,
-owner ruling 2026-09-28, `inbound:v16`).** CSRs are told to drop a transfer
+owner ruling 2026-09-28, `inbound:v17`).** CSRs are told to drop a transfer
 attempt after ~2 minutes on hold when the target never answers, and QCD counts
 that dropped attempt as an abandon for the TARGET queue. "Abandoned on hold"
 above deliberately does not (it counts callers who hung up), so the attempts
@@ -793,7 +793,7 @@ the call id + copy for admins (`parentIdBadge`: managers get the path chip
 alone, the owner-round-4 rule) -- the phone provider's portal shows the
 number the dashboard never stores. **Direct lines (CE-3, 2026-10-09)** -- the question this report was built
 for -- are a SEPARATE, lazy, separately cached endpoint
-(`getOutboundDirectCallbacks`, `outboundDirect:v5`: dept + window + freshness
+(`getOutboundDirectCallbacks`, `outboundDirect:v6`: dept + window + freshness
 tag + roster hash) so the Callbacks figures never pay for it. Population:
 external calls whose first leg rang a PERSON (no entry queue, `first_agent`
 set) and that nobody answered, `missed` (rang out / that person's voicemail --
@@ -844,7 +844,7 @@ of the SQL (parity-pinned in `outbound-fallback.test.js`) -- never cached,
 disclosed with `fallbackThrough` and `fallbackCoverageStart` (the first date
 whose rows name the line rung: rows exported before FO-2 are blank there and
 would read as "no direct calls"). Cached
-`outboundReport:v11` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
+`outboundReport:v12` + the freshness tag + the roster hash (B1/DATA-3); unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) the CONNECTED callback rate (`ownConnectedPct` since
@@ -899,7 +899,7 @@ carry it -- that would silently narrow the grid's first column;
 from, to})` aggregates abandon rate by `ISODOW × hour-slot` in ONE
 json_agg round-trip, reusing `inboundResolveRequest_` (so it inherits
 the inbound report's **admin-only vetting gate** + per-dept scoping) and
-`inboundDeptPredicate_`. Cached `inboundHeatmap:v4`. Rendered by the
+`inboundDeptPredicate_`. Cached `inboundHeatmap:v5`. Rendered by the
 SHARED client `renderAbandonHeatmap_` / `loadAbandonHeatmap_` as a
 CSS-grid heatmap (no Chart.js dep) in the **Inbound report**
 (`#inbound-heatmap`, always, since that report is admin-only), AND the **Insights report**

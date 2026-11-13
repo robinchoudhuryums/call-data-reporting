@@ -69,7 +69,8 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v16';  // v16: PC-9 the R49 06:00 floor for CSR-family entry queues (inboundWindowClause_). v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+// v17: EXC-3 (#81 phase 3) -- the insurer daily drill (`:daily:`) leaves out exception days like its parent row.
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v17';  // v16: PC-9 the R49 06:00 floor for CSR-family entry queues (inboundWindowClause_). v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1315,7 +1316,8 @@ function sendInboundReportEmail(req) {
     subtitle: dateLabel + ' · vs prior ' + priorLabel,
     preheader: scopeLabel + ': ' + fmtNum_(k.total) + ' inbound calls, '
       + (k.abandonRate || 0) + '% abandoned · ' + dateLabel,
-    rowsHtml: ekRow_('<table style="border-collapse:collapse;width:100%;max-width:520px;">' + kpiRows + '</table>')
+    rowsHtml: ekExceptionNoteRow_(meta.exceptionDays)   // EXC-3 (#81)
+      + ekRow_('<table style="border-collapse:collapse;width:100%;max-width:520px;">' + kpiRows + '</table>')
       + ekRow_(inboundEmailBreakdownTable_('By insurer', data.byInsurer)
           + inboundEmailBreakdownTable_('By advertised line', data.byDialIn), '4px 26px 6px'),
     ctaUrl: dashboardUrl,
@@ -1780,6 +1782,12 @@ function xferSampleTally_(rows, deptMap, labelsOf) {
   return out;
 }
 
+/** EXC-3 (#81): the note list ([{date, reason}]) for an inbound scope's window, or undefined. */
+function inboundExcNote_(scope) {
+  return (typeof exceptionDaysNoteFor_ === 'function')
+    ? exceptionDaysNoteFor_(scope.from, scope.to, scope.dept || null) : undefined;
+}
+
 /** EXC-2 (#81): the exception-day clause on c.call_date ('' when none, or Util.gs is not loaded). */
 function inboundExcSql_(from, to, dept) {
   return (typeof exceptionNotInSql_ === 'function') ? exceptionNotInSql_('c.call_date', from, to, dept) : '';
@@ -2170,8 +2178,13 @@ function getInboundInsurerDaily(req) {
     // Same work-window scope as computeInboundReport_ -- this drill hangs off a
     // byInsurer row, so an unscoped drill would not reconcile with the row's
     // own count.
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
+    // EXC-3 (#81): the parent row leaves out this scope's exception days
+    // (computeInboundReport_'s excCur), so the drill must too.
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date"
+             + inboundExcSql_(scope.from, scope.to, scope.dept || null) + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
              + deptPred + ' AND ' + inboundWindowClause_(true);
+    const excDaily = inboundExcNote_(scope);
+    if (excDaily) out.meta.exceptionDays = excDaily;
     const sql =
       "SELECT COALESCE(json_agg(t ORDER BY t.d), '[]')::text AS j FROM (" +
         "SELECT c.call_date::text AS d, count(*) AS calls, " +
@@ -2553,7 +2566,8 @@ function runInboundQcdParityCheck() {
 // excluded (documented gap -- they predate the journey extension).
 // v3: bumped with the B-4 inbound bump (shares inboundDeptPredicate_).
 // v4: bumped with PCR-1/PCR-2 (the same predicate now rolls in children).
-const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v4';
+// v5: EXC-3 (#81 phase 3) -- the grid leaves out the scope's exception days.
+const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v5';
 const INBOUND_HEATMAP_CST_SHIFT_HOURS = 2;    // PST(stored) -> CST(dashboard)
 const INBOUND_HEATMAP_WINDOW_START_HOUR = 8;  // 8 AM CST (matches INV-18)
 const INBOUND_HEATMAP_WINDOW_END_HOUR   = 17; // 5 PM CST (exclusive)
@@ -2572,6 +2586,8 @@ function getInboundHeatmap(req) {
   }
 
   const out = emptyInboundHeatmap_(scope);
+  const excHeat = inboundExcNote_(scope);   // EXC-3 (#81; absent when none)
+  if (excHeat) out.meta.exceptionDays = excHeat;
   // Dept view with no mapped queues: nothing attributes -> "unmapped" hint,
   // mirroring getInboundReport / QCD.
   if (!scope.companyView && scope.deptQueues.length === 0) {
@@ -2585,7 +2601,10 @@ function getInboundHeatmap(req) {
     if (!conn) return inboundHeatmapSheetFallback_(scope, out);
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
+    // EXC-3 (#81): this scope's exception days leave the grid (one outage day
+    // otherwise paints a whole weekday column) -- the sheet twin does the same.
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date"
+      + inboundExcSql_(scope.from, scope.to, scope.dept || null) + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     // CST seconds-since-midnight for the shifted start time; bucket into
     // hourly slots (INBOUND_HEATMAP_SLOT_MINUTES=60) indexed from the 8 AM CST window start.
     const cstSecs = "(EXTRACT(EPOCH FROM ((c.call_start)::time + interval '"
@@ -2747,10 +2766,12 @@ function ihSheetHeatmapCells_(scope) {
   var slotSecs     = INBOUND_HEATMAP_SLOT_MINUTES * 60;
   var shiftSecs    = INBOUND_HEATMAP_CST_SHIFT_HOURS * 3600;
   var cellMap = {};
+  var excOn = typeof exceptionDayFor_ === 'function';   // EXC-3: the SQL's inboundExcSql_ clause
   for (var r = 0; r < grid.length; r++) {
     var row = grid[r];
     var iso = ncCellDateIso_(row[0]);
     if (!iso || iso < scope.from || iso > scope.to) continue;
+    if (excOn && exceptionDayFor_(iso, scope.dept || null)) continue;
     if (String(row[16] == null ? '' : row[16]).trim().toUpperCase() === 'TRUE') continue;
     var cs = String(row[15] == null ? '' : row[15]).trim();
     if (!/^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$/.test(cs)) continue;
@@ -2876,7 +2897,11 @@ function inboundAbandonList_(scope, bucket) {
     if (!conn) { out.meta.available = false; return out; }
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
+    // EXC-3 (#81): a CELL's list leaves out the days its count left out. A
+    // RANGE request (one clicked day) lists what happened, so it keeps them.
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date"
+      + (cellScope ? inboundExcSql_(scope.from, scope.to, scope.dept || null) : '')
+      + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     // Identical shift + bucket expressions to getInboundHeatmap so the cell
     // and its drill can never disagree on which calls a bucket holds.
     const cstStart = "((c.call_start)::time + interval '"

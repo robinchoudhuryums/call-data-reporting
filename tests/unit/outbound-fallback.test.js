@@ -4,6 +4,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadGas } = require('../harness/loadGas');
 
+
+// EXC-3 (#81): the report paths now read the exception-day list, which keeps
+// its own 5-minute cache entry (`excDays:v1`). The rule these suites pin is
+// about the REPORT payload, so that entry is not counted.
+function reportCacheSize(h) {
+  let n = 0;
+  h.state.cache.forEach(function (v, k) { if (k !== 'excDays:v1') n++; });
+  return n;
+}
+
 // Outbound report NEON-DOWN SHEET FALLBACK.
 //
 // `outbound_calls` had no sheet primary, so a Neon outage took the Outbound
@@ -291,11 +301,11 @@ test('fallback payloads are NEVER cached; healthy payloads still are', function 
   install({ conn: null });
   const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
   assert.equal(fb.meta.fallbackSource, 'sheet');
-  assert.equal(h.state.cache.size, 0, 'an outage payload must not pin under the live key');
+  assert.equal(reportCacheSize(h), 0, 'an outage payload must not pin under the live key');
 
   install({ conn: connReturning(JSON.stringify(neonBlobFromFixture('CSR'))) });
   h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
-  assert.ok(h.state.cache.size > 0, 'a healthy payload still caches');
+  assert.ok(reportCacheSize(h) > 0, 'a healthy payload still caches');
 });
 
 test('every Neon failure branch reaches the fallback; missing tabs stay unavailable', function () {
@@ -618,7 +628,7 @@ test('FO-2: the direct-line figures agree between Neon and the sheet fallback --
     + 'and never hashV, whose episode began before the window (B1/PC-1)');
   assert.equal(fb.meta.fallbackThrough, '2026-08-10', 'the OLDER of the two tabs (Outbound ends 08-10)');
   assert.equal(fb.meta.fallbackCoverageStart, '2026-08-08', 'the first named line in the copy (hashV, read for the lookback)');
-  assert.equal(h.state.cache.size, 0, 'a fallback payload is never cached');
+  assert.equal(reportCacheSize(h), 0, 'a fallback payload is never cached');
 });
 
 test('FO-2: the repeat list falls back too, its call detail read from the tab', function () {

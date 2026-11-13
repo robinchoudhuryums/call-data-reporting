@@ -795,6 +795,33 @@ function exceptionDayMark_(iso, dept) {
   return null;
 }
 
+/**
+ * PURE (EXC-3). The note as ONE sentence, for an email's own text -- the
+ * server twin of the client's excNoteText_ (script-1-core). `list` is a
+ * report's exception-day list ([{date, reason, rung?|answered?+missed?}]);
+ * '' when it is empty, so a report with no exception day reads as it did.
+ * `tail` replaces the closing sentence where only PART of an email is covered.
+ */
+function exceptionNoteText_(list, tail) {
+  if (!list || !list.length) return '';
+  const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let calls = 0;
+  const days = list.map(function (e) {
+    calls += Number(e.rung) || ((Number(e.answered) || 0) + (Number(e.missed) || 0));
+    const p = String(e.date || '').split('-');
+    let label = String(e.date || '');
+    if (p.length === 3) {
+      const d = new Date(Date.UTC(+p[0], p[1] - 1, +p[2], 12));
+      if (!isNaN(d.getTime())) label = WD[d.getUTCDay()] + ' ' + MON[(+p[1]) - 1] + ' ' + (+p[2]);
+    }
+    return label + (e.reason ? ': ' + e.reason : '');
+  });
+  return list.length + ' exception day' + (list.length === 1 ? '' : 's') + ' left out (' + days.join('; ') + ')'
+    + (calls ? ' \u2014 ' + String(calls).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' call' + (calls === 1 ? '' : 's') + ' not counted' : '')
+    + '. ' + (tail || ('Every figure here excludes ' + (list.length === 1 ? 'it' : 'them') + '.'));
+}
+
 /** PURE. The payload form: only the days inside [from, to], oldest first. */
 function exceptionDaysMeta_(info, from, to) {
   return ((info && info.excluded) || []).filter(function (e) { return e.date >= from && e.date <= to; });

@@ -462,6 +462,12 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       };
       // PC-12: the dept view's in-scope list (the server's meta.scopeDepts).
       if (req && req.department) out.meta.scopeDepts = req.department === 'Sales' ? ['Sales', 'PAP'] : [req.department];
+      // EXC-3 (#81 phase 3): the server names the exception days its callback
+      // figures leave out (obExcNote_'s shape) when the window holds one.
+      const excCbD = ${JSON.stringify(meta.excDate)};
+      if (excCbD && out.meta.from <= excCbD && excCbD <= out.meta.to) {
+        out.callback.exceptionDays = [{ date: excCbD, reason: '8x8 outage' }];
+      }
       return out;
     },
     // F-e: coaching worklist (admin-only until released). Inline fixture --
