@@ -2549,6 +2549,30 @@ stay pinned by INV-39, INV-53 and INV-06.
   `aria-busy`), an error line with Retry on a failure (`#tdc-error`,
   `#tdc-retry`), a tally per agent (answered / missed / busy) with its legend,
   and rows that open the agent table's Direct view at that agent (`tdcJump_`).
+  **P4 (owner 2026-11-13), three rules.** (1) **Busy from the first moment,
+  and the last figures stay up.** `refresh()` calls `tdcArm_()` beside
+  `deptMissedFrostArm_()` (`TDC_.pending`), so the card is busy from the
+  page's own request, before it has a window to ask for; `onError` calls
+  `tdcDisarm_()`. While busy `tdcRender_` shows `tdcHeld_()` -- the newest
+  good payload (`TDC_.last`) for the SAME department -- under a frost on
+  `#tdc-body`; with nothing to keep, or after a department switch, the
+  skeleton. `TDC_.data` keeps its meaning (the payload for `TDC_.key`, or
+  null), so the Direct view is untouched. An error never shows old figures.
+  (2) **The side column with three panels.** `tdcSync_` sets
+  `.dept-side--direct` on the aside while the card is active; with it Team
+  Rings and Team Outbound are `flex: 0 0 auto` with a 200px scrolling table
+  (the Both-view rule), because R18b's shrink-to-fit let Rings collapse to
+  nothing and paint over the card below. A fourth panel in this column needs
+  the same treatment. (3) **The card form** (`directSummaryHtml_(k, null,
+  'card')`): ONE headline (answered of rang, the rate when free at its end),
+  ONE bar, a key line (`.tdc-key`: the colours plus the missed and busy
+  counts, which also keys the agent tallies), then one labelled block
+  (`.tdc-more`: Outside answered, Calls to colleagues, Calls to outside
+  numbers). The block size sits in the table header (`#tdc-unit`); the table
+  is `table-layout: fixed` so a long name or a four-digit count cannot push
+  past the card; a coverage caveat is one quiet line (`.tdc-hint`), the boxed
+  note only for "nothing to show". Pinned by `team-direct-card.test.js` and
+  `drive-deptoutbound.js`.
   The text below describes the original fold. `#dept-team-direct`, a collapsed `<details>` under Team Outbound in the side
   column: the Direct Calls report's figures for the page's dept and dates,
   through the report's OWN `getDirectCallReport` (admin-only while vetted), so

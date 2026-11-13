@@ -131,7 +131,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   agent panel with no second request; AT-1's table ⓘ -- and the D3 / TDC-1 Team
   Direct Calls panel: loaded with the page, one request per window, skeleton,
   error + Retry, rows that open the Direct view, the coverage note, the
-  report button, absent for a manager) the My Department **direction switch** (Inbound + outbound
+  report button, absent for a manager; since P4 the one-headline one-bar card
+  form, the fixed-column table, the loader while the page itself is still
+  loading, Team Rings ending above the card on the Inbound view, and the last
+  figures kept under a frost while a new range loads) the My Department **direction switch** (Inbound + outbound
   by default; four views since DV-1)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on

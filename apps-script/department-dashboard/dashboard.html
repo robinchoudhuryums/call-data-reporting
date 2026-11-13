@@ -1683,8 +1683,7 @@
           <div id="tdc-loading" class="tdc-skel" style="display:none;" aria-hidden="true">
             <div class="skeleton-line tdc-skel-head"></div>
             <div class="skeleton-line tdc-skel-bar"></div>
-            <div class="skeleton-line tdc-skel-head"></div>
-            <div class="skeleton-line tdc-skel-bar"></div>
+            <div class="skeleton-line tdc-skel-key"></div>
             <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
             <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
             <div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
@@ -1693,18 +1692,22 @@
             <span id="tdc-error-msg">Could not load direct calls.</span>
             <button type="button" class="link-btn" id="tdc-retry">Retry</button>
           </div>
-          <div id="tdc-note" class="ds-note dtd-note" style="display:none;"></div>
-          <div class="trp-tiles" id="tdc-tiles"></div>
-          <div class="trp-table-wrap" id="tdc-table-wrap">
-            <table class="trp-table">
-              <thead><tr>
-                <th>Agent</th><th class="trp-num">Rang</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
-              </tr></thead>
-              <tbody id="tdc-tbody"></tbody>
-            </table>
-            <span id="tdc-row-action-desc" class="sr-only">Activate to open the Direct view of the agent table at this agent’s row.</span>
+          <!-- P4: #tdc-body is what frosts while a new range loads (the last
+               figures stay under it); the colour key lives under the bar
+               (.tdc-key, in the tiles), so the table adds only its block size. -->
+          <div id="tdc-body" style="display:none;">
+            <div id="tdc-note" class="tdc-hint" style="display:none;"></div>
+            <div class="trp-tiles" id="tdc-tiles"></div>
+            <div class="trp-table-wrap" id="tdc-table-wrap">
+              <table class="trp-table">
+                <thead><tr>
+                  <th>Agent</th><th class="trp-num">Rang <span id="tdc-unit" class="tdc-unit"></span></th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
+                </tr></thead>
+                <tbody id="tdc-tbody"></tbody>
+              </table>
+              <span id="tdc-row-action-desc" class="sr-only">Activate to open the Direct view of the agent table at this agent’s row.</span>
+            </div>
           </div>
-          <div id="tdc-legend" class="ans-tally-legend" style="display:none;"></div>
           <button type="button" class="link-btn dtd-open" id="tdc-open-report">Open the Direct Calls report &#8599;</button>
         </div>
       </aside>

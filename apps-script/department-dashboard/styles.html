@@ -1598,6 +1598,18 @@
     body[data-dir="both"] .dept-side > #dept-team-outbound { flex: 0 0 auto; }
     body[data-dir="both"] .dept-side > #dept-team-rings .trp-table-wrap,
     body[data-dir="both"] .dept-side > #dept-team-outbound .trp-table-wrap { flex: 0 0 auto; max-height: 200px; }
+    /* P4 (owner 2026-11-13): Team Direct Calls is a THIRD panel in this column
+       for admins, in every view. Team Rings' shrink-to-fit above (min-height:
+       0) then gave up ALL its height to it and its tiles and pinned table
+       header painted over the card below. Same answer as the Both view: with
+       the Direct card present (.dept-side--direct, set by tdcSync_) every
+       panel keeps its natural height with a capped, scrolling table, and the
+       aside's own scrollbar is the last resort. */
+    .dept-side.dept-side--direct > #dept-team-rings,
+    .dept-side.dept-side--direct > #dept-team-outbound,
+    .dept-side > #dept-team-direct { flex: 0 0 auto; }
+    .dept-side.dept-side--direct > #dept-team-rings .trp-table-wrap,
+    .dept-side.dept-side--direct > #dept-team-outbound .trp-table-wrap { flex: 0 0 auto; max-height: 200px; }
   }
   /* In the narrow side column the per-queue tiles stack rather than squeeze.
      R17c (owner): two tiles per row + a two-line Total-Calls split + a
@@ -3914,9 +3926,24 @@
   .tdc-skel { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
   .tdc-skel .skeleton-line.tdc-skel-head { width: 45%; height: 16px; }
   .tdc-skel .skeleton-line.tdc-skel-bar { height: 10px; }
+  .tdc-skel .skeleton-line.tdc-skel-key { width: 70%; height: 10px; }
   .tdc-skel .skeleton-row { margin-bottom: 0; }
-  #tdc-legend { flex-wrap: wrap; gap: 3px 10px; }
-  #tdc-legend .tdc-leg-k { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  /* P4: the card's agent table has FIXED columns, so a long name or a
+     four-digit count can no longer push it past the card's border -- the
+     name ellipsizes and the tally column takes what is left. */
+  #dept-team-direct .trp-table { table-layout: fixed; }
+  #dept-team-direct .trp-table th:nth-child(1) { width: 28%; }
+  #dept-team-direct .trp-table th:nth-child(3) { width: 84px; }
+  #dept-team-direct .trp-table th:nth-child(4) { width: 48px; }
+  #dept-team-direct .trp-name { max-width: none; }
+  #dept-team-direct .trp-tally-cell { overflow: hidden; }
+  #dept-team-direct .trp-tally { max-width: none; flex-wrap: nowrap; }
+  .tdc-unit { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+  .tdc-unit:empty { display: none; }
+  .tdc-unit .tly { width: 5px; height: 9px; }
+  /* One quiet line for a coverage caveat (the boxed note is for "nothing to show"). */
+  .tdc-hint { margin: 4px 0 6px; font-size: 11px; line-height: 1.35; color: var(--muted); }
+  #tdc-body.ds-frost-host { min-height: 96px; }
   .tdc-error { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 6px 0; font-size: 12px; }
   @media (prefers-reduced-motion: reduce) { .tdc-skel .skeleton-line { animation: none; } }
   /* D1: the Direct Calls report's internal / external split under a count. */
@@ -8927,8 +8954,19 @@ tr.subq-group-head.ob-group-head:hover td { background: var(--accent-soft); }
 .ob-split-rows .num { text-align: right; font-variant-numeric: tabular-nums; }
 .trp-tiles > .tdc-split, .trp-tiles > .tob-split { grid-column: 1 / -1; }
 .tdc-split, .tob-split { display: flex; flex-direction: column; gap: 6px; }
-.tdc-split-head { display: flex; align-items: baseline; gap: 6px; }
-.tdc-split-head--out { margin-top: 6px; }
+.tdc-split-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+/* P4: the Team Direct Calls card -- the rate sits at the end of the headline,
+   the key line under the bar names its colours (and the agent tallies'), and
+   the remaining figures are one small labelled block. */
+.tdc-split-rate { margin-left: auto; font-size: 12px; color: var(--ink-muted, var(--muted)); white-space: nowrap; }
+.tdc-split-rate strong { font: 600 13px var(--mono); color: var(--ink); }
+.tdc-key { display: flex; flex-wrap: wrap; gap: 2px 12px; font: 500 10.5px/1.2 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.tdc-key-k { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.tdc-key .tly { width: 5px; height: 10px; }
+.tdc-more { margin: 2px 0 0; padding: 6px 0 0; border-top: 1px solid var(--paper-2); display: grid; gap: 3px; }
+.tdc-more-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 11.5px; line-height: 1.35; }
+.tdc-more-row dt { color: var(--muted); flex: 0 0 auto; }
+.tdc-more-row dd { margin: 0; text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 0; }
 .tdc-split-num { font: 700 20px/1.1 var(--sans); color: var(--ink); }
 .tdc-split-of { font-size: 12px; color: var(--ink-muted, var(--muted)); }
 /* An outbound summary keeps the direction hue its tiles carried (Agent Day,
