@@ -507,6 +507,9 @@ dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s3
     r({ call_id: 'dc-6', call_start: '15:50:00', direction: 'in', side: 'int', other_name: 'Eli Ext', outcome: 'answered', ring_sec: 5, talk_sec: 60, in_window: false }),
     r({ call_id: 'dc-7', call_start: '15:55:00', direction: 'out', side: 'int', other_name: 'Flo Phone', outcome: 'not_connected', in_window: false }),
     r({ call_id: 'dc-8', call_start: '16:00:00', direction: 'in', side: 'int', other_name: 'Gus Line', outcome: 'missed_busy', ring_sec: 12, in_window: false, busy_with: 'Cal Colleague' }),
+    // P2 (owner 2026-11-13): a call PLACED to an outside number is an Outbound
+    // call -- the Direct tab keeps it out of its list and headline ("+1" line).
+    r({ call_id: 'dc-9', call_start: '09:30:00', direction: 'out', side: 'ext', outcome: 'connected', talk_sec: 50 }),
   ] };
   const d = JSON.parse(JSON.stringify(ad.call('agentDayDirect_', cap, 'Test Agent', '2026-08-19')));
   dump('agentday-direct', { rows: d.rows, summary: d.summary });

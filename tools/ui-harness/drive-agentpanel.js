@@ -207,6 +207,25 @@ function record(name, pass, detail) {
   })));
   record('admin: each outbound call shows its call id, a copy button and an outbound path drill',
     ids.length > 0 && ids.every((r) => /^#oc-\d/.test(r.num) && r.copy && r.kind === 'outbound'), JSON.stringify(ids));
+  // P1 (owner 2026-11-13): the chip's warn tint means ABANDONED, so an
+  // outbound call's chip is neutral; and a connected call that rang 0 s reads
+  // "instant" while an unanswered one keeps its ring time.
+  const p1 = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#ap-panel .ap-calls tbody tr'));
+    const chips = rows.map((tr) => tr.querySelector('.parent-id')).filter(Boolean);
+    const ringOf = (id) => {
+      const tr = rows.find((x) => /^#/.test(((x.querySelector('.pid-num') || {}).textContent || '')) && x.querySelector('.pid-num').textContent === '#' + id);
+      return tr ? tr.children[4].textContent.trim() : null;
+    };
+    const warn = getComputedStyle(document.documentElement).getPropertyValue('--warn-soft').trim();
+    return { n: chips.length, neutral: chips.every((c) => c.classList.contains('parent-id--neutral')),
+      bg: chips.length ? getComputedStyle(chips[0]).backgroundColor : '', warn: warn,
+      instant: ringOf('oc-3'), rang: ringOf('oc-2'), normal: ringOf('oc-1') };
+  });
+  record('P1: an outbound call\'s id chip is neutral, not the abandoned-call red',
+    p1.n >= 3 && p1.neutral, JSON.stringify({ n: p1.n, neutral: p1.neutral, bg: p1.bg }));
+  record('P1: a connected call that rang 0 s reads "instant"; other rows keep their ring time',
+    p1.instant === 'instant' && p1.rang === '0:00:26' && p1.normal === '0:00:08', JSON.stringify(p1));
   const mgrIds = await page.evaluate(() => {
     const prev = window.__USER__.role;
     window.__USER__.role = 'manager';
@@ -242,11 +261,13 @@ function record(name, pass, detail) {
     });
     record('ADT-1: the Direct list\'s header row sits at the top of the list, not partway down it',
       hdrOffset !== null && Math.abs(hdrOffset) <= 2, 'offset=' + hdrOffset);
-    record('AC-6: the Direct tab lists the agent\'s direct calls -- way, who, outcome, rang, talk',
-      /^Direct calls\s*8$/.test(dc.tab) && JSON.stringify(dc.heads) === JSON.stringify(['Time', 'Way', 'With', 'Outcome', 'Rang', 'Talk'])
-        && dc.rows.length === 8 && dc.rows[0][1] === 'Called' && /^Cal Colleague · internal$/.test(dc.rows[0][2]) && dc.rows[0][3] === 'Connected'
-        && /^Bea Buddy · internal$/.test(dc.rows[1][2])
-        && dc.rows[2][2] === 'Outside caller · their direct line' && dc.rows[2][1] === 'Called them'
+    // P2 (owner 2026-11-13): the column is "Direction" (Incoming / Outgoing),
+    // the headers sort, and an admin gets each call's id in a NEUTRAL chip.
+    record('AC-6: the Direct tab lists the agent\'s direct calls -- direction, who, outcome, rang, talk, call id',
+      /^Direct calls\s*8$/.test(dc.tab) && JSON.stringify(dc.heads) === JSON.stringify(['Time▲', 'Direction', 'With', 'Outcome', 'Rang', 'Talk', 'Call'])
+        && dc.rows.length === 8 && dc.rows[0][1] === 'Outgoing' && /^Cal Colleague · internal$/.test(dc.rows[0][2]) && dc.rows[0][3] === 'Connected'
+        && /^Bea Buddy · internal$/.test(dc.rows[1][2]) && /^#dc-1/.test(dc.rows[0][6])
+        && dc.rows[2][2] === 'Outside caller · their direct line' && dc.rows[2][1] === 'Incoming'
         && /after hours/.test(dc.rows[3][0]) && !dc.rows.some((r) => /\d{7,}/.test(r.join(' '))), JSON.stringify(dc));
     // ADT-2 (owner 2026-11-06): a ring missed while on another call names who
     // that call was with; the summary above the list counts the rows below it.
@@ -256,8 +277,8 @@ function record(name, pass, detail) {
     const sum = await page.evaluate(() => {
       const box = document.querySelector('#ap-panel .ap-dsum');
       const hs = box ? Array.from(box.querySelectorAll('.ap-dsum-h strong')).map((x) => Number(x.textContent.replace(/,/g, ''))) : [];
-      const rowsIn = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).filter((tr) => tr.children[1].textContent.trim() === 'Called them').length;
-      const rowsOut = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).filter((tr) => tr.children[1].textContent.trim() === 'Called').length;
+      const rowsIn = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).filter((tr) => tr.children[1].textContent.trim() === 'Incoming').length;
+      const rowsOut = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).filter((tr) => tr.children[1].textContent.trim() === 'Outgoing').length;
       const listTop = (document.querySelector('#ap-panel .ap-list') || { getBoundingClientRect: () => ({ top: 0 }) }).getBoundingClientRect().top;
       return { has: !!box, heads: hs, rowsIn: rowsIn, rowsOut: rowsOut,
         busy: ((box && box.querySelector('.ap-dsum-busy')) || {}).textContent || '',
@@ -284,6 +305,53 @@ function record(name, pass, detail) {
     record('ADT-2: the colleagues list shows the top 5 and "Show all" lists every colleague, keeping focus and the tab',
       sum.cols === 5 && sum.more === 'Show all 6' && all.cols === 6 && all.more === 'Show the top 5' && all.focus && all.tabOn === 'direct',
       JSON.stringify({ before: [sum.cols, sum.more], after: all }));
+    // P2 (owner 2026-11-13): outside-number calls the agent PLACED are on the
+    // Outbound tab -- one "+N" line here, never a list row or the headline.
+    const p2 = await page.evaluate(() => {
+      const box = document.querySelector('#ap-panel .ap-dsum');
+      const rows = Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr'));
+      const cols = box && box.querySelector('.ap-dsum-cols');
+      return { ext: ((box && box.querySelector('.ap-dsum-ext')) || {}).textContent || '',
+        heads: box ? Array.from(box.querySelectorAll('.ap-dsum-h')).map((x) => x.textContent.replace(/\s+/g, ' ').trim()) : [],
+        outsideOut: rows.filter((tr) => tr.children[1].textContent.trim() === 'Outgoing' && !/internal/.test(tr.children[2].textContent)).length,
+        colHeads: box ? Array.from(box.querySelectorAll('.ap-dsum-tbl thead th')).map((x) => x.textContent) : [],
+        overrun: cols ? cols.scrollWidth - cols.clientWidth : -1,
+        chipsNeutral: Array.from(document.querySelectorAll('#ap-panel .ap-direct .parent-id')).every((c) => c.classList.contains('parent-id--neutral')),
+        busySeg: !!document.querySelector('#ap-panel .ap-dsum .ob-seg-busy'), softSeg: !!document.querySelector('#ap-panel .ap-dsum .ob-seg-soft') };
+    });
+    record('P2: a call placed to an outside number is one "+N" line, not a list row or the headline',
+      /^\+1 to outside numbers \(1 connected\) — listed under Outbound calls$/.test(p2.ext) && p2.outsideOut === 0
+        && /^3 calls to colleagues$/.test(p2.heads[1] || ''), JSON.stringify(p2));
+    record('P2: the colleague table says Outgoing / Incoming and stays inside its card',
+      JSON.stringify(p2.colHeads) === JSON.stringify(['Colleague', 'Outgoing', 'Incoming']) && p2.overrun <= 1 && p2.chipsNeutral,
+      JSON.stringify({ colHeads: p2.colHeads, overrun: p2.overrun, chipsNeutral: p2.chipsNeutral }));
+    record('P1: "missed while on another call" has its own (yellow) segment, not the soft red',
+      p2.busySeg && !p2.softSeg, JSON.stringify({ busy: p2.busySeg, soft: p2.softSeg }));
+    // Filter, then sort: the count line says what is showing, focus stays put.
+    await page.locator('#ap-panel [data-ap-dfilter="way"]').selectOption('out');
+    await page.waitForTimeout(250);
+    const flt = await page.evaluate(() => ({
+      rows: Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).map((tr) => tr.children[1].textContent.trim()),
+      n: (document.querySelector('#ap-panel .ap-dfilter-n') || {}).textContent || '',
+      focus: !!document.activeElement && document.activeElement.getAttribute('data-ap-dfilter') === 'way',
+      tab: (document.querySelector('#ap-panel .ap-tab[data-ap-tab="direct"]') || { textContent: '' }).textContent.replace(/\s+/g, ' ').trim() }));
+    record('P2: filtering by direction keeps only those rows, says "showing 3 of 8", and keeps focus on the filter',
+      flt.rows.length === 3 && flt.rows.every((x) => x === 'Outgoing') && flt.n === 'showing 3 of 8' && flt.focus && /^Direct calls\s*8$/.test(flt.tab),
+      JSON.stringify(flt));
+    await page.locator('#ap-panel [data-ap-dfilter="way"]').selectOption('all');
+    await page.waitForTimeout(200);
+    await page.locator('#ap-panel [data-ap-dsort="talk"]').click();
+    await page.waitForTimeout(200);
+    await page.locator('#ap-panel [data-ap-dsort="talk"]').click();
+    await page.waitForTimeout(250);
+    const srt = await page.evaluate(() => ({
+      first: Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).slice(0, 2).map((tr) => tr.children[5].textContent.trim()),
+      last: (Array.from(document.querySelectorAll('#ap-panel .ap-direct tbody tr')).pop() || { children: [] }).children[5].textContent.trim(),
+      aria: (document.querySelector('#ap-panel [data-ap-dsort="talk"]') || { parentElement: { getAttribute: () => '' } }).parentElement.getAttribute('aria-sort'),
+      focus: !!document.activeElement && document.activeElement.getAttribute('data-ap-dsort') === 'talk' }));
+    record('P2: a second click on Talk sorts longest first, blanks last, with aria-sort and focus kept',
+      srt.first[0] === '0:03:30' && srt.first[1] === '0:01:35' && srt.last === '–' && srt.aria === 'descending' && srt.focus,
+      JSON.stringify(srt));
     await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').click();
     await page.waitForTimeout(300);
     await page.locator('#ap-panel .ap-tab[data-ap-tab="out"]').focus();

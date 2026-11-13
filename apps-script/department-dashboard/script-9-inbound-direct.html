@@ -1581,7 +1581,7 @@
     return [
       { cls: 'good', n: Number(k.ibAnswered) || 0, label: 'answered' },
       { cls: 'bad', n: Number(k.ibMissedFree) || 0, label: 'missed while free' },
-      { cls: 'soft', n: Number(k.ibMissedBusy) || 0, label: 'missed while on another call' },
+      { cls: 'busy', n: Number(k.ibMissedBusy) || 0, label: 'missed while on another call' },   // P1: its own (yellow) segment
     ];
   }
   // DO-1 (owner 2026-11-05): the outbound figures here are calls to
@@ -1669,7 +1669,7 @@
         const parts = [
           { cls: 'good', n: g('ibAnswered', side), label: 'answered' },
           { cls: 'bad', n: g('ibMissedFree', side), label: 'missed while free' },
-          { cls: 'soft', n: g('ibMissedBusy', side), label: 'missed while on another call' },
+          { cls: 'busy', n: g('ibMissedBusy', side), label: 'missed while on another call' },
         ];
         const n = parts.reduce(function (a, x) { return a + x.n; }, 0);
         const w = rung ? Math.max(n ? 2 : 0, Math.round(n / rung * 1000) / 10) : 0;

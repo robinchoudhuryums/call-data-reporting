@@ -2518,7 +2518,21 @@ stay pinned by INV-39, INV-53 and INV-06.
   line, DID-3), a ring missed while busy naming who that other call was with
   (`busy_with`, never a number) -- under a summary block that counts every
   row of the day (`agentDayDirectSummary_` / `apDirectSummaryHtml_`, ADT-2;
-  it sits outside the list's scroll box, colleagues top 5 with "Show all"); every
+  it sits outside the list's scroll box, colleagues top 5 with "Show all").
+  **P2 (owner 2026-11-13):** the list's column is Direction (Incoming /
+  Outgoing -- "Called / Called them" was ambiguous). A call the agent PLACED
+  to an outside number is an Outbound call (the DO-1 rule): `apDirectListRows_`
+  keeps it out of the list, the tab count and the quick view's count, and the
+  summary shows it as one "+N to outside numbers — listed under Outbound
+  calls" line under a "calls to colleagues" headline; the summary's foot is
+  computed from the listed rows. `apDirectFilterHtml_` (Direction, Outcome;
+  it sits with the summary, above the scroll box, so ADT-1's header-at-top
+  holds) and the sortable headers (`data-ap-dsort`, `aria-sort`, a second
+  click reverses, a missing value sorts last either way) read `AP_.dview`,
+  which survives day and tab changes; the quick view passes no view and gets
+  the plain time-ordered list. Admins get each call's id (`parentIdBadge`
+  with no date, so no path button). Pinned by `panel-direct-tab.test.js`
+  (the helpers run as written) and `drive-agentpanel.js`. In the dept table every
   header sorts by click and keyboard (`obThHtml_`). Still ONE `<tr>` per
   agent, so the agent panel, subtotals and exports keep their shape.
   `drive-deptoutbound.js` pins the cells, the group row, that every bar adds
@@ -3116,6 +3130,32 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   and the rule cards still render -- each chip just shows a dash. Admin-only via the
   existing modal gating (`assertAdmin_` in `getAlertsInit`);
   no separate gate needed.
+
+## Call ID chip, busy colour, instant ring (P1, owner 2026-11-13)
+
+- **The Call ID chip's warn tint means ABANDONED.** `parentIdBadge(id, date,
+  kind, opts)` (script-5-dept) was built for abandoned timestamps and was
+  always red; it now adds `.parent-id--neutral` when `kind === 'outbound'` or
+  `opts.neutral` is set. A NEW caller showing an id for a call that was not
+  abandoned (a transfer, a direct call, a connected outbound call) passes one
+  of those; the abandoned callers pass neither and keep the tint.
+- **"Missed while on another call" is `.ob-seg-busy` / `.tly.mb` (light
+  yellow, `--caution`), never `.ob-seg-soft`.** The soft red stays for "rang
+  out or voicemail", "ringing a person's line" and "brief ring"; a new bar
+  showing a busy miss uses `cls: 'busy'`.
+- **A connected outbound call that rang 0-1 s reads "instant"**
+  (`apOutboundRingHtml_`, the agent panel's Outbound list). The stored 0 is
+  real (Operator State #65); an unanswered call keeps its ring time and an
+  unknown ring stays "–".
+- The Missed Calls strip carries no "Range:" (the heading has it); the
+  Transfer retries case table scrolls in `.tr-cases-wrap` with a pinned header
+  (`overflow: clip` on the table, the R10-9 rule).
+- Outlier Fix: an unlisted-extension row is tickable with nothing mapped
+  (`ofRowReady_` kind `ignore`); "Apply selected" sends those names through
+  `ofIgnoreNames_` (chunks of `OF_IGNORE_CHUNK_`, at or under the server's
+  per-call cap) before the renames and roster adds, and the dialog is
+  destructive-toned only when a rename or roster add is in the batch.
+- Pinned by `panel-direct-tab.test.js`, `drive-agentpanel.js`, `drive-admin.js`.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 

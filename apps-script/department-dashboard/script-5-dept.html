@@ -500,9 +500,14 @@
   // abandoned timestamp. Pasting the parent ID into raw CDR search
   // is the manual verification step, so the copy button is worth
   // the extra DOM. Returns '' for falsy IDs (non-abandoned rows).
-  function parentIdBadge(parentId, date, kind) {
+  // P1 (owner 2026-11-13): the warn tint MEANS "abandoned" -- that is what the
+  // chip was built to mark. A call that was not abandoned gets the neutral
+  // chip: every OUTBOUND call (kind 'outbound'), and any caller that passes
+  // `opts.neutral` (a transferred call, a direct call).
+  function parentIdBadge(parentId, date, kind, opts) {
     if (!parentId) return '';
     const safe = escapeHtml(String(parentId));
+    const chipCls = 'parent-id' + ((kind === 'outbound' || (opts && opts.neutral)) ? ' parent-id--neutral' : '');
     // #3: "view path" affordance on abandoned rings -- the parent call id +
     // date key inbound_calls for the leg-by-leg journey (getCallJourney).
     // `kind` 'outbound' drills an outbound call instead (CE-2's attribute).
@@ -518,9 +523,9 @@
     // verification workflow (paste into raw CDR search); managers only need
     // the journey drill, so non-admins get the "↳ path" button alone.
     if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') {
-      return pathBtn ? ' <span class="parent-id">' + pathBtn + '</span>' : '';
+      return pathBtn ? ' <span class="' + chipCls + '">' + pathBtn + '</span>' : '';
     }
-    return ' <span class="parent-id">'
+    return ' <span class="' + chipCls + '">'
          +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use 📋 to copy)">#' + safe + '</span>'
          +   '<button type="button" class="pid-copy" '
          +     'data-pid="' + safe + '" '
@@ -2360,11 +2365,11 @@
       head.style.display = lines.length ? '' : 'none';
     }
 
-    // Summary strip (Range / Total missed / Abandoned / No-ring abandons / Agents).
+    // Summary strip (Total missed / Abandoned / No-ring abandons / Agents). P1:
+    // the range is in the section heading beside it, so it is not repeated here.
     const sum = $('dept-missed-summary');
     if (sum) {
       const parts = [
-        '<span class="label">Range:</span><span class="val">' + escapeHtml(from || '') + (from === to ? '' : ' to ' + escapeHtml(to || '')) + '</span>',
         '<span class="label">Total missed:</span><span class="val">' + fmtNumber(m.totalMissed || 0) + '</span>',
         '<span class="label">Abandoned calls:</span><span class="val">' + fmtNumber(m.abandonedCallCount || 0) + '</span>',
       ];
@@ -4444,7 +4449,7 @@
       + (showOb ? '<div class="dqv-ad-h">Outbound calls <span class="ap-tab-n">' + fmtNumber(outbound.length) + '</span></div>'
           + apOutboundTableHtml_(outbound, meta.date) : '')
       // AC-6: direct calls (admins only -- the server sends no source otherwise).
-      + (meta.directSource ? '<div class="dqv-ad-h">Direct calls <span class="ap-tab-n">' + fmtNumber(((data && data.direct) || []).length) + '</span></div>'
+      + (meta.directSource ? '<div class="dqv-ad-h">Direct calls <span class="ap-tab-n">' + fmtNumber(apDirectListRows_((data && data.direct) || []).length) + '</span></div>'
           + apDirectTableHtml_((data && data.direct) || [], meta) : '');
   }
 
@@ -5569,7 +5574,7 @@
     if (!wrap || !thead || !tbody || !tfoot || obEffectiveDir_() !== 'direct') return;
     dcWire_();
     thead.innerHTML = '<tr class="lb-groups"><th aria-hidden="true"></th>'
-      + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['soft', 'busy']]) + '</th>'
+      + '<th colspan="2" class="lb-g lb-g--in">Rang their line ' + obLegendHtml_([['good', 'answered'], ['bad', 'missed'], ['busy', 'busy']]) + '</th>'
       + '<th colspan="2" class="lb-g lb-g--out">Called colleagues ' + obLegendHtml_([['oconn', 'connected'], ['oreal', 'not']]) + '</th>'
       + '<th aria-hidden="true"></th></tr>'
       + '<tr>' + dcThHtml_('agent', 'Agent') + dcThHtml_('rang', 'Answered / missed', 'lb-th-bar')

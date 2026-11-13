@@ -110,6 +110,38 @@ const MODALS = [
           && /1 person is on an extension no roster lists/.test(a.bar)
           && a.calls.length === 1 && JSON.stringify(a.calls[0]) === JSON.stringify([{ names: ['Omar Unlisted'], ignored: true }]),
         JSON.stringify(a));
+      // P1 (owner 2026-11-13): "Apply selected" handles Not an agent. A person
+      // on an unlisted extension can be ticked with nothing mapped; an
+      // ordinary outlier still cannot. Applying sends ONE setOrphanIgnored.
+      const tick = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#of-orphans-tbody tr[data-orphan-idx]'));
+        const box = (re) => { const r = rows.filter((x) => re.test(x.textContent))[0]; return r ? r.querySelector('.of-row-check') : null; };
+        const pat = box(/Pat Porter/), other = box(/Jon Smyth/);
+        const out = { patEnabled: !!pat && !pat.disabled, otherDisabled: !!other && other.disabled };
+        if (pat && !pat.disabled) pat.click();
+        out.label = (document.getElementById('of-batch-apply') || {}).textContent || '';
+        return out;
+      });
+      await page.click('#of-batch-apply');
+      await page.waitForSelector('.ds-confirm-ok', { timeout: 3000 }).catch(() => {});
+      const bdlg = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok');
+        return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')),
+          body: ((document.querySelector('.ds-confirm-body') || {}).textContent) || '' }; });
+      if (bdlg.open) await page.click('.ds-confirm-ok');
+      await page.waitForFunction(() => /Not an agent \(2\)/.test((document.getElementById('of-ignored-summary') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+      const b = await page.evaluate(() => {
+        const calls = (window.__HARNESS__.calls || []).filter((c) => c.fn === 'setOrphanIgnored');
+        return { patGone: !/Pat Porter/.test(document.getElementById('of-orphans-tbody').textContent),
+          kept: /Nina New/.test(document.getElementById('of-orphans-tbody').textContent),
+          last: calls.length ? calls[calls.length - 1].args : null, n: calls.length,
+          status: (document.getElementById('of-status') || {}).textContent || '' };
+      });
+      record('P1: a person on an unlisted extension can be ticked with nothing mapped; an ordinary outlier cannot',
+        tick.patEnabled && tick.otherDisabled && /^Apply 1 selected$/.test(tick.label.trim()), JSON.stringify(tick));
+      record('P1: "Apply selected" marks the ticked people Not an agent in one request, after asking (not as a destructive action)',
+        bdlg.open && !bdlg.danger && /1 person marked as not an agent/.test(bdlg.body)
+          && b.n === 2 && JSON.stringify(b.last) === JSON.stringify([{ names: ['Pat Porter'], ignored: true }]) && b.patGone && b.kept,
+        JSON.stringify({ dlg: bdlg, after: b }));
     } },
   // DCD-1 (owner 2026-11-09): "Save all defaults as sheet rows". The init is the
   // REAL getDeptConfigInit's (gen-phase3), so the bar names the departments the
@@ -183,6 +215,23 @@ const MODALS = [
       record('Transfer Retries: every row has its call-path chip; the outbound call is marked; declines are flagged',
         st.paths === 3 && st.outbound === 1 && st.decline === 2, JSON.stringify(st));
       record('Transfer Retries: the department picker lists every department', st.depts > 3, 'options=' + st.depts);
+      // P1 (owner 2026-11-13): the case table's header row stays in view while
+      // its rows scroll, and its call-id chips are neutral (not abandoned calls).
+      const hdr = await page.evaluate(() => {
+        const wrap = document.querySelector('.tr-cases-wrap'), th = wrap && wrap.querySelector('thead th');
+        if (!wrap || !th) return null;
+        const cs = getComputedStyle(th);
+        wrap.style.maxHeight = '90px';            // force a scroll in the 3-row fixture
+        wrap.scrollTop = 60;
+        const off = Math.round(th.getBoundingClientRect().top - wrap.getBoundingClientRect().top);
+        const out = { position: cs.position, offset: off, scrolled: wrap.scrollTop > 0,
+          chips: document.querySelectorAll('#tr-tbody .parent-id').length,
+          neutral: Array.from(document.querySelectorAll('#tr-tbody .parent-id')).every((c) => c.classList.contains('parent-id--neutral')) };
+        wrap.scrollTop = 0; wrap.style.maxHeight = '';
+        return out;
+      });
+      record('P1: the Transfer retries header row stays pinned while the cases scroll; its call-id chips are neutral',
+        !!hdr && hdr.position === 'sticky' && hdr.scrolled && Math.abs(hdr.offset) <= 2 && hdr.chips === 3 && hdr.neutral, JSON.stringify(hdr));
       await page.selectOption('#tr-dept', 'Power'); await page.waitForTimeout(500);
       const none = await page.evaluate(() => ({ summary: (document.getElementById('tr-summary') || {}).textContent || '',
         rows: document.querySelectorAll('#tr-tbody tr').length,
