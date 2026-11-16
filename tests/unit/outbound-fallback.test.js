@@ -7,10 +7,11 @@ const { loadGas } = require('../harness/loadGas');
 
 // EXC-3 (#81): the report paths now read the exception-day list, which keeps
 // its own 5-minute cache entry (`excDays:v1`). The rule these suites pin is
-// about the REPORT payload, so that entry is not counted.
+// about the REPORT payload, so that entry is not counted -- nor is the
+// partial-day list's (`partialDays:v1`, P7), which the per-agent query reads.
 function reportCacheSize(h) {
   let n = 0;
-  h.state.cache.forEach(function (v, k) { if (k !== 'excDays:v1') n++; });
+  h.state.cache.forEach(function (v, k) { if (k !== 'excDays:v1' && k !== 'partialDays:v1') n++; });
   return n;
 }
 
@@ -518,7 +519,11 @@ test('Batch D: the report and the view read ONE SQL definition and ONE sheet agg
   // The mocked connection never runs SQL, so the "/ day" denominator's clause
   // is pinned at the source: it must count DAYS, not rows.
   const sel = src.slice(src.indexOf('function outboundAgentsSel_('), src.indexOf('function computeOutboundReport_('));
-  assert.match(sel, /'count\(DISTINCT call_date\) AS ob_days '/);
+  assert.match(sel, /'count\(DISTINCT call_date\) AS ob_days' \+ markedSel/);
+  // P7: with partial-day marks in the window the same select also names the
+  // marked dates the agent has a call on; with none its text is unchanged.
+  assert.match(sel, /var markedSel = marked\.length\s*\? ", COALESCE\(json_agg\(DISTINCT call_date::text\) FILTER \(WHERE call_date IN \("/);
+  assert.match(sel, /: ' ';/);
 });
 
 // ── FO-2: the direct-line figures' sheet fallback ──────────────────────────

@@ -3986,6 +3986,163 @@
     });
   }
 
+  // ── Partial days editor (P7, owner 2026-11-16, #94) ───────────────────────
+  // Admin-only: the menu item is data-admin-only and every server call starts
+  // with assertAdmin_. One row per (date, agent). The reason is shown HERE
+  // only -- no report payload carries it.
+  var PD_STATE_ = { data: null };
+  function pdCreditLabel_(c) {
+    c = Number(c);
+    if (c === 0) return 'Not a day (0)';
+    if (c === 0.25) return 'A quarter day';
+    if (c === 0.5) return 'Half a day';
+    if (c === 0.75) return 'Three quarters';
+    return String(c) + ' of a day';
+  }
+  function initPartialDays_() {
+    const btn = $('partial-days-btn');
+    const modal = $('partial-days-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      pdEditorLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('pd-dept')) $('pd-dept').addEventListener('change', pdFillAgents_);
+    if ($('pd-save-btn')) $('pd-save-btn').addEventListener('click', pdEditorSave_);
+    const tbody = $('pd-tbody');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-pd-remove]') : null;
+      if (b) pdEditorRemove_(b.getAttribute('data-pd-remove'), b.getAttribute('data-pd-agent'));
+    });
+  }
+
+  function pdEditorStatus_(kind, text) {
+    const s = $('pd-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+
+  // The agent picker lists the chosen department's roster (exact roster names).
+  function pdFillAgents_() {
+    const data = PD_STATE_.data || {};
+    const dept = ($('pd-dept') && $('pd-dept').value) || '';
+    const sel = $('pd-agent');
+    if (!sel) return;
+    const keep = sel.value;
+    const names = (data.rosters && data.rosters[dept]) || [];
+    sel.innerHTML = '<option value="">Choose…</option>' + names.map(function (n) {
+      return '<option value="' + escapeHtml(n) + '"' + (n === keep ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+    }).join('');
+  }
+
+  function pdEditorRender_(data) {
+    PD_STATE_.data = data || {};
+    const deptSel = $('pd-dept');
+    if (deptSel && data && data.rosters) {
+      const keep = deptSel.value || getRequestedDept() || '';
+      deptSel.innerHTML = Object.keys(data.rosters).map(function (d) {
+        return '<option value="' + escapeHtml(d) + '"' + (d === keep ? ' selected' : '') + '>' + escapeHtml(d) + '</option>';
+      }).join('');
+    }
+    pdFillAgents_();
+    const cSel = $('pd-credit');
+    if (cSel && data && data.credits && !cSel.options.length) {
+      cSel.innerHTML = data.credits.map(function (c) {
+        return '<option value="' + escapeHtml(String(c)) + '"' + (Number(c) === 0.5 ? ' selected' : '') + '>' + escapeHtml(pdCreditLabel_(c)) + '</option>';
+      }).join('');
+    }
+    const rSel = $('pd-reason');
+    if (rSel && data && data.reasons && !rSel.options.length) {
+      rSel.innerHTML = data.reasons.map(function (r) { return '<option value="' + escapeHtml(r) + '">' + escapeHtml(r) + '</option>'; }).join('');
+    }
+    const days = (data && data.days) || [];
+    $('pd-table').style.display = days.length ? '' : 'none';
+    $('pd-empty').style.display = days.length ? 'none' : '';
+    $('pd-tbody').innerHTML = days.map(function (d) {
+      return '<tr>'
+        + '<td>' + escapeHtml(excDateLabel_(d.date)) + ' <span class="al-hint">' + escapeHtml(d.date) + '</span></td>'
+        + '<td>' + escapeHtml(d.agent || '') + '</td>'
+        + '<td>' + escapeHtml(pdCreditLabel_(d.credit)) + '</td>'
+        + '<td>' + escapeHtml(d.reason || '') + '</td>'
+        + '<td class="al-hint">' + escapeHtml(d.addedBy || '') + (d.addedAt ? '<br>' + escapeHtml(String(d.addedAt).slice(0, 10)) : '') + '</td>'
+        + '<td><button type="button" class="link-btn" data-pd-remove="' + escapeHtml(d.date) + '" data-pd-agent="' + escapeHtml(d.agent || '')
+        +   '" aria-label="Remove the partial day for ' + escapeHtml(d.agent || '') + ' on ' + escapeHtml(d.date) + '">Remove</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function pdEditorLoad_() {
+    pdEditorStatus_('', 'Loading…');
+    google.script.run
+      .withSuccessHandler(function (data) { pdEditorStatus_('', ''); pdEditorRender_(data); })
+      .withFailureHandler(function (err) { pdEditorStatus_('error', 'Could not load: ' + ((err && err.message) || err)); })
+      .getPartialDaysInit();
+  }
+
+  function pdEditorSave_() {
+    const date = ($('pd-date') && $('pd-date').value) || '';
+    const agent = ($('pd-agent') && $('pd-agent').value) || '';
+    const credit = ($('pd-credit') && $('pd-credit').value);
+    const reason = ($('pd-reason') && $('pd-reason').value) || '';
+    if (!date) { pdEditorStatus_('error', 'Choose a date.'); return; }
+    if (!agent) { pdEditorStatus_('error', 'Choose an agent.'); return; }
+    const b = $('pd-save-btn');
+    if (b) b.disabled = true;
+    pdEditorStatus_('', 'Saving…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (b) b.disabled = false;
+        pdEditorStatus_('', 'Saved. Per-day figures pick it up within a few minutes (refresh a page to see it now).');
+        pdEditorRender_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (b) b.disabled = false;
+        pdEditorStatus_('error', (err && err.message) || String(err));
+      })
+      .savePartialDay({ date: date, agent: agent, credit: Number(credit), reason: reason });
+  }
+
+  function pdEditorRemove_(date, agent) {
+    if (!date || !agent) return;
+    dsConfirm_({
+      title: 'Remove the partial day for ' + agent + ' on ' + excDateLabel_(date) + '?',
+      message: 'That day counts as a whole day again in the per-day figures.',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    }).then(function (ok) {
+      if (!ok) return;
+      var busyKey = 'pdRemove:' + date + ':' + agent;
+      if (mutationBusy_(busyKey)) return;
+      pdEditorStatus_('', 'Removing…');
+      google.script.run
+        .withSuccessHandler(function (data) { mutationDone_(busyKey); pdEditorStatus_('', 'Removed.'); pdEditorRender_(data); })
+        .withFailureHandler(function (err) { mutationDone_(busyKey); pdEditorStatus_('error', (err && err.message) || String(err)); })
+        .removePartialDay({ date: date, agent: agent });
+    });
+  }
+
   function initCoaching_() {
     const btn = $('coaching-btn');
     const modal = $('coaching-modal');

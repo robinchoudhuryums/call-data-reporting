@@ -5989,16 +5989,21 @@
         + ', missed ' + obSignedDelta_(m, r.priorMissed);
     }
     var w = scaleMax ? Math.max(2, Math.round(t / scaleMax * 1000) / 10) : 100;
-    var per = (r.ansPerDay != null && r.ansPerDay !== '' && isFinite(Number(r.ansPerDay)))
-      ? '<span class="lb-sub" title="' + escapeHtml(ansPerDayHtml_(r).replace(/^.*title="([^"]*)".*$/, '$1')) + '">'
-        + Number(r.ansPerDay).toFixed(1) + ' ans/day</span>' : '';
+    // P7: an agent with a partial day keeps the sub-line even when the figure
+    // is a dash (under one credited day), and the attendance sits under it.
+    var rPartial = (r.ansPerDayAgentDays == null) ? (Number(r.partialDays) || 0) : 0;
+    var hasPer = (r.ansPerDay != null && r.ansPerDay !== '' && isFinite(Number(r.ansPerDay)));
+    var per = (hasPer || rPartial)
+      ? '<span class="lb-sub" title="' + escapeHtml(ansPerDayHtml_(r).replace(/^[^"]*title="([^"]*)"[\s\S]*$/, '$1')) + '">'
+        + (hasPer ? Number(r.ansPerDay).toFixed(1) : '–') + ' ans/day</span>' : '';
+    var att = rPartial ? '<div class="lb-attend">' + attendanceHtml_(r.daysCredited, rPartial, r.partialMarks) + '</div>' : '';
     return '<div class="lb-cell" title="' + escapeHtml(tip) + '">'
       + '<div class="lb-track"><div style="width:' + w + '%">'
       +   obOutcomeBarHtml_([{ cls: 'good', n: a, label: 'answered' }, { cls: pass ? 'misslite' : 'bad', n: m, label: 'missed' }],
             t, tip, 'mid')
       + '</div></div>'
       + '<div class="lb-nums"><span class="lb-n"><span class="ans-n">' + a + '</span><span class="ans-slash">/</span>'
-      +   '<span class="miss-n">' + m + '</span></span>' + per + '</div></div>';
+      +   '<span class="miss-n">' + m + '</span></span>' + per + '</div>' + att + '</div>';
   }
   // The outbound bar's four parts (placed = connected + rang out + brief +
   // unknown) in the outbound hue, darkest = connected.
@@ -6020,12 +6025,16 @@
     }
     tip += '. ' + OB_CONNECTED_DEF_;
     var w = scaleMax ? Math.max(2, Math.round(placed / scaleMax * 1000) / 10) : 100;
-    var per = (o.obPerDay != null)
-      ? '<span class="lb-sub" title="Calls placed per day, counting only days with outbound calls">' + o.obPerDay + ' / day</span>' : '';
+    // P7: outbound per CREDITED day, with the attendance when a mark applied.
+    var oPartial = Number(o.obPartialDays) || 0;
+    var per = (o.obPerDay != null || oPartial)
+      ? '<span class="lb-sub" title="Calls placed per day, counting only days with outbound calls'
+        + (oPartial ? '; a partial day counts as its share' : '') + '">' + (o.obPerDay != null ? o.obPerDay : '–') + ' / day</span>' : '';
+    var att = oPartial ? '<div class="lb-attend">' + attendanceHtml_(o.obDaysCredited, oPartial, null) + '</div>' : '';
     return '<div class="lb-cell lb-cell--out" title="' + escapeHtml(tip) + '">'
       + '<div class="lb-track"><div style="width:' + w + '%">' + obOutcomeBarHtml_(parts, placed, tip, 'mid') + '</div></div>'
       + '<div class="lb-nums"><span class="lb-n"><span class="ob-c">' + c + '</span><span class="ans-slash">/</span>'
-      +   '<span class="ob-u">' + n + '</span></span>' + per + '</div></div>';
+      +   '<span class="ob-u">' + n + '</span></span>' + per + '</div>' + att + '</div>';
   }
   // The inbound rate's change chip (points), the same rule as the connect
   // rate's: muted under OB_CHIP_RATE_PTS_ or when either window rang fewer

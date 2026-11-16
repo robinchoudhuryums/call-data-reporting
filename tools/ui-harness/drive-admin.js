@@ -301,6 +301,46 @@ const MODALS = [
       const r2 = await rows();
       record('Exception Days: confirming removes the day from the list', r2.length === 1 && !r2.some((t) => /carrier fault/.test(t)), JSON.stringify(r2));
     } },
+  // P7 (#94): the partial-day editor.
+  { name: 'Partial Days', btn: '#partial-days-btn', sel: '#partial-days-modal', adminMenu: true,
+    probe: async function (page, record) {
+      const meta = require('./payloads/meta.json');
+      const rows = () => page.evaluate(() => Array.from(document.querySelectorAll('#pd-tbody tr')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+      const r0 = await rows();
+      record('Partial Days: the two fixture marks are listed with the agent, the share and (here only) the reason',
+        r0.length === 2 && r0.every((t) => t.indexOf(meta.pdAgent) !== -1) && r0.some((t) => /Half a day/.test(t) && /Training/.test(t))
+          && r0.some((t) => /A quarter day/.test(t) && /Leave/.test(t)), JSON.stringify(r0));
+      const form = await page.evaluate(() => ({
+        depts: document.querySelectorAll('#pd-dept option').length,
+        credits: Array.from(document.querySelectorAll('#pd-credit option')).map((o) => o.value),
+        reasons: Array.from(document.querySelectorAll('#pd-reason option')).map((o) => o.value),
+        freeText: !!document.querySelector('#partial-days-modal input[type="text"], #partial-days-modal textarea') }));
+      record('Partial Days: the share and the reason are fixed lists -- no free text to hold personal detail',
+        form.depts > 3 && JSON.stringify(form.credits) === JSON.stringify(['0', '0.25', '0.5', '0.75']) && form.reasons.length === 5 && !form.freeText,
+        JSON.stringify(form));
+      await page.fill('#pd-date', meta.latest);
+      await page.selectOption('#pd-agent', '');
+      await page.click('#pd-save-btn'); await page.waitForTimeout(300);
+      const err = await page.evaluate(() => { const s = document.getElementById('pd-status'); return s && s.style.display !== 'none' ? s.textContent : ''; });
+      record('Partial Days: a save with no agent is refused in place', /agent/i.test(err), err);
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.selectOption('#pd-dept', 'CSR'); await page.waitForTimeout(200);
+      await page.selectOption('#pd-agent', 'Anna Reyes');
+      await page.selectOption('#pd-credit', '0.75');
+      await page.selectOption('#pd-reason', 'Meeting');
+      await page.click('#pd-save-btn'); await page.waitForTimeout(800);
+      const saved = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDay').map((c) => c.args[0]));
+      const r1 = await rows();
+      record('Partial Days: Save sends the date, the roster name, the share and the reason, and lists the mark',
+        saved.length === 1 && saved[0].date === meta.latest && saved[0].agent === 'Anna Reyes' && saved[0].credit === 0.75 && saved[0].reason === 'Meeting'
+          && r1.length === 3 && r1.some((t) => /Anna Reyes/.test(t) && /Three quarters/.test(t)), JSON.stringify({ saved: saved, rows: r1 }));
+      await page.click('#pd-tbody button[data-pd-remove="' + meta.latest + '"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(300);
+      const dlg = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok'); return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')) }; });
+      record('Partial Days: Remove asks first, in DANGER tone', dlg.open && dlg.danger, JSON.stringify(dlg));
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const r2 = await rows();
+      record('Partial Days: confirming removes that one mark', r2.length === 2 && !r2.some((t) => /Anna Reyes/.test(t)), JSON.stringify(r2));
+    } },
   // (G3: the Outbound report modal is retired. Its content is driven on My
   // Department by drive-callbacks.js / drive-deptoutbound.js and its
   // company-view table on the Overview by drive-cbdept.js.)

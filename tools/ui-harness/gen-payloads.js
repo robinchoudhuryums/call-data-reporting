@@ -234,7 +234,17 @@ const EXC_DATE = days[days.length - 8];
 const EXCEPTION_DAYS = [['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At'],
   [EXC_DATE, '', '8x8 outage', 'TRUE', 'admin@ums.com', '2026-01-01T00:00:00Z']];
 
+// P7 (#94): two partial days for ONE agent inside the 30-day window (never
+// the exception day), so the credited-day divisor, the attendance line and
+// the editor are all driven by the REAL server code. In meta.json for the drivers.
+const PD_AGENT = 'Ben Ortiz';
+const PD_DATES = [days[days.length - 4], days[days.length - 11]];
+const PARTIAL_DAYS = [['Date', 'Agent', 'Credit', 'Reason', 'Added By', 'Added At'],
+  [PD_DATES[0], PD_AGENT, 0.5, 'Training', 'admin@ums.com', '2026-01-01T00:00:00Z'],
+  [PD_DATES[1], PD_AGENT, 0.25, 'Leave', 'admin@ums.com', '2026-01-01T00:00:00Z']];
+
 const SHEETS = {
+  'Partial Days': PARTIAL_DAYS,
   'Exception Days': EXCEPTION_DAYS,
   'DO NOT EDIT!': ROSTER,
   'DQE Historical Data': dqeSheet(dqeRows),
@@ -250,7 +260,7 @@ const h = loadGas({
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs',
           'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs',
-          'ExceptionDays.gs'],   // #81: the editor's init
+          'ExceptionDays.gs', 'PartialDays.gs'],   // #81: the editor's init
 });
 
 function install(email) {
@@ -631,5 +641,7 @@ dump('qcd-alldept', h.call('getQcdAllDepartments', { from: LATEST, to: LATEST })
 
 // #81: the exception-day editor's first paint, from the REAL init.
 dump('exception-init', h.call('getExceptionDaysInit'));
-dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart, excDate: EXC_DATE });
+// P7 (#94): the partial-day editor's first paint, from the REAL init.
+dump('partial-init', h.call('getPartialDaysInit'));
+dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart, excDate: EXC_DATE, pdAgent: PD_AGENT, pdDates: PD_DATES });
 console.log('LATEST=' + LATEST);

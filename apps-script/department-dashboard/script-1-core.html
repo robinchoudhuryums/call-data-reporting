@@ -2011,17 +2011,57 @@
   // subtotal row carries the team pair and shows answered per AGENT per day
   // (floaters and the dept's team-average excludes left out, server-side). The
   // pair's presence is what tells the two apart. Null -> nothing rendered.
+  // P7 (#94): a per-day figure divides by CREDITED days -- a day marked partial
+  // counts as its share. Whenever a mark applied, the attendance sits beside
+  // the figure ("17.5 of 22 workdays, 9 partial"), and a figure below one
+  // credited day is a dash with the attendance saying why.
+  function attNum_(n) { return String(Math.round((Number(n) || 0) * 100) / 100); }
+  /** PURE given `workdays`: "17.5 of 22 workdays, 9 partial". */
+  function attendanceText_(credited, partial, workdays) {
+    var wd = Number(workdays) || 0;
+    return attNum_(credited) + (wd ? ' of ' + wd + ' workday' + (wd === 1 ? '' : 's')
+                                   : ' day' + (Number(credited) === 1 ? '' : 's'))
+      + (partial ? ', ' + partial + ' partial' : '');
+  }
+  // The workdays of the window on screen (My Department's own dates).
+  function attWindowWorkdays_() {
+    try {
+      var m = (state && state.meta) || {};
+      return (m.from && m.to) ? workingDaysBetween_(m.from, m.to) : 0;
+    } catch (e) { return 0; }
+  }
+  /** PURE. The marks as a tooltip: "Partial days: Mon Nov 3 (0.5 day), ...". No reason -- it never reaches here. */
+  function attMarksTitle_(marks) {
+    var list = (marks || []).slice(0, 12).map(function (m) {
+      return excDateLabel_(m[0]) + ' (' + (Number(m[1]) === 0 ? 'not counted' : attNum_(m[1]) + ' day') + ')';
+    });
+    if (!list.length) return '';
+    return 'Partial days: ' + list.join(', ') + ((marks || []).length > 12 ? ', …' : '');
+  }
+  /** The attendance beside a per-day figure; '' when no mark applied. */
+  function attendanceHtml_(credited, partial, marks, cls) {
+    if (!partial) return '';
+    return '<span class="' + (cls || 'att-line') + '" title="' + escapeHtml(attMarksTitle_(marks)) + '">'
+      + escapeHtml(attendanceText_(credited, partial, attWindowWorkdays_())) + '</span>';
+  }
   function ansPerDayHtml_(row) {
     var v = row ? row.ansPerDay : null;
-    if (v == null || v === '' || !isFinite(Number(v))) return '';
-    var team = row.ansPerDayAgentDays != null;
-    var days = Number(team ? row.ansPerDayAgentDays : row.daysActive) || 0;
+    var none = (v == null || v === '' || !isFinite(Number(v)));
+    var team = !!row && row.ansPerDayAgentDays != null;
+    var partial = (!team && row) ? (Number(row.partialDays) || 0) : 0;
+    if (none && !partial) return '';
+    var credited = team ? Number(row.ansPerDayAgentDays) || 0
+      : (row.daysCredited != null ? Number(row.daysCredited) || 0 : Number(row.daysActive) || 0);
     var ans = Number(team ? row.ansPerDayAnswered : row.totalAnswered) || 0;
     var title = team
-      ? ans + ' answered over ' + days + ' agent-days with rings (per agent; floaters and team-average exclusions left out)'
-      : ans + ' answered over ' + days + ' day' + (days === 1 ? '' : 's') + ' with rings';
+      ? ans + ' answered over ' + attNum_(credited) + ' agent-days with rings (per agent; partial days count as their share; floaters and team-average exclusions left out)'
+      : (partial
+          ? ans + ' answered over ' + attNum_(credited) + ' credited days (' + (Number(row.daysActive) || 0) + ' with rings, ' + partial + ' partial)'
+            + (none ? ' — under one credited day, so no per-day figure' : '')
+          : ans + ' answered over ' + credited + ' day' + (credited === 1 ? '' : 's') + ' with rings');
     return '<span class="ans-perday" title="' + escapeHtml(title) + '">&middot; '
-      + Number(v).toFixed(1) + ' ans/day</span>';
+      + (none ? '–' : Number(v).toFixed(1)) + ' ans/day</span>'
+      + (partial ? ' ' + attendanceHtml_(credited, partial, row.partialMarks, 'ans-att') : '');
   }
 
   function answeredBarHtml_(row, tallyUnit) {

@@ -262,7 +262,19 @@
           : 'standard ' + ANSWER_STANDARD_ + '%') + '</div></div>'
       + '<div class="agent-kpi"><div class="lbl">Avg talk time</div><div class="val">' + esc(fmtHms(me.attSeconds)) + '</div>'
       + '<div class="vs">' + (attDelta == null ? '' : deltaChip(Math.round(attDelta), null, 's')) + ' vs team avg ('
-      + esc(fmtHms(team.attSeconds)) + ')</div></div>';
+      + esc(fmtHms(team.attSeconds)) + ')</div></div>'
+      + agentAttendanceHtml_(me);
+  }
+
+  // P7 (#94): the agent's own attendance, shown only when one of their days
+  // is marked partial -- that it is marked, never why.
+  function agentAttendanceHtml_(me) {
+    var partial = Number(me && me.partialDays) || 0;
+    if (!partial) return '';
+    var credited = Math.round((Number(me.daysCredited) || 0) * 100) / 100;
+    var active = Number(me.daysActive) || 0;
+    return '<div class="agent-att" id="agent-attendance">Days with calls: <b>' + active + '</b> &middot; counted as <b>'
+      + credited + '</b> (' + partial + ' marked as a partial day). Your calls and answer rate are not changed by this.</div>';
   }
 
   function renderRank(d) {

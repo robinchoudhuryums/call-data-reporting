@@ -4292,3 +4292,50 @@ When something looks wrong, before assuming a code bug, check:
     credit until `rebuildDirectCallHeldDates()` (#90) or a re-import (#56).
     The `Dashboard Standards` sheet gains an `Other` row on the next publish
     (#37); team-tools can ignore it. Pinned by `custodial-dept.test.js`.
+
+94. **Partial days -- a day an agent was on the phones for only part of it
+    (P7, owner 2026-11-16).** Admin ▾ → Partial days writes the `Partial
+    Days` sheet (`Date | Agent | Credit | Reason | Added By | Added At`;
+    `setup()` creates it, Date column plain text). One row per (date,
+    agent); Credit is one of 0, 0.25, 0.5, 0.75 (`PARTIAL_DAY_CREDITS_`) and
+    Reason one of a fixed list (`PARTIAL_DAY_REASONS_`: Partial shift,
+    Training, Meeting, Leave, Other) -- no free text, so the sheet cannot
+    collect personal detail. Only an admin can add or remove a mark.
+    **The rule (owner: "pace while present"):** a marked day counts as its
+    credit in the DIVISOR of a per-day figure and nowhere else. Call
+    counts, totals, answer rates, talk time and every team TOTAL are
+    exactly what they were; only "ans/day" (My Department, the agent app's
+    rank) and outbound "/ day" change, plus the two team per-agent-day
+    benchmarks, where a teammate's partial day is credited the same way.
+    A day with no calls was never a day in the divisor, so a full absence
+    needs no mark. An agent with less than one credited day in the window
+    shows a dash instead of a pace (`PARTIAL_DAY_MIN_CREDITED_`). Beside
+    every changed figure the row says so: "19.75 of 22 workdays, 2
+    partial", with the marked dates and shares on hover. **Who sees what:**
+    managers see the attendance line and the dates; agents see the line on
+    their own numbers only; the REASON is shown in the admin editor and
+    nowhere else (it is not in any report payload, nor in the cache tag).
+    **What to know before relying on it:** (1) a mark takes effect within
+    about 5 minutes (the list's cache; the mark re-keys every cached report,
+    no redeploy); (2) the agent name must be the roster spelling -- the
+    editor only offers roster names; (3) calls handled on a credit-0 day
+    stay in the count (calls are never removed), so mark 0 only for a day
+    the few calls should not earn any day's credit; (4) outbound "/ day"
+    credits a mark only on a day the agent placed a call; (5) if the sheet
+    cannot be read, that run treats every day as whole rather than failing
+    the report; (6) the Individual Report and the Insights comparisons do
+    NOT apply marks yet (P8), and suggestions of likely partial days are P9.
+    **Not yet done -- the CSR team app (team-tools, a separate repo; #68).**
+    It does not read this sheet, so any per-day pace it shows still counts
+    a partial day as a whole one. The matching change, to make there:
+    read the `Partial Days` tab of this workbook (a sixth tab on #68's
+    list), columns A-C only (Date as an ISO string or a date in the
+    spreadsheet's timezone, Agent exact-match, Credit a number with
+    0 <= credit < 1; skip any other row); for each agent, credited days =
+    the sum over their days with any ring of (the mark's credit, else 1);
+    divide by that instead of the day count; show a dash below 1 credited
+    day; show the "N of M workdays, K partial" line beside the figure; and
+    never read or show column D. If the team app shows no per-day figure,
+    there is nothing to change. Until it is done, a rename or column move
+    on this tab is a one-repo edit. Pinned by `partial-days.test.js`;
+    rendered checks in `drive-admin.js` and `drive-deptoutbound.js`.

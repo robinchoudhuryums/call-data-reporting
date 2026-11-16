@@ -63,6 +63,27 @@ async function openDept(page, meta) {
       called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length,
     }));
     record('manager: the outbound columns toggle is hidden', st.sw === 'none', st.sw);
+    // P7 (#94): a manager sees the attendance beside the per-day figure of an
+    // agent with partial days -- the mark, never the reason.
+    {
+      const s30m = require('./payloads/summary-30d.json');
+      const want = s30m.rows.filter((r) => r.agent === meta.pdAgent)[0];
+      const attM = await page.evaluate((name) => {
+        const row = Array.from(document.querySelectorAll('#agents tbody tr, #agents-tbody tr, tr[data-agent]'))
+          .find((r) => (r.getAttribute('data-agent') || '') === name && r.offsetParent !== null);
+        const a = row ? row.querySelector('.ans-att, .att-line') : null;
+        const others = Array.from(document.querySelectorAll('.ans-att, .att-line')).filter((x) => x.offsetParent !== null).length;
+        return { found: !!row, text: a ? a.textContent.trim() : '', title: a ? a.getAttribute('title') : '', shown: others,
+          per: row ? ((row.querySelector('.ans-perday, .lb-sub') || {}).textContent || '').trim() : '' };
+      }, meta.pdAgent);
+      record('P7: a manager sees the attendance beside the per-day figure of the agent with partial days, and only there',
+        attM.found && new RegExp('^' + String(want.daysCredited).replace('.', '\\.') + ' of \\d+ workdays, 2 partial$').test(attM.text)
+          && attM.shown === 1 && attM.per.indexOf(want.ansPerDay.toFixed(1) + ' ans/day') !== -1,
+        JSON.stringify({ attM: attM, want: [want.daysCredited, want.ansPerDay] }));
+      record('P7: the tooltip lists the marked days and their share -- never the reason',
+        /^Partial days: /.test(attM.title) && /0\.5 day/.test(attM.title) && /0\.25 day/.test(attM.title)
+          && !/Training|Leave|Meeting|Partial shift/.test(attM.title + attM.text), attM.title);
+    }
     const tdcM = await page.evaluate(() => { const el = document.getElementById('dept-team-direct');
       return { shown: !!el && getComputedStyle(el).display !== 'none',
                called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length }; });

@@ -3915,6 +3915,15 @@
     font-variant-numeric: tabular-nums; line-height: 1.25; }
   .lb-n { font-weight: 600; white-space: nowrap; }
   .lb-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  /* P7 (#94): the attendance beside a per-day figure, shown only where a
+     partial-day mark applied ("17.5 of 22 workdays, 9 partial"). Quiet, and
+     dotted-underlined because its tooltip lists the marked days. */
+  .lb-attend { margin-top: 1px; }
+  .att-line, .ans-att { font-size: 10.5px; color: var(--muted); letter-spacing: 0;
+    text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+  .ans-att { margin-left: 4px; white-space: nowrap; }
+  .pd-form { align-items: end; }
+  .agent-att { grid-column: 1 / -1; margin: 6px 0 0; font-size: 12px; color: var(--muted); }
   .ob-seg-misslite { background: color-mix(in oklab, var(--warn) 40%, var(--paper)); }
   .ob-seg-oconn { background: var(--dir-out); }
   .ob-seg-oreal { background: color-mix(in oklab, var(--dir-out) 45%, var(--paper)); }

@@ -124,8 +124,9 @@ test('F71: no modal\'s closeModal hands focus straight to its opener any more', 
     }
   });
   assert.ok(closers >= 16, 'every modal closer was swept (' + closers + ')');
-  // The eleven menu-opened modals, plus Help / Settings / Queue report / Caller Lookup.
-  assert.equal(routed, 15, 'fifteen closers return focus through the shared helper');
+  // The twelve menu-opened modals (Partial days joined in P7), plus Help /
+  // Settings / Queue report / Caller Lookup.
+  assert.equal(routed, 16, 'sixteen closers return focus through the shared helper');
 });
 
 // ── F75: a popover takes focus and gives it back ────────────────────────────

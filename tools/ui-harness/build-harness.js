@@ -323,6 +323,25 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       st.days = st.days.filter(function (d) { return d.date !== (req && req.date); });
       return st;
     },
+    // P7 (#94): the partial-day editor -- the REAL init, then an in-memory list
+    // so save / remove round-trip the way the server's do.
+    getPartialDaysInit: function () {
+      if (!window.__PD_STATE__) window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init']));
+      return window.__PD_STATE__;
+    },
+    savePartialDay: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      if (!req || !req.agent) throw new Error('Choose an agent.');
+      st.days = st.days.filter(function (d) { return !(d.date === req.date && d.agent === req.agent); });
+      st.days.unshift({ date: req.date, agent: req.agent, credit: Number(req.credit), reason: req.reason,
+        addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
+      return st;
+    },
+    removePartialDay: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      st.days = st.days.filter(function (d) { return !(d.date === (req && req.date) && d.agent === (req && req.agent)); });
+      return st;
+    },
     // TR-1: the REAL getTransferRetries over gen-phase3's fake journeys; a
     // department pick filters the same cases the way the server does.
     getTransferRetriesInit: function () { return P['transfer-retries-init']; },

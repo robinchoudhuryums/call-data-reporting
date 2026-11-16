@@ -146,6 +146,10 @@ function agentHomeTeamBlob_(summary) {
         unique: r.totalUnique,
         attSeconds: r.attSeconds,
         daysActive: r.daysActive,
+        // P7 (#94): the agent's own attendance -- credited days and how many
+        // are marked partial. Never the reason, and never a teammate's.
+        daysCredited: (r.daysCredited != null) ? r.daysCredited : r.daysActive,
+        partialDays: Number(r.partialDays) || 0,
         ratePct: d ? Math.round((r.totalAnswered / d) * 1000) / 10 : null,
       };
     }),
@@ -171,6 +175,8 @@ function agentHomeOwnView_(blob, agentName) {
     answerRatePct: own ? own.ratePct : null,
     attSeconds: own ? own.attSeconds : 0,
     daysActive: own ? own.daysActive : 0,
+    daysCredited: own ? own.daysCredited : 0,   // P7 (#94)
+    partialDays: own ? own.partialDays : 0,
   };
   var ranked = blob.rankRows.filter(function (r) { return (r.answered + r.missed) > 0; });
   ranked.sort(function (a, b) {

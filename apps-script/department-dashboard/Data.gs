@@ -789,6 +789,12 @@ function summaryDailyList_(perDay) {
   });
 }
 
+/** PURE. A summary row's credited days (P7); a row cached before the field falls back to its active days. */
+function rowCreditedDays_(r) {
+  if (!r) return 0;
+  return (r.daysCredited != null) ? (Number(r.daysCredited) || 0) : (Number(r.daysActive) || 0);
+}
+
 function combineSummaries_(primary, parts) {
   if (parts.length === 1) {
     // D-9 (broad-scan 2026-09-17): the requested dept is the payload's
@@ -893,7 +899,7 @@ function combineSummaries_(primary, parts) {
     crossoverAgentCount++;
     if (pairCounted) {
       grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
-      grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+      grand.ansPerDayAgentDays -= rowCreditedDays_(r);   // P7: credited days
     }
     grand.totalUnique   -= Number(r.totalUnique) || 0;
     grand.totalRung     -= Number(r.totalRung) || 0;
@@ -993,7 +999,7 @@ function combineSummaries_(primary, parts) {
       crossoverAgentCount++;
       if (supInTeam && !teamAvgExcludeSet_(r.dept)[name]) {
         grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
-        grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+        grand.ansPerDayAgentDays -= rowCreditedDays_(r);   // P7: credited days
       }
       grand.totalUnique   -= Number(r.totalUnique) || 0;
       grand.totalRung     -= Number(r.totalRung) || 0;
@@ -1025,15 +1031,18 @@ function combineSummaries_(primary, parts) {
       if (!days) return;
       const e = scopedDays[name] || (scopedDays[name] = { n: 0, sum: 0, union: {} });
       e.n++;
-      e.sum += Number(r.daysActive) || 0;
+      e.sum += rowCreditedDays_(r);   // P7: credited days
       days.forEach(function (d) { e.union[d] = true; });
     });
   });
   Object.keys(scopedDays).forEach(function (name) {
     const e = scopedDays[name];
     if (e.n < 2) return;
-    grand.ansPerDayAgentDays -= Math.max(0, e.sum - Object.keys(e.union).length);
+    // P7: the union is counted in credited days too -- a marked day shared by
+    // two depts' rows is its credit once, not twice.
+    grand.ansPerDayAgentDays -= Math.max(0, e.sum - creditedDays_(name, Object.keys(e.union)).credited);
   });
+  grand.ansPerDayAgentDays = Math.round(grand.ansPerDayAgentDays * 100) / 100;
   grand.crossoverAgentCount = crossoverAgentCount;
   if (wantDaily) grand.daily = summaryDailyList_(grandDaily);
   // #81: every part's excluded days, merged by date (each dept's roster
@@ -1683,6 +1692,10 @@ function computeSummary_(dept, from, to, scope, opts) {
     // before `from`. priorFrom / priorTo are surfaced on meta below.
     const priorBucket = priorAcc[a.agent];
     const priorHasData = !!(priorBucket && priorBucket.rows > 0);
+    // P7 (#94): the agent's CREDITED days -- each active day counts as its
+    // partial-day mark's share, or 1. Only this divisor changes; every count
+    // and rate above is untouched (rule A).
+    const cd = creditedDays_(a.agent, Object.keys(a.days));
     rows.push({
       agent: a.agent,
       matchedViaRoster: a.matchedViaRoster,
@@ -1699,7 +1712,9 @@ function computeSummary_(dept, from, to, scope, opts) {
       // USER window; a.days is user-window only, the E5 prior window
       // accumulates in priorAcc), so PTO does not drag it down. 1 dp; null
       // when no active day so the client renders a dash, never 0.0.
-      ansPerDay: Object.keys(a.days).length ? round1_(a.totalAnswered / Object.keys(a.days).length) : null,
+      // P7: ...per CREDITED day, and a dash (null) below one credited day --
+      // 20 calls over half a day is not "40 a day".
+      ansPerDay: perCreditedDay_(a.totalAnswered, cd.credited),
       priorRung:     priorHasData ? priorBucket.rung     : 0,
       priorMissed:   priorHasData ? priorBucket.missed   : 0,
       priorAnswered: priorHasData ? priorBucket.answered : 0,
@@ -1720,6 +1735,11 @@ function computeSummary_(dept, from, to, scope, opts) {
       csrAvgAbdWaitSeconds: a.csrAvgAbdWaitSecondsCount
         ? Math.round(a.csrAvgAbdWaitSecondsSum / a.csrAvgAbdWaitSecondsCount) : 0,
       daysActive: Object.keys(a.days).length,
+      // P7: the divisor behind ansPerDay, how many of the active days carry a
+      // mark, and the marks themselves ([iso, credit] -- never the reason).
+      daysCredited: cd.credited,
+      partialDays: cd.partial,
+      partialMarks: cd.marks.length ? cd.marks : undefined,
     });
   }
 
@@ -1798,10 +1818,10 @@ function computeSummary_(dept, from, to, scope, opts) {
   rosterRows.forEach(function (r) {
     if (teamExcl[r.agent]) return;
     teamAns  += Number(r.totalAnswered) || 0;
-    teamDays += Number(r.daysActive) || 0;
+    teamDays += rowCreditedDays_(r);   // P7: teammates' partial days are credited too
   });
   totals.ansPerDayAnswered = teamAns;
-  totals.ansPerDayAgentDays = teamDays;
+  totals.ansPerDayAgentDays = Math.round(teamDays * 100) / 100;   // P7: credited days can be fractional
   Object.defineProperty(totals, '_activeDaysByAgent', { value: activeDaysByAgent, enumerable: false });   // AC-3
   totals.ansPerDay = teamDays ? round1_(teamAns / teamDays) : null;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;

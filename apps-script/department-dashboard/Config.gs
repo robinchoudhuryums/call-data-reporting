@@ -295,6 +295,7 @@ const SHEETS = Object.freeze({
   COMPANY_HOLIDAYS: 'Company Holidays',
   DASHBOARD_STANDARDS: 'Dashboard Standards',
   EXCEPTION_DAYS: 'Exception Days',
+  PARTIAL_DAYS: 'Partial Days',
 });
 
 // Phase A (agent role, docs/agent-role-plan.md): Role + Agent Name are
@@ -363,6 +364,22 @@ const QUEUE_REPORT_SUBSCRIBERS_HEADERS = Object.freeze([
 // well as rates -- and every report says so (Operator State #81). The Date
 // column is plain-text pinned at creation, like Company Holidays.
 const EXCEPTION_DAYS_HEADERS = Object.freeze(['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At']);
+// Partial Days (P7, owner 2026-11-16; Operator State #94): an AGENT's day that
+// should count as less than a whole day in the per-day figures -- they left
+// early, were in training, covered a meeting. One row per (date, agent);
+// Credit is the share of a day they were present (PARTIAL_DAY_CREDITS_).
+// RULE A (owner-confirmed): only the DIVISOR of a per-day figure changes --
+// answered per day and outbound per day divide by CREDITED days. Calls are
+// never removed and no total or rate moves; the attendance ("17.5 of 22
+// workdays, 9 partial") is shown beside the figure, and a per-day figure is a
+// dash below PARTIAL_DAY_MIN_CREDITED_ credited days. Read by getPartialDays_
+// (Util.gs), written by the admin editor (PartialDays.gs). The Reason is one
+// of PARTIAL_DAY_REASONS_ and never leaves the admin editor (managers and
+// agents see the mark, not why). The Date column is plain-text pinned.
+const PARTIAL_DAYS_HEADERS = Object.freeze(['Date', 'Agent', 'Credit', 'Reason', 'Added By', 'Added At']);
+const PARTIAL_DAY_CREDITS_ = Object.freeze([0, 0.25, 0.5, 0.75]);
+const PARTIAL_DAY_REASONS_ = Object.freeze(['Partial shift', 'Training', 'Meeting', 'Leave', 'Other']);
+const PARTIAL_DAY_MIN_CREDITED_ = 1;
 const COMPANY_HOLIDAYS_HEADERS = Object.freeze([
   'Dates', 'Label', 'Active', 'Notes',
 ]);

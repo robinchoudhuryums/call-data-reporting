@@ -2900,7 +2900,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   `ansPerDayHtml_`) by "· N.N ans/day" -- answered per day WITH RINGS on an
   agent row, answered per AGENT per day on a total/subtotal row (the team pair
   `ansPerDayAnswered`/`ansPerDayAgentDays`; floaters and team-average excludes
-  out). The bar no longer prints an inline answer rate: the Answer % column
+  out; since P7 the divisor is CREDITED days -- see "Partial days on the
+  client"). The bar no longer prints an inline answer rate: the Answer % column
   beside it is the same figure. Sorts by answered VOLUME (`totalAnswered`,
   owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
   `sortRows`). **The CSV still emits a numeric Total calls column** spliced
@@ -3297,3 +3298,38 @@ rules: Operator State #81.
 - Pinned by `drive-callbacks.js` (the callback summary's part note) and
   `drive-exceptions.js` (note, switch, bars, band, 360 px, manager),
   `drive-admin.js` (the editor), `drive-smoke.js` (IR note), `drive-agent.js`.
+
+## Partial days on the client (P7, owner 2026-11-16)
+
+The server credits a marked day as its share in the DIVISOR of a per-day
+figure (Operator State #94: rule, credits, who may mark). The client's job is
+to SAY so beside the figure, never to recompute it.
+
+- **The attendance line.** `attendanceText_(credited, partial, workdays)`
+  (script-1-core, pure) prints "19.75 of 22 workdays, 2 partial";
+  `attendanceHtml_` wraps it with the marked dates and shares as its title
+  (`attMarksTitle_`, at most 12 dates) and returns `''` when no mark applied
+  -- so a row with no partial day is byte-identical to before. Workdays come
+  from the window on screen (`attWindowWorkdays_`), holidays and weekends out.
+- **Where it shows.** Under the inbound bar's "ans/day" and the outbound
+  bar's "/ day" on every My Department view (`.lb-attend`; NOT `.lb-att`,
+  which is the avg-talk `<small>`), inside `ansPerDayHtml_`'s classic cell
+  (`.ans-att`), and on the agent app's own KPIs (`#agent-attendance`,
+  `.agent-att`, the agent's own row only). Team rows show no line: their
+  divisor is agent-days (`ansPerDayAgentDays`, now possibly fractional).
+- **The dash.** `ansPerDay` / `obPerDay` arrive `null` when the agent has
+  less than one credited day; the cell prints "–" WITH the attendance line,
+  so the dash is explained. Never divide client-side to fill it in.
+- **The reason never reaches a report payload.** Rows carry `daysCredited`,
+  `partialDays` and `partialMarks` (`[[iso, credit]]`) only; the agent app
+  gets no dated marks at all. The reason exists in `getPartialDaysInit`
+  (admin) and the editor's table.
+- **The editor** (`#partial-days-modal`, route `/admin/partial-days`,
+  script-7-admin `initPartialDays_` / `pdEditor*_`): date, department (only
+  to narrow the agent list), agent (roster names), share and reason are all
+  `<select>`s or a date input -- no free text. Save validates in place
+  (`#pd-status`); Remove goes through `dsConfirm_` in danger tone.
+- **Not yet:** the Individual Report and Insights (P8), and the CSV, which
+  still exports the per-day figure without the line.
+- Pinned by `partial-days.test.js`; rendered by `drive-admin.js` (the editor)
+  and `drive-deptoutbound.js` (the row line and its title as a manager).

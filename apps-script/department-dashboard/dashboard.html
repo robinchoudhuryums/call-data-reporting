@@ -133,6 +133,9 @@
             <button class="header-menu-item" id="exception-days-btn" type="button"
                     data-route="/admin/exception-days" data-admin-only role="menuitem"
                     title="Days whose call data is real but unfair to judge by (an outage) -- left out of every report's figures, and every report says so. Admin-only.">Exception days</button>
+            <button class="header-menu-item" id="partial-days-btn" type="button"
+                    data-route="/admin/partial-days" data-admin-only role="menuitem"
+                    title="An agent's day that should count as less than a whole day in the per-day figures (left early, training, a meeting). Only the per-day divisor changes; calls and rates do not. Admin-only.">Partial days</button>
             <button class="header-menu-item" id="transfer-retries-btn" type="button"
                     data-route="/admin/transfer-retries" data-admin-only role="menuitem"
                     title="Calls where an agent tried someone in another department, got no answer, then tried someone else there -- the list to check for transfers declined that should not have been. Admin-only.">Transfer retries</button>
@@ -2672,6 +2675,58 @@
           <tbody id="exc-tbody"></tbody>
         </table>
         <div id="exc-empty" class="al-hint" style="display:none;">No exception days yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P7 (owner 2026-11-16, #94): the partial-day editor. Admin-only (server:
+       assertAdmin_ on every call in PartialDays.gs). -->
+  <div id="partial-days-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="partial-days-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="partial-days-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="partial-days-modal-title">Partial days</h2>
+      </div>
+      <div class="modal-panel-body">
+        <p class="al-hint">A day an agent worked only part of &mdash; they left early, were in training, sat in a
+          meeting. Marking it changes one thing: <strong>answered per day</strong> and <strong>outbound per day</strong>
+          count that day as the share you choose instead of a whole day. The agent&rsquo;s calls, totals and answer
+          rate do not change, and the attendance (&ldquo;17.5 of 22 workdays, 9 partial&rdquo;) shows beside the per-day
+          figure. Managers and the agent see that a day is marked, not the reason.</p>
+        <div class="ir-form-grid pd-form">
+          <div class="ir-col">
+            <label for="pd-date">Date</label>
+            <input type="date" id="pd-date">
+          </div>
+          <div class="ir-col">
+            <label for="pd-dept">Department</label>
+            <select id="pd-dept"></select>
+          </div>
+          <div class="ir-col">
+            <label for="pd-agent">Agent</label>
+            <select id="pd-agent"></select>
+          </div>
+          <div class="ir-col">
+            <label for="pd-credit">Counts as</label>
+            <select id="pd-credit"></select>
+          </div>
+          <div class="ir-col">
+            <label for="pd-reason">Reason (admins only)</label>
+            <select id="pd-reason"></select>
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
+            <button class="btn" id="pd-save-btn" type="button">Save</button>
+          </div>
+        </div>
+        <div id="pd-status" role="status" class="status" style="display:none;"></div>
+        <table class="al-config-table" id="pd-table" style="display:none;">
+          <thead><tr><th>Date</th><th>Agent</th><th>Counts as</th><th>Reason</th><th>Added</th><th></th></tr></thead>
+          <tbody id="pd-tbody"></tbody>
+        </table>
+        <div id="pd-empty" class="al-hint" style="display:none;">No partial days yet.</div>
       </div>
     </div>
   </div>

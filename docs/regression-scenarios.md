@@ -150,7 +150,7 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
   Steps:
     - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards + Exception Days (each with their header row + frozen first row; Company Holidays col A, Dashboard Standards col D and Exception Days col A plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all thirteen and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards + Exception Days + Partial Days (each with their header row + frozen first row; Company Holidays col A, Dashboard Standards col D, Exception Days col A and Partial Days col A plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all fourteen and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click solos the trend line | Subsystem: Department Dashboard
   Steps:
@@ -780,3 +780,18 @@ S72 | Paper, a phone, dark mode and a screen reader: print with a modal open, mo
     - With a screen reader on My Department: an amber Answer % reads as its number followed by "just below target", a red one "below target"; an over-standard abandon % "outside the standard"; a green one is just its number. Hovering any of them shows the same words. Select and copy a few table rows: the pasted text holds the numbers only.
     - With a screen reader: each chart is announced as an image with a name (for example "Answer rate by department over time"), and the My Department table as "Agents: inbound calls". Save a rule in Admin ▾ → Notifications, or press Refresh while a section is loading: the result or the loading line is announced without moving focus.
   Expected: every step as described. AUTOMATED COUNTERPART: `tools/ui-harness/drive-admin.js` (print emulation on Inbound; five modals at 390 and 768 px; tier words; canvas names; segment ink in both modes) and `tests/unit/names-print-narrow.test.js`. The screen-reader steps and the real print preview are manual.
+
+S73 | Partial days: an admin marks a part day, the per-day pace changes and says why, nothing else moves (P7) | Subsystem: Department Dashboard
+  Steps:
+    - Before marking anything, note one agent's row on My Department for a window of a few weeks: Rung, Answered, Answer %, and the "ans/day" figure with its hover text. Note the Team Rings card's answered-per-agent-day figure too.
+    - As the ADMIN: Admin ▾ → Partial days. Pick a date inside that window on which the agent took calls, their department, the agent, "Half a day" and a reason, and Save. The mark appears in the list with the reason.
+    - Try to save with no agent chosen: the form says "Choose an agent." and nothing is saved. There is no free-text field anywhere on the form.
+    - Wait about five minutes (or change the dates and change them back) and reload My Department for the same window. The agent's Rung, Answered and Answer % are EXACTLY what they were. "ans/day" is higher, and under it a line reads like "20.5 of 22 workdays, 1 partial"; hovering it names the date and "(0.5 day)". The team per-agent-day figure rose slightly; every team total is unchanged.
+    - Switch to the Outbound or the side-by-side view (admin, or a manager once outbound is released): the same agent's "/ day" shows the same kind of line when the marked day had an outbound call.
+    - Mark enough days at "Not a day (0)" that the agent has less than one credited day in a short window: the pace shows a dash, not a number, and the line still says why.
+    - As a MANAGER of that department: the line and the dates are there; the reason is nowhere (not on hover, not in the page source). Admin ▾ → Partial days is not offered.
+    - As the AGENT (agent app): their own numbers carry the same attendance line; no teammate's.
+    - Remove the mark (Remove asks first): within about five minutes the row is back to the figures first noted.
+  Expected: every step as described. AUTOMATED COUNTERPART: `tests/unit/partial-days.test.js`, `tools/ui-harness/drive-admin.js` (the editor) and `drive-deptoutbound.js` (the row line as a manager).
+  Fails if: a count, a total or an answer rate moved; the reason is visible to a manager or an agent; a manager can save a mark; the pace shows a huge number for an agent credited a fraction of a day; the Individual Report or Insights changed (they must not until P8).
+

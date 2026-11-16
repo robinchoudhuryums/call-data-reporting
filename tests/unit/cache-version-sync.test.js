@@ -82,6 +82,7 @@ const SPECS = [
   ['deptConfig:init',   'DeptConfig.gs',          /'deptConfig:init:v(\d+)'/],
   ['escSchema',         'Escalations.gs',         /'escSchema:v(\d+):'/],   // AC-5 (broad-scan 2026-10-01)
   ['excDays',           'Util.gs',                /'excDays:v(\d+)'/],   // #81 exception-day list
+  ['partialDays',       'Util.gs',                /'partialDays:v(\d+)'/],   // P7 (#94) partial-day list
 ];
 
 // Build the canonical map from code at load time so every test sees it.
@@ -227,6 +228,7 @@ const ANCHOR_SPECS = {
   'deptConfig:init':   'exception: busted on every write (dcBustCaches_)',
   escSchema:           'exception: AC-5 "schema DDL already ran" flag (1 h TTL, key carries ESC_REQUIRED_COLUMNS_) -- not a report cache',
   excDays:             'exception: the #81 exception-day LIST (5-min tier), busted by every editor save (bustExceptionDaysCache_) -- not a report cache; its hash joins reportFreshnessTag_ instead',
+  partialDays:         'exception: the P7 (#94) partial-day LIST (5-min tier), busted by every editor save (bustPartialDaysCache_) -- not a report cache; its hash joins reportFreshnessTag_ instead',
 };
 
 test('S3: every SPECS prefix has an anchor classification, and tag-anchored files reference reportFreshnessTag_', function () {
