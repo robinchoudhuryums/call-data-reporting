@@ -723,6 +723,27 @@ test('P6: queueHealth.trend.metrics carries avg answer and longest wait, per que
     'no new field on the per-day rows that ship per queue per day');
 });
 
+test('P6: a department with two own queues -- the dept total weights avg answer by answered calls ACROSS queues and takes the longer wait', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [['Alpha', 'A_Q_Alpha, A_Q_Alpha2', '', '', '', 'TRUE', 'a@x.com', '', '']],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha',  100, 10, 0, '0:01:00', '0:00:20'),   // 90 answered at 20s
+      qcdRow('2026-03-10', 'A_Q_Alpha2', 10,  0,  0, '0:06:00', '0:02:00'),   // 10 answered at 120s
+    ]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const m = data.queueHealth.trend.metrics;
+  const last = data.queueHealth.trend.labels.length - 1;
+  // (90 x 20 + 10 x 120) / 100 = 30 -- the mean of the two queue averages would be 70.
+  assert.equal(m.avgAnswer.total[last], 30, 'monthly dept total: weighted across queues');
+  assert.equal(m.avgAnswer.dailyTotal.join(','), '30', 'daily dept total: the same weighting');
+  assert.equal(m.longestWait.total[last], 360, 'the longer of the two queues');
+  assert.equal(m.longestWait.dailyTotal.join(','), '360');
+  assert.equal(m.avgAnswer.perQueue['A_Q_Alpha2'][last], 120, 'each queue keeps its own line');
+});
+
 test('P6: the client offers both metrics, formats seconds as m:ss and never marks them as partial counts', function () {
   const fs = require('fs'), path = require('path'), vm = require('node:vm');
   const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
