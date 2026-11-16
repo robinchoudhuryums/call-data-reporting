@@ -166,8 +166,17 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   (rung) / Avg talk time (ADMIN-only -- the `data-admin-metric` option is
   REMOVED at init for non-admins, since `<option>` can't use the
   data-admin-only reveal) / the queue metrics as `queues:<metric>` values
-  (Abandoned % / Total calls / Violations -- these split into the old
-  queues tab + `insQueueMetric`). Plus a **Monthly/Daily**
+  (Abandoned % / Total calls / Violations, and since P6 Avg answer time /
+  Longest wait -- these split into the old queues tab + `insQueueMetric`;
+  the allowed set is `INS_QUEUE_METRICS_`). **The two TIME metrics (P6) are
+  SECONDS** in `queueHealth.trend.metrics.avgAnswer` / `.longestWait`, with
+  `null` where a day or month has none (a gap in the line, never a dip to
+  zero): `fmtVal` and the y axis print m:ss (`insSecsLabel_`), the axis steps
+  by a clock-friendly amount (`insTimeAxisStep_`), they are line-only (no
+  calendar), and they are never marked as partial-month counts -- an average
+  or a maximum is not understated by a part month. The daily values arrive
+  as compact arrays (`dailyAnswerTimes` in QCDReport.gs), not as fields on
+  the per-day rows, which ship per queue per day. Plus a **Monthly/Daily**
   toggle (`insTrendView`), hidden in Calendar mode. Daily for the team metrics reads the
   `trendDaily` response field (daily answered/missed/rung/%/ATT over the selected
   window); Daily for the queue tab reads `queueHealth.trend.daily*`.
@@ -223,7 +232,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v26` already makes a fresh re-generate fast too).
+  `insights:v27` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -285,7 +294,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v26). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v27). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -1413,7 +1422,7 @@ behind the removed button.
   of either bar -- an empty full-width track read as a broken row; the My
   Department table no longer sends such agents at all (IDLE-1, the summary cache's v24,
   `answered-bar.test.js`). Insights follows the same rule on an agent-free
-  run (IDLE-2, `insights:v26`): no card for an agent with no calls in the
+  run (IDLE-2, the insights v26 bump): no card for an agent with no calls in the
   window, so the quiet group and the small-sample banner no longer count them.
 - **Team strip**: Queue calls and Abandoned % carry the vs-prior chip from
   `qcd.rangePrior` like Avg answer (QD-1; abandoned % under 0.25 pts reads
@@ -1436,8 +1445,17 @@ behind the removed button.
 - **Team strip LINKED DAY BARS (Step 4, owner 2026-10-16; admin trial).**
   `dtsAttachDayBars_` (script-5, end of `renderDeptTeamStrip_`) appends a
   `.dts-daybars` block to each tile that names its figure with
-  `data-dts-metric` (`rate` / `answered` / `qcalls` / `qabd` / `qavg`; the CSR
-  Transfer % tile has no per-day source and gets none). Buckets come from the
+  `data-dts-metric` (`rate` / `answered` / `qcalls` / `qabd` / `qavg` / `qmax`;
+  the CSR Transfer % tile has no per-day source and gets none). **P6 (owner
+  2026-11-13): the Longest wait card** (`qmax`) is the longest any caller
+  waited in the dept's OWN queues over the range, answered or not (QCD col I;
+  `qcd.range.longestWait`, a MAX across queues and days). Its bars read the
+  per-day tuple's 6th element and a week / month bar is its longest DAY
+  (`dtsSum_`'s `max`, never a sum); the vs-prior chip warns on a rise and
+  stays muted under `DTS_MAX_NOISE_SEC_` (15 s). The strip's grid follows its
+  card count (`data-cards`, styles.html): four keep the four-up row, five get
+  one row from 1360px, six sit as two rows of three -- so a new card never
+  wraps alone. Buckets come from the
   PURE `dtsDayBuckets_`: one per WORKDAY (weekends and `isCompanyHolidayIso_`
   dates get no bar; a quiet workday is an empty bar), one per Monday-start
   week past 31 workdays, one per calendar month past 130; count cards read
@@ -2590,7 +2608,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   repaint in `onData` (never the SWR pre-paint) and `onError` call
   `sideFrostDisarm_()`. While armed, Team Rings unfrosts only through
   `trpUnfrost_`, so its pre-paint cannot clear the frost early; Team Outbound
-  is also frosted while its own request is out (`obViewSync_`). A new side
+  is also frosted while its own request is out (`obViewSync_`). Queue Call
+  Data joined the list in P6 (it paints from the same summary). A new side
   panel that paints from the summary joins `SIDE_BUSY_PANELS_`. (d) **Every
   side panel folds to its header**: a `.side-collapse` button
   (`data-side-collapse="<panel id>"`, `aria-expanded`) in each

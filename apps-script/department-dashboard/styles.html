@@ -8017,6 +8017,16 @@
   .dept-team-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px; margin: 10px 0 14px; }
   .dept-team-strip[hidden] { display: none; }
+  /* P6: a fifth card (Longest wait) and CSR's sixth (Transfer %) used to
+     wrap alone onto a second row. With room for it the row holds five; six
+     sit as two rows of three; narrower windows keep the four-up wrap. */
+  @media (min-width: 1360px) {
+    .dept-team-strip[data-cards="5"] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .dept-team-strip[data-cards="5"] .dts-value--split { font-size: 19px; }
+  }
+  @media (min-width: 721px) {
+    .dept-team-strip[data-cards="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
   .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper-card);
     padding: 10px 12px; box-shadow: var(--shadow-1); }
   /* Round-16 (owner): non-hero tiles center their content both axes -- the

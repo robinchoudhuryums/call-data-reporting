@@ -1178,13 +1178,19 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       // Per-queue daily accumulator for multi-line chart.
       let qDay = bucket.daily[dateIso];
       if (!qDay) {
-        qDay = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+        qDay = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0, aaSum: 0, aaN: 0, lw: 0 };
         bucket.daily[dateIso] = qDay;
       }
       qDay.totalCalls    += totalCalls;
       qDay.totalAnswered += totalAnswered;
       qDay.abandoned     += abandoned;
       qDay.violations    += violations;
+      // P6: the day's answer times -- avg answered-weighted (RPT-8), the
+      // longest wait a MAX. Kept OFF the shipped daily rows (they ride the
+      // Insights payload per queue per day); they leave as the compact
+      // dailyAnswerTimes arrays below.
+      if (avgAnswerSec > 0 && totalAnswered > 0) { qDay.aaSum += avgAnswerSec * totalAnswered; qDay.aaN += totalAnswered; }
+      if (longestWaitSec > qDay.lw) qDay.lw = longestWaitSec;
       // F-15: the daily DATE AXIS covers every in-range row (own + sub
       // queues). It was previously derived from dailyAcc (own rows only),
       // so a date where ONLY a sub-queue had calls silently vanished from
@@ -1197,13 +1203,15 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       if (isOwn(callQueue)) {
         let dayBucket = dailyAcc[dateIso];
         if (!dayBucket) {
-          dayBucket = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+          dayBucket = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0, aaSum: 0, aaN: 0, lw: 0 };
           dailyAcc[dateIso] = dayBucket;
         }
         dayBucket.totalCalls    += totalCalls;
         dayBucket.totalAnswered += totalAnswered;
         dayBucket.abandoned     += abandoned;
         dayBucket.violations    += violations;
+        if (avgAnswerSec > 0 && totalAnswered > 0) { dayBucket.aaSum += avgAnswerSec * totalAnswered; dayBucket.aaN += totalAnswered; }   // P6
+        if (longestWaitSec > dayBucket.lw) dayBucket.lw = longestWaitSec;
       }
     }
     if (inTrendRange) {
@@ -1225,9 +1233,10 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       const monthKey = dateIso.slice(0, 7);
       let mb = bucket.monthly[monthKey];
       if (!mb) {
-        mb = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0, aaSum: 0, aaN: 0 };
+        mb = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0, aaSum: 0, aaN: 0, lw: 0 };
         bucket.monthly[monthKey] = mb;
       }
+      if (longestWaitSec > mb.lw) mb.lw = longestWaitSec;   // P6: the month's longest wait (a MAX)
       mb.totalCalls    += totalCalls;
       mb.totalAnswered += totalAnswered;
       mb.abandoned     += abandoned;
@@ -1343,7 +1352,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   // separate per-queue lines via trendData.perQueue).
   const trendQueues = separate ? queues.filter(isOwn) : queues;
   const trendSeries = monthKeys.map(function (m) {
-    let total = 0, ans = 0, abnd = 0, viol = 0;
+    let total = 0, ans = 0, abnd = 0, viol = 0, aaSum = 0, aaN = 0, lw = 0;
     trendQueues.forEach(function (q) {
       const b = queueAcc[q].monthly[m];
       if (!b) return;
@@ -1351,6 +1360,8 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       ans   += b.totalAnswered;
       abnd  += b.abandoned;
       viol  += b.violations;
+      aaSum += b.aaSum || 0; aaN += b.aaN || 0;
+      if ((b.lw || 0) > lw) lw = b.lw;
     });
     const pct = total > 0 ? (abnd / total) * 100 : 0;
     return {
@@ -1359,6 +1370,9 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       abandoned:     abnd,
       abandonedPct:  pct,
       violations:    viol,
+      // P6: the dept's own-queue answer times per month (0 = none that month).
+      avgAnswerSec:   aaN > 0 ? Math.round(aaSum / aaN) : 0,
+      longestWaitSec: lw,
     };
   });
 
@@ -1391,10 +1405,10 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     perQueue[q] = {
       monthly: monthKeys.map(function (m) {
         var b = acc.monthly[m];
-        if (!b) return { month: m, totalCalls: 0, totalAnswered: 0, abandoned: 0, abandonedPct: 0, violations: 0, avgAnswerSec: 0 };
+        if (!b) return { month: m, totalCalls: 0, totalAnswered: 0, abandoned: 0, abandonedPct: 0, violations: 0, avgAnswerSec: 0, longestWaitSec: 0 };
         var pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
         return { month: m, totalCalls: b.totalCalls, totalAnswered: b.totalAnswered, abandoned: b.abandoned, abandonedPct: pct, violations: b.violations,
-                 avgAnswerSec: b.aaN > 0 ? Math.round(b.aaSum / b.aaN) : 0 };
+                 avgAnswerSec: b.aaN > 0 ? Math.round(b.aaSum / b.aaN) : 0, longestWaitSec: b.lw || 0 };
       }),
       daily: allDailyDates.map(function (iso) {
         var d = acc.daily[iso];
@@ -1402,6 +1416,24 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
         var pct = d.totalCalls > 0 ? (d.abandoned / d.totalCalls) * 100 : 0;
         return { date: iso, totalCalls: d.totalCalls, totalAnswered: d.totalAnswered, abandoned: d.abandoned, abandonedPct: pct, violations: d.violations };
       }),
+    };
+  });
+
+  // P6: the per-day answer times, as COMPACT arrays aligned to dailySeries'
+  // dates (null = no answered call / no call that day) -- the dept's own
+  // queues as `total`, plus one pair per queue. Arrays, not fields on the
+  // daily rows: those rows ship per queue per day in the Insights payload.
+  const dailyAnswerTimes = { total: { avgAnswerSec: [], longestWaitSec: [] }, perQueue: {} };
+  allDailyDates.forEach(function (iso) {
+    const b = dailyAcc[iso];
+    dailyAnswerTimes.total.avgAnswerSec.push(b && b.aaN > 0 ? Math.round(b.aaSum / b.aaN) : null);
+    dailyAnswerTimes.total.longestWaitSec.push(b && b.lw > 0 ? b.lw : null);
+  });
+  queues.forEach(function (q) {
+    const acc = queueAcc[q];
+    dailyAnswerTimes.perQueue[q] = {
+      avgAnswerSec:   allDailyDates.map(function (iso) { const d = acc.daily[iso]; return d && d.aaN > 0 ? Math.round(d.aaSum / d.aaN) : null; }),
+      longestWaitSec: allDailyDates.map(function (iso) { const d = acc.daily[iso]; return d && d.lw > 0 ? d.lw : null; }),
     };
   });
 
@@ -1440,6 +1472,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       };
     }),
     dailySeries:     dailySeries,
+    dailyAnswerTimes: dailyAnswerTimes,   // P6
     perQueue:        perQueue,
   };
 }
@@ -1493,6 +1526,7 @@ function emptyQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
     trendData: { labels: [], series: [], perQueue: perQueueEmpty },
     ytdDailySeries: [],   // R18 (shape consistency)
     dailySeries: [],
+    dailyAnswerTimes: { total: { avgAnswerSec: [], longestWaitSec: [] }, perQueue: {} },   // P6 (shape consistency)
     perQueue: perQueueEmpty,
   };
 }

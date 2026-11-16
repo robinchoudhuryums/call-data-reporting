@@ -1227,9 +1227,11 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
+  // v27 (P6): qcd.range / rangePrior carry longestWait(Sec) and the per-day
+  // tuples a 6th element (that day's longest wait).
   // v26 (NUM-1 / NUM-7 / NUM-8): csrTransfer leaves out exception days; the
   // combined grand total drops two more kinds of crossover repeat.
-  const cacheKey = 'summary:v26:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v27:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
@@ -2289,7 +2291,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         const inPrior = pFrom && pTo && d3 >= pFrom && d3 <= pTo;
         if (!inRange && !inPrior) continue;
         const bump3 = function (map) {
-          const b3 = map[q3] || (map[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0 });
+          const b3 = map[q3] || (map[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0, lw: 0 });
           b3.total      += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
           b3.answered   += Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
           b3.abandoned  += Number(r3[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
@@ -2300,12 +2302,16 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
             const ansN = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
             const avgS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
             if (ansN > 0 && avgS > 0) { b3.avgWSum += avgS * ansN; b3.avgWN += ansN; }
+            // P6: the longest wait is a MAX, never a sum or a mean (col I --
+            // the longest any caller waited, answered or not).
+            const lwS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]);
+            if (lwS > b3.lw) b3.lw = lwS;
           }
         };
         if (inRange) bump3(byQueueRange);
         if (inPrior) bump3(byQueueRangePrior);
         if (inRange && !queueOwner[q3]) {
-          const dy = byDayRange[d3] || (byDayRange[d3] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0 });
+          const dy = byDayRange[d3] || (byDayRange[d3] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0, maxW: 0 });
           const ansD = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
           dy.total     += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
           dy.answered  += ansD;
@@ -2313,6 +2319,8 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
           if (displays && typeof parseHmsDisplay_ === 'function') {
             const avgD = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
             if (ansD > 0 && avgD > 0) { dy.avgWSum += avgD * ansD; dy.avgWN += ansD; }
+            const lwD = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]);   // P6
+            if (lwD > dy.maxW) dy.maxW = lwD;
           }
         }
       }
@@ -2334,7 +2342,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         if (!queueSet[q4] || queueOwner[q4]) continue;
         const d4 = rowDateIso_(r4[QCD_HISTORICAL_COLS.DATE - 1], tz);
         if (!d4 || d4 < rFrom || d4 > rTo || !excPred(d4, q4)) continue;
-        const dx = byDayExcl[d4] || (byDayExcl[d4] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0 });
+        const dx = byDayExcl[d4] || (byDayExcl[d4] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0, maxW: 0 });
         const ansX = Number(r4[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
         dx.total     += Number(r4[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
         dx.answered  += ansX;
@@ -2342,6 +2350,8 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         if (rd && typeof parseHmsDisplay_ === 'function') {
           const avgX = parseHmsDisplay_(rd[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
           if (ansX > 0 && avgX > 0) { dx.avgWSum += avgX * ansX; dx.avgWN += ansX; }
+          const lwX = parseHmsDisplay_(rd[k][QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]);   // P6
+          if (lwX > dx.maxW) dx.maxW = lwX;
         }
       }
     }
@@ -2371,6 +2381,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       // R10-5: answered-weighted avg-answer over the dept's OWN queues (only
       // the range pass populates avgWSum/avgWN; other blocks yield null).
       let ownAvgWSum = 0, ownAvgWN = 0;
+      let ownLongest = 0;   // P6: the longest wait on the dept's OWN queues (range passes only)
       let mainQueueCount = 0, subQueueCount = 0;
       const perQueue = queues.filter(function (q) { return !!byQueueMap[q]; })
         .map(function (q) {
@@ -2380,6 +2391,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
           acc.total += b.total; acc.answered += b.answered;
           acc.abandoned += b.abandoned; acc.violations += b.violations;
           if (!isSub && (b.avgWN || 0) > 0) { ownAvgWSum += b.avgWSum; ownAvgWN += b.avgWN; }
+          if (!isSub && (b.lw || 0) > ownLongest) ownLongest = b.lw;
           if (isSub) subQueueCount++; else mainQueueCount++;
           const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
           return {
@@ -2419,6 +2431,10 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         // tile renders only where the data exists.
         avgAnswerSec:     ownAvgWN > 0 ? Math.round(ownAvgWSum / ownAvgWN) : null,
         avgAnswer:        ownAvgWN > 0 ? formatSecondsHms_(Math.round(ownAvgWSum / ownAvgWN)) : null,
+        // P6: own-queues longest wait over the block (a MAX across queues and
+        // days); null on the blocks that do not read it, like avgAnswer.
+        longestWaitSec:   ownLongest > 0 ? ownLongest : null,
+        longestWait:      ownLongest > 0 ? formatSecondsHms_(ownLongest) : null,
       };
     };
 
@@ -2444,18 +2460,21 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), {
         from: rFrom, to: rTo,
         // Step 4: one COMPACT tuple per date with own-queue activity, oldest
-        // first -- [iso, totalCalls, totalAnswered, abandoned, avgAnswerSec]
-        // (avg answered-weighted like the block's own; null = none). Tuples,
+        // first -- [iso, totalCalls, totalAnswered, abandoned, avgAnswerSec,
+        // longestWaitSec] (avg answered-weighted like the block's own; the
+        // longest wait is that day's MAX across own queues, P6; null = none). Tuples,
         // not objects: a 2-year window is ~500 of them and this payload is
         // cached under CacheService's ~100 KB per-value cap.
         daily: Object.keys(byDayRange).sort().map(function (iso) {
           const dy = byDayRange[iso];
-          return [iso, dy.total, dy.answered, dy.abandoned, dy.avgWN > 0 ? Math.round(dy.avgWSum / dy.avgWN) : null];
+          return [iso, dy.total, dy.answered, dy.abandoned, dy.avgWN > 0 ? Math.round(dy.avgWSum / dy.avgWN) : null,
+                  dy.maxW > 0 ? dy.maxW : null];
         }),
         // #81: the same tuples for the excluded days (absent when none).
         dailyExcluded: Object.keys(byDayExcl).length ? Object.keys(byDayExcl).sort().map(function (iso) {
           const dx = byDayExcl[iso];
-          return [iso, dx.total, dx.answered, dx.abandoned, dx.avgWN > 0 ? Math.round(dx.avgWSum / dx.avgWN) : null];
+          return [iso, dx.total, dx.answered, dx.abandoned, dx.avgWN > 0 ? Math.round(dx.avgWSum / dx.avgWN) : null,
+                  dx.maxW > 0 ? dx.maxW : null];
         }) : undefined,
       }) : null,
       // R11-C1: the same block over the E5 prior window (null when no prior

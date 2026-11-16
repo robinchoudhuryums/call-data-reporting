@@ -1285,7 +1285,7 @@
   }
 
   var SIDE_BUSY_ = { page: false };
-  var SIDE_BUSY_PANELS_ = ['dept-team-rings', 'dept-team-outbound'];
+  var SIDE_BUSY_PANELS_ = ['dept-qcd-snapshot', 'dept-team-rings', 'dept-team-outbound'];
   function sideFrostArm_() {
     SIDE_BUSY_.page = true;
     SIDE_BUSY_PANELS_.forEach(function (id) {
@@ -3741,6 +3741,26 @@
         +   '<div class="dts-sub">' + (qAvgChip ? qAvgChip + ' vs prior' : 'time to answer') + '</div>'
         + '</div>';
     }
+    // P6 (owner 2026-11-13): Longest wait -- the longest any caller waited in
+    // the department's own queues this range, answered or not (QCD col I, a
+    // MAX across queues and days; qcd.range.longestWait). A longer wait
+    // warns, like Avg answer; the noise floor is wider because one call
+    // moves a maximum.
+    var qMaxTile = '';
+    if (qr && qr.longestWait) {
+      var qMaxChip = '';
+      var qrpM = state.qcd && state.qcd.rangePrior;
+      if (qrpM && qrpM.longestWaitSec != null && qr.longestWaitSec != null) {
+        qMaxChip = deptStripDelta_(qr.longestWaitSec - qrpM.longestWaitSec, 'bad', DTS_MAX_NOISE_SEC_, 's',
+          priorTip + ': ' + qrpM.longestWait);
+      }
+      qMaxTile =
+          '<div class="dts-tile dts-tile--queue" data-dts-metric="qmax" title="The longest any caller waited in the department&#39;s mapped queues this range, whether they were answered or hung up.">'
+        +   '<div class="dts-label">Longest wait <span class="dts-scope">queue</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:qmax">' + escapeHtml(qr.longestWait) + '</div>'
+        +   '<div class="dts-sub">' + (qMaxChip ? qMaxChip + ' vs prior' : 'one caller, at most') + '</div>'
+        + '</div>';
+    }
     // R10-5: Transfer % tile -- CSR only (server ships csrTransfer only for
     // CSR, from CSR Transfer Historical Data; weighted transferred/total).
     // R11-C1: + a delta chip vs the prior window (csrTransfer.prior). A
@@ -3767,7 +3787,11 @@
         + '</div>';
     }
 
-    strip.innerHTML = heroTile + ansTile + qAbdTile + qAvgTile + trTile;
+    strip.innerHTML = heroTile + ansTile + qAbdTile + qAvgTile + qMaxTile + trTile;
+    // P6: the grid fits its card count (styles.html) -- four cards keep the
+    // four-up row; five or six get their own layout instead of a lone card
+    // wrapping onto a second row.
+    strip.setAttribute('data-cards', String(strip.children.length));
     strip.style.display = '';
     if (zone) zone.style.display = '';
     // Round-16: the innerHTML replace above destroyed any active frost
@@ -3849,16 +3873,21 @@
     }
     return 'Week of ' + dtsShortDate_(b.from) + (b.n < 5 ? ' (' + b.n + ' workday' + (b.n === 1 ? '' : 's') + ')' : '');
   }
-  // One bucket's sums across its days.
+  // One bucket's sums across its days. `max` (P6) is the bucket's LONGEST
+  // wait -- a maximum across its days, never a sum; null when no day has one.
   function dtsSum_(b) {
-    var t = { ans: 0, miss: 0, q: 0, qans: 0, abd: 0, avgW: 0, avgN: 0 };
+    var t = { ans: 0, miss: 0, q: 0, qans: 0, abd: 0, avgW: 0, avgN: 0, max: null };
     b.days.forEach(function (d) {
       t.ans += d.ans || 0; t.miss += d.miss || 0; t.q += d.q || 0; t.qans += d.qans || 0;
       t.abd += d.abd || 0;
       if (d.avg != null && d.qans > 0) { t.avgW += d.avg * d.qans; t.avgN += d.qans; }
+      if (d.max != null && (t.max == null || d.max > t.max)) t.max = d.max;
     });
     return t;
   }
+  // P6: the Longest wait card's vs-prior chip stays muted under this many
+  // seconds -- a maximum moves on a single call.
+  var DTS_MAX_NOISE_SEC_ = 15;
   // Per card: the bar value (null = no bar height), its readout, its tint.
   var DTS_METRICS_ = {
     rate: { v: function (t) { return (t.ans + t.miss) ? t.ans / (t.ans + t.miss) * 100 : null; },
@@ -3883,6 +3912,10 @@
             t: function () { return ABANDON_STANDARD_; } },
     qavg: { v: function (t) { return t.avgN ? t.avgW / t.avgN : null; },
             f: function (t) { return t.avgN ? fmtDuration(t.avgW / t.avgN) + ' avg answer' : 'no answered queue calls'; },
+            cls: function () { return ''; } },
+    // P6: the longest wait of the day (or of the week / month the bar stands for).
+    qmax: { v: function (t) { return t.max; },
+            f: function (t, b) { return t.max != null ? fmtDuration(t.max) + ' longest wait' + (b && b.n > 1 ? ' in the period' : '') : 'no queue calls'; },
             cls: function () { return ''; } },
   };
 
@@ -3911,6 +3944,7 @@
       var x = get(d[0]);
       x.q = Number(d[1]) || 0; x.qans = Number(d[2]) || 0;
       x.abd = Number(d[3]) || 0; x.avg = (d[4] != null) ? Number(d[4]) : null;
+      x.max = (d[5] != null) ? Number(d[5]) : null;   // P6 (absent on a payload cached before it)
     });
     return map;
   }

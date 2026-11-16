@@ -685,10 +685,14 @@ async function openDept(page, meta) {
       await pl.click('#refresh-btn');
       await pl.waitForTimeout(500);
       const ringsMid = await frosted('dept-team-rings');
+      const qcdMid = await frosted('dept-qcd-snapshot');
       await pl.waitForTimeout(2600);
       const ringsDone = await frosted('dept-team-rings');
+      const qcdDone = await frosted('dept-qcd-snapshot');
       record('P4 follow-on: Team Rings frosts from the page request on a same-department Refresh, and clears when it lands',
         ringsMid && !ringsDone, JSON.stringify({ mid: ringsMid, done: ringsDone }));
+      record('P6: Queue Call Data frosts with it, and clears when the page lands',
+        qcdMid && !qcdDone, JSON.stringify({ mid: qcdMid, done: qcdDone }));
       // The Direct view of the table keeps its rows while a new range loads.
       await pl.evaluate(() => { window.__HARNESS__.delay = {}; });
       await pl.click('#dept-dir-switch [data-dir-pick="direct"]');

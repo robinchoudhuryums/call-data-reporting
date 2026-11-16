@@ -76,6 +76,27 @@
   // metric to plot -- 'abandonedPct' (default, the abandon-standard view) |
   // 'totalCalls' | 'violations'. Persisted in prefs.
   let insQueueMetric = 'abandonedPct';
+  // P6: the queue metrics the trend chart can plot. The two TIME metrics are
+  // seconds (null = none that day / month) and read m:ss on the axis.
+  const INS_QUEUE_METRICS_ = ['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'];
+  const INS_QUEUE_TIME_METRICS_ = ['avgAnswer', 'longestWait'];
+  // PURE. A y-axis step, in seconds, for a time metric: the smallest
+  // clock-friendly step that keeps the axis to eight ticks or fewer.
+  function insTimeAxisStep_(datasets) {
+    let max = 0;
+    (datasets || []).forEach(function (ds) {
+      (ds.data || []).forEach(function (v) { if (v != null && Number(v) > max) max = Number(v); });
+    });
+    const steps = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+    for (let i = 0; i < steps.length; i++) { if (max / steps[i] <= 8) return steps[i]; }
+    return 7200;
+  }
+  // Seconds as m:ss (h:mm:ss from an hour up).
+  function insSecsLabel_(v) {
+    const s = Math.max(0, Math.round(Number(v) || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (r < 10 ? '0' : '') + r;
+  }
   // Round-16 (sub-queue drill fix): Daily-breakdown scope state. '' renders
   // the dept-total dailySeries; a queue name renders that queue's OWN per-day
   // rows (qh.perQueue[i].daily), set when a violation-date chip is clicked so
@@ -789,7 +810,7 @@
         const v = trendSel.value || 'answered';
         if (v.indexOf('queues:') === 0) {
           insActiveTrendMetric = 'queues';
-          insQueueMetric = v.slice(7) || 'abandonedPct';
+          insQueueMetric = INS_QUEUE_METRICS_.indexOf(v.slice(7)) !== -1 ? v.slice(7) : 'abandonedPct';
         } else {
           insActiveTrendMetric = v;
         }
@@ -4083,7 +4104,7 @@
       return 'Calendar view is available for the count and rate metrics (Answered, % Answered, Missed, Call volume, Queue: Abandoned %).';
     }
     if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
-      return 'Calendar view is available for Queue: Abandoned % (the count queue metrics are line-only).';
+      return 'Calendar view is available for Queue: Abandoned % (the other queue metrics are line-only).';
     }
     // R18 (item 8): the span rules are GONE for the queue metric too -- it now
     // falls back to queueHealth.ytdDailySeries the way the team metrics fall
@@ -4203,7 +4224,8 @@
     const queueMetricWrap = $('ins-queue-metric-wrap');
     if (queueMetricWrap) queueMetricWrap.style.display = isQueues ? '' : 'none';
     const qMetricLabel = { abandonedPct: 'abandoned % by queue',
-      totalCalls: 'total calls by queue', violations: 'violations by queue' };
+      totalCalls: 'total calls by queue', violations: 'violations by queue',
+      avgAnswer: 'avg answer time by queue', longestWait: 'longest wait by queue' };
 
     // #4 + gap 1, MERGED (C-1): ONE header writer. These were two consecutive
     // writers to the same element -- the second unconditionally clobbered the
@@ -4245,13 +4267,14 @@
       canvas.style.display = '';
       const qMetric = insQueueMetric || 'abandonedPct';
       const isPct = (qMetric === 'abandonedPct');
+      const isTime = INS_QUEUE_TIME_METRICS_.indexOf(qMetric) !== -1;   // P6: seconds
       // Abandoned % reads the default/legacy series; the other metrics read
       // trend.metrics[qMetric] (server-side, gap 1).
       const mSrc = isPct ? qhTrend : ((qhTrend.metrics && qhTrend.metrics[qMetric]) || {});
       const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
       const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
       const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
-      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : fmtNumber(v); };
+      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); };
       const qNames = Object.keys(perQueue);
       // Round 4 (owner): this tab read visually different from the team tabs
       // (thin flat multi-lines vs their filled single curve). A SINGLE-queue
@@ -4284,7 +4307,9 @@
       // INV-29 months as the team trend; the guard skips the marking if the
       // two ever disagree in length rather than mark the wrong point.
       const teamMonths = (data.trendData && data.trendData.months) || [];
-      const qPart = insPartialChartBits_((!daily && !isPct && (labels || []).length === teamMonths.length)
+      // P6: an average and a maximum are not counts -- a partly covered month
+      // does not understate them, so the time metrics are never marked.
+      const qPart = insPartialChartBits_((!daily && !isPct && !isTime && (labels || []).length === teamMonths.length)
         ? insPartialForData_(data) : []);
       if (qPart.any) {
         datasets.forEach(function (ds) {
@@ -4358,7 +4383,10 @@
           scales: {
             x: { ticks: { maxRotation: 0, autoSkip: true,
               callback: function (v, i) { return qPart.tick(this.getLabelForValue(v), i); } } },
-            y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? (v + '%') : fmtNumber(v); } } },
+            y: { beginAtZero: true, ticks: Object.assign(
+              { callback: function (v) { return isPct ? (v + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); } },
+              // P6: a time axis steps in clock-friendly amounts (0:30, 1:00, 5:00...).
+              isTime ? { stepSize: insTimeAxisStep_(datasets) } : {}) },
           },
         },
       };
@@ -6040,7 +6068,7 @@
           insActiveTrendMetric = 'answered';
         }
       }
-      if (prefs.queueMetric === 'abandonedPct' || prefs.queueMetric === 'totalCalls' || prefs.queueMetric === 'violations') {
+      if (INS_QUEUE_METRICS_.indexOf(prefs.queueMetric) !== -1) {
         insQueueMetric = prefs.queueMetric;
       }
       // R11-C3: both restore onto the consolidated dropdown.

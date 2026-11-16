@@ -94,7 +94,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
-  it also checks the Queue calls and Abandoned % cards' vs-prior chips.
+  it also checks the Queue calls and Abandoned % cards' vs-prior chips, and since P6 the
+  Longest wait card (its figure is the tallest of its day figures) and the strip's
+  balanced rows for its card count.
 - `drive-dayqv.js` — the **day quick view** (QV-1, owner 2026-10-29;
   admin-only, released with the day bars): a click on a day bar opens THAT
   day; its cards equal the bars' own readouts beside the range figure; it

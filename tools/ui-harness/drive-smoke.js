@@ -1045,6 +1045,38 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
         qdrawn.shown && qdrawn.cells > 0
           && /year to date/i.test(qdrawn.note + ' ' + qdrawn.header),
         JSON.stringify(qdrawn));
+      // P6 (owner 2026-11-13): the two answer-time queue metrics -- seconds
+      // on a minutes:seconds axis, one line per queue, line-only.
+      await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Line');
+        if (btn) btn.click();
+      });
+      await page.waitForTimeout(600);
+      const timeMetric = async (value) => {
+        await page.selectOption('#ins-trend-metric', value);
+        await page.waitForTimeout(1200);
+        return page.evaluate(() => {
+          const c = document.getElementById('ins-trend-chart');
+          const ch = (c && window.Chart) ? Chart.getChart(c) : null;
+          const cal = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Calendar');
+          const vals = ch ? ch.data.datasets.reduce((a, d) => a.concat(d.data.filter((v) => v != null)), []) : [];
+          return { header: (document.getElementById('ins-trend-header') || {}).textContent || '',
+            drawn: !!ch && c.style.display !== 'none', sets: ch ? ch.data.datasets.length : 0,
+            hasValues: vals.length > 0, allSeconds: vals.every((v) => Number.isInteger(v) && v > 0),
+            ticks: ch ? ch.scales.y.ticks.map((t) => t.label) : [],
+            calendarOff: !cal || cal.disabled };
+        });
+      };
+      const lwT = await timeMetric('queues:longestWait');
+      record(role + ': P6 the trend chart plots Queue: Longest wait in minutes:seconds, line-only',
+        lwT.drawn && lwT.sets > 0 && lwT.hasValues && lwT.allSeconds && /longest wait by queue$/.test(lwT.header)
+          && lwT.ticks.length > 1 && lwT.ticks.every((t) => /^(\d+:)?\d+:\d\d$/.test(t)) && lwT.calendarOff,
+        JSON.stringify(lwT));
+      const aaT = await timeMetric('queues:avgAnswer');
+      record(role + ': P6 the trend chart plots Queue: Avg answer time the same way',
+        aaT.drawn && aaT.sets > 0 && aaT.hasValues && aaT.allSeconds && /avg answer time by queue$/.test(aaT.header)
+          && aaT.ticks.every((t) => /^(\d+:)?\d+:\d\d$/.test(t)),
+        JSON.stringify(aaT));
       await page.selectOption('#ins-trend-metric', 'answered');
       await page.waitForTimeout(900);
     }

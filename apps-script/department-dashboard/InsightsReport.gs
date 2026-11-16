@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v26';  // v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v27';  // v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -624,7 +624,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // which never matched roster anyway). queueOnlyAgentCount is therefore always
   // 0 here. Floaters remain available in IR/PR/CR (INV-53), same split as My
   // Department.
-  // IDLE-2 (owner 2026-10-20, insights:v26): on an agent-free run (the whole
+  // IDLE-2 (owner 2026-10-20, the insights v26 bump): on an agent-free run (the whole
   // dept, `opts.dropIdle`) an agent with no calls in the CURRENT window gets
   // no card -- an ex-employee kept on the roster, or (QUEUE_SPLIT_SCOPE=dept)
   // an agent on two rosters who worked only the other dept's queues. One
@@ -958,6 +958,18 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       const monthlyTotal = function (field) {
         return (td.series || []).map(function (b) { return round1_(b[field]); });
       };
+      const secsOrNull = function (v) { v = Number(v); return v > 0 ? Math.round(v) : null; };
+      const monthlySecs = function (field) {
+        return (td.series || []).map(function (b) { return secsOrNull(b[field]); });
+      };
+      const monthlySecsPerQueue = function (field) {
+        const out = {};
+        qList.forEach(function (q) {
+          const m = td.perQueue && td.perQueue[q] && td.perQueue[q].monthly;
+          if (m) out[q] = m.map(function (b) { return secsOrNull(b[field]); });
+        });
+        return out;
+      };
       trend = {
         labels: td.labels,
         // Abandoned % is the DEFAULT/legacy series (drives the forecast +
@@ -969,6 +981,12 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         metrics: {
           totalCalls: { total: monthlyTotal('totalCalls'), perQueue: monthlyPerQueue('totalCalls') },
           violations: { total: monthlyTotal('violations'), perQueue: monthlyPerQueue('violations') },
+          // P6 (owner 2026-11-13): the two answer-time metrics, in SECONDS,
+          // null where a month had none (a gap in the line, never a dip to
+          // zero). Avg answer is answered-weighted (RPT-8); the longest wait
+          // is a MAX -- the dept total is the max across its own queues.
+          avgAnswer:   { total: monthlySecs('avgAnswerSec'),   perQueue: monthlySecsPerQueue('avgAnswerSec') },
+          longestWait: { total: monthlySecs('longestWaitSec'), perQueue: monthlySecsPerQueue('longestWaitSec') },
         },
       };
       // Daily view -- selected range scoped. dailyTotal (abandoned %) also
@@ -993,6 +1011,23 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         trend.metrics.totalCalls.dailyPerQueue = dailyPerQueueOf('totalCalls');
         trend.metrics.violations.dailyTotal    = dailyTotalOf('violations');
         trend.metrics.violations.dailyPerQueue = dailyPerQueueOf('violations');
+        // P6: the daily answer times arrive as compact arrays on the same
+        // date axis (QCDReport's dailyAnswerTimes); an older shape has none.
+        const dat = cur.dailyAnswerTimes;
+        if (dat && dat.total && (dat.total.avgAnswerSec || []).length === daily.length) {
+          const dailyAtPerQueue = function (field) {
+            const out = {};
+            qList.forEach(function (q) {
+              const a = dat.perQueue && dat.perQueue[q] && dat.perQueue[q][field];
+              if (a) out[q] = a;
+            });
+            return out;
+          };
+          trend.metrics.avgAnswer.dailyTotal      = dat.total.avgAnswerSec;
+          trend.metrics.avgAnswer.dailyPerQueue   = dailyAtPerQueue('avgAnswerSec');
+          trend.metrics.longestWait.dailyTotal    = dat.total.longestWaitSec;
+          trend.metrics.longestWait.dailyPerQueue = dailyAtPerQueue('longestWaitSec');
+        }
       }
 
     }
