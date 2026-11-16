@@ -397,7 +397,14 @@ function getPartialDaySuggestions(req) {
   start.setUTCDate(start.getUTCDate() - (PARTIAL_SUGGEST_DAYS_ - 1));
   const to = end.toISOString().slice(0, 10), from = start.toISOString().slice(0, 10);
   const base = { department: dept, from: from, to: to, suggestions: [], truncated: false, judged: 0, notJudged: [] };
+  // P9 follow-on: how long the database read took rides in the payload (and
+  // the log), so whether the read needs narrowing is a measured question --
+  // it expands every inbound journey in the look-back, and its cost on the
+  // production database was not known when it shipped.
+  const t0 = Date.now();
   const read = pdFetchAgentDaySpans_(names, from, to);
+  base.readMs = Date.now() - t0;
+  try { Logger.log('[partial-days] suggestion read for %s: %s ms, %s agent-day row(s), ok=%s', dept, base.readMs, read.rows.length, read.ok); } catch (eL) {}
   if (!read.ok) return Object.assign(base, { available: false, reason: read.reason });
   const workdayMemo = {};
   const res = partialDaySuggestionsFrom_(read.rows.map(function (r) {

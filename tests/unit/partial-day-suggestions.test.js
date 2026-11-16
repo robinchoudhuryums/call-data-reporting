@@ -247,6 +247,7 @@ test('the read merges an agent-day across the sources: earliest first call, late
   const f = new Date(y.getTime()); f.setUTCDate(f.getUTCDate() - (h.consts.PARTIAL_SUGGEST_DAYS_ - 1));
   assert.equal(out.to, isoOf(y));
   assert.equal(out.from, isoOf(f));
+  assert.ok(typeof out.readMs === 'number' && out.readMs >= 0, 'how long the read took rides in the payload');
   assert.equal(seen.sql.length, 2, 'one statement for inbound + outbound, one for direct calls');
   assert.deepEqual(seen.egress.map(function (e) { return e[1]; }), ['partialSuggest', 'partialSuggest'], 'both reads are metered');
 });
@@ -281,6 +282,7 @@ test('the database unreachable or failing: "not available" with a reason, never 
   let out = J(h.call('getPartialDaySuggestions', { department: 'Alpha' }));
   assert.equal(out.available, false);
   assert.match(out.reason, /could not be reached/);
+  assert.ok(typeof out.readMs === 'number', 'a failed read is timed too');
   assert.deepEqual(out.suggestions, []);
   h.ctx.getDashboardNeonConn_ = function () { return { prepareStatement: function () { throw new Error('boom'); }, close: function () {} }; };
   out = J(h.call('getPartialDaySuggestions', { department: 'Alpha' }));
@@ -393,6 +395,13 @@ test('client: a suggestion disappears once its day has a row; the summary says w
     '2 days to look at · 2026-08-18 to 2026-11-15 · 4 agents checked · 1 not checked (too few days, or a usual day too short to judge): Robin');
   assert.equal(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 1, notJudged: [] }, 0), 'Nothing stands out · a to b · 1 agent checked');
   assert.match(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 9, notJudged: [], truncated: true }, 200), /showing the newest 200$/);
+  // Nothing shown is two different facts: nothing was found, or everything found has been dealt with.
+  assert.match(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 4, notJudged: [], suggestions: [{}, {}] }, 0), /^Nothing left to look at · /);
+  assert.match(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 4, notJudged: [], suggestions: [] }, 0), /^Nothing stands out · /);
+  // The read's own duration, so "is it slow?" has a number.
+  assert.match(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 4, notJudged: [], readMs: 12400 }, 1), / · read in 12 s$/);
+  assert.match(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 4, notJudged: [], readMs: 300 }, 1), / · read in under a second$/);
+  assert.ok(!/read in/.test(ctx.pdSuggestSummary_({ from: 'a', to: 'b', judged: 4, notJudged: [] }, 1)), 'no duration, no claim');
   // "Use" fills the form and saves nothing; only Save and Whole day call the server.
   const use = grab('pdSuggestUse_');
   assert.ok(!/google\.script\.run/.test(use), 'Use never calls the server');

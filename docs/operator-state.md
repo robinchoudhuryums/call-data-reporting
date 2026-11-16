@@ -4340,8 +4340,12 @@ When something looks wrong, before assuming a code bug, check:
     (a manager, a part-timer). Never suggested: a weekend, a company
     holiday, an exception day, or a day that already has a row. Things to
     know: (1) it needs Neon -- when the call-level tables cannot be reached
-    the editor says so and suggests nothing (the sheet copies are not
-    used); (2) a dismissal is stored in the same sheet as a row with Credit
+    the editor says so and suggests nothing. The sheet copies are NOT used,
+    on purpose: on the `Inbound Calls` tab the agent names exist only inside
+    the heavy call-path column (tens of megabytes for 90 days), and what
+    could be read cheaply -- outbound calls and the first agent rung -- sees
+    only a slice of each day, which would suggest partial days that were
+    not; (2) a dismissal is stored in the same sheet as a row with Credit
     1 and the reason "Reviewed: whole day" -- it is NOT a mark, changes no
     figure, and is listed apart under "Reviewed as whole days", where Remove
     lets the day be suggested again; do not hand-edit its credit unless you
@@ -4350,7 +4354,12 @@ When something looks wrong, before assuming a code bug, check:
     and an agent on a long off-phone task mid-day is not caught; (4) times
     are shown in Central; (5) the read is aggregated in the database (one
     row per agent-day comes back, never a call) and counted on the Health
-    page's Neon read gauge as `partialSuggest`. Pinned by
+    page's Neon read gauge as `partialSuggest`; (6) the line under the list
+    ends with how long the read took ("read in 12 s"; also in the execution
+    log) -- it expands every inbound call path in the look-back and stops at
+    a 90-second limit, so if that figure is large, or Find fails on the
+    biggest department, that is the number to bring back: the read can be
+    narrowed, but not without knowing which part is slow. Pinned by
     `partial-day-suggestions.test.js`; rendered in `drive-admin.js`.
     **The Individual Report and Insights (P8, 2026-11-16).** Every place
     those two compare an agent's call VOLUME with the team now compares per

@@ -4140,7 +4140,11 @@
   /** PURE. The line under the list: how many agents were judged and who could not be. */
   function pdSuggestSummary_(res, shown) {
     if (!res) return '';
-    const parts = [shown ? shown + ' day' + (shown === 1 ? '' : 's') + ' to look at' : 'Nothing stands out'];
+    // Nothing shown is two different facts: the read found nothing, or every
+    // day it found has since been marked or reviewed.
+    const found = (res.suggestions || []).length;
+    const parts = [shown ? shown + ' day' + (shown === 1 ? '' : 's') + ' to look at'
+                         : (found ? 'Nothing left to look at' : 'Nothing stands out')];
     parts.push(res.from + ' to ' + res.to);
     parts.push((Number(res.judged) || 0) + ' agent' + (Number(res.judged) === 1 ? '' : 's') + ' checked');
     const skip = res.notJudged || [];
@@ -4149,6 +4153,11 @@
         + skip.slice(0, 6).join(', ') + (skip.length > 6 ? ', …' : ''));
     }
     if (res.truncated) parts.push('showing the newest ' + shown);
+    // How long the database read took -- the figure to quote if it feels slow.
+    if (res.readMs != null) {
+      const sec = Math.round(Number(res.readMs) / 1000);
+      parts.push(sec < 1 ? 'read in under a second' : 'read in ' + sec + ' s');
+    }
     return parts.join(' · ');
   }
   function pdSuggestRender_() {
@@ -4160,13 +4169,16 @@
     table.style.display = open.length ? '' : 'none';
     body.innerHTML = open.map(function (s) {
       const who = escapeHtml(s.agent) + ' on ' + escapeHtml(s.date);
-      return '<tr>'
-        + '<td>' + escapeHtml(excDateLabel_(s.date)) + ' <span class="al-hint">' + escapeHtml(s.date) + '</span></td>'
-        + '<td>' + escapeHtml(s.agent) + '</td>'
-        + '<td>' + escapeHtml(s.first + ' – ' + s.last) + ' <span class="al-hint">' + escapeHtml(Number(s.hours).toFixed(1)) + ' h</span></td>'
+      // The date is the weekday form only, on one line (the full date is the
+      // cell's title and the row's data-pd-date): with seven columns the
+      // "Wed Nov 11 2026-11-11" form wrapped onto three lines.
+      return '<tr data-pd-date="' + escapeHtml(s.date) + '" data-pd-agent="' + escapeHtml(s.agent) + '">'
+        + '<td class="pd-nowrap" title="' + escapeHtml(s.date) + '">' + escapeHtml(excDateLabel_(s.date)) + '</td>'
+        + '<td class="pd-nowrap">' + escapeHtml(s.agent) + '</td>'
+        + '<td class="pd-nowrap">' + escapeHtml(s.first + ' – ' + s.last) + ' <span class="al-hint">' + escapeHtml(Number(s.hours).toFixed(1)) + ' h</span></td>'
         + '<td>' + escapeHtml(Number(s.usualHours).toFixed(1)) + ' h</td>'
-        + '<td>' + escapeHtml(String(s.calls)) + ' <span class="al-hint">usually ' + escapeHtml(String(s.usualCalls)) + '</span></td>'
-        + '<td>' + escapeHtml(pdCreditLabel_(s.credit)) + '</td>'
+        + '<td class="pd-nowrap">' + escapeHtml(String(s.calls)) + ' <span class="al-hint">usually ' + escapeHtml(String(s.usualCalls)) + '</span></td>'
+        + '<td class="pd-nowrap">' + escapeHtml(pdCreditLabel_(s.credit)) + '</td>'
         + '<td class="pd-suggest-acts">'
         +   '<button type="button" class="link-btn" data-pd-s="use" data-pd-date="' + escapeHtml(s.date) + '" data-pd-agent="' + escapeHtml(s.agent)
         +     '" data-pd-credit="' + escapeHtml(String(s.credit)) + '" aria-label="Use: put ' + who + ' in the form">Use</button>'

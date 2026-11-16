@@ -343,7 +343,10 @@ const MODALS = [
 
       // P9: suggestions -- the REAL getPartialDaySuggestions payload for CSR.
       const sug = require('./payloads/partial-suggest.json');
-      const sRows = () => page.evaluate(() => Array.from(document.querySelectorAll('#pd-suggest-tbody tr')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+      // Each row as "<date> <text>": the cell shows the weekday form only, the
+      // full date is the row's data-pd-date.
+      const sRows = () => page.evaluate(() => Array.from(document.querySelectorAll('#pd-suggest-tbody tr')).map((r) =>
+        (r.getAttribute('data-pd-date') || '') + ' ' + r.textContent.replace(/\s+/g, ' ').trim()));
       const sState = () => page.evaluate(() => ({
         status: (function (el) { return el && el.style.display !== 'none' ? el.textContent : ''; })(document.getElementById('pd-suggest-status')),
         table: getComputedStyle(document.getElementById('pd-suggest-table')).display !== 'none',
@@ -368,7 +371,29 @@ const MODALS = [
       record('P9: a marked day, a reviewed day and an exception day are not suggested, and the status says who could not be judged',
         !sr.some((t) => t.indexOf(meta.pdDates[0]) !== -1 && /Ben Ortiz/.test(t)) && !sr.some((t) => /Dev Patel/.test(t))
           && !sr.some((t) => t.indexOf(meta.excDate) !== -1)
-          && /2 days to look at/.test(s1.status) && /4 agents checked/.test(s1.status) && /1 not checked[^:]*: Robin Choudhury/.test(s1.status), s1.status);
+          && /2 days to look at/.test(s1.status) && /4 agents checked/.test(s1.status) && /1 not checked[^:]*: Robin Choudhury/.test(s1.status)
+          && /read in (under a second|\d+ s)$/.test(s1.status), s1.status);
+      // Follow-on: every cell on one line (the date wrapped onto three), and at
+      // phone width the table scrolls inside its own box, never the dialog.
+      const lay = await page.evaluate(() => {
+        const rowsEl = Array.from(document.querySelectorAll('#pd-suggest-tbody tr'));
+        const first = rowsEl[0] && rowsEl[0].cells[0];
+        const lh = first ? parseFloat(getComputedStyle(first).lineHeight) || 20 : 20;
+        return { dateText: first ? first.textContent.trim() : '', title: first ? first.getAttribute('title') : '',
+          oneLine: rowsEl.every((r) => Array.from(r.cells).slice(0, 6).every((c) => c.getBoundingClientRect().height < lh * 2.4 + 24)) };
+      });
+      record('P9 follow-on: a suggestion row keeps each cell on one line; the cell shows the weekday form with the full date as its title',
+        lay.oneLine && /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}$/.test(lay.dateText) && lay.title === meta.pdSuggest.carla, JSON.stringify(lay));
+      await page.setViewportSize({ width: 390, height: 800 }); await page.waitForTimeout(300);
+      const narrow = await page.evaluate(() => {
+        const panel = document.querySelector('#partial-days-modal .modal-panel'), body = document.querySelector('#partial-days-modal .modal-panel-body');
+        const box = document.getElementById('pd-suggest-table');   // its own scroller at this width (F81)
+        return { panelOver: panel.scrollWidth - panel.clientWidth, bodyOver: body ? body.scrollWidth - body.clientWidth : 0,
+          boxScrolls: box.scrollWidth > box.clientWidth, vw: window.innerWidth };
+      });
+      await page.setViewportSize({ width: 1440, height: 1000 }); await page.waitForTimeout(300);
+      record('P9 follow-on: at 390 px the one-line suggestions table is its own sideways scroller and the dialog does not scroll sideways',
+        narrow.boxScrolls && narrow.panelOver <= 1 && narrow.bodyOver <= 1, JSON.stringify(narrow));
       // Use: the form is filled; NOTHING is saved until the admin presses Save.
       await page.click('#pd-suggest-tbody button[data-pd-s="use"][data-pd-agent="Carla Diaz"]'); await page.waitForTimeout(300);
       const used = await page.evaluate(() => ({ date: document.getElementById('pd-date').value, agent: document.getElementById('pd-agent').value,
@@ -394,7 +419,7 @@ const MODALS = [
       const s3 = await sState();
       record('P9: saving the suggested day marks it (the admin\'s own reason) and takes it off the suggestions',
         sv.length === 1 && sv[0].date === meta.pdSuggest.carla && sv[0].agent === 'Carla Diaz' && sv[0].credit === 0.5 && sv[0].reason === 'Leave'
-          && sr3.length === 0 && !s3.table && s3.marks === 3 && /Nothing stands out/.test(s3.status), JSON.stringify({ sv: sv, rows: sr3, s: s3 }));
+          && sr3.length === 0 && !s3.table && s3.marks === 3 && /^Nothing left to look at/.test(s3.status), JSON.stringify({ sv: sv, rows: sr3, s: s3 }));
       // A reviewed day can be put back: Remove asks first, without the danger tone (no figure changes).
       await page.evaluate(() => { document.getElementById('pd-reviewed').open = true; });
       await page.click('#pd-reviewed-tbody button[data-pd-remove="' + meta.pdSuggest.anna + '"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(300);

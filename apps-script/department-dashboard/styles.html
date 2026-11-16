@@ -7600,6 +7600,10 @@
   .pd-sub { margin: 22px 0 6px; font: 600 14px/1.3 var(--sans, inherit); }
   .pd-suggest-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
   .pd-suggest-acts { white-space: nowrap; }
+  /* Seven columns in a modal: each cell stays on one line. On a narrow screen
+     the table is already its own sideways scroller (the F81 rule for
+     .modal-panel-body table.al-config-table), so the dialog never is. */
+  #pd-suggest-table .pd-nowrap { white-space: nowrap; }
   .pd-suggest-acts .link-btn + .link-btn { margin-left: 10px; }
   .pd-reviewed { margin-top: 12px; }
   .pd-reviewed > summary { cursor: pointer; font: 500 12px/1.4 var(--mono); color: var(--muted); }

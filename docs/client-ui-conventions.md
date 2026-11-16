@@ -3343,7 +3343,13 @@ to SAY so beside the figure, never to recompute it.
   with no second request. Removing a REVIEW goes through `dsConfirm_`
   without the danger tone (no figure changes); removing a mark keeps it.
   The status line under the list (`pdSuggestSummary_`) names the agents who
-  could not be judged -- a silent omission would read as "nothing to flag".
+  could not be judged -- a silent omission would read as "nothing to flag" --
+  says "Nothing left to look at" (every day found has been dealt with) apart
+  from "Nothing stands out" (none was found), and ends with how long the
+  read took (`readMs`). Each row is one line: the date cell shows the
+  weekday form with the full date as its `title` and the row's
+  `data-pd-date`; on a phone the table is its own sideways scroller (the
+  F81 rule for modal tables), so the dialog never scrolls sideways.
 - **Not yet:** the CSV, which still exports the per-day figure without the
   line.
 - **The Individual Report and Insights (P8).** Every agent-vs-team VOLUME
