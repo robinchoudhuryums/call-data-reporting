@@ -4197,6 +4197,40 @@ When something looks wrong, before assuming a code bug, check:
     prints every time in Central (`trWhen_` -> `clCstTime_`, the journey
     drill's shift); the stored values and the editor-run diagnostic's log
     stay Pacific.
+    **P10 (2026-11-16, owner plan 2026-11-13): WAS THE PERSON FREE?** "Not
+    answered first" gains a **Free or on a call** column for the first
+    attempt, and the ranking counts "While free" and "While on a call" apart.
+    A person-transfer attempt is its own internal call, so the per-call direct
+    list (`direct_calls`, #90) already holds it as an inbound internal direct
+    call to the person tried, with `missed_free` / `missed_busy` and who the
+    blocking call was with (`busy_with`). The journey event carries NO call id
+    for it, so the two are matched on **date + person + time** (the attempt's
+    time inside the record's ring, give or take `TR_AVAIL_SLACK_SECS_` = 3 s),
+    and never against a record that names a different caller than the sender
+    (`trAvailMatch_`). A row shows Free / On a call ONLY on a confident match;
+    everything else reads "Not known" with the reason on hover, and the line
+    under the summary counts each: no direct-call records for that date (the
+    per-call list starts at AC-6 and holds ~14 days before it, #90 -- older
+    retries are never known), no record found, more than one fits, or the
+    record disagrees (it says answered). "On a call" is the direct list's own
+    rule: on another call at EVERY ring (CAP-4), busy from answer (S2C-5) to
+    5 s after it ends (the wrap-up tail).
+    **The match rate was NOT measured before this shipped** (it needs
+    production data): after the deploy run **`probeTransferRetryAvailability()`**
+    (dashboard editor, admin, read-only, last 30 days, all departments) and
+    read the VERDICT -- GOOD (90%+ of first attempts on covered dates
+    matched), PARTIAL, POOR, or INCONCLUSIVE (under 20 such attempts). It
+    logs the time offsets of the matches, how many named the sender, call-id
+    samples of each not-matched kind, and what a 30 s allowance would add --
+    the evidence for retuning the 3 s line or the name rule. On PARTIAL /
+    POOR treat the column as a sample, not a count, and send the log back.
+    One extra metered read per run (`transfer-retries`, a few KB: only the
+    cases' own date + person pairs); a failed read costs the column, never
+    the list. Employee names only -- no hash, extension or number is
+    selected. Dashboard-only: `trRetriesOfJourney_` is untouched, so the
+    cdr-import parity stands and `diagnoseTransferRetries` prints no
+    availability. No property, trigger or migration. Pinned by
+    `transfer-retries.test.js` and `drive-admin.js`.
 90. **The per-call DIRECT list -- `direct_calls` and the agent panel's Direct
     tab (AC-6, cdr-import + dashboard, owner 2026-11-04).** Every call to or
     from a person's own line (the queues left out): colleagues by roster name,

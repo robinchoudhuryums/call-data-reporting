@@ -1012,7 +1012,12 @@ in the response.
 > (its own best-effort read; never the hash) and `agentDayDirect_` serves it
 > to admins as the agent panel's Direct tab, falling back -- before the
 > capture's first date -- to the outside callers in `inbound_calls` (no entry
-> queue, `first_agent` = the agent).
+> queue, `first_agent` = the agent). **A second reader (P10):** Transfer
+> retries (`trFetchDirectFor_`) reads the inbound internal rows of the people
+> tried first to say whether each was free or on a call -- matched on date +
+> person + time, because a journey's person-transfer event carries no call id
+> (Operator State #89). A change to `call_start`'s clock, to `ring_sec`, to
+> the `missed_free` / `missed_busy` rule or to `other_name` moves that match.
 
 **Direct-extension call metrics are a separate population from the
 DQE/QCD queue metrics, with a "busy" carve-out.** `cdr-import/directCallMetrics.js`

@@ -3239,6 +3239,16 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   own shift (owner 2026-11-13 -- it printed them as stored). A new time
   print in this modal goes through `trWhen_`; `transfer-retries.test.js`
   fails on one that does not. Pinned by `drive-admin.js`.
+  **Free or on a call (P10).** A retry's `first.avail` is `{ state, with? }`
+  -- `free`, `busy`, or a reason it is not known (`noDay` / `noRow` /
+  `ambiguous` / `conflict`); `trAvailHtml_` prints Free, "On a call" (the
+  light-yellow busy colour, `.tr-avail--busy`) with whom, or a visible "Not
+  known" whose `title` is the reason (`TR_AVAIL_WHY_`). The column and the
+  ranking's "While free" / "While on a call" are `.tr-avail-col`, shown only
+  while `#tr-view-missed` carries `.tr-has-avail` (at least one attempt
+  known), so a window with nothing known looks as it did; `#tr-avail-note`
+  (`trAvailNote_`) states the match rate and why the rest are not known.
+  Never guess a state on the client: no `avail`, no cell text.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 

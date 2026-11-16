@@ -3761,6 +3761,38 @@
     return '<span class="tr-out' + cls + '">' + escapeHtml(txt) + '</span>'
       + (x.outcome !== 'answered' && x.secs != null ? ' <span class="al-hint">' + escapeHtml(String(x.secs)) + ' s</span>' : '');
   }
+  // P10: was the person tried first free, or on another call? Shown only on a
+  // confident match to their direct-call record; otherwise "Not known", with why on hover.
+  var TR_AVAIL_WHY_ = { noDay: 'No direct-call records are held for this date',
+                        noRow: 'No direct-call record was found for this ring',
+                        ambiguous: 'More than one direct-call record fits this ring',
+                        conflict: 'The direct-call record says this call was answered' };
+  function trAvailHtml_(x) {
+    const a = x && x.avail;
+    if (!a) return '';
+    if (a.state === 'free') return '<span class="tr-avail tr-avail--free">Free</span>';
+    if (a.state === 'busy') {
+      const w = a.with;
+      const sub = !w || w === 'another call' ? 'on another call' : (w === 'a queue call' ? 'on a queue call' : 'with ' + w);
+      return '<span class="tr-avail tr-avail--busy">On a call</span> <div class="al-hint tr-avail-with">' + escapeHtml(sub) + '</div>';
+    }
+    return '<span class="al-hint tr-avail-unknown" title="' + escapeHtml(TR_AVAIL_WHY_[a.state] || 'Not known') + '">Not known</span>';
+  }
+  function trAvailNote_(av, n) {
+    if (!av || !n) return '';
+    if (av.unavailable) return 'Free or on a call could not be read just now; the list itself is complete.';
+    const known = Number(av.known) || 0;
+    const why = [];
+    if (av.noDay) why.push(fmtNumber(av.noDay) + ' on dates with no direct-call records');
+    if (av.noRow) why.push(fmtNumber(av.noRow) + ' with no record found');
+    if (av.ambiguous) why.push(fmtNumber(av.ambiguous) + ' where more than one record fits');
+    if (av.conflict) why.push(fmtNumber(av.conflict) + ' where the record disagrees');
+    const rest = (Number(av.attempts) || 0) - known;
+    if (!known) return 'Free or on a call is not known for these calls' + (why.length ? ' (' + why.join(', ') + ')' : '') + '.';
+    return 'Free or on a call is known for ' + fmtNumber(known) + ' of ' + fmtNumber(av.attempts) + ' first attempts: '
+      + fmtNumber(av.free || 0) + ' free, ' + fmtNumber(av.busy || 0) + ' on a call.'
+      + (rest > 0 ? ' Not known for ' + fmtNumber(rest) + (why.length ? ' (' + why.join(', ') + ')' : '') + '.' : '');
+  }
   function trRender_(d) {
     const m = d.meta || {};
     const res = $('tr-results');
@@ -3782,12 +3814,21 @@
         + escapeHtml(fmtNumber(bo.quickDecline || 0)) + ' declined quickly, ' + escapeHtml(fmtNumber(bo.rangOut || 0)) + ' rang out, '
         + escapeHtml(fmtNumber(bo.voicemail || 0)) + ' went to voicemail' + (bo.unknown ? ', ' + escapeHtml(fmtNumber(bo.unknown)) + ' not timed' : '') + '.'
       : 'No transfer was tried again in the same department in these dates' + deptNote + '.';
+    // P10: the availability columns show only when at least one attempt is known.
+    const av = sum.avail || null;
+    const hasAvail = !!(n && av && Number(av.known) > 0);
+    const mv = $('tr-view-missed');
+    if (mv) mv.classList.toggle('tr-has-avail', hasAvail);
+    const an = $('tr-avail-note');
+    if (an) { const at = trAvailNote_(av, n); an.textContent = at; an.style.display = at ? '' : 'none'; }
     const callees = sum.callees || [];
     const cw = document.querySelector('#transfer-retries-modal .tr-callees-wrap');
     if (cw) cw.style.display = callees.length ? '' : 'none';
     $('tr-callees').innerHTML = callees.map(function (c) {
       return '<tr><td>' + escapeHtml(c.name) + '</td><td>' + escapeHtml(c.dept) + '</td><td class="num">' + escapeHtml(fmtNumber(c.n))
-        + '</td><td class="num">' + escapeHtml(fmtNumber(c.quickDecline || 0)) + '</td></tr>';
+        + '</td><td class="num">' + escapeHtml(fmtNumber(c.quickDecline || 0)) + '</td>'
+        + '<td class="num tr-avail-col">' + escapeHtml(fmtNumber(c.free || 0)) + '</td>'
+        + '<td class="num tr-avail-col">' + escapeHtml(fmtNumber(c.busy || 0)) + '</td></tr>';
     }).join('');
     const pairs = sum.pairs || [];
     $('tr-pairs').textContent = pairs.length ? 'By department (sent by → tried): ' + pairs.map(function (p) { return p.pair + ' ' + p.n; }).join(' · ') : '';
@@ -3801,6 +3842,7 @@
         + '<td>' + trSenderHtml_(c) + '</td>'
         + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span></td>'
         + '<td>' + trOutcomeHtml_(c.first) + '</td>'
+        + '<td class="tr-avail-col">' + trAvailHtml_(c.first) + '</td>'
         + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '') + '</td>'
         + '<td>' + trOutcomeHtml_(c.second) + '</td>'
         + '<td class="num">' + (c.gapSecs != null ? escapeHtml(String(c.gapSecs)) + ' s' : '–') + '</td></tr>';

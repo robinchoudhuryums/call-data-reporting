@@ -63,6 +63,17 @@ const TR_ROWS = [
     { t: '15:01:00', name: 'Elena Park', kind: 'answer', talk: 20, transfer: true, consult: true },
     trAt('15:02:00', 'Frank Wu', { secs: 22 })]) },
 ];
+// P10: the direct-call records two of the three retried first attempts match
+// (Elena Park free when she declined Anna; on a call with Frank Wu when Ben's
+// rang out). The third call's date holds no direct-call record at all.
+const TR_DIRECT = {
+  rows: [
+    { date: ago(1), agent: 'Elena Park', start: '10:02:00', ring: 3, outcome: 'missed_free', other: 'Anna Reyes', busyWith: null },
+    { date: ago(1), agent: 'Elena Park', start: '11:40:00', ring: 9, outcome: 'answered', other: 'Frank Wu', busyWith: null },
+    { date: ago(2), agent: 'Elena Park', start: '14:01:00', ring: 25, outcome: 'missed_busy', other: 'Ben Ortiz', busyWith: 'Frank Wu' },
+  ],
+  days: [ago(1), ago(2)],
+};
 function mkRs(obj){ let used=false; return { next(){ if(used) return false; used=true; return true; },
   getString(k){ return (obj[k]==null)?null:String(obj[k]); }, getInt(k){ return Number(obj[k])||0; }, close(){} }; }
 function fakeNeonConn() {
@@ -75,6 +86,8 @@ function fakeNeonConn() {
       if (/^SELECT COALESCE\(json_agg\(t ORDER BY t\.occurred_at/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
       if (/escalation_activity/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ACTIVITY) });
       if (/FROM \(/.test(sql) && /escalations/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
+      // P10: the direct-call records behind "free / on a call".
+      if (/FROM direct_calls d JOIN/.test(sql)) return mkRs({ j: JSON.stringify(TR_DIRECT) });
       // TR-1: the transfer-retries read (journeys prefiltered in SQL).
       if (/journey LIKE/.test(sql) && /inbound_calls/.test(sql)) return mkRs({ j: JSON.stringify(TR_ROWS) });
       if (/FILTER/.test(sql) && /escalations/.test(sql)) return mkRs({

@@ -2773,7 +2773,8 @@
           voicemail (someone sent it there); a ring that ran out to voicemail stays voicemail. The list to check
           for transfers turned away that should not have been. <strong>Answered, then redirected</strong> lists the
           other shape: the first person tried <em>answered</em> and talked, and the call then went to a colleague of
-          theirs anyway. Times are Central.</p>
+          theirs anyway. Where the first person's own direct-call record for that ring is found, <strong>Not answered
+          first</strong> also says whether they were free or on another call then. Times are Central.</p>
         <div class="ir-form-grid tr-form">
           <div class="ir-col">
             <label for="tr-from">From</label>
@@ -2831,11 +2832,13 @@
           </div>
           <div id="tr-view-missed" style="display:none;">
           <p id="tr-summary" class="tr-summary"></p>
+          <!-- P10: how many first attempts are known free / on a call, and why the rest are not. -->
+          <p id="tr-avail-note" class="al-hint tr-avail-note" style="display:none;"></p>
           <div class="tr-side">
             <div class="tr-callees-wrap">
               <div class="ds-zone-label">Most often not answering first</div>
               <table class="al-config-table tr-callees">
-                <thead><tr><th>Person tried first</th><th>Department</th><th class="num">Times</th><th class="num">Of which declined</th></tr></thead>
+                <thead><tr><th>Person tried first</th><th>Department</th><th class="num">Times</th><th class="num">Of which declined</th><th class="num tr-avail-col">While free</th><th class="num tr-avail-col">While on a call</th></tr></thead>
                 <tbody id="tr-callees"></tbody>
               </table>
             </div>
@@ -2844,7 +2847,7 @@
           <div class="ds-zone-label">Calls</div>
           <div class="tr-cases-wrap">
             <table class="al-config-table tr-cases" id="tr-cases">
-              <thead><tr><th>When</th><th>Call</th><th>Sent by</th><th>Tried first</th><th>How it ended</th><th>Then tried</th><th>How that went</th><th class="num">After</th></tr></thead>
+              <thead><tr><th>When</th><th>Call</th><th>Sent by</th><th>Tried first</th><th>How it ended</th><th class="tr-avail-col">Free or on a call</th><th>Then tried</th><th>How that went</th><th class="num">After</th></tr></thead>
               <tbody id="tr-tbody"></tbody>
             </table>
           </div>

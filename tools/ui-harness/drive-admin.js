@@ -243,10 +243,35 @@ const MODALS = [
       record('Transfer Retries: the first-attempt times are Central, two hours on from the stored Pacific values',
         st.whens.indexOf('12:02:00') >= 0 && st.whens.indexOf('16:01:00') >= 0 && st.whens.indexOf('10:02:00') < 0, JSON.stringify(st.whens));
       record('Transfer Retries: the person tried first is tallied, with the quick declines', st.callees.length === 1
-        && /^Elena Park Sales 3 2$/.test(st.callees[0]), JSON.stringify(st.callees));
+        && /^Elena Park Sales 3 2 1 1$/.test(st.callees[0]), JSON.stringify(st.callees));
       record('Transfer Retries: every row has its call-path chip; the outbound call is marked; declines are flagged',
         st.paths === 3 && st.outbound === 1 && st.decline === 2, JSON.stringify(st));
       record('Transfer Retries: the department picker lists every department', st.depts > 3, 'options=' + st.depts);
+      // P10 (owner 2026-11-13): was the person tried first free, or on another
+      // call? Two of the three first attempts match a direct-call record (one
+      // free, one on a call with Frank Wu); the third date holds none.
+      const av = await page.evaluate(() => {
+        const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+        const head = Array.from(document.querySelectorAll('#tr-cases thead th'));
+        const col = head.findIndex((th) => th.textContent.trim() === 'Free or on a call');
+        const cells = Array.from(document.querySelectorAll('#tr-tbody tr')).map((r) => r.cells[col]);
+        const busy = document.querySelector('#tr-tbody .tr-avail--busy');
+        return { col, colShown: shown(head[col]),
+          note: (document.getElementById('tr-avail-note') || {}).textContent || '', noteShown: shown(document.getElementById('tr-avail-note')),
+          cells: cells.map((c) => c ? c.textContent.replace(/\s+/g, ' ').trim() : null),
+          why: cells.map((c) => { const u = c && c.querySelector('.tr-avail-unknown'); return u ? u.getAttribute('title') : ''; }),
+          calleeHead: Array.from(document.querySelectorAll('#tr-view-missed .tr-callees thead th')).filter(shown).map((th) => th.textContent.trim()),
+          busyBg: busy ? getComputedStyle(busy).backgroundColor : '', paper: getComputedStyle(document.body).backgroundColor,
+          digits: /\d{7,}/.test(cells.map((c) => c ? c.textContent : '').join(' ')) };
+      });
+      record('P10: Transfer retries says whether the person tried first was free or on a call, and with whom',
+        av.col === 5 && av.colShown && JSON.stringify(av.cells) === JSON.stringify(['Free', 'On a call with Frank Wu', 'Not known'])
+          && av.why[2] === 'No direct-call records are held for this date' && !av.digits
+          && !!av.busyBg && av.busyBg !== 'rgba(0, 0, 0, 0)' && av.busyBg !== av.paper, JSON.stringify(av));
+      record('P10: the match rate is on the page, with why the rest are not known; the ranking counts free and on-a-call apart',
+        av.noteShown && av.note.trim() === 'Free or on a call is known for 2 of 3 first attempts: 1 free, 1 on a call. Not known for 1 (1 on dates with no direct-call records).'
+          && JSON.stringify(av.calleeHead) === JSON.stringify(['Person tried first', 'Department', 'Times', 'Of which declined', 'While free', 'While on a call']),
+        JSON.stringify({ note: av.note, calleeHead: av.calleeHead }));
       // P1 (owner 2026-11-13): the case table's header row stays in view while
       // its rows scroll, and its call-id chips are neutral (not abandoned calls).
       const hdr = await page.evaluate(() => {
@@ -268,6 +293,12 @@ const MODALS = [
       const none = await page.evaluate(() => ({ summary: (document.getElementById('tr-summary') || {}).textContent || '',
         rows: document.querySelectorAll('#tr-tbody tr').length,
         call: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getTransferRetries').slice(-1)[0] }));
+      const noAv = await page.evaluate(() => {
+        const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+        return { note: shown(document.getElementById('tr-avail-note')),
+          cols: Array.from(document.querySelectorAll('#tr-view-missed th.tr-avail-col')).filter(shown).length };
+      });
+      record('P10: with nothing known, the availability columns and the note are not shown', !noAv.note && noAv.cols === 0, JSON.stringify(noAv));
       record('Transfer Retries: picking a department re-asks for it and says when there is nothing',
         /^No transfer was tried again/.test(none.summary.trim()) && none.rows === 0 && none.call && none.call.args[0].dept === 'Power',
         JSON.stringify(none));

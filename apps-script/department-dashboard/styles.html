@@ -8918,6 +8918,13 @@ tr.subq-group-head.ob-group-head:hover td { background: var(--accent-soft); }
 .tr-took { font-weight: 600; }
 .tr-out--decline { color: var(--bad); font-weight: 600; }
 .tr-out--ok { color: var(--good); }
+/* P10 (owner 2026-11-13): was the person tried first free, or on another call?
+   The columns exist only once at least one attempt is known (.tr-has-avail). */
+.tr-avail-col { display: none; }
+.tr-has-avail .tr-avail-col { display: table-cell; }
+.tr-avail { font-weight: 600; white-space: nowrap; }
+.tr-avail--busy { background: color-mix(in oklab, var(--caution) 38%, var(--paper)); color: var(--ink); padding: 1px 6px; border-radius: var(--r); font-weight: 500; }
+.tr-avail-note { margin: -2px 0 8px; }
 /* IC-1..IC-4 (owner 2026-11-02): "How this is counted" is an ⓘ in the
    section's button row; its bullets live in a hidden .ob-howto-src that the
    gloss tooltip reads at show time (data-gloss-src). */
