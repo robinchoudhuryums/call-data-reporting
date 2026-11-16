@@ -294,11 +294,17 @@ test('a weekend and an exception day are left out by the read; so is a day with 
   rows.push(['Anna', SATURDAY, FULL[0], FULL[0] + 1800, 2]);                 // a Saturday call
   rows.push(['Anna', WORKDAYS[7], FULL[0], FULL[0] + 2 * 3600, 6]);          // an outage day
   rows.push(['Anna', WORKDAYS[8], FULL[0], FULL[0] + 2 * 3600, 6]);          // dismissed below
-  install({ exception: [[WORKDAYS[7], 'ALL', 'outage', true, 'admin@x.com', 't']],
+  rows.push(['Anna', WORKDAYS[9], FULL[0], FULL[0] + 2 * 3600, 6]);          // another department's outage
+  // The outage on WORKDAYS[7] is THIS department's only (found by bite-check:
+  // an all-company exception day is already not a working day, so only a
+  // department-scoped one shows whether the read asks about the department).
+  install({ exception: [[WORKDAYS[7], 'Alpha', 'outage', true, 'admin@x.com', 't'],
+                        [WORKDAYS[9], 'Beta', 'their outage', true, 'admin@x.com', 't']],
             rows: [[WORKDAYS[8], 'Anna', 1, h.consts.PARTIAL_DAY_REVIEWED_REASON_, 'admin@x.com', 't']] });
   fakeNeon(rows);
   const out = J(h.call('getPartialDaySuggestions', { department: 'Alpha' }));
-  assert.deepEqual(out.suggestions.map(function (s) { return s.date; }), [WORKDAYS[6]]);
+  assert.deepEqual(out.suggestions.map(function (s) { return s.date; }), [WORKDAYS[9], WORKDAYS[6]],
+    'Alpha\'s own outage day is out; Beta\'s outage is an ordinary day for Alpha');
 });
 
 // ── Dismissing a suggestion ─────────────────────────────────────────────────
