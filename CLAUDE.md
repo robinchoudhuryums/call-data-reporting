@@ -838,7 +838,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `directCallMetrics.js`, the dashboard's `InboundReport.gs` /
   `OutboundReport.gs` / `DirectCallReport.gs` / `CallerLookup.gs`, or the
   `Inbound Calls` / `Outbound Calls` / `Direct Call History` export tabs.**
-  Fourteen bullets moved there in the F8c split (+ the 6d agent-day view)
+  Fourteen bullets moved there in the F8c split (+ the 6d agent-day view,
+  + P9's reader of these tables)
   because they describe how ONE subsystem is built rather than a trap that
   bites unrelated work; the file is authoritative, this is the index:
   Inbound-call capture · Internal-transfer journey enrichment (R11-N) ·
@@ -846,7 +847,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Insurer labels and the Inbound report gate · QCD vs inbound abandons ·
   Dept attribution contract · Outbound-call capture · Outbound report ·
   Temporal abandon heatmap · Direct-extension call metrics ·
-  CSR transfer detail · Agent-day interaction view (6d) · Transfer filter.
+  CSR transfer detail · Agent-day interaction view (6d) · Transfer filter ·
+  Partial-day suggestions (P9).
   **Three rules stayed HERE, because each bites from OUTSIDE that subsystem:**
   (1) **⚠ The DQE and INBOUND queue-name recognizers diverge ON PURPOSE -- do
   not "harmonize" them.** The DQE regex
@@ -2119,7 +2121,7 @@ items for anything it flags or doesn't cover.)
 91. `diagnoseDirectDialIn` (DID-0, cdr-import, read-only): did an outside caller dial the agent's OWN number, or a main line routed through a phone menu (or a colleague)? Per number dialed and per agent, with sample call ids
 92. Outside direct calls split by how they arrived (DID-1..3, admin-only): cdr-import stores `via` + `dial_in` on `direct_calls`; push cdr-import, run `rebuildDirectCallHeldDates()`, and keep `DIAL_IN_LABELS` listing every main line
 93. The `Other` roster column (P5): a home for people in no call-handling team (`CUSTODIAL_DEPTS`); header exactly `Other`, one blank column kept before the insurance block; off the Overview, coaching and cache warming, a department by name everywhere else
-94. Partial days (P7) -- the `Partial Days` sheet (Admin ▾ → Partial days): a marked day counts as its share in the DIVISOR of ans/day and outbound / day only (`creditedDays_`), counts and rates never change; admin-only, reason never leaves the editor; since P8 the IR + Insights vs-team VOLUME comparisons are per credited day too (`agentDaysBlock_`); team-tools' matching change is PLANNED, not built
+94. Partial days (P7) -- the `Partial Days` sheet (Admin ▾ → Partial days): a marked day counts as its share in the DIVISOR of ans/day and outbound / day only (`creditedDays_`), counts and rates never change; admin-only, reason never leaves the editor; since P8 the IR + Insights vs-team VOLUME comparisons are per credited day too (`agentDaysBlock_`); P9: the editor SUGGESTS likely partial days from first-to-last call times (Neon; a dismissal is a Credit-1 row, not a mark); team-tools' matching change is PLANNED, not built
 
 ## Cycle Workflow Config
 

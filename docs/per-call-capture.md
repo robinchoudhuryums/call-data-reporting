@@ -1283,3 +1283,19 @@ name. Pinned by `transfer-filter.test.js`. **Both CDR Tools dialogs**
 dashboard's light-palette tokens inline**: cdr-import cannot include
 `styles.html`, so a token change there does not reach them. Prose only;
 nothing enforces it.
+
+### Partial-day suggestions (P9)
+
+`PartialDays.gs::pdFetchAgentDaySpans_` (Operator State #94) is a READER of all
+three per-call tables, outside this subsystem's own files: it takes each roster
+agent's first and last call time per day from the `inbound_calls` journey legs
+(expanded in SQL with the same `LIKE '[%'` guard as `inboundJourneyEndSql_`,
+`transfer:true` events left out), from `outbound_calls.call_start` and from
+`direct_calls.call_start`. So three things it depends on: the journey event
+fields `name` / `t` / `secs` / `talk`; `call_start` staying an `HH:MM:SS`
+Pacific string in all three tables; and the journeys' ~90-day retention, which
+is its look-back (`PARTIAL_SUGGEST_DAYS_`). It is aggregated in the database
+and returns one row per agent-day. A missing `direct_calls` table is
+tolerated; an unreachable database is reported, never guessed around. Pinned
+by `partial-day-suggestions.test.js`.
+

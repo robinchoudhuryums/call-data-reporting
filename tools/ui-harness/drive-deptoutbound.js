@@ -793,7 +793,10 @@ async function openDept(page, meta) {
           h: Math.round(p.getBoundingClientRect().height), hidden: kids.every((c) => getComputedStyle(c).display === 'none'),
           head: getComputedStyle(p.querySelector('.dept-qcd-header')).display !== 'none', label: b.getAttribute('aria-label'),
           buttons: document.querySelectorAll('.dept-side .side-collapse').length,
-          stored: localStorage.getItem('cdr.dept.side.collapsed') };
+          stored: localStorage.getItem('cdr.dept.side.collapsed'),
+          // Which keys the page holds -- so a failure here says whether ONE
+          // key went missing or the whole store did.
+          keys: Object.keys(localStorage).sort().join(',') };
       });
       const open0 = await fold();
       await pl.focus('#dept-team-direct .side-collapse');
@@ -804,10 +807,15 @@ async function openDept(page, meta) {
         open0.buttons === 4 && !open0.folded && open0.expanded === 'true' && /show or hide this panel$/.test(open0.label)
           && shut.folded && shut.expanded === 'false' && shut.hidden && shut.head && shut.h < 90 && shut.h < open0.h
           && shut.stored === '["dept-team-direct"]' && shut.title === 'Show this panel', JSON.stringify({ open0: open0, shut: shut }));
-      // Let the browser commit the storage write before the reload: with four
-      // drivers running side by side a reload 250 ms after the write came back
-      // with the key unset (the page was fine; the write had not landed yet).
-      await pl.waitForTimeout(1200);
+      // The product owns two things here: the fold WRITES the choice (asserted
+      // just above) and a stored choice is APPLIED on load (asserted below).
+      // Carrying the value across the reload is the browser's job, and under
+      // load headless Chromium drops a just-written key on reload -- measured:
+      // 2 of 5 runs with five drivers side by side, every OTHER key intact, no
+      // product code removing it, and a 1.2 s settle did not help. So the
+      // stored choice is put back by an init script, the way this page's
+      // other preferences are seeded, and the load is what is tested.
+      await pl.addInitScript(() => { localStorage.setItem('cdr.dept.side.collapsed', '["dept-team-direct"]'); });
       await pl.reload();
       await pl.waitForTimeout(1500);
       await pl.click('#my-dept-btn');

@@ -4323,7 +4323,35 @@ When something looks wrong, before assuming a code bug, check:
     the few calls should not earn any day's credit; (4) outbound "/ day"
     credits a mark only on a day the agent placed a call; (5) if the sheet
     cannot be read, that run treats every day as whole rather than failing
-    the report; (6) suggestions of likely partial days are P9.
+    the report.
+    **Suggestions (P9, 2026-11-16).** The editor's "Find likely partial
+    days" looks back 90 days (`PARTIAL_SUGGEST_DAYS_`, about as long as the
+    per-call journeys are kept) for the department chosen in the form. For
+    each roster agent and workday it takes the first and last call time
+    from the per-call tables in Neon -- every leg on an inbound call, every
+    outbound call, every direct call -- and lists the days whose span is
+    well short of that agent's OWN usual span (their median day), with the
+    share the span implies: under an eighth of usual "Not a day (0)", then a
+    quarter, half, three quarters; within an eighth of usual is not listed.
+    It only suggests. **Use** puts the day in the form, where the admin
+    still picks the reason and presses Save; **Whole day** dismisses it.
+    Not judged, and named under the list: an agent with fewer than 5
+    workdays of calls in the look-back, or whose usual span is under 4 hours
+    (a manager, a part-timer). Never suggested: a weekend, a company
+    holiday, an exception day, or a day that already has a row. Things to
+    know: (1) it needs Neon -- when the call-level tables cannot be reached
+    the editor says so and suggests nothing (the sheet copies are not
+    used); (2) a dismissal is stored in the same sheet as a row with Credit
+    1 and the reason "Reviewed: whole day" -- it is NOT a mark, changes no
+    figure, and is listed apart under "Reviewed as whole days", where Remove
+    lets the day be suggested again; do not hand-edit its credit unless you
+    mean to mark the day; (3) the span is first call to last call, so a
+    quiet agent who took an early and a late call looks like a full day,
+    and an agent on a long off-phone task mid-day is not caught; (4) times
+    are shown in Central; (5) the read is aggregated in the database (one
+    row per agent-day comes back, never a call) and counted on the Health
+    page's Neon read gauge as `partialSuggest`. Pinned by
+    `partial-day-suggestions.test.js`; rendered in `drive-admin.js`.
     **The Individual Report and Insights (P8, 2026-11-16).** Every place
     those two compare an agent's call VOLUME with the team now compares per
     credited day instead of per window -- which changes those comparisons
@@ -4352,7 +4380,8 @@ When something looks wrong, before assuming a code bug, check:
     read the `Partial Days` tab of this workbook (a sixth tab on #68's
     list), columns A-C only (Date as an ISO string or a date in the
     spreadsheet's timezone, Agent exact-match, Credit a number with
-    0 <= credit < 1; skip any other row); for each agent, credited days =
+    0 <= credit < 1; skip any other row -- that includes the Credit-1
+    "Reviewed: whole day" rows P9 writes); for each agent, credited days =
     the sum over their days with any ring of (the mark's credit, else 1);
     divide by that instead of the day count; show a dash below 1 credited
     day; show the "N of M workdays, K partial" line beside the figure; and

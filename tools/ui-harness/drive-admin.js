@@ -340,6 +340,72 @@ const MODALS = [
       await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
       const r2 = await rows();
       record('Partial Days: confirming removes that one mark', r2.length === 2 && !r2.some((t) => /Anna Reyes/.test(t)), JSON.stringify(r2));
+
+      // P9: suggestions -- the REAL getPartialDaySuggestions payload for CSR.
+      const sug = require('./payloads/partial-suggest.json');
+      const sRows = () => page.evaluate(() => Array.from(document.querySelectorAll('#pd-suggest-tbody tr')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+      const sState = () => page.evaluate(() => ({
+        status: (function (el) { return el && el.style.display !== 'none' ? el.textContent : ''; })(document.getElementById('pd-suggest-status')),
+        table: getComputedStyle(document.getElementById('pd-suggest-table')).display !== 'none',
+        reviewed: (document.getElementById('pd-reviewed-summary') || {}).textContent,
+        reviewedShown: getComputedStyle(document.getElementById('pd-reviewed')).display !== 'none',
+        marks: document.querySelectorAll('#pd-tbody tr').length,
+      }));
+      const s0 = await sState();
+      record('P9: nothing is suggested until asked; the day already reviewed as whole is listed apart from the marks',
+        !s0.table && s0.reviewedShown && s0.reviewed === 'Reviewed as whole days (1)' && s0.marks === 2
+          && !(await rows()).some((t) => t.indexOf(meta.pdReviewed.agent) !== -1), JSON.stringify(s0));
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.selectOption('#pd-dept', 'CSR'); await page.waitForTimeout(200);
+      await page.click('#pd-suggest-btn'); await page.waitForTimeout(900);
+      const asked = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getPartialDaySuggestions').map((c) => c.args[0]));
+      const sr = await sRows();
+      const s1 = await sState();
+      record('P9: Find asks for the chosen department and lists each short day with its times, the usual day and a suggested share',
+        asked.length === 1 && asked[0].department === 'CSR' && sr.length === sug.suggestions.length && sr.length === 2
+          && sr.some((t) => /Carla Diaz/.test(t) && /8:35 – 12:33/.test(t) && /8\.3 h/.test(t) && /Half a day/.test(t))
+          && sr.some((t) => /Anna Reyes/.test(t) && /Three quarters/.test(t)), JSON.stringify({ asked: asked, rows: sr }));
+      record('P9: a marked day, a reviewed day and an exception day are not suggested, and the status says who could not be judged',
+        !sr.some((t) => t.indexOf(meta.pdDates[0]) !== -1 && /Ben Ortiz/.test(t)) && !sr.some((t) => /Dev Patel/.test(t))
+          && !sr.some((t) => t.indexOf(meta.excDate) !== -1)
+          && /2 days to look at/.test(s1.status) && /4 agents checked/.test(s1.status) && /1 not checked[^:]*: Robin Choudhury/.test(s1.status), s1.status);
+      // Use: the form is filled; NOTHING is saved until the admin presses Save.
+      await page.click('#pd-suggest-tbody button[data-pd-s="use"][data-pd-agent="Carla Diaz"]'); await page.waitForTimeout(300);
+      const used = await page.evaluate(() => ({ date: document.getElementById('pd-date').value, agent: document.getElementById('pd-agent').value,
+        credit: document.getElementById('pd-credit').value, focus: (document.activeElement || {}).id,
+        saves: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDay').length,
+        status: document.getElementById('pd-status').textContent }));
+      record('P9: Use puts the day in the form and moves to the reason -- nothing is saved yet',
+        used.date === meta.pdSuggest.carla && used.agent === 'Carla Diaz' && used.credit === '0.5' && used.focus === 'pd-reason'
+          && used.saves === 0 && /Choose a reason and press Save/.test(used.status), JSON.stringify(used));
+      // Whole day: the suggestion is dismissed and joins the reviewed list.
+      await page.click('#pd-suggest-tbody button[data-pd-s="whole"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(700);
+      const dis = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'dismissPartialDaySuggestion').map((c) => c.args[0]));
+      const sr2 = await sRows();
+      const s2 = await sState();
+      record('P9: Whole day dismisses that suggestion: it leaves the list, joins the reviewed days, and no mark is added',
+        dis.length === 1 && dis[0].date === meta.pdSuggest.anna && dis[0].agent === 'Anna Reyes' && sr2.length === 1 && /Carla Diaz/.test(sr2[0])
+          && s2.reviewed === 'Reviewed as whole days (2)' && s2.marks === 2, JSON.stringify({ dis: dis, rows: sr2, s: s2 }));
+      // Save the form the suggestion filled: the day becomes a mark and stops being a suggestion.
+      await page.selectOption('#pd-reason', 'Leave');
+      await page.click('#pd-save-btn'); await page.waitForTimeout(800);
+      const sv = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDay').map((c) => c.args[0]));
+      const sr3 = await sRows();
+      const s3 = await sState();
+      record('P9: saving the suggested day marks it (the admin\'s own reason) and takes it off the suggestions',
+        sv.length === 1 && sv[0].date === meta.pdSuggest.carla && sv[0].agent === 'Carla Diaz' && sv[0].credit === 0.5 && sv[0].reason === 'Leave'
+          && sr3.length === 0 && !s3.table && s3.marks === 3 && /Nothing stands out/.test(s3.status), JSON.stringify({ sv: sv, rows: sr3, s: s3 }));
+      // A reviewed day can be put back: Remove asks first, without the danger tone (no figure changes).
+      await page.evaluate(() => { document.getElementById('pd-reviewed').open = true; });
+      await page.click('#pd-reviewed-tbody button[data-pd-remove="' + meta.pdSuggest.anna + '"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(300);
+      const dlg2 = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok');
+        return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')), text: (document.querySelector('.ds-confirm') || document.body).textContent.slice(0, 400) }; });
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const sr4 = await sRows();
+      const s4 = await sState();
+      record('P9: removing a review asks first, plainly (no figure changes), and the day is suggested again',
+        dlg2.open && !dlg2.danger && /No figure changes/.test(dlg2.text) && s4.reviewed === 'Reviewed as whole days (1)'
+          && sr4.length === 1 && /Anna Reyes/.test(sr4[0]), JSON.stringify({ dlg: dlg2, rows: sr4, s: s4 }));
     } },
   // (G3: the Outbound report modal is retired. Its content is driven on My
   // Department by drive-callbacks.js / drive-deptoutbound.js and its

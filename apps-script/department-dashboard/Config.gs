@@ -380,6 +380,20 @@ const PARTIAL_DAYS_HEADERS = Object.freeze(['Date', 'Agent', 'Credit', 'Reason',
 const PARTIAL_DAY_CREDITS_ = Object.freeze([0, 0.25, 0.5, 0.75]);
 const PARTIAL_DAY_REASONS_ = Object.freeze(['Partial shift', 'Training', 'Meeting', 'Leave', 'Other']);
 const PARTIAL_DAY_MIN_CREDITED_ = 1;
+// P9 (#94): suggestions of likely partial days, for the admin to confirm.
+// The read looks back this many days (the per-call journeys are kept about
+// that long), judges an agent only with this many workdays of history and a
+// usual first-to-last-call span of at least this many hours (a manager or a
+// part-timer has no "usual day" to fall short of), and lists at most this many.
+const PARTIAL_SUGGEST_DAYS_ = 90;
+const PARTIAL_SUGGEST_MIN_DAYS_ = 5;
+const PARTIAL_SUGGEST_MIN_USUAL_HOURS_ = 4;
+const PARTIAL_SUGGEST_MAX_ = 200;
+// A suggestion the admin dismissed is stored as a row with Credit 1 and this
+// reason. A credit of 1 is not a mark (partialDayFromRow_ refuses it), so the
+// row changes no figure and no cache key -- it only stops the suggestion
+// coming back.
+const PARTIAL_DAY_REVIEWED_REASON_ = 'Reviewed: whole day';
 const COMPANY_HOLIDAYS_HEADERS = Object.freeze([
   'Dates', 'Label', 'Active', 'Notes',
 ]);

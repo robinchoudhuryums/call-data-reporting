@@ -3329,6 +3329,21 @@ to SAY so beside the figure, never to recompute it.
   to narrow the agent list), agent (roster names), share and reason are all
   `<select>`s or a date input -- no free text. Save validates in place
   (`#pd-status`); Remove goes through `dsConfirm_` in danger tone.
+- **Suggestions in the editor (P9).** A second block under the marks:
+  `#pd-suggest-btn` calls `getPartialDaySuggestions({department})` for the
+  form's department (`pdSuggestLoad_`); `#pd-suggest-tbody` lists the open
+  ones. **A suggestion is never a mark.** `pdSuggestUse_` only fills the
+  form and moves focus to the reason -- it must never call the server
+  (`partial-day-suggestions.test.js` fails if it does); the admin's own Save
+  marks the day. "Whole day" calls `dismissPartialDaySuggestion`, whose row
+  comes back in the init's `reviewed` list (`#pd-reviewed`, a `<details>`).
+  `pdSuggestOpen_(suggestions, data)` is the one filter: a suggestion whose
+  (date, agent) is in `data.days` or `data.reviewed` is gone, so every
+  save / dismiss / remove re-renders the list from the server's own state
+  with no second request. Removing a REVIEW goes through `dsConfirm_`
+  without the danger tone (no figure changes); removing a mark keeps it.
+  The status line under the list (`pdSuggestSummary_`) names the agents who
+  could not be judged -- a silent omission would read as "nothing to flag".
 - **Not yet:** the CSV, which still exports the per-day figure without the
   line.
 - **The Individual Report and Insights (P8).** Every agent-vs-team VOLUME

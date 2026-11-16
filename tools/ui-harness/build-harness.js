@@ -340,6 +340,21 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     removePartialDay: function (req) {
       var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
       st.days = st.days.filter(function (d) { return !(d.date === (req && req.date) && d.agent === (req && req.agent)); });
+      st.reviewed = (st.reviewed || []).filter(function (d) { return !(d.date === (req && req.date) && d.agent === (req && req.agent)); });
+      return st;
+    },
+    // P9: the suggestions are the REAL getPartialDaySuggestions payload for
+    // CSR (gen-payloads); another department has nothing to suggest. A
+    // dismissal joins the reviewed list, as the server's does.
+    getPartialDaySuggestions: function (req) {
+      var p = JSON.parse(JSON.stringify(P['partial-suggest']));
+      if (!req || req.department !== p.department) { p.department = (req && req.department) || ''; p.suggestions = []; p.judged = 0; p.notJudged = []; }
+      return p;
+    },
+    dismissPartialDaySuggestion: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      st.reviewed = st.reviewed || [];
+      st.reviewed.unshift({ date: req.date, agent: req.agent, addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
       return st;
     },
     // TR-1: the REAL getTransferRetries over gen-phase3's fake journeys; a

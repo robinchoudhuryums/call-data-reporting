@@ -2727,6 +2727,30 @@
           <tbody id="pd-tbody"></tbody>
         </table>
         <div id="pd-empty" class="al-hint" style="display:none;">No partial days yet.</div>
+
+        <!-- P9: suggestions. getPartialDaySuggestions is read-only; nothing is
+             marked until the admin presses Use and then Save, or Whole day. -->
+        <h3 class="pd-sub">Suggestions</h3>
+        <p class="al-hint">Looks back <span id="pd-suggest-days">90</span> days at when each agent&rsquo;s first and last
+          call of the day were, and lists the days that were much shorter than that agent&rsquo;s own usual day. It only
+          suggests: press <strong>Use</strong> to put a day in the form above (then choose a reason and Save), or
+          <strong>Whole day</strong> if the agent worked a normal day and it should not be suggested again.</p>
+        <div class="pd-suggest-bar">
+          <button class="btn btn-secondary" id="pd-suggest-btn" type="button">Find likely partial days</button>
+          <span class="al-hint" id="pd-suggest-scope"></span>
+        </div>
+        <div id="pd-suggest-status" role="status" class="status" style="display:none;"></div>
+        <table class="al-config-table" id="pd-suggest-table" style="display:none;">
+          <thead><tr><th>Date</th><th>Agent</th><th>On calls (Central)</th><th>Their usual</th><th>Calls</th><th>Suggested</th><th></th></tr></thead>
+          <tbody id="pd-suggest-tbody"></tbody>
+        </table>
+        <details id="pd-reviewed" class="pd-reviewed" style="display:none;">
+          <summary id="pd-reviewed-summary">Reviewed as whole days</summary>
+          <table class="al-config-table">
+            <thead><tr><th>Date</th><th>Agent</th><th>Reviewed</th><th></th></tr></thead>
+            <tbody id="pd-reviewed-tbody"></tbody>
+          </table>
+        </details>
       </div>
     </div>
   </div>
