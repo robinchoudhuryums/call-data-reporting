@@ -624,6 +624,34 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
               const irExc = await page.evaluate(() => { const el = document.querySelector('#individual-results > .exc-note');
                 return el && getComputedStyle(el).display !== 'none' ? el.textContent : ''; });
               record(role + ': the generated Individual Report says which exception day it left out', /8x8 outage/.test(irExc), irExc);
+              // P8 (#94): the three count tiles compare per credited day --
+              // the agent's own "/ day" line, the team's, and no figure cut
+              // off by the tile's ellipsis; the two rate tiles are as before.
+              const irP = require('./payloads/ir-report.json');
+              const irTiles = await page.evaluate(() => {
+                const c = document.querySelector('#individual-modal .ir-summary-card');
+                if (!c) return null;
+                return {
+                  name: ((c.querySelector('.ir-summary-title') || {}).textContent || ''),
+                  tiles: Array.from(c.querySelectorAll('.ds-kpi')).map((t) => ({
+                    per: ((t.querySelector('.ds-kpi__perday') || {}).textContent || ''),
+                    team: ((t.querySelector('.ds-kpi__compare .ds-kpi__team') || {}).textContent || ''),
+                    cut: (function (el) { return !!el && el.scrollWidth > el.clientWidth + 1; })(t.querySelector('.ds-kpi__compare .ds-kpi__team')),
+                    value: ((t.querySelector('.ds-kpi__value') || {}).textContent || ''),
+                  })),
+                };
+              });
+              const irCard = irTiles ? irP.summaryData.filter((s) => irTiles.name.indexOf(s.name) === 0)[0] : null;
+              const tp = irP.teamAvg.perDay;
+              record(role + ': P8 -- the IR count tiles read "<agent> / day" against "Team <x> / day", totals unchanged, nothing cut off',
+                !!irCard && irTiles.tiles.length === 5
+                  && ['rung', 'answered', 'missed'].every((k, i) =>
+                    irTiles.tiles[i].per === irCard.perDay[k].toFixed(1) + ' / day'
+                    && irTiles.tiles[i].team === 'Team ' + tp[k].toFixed(1) + ' / day'
+                    && irTiles.tiles[i].value === String(irCard.stats[k]) && !irTiles.tiles[i].cut)
+                  && irTiles.tiles[3].per === '' && irTiles.tiles[4].per === ''
+                  && /per day worked/.test(irTiles.name) && irTiles.name.indexOf(irCard.days.active + ' days with calls') !== -1,
+                JSON.stringify(irTiles));
             } else {
               record(role + ': the IR Generate button enables after picking an agent',
                 false, 'still disabled/hidden -- the tone check cannot run');

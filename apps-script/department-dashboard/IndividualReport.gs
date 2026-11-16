@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v12';   // v12 (D-2/DD-3): deptStats + share over the whole roster; activeDays activity-gated
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v13';   // v13 (P8): the team comparison per CREDITED day -- cards carry days + perDay, teamAvg carries perDay
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -403,6 +403,10 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // so the team-avg denominator only counts agents who took calls
   // (zero-call roster members shouldn't drag the average down).
   const activeAgentSet = {};
+  // P8 (#94): the days each agent had ANY call on in the user range -- the
+  // divisor of the per-day team comparison, credited by partial-day marks.
+  // Team members (roster, not excluded) and every selected agent.
+  const daysByAgent = {};
 
   // Per-dept exclusion list for managers / others who are on the
   // roster but shouldn't factor into the team average. Resolved at
@@ -498,6 +502,12 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
         if (hadActivity) activeAgentSet[agent] = true;
       }
     }
+    // P8: a day counts for an agent when they had a call event on it (the
+    // same gate as activeAgentSet / computeSummary_'s `days`).
+    if (inUserRange && (rosterSet[agent] || selectedSet[agent])
+        && (rung > 0 || answered > 0 || missed > 0)) {
+      (daysByAgent[agent] || (daysByAgent[agent] = {}))[dateIso] = true;
+    }
 
     // Per-selected-agent.
     if (selectedSet[agent]) {
@@ -543,6 +553,19 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // every roster member was inactive or excluded, fall back to 1 to
   // avoid divide-by-zero (totals will be 0 anyway).
   const activeAgentCount = Math.max(1, Object.keys(activeAgentSet).length);
+  // P8 (#94, owner 2026-11-13): the VOLUME comparison is per CREDITED day,
+  // not per window. A window total compared an agent who was out for a week
+  // (or on a marked part day) with teammates who were not; per day worked
+  // compares pace with pace. Team agent-days = the credited days of every
+  // active, non-excluded roster agent -- My Department's ans/day basis.
+  let teamAgentDays = 0;
+  Object.keys(activeAgentSet).forEach(function (a) {
+    teamAgentDays += agentDaysBlock_(a, daysByAgent[a]).credited;
+  });
+  teamAgentDays = Math.round(teamAgentDays * 100) / 100;
+  const teamPerDay = function (n) {
+    return teamAgentDays >= PARTIAL_DAY_MIN_CREDITED_ ? Math.round((n / teamAgentDays) * 100) / 100 : null;
+  };
   const teamAvg = {
     rung:     Math.round(teamTotal.rung     / activeAgentCount),
     missed:   Math.round(teamTotal.missed   / activeAgentCount),
@@ -550,6 +573,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     pctAnswered: answerRatePct_(teamTotal.answered, teamTotal.missed, teamTotal.rung),   // DD-2
     tttPerCall:  teamTotal.answered > 0 ? (teamTotal.ttt       / teamTotal.answered)     : 0,
     att:         teamTotal.answered > 0 ? (teamTotal.attTotal  / teamTotal.answered)     : 0,
+    // P8: per credited agent-day (2 dp; null with under one credited day).
+    agentDays:      teamAgentDays,
+    rungPerDay:     teamPerDay(teamTotal.rung),
+    missedPerDay:   teamPerDay(teamTotal.missed),
+    answeredPerDay: teamPerDay(teamTotal.answered),
   };
 
   const teamAvgOut = {
@@ -566,6 +594,12 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       pctAnswered: teamAvg.pctAnswered,
       ttt:         teamAvg.tttPerCall,
       att:         teamAvg.att,
+    },
+    // P8: what the volume tiles compare against -- calls per credited
+    // agent-day. The per-agent window figures above stay for the record.
+    perDay: {
+      rung: teamAvg.rungPerDay, missed: teamAvg.missedPerDay, answered: teamAvg.answeredPerDay,
+      agentDays: teamAvg.agentDays,
     },
   };
 
@@ -646,9 +680,17 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       answered: deptTotal.answered > 0 ? (s.answered / deptTotal.answered) * 100 : 0,
       missed:   deptTotal.missed   > 0 ? (s.missed   / deptTotal.missed)   * 100 : 0,
     };
+    // P8 (#94): this agent's days and their figures per credited day (2 dp;
+    // null under one credited day -- a pace over a fraction of a day is noise).
+    const days = agentDaysBlock_(agent, daysByAgent[agent]);
+    const agPerDay = function (n) {
+      return days.credited >= PARTIAL_DAY_MIN_CREDITED_ ? Math.round((n / days.credited) * 100) / 100 : null;
+    };
+    const perDay = { rung: agPerDay(s.rung), missed: agPerDay(s.missed), answered: agPerDay(s.answered) };
     const agentRaw = {
       rung: s.rung, missed: s.missed, answered: s.answered,
       pct: agPct, ttt: agTtt, att: agAtt,
+      rungPerDay: perDay.rung, missedPerDay: perDay.missed,
     };
 
     let priorStats = null;
@@ -702,6 +744,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
         att:      formatSecondsHms_(agAtt),
       },
       raw: agentRaw,
+      days: days,       // P8: { active, credited, partial, marks? }
+      perDay: perDay,   // P8: { rung, missed, answered } per credited day
       share: {
         rung:     share.rung.toFixed(1)     + '%',
         answered: share.answered.toFixed(1) + '%',
@@ -835,7 +879,9 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
         matchedViaQueue:  false,
         sourceHomes:      [],
         stats: { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
-        raw:   { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 },
+        raw:   { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0, rungPerDay: null, missedPerDay: null },
+        days:   { active: 0, credited: 0, partial: 0 },            // P8: the populated shape
+        perDay: { rung: null, missed: null, answered: null },
         share: { rung: '0.0%', answered: '0.0%', missed: '0.0%',
                  rawRung: 0, rawAnswered: 0, rawMissed: 0 },
         insights: [],
@@ -846,6 +892,7 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
     teamAvg: {
       rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00',
       raw: { rung: 0, missed: 0, answered: 0, pctAnswered: 0, ttt: 0, att: 0 },
+      perDay: { rung: null, missed: null, answered: null, agentDays: 0 },   // P8
     },
     deptStats: { dailyRung: '0.0', dailyMissed: '0.0', dailyAnswered: '0.0', ansPct: '0.0%', deptActiveDays: 0 },
     mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
@@ -893,15 +940,18 @@ function buildAgentInsights_(agent, teamAvg) {
     }
   }
 
-  if (teamAvg.rung > 0) {
-    const rungDelta = ((agent.rung - teamAvg.rung) / teamAvg.rung) * 100;
+  // P8 (#94): volume is compared PER CREDITED DAY -- an agent who was out
+  // for a week, or on a marked part day, is not "40% below the team". With
+  // under one credited day on either side there is no pace to compare.
+  if (teamAvg.rungPerDay > 0 && agent.rungPerDay != null) {
+    const rungDelta = ((agent.rungPerDay - teamAvg.rungPerDay) / teamAvg.rungPerDay) * 100;
     if (Math.abs(rungDelta) >= 25) {
       const above = rungDelta > 0;
       out.push({
         type: above ? 'positive' : 'negative',
-        text: 'Call volume is ' + Math.abs(rungDelta).toFixed(0)
+        text: 'Call volume per day worked is ' + Math.abs(rungDelta).toFixed(0)
             + '% ' + (above ? 'higher' : 'lower') + ' than team avg ('
-            + agent.rung + ' vs ' + teamAvg.rung + ' rung).',
+            + agent.rungPerDay.toFixed(1) + ' vs ' + teamAvg.rungPerDay.toFixed(1) + ' rung a day).',
       });
     }
   }
@@ -922,15 +972,15 @@ function buildAgentInsights_(agent, teamAvg) {
     }
   }
 
-  if (teamAvg.missed > 0 && agent.missed >= 3) {
-    const missedDelta = ((agent.missed - teamAvg.missed) / teamAvg.missed) * 100;
+  if (teamAvg.missedPerDay > 0 && agent.missedPerDay != null && agent.missed >= 3) {
+    const missedDelta = ((agent.missedPerDay - teamAvg.missedPerDay) / teamAvg.missedPerDay) * 100;
     if (Math.abs(missedDelta) >= 30) {
       const above = missedDelta > 0;
       out.push({
         type: above ? 'negative' : 'positive',
-        text: 'Missed-call count is ' + Math.abs(missedDelta).toFixed(0)
+        text: 'Missed calls per day worked are ' + Math.abs(missedDelta).toFixed(0)
             + '% ' + (above ? 'above' : 'below') + ' team avg ('
-            + agent.missed + ' vs ' + teamAvg.missed + ' missed).',
+            + agent.missedPerDay.toFixed(1) + ' vs ' + teamAvg.missedPerDay.toFixed(1) + ' missed a day).',
       });
     }
   }

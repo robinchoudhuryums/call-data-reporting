@@ -47,7 +47,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   twice, one report runs for the linked window, and the provisional window
   ending today is never loaded)
   (since #81 also the generated Individual Report's
-  exception-day note) boots every page as admin AND manager; fails on page /
+  exception-day note; P8: its three count tiles read "<agent> / day" against
+  "Team <x> / day" with the totals unchanged and no figure cut off) boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
   class: laid out and visible but entirely uniform pixels), and horizontal page
   overflow -- at 1440 px AND, in a separate fresh boot, at 360 px (CL-9), where
@@ -140,7 +141,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   percents on the card, the Direct view keeping its rows, Team Rings frosting
   from the page request, and a side panel folding from the keyboard and
   staying folded across a reload; P7: a marked agent's row carries the
-  attendance line with the dates in its hover and no reason) the My Department **direction switch** (Inbound + outbound
+  attendance line with the dates in its hover and no reason; P8: an Insights
+  card's chip and bars per credited day with the count unchanged, the
+  attendance on the marked agent's card only, the gap chart on the per-day
+  basis and the call-share benchmark by days worked) the My Department **direction switch** (Inbound + outbound
   by default; four views since DV-1)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on

@@ -232,7 +232,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v27` already makes a fresh re-generate fast too).
+  `insights:v28` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -3329,7 +3329,41 @@ to SAY so beside the figure, never to recompute it.
   to narrow the agent list), agent (roster names), share and reason are all
   `<select>`s or a date input -- no free text. Save validates in place
   (`#pd-status`); Remove goes through `dsConfirm_` in danger tone.
-- **Not yet:** the Individual Report and Insights (P8), and the CSV, which
-  still exports the per-day figure without the line.
+- **Not yet:** the CSV, which still exports the per-day figure without the
+  line.
+- **The Individual Report and Insights (P8).** Every agent-vs-team VOLUME
+  comparison is per credited day; the count on screen stays the window
+  total. Shared helpers (script-1-core, all pure): `perDayOf_(count, days)`
+  -- a number, `null` under one credited day, `undefined` when the payload
+  has no `days` block, which is each surface's cue to keep its old window
+  comparison (a payload cached before P8, a hand-built fixture);
+  `attDaysText_` / `attDaysHtml_` ("21 days with calls", or the attendance
+  text when a day is marked); `perDayText_` (one decimal, a dash for none).
+  - *IR tiles* (script-6-ir `volTile`): the three count tiles get their own
+    `.ds-kpi__perday` line ("24.8 / day") above the compare row, whose
+    marker reads "Team 20.1 / day" (`.ds-kpi__team--tight` -- looser tracking
+    let the ellipsis eat the figure) and whose badge is `irPerDayBadge_` (a
+    plain "-" under one credited day, never "-100%"). The card title says
+    "vs Team Avg, per day worked" and carries the days (`.ir-days`). The two
+    rate tiles are untouched.
+  - *Insights cards* (`insBuildCard_`): the chip reads "24.8 vs 20.1
+    ans/day" (`insVsTeamBadge_(a, t, true)`; no chip under one credited
+    day); the Answered / Missed bars carry `data-perday="1"`, draw fill and
+    team marker on a per-day scale and keep the total in `.ins-cbar-val`;
+    `.ins-card-att` shows the attendance only on a card with a marked day.
+    The team pace is `insTeamPerDay_(meta)` -- the R18 baseline
+    (`meta.teamAvgBasis`) over its `agentDays`. **The % Ans bar's marker
+    still reads the dept rate from `teamStats`**, as before.
+  - *Gap vs team chart*: per day for a count metric when EVERY card has
+    days (`canvas[data-basis="per-day"]`), labels to one decimal, a muted
+    zero bar and a dash for an agent under one credited day; `grace: '10%'`
+    keeps the end labels inside the plot.
+  - *Share of answered calls*: the ▲▼ compares each row with that agent's
+    share of the DAYS WORKED (`#ins-share-tally[data-benchmark="days"]`),
+    still after the share held by excluded managers; identical days give
+    the old equal share, and a payload without days falls back to it
+    (`data-benchmark="equal"`).
+  - Pinned by `team-per-day.test.js`; rendered by `drive-smoke.js` (IR
+    tiles) and `drive-deptoutbound.js` (the four Insights surfaces).
 - Pinned by `partial-days.test.js`; rendered by `drive-admin.js` (the editor)
   and `drive-deptoutbound.js` (the row line and its title as a manager).

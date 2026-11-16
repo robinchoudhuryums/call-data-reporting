@@ -84,6 +84,60 @@ async function openDept(page, meta) {
         /^Partial days: /.test(attM.title) && /0\.5 day/.test(attM.title) && /0\.25 day/.test(attM.title)
           && !/Training|Leave|Meeting|Partial shift/.test(attM.title + attM.text), attM.title);
     }
+    {
+      // P8 (#94): Insights compares an agent's VOLUME with the team per
+      // CREDITED day. The fixture marks two part days for one agent, so the
+      // payload's own figures are the expectation.
+      // Open the agents and team-detail sections (a brief row for the admin
+      // trial, a plain fold otherwise).
+      for (const sid of ['ins-agents-fold', 'ins-team-detail']) {
+        await page.evaluate((id) => {
+          const el = document.getElementById(id); if (!el) return;
+          const slot = el.closest('.ins-brief-slot');
+          if (slot) {
+            const btn = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="' + slot.getAttribute('data-brief-slot') + '"]');
+            if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
+          } else if (!el.open) { el.open = true; }
+        }, sid);
+        await page.waitForTimeout(900);
+      }
+      const insP = require('./payloads/insights.json');
+      const metaP = require('./payloads/meta.json');
+      const basis = insP.meta.teamAvgBasis;
+      const pdCard = insP.agentData.filter((a) => a.name === metaP.pdAgent)[0];
+      const p8 = await page.evaluate((agent) => {
+        const cardEl = document.querySelector('[data-ins-agent="' + agent + '"]');
+        const chart = document.getElementById('ins-cards-chart');
+        const share = document.getElementById('ins-share-tally');
+        const rowEl = share ? Array.from(share.querySelectorAll('.ins-share-row')).find((r) => (r.getAttribute('title') || '').indexOf(agent + ':') === 0) : null;
+        return {
+          chip: cardEl ? ((cardEl.querySelector('.cr-vs-team') || {}).textContent || '') : null,
+          bars: cardEl ? Array.from(cardEl.querySelectorAll('.ins-cbar-row[data-perday]')).map((r) => r.getAttribute('title')) : [],
+          val: cardEl ? Array.from(cardEl.querySelectorAll('.ins-cbar-row[data-perday] .ins-cbar-val')).map((v) => v.textContent.trim()) : [],
+          att: cardEl ? ((cardEl.querySelector('.ins-card-att') || {}).textContent || '') : '',
+          attShown: document.querySelectorAll('.ins-card-att').length,
+          basis: chart ? chart.getAttribute('data-basis') : null,
+          bench: share ? share.getAttribute('data-benchmark') : null,
+          shareTitle: rowEl ? rowEl.getAttribute('title') : '',
+          reason: /Training|Leave/.test((document.getElementById('dept-insights-region') || document.body).innerHTML),
+        };
+      }, metaP.pdAgent);
+      const ansPd = (pdCard.metrics.answered.val / pdCard.days.credited).toFixed(1);
+      const teamPd = (basis.answered / basis.agentDays).toFixed(1);
+      record('P8: an Insights card compares answered PER CREDITED DAY with the team, the count beside the bar unchanged',
+        !!p8.chip && p8.chip.indexOf(ansPd + ' vs ' + teamPd + ' ans/day') !== -1
+          && p8.bars.length === 2 && p8.bars[0].indexOf(ansPd + ' a day worked (team avg ' + teamPd + ' a day)') !== -1
+          && p8.val[0] === String(pdCard.metrics.answered.val),
+        JSON.stringify({ chip: p8.chip, bars: p8.bars, val: p8.val, want: [ansPd, teamPd] }));
+      record('P8: the card of the agent with partial days says so, and only that card; no reason anywhere',
+        p8.att === pdCard.days.credited + ' of ' + (p8.att.match(/of (\d+) workdays/) || [])[1] + ' workdays, ' + pdCard.days.partial + ' partial'
+          && p8.attShown === 1 && !p8.reason, JSON.stringify({ att: p8.att, shown: p8.attShown, reason: p8.reason }));
+      record('P8: the gap chart is on the per-day basis and the call-share benchmark is each agent\'s share of the days worked',
+        p8.basis === 'per-day' && p8.bench === 'days'
+          && p8.shareTitle.indexOf('share of the days worked (' + pdCard.days.credited + ' of ' + basis.agentDays + ' agent-days') !== -1,
+        JSON.stringify({ basis: p8.basis, bench: p8.bench, title: p8.shareTitle }));
+    }
+
     const tdcM = await page.evaluate(() => { const el = document.getElementById('dept-team-direct');
       return { shown: !!el && getComputedStyle(el).display !== 'none',
                called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length }; });
@@ -750,6 +804,10 @@ async function openDept(page, meta) {
         open0.buttons === 4 && !open0.folded && open0.expanded === 'true' && /show or hide this panel$/.test(open0.label)
           && shut.folded && shut.expanded === 'false' && shut.hidden && shut.head && shut.h < 90 && shut.h < open0.h
           && shut.stored === '["dept-team-direct"]' && shut.title === 'Show this panel', JSON.stringify({ open0: open0, shut: shut }));
+      // Let the browser commit the storage write before the reload: with four
+      // drivers running side by side a reload 250 ms after the write came back
+      // with the key unset (the page was fine; the write had not landed yet).
+      await pl.waitForTimeout(1200);
       await pl.reload();
       await pl.waitForTimeout(1500);
       await pl.click('#my-dept-btn');

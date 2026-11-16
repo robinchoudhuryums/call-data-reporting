@@ -1867,7 +1867,7 @@
           </section>
           <section class="help-topic" id="help-topic-individual" hidden>
             <h3>Individual Report</h3>
-            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
+            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline; the three count tiles compare with the team <em>per day worked</em> &mdash; a day with no calls is not counted and a day marked partial counts as its share) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
           </section>
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
@@ -1875,17 +1875,17 @@
             <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Trend</strong> bases (Gap = who&rsquo;s above/below the team average; Trend = each agent&rsquo;s metric over time, one line each). The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
-              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
+              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls <em>per day worked</em> vs the team average this period (the marker on the Answered bar). A day with no calls is not counted, and a day marked partial counts as its share, so time off does not read as falling behind. So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
             </ul>
             <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
               <div class="help-mini-card-head">
                 <span class="help-mini-name">Jordan A.</span>
                 <span class="ins-trend-pill ins-trend-up">&#9650; Improving</span>
-                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 142 vs 98 ans</span>
+                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 24.8 vs 20.1 ans/day</span>
               </div>
             </div>
-            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 142 answered vs the ~98 a teammate averaged).</div>
-            <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
+            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 24.8 answered a day worked vs the 20.1 a teammate averaged).</div>
+            <p>The bars compare % Answered / Answered / Missed against the team average &mdash; the two counts per day worked, with the window total printed beside each bar. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
             <h3>Missed Calls</h3>

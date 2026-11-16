@@ -2038,12 +2038,41 @@
     if (!list.length) return '';
     return 'Partial days: ' + list.join(', ') + ((marks || []).length > 12 ? ', …' : '');
   }
-  /** The attendance beside a per-day figure; '' when no mark applied. */
-  function attendanceHtml_(credited, partial, marks, cls) {
+  /** The attendance beside a per-day figure; '' when no mark applied. `workdays`
+   *  is the caller's own window (IR / Insights, P8); omitted = My Department's. */
+  function attendanceHtml_(credited, partial, marks, cls, workdays) {
     if (!partial) return '';
     return '<span class="' + (cls || 'att-line') + '" title="' + escapeHtml(attMarksTitle_(marks)) + '">'
-      + escapeHtml(attendanceText_(credited, partial, attWindowWorkdays_())) + '</span>';
+      + escapeHtml(attendanceText_(credited, partial, workdays != null ? workdays : attWindowWorkdays_())) + '</span>';
   }
+  // P8 (#94): the Individual Report and Insights compare an agent's VOLUME
+  // with the team PER CREDITED DAY. `days` is the server's block
+  // { active, credited, partial, marks? }; a payload without it (cached
+  // before P8, a hand-built fixture) returns undefined and the caller keeps
+  // its window-total comparison.
+  /** PURE. count per credited day: a number, null under one credited day, undefined with no days block. */
+  function perDayOf_(count, days) {
+    if (!days || days.credited == null) return undefined;
+    var c = Number(days.credited) || 0;
+    return c >= 1 ? (Number(count) || 0) / c : null;
+  }
+  /** PURE. "21 days with calls", or the attendance text when a day is marked. */
+  function attDaysText_(days, workdays) {
+    if (!days || days.credited == null) return '';
+    if (Number(days.partial) > 0) return attendanceText_(days.credited, days.partial, workdays);
+    var n = Number(days.active) || 0;
+    return n + ' day' + (n === 1 ? '' : 's') + ' with calls';
+  }
+  /** The same as markup; the marked dates and shares ride the title. */
+  function attDaysHtml_(days, workdays, cls) {
+    var t = attDaysText_(days, workdays);
+    if (!t) return '';
+    return '<span class="' + (cls || 'att-line') + '"'
+      + (days.marks && days.marks.length ? ' title="' + escapeHtml(attMarksTitle_(days.marks)) + '"' : '')
+      + '>' + escapeHtml(t) + '</span>';
+  }
+  /** PURE. A per-day figure as text: one decimal, a dash when there is none. */
+  function perDayText_(v) { return (v == null || !isFinite(Number(v))) ? '–' : Number(v).toFixed(1); }
   function ansPerDayHtml_(row) {
     var v = row ? row.ansPerDay : null;
     var none = (v == null || v === '' || !isFinite(Number(v)));

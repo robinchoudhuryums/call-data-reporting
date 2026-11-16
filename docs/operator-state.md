@@ -4323,8 +4323,29 @@ When something looks wrong, before assuming a code bug, check:
     the few calls should not earn any day's credit; (4) outbound "/ day"
     credits a mark only on a day the agent placed a call; (5) if the sheet
     cannot be read, that run treats every day as whole rather than failing
-    the report; (6) the Individual Report and the Insights comparisons do
-    NOT apply marks yet (P8), and suggestions of likely partial days are P9.
+    the report; (6) suggestions of likely partial days are P9.
+    **The Individual Report and Insights (P8, 2026-11-16).** Every place
+    those two compare an agent's call VOLUME with the team now compares per
+    credited day instead of per window -- which changes those comparisons
+    for everyone, marks or not, because a day with no calls is not a day: an
+    agent who was out for a week is no longer "40% below the team". The
+    places: the Individual Report's three count tiles (the big number is
+    still the window total; under it "24.8 / day" against "Team 20.1 / day")
+    and its two volume sentences; on Insights the above / below team chip,
+    the Answered and Missed bars on each card (the number beside the bar is
+    still the total), the Gap vs team chart for a count metric, and the
+    call-share benchmark, which is now each agent's share of the days worked
+    rather than a flat equal share. The team figure is calls per credited
+    agent-day over the same people as before (active roster agents, the
+    department's team-average excludes left out). Rates -- % answered, avg
+    talk -- are compared exactly as before, as is every "vs prior period"
+    figure, and no count, total or share of the department moves. Under one
+    credited day an agent has no per-day figure and the comparison is left
+    blank rather than shown as a large number. Both report caches were
+    re-versioned (`individual:v13`, `insights:v28`), so the change shows on
+    the first load after the deploy. Pinned by `team-per-day.test.js`;
+    rendered checks in `drive-smoke.js` (the tiles) and
+    `drive-deptoutbound.js` (the Insights surfaces).
     **Not yet done -- the CSR team app (team-tools, a separate repo; #68).**
     It does not read this sheet, so any per-day pace it shows still counts
     a partial day as a whole one. The matching change, to make there:

@@ -723,6 +723,20 @@ function creditedDays_(agent, isoList) {
   return { credited: Math.round(credited * 100) / 100, partial: partial, marks: marks };
 }
 
+/**
+ * P8 (#94): an agent's attendance block from the SET of days they had any
+ * call on -- `{ active, credited, partial, marks? }`. What the Individual
+ * Report and Insights ship beside every per-day comparison; `marks` is
+ * `[[iso, credit]]`, present only when a day is marked (never the reason).
+ */
+function agentDaysBlock_(agent, daySet) {
+  const keys = Object.keys(daySet || {});
+  const cd = creditedDays_(agent, keys);
+  const out = { active: keys.length, credited: cd.credited, partial: cd.partial };
+  if (cd.marks.length) out.marks = cd.marks;
+  return out;
+}
+
 /** PURE. answered-per-day style quotient over credited days; null below the floor (the dash). */
 function perCreditedDay_(count, credited) {
   const c = Number(credited) || 0;

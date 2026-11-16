@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v27';  // v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v28';  // v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -480,6 +480,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   const teamAvgBase = blank();     // per-agent baseline numerators
   const activeRosterAvg = {};      // agent -> true (baseline divisor members)
   let deptAnsweredExcluded = 0;    // excluded agents' answered, for the share benchmark
+  // P8 (#94): the days each agent had ANY call on in the CURRENT window --
+  // the divisor of every per-day vs-team comparison, credited by partial-day
+  // marks. Team roster members and selected agents alike.
+  const currDaysByAgent = {};
   // R11-E (item 6): full-department answered total in the CURRENT window over
   // ALL active roster agents -- NOT just the selected ones. The share-of-
   // answered donut divides by this (and folds unselected agents into an
@@ -535,6 +539,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     // Current wins when a custom prior window overlaps the current
     // range (same else-if semantics as the Performance Report).
     if (inCurrent) {
+      if (rung || missed || answered) {
+        (currDaysByAgent[agent] || (currDaysByAgent[agent] = {}))[dateIso] = true;   // P8
+      }
       if (isSelected) {
         const ag = perAgentCurr[agent];
         ag.rung += rung; ag.missed += missed; ag.answered += answered;
@@ -663,6 +670,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       // 'EXCLUDED FROM TEAM AVG' pill works here unchanged (INV-26).
       excludedFromTeamAvg: !!teamAvgExcluded[agent],
       sourceHomes:      sourceHomes,
+      // P8 (#94): { active, credited, partial, marks? } for the CURRENT window
+      // -- the client compares volume with the team per credited day.
+      days: agentDaysBlock_(agent, currDaysByAgent[agent]),
       // Each metric is a deltaBlock_ (current vs prior), same shape the
       // team tiles use -- so the client renders both with one helper.
       metrics: {
@@ -760,8 +770,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     ? answerRatePct_(teamAvgBase.answered, teamAvgBase.missed, teamAvgBase.rung) : 0;   // DD-2
   const avgAtt = teamAvgBase.answered > 0
     ? (teamAvgBase.att_sum / teamAvgBase.answered) : 0;
+  // P8 (#94): the baseline's divisor in credited AGENT-DAYS (the same
+  // non-excluded active roster the sums above cover), so "vs team" can be
+  // read per day worked instead of per window.
+  let teamAvgAgentDays = 0;
+  Object.keys(activeRosterAvg).forEach(function (a) {
+    teamAvgAgentDays += agentDaysBlock_(a, currDaysByAgent[a]).credited;
+  });
   const teamAvgBasis = {
     agents:   activeRosterAvgCount,
+    agentDays: Math.round(teamAvgAgentDays * 100) / 100,
     rung:     teamAvgBase.rung,
     missed:   teamAvgBase.missed,
     answered: teamAvgBase.answered,
@@ -1168,7 +1186,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       agents: selectedAgents,
       rosterSize: roster.names.length,
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
-      teamAvgBasis: { agents: 0, rung: 0, missed: 0, answered: 0, ttt: 0,
+      teamAvgBasis: { agents: 0, agentDays: 0, rung: 0, missed: 0, answered: 0, ttt: 0,
                       pct: 0, att: 0, excludedAnsweredShare: 0, excluded: [] },
       generatedAt: new Date().toISOString(),
     },
@@ -1180,6 +1198,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
     agentData: selectedAgents.filter(function (a) { return !!rosterSet[a]; }).map(function (a) {
       return {
         name: a, matchedViaRoster: true, matchedViaQueue: false, sourceHomes: [],
+        days: { active: 0, credited: 0, partial: 0 },   // P8: the populated shape
         metrics: zeroMetrics(), rawAnswered: 0,
       };
     }),
