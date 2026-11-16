@@ -209,10 +209,20 @@ test('the sheet twin names the marked dates an agent has a call on, like the SQL
 // ── The editor (INV-01 admin carve-out) ─────────────────────────────────────
 
 test('the editor is admin-only, validates every field against a fixed list, and writes one row per (date, agent)', function () {
-  install([], { user: 'manager@x.com' });
-  ['getPartialDaysInit', 'savePartialDay', 'removePartialDay'].forEach(function (fn) {
-    assert.throws(function () { h.call(fn, { date: WEEK[0], agent: 'Anna', credit: 0.5, reason: 'Training' }); }, /admin/i, fn);
-  });
+  // A manager is refused BEFORE anything is written. (Each verb ends by
+  // returning the admin-gated init, so "it throws" alone would pass with the
+  // verb's own gate gone -- the sheet is what proves the gate ran first.)
+  install([[WEEK[1], 'Ben', 0.5, 'Leave', 'admin@x.com', 't']], { user: 'manager@x.com' });
+  const sheetRows = function () {
+    return h.state.spreadsheet.getSheetByName(h.consts.SHEETS.PARTIAL_DAYS).getDataRange().getValues()
+      .slice(1).map(function (r) { return r[0] + '|' + r[1] + '|' + r[2]; }).join(';');
+  };
+  const before = sheetRows();
+  assert.throws(function () { h.call('getPartialDaysInit'); }, /admin/i);
+  assert.throws(function () { h.call('savePartialDay', { date: WEEK[0], agent: 'Anna', credit: 0.5, reason: 'Training' }); }, /admin/i);
+  assert.equal(sheetRows(), before, 'a refused save wrote nothing');
+  assert.throws(function () { h.call('removePartialDay', { date: WEEK[1], agent: 'Ben' }); }, /admin/i);
+  assert.equal(sheetRows(), before, 'a refused remove removed nothing');
   install([]);
   const init = J(h.call('getPartialDaysInit'));
   assert.deepEqual(init.credits, [0, 0.25, 0.5, 0.75]);
