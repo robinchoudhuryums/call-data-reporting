@@ -431,6 +431,34 @@ const MODALS = [
       record('P9: removing a review asks first, plainly (no figure changes), and the day is suggested again',
         dlg2.open && !dlg2.danger && /No figure changes/.test(dlg2.text) && s4.reviewed === 'Reviewed as whole days (1)'
           && sr4.length === 1 && /Anna Reyes/.test(sr4[0]), JSON.stringify({ dlg: dlg2, rows: sr4, s: s4 }));
+
+      // Mark all shown (owner 2026-11-16). Take Carla's mark off again so two
+      // suggestions are on screen, then mark both at once.
+      await page.click('#pd-tbody button[data-pd-remove="' + meta.pdSuggest.carla + '"][data-pd-agent="Carla Diaz"]'); await page.waitForTimeout(300);
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const allBtn = () => page.evaluate(() => { const b = document.getElementById('pd-suggest-all');
+        return { shown: getComputedStyle(b).display !== 'none', text: b.textContent.trim() }; });
+      const a0 = await allBtn();
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.selectOption('#pd-reason', 'Training');
+      await page.click('#pd-suggest-all'); await page.waitForTimeout(300);
+      const dlg3 = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok');
+        return { open: !!ok, ok: ok ? ok.textContent.trim() : '', text: (document.querySelector('.ds-confirm') || document.body).textContent.slice(0, 500),
+          sentYet: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDays').length }; });
+      record('Mark all shown: offered with the count, and it asks first -- naming the count and the one reason -- before anything is sent',
+        a0.shown && a0.text === 'Mark all shown (2)' && dlg3.open && dlg3.ok === 'Mark 2' && /Mark 2 days as partial\?/.test(dlg3.text)
+          && /the reason "Training"/.test(dlg3.text) && /check the list first/.test(dlg3.text) && dlg3.sentYet === 0, JSON.stringify({ a0: a0, dlg: dlg3 }));
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(900);
+      const many = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDays').map((c) => c.args[0]));
+      const sr5 = await sRows();
+      const s5 = await sState();
+      const a1 = await allBtn();
+      const items = many.length === 1 ? many[0].items.map((i) => i.date + ' ' + i.agent + ' ' + i.credit).sort() : [];
+      record('Mark all shown: ONE request with each day\'s own suggested share and the chosen reason; the days become marks and the button goes',
+        many.length === 1 && many[0].reason === 'Training'
+          && JSON.stringify(items) === JSON.stringify([meta.pdSuggest.anna + ' Anna Reyes 0.75', meta.pdSuggest.carla + ' Carla Diaz 0.5'].sort())
+          && sr5.length === 0 && s5.marks === 4 && !a1.shown && /^Nothing left to look at/.test(s5.status),
+        JSON.stringify({ many: many, rows: sr5, s: s5, a1: a1 }));
     } },
   // (G3: the Outbound report modal is retired. Its content is driven on My
   // Department by drive-callbacks.js / drive-deptoutbound.js and its

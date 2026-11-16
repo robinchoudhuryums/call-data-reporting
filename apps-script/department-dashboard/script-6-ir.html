@@ -1610,9 +1610,16 @@
         }
         const title = 'Per day worked: ' + agent.stats[key] + ' over ' + attDaysText_(agent.days, irWorkdays)
           + '. Team: ' + perDayText_(tPer[key]) + ' a day over ' + attNum_(tPer.agentDays) + ' agent-days.';
+        // The agent's own prior window, per credited day too: "Prior 22.9 /
+        // day". With no per-day figure on either side (under one credited day,
+        // no prior activity) the window totals are compared as before.
+        const pPer = agent.priorPerDay || null;
+        const priorHtml = (pStats && pPer && pPer[key] != null && aPer[key] != null)
+          ? irPriorRow_(pStats, pPer[key], aPer[key], valence, perDayText_(pPer[key]) + ' / day')
+          : priorRow(key, valence);
         return irKpiTile(label, agent.stats[key], perDayText_(tPer[key]) + ' / day',
           irPerDayBadge_(aPer[key], tPer[key], valence, noun + ' per day worked'),
-          spark, color, share[key], priorRow(key, valence),
+          spark, color, share[key], priorHtml,
           { text: perDayText_(aPer[key]) + ' / day', title: title });
       };
       return '<div class="ir-summary-card">'
@@ -2749,9 +2756,15 @@
   // adjustment feeds ONLY the classifiers below (trend pill, triage tiers,
   // quiet test, improver/regressor sort, headline, CSV classification
   // columns) -- the card badges keep showing the raw window totals.
-  function insPerDayMetrics_(metrics, meta) {
-    const wdC = Number(meta && meta.currentWorkDays) || 0;
-    const wdP = Number(meta && meta.priorWorkDays) || 0;
+  // `card` (owner 2026-11-16): an AGENT's metrics are normalised by that
+  // agent's own CREDITED days in each window (creditedPair_) -- a day with no
+  // calls is not a day, a day marked partial counts as its share -- so time
+  // off in one window is not a slip. The team's metrics (no card), and a card
+  // without both day blocks, keep the window's working days.
+  function insPerDayMetrics_(metrics, meta, card) {
+    const pair = card ? creditedPair_(card.days, card.daysPrior) : null;
+    const wdC = pair ? pair.cur : (Number(meta && meta.currentWorkDays) || 0);
+    const wdP = pair ? pair.prior : (Number(meta && meta.priorWorkDays) || 0);
     if (!metrics || wdC <= 0 || wdP <= 0 || wdC === wdP) return metrics;
     const out = {};
     Object.keys(metrics).forEach(function (k) {

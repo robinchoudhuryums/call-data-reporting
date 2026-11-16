@@ -75,8 +75,8 @@ test('CL-2: length-dependent Insights card deltas compare PER DAY when the windo
 
   const card = extractFn(ins, 'insBuildCard_');
   assert.equal((card.match(/insMetricPerDay_\(/g) || []).length, 3, 'the per-day subline renders on the bars (both the P8 per-credited-day bar and the window bar) AND the secondary metrics');
-  assert.match(card, /meta, perDayKind\) \+ '<\/span>'/, 'the bar badges get meta + the per-day kind');
-  assert.match(card, /insDeltaBadge_\(st, m\[2\], priorLbl, meta, m\[3\]\)/, 'so do the secondary badges');
+  assert.match(card, /meta, perDayKind, pair\) \+ '<\/span>'/, 'the bar badges get meta + the per-day kind (+ the agent\'s credited-day pair)');
+  assert.match(card, /insDeltaBadge_\(st, m\[2\], priorLbl, meta, m\[3\], pair\)/, 'so do the secondary badges');
   assert.match(card, /\['ATT', 'att', 'neu', null\]/, 'ATT (per call) is length-independent');
   assert.ok(!/same-length/.test(extractFn(ins, 'insDeltaBadge_')),
     'the badge no longer claims a same-length comparison');

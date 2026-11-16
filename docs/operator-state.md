@@ -4334,7 +4334,11 @@ When something looks wrong, before assuming a code bug, check:
     share the span implies: under an eighth of usual "Not a day (0)", then a
     quarter, half, three quarters; within an eighth of usual is not listed.
     It only suggests. **Use** puts the day in the form, where the admin
-    still picks the reason and presses Save; **Whole day** dismisses it.
+    still picks the reason and presses Save; **Whole day** dismisses it;
+    **Mark all shown (N)** marks every day on screen at once -- each with
+    its own suggested share, all with the one reason chosen in the form --
+    after asking first with the count and the reason (`savePartialDays`:
+    all-or-nothing, one lock; any of them can be removed afterwards).
     Not judged, and named under the list: an agent with fewer than 5
     workdays of calls in the look-back, or whose usual span is under 4 hours
     (a manager, a part-timer). Never suggested: a weekend, a company
@@ -4375,11 +4379,24 @@ When something looks wrong, before assuming a code bug, check:
     rather than a flat equal share. The team figure is calls per credited
     agent-day over the same people as before (active roster agents, the
     department's team-average excludes left out). Rates -- % answered, avg
-    talk -- are compared exactly as before, as is every "vs prior period"
-    figure, and no count, total or share of the department moves. Under one
+    talk -- are compared exactly as before, and no count, total or share of
+    the department moves. **An agent's own "vs prior period" on counts is
+    per credited day too (owner 2026-11-16):** the Individual Report's prior
+    row on a count tile reads "Prior 22.9 / day", and on Insights each
+    card's change badges for answered, missed, rung and total talk time, and
+    the Improving / Slipping pill, compare the agent's credited days in the
+    two windows -- so time off in one window is not a slip. The DEPARTMENT's
+    own vs-prior figures (team totals) are not re-based. Where a window has
+    under one credited day for the agent, the totals are compared as before.
+    **Agents on the team-average exclusion list** (a manager on the roster)
+    are not measured against the team on Insights: their card says "exempt"
+    in place of the above / below team chip and carries no team markers,
+    the Gap vs team chart leaves them out and names them under the chart,
+    and the % Ans marker on every card is the same manager-excluded team the
+    count bars use (it had read the department rate). Under one
     credited day an agent has no per-day figure and the comparison is left
     blank rather than shown as a large number. Both report caches were
-    re-versioned (`individual:v13`, `insights:v28`), so the change shows on
+    re-versioned (now `individual:v14`, `insights:v29`), so the change shows on
     the first load after the deploy. Pinned by `team-per-day.test.js`;
     rendered checks in `drive-smoke.js` (the tiles) and
     `drive-deptoutbound.js` (the Insights surfaces).

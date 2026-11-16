@@ -48,7 +48,7 @@
  *      The log is append-only and idempotently created by setup().
  *
  * The downstream cache layers (companyOverview:v31, summary:v27,
- * individual:v13, etc.; see INV-30 for the canonical list) will
+ * individual:v14, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 6 hours (REPORT_CACHE_TTL_SECONDS,
  * R24) after a rename -- though the morning ingest's freshness tag
  * usually mints new keys sooner. We invalidate the single fixed-key

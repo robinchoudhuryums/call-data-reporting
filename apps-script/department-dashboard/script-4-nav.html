@@ -1620,7 +1620,7 @@
       let top = null, bottom = null;
       cards.forEach(function (c) {
         // Per-working-day-adjusted, matching the card trend pills below.
-        const score = deltaImprovementScore_(insPerDayMetrics_(c.metrics, data.meta));
+        const score = deltaImprovementScore_(insPerDayMetrics_(c.metrics, data.meta, c));
         if (!top || score > top.score) top = { name: c.name, score: score };
         if (!bottom || score < bottom.score) bottom = { name: c.name, score: score };
       });

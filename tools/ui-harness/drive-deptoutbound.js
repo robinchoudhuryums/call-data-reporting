@@ -136,6 +136,50 @@ async function openDept(page, meta) {
         p8.basis === 'per-day' && p8.bench === 'days'
           && p8.shareTitle.indexOf('share of the days worked (' + pdCard.days.credited + ' of ' + basis.agentDays + ' agent-days') !== -1,
         JSON.stringify({ basis: p8.basis, bench: p8.bench, title: p8.shareTitle }));
+      // Owner 2026-11-16: (1) an agent's own vs-prior badges on COUNTS compare
+      // per credited day; (2) an agent on the team-average exclusion list is
+      // not measured against the team -- "exempt", no team markers, no gap
+      // bar; (3) the % Ans marker is the same manager-excluded team as the
+      // count bars.
+      const exName = (basis.excluded || [])[0];
+      const v2 = await page.evaluate((arg) => {
+        const card = (n) => document.querySelector('[data-ins-agent="' + n + '"]');
+        const pd = card(arg.pd), ex = card(arg.ex);
+        const badge = (row) => { const b = row ? row.querySelector('.ins-cbar-delta .pr-delta') : null;
+          return b ? { basis: b.getAttribute('data-basis') || '', title: b.getAttribute('title') || '' } : null; };
+        const rows = pd ? Array.from(pd.querySelectorAll('.ins-cbar-row')) : [];
+        const canvas = document.getElementById('ins-cards-chart');
+        const chart = (canvas && window.Chart && Chart.getChart) ? Chart.getChart(canvas) : null;
+        return {
+          pdBadges: rows.map(badge),
+          pctTitle: rows[0] ? rows[0].getAttribute('title') : '',
+          pdMarkers: pd ? pd.querySelectorAll('.ins-cbar-team').length : -1,
+          exChip: ex ? ((ex.querySelector('.ins-share-exempt') || {}).textContent || '') : null,
+          exTeamChip: ex ? !!ex.querySelector('.cr-vs-team') : null,
+          exMarkers: ex ? ex.querySelectorAll('.ins-cbar-team').length : -1,
+          exTitles: ex ? Array.from(ex.querySelectorAll('.ins-cbar-row')).map((r) => r.getAttribute('title')) : [],
+          gapExempt: canvas ? canvas.getAttribute('data-exempt') : null,
+          gapLabels: chart ? chart.data.labels.slice() : null,
+          gapNote: chart && chart.options.plugins.title ? [chart.options.plugins.title.display, chart.options.plugins.title.text] : null,
+        };
+      }, { pd: metaP.pdAgent, ex: exName });
+      const pdPrior = pdCard.daysPrior || {};
+      record('vs-prior: the count badges on an agent\'s card compare PER DAY WORKED (their credited days in each window); the rate badge does not',
+        v2.pdBadges.length === 3 && v2.pdBadges[0] && v2.pdBadges[0].basis === ''
+          && v2.pdBadges[1] && v2.pdBadges[1].basis === 'worked' && v2.pdBadges[2] && v2.pdBadges[2].basis === 'worked'
+          && v2.pdBadges[1].title.indexOf('(' + pdCard.days.credited + ' vs ' + pdPrior.credited + ' credited days') !== -1,
+        JSON.stringify({ badges: v2.pdBadges, days: [pdCard.days.credited, pdPrior.credited] }));
+      record('exempt: an agent on the team-average exclusion list gets "exempt" in place of the team chip and no team markers; everyone else keeps theirs',
+        !!exName && v2.exChip === 'exempt' && v2.exTeamChip === false && v2.exMarkers === 0 && v2.pdMarkers === 3
+          && v2.exTitles.length === 3 && v2.exTitles.every((t) => t.indexOf('team avg') === -1), JSON.stringify(v2));
+      record('exempt: the gap chart leaves them out and says so under the chart',
+        v2.gapExempt === exName && !!v2.gapLabels && v2.gapLabels.indexOf(exName) === -1 && v2.gapLabels.indexOf(metaP.pdAgent) !== -1
+          && !!v2.gapNote && v2.gapNote[0] === true && v2.gapNote[1] === 'Not shown: ' + exName + ' (excluded from the team benchmark)',
+        JSON.stringify({ exempt: v2.gapExempt, labels: v2.gapLabels, note: v2.gapNote }));
+      const deptPct = Number(insP.teamStats.pct.val).toFixed(1), basePct = Number(basis.pct).toFixed(1);
+      record('the % Ans marker is the manager-excluded team rate (the count bars\' team), not the department rate',
+        v2.pctTitle.indexOf('(team avg ' + basePct + '%)') !== -1 && deptPct !== basePct,
+        JSON.stringify({ title: v2.pctTitle, dept: deptPct, basis: basePct }));
     }
 
     const tdcM = await page.evaluate(() => { const el = document.getElementById('dept-team-direct');

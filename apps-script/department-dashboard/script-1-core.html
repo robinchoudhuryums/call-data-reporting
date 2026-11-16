@@ -2071,6 +2071,26 @@
       + (days.marks && days.marks.length ? ' title="' + escapeHtml(attMarksTitle_(days.marks)) + '"' : '')
       + '>' + escapeHtml(t) + '</span>';
   }
+  /**
+   * PURE. An agent's credited days in the current and the prior window --
+   * `{ cur, prior }` -- for their OWN vs-prior comparison per credited day
+   * (owner 2026-11-16). Null unless both windows carry at least one credited
+   * day (a payload from before the field, or no activity in one window): the
+   * caller then keeps the window comparison.
+   */
+  function creditedPair_(days, daysPrior) {
+    if (!days || !daysPrior || days.credited == null || daysPrior.credited == null) return null;
+    var c = Number(days.credited) || 0, p = Number(daysPrior.credited) || 0;
+    return (c >= 1 && p >= 1) ? { cur: c, prior: p } : null;
+  }
+  /** PURE. Percent change of a count per credited day; null when a value is missing. */
+  function creditedDeltaPct_(cur, prev, pair) {
+    if (!pair || cur == null || prev == null) return null;
+    var c = Number(cur) / pair.cur, p = Number(prev) / pair.prior;
+    if (!isFinite(c) || !isFinite(p)) return null;
+    if (p === 0) return c === 0 ? 0 : 100;   // deltaBlock_'s zero-prior rule
+    return (c - p) / p * 100;
+  }
   /** PURE. A per-day figure as text: one decimal, a dash when there is none. */
   function perDayText_(v) { return (v == null || !isFinite(Number(v))) ? '–' : Number(v).toFixed(1); }
   function ansPerDayHtml_(row) {

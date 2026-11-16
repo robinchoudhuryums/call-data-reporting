@@ -144,7 +144,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   attendance line with the dates in its hover and no reason; P8: an Insights
   card's chip and bars per credited day with the count unchanged, the
   attendance on the marked agent's card only, the gap chart on the per-day
-  basis and the call-share benchmark by days worked) the My Department **direction switch** (Inbound + outbound
+  basis and the call-share benchmark by days worked; an agent's count
+  badges vs prior per day worked, an exempt agent's card with no team chip or
+  markers and no gap bar (named under the chart), the % Ans marker on the
+  manager-excluded team) the My Department **direction switch** (Inbound + outbound
   by default; four views since DV-1)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
@@ -196,7 +199,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   summary that leads with the unreturned callers and its one-base bar, the
   most-not-called-back default order, and a row's own unreturned-caller list;
   since IC-4 its "How this is counted" ⓘ (no fold).
-- `drive-admin.js` — (NPS, Batch 10: printing with the Inbound report open prints the whole report and nothing behind it, and the screen comes back; five modals at 390 and 768 px do not scroll sideways as a whole and keep Close on screen; every amber or red value says its tier; every canvas is a named image; the three filled category segments use dark ink in dark mode; P7: the Partial Days editor -- the fixture marks listed with their reason, fixed lists only, a save with no agent refused in place, Save sending date / roster name / share / reason, Remove asking first in danger tone; P9: nothing suggested until asked, Find listing the REAL payload's short days and naming who was not judged, a marked / reviewed / exception day absent, Use filling the form without saving, Whole day moving a day to the reviewed list with no mark added, Save taking the day off the suggestions, and removing a review asking first without the danger tone; the follow-ons: every suggestion cell on one line with the full date as the cell's title, the table being its own sideways scroller at 390 px, the read's duration in the status line, and "Nothing left to look at" once every suggestion is dealt with)
+- `drive-admin.js` — (NPS, Batch 10: printing with the Inbound report open prints the whole report and nothing behind it, and the screen comes back; five modals at 390 and 768 px do not scroll sideways as a whole and keep Close on screen; every amber or red value says its tier; every canvas is a named image; the three filled category segments use dark ink in dark mode; P7: the Partial Days editor -- the fixture marks listed with their reason, fixed lists only, a save with no agent refused in place, Save sending date / roster name / share / reason, Remove asking first in danger tone; P9: nothing suggested until asked, Find listing the REAL payload's short days and naming who was not judged, a marked / reviewed / exception day absent, Use filling the form without saving, Whole day moving a day to the reviewed list with no mark added, Save taking the day off the suggestions, and removing a review asking first without the danger tone; the follow-ons: every suggestion cell on one line with the full date as the cell's title, the table being its own sideways scroller at 390 px, the read's duration in the status line, and "Nothing left to look at" once every suggestion is dealt with; Mark all shown asking first with the count and the reason, then one request with each day's own share)
   (KBF, Batch 9: every modal's Escape returns focus to a VISIBLE control -- the opener or its menu's trigger; Help holds 40 Tabs with its topic folds closed; Help topics and theme chips are pressed exactly when selected; the Inbound report's 20 header labels take focus and open their tooltip)
   (CCX-1: text typed on two escalation cards survives a
   "Save comment only" reload, the saved comment comes back empty)

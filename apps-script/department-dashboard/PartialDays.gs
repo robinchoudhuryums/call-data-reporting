@@ -169,6 +169,87 @@ function savePartialDay(req) {
   return getPartialDaysInit();
 }
 
+/**
+ * P9 follow-on (owner 2026-11-16): mark SEVERAL days in one go -- the
+ * editor's "Mark all shown" on its suggestions.
+ *   req: { items: [{ date, agent, credit }], reason }
+ * One reason for the whole batch (the admin picks it once); each item keeps
+ * its own credit. All-or-nothing: every item is validated before anything is
+ * written, under one lock, with one usage row. An item whose day already has
+ * a row is updated in place, exactly as savePartialDay would.
+ */
+function savePartialDays(req) {
+  assertAdmin_();
+  const items = (req && Array.isArray(req.items)) ? req.items : [];
+  if (!items.length) throw new Error('Nothing to mark.');
+  if (items.length > PARTIAL_SUGGEST_MAX_) throw new Error('Too many days at once (' + items.length + '); mark at most ' + PARTIAL_SUGGEST_MAX_ + '.');
+  const reason = String((req && req.reason) || '').trim();
+  if (PARTIAL_DAY_REASONS_.indexOf(reason) === -1) {
+    throw new Error('Choose a reason: ' + PARTIAL_DAY_REASONS_.join(', ') + '.');
+  }
+  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const rosters = partialDayRosters_();
+  const onRoster = {};
+  Object.keys(rosters).forEach(function (d) { rosters[d].forEach(function (n) { onRoster[n] = true; }); });
+  const seen = {};
+  const clean = items.map(function (it, i) {
+    const where = 'Item ' + (i + 1) + ': ';
+    const date = String((it && it.date) || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(date + 'T12:00:00Z').getTime())) throw new Error(where + 'not a date.');
+    if (date > today) throw new Error(where + date + ' has not happened yet.');
+    const agent = String((it && it.agent) || '').trim();
+    if (!agent || !onRoster[agent]) throw new Error(where + '"' + agent + '" is not on any department roster.');
+    const credit = Number(it && it.credit);
+    if (!(it && it.credit !== '' && it.credit != null) || PARTIAL_DAY_CREDITS_.indexOf(credit) === -1) {
+      throw new Error(where + 'the share must be one of ' + PARTIAL_DAY_CREDITS_.join(', ') + '.');
+    }
+    const key = date + '|' + agent;
+    if (seen[key]) throw new Error(where + agent + ' on ' + date + ' is listed twice.');
+    seen[key] = true;
+    return { date: date, agent: agent, credit: credit };
+  });
+  const user = (Session.getActiveUser().getEmail() || '').toLowerCase();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Busy — please retry.');
+  try {
+    const ss = openSpreadsheet_();
+    let sheet = ss.getSheetByName(SHEETS.PARTIAL_DAYS);
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEETS.PARTIAL_DAYS);
+      sheet.appendRow(PARTIAL_DAYS_HEADERS.slice());
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, sheet.getMaxRows(), 1).setNumberFormat('@');
+    }
+    let tz = null;
+    try { tz = ss.getSpreadsheetTimeZone(); } catch (e) { tz = null; }
+    const rowOf = {};
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      const cols = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+      for (let i = 0; i < cols.length; i++) {
+        const d = exceptionDayFromRow_([cols[i][0], '', '', ''], tz);
+        const a = String(cols[i][1] == null ? '' : cols[i][1]).trim();
+        if (d && a && rowOf[d.date + '|' + a] == null) rowOf[d.date + '|' + a] = i + 2;
+      }
+    }
+    const stamp = new Date().toISOString();
+    clean.forEach(function (it) {
+      const rowVals = [it.date, sheetSafeCell_(it.agent), it.credit, reason, sheetSafeCell_(user), stamp];
+      const at = rowOf[it.date + '|' + it.agent];
+      if (at) sheet.getRange(at, 1, 1, rowVals.length).setValues([rowVals]);
+      else sheet.appendRow(rowVals);
+    });
+    bustPartialDaysCache_();
+    Logger.log('Partial days: %s marked in one batch by %s (reason=%s)', clean.length, user, reason);
+  } finally {
+    lock.releaseLock();
+  }
+  try { logReportUsage_('partialDays:saveMany', String(clean.length), resolveUser_(Session.getActiveUser().getEmail()), false); } catch (eU) {}
+  const out = getPartialDaysInit();
+  out.saved = clean.length;
+  return out;
+}
+
 /** Remove the mark for (req.date, req.agent) -- the day counts as a whole day again. */
 function removePartialDay(req) {
   assertAdmin_();

@@ -4036,6 +4036,7 @@
     });
     // P9: suggestions.
     if ($('pd-suggest-btn')) $('pd-suggest-btn').addEventListener('click', pdSuggestLoad_);
+    if ($('pd-suggest-all')) $('pd-suggest-all').addEventListener('click', pdSuggestMarkAll_);
     if ($('pd-dept')) $('pd-dept').addEventListener('change', pdSuggestScope_);
     const sBody = $('pd-suggest-tbody');
     if (sBody) sBody.addEventListener('click', function (e) {
@@ -4164,7 +4165,7 @@
     const res = PD_STATE_.suggest;
     const table = $('pd-suggest-table'), body = $('pd-suggest-tbody');
     if (!table || !body) return;
-    if (!res || !res.available) { table.style.display = 'none'; body.innerHTML = ''; return; }
+    if (!res || !res.available) { table.style.display = 'none'; body.innerHTML = ''; pdSuggestAllSync_(0); return; }
     const open = pdSuggestOpen_(res.suggestions, PD_STATE_.data);
     table.style.display = open.length ? '' : 'none';
     body.innerHTML = open.map(function (s) {
@@ -4187,6 +4188,52 @@
         + '</td></tr>';
     }).join('');
     pdSuggestStatus_('', pdSuggestSummary_(res, open.length));
+    pdSuggestAllSync_(open.length);
+  }
+  // "Mark all shown": offered only while there is something shown.
+  function pdSuggestAllSync_(n) {
+    const b = $('pd-suggest-all');
+    if (!b) return;
+    b.style.display = n > 0 ? '' : 'none';
+    b.textContent = 'Mark all shown (' + n + ')';
+  }
+  // Owner 2026-11-16: mark every suggestion on screen in one go -- each with
+  // its own suggested share, all with the ONE reason chosen in the form. It
+  // asks first and names the count and the reason; any of them can be removed
+  // afterwards from the list of marks.
+  function pdSuggestMarkAll_() {
+    const res = PD_STATE_.suggest;
+    const open = (res && res.available) ? pdSuggestOpen_(res.suggestions, PD_STATE_.data) : [];
+    if (!open.length) return;
+    const reason = ($('pd-reason') && $('pd-reason').value) || '';
+    if (!reason) { pdSuggestStatus_('error', 'Choose a reason in the form above first.'); return; }
+    dsConfirm_({
+      title: 'Mark ' + open.length + ' day' + (open.length === 1 ? '' : 's') + ' as partial?',
+      message: 'Each of the ' + open.length + ' day' + (open.length === 1 ? '' : 's') + ' shown is marked with its suggested share and the reason "'
+        + reason + '". These are suggestions from call times, so check the list first. You can remove any of them afterwards.',
+      confirmLabel: 'Mark ' + open.length,
+    }).then(function (ok) {
+      if (!ok) return;
+      if (mutationBusy_('pdMarkAll')) return;
+      const b = $('pd-suggest-all');
+      if (b) b.disabled = true;
+      pdSuggestStatus_('', 'Marking ' + open.length + '…');
+      google.script.run
+        .withSuccessHandler(function (data) {
+          mutationDone_('pdMarkAll');
+          if (b) b.disabled = false;
+          pdEditorRender_(data);
+          pdEditorStatus_('', 'Marked ' + ((data && data.saved) || open.length) + ' day' + (open.length === 1 ? '' : 's')
+            + '. Per-day figures pick them up within a few minutes.');
+        })
+        .withFailureHandler(function (err) {
+          mutationDone_('pdMarkAll');
+          if (b) b.disabled = false;
+          pdSuggestStatus_('error', (err && err.message) || String(err));
+        })
+        .savePartialDays({ reason: reason,
+          items: open.map(function (s) { return { date: s.date, agent: s.agent, credit: s.credit }; }) });
+    });
   }
   function pdSuggestLoad_() {
     const dept = ($('pd-dept') && $('pd-dept').value) || '';

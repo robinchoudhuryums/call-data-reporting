@@ -232,7 +232,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v28` already makes a fresh re-generate fast too).
+  `insights:v29` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -3350,8 +3350,30 @@ to SAY so beside the figure, never to recompute it.
   weekday form with the full date as its `title` and the row's
   `data-pd-date`; on a phone the table is its own sideways scroller (the
   F81 rule for modal tables), so the dialog never scrolls sideways.
+  **Mark all shown** (`#pd-suggest-all`, `pdSuggestMarkAll_`) is offered
+  only while a suggestion is on screen, always asks first through
+  `dsConfirm_` (the count and the one reason), and sends ONE
+  `savePartialDays` with each day's own share.
 - **Not yet:** the CSV, which still exports the per-day figure without the
   line.
+- **An agent's own vs-prior, per credited day (owner 2026-11-16).**
+  `creditedPair_(days, daysPrior)` (script-1-core, pure) is the agent's
+  credited days in the two windows, or null when either has under one (or
+  the payload predates the field). With a pair: `insDeltaBadge_(…, pair)`
+  compares a count or a talk-time total per day worked and marks the badge
+  `data-basis="worked"`; `insMetricPerDay_(…, pair)` divides by the same
+  days; `insPerDayMetrics_(metrics, meta, card)` feeds the Improving /
+  Slipping classification from the card's own days. Without one, every
+  window rule stands. The team's own tiles and rollup never get a pair. On
+  the IR the prior row of a count tile is `irPriorRow_` over
+  `priorPerDay` / `perDay` ("Prior 22.9 / day"), falling back to the totals.
+- **Exempt agents on Insights (R18 follow-through).** `insIsExempt_(card)`
+  (on the dept's team-average exclusion list): the card shows
+  `.ins-share-exempt` in place of the team chip and no `.ins-cbar-team`
+  markers; the Gap vs team chart drops them (`canvas[data-exempt]`, and the
+  chart's bottom title names them -- never a silent omission); the Trend
+  basis still draws their line. The % Ans marker on every card reads
+  `meta.teamAvgBasis.pct`, the count bars' own team.
 - **The Individual Report and Insights (P8).** Every agent-vs-team VOLUME
   comparison is per credited day; the count on screen stays the window
   total. Shared helpers (script-1-core, all pure): `perDayOf_(count, days)`

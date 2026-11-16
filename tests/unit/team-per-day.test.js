@@ -192,6 +192,47 @@ test('Insights: the empty shape carries days and agentDays', function () {
   assert.deepEqual(card(d, 'Anna').days, { active: 0, credited: 0, partial: 0 });
 });
 
+// ── An agent's own vs-prior, per credited day (owner 2026-11-16) ────────────
+
+// Prior window: the five workdays before DAYS[0]; current: DAYS[0..4].
+const PRIOR = ['2026-02-23', '2026-02-24', '2026-02-25', '2026-02-26', '2026-02-27'];
+function twoWindows() {
+  const rows = [];
+  PRIOR.forEach(function (d) { rows.push(row(d, 'Anna', 20, 2)); });                 // 5 days, 100 rung
+  DAYS.slice(0, 3).forEach(function (d) { rows.push(row(d, 'Anna', 20, 2)); });       // 3 days, 60 rung -- out two days
+  DAYS.slice(0, 5).forEach(function (d) { rows.push(row(d, 'Ben', 10, 1)); });
+  PRIOR.forEach(function (d) { rows.push(row(d, 'Ben', 10, 1)); });
+  return rows;
+}
+
+test('IR: with a comparison on, each card carries its PRIOR window\'s days and per-credited-day figures', function () {
+  install(twoWindows(), { marks: [mark(PRIOR[0], 'Anna', 0.5)] });
+  const d = J(h.call('getIndividualReport', { department: 'Alpha', from: DAYS[0], to: DAYS[4], agents: ['Anna'], priorFrom: PRIOR[0], priorTo: PRIOR[4] }));
+  const c = card(d, 'Anna');
+  assert.deepEqual(c.days, { active: 3, credited: 3, partial: 0 });
+  assert.deepEqual(c.priorDays, { active: 5, credited: 4.5, partial: 1, marks: [[PRIOR[0], 0.5]] });
+  assert.deepEqual(c.perDay, { rung: 20, missed: 2, answered: 18 });
+  assert.deepEqual(c.priorPerDay, { rung: 22.22, missed: 2.22, answered: 20 });
+  assert.equal(c.priorStats.rung, 100, 'the prior window\'s totals are what they were');
+  // No comparison: the fields are null, as priorStats is.
+  install(twoWindows());
+  const none = card(ir(['Anna']), 'Anna');
+  assert.equal(none.priorDays, null);
+  assert.equal(none.priorPerDay, null);
+});
+
+test('Insights: every card carries daysPrior beside days; the delta blocks themselves are untouched', function () {
+  install(twoWindows());
+  const plain = J(h.call('getInsightsReport', { department: 'Alpha', from: DAYS[0], to: DAYS[4], agents: [], priorFrom: PRIOR[0], priorTo: PRIOR[4] }));
+  assert.deepEqual(card(plain, 'Anna').days, { active: 3, credited: 3, partial: 0 });
+  assert.deepEqual(card(plain, 'Anna').daysPrior, { active: 5, credited: 5, partial: 0 });
+  assert.equal(card(plain, 'Anna').metrics.rung.deltaPct, -40, 'the stored delta is still totals: 60 vs 100');
+  install(twoWindows(), { marks: [mark(PRIOR[0], 'Anna', 0.5)] });
+  const marked = J(h.call('getInsightsReport', { department: 'Alpha', from: DAYS[0], to: DAYS[4], agents: [], priorFrom: PRIOR[0], priorTo: PRIOR[4] }));
+  assert.equal(card(marked, 'Anna').daysPrior.credited, 4.5);
+  assert.deepEqual(card(marked, 'Anna').metrics, card(plain, 'Anna').metrics);
+});
+
 // ── The client's pure helpers ───────────────────────────────────────────────
 
 function grabFrom(file) {
@@ -273,6 +314,55 @@ test('client: the IR per-day badge -- a percent against the team pace, and a pla
 });
 
 // ── Where the comparisons are wired ─────────────────────────────────────────
+
+test('client: an agent\'s own vs-prior per credited day -- the pair, the change, and the classifier fed by the card', function () {
+  const core = grabFrom('script-1-core.html'), irF = grabFrom('script-6-ir.html');
+  const ctx = vm.createContext({});
+  vm.runInContext(['creditedPair_', 'creditedDeltaPct_'].map(core).join('\n') + '\n' + irF('insPerDayMetrics_'), ctx);
+  assert.deepEqual(J(ctx.creditedPair_({ credited: 3 }, { credited: 4.5 })), { cur: 3, prior: 4.5 });
+  assert.equal(ctx.creditedPair_({ credited: 0.5 }, { credited: 5 }), null, 'under one credited day on either side: no pair');
+  assert.equal(ctx.creditedPair_({ credited: 5 }, { credited: 0 }), null);
+  assert.equal(ctx.creditedPair_({ credited: 5 }, undefined), null, 'a payload from before the field');
+  // 60 rung over 3 days vs 100 over 5: the same pace -- 0%, where the totals said -40%.
+  assert.equal(ctx.creditedDeltaPct_(60, 100, { cur: 3, prior: 5 }), 0);
+  assert.equal(Math.round(ctx.creditedDeltaPct_(60, 100, { cur: 3, prior: 4.5 }) * 10) / 10, -10);
+  assert.equal(ctx.creditedDeltaPct_(5, 0, { cur: 3, prior: 5 }), 100, 'the zero-prior rule');
+  assert.equal(ctx.creditedDeltaPct_(0, 0, { cur: 3, prior: 5 }), 0);
+  assert.equal(ctx.creditedDeltaPct_(60, null, { cur: 3, prior: 5 }), null);
+  assert.equal(ctx.creditedDeltaPct_(60, 100, null), null);
+  // The trend classifier: an agent out two days of five is not "slipping".
+  const metrics = { rung: { val: 60, prev: 100, deltaPct: -40, type: 'volume' }, pct: { val: 90, prev: 90, deltaPct: 0, type: 'pctPoints' } };
+  const meta = { currentWorkDays: 5, priorWorkDays: 5 };
+  assert.equal(ctx.insPerDayMetrics_(metrics, meta).rung.deltaPct, -40, 'the team (no card): equal windows, totals stand');
+  const adj = ctx.insPerDayMetrics_(metrics, meta, { days: { credited: 3 }, daysPrior: { credited: 5 } });
+  assert.equal(adj.rung.deltaPct, 0, 'an agent: per credited day');
+  assert.equal(adj.pct.deltaPct, 0, 'a rate is never re-based');
+  assert.equal(ctx.insPerDayMetrics_(metrics, meta, { days: { credited: 3 } }).rung.deltaPct, -40, 'no prior block: the window rule');
+});
+
+test('the vs-prior and exempt wiring: every card badge gets the pair, the IR prior row is per day, exempt agents are not measured', function () {
+  const insSrc = fs.readFileSync(path.join(DASHBOARD_DIR, 'script-8-insights.html'), 'utf8');
+  const irSrc = fs.readFileSync(path.join(DASHBOARD_DIR, 'script-6-ir.html'), 'utf8');
+  const navSrc = fs.readFileSync(path.join(DASHBOARD_DIR, 'script-4-nav.html'), 'utf8');
+  // Every card-level badge and subline carries the agent's pair.
+  assert.match(insSrc, /const pair = creditedPair_\(c\.days, c\.daysPrior\);/);
+  assert.equal((insSrc.match(/meta, perDayKind, pair\) \+ '<\/span>'/g) || []).length, 2, 'the badge on both bar forms');
+  assert.equal((insSrc.match(/insMetricPerDay_\(st, perDayKind, meta, pair\)/g) || []).length, 2, 'and the subline on both');
+  assert.match(insSrc, /insDeltaBadge_\(st, m\[2\], priorLbl, meta, m\[3\], pair\)/);
+  // Every per-agent classification passes the card; the team's own does not.
+  assert.equal((insSrc.match(/insPerDayMetrics_\((c|a)\.metrics, (meta|d\.meta), (c|a)\)/g) || []).length, 3);
+  assert.match(navSrc, /insPerDayMetrics_\(c\.metrics, data\.meta, c\)/);
+  assert.match(insSrc, /insPerDayMetrics_\(teamStats \|\| \{\}, meta\)\)/, 'the team rollup keeps the window rule');
+  // IR: the vs-prior row on a count tile is per credited day, with the totals as its fallback.
+  assert.match(irSrc, /irPriorRow_\(pStats, pPer\[key\], aPer\[key\], valence, perDayText_\(pPer\[key\]\) \+ ' \/ day'\)/);
+  assert.match(irSrc, /: priorRow\(key, valence\);/);
+  // Exempt: no team chip, no team markers, no gap bar; one team basis for the % marker.
+  assert.match(insSrc, /const exempt = insIsExempt_\(c\);/);
+  assert.equal((insSrc.match(/\(exempt \? '' : '<span class="ins-cbar-team"/g) || []).length, 2);
+  assert.match(insSrc, /cards = cards\.filter\(function \(c\) \{ return !insIsExempt_\(c\); \}\);/);
+  assert.match(insSrc, /text: 'Not shown: ' \+ exemptNames\.join\(', '\) \+ ' \(excluded from the team benchmark\)'/);
+  assert.match(insSrc, /pct:\s+\(meta && meta\.teamAvgBasis && meta\.teamAvgBasis\.agents > 0\)\s+\? \(Number\(meta\.teamAvgBasis\.pct\) \|\| 0\)/);
+});
 
 test('the surfaces are wired to the per-day basis, each with the old comparison as its fallback', function () {
   const insSrc = fs.readFileSync(path.join(DASHBOARD_DIR, 'script-8-insights.html'), 'utf8');

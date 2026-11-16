@@ -371,6 +371,43 @@ test('the editor\'s init carries the reviewed days and the look-back, beside the
   assert.equal(h.consts.PARTIAL_SUGGEST_DAYS_, 90);
 });
 
+// ── Mark all shown (owner 2026-11-16) ───────────────────────────────────────
+
+test('mark-all is admin-only, all-or-nothing, and a refused batch writes nothing', function () {
+  install({ user: 'manager@x.com' });
+  const good = [{ date: WORKDAYS[5], agent: 'Anna', credit: 0.5 }, { date: WORKDAYS[6], agent: 'Ben', credit: 0.75 }];
+  assert.throws(function () { h.call('savePartialDays', { items: good, reason: 'Training' }); }, /admin/i);
+  assert.equal(sheetRows().join(';'), '');
+  install();
+  const bad = function (req, re) { assert.throws(function () { h.call('savePartialDays', req); }, re, JSON.stringify(req)); };
+  bad({ items: [], reason: 'Training' }, /Nothing to mark/);
+  bad({ items: good, reason: 'Sick -- flu' }, /Choose a reason/);
+  bad({ items: good.concat([{ date: WORKDAYS[7], agent: 'Nobody', credit: 0.5 }]), reason: 'Training' }, /Item 3: .*not on any department roster/);
+  bad({ items: good.concat([{ date: WORKDAYS[7], agent: 'Anna', credit: 0.4 }]), reason: 'Training' }, /Item 3: the share must be one of/);
+  bad({ items: good.concat([{ date: WORKDAYS[7], agent: 'Anna', credit: 1 }]), reason: 'Training' }, /Item 3/);
+  bad({ items: good.concat([{ date: '2999-01-01', agent: 'Anna', credit: 0.5 }]), reason: 'Training' }, /has not happened yet/);
+  bad({ items: good.concat([good[0]]), reason: 'Training' }, /listed twice/);
+  assert.equal(sheetRows().join(';'), '', 'one bad item and NOTHING of the batch is written');
+  const many = [];
+  for (let i = 0; i <= h.consts.PARTIAL_SUGGEST_MAX_; i++) many.push(good[0]);
+  bad({ items: many, reason: 'Training' }, /Too many days at once/);
+});
+
+test('mark-all writes each day with its own share and the one reason; a reviewed or marked day is updated in place', function () {
+  install({ rows: [[WORKDAYS[5], 'Anna', 1, h.consts.PARTIAL_DAY_REVIEWED_REASON_, 'admin@x.com', 't'],
+                   [WORKDAYS[6], 'Ben', 0.25, 'Leave', 'admin@x.com', 't']] });
+  const out = J(h.call('savePartialDays', { reason: 'Training', items: [
+    { date: WORKDAYS[5], agent: 'Anna', credit: 0.5 }, { date: WORKDAYS[6], agent: 'Ben', credit: 0.75 },
+    { date: WORKDAYS[7], agent: 'Anna', credit: 0 }] }));
+  assert.equal(out.saved, 3);
+  assert.deepEqual(sheetRows().slice().sort(), [WORKDAYS[5] + '|Anna|0.5|Training', WORKDAYS[6] + '|Ben|0.75|Training',
+    WORKDAYS[7] + '|Anna|0|Training'].sort(), 'three rows: two updated in place, one added');
+  assert.equal(out.days.length, 3);
+  assert.equal(out.reviewed.length, 0);
+  assert.equal(h.call('partialDayCredit_', WORKDAYS[5], 'Anna'), 0.5, 'the list cache is busted');
+  assert.equal(h.call('partialDayCredit_', WORKDAYS[7], 'Anna'), 0);
+});
+
 // ── The client's pure helpers ───────────────────────────────────────────────
 
 test('client: a suggestion disappears once its day has a row; the summary says who was and was not checked', function () {
@@ -406,4 +443,9 @@ test('client: a suggestion disappears once its day has a row; the summary says w
   const use = grab('pdSuggestUse_');
   assert.ok(!/google\.script\.run/.test(use), 'Use never calls the server');
   assert.match(grab('pdSuggestDismiss_'), /\.dismissPartialDaySuggestion\(\{ date: date, agent: agent \}\)/);
+  // Mark all shown asks first (dsConfirm_) and sends ONE request with each day's own share.
+  const all = grab('pdSuggestMarkAll_');
+  assert.ok(all.indexOf('dsConfirm_(') !== -1 && all.indexOf('dsConfirm_(') < all.indexOf('.savePartialDays('), 'it asks before it sends');
+  assert.match(all, /items: open\.map\(function \(s\) \{ return \{ date: s\.date, agent: s\.agent, credit: s\.credit \}; \}\)/);
+  assert.match(all, /pdSuggestOpen_\(res\.suggestions, PD_STATE_\.data\)/, 'only the suggestions still open');
 });

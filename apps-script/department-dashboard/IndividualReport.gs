@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v13';   // v13 (P8): the team comparison per CREDITED day -- cards carry days + perDay, teamAvg carries perDay
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v14';   // v14: the vs-prior volume comparison per CREDITED day too -- cards carry priorDays + priorPerDay; v13 (P8): the team comparison per CREDITED day -- cards carry days + perDay, teamAvg carries perDay
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -407,6 +407,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // divisor of the per-day team comparison, credited by partial-day marks.
   // Team members (roster, not excluded) and every selected agent.
   const daysByAgent = {};
+  // ...and the same for each selected agent's PRIOR window, so an agent's own
+  // vs-prior volume is compared per credited day as well (owner 2026-11-16).
+  const priorDaysByAgent = {};
 
   // Per-dept exclusion list for managers / others who are on the
   // roster but shouldn't factor into the team average. Resolved at
@@ -537,6 +540,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       // inputs no longer produce a different prior baseline here (IR
       // previously double-counted overlap days into BOTH windows).
       } else if (inPriorRange) {
+        if (rung > 0 || answered > 0 || missed > 0) {
+          (priorDaysByAgent[agent] || (priorDaysByAgent[agent] = {}))[dateIso] = true;
+        }
         const p = priorSummaryStats[agent];
         p.rung     += rung;
         p.missed   += missed;
@@ -695,8 +701,17 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 
     let priorStats = null;
     let priorRaw   = null;
+    let priorDays = null;
+    let priorPerDay = null;
     if (hasPrior) {
       const p = priorSummaryStats[agent];
+      // The prior window's own days and per-credited-day figures: what the
+      // vs-prior row on a count tile compares (null under one credited day).
+      priorDays = agentDaysBlock_(agent, priorDaysByAgent[agent]);
+      const pPerDay = function (n) {
+        return priorDays.credited >= PARTIAL_DAY_MIN_CREDITED_ ? Math.round((n / priorDays.credited) * 100) / 100 : null;
+      };
+      priorPerDay = { rung: pPerDay(p.rung), missed: pPerDay(p.missed), answered: pPerDay(p.answered) };
       const pPct = answerRatePct_(p.answered, p.missed, p.rung);   // DD-2
       const pTtt = p.answered > 0 ? p.ttt      / p.answered : 0;
       const pAtt = p.answered > 0 ? p.attTotal / p.answered : 0;
@@ -757,6 +772,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       insights: buildAgentInsights_(agentRaw, teamAvg),
       priorStats: priorStats,
       priorRaw:   priorRaw,
+      priorDays:   priorDays,     // { active, credited, partial, marks? } | null (no comparison)
+      priorPerDay: priorPerDay,   // { rung, missed, answered } per credited day | null
     };
   });
 
@@ -887,6 +904,8 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
         insights: [],
         priorStats: null,
         priorRaw:   null,
+        priorDays:   null,
+        priorPerDay: null,
       };
     }),
     teamAvg: {

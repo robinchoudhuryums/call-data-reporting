@@ -351,6 +351,18 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       if (!req || req.department !== p.department) { p.department = (req && req.department) || ''; p.suggestions = []; p.judged = 0; p.notJudged = []; }
       return p;
     },
+    savePartialDays: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      if (!req || !req.reason) throw new Error('Choose a reason.');
+      (req.items || []).forEach(function (it) {
+        st.days = st.days.filter(function (d) { return !(d.date === it.date && d.agent === it.agent); });
+        st.reviewed = (st.reviewed || []).filter(function (d) { return !(d.date === it.date && d.agent === it.agent); });
+        st.days.unshift({ date: it.date, agent: it.agent, credit: Number(it.credit), reason: req.reason,
+          addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
+      });
+      st.saved = (req.items || []).length;
+      return st;
+    },
     dismissPartialDaySuggestion: function (req) {
       var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
       st.reviewed = st.reviewed || [];

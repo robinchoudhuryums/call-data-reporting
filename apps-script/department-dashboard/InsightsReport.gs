@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v28';  // v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v29';  // v29: agentData[].daysPrior -- an agent's own vs-prior volume is per CREDITED day too; v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -484,6 +484,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // the divisor of every per-day vs-team comparison, credited by partial-day
   // marks. Team roster members and selected agents alike.
   const currDaysByAgent = {};
+  // ...and each selected agent's PRIOR-window days, for their own vs-prior
+  // comparison per credited day (owner 2026-11-16).
+  const priorDaysByAgent = {};
   // R11-E (item 6): full-department answered total in the CURRENT window over
   // ALL active roster agents -- NOT just the selected ones. The share-of-
   // answered donut divides by this (and folds unselected agents into an
@@ -569,6 +572,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         db.ttt += tttSec; db.att_sum += attTotal;
       }
     } else if (inPrior) {
+      if (isSelected && (rung || missed || answered)) {
+        (priorDaysByAgent[agent] || (priorDaysByAgent[agent] = {}))[dateIso] = true;
+      }
       if (isSelected) {
         const ap = perAgentPrior[agent];
         ap.rung += rung; ap.missed += missed; ap.answered += answered;
@@ -673,6 +679,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       // P8 (#94): { active, credited, partial, marks? } for the CURRENT window
       // -- the client compares volume with the team per credited day.
       days: agentDaysBlock_(agent, currDaysByAgent[agent]),
+      daysPrior: agentDaysBlock_(agent, priorDaysByAgent[agent]),
       // Each metric is a deltaBlock_ (current vs prior), same shape the
       // team tiles use -- so the client renders both with one helper.
       metrics: {
@@ -1199,6 +1206,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       return {
         name: a, matchedViaRoster: true, matchedViaQueue: false, sourceHomes: [],
         days: { active: 0, credited: 0, partial: 0 },   // P8: the populated shape
+        daysPrior: { active: 0, credited: 0, partial: 0 },
         metrics: zeroMetrics(), rawAnswered: 0,
       };
     }),
