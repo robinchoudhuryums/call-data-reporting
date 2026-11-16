@@ -135,6 +135,21 @@ test('IR: the volume sentences compare per day worked -- an absence is not "lowe
   assert.match(txt('Ben'), /Missed calls per day worked are \d+% above team avg \(4\.0 vs 2\.7 missed a day\)/);
 });
 
+test('a row with no call on it is not a day -- in either report (found by bite-check)', function () {
+  // The pipeline writes a 0 / 0 / 0 row for an agent who was signed in but
+  // took nothing. It must not add a day to their divisor or the team's.
+  const rows = fixture();
+  DAYS.slice(0, 5).forEach(function (d) { rows.push(row(d, 'Ben', 0, 0)); });
+  install(rows);
+  const d = ir(['Ben']);
+  assert.deepEqual(card(d, 'Ben').days, { active: 5, credited: 5, partial: 0 });
+  assert.equal(card(d, 'Ben').perDay.rung, 20);
+  assert.equal(d.teamAvg.perDay.agentDays, 25);
+  const i = ins();
+  assert.deepEqual(card(i, 'Ben').days, { active: 5, credited: 5, partial: 0 });
+  assert.equal(i.meta.teamAvgBasis.agentDays, 25);
+});
+
 test('IR: the empty shape carries the same fields', function () {
   install([]);
   const d = ir(['Anna']);
