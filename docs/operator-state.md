@@ -329,7 +329,10 @@ When something looks wrong, before assuming a code bug, check:
     rows still write (main metric columns) but JSONB name-list fields
     and `call_history_phones` child rows are skipped; the Caller
     Lookup modal renders an "HMAC_SECRET not set" hint
-    (meta.configured=false) instead of failing.
+    (meta.configured=false) instead of failing. **The callback worklist
+    (#95) depends on it too:** a caller's number is shown only when its HMAC
+    equals the call's stored `caller_hash`, so a missing or different secret
+    on the dashboard makes every lookup read "Could not be confirmed".
 18. Neon Script Properties + scope on the DASHBOARD project (for
     orphan-rename-to-Neon): `NEON_HOST`, `NEON_DB`, `NEON_USER`,
     `NEON_PASS` must also be set on the Department Dashboard project
@@ -1601,7 +1604,11 @@ When something looks wrong, before assuming a code bug, check:
     hygiene: the inbound/outbound journey backfills, the per-queue split
     backfill window (#40), and the deferred mirror's pruned-sheet detection
     all assume it runs — and when auditing "how far back can X be rebuilt",
-    this trigger's cadence IS the answer. Since R27 (2026-08) that answer is
+    this trigger's cadence IS the answer. **Since P11 the DASHBOARD reads
+    these tabs too** (the callback worklist's number lookup, #95, by the
+    `Call_Legs_<date>` name and the raw column layout): it is why a number
+    can be shown for about two weeks only, and a rename of the tab prefix or
+    a moved raw column is now a two-project edit (`callback-worklist.test.js`). Since R27 (2026-08) that answer is
     exact year-round: the prune compared fractional days between LOCAL
     midnights, so a window spanning the November fall-back transition pruned
     a day early and the effective retention was 13 days for ~2 weeks each
@@ -4254,7 +4261,9 @@ When something looks wrong, before assuming a code bug, check:
     outside callers who rang the person's line (from `inbound_calls`), with a
     note, until their source is re-imported (#56). The dashboard serves it
     from `getAgentDay` to ADMINS only, the Direct Calls report's vetting gate;
-    the hash is never selected. Joins the Neon backup (#28, monthly files),
+    the hash is never selected. Since P10 Transfer retries reads it as well
+    (the inbound internal rows of the people tried first, to say whether each
+    was free or on a call, #89). Joins the Neon backup (#28, monthly files),
     the restore list and the retention prune (#57, the per-call horizon).
     Pinned by `tests/unit/direct-calls-capture.test.js`. **ADT-2 (owner
     2026-11-06):** a ring missed while the person was on another call stores
@@ -4406,7 +4415,8 @@ When something looks wrong, before assuming a code bug, check:
     `partial-day-suggestions.test.js`; rendered in `drive-admin.js`.
     **The Individual Report and Insights (P8, 2026-11-16).** Every place
     those two compare an agent's call VOLUME with the team now compares per
-    credited day instead of per window -- which changes those comparisons
+    credited day instead of per window (the server's day counts come from
+    `agentDaysBlock_`, Util.gs) -- which changes those comparisons
     for everyone, marks or not, because a day with no calls is not a day: an
     agent who was out for a week is no longer "40% below the team". The
     places: the Individual Report's three count tiles (the big number is

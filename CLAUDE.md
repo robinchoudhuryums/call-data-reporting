@@ -140,7 +140,7 @@ npm run lint:gas
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~170 suites pin the invariants, the report
+# Non-zero exit on failure. ~180 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -518,9 +518,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Public write paths are admin-only — INV-01 carries the AUTHORITATIVE
   carve-out list** (OrphanFix.gs incl. the `addOrphanToRoster` New-hire flow /
   `setup()` / DeptConfig.gs / the Access Control editor in Auth.gs / the
-  Alert+Digest config editors / the Exception Days editor (#81) / the append-only
-  `logReportUsage_` telemetry carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
-  with `assertAdmin_()` except the telemetry append and the row-dept-gated
+  Alert+Digest config editors / the Exception Days (#81) and Partial Days (#94)
+  editors / the append-only `logReportUsage_` telemetry and the #95 Callback
+  Number Log audit row; Escalations, INV-55, is the per-dept NEON write path). All start
+  with `assertAdmin_()` except those two appends and the row-dept-gated
   Escalations verbs. Every other
   public-callable function is read-only; helpers that touch
   spreadsheet state end in `_` so Apps Script blocks them from RPC.
@@ -658,23 +659,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `computeQcdSnapshots_` + the Overview parent map (CompanyOverview.gs),
   the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_`
   (Data.gs).
-- **The Performance Report is RETIRED (PR->Insights consolidation).**
-  Its semantics live on in Insights: the INV-28 comparison window is the
+- **The Performance Report is RETIRED into Insights (PR->Insights
+  consolidation).** What still binds: the INV-28 comparison window is the
   immediately-preceding same-workday-count window (R24; NOT "previous
-  calendar month") -- since R17b carried by the agent-card delta badges + the
-  emails (the rollup KPI tile row is hidden); the share-of-answered
-  breakdown sits in Team detail; the **Absolute** chart basis
-  (`insRenderCardsChartAbs_`) is HIDDEN since R16g (the agent table on
-  the same page carries it; renderer inert, A/B remote still reaches it). `PerformanceReport.gs` was
-  DELETED (`deltaBlock_` moved to Util.gs -- Insights consumes it);
-  legacy `#/report/performance` deep links land on the Insights region
-  (router repoint); the `performance:` cache prefix is an orphan
-  and the `cdr.pr.prefs.v1` localStorage key is swept on boot
-  (`sweepOrphanPrefs_`, script-2-chrome). The frozen-literal
-  test in insights-report.test.js pins the inherited semantics
-  (ex-parity gate). NOTE (INV-17): `clasp push -f` does not delete
-  remote files -- PerformanceReport.gs must be removed in the Apps
-  Script web editor.
+  calendar month"), carried by the agent-card delta badges + the emails;
+  `deltaBlock_` lives in Util.gs; legacy `#/report/performance` links land on
+  the Insights region; the `performance:` cache prefix is an orphan and
+  `cdr.pr.prefs.v1` is swept on boot (`sweepOrphanPrefs_`); the **Absolute**
+  chart basis (`insRenderCardsChartAbs_`) is hidden since R16g, renderer
+  inert. `PerformanceReport.gs` was deleted locally and must be removed in the
+  web editor (INV-17). The frozen-literal test in insights-report.test.js pins
+  the inherited semantics; the surface detail is in
+  `docs/client-ui-conventions.md`.
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing. `neonWrite.js` self-contains
@@ -2084,7 +2080,7 @@ items for anything it flags or doesn't cover.)
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; when set, an Access Control `agent` row opens the separate agent app -- off, agents get access-denied)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
-48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching; per-dept gates (`COACHING_DEPT_RULES`, team-relative or a flat answer %; Save all), Met / Rotated / Dismissed and the manager email HELD for admins since Step 5b
+48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); arm it from Admin ▾ → Coaching; per-dept gates (`COACHING_DEPT_RULES`); the manager email is HELD for admins (Step 5b)
 49. Inbound Calls tab export trigger -- keeps the heatmap's and the direct-line callbacks' SHEET FALLBACK fresh, plus the one-time re-exports and the BF-1 ring backfill from stored journeys
 50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable; both copies are watched on Health and re-sort themselves (#49, OFB-1/2)
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use for an emailed Individual Report; prefer adding the agent to Access Control
@@ -2117,21 +2113,21 @@ items for anything it flags or doesn't cover.)
 78. `ALERT_REASON_RULES` -- the admin-trial alert reasons (Step 5c): an agent below X% on each of N workdays, callers not called back within a business day; admins-only email, `reason:` Alert Log rows
 79. `probeOutboundCallMix` / `OUTBOUND_MIX_AGENTS` -- read-only: sorts agents' outbound calls into company line / colleague / inbound twin / misdial / redial / external, with sample call ids
 80. `diagnoseDirectCallCounting` (cdr-import) -- read-only: sizes what re-importing a pre-D2 date changes (D2 is not retroactive), then re-import per #56
-81. Exception days -- the `Exception Days` sheet (Admin ▾ → Exception days): a day left out of every windowed figure (counts too) and named on every report; admin-only include switch; per-call report totals since EXC-2 (call-level views mark it); callbacks, heatmap, insurer drill + report emails since EXC-3; team-tools still counts it
-82. Warm-transfer continuations are NOT outbound calls (OBX-1: the capture skips a call named in another call's Transfer To Call ID; not retroactive) + `diagnoseOutboundTransfers` (cdr-import, read-only) sorting the number-live-only calls by shape -- owner-checked genuine calls (OBX-2), so the number-live test is never a rule
-83. Direct calls credited to the person 8x8 names on the leg (DCA-1..5: a reassigned extension credits its new user, never the former employee; a blank name only on a confirmed extension; Spanish + CSR agents to CSR; not retroactive) + `diagnoseDirectCallAttribution` (cdr-import, read-only); a new hire on a former employee's extension is on the orphan list (DCA-6), as is anyone on an extension no roster lists, with a "Not an agent" dismiss (DCA-7)
-84. Transfers / consults to a person on the caller's journey (IXT-1: the Transfer To call plus every internal dial from the answering agent while live, journey-only; not retroactive), the outbound twin (OXT-1: an agent on an inbound AND an outbound call at once gets neither) + `diagnosePersonTransfers` (cdr-import, read-only, both directions + time since connect)
+81. Exception days -- the `Exception Days` sheet (Admin ▾ → Exception days): a day left out of every windowed figure (counts too) and named on every report; admin-only include switch; team-tools still counts it
+82. Warm-transfer continuations are NOT outbound calls (OBX-1; not retroactive) + `diagnoseOutboundTransfers` (cdr-import, read-only); the number-live test is never a rule (OBX-2)
+83. Direct calls are credited to the person 8x8 names on the leg (DCA-1..5; not retroactive) + `diagnoseDirectCallAttribution` (cdr-import, read-only); a reassigned or unlisted extension lands on the orphan list (DCA-6, DCA-7)
+84. Transfers / consults to a PERSON on the caller's journey (IXT-1 inbound, OXT-1 outbound; journey-only, not retroactive) + `diagnosePersonTransfers` (cdr-import, read-only)
 85. `diagnoseHoldHangups` (HOH-0, cdr-import, read-only): is a "hung up on hold" flag a real hang-up (the call's last leg) or a transfer side effect (someone answered after it)?
 86. `diagnoseTransferBounces` (XB-0, cdr-import, read-only): calls sent to another department after being answered that CAME BACK, by department trio and first sender
 87. `diagnoseOutsideNumberLegs` (NX-0, cdr-import, read-only) + NX-2: a CallRecording leg 8x8 marks Incoming is not a caller, so short outbound calls stop reading as inbound (not retroactive; re-run both backfills)
 88. Escalation comments missing from their thread (ESC-C2): `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (dashboard, admin, once after deploy); resolve comments now go into the thread (ESC-C1)
-89. `diagnoseTransferRetries` (TR-0, cdr-import, read-only): a call where an agent tried a person in another department, got no answer, then tried someone else there -- the incorrect-rejection check; on the dashboard as Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned), incl. P3's "answered, then redirected" list and P10's free / on-a-call column (`probeTransferRetryAvailability` measures its match rate)
+89. Transfer retries -- `diagnoseTransferRetries` (TR-0, cdr-import, read-only) and Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned): an agent tried one person in another department, then another; P3's "answered, then redirected" list; P10's free / on-a-call column (`probeTransferRetryAvailability`)
 90. The per-call direct list (AC-6): Neon `direct_calls` behind the agent panel's admin-only Direct tab; run `rebuildDirectCallHeldDates()` (cdr-import) after each cdr-import push that changes direct credit -- it re-applies DCA-1..5 (#83) to the held dates
 91. `diagnoseDirectDialIn` (DID-0, cdr-import, read-only): did an outside caller dial the agent's OWN number, or a main line routed through a phone menu (or a colleague)? Per number dialed and per agent, with sample call ids
 92. Outside direct calls split by how they arrived (DID-1..3, admin-only): cdr-import stores `via` + `dial_in` on `direct_calls`; push cdr-import, run `rebuildDirectCallHeldDates()`, and keep `DIAL_IN_LABELS` listing every main line
 93. The `Other` roster column (P5): a home for people in no call-handling team (`CUSTODIAL_DEPTS`); header exactly `Other`, one blank column kept before the insurance block; off the Overview, coaching and cache warming, a department by name everywhere else
-94. Partial days (P7) -- the `Partial Days` sheet (Admin ▾ → Partial days): a marked day counts as its share in the DIVISOR of ans/day and outbound / day only (`creditedDays_`), counts and rates never change; admin-only, reason never leaves the editor; since P8 the IR + Insights vs-team VOLUME comparisons are per credited day too (`agentDaysBlock_`), as is an agent's own vs-prior on counts (`creditedPair_`); P9: the editor SUGGESTS likely partial days from first-to-last call times (Neon; a dismissal is a Credit-1 row, not a mark); team-tools' matching change is PLANNED, not built
-95. The callback worklist (P11) -- Admin ▾ → Callback worklist: callers not yet called back, and the ONE page a caller's phone number can be shown, one call per click, each logged to `Callback Number Log` first; set `CDR_IMPORT_SS_ID`, run `setup()` then `probeCallbackNumberLookup()`; `CALLBACK_NUMBERS_MANAGERS` (default off) + the #63 release gate managers
+94. Partial days -- the `Partial Days` sheet (Admin ▾ → Partial days): a marked day counts as its share in the DIVISOR of per-day figures only (My Department, IR, Insights; `creditedDays_`); counts and rates never change; the editor suggests likely days (P9); team-tools' matching change is PLANNED, not built
+95. The callback worklist (P11) -- Admin ▾ → Callback worklist: the ONE page a caller's phone number can be shown, one call per click, logged to `Callback Number Log` first; set `CDR_IMPORT_SS_ID`, run `setup()` then `probeCallbackNumberLookup()`; managers need `CALLBACK_NUMBERS_MANAGERS` + the #63 release
 
 ## Cycle Workflow Config
 
