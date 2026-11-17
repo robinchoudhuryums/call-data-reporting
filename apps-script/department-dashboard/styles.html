@@ -3915,6 +3915,15 @@
     font-variant-numeric: tabular-nums; line-height: 1.25; }
   .lb-n { font-weight: 600; white-space: nowrap; }
   .lb-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  /* P7 (#94): the attendance beside a per-day figure, shown only where a
+     partial-day mark applied ("17.5 of 22 workdays, 9 partial"). Quiet, and
+     dotted-underlined because its tooltip lists the marked days. */
+  .lb-attend { margin-top: 1px; }
+  .att-line, .ans-att { font-size: 10.5px; color: var(--muted); letter-spacing: 0;
+    text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+  .ans-att { margin-left: 4px; white-space: nowrap; }
+  .pd-form { align-items: end; }
+  .agent-att { grid-column: 1 / -1; margin: 6px 0 0; font-size: 12px; color: var(--muted); }
   .ob-seg-misslite { background: color-mix(in oklab, var(--warn) 40%, var(--paper)); }
   .ob-seg-oconn { background: var(--dir-out); }
   .ob-seg-oreal { background: color-mix(in oklab, var(--dir-out) 45%, var(--paper)); }
@@ -7571,6 +7580,35 @@
     font: 500 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .18em;
     color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* P8 (#94): the agent's own per-day figure, ahead of the team marker on an
+     Individual Report volume tile. Mixed case and ink, so it reads as the
+     agent's number rather than as a second label. */
+  .ds-kpi__perday {
+    font: 600 11px/1 var(--mono); color: var(--ink); white-space: nowrap;
+    font-variant-numeric: tabular-nums; margin-top: 6px;
+  }
+  .ds-kpi__perday + .ds-kpi__compare { margin-top: 4px; }
+  /* "Team 22.3 / day" is longer than "Team 480": tighter tracking so the
+     figure is never the part the ellipsis eats. */
+  .ds-kpi__team--tight { letter-spacing: .06em; }
+  .ir-summary-title .ir-days {
+    font: 400 11px/1.2 var(--mono); color: var(--muted); letter-spacing: 0;
+    text-transform: none;
+  }
+  .ir-summary-title .ir-days[title] { text-decoration: underline dotted; cursor: help; }
+  /* P9: the suggestions block in the Partial days editor. */
+  .pd-sub { margin: 22px 0 6px; font: 600 14px/1.3 var(--sans, inherit); }
+  .pd-suggest-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+  .pd-suggest-acts { white-space: nowrap; }
+  /* Seven columns in a modal: each cell stays on one line. On a narrow screen
+     the table is already its own sideways scroller (the F81 rule for
+     .modal-panel-body table.al-config-table), so the dialog never is. */
+  #pd-suggest-table .pd-nowrap { white-space: nowrap; }
+  .pd-suggest-acts .link-btn + .link-btn { margin-left: 10px; }
+  .pd-reviewed { margin-top: 12px; }
+  .pd-reviewed > summary { cursor: pointer; font: 500 12px/1.4 var(--mono); color: var(--muted); }
+  .ins-card-att { margin: 2px 0 0; font: 400 10.5px/1.3 var(--mono); color: var(--muted); }
+  .ins-card-att [title] { text-decoration: underline dotted; cursor: help; }
   .ds-kpi__prior {
     display: flex; align-items: center; justify-content: space-between;
     gap: 6px; margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line);
@@ -8017,6 +8055,16 @@
   .dept-team-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px; margin: 10px 0 14px; }
   .dept-team-strip[hidden] { display: none; }
+  /* P6: a fifth card (Longest wait) and CSR's sixth (Transfer %) used to
+     wrap alone onto a second row. With room for it the row holds five; six
+     sit as two rows of three; narrower windows keep the four-up wrap. */
+  @media (min-width: 1360px) {
+    .dept-team-strip[data-cards="5"] { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .dept-team-strip[data-cards="5"] .dts-value--split { font-size: 19px; }
+  }
+  @media (min-width: 721px) {
+    .dept-team-strip[data-cards="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
   .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper-card);
     padding: 10px 12px; box-shadow: var(--shadow-1); }
   /* Round-16 (owner): non-hero tiles center their content both axes -- the
@@ -8870,6 +8918,20 @@ tr.subq-group-head.ob-group-head:hover td { background: var(--accent-soft); }
 .tr-took { font-weight: 600; }
 .tr-out--decline { color: var(--bad); font-weight: 600; }
 .tr-out--ok { color: var(--good); }
+/* P11 (owner 2026-11-17): the callback worklist. A shown number is the one
+   thing on this page that must never reach paper. */
+.cbw-num { font-family: var(--mono); font-weight: 600; white-space: nowrap; user-select: all; }
+.cbw-mgr .btn { margin-left: 6px; }
+.cbw-show, .cbw-mgr .btn { padding: 3px 10px; font-size: 12px; }
+.cbw-err { color: var(--bad); white-space: normal; max-width: 260px; }
+@media print { .cbw-num { display: none !important; } .cbw-phone::after { content: 'not printed'; } }
+/* P10 (owner 2026-11-13): was the person tried first free, or on another call?
+   The columns exist only once at least one attempt is known (.tr-has-avail). */
+.tr-avail-col { display: none; }
+.tr-has-avail .tr-avail-col { display: table-cell; }
+.tr-avail { font-weight: 600; white-space: nowrap; }
+.tr-avail--busy { background: color-mix(in oklab, var(--caution) 38%, var(--paper)); color: var(--ink); padding: 1px 6px; border-radius: var(--r); font-weight: 500; }
+.tr-avail-note { margin: -2px 0 8px; }
 /* IC-1..IC-4 (owner 2026-11-02): "How this is counted" is an ⓘ in the
    section's button row; its bullets live in a hidden .ob-howto-src that the
    gloss tooltip reads at show time (data-gloss-src). */

@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v26';  // v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v29';  // v29: agentData[].daysPrior -- an agent's own vs-prior volume is per CREDITED day too; v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -480,6 +480,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   const teamAvgBase = blank();     // per-agent baseline numerators
   const activeRosterAvg = {};      // agent -> true (baseline divisor members)
   let deptAnsweredExcluded = 0;    // excluded agents' answered, for the share benchmark
+  // P8 (#94): the days each agent had ANY call on in the CURRENT window --
+  // the divisor of every per-day vs-team comparison, credited by partial-day
+  // marks. Team roster members and selected agents alike.
+  const currDaysByAgent = {};
+  // ...and each selected agent's PRIOR-window days, for their own vs-prior
+  // comparison per credited day (owner 2026-11-16).
+  const priorDaysByAgent = {};
   // R11-E (item 6): full-department answered total in the CURRENT window over
   // ALL active roster agents -- NOT just the selected ones. The share-of-
   // answered donut divides by this (and folds unselected agents into an
@@ -535,6 +542,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     // Current wins when a custom prior window overlaps the current
     // range (same else-if semantics as the Performance Report).
     if (inCurrent) {
+      if (rung || missed || answered) {
+        (currDaysByAgent[agent] || (currDaysByAgent[agent] = {}))[dateIso] = true;   // P8
+      }
       if (isSelected) {
         const ag = perAgentCurr[agent];
         ag.rung += rung; ag.missed += missed; ag.answered += answered;
@@ -562,6 +572,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         db.ttt += tttSec; db.att_sum += attTotal;
       }
     } else if (inPrior) {
+      if (isSelected && (rung || missed || answered)) {
+        (priorDaysByAgent[agent] || (priorDaysByAgent[agent] = {}))[dateIso] = true;
+      }
       if (isSelected) {
         const ap = perAgentPrior[agent];
         ap.rung += rung; ap.missed += missed; ap.answered += answered;
@@ -624,7 +637,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // which never matched roster anyway). queueOnlyAgentCount is therefore always
   // 0 here. Floaters remain available in IR/PR/CR (INV-53), same split as My
   // Department.
-  // IDLE-2 (owner 2026-10-20, insights:v26): on an agent-free run (the whole
+  // IDLE-2 (owner 2026-10-20, the insights v26 bump): on an agent-free run (the whole
   // dept, `opts.dropIdle`) an agent with no calls in the CURRENT window gets
   // no card -- an ex-employee kept on the roster, or (QUEUE_SPLIT_SCOPE=dept)
   // an agent on two rosters who worked only the other dept's queues. One
@@ -663,6 +676,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       // 'EXCLUDED FROM TEAM AVG' pill works here unchanged (INV-26).
       excludedFromTeamAvg: !!teamAvgExcluded[agent],
       sourceHomes:      sourceHomes,
+      // P8 (#94): { active, credited, partial, marks? } for the CURRENT window
+      // -- the client compares volume with the team per credited day.
+      days: agentDaysBlock_(agent, currDaysByAgent[agent]),
+      daysPrior: agentDaysBlock_(agent, priorDaysByAgent[agent]),
       // Each metric is a deltaBlock_ (current vs prior), same shape the
       // team tiles use -- so the client renders both with one helper.
       metrics: {
@@ -760,8 +777,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     ? answerRatePct_(teamAvgBase.answered, teamAvgBase.missed, teamAvgBase.rung) : 0;   // DD-2
   const avgAtt = teamAvgBase.answered > 0
     ? (teamAvgBase.att_sum / teamAvgBase.answered) : 0;
+  // P8 (#94): the baseline's divisor in credited AGENT-DAYS (the same
+  // non-excluded active roster the sums above cover), so "vs team" can be
+  // read per day worked instead of per window.
+  let teamAvgAgentDays = 0;
+  Object.keys(activeRosterAvg).forEach(function (a) {
+    teamAvgAgentDays += agentDaysBlock_(a, currDaysByAgent[a]).credited;
+  });
   const teamAvgBasis = {
     agents:   activeRosterAvgCount,
+    agentDays: Math.round(teamAvgAgentDays * 100) / 100,
     rung:     teamAvgBase.rung,
     missed:   teamAvgBase.missed,
     answered: teamAvgBase.answered,
@@ -958,6 +983,18 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       const monthlyTotal = function (field) {
         return (td.series || []).map(function (b) { return round1_(b[field]); });
       };
+      const secsOrNull = function (v) { v = Number(v); return v > 0 ? Math.round(v) : null; };
+      const monthlySecs = function (field) {
+        return (td.series || []).map(function (b) { return secsOrNull(b[field]); });
+      };
+      const monthlySecsPerQueue = function (field) {
+        const out = {};
+        qList.forEach(function (q) {
+          const m = td.perQueue && td.perQueue[q] && td.perQueue[q].monthly;
+          if (m) out[q] = m.map(function (b) { return secsOrNull(b[field]); });
+        });
+        return out;
+      };
       trend = {
         labels: td.labels,
         // Abandoned % is the DEFAULT/legacy series (drives the forecast +
@@ -969,6 +1006,12 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         metrics: {
           totalCalls: { total: monthlyTotal('totalCalls'), perQueue: monthlyPerQueue('totalCalls') },
           violations: { total: monthlyTotal('violations'), perQueue: monthlyPerQueue('violations') },
+          // P6 (owner 2026-11-13): the two answer-time metrics, in SECONDS,
+          // null where a month had none (a gap in the line, never a dip to
+          // zero). Avg answer is answered-weighted (RPT-8); the longest wait
+          // is a MAX -- the dept total is the max across its own queues.
+          avgAnswer:   { total: monthlySecs('avgAnswerSec'),   perQueue: monthlySecsPerQueue('avgAnswerSec') },
+          longestWait: { total: monthlySecs('longestWaitSec'), perQueue: monthlySecsPerQueue('longestWaitSec') },
         },
       };
       // Daily view -- selected range scoped. dailyTotal (abandoned %) also
@@ -993,6 +1036,23 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         trend.metrics.totalCalls.dailyPerQueue = dailyPerQueueOf('totalCalls');
         trend.metrics.violations.dailyTotal    = dailyTotalOf('violations');
         trend.metrics.violations.dailyPerQueue = dailyPerQueueOf('violations');
+        // P6: the daily answer times arrive as compact arrays on the same
+        // date axis (QCDReport's dailyAnswerTimes); an older shape has none.
+        const dat = cur.dailyAnswerTimes;
+        if (dat && dat.total && (dat.total.avgAnswerSec || []).length === daily.length) {
+          const dailyAtPerQueue = function (field) {
+            const out = {};
+            qList.forEach(function (q) {
+              const a = dat.perQueue && dat.perQueue[q] && dat.perQueue[q][field];
+              if (a) out[q] = a;
+            });
+            return out;
+          };
+          trend.metrics.avgAnswer.dailyTotal      = dat.total.avgAnswerSec;
+          trend.metrics.avgAnswer.dailyPerQueue   = dailyAtPerQueue('avgAnswerSec');
+          trend.metrics.longestWait.dailyTotal    = dat.total.longestWaitSec;
+          trend.metrics.longestWait.dailyPerQueue = dailyAtPerQueue('longestWaitSec');
+        }
       }
 
     }
@@ -1133,7 +1193,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       agents: selectedAgents,
       rosterSize: roster.names.length,
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
-      teamAvgBasis: { agents: 0, rung: 0, missed: 0, answered: 0, ttt: 0,
+      teamAvgBasis: { agents: 0, agentDays: 0, rung: 0, missed: 0, answered: 0, ttt: 0,
                       pct: 0, att: 0, excludedAnsweredShare: 0, excluded: [] },
       generatedAt: new Date().toISOString(),
     },
@@ -1145,6 +1205,8 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
     agentData: selectedAgents.filter(function (a) { return !!rosterSet[a]; }).map(function (a) {
       return {
         name: a, matchedViaRoster: true, matchedViaQueue: false, sourceHomes: [],
+        days: { active: 0, credited: 0, partial: 0 },   // P8: the populated shape
+        daysPrior: { active: 0, credited: 0, partial: 0 },
         metrics: zeroMetrics(), rawAnswered: 0,
       };
     }),

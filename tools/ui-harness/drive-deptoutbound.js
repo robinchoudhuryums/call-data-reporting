@@ -63,6 +63,125 @@ async function openDept(page, meta) {
       called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDeptOutboundSummary').length,
     }));
     record('manager: the outbound columns toggle is hidden', st.sw === 'none', st.sw);
+    // P7 (#94): a manager sees the attendance beside the per-day figure of an
+    // agent with partial days -- the mark, never the reason.
+    {
+      const s30m = require('./payloads/summary-30d.json');
+      const want = s30m.rows.filter((r) => r.agent === meta.pdAgent)[0];
+      const attM = await page.evaluate((name) => {
+        const row = Array.from(document.querySelectorAll('#agents tbody tr, #agents-tbody tr, tr[data-agent]'))
+          .find((r) => (r.getAttribute('data-agent') || '') === name && r.offsetParent !== null);
+        const a = row ? row.querySelector('.ans-att, .att-line') : null;
+        const others = Array.from(document.querySelectorAll('.ans-att, .att-line')).filter((x) => x.offsetParent !== null).length;
+        return { found: !!row, text: a ? a.textContent.trim() : '', title: a ? a.getAttribute('title') : '', shown: others,
+          per: row ? ((row.querySelector('.ans-perday, .lb-sub') || {}).textContent || '').trim() : '' };
+      }, meta.pdAgent);
+      record('P7: a manager sees the attendance beside the per-day figure of the agent with partial days, and only there',
+        attM.found && new RegExp('^' + String(want.daysCredited).replace('.', '\\.') + ' of \\d+ workdays, 2 partial$').test(attM.text)
+          && attM.shown === 1 && attM.per.indexOf(want.ansPerDay.toFixed(1) + ' ans/day') !== -1,
+        JSON.stringify({ attM: attM, want: [want.daysCredited, want.ansPerDay] }));
+      record('P7: the tooltip lists the marked days and their share -- never the reason',
+        /^Partial days: /.test(attM.title) && /0\.5 day/.test(attM.title) && /0\.25 day/.test(attM.title)
+          && !/Training|Leave|Meeting|Partial shift/.test(attM.title + attM.text), attM.title);
+    }
+    {
+      // P8 (#94): Insights compares an agent's VOLUME with the team per
+      // CREDITED day. The fixture marks two part days for one agent, so the
+      // payload's own figures are the expectation.
+      // Open the agents and team-detail sections (a brief row for the admin
+      // trial, a plain fold otherwise).
+      for (const sid of ['ins-agents-fold', 'ins-team-detail']) {
+        await page.evaluate((id) => {
+          const el = document.getElementById(id); if (!el) return;
+          const slot = el.closest('.ins-brief-slot');
+          if (slot) {
+            const btn = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="' + slot.getAttribute('data-brief-slot') + '"]');
+            if (btn && btn.getAttribute('aria-expanded') !== 'true') btn.click();
+          } else if (!el.open) { el.open = true; }
+        }, sid);
+        await page.waitForTimeout(900);
+      }
+      const insP = require('./payloads/insights.json');
+      const metaP = require('./payloads/meta.json');
+      const basis = insP.meta.teamAvgBasis;
+      const pdCard = insP.agentData.filter((a) => a.name === metaP.pdAgent)[0];
+      const p8 = await page.evaluate((agent) => {
+        const cardEl = document.querySelector('[data-ins-agent="' + agent + '"]');
+        const chart = document.getElementById('ins-cards-chart');
+        const share = document.getElementById('ins-share-tally');
+        const rowEl = share ? Array.from(share.querySelectorAll('.ins-share-row')).find((r) => (r.getAttribute('title') || '').indexOf(agent + ':') === 0) : null;
+        return {
+          chip: cardEl ? ((cardEl.querySelector('.cr-vs-team') || {}).textContent || '') : null,
+          bars: cardEl ? Array.from(cardEl.querySelectorAll('.ins-cbar-row[data-perday]')).map((r) => r.getAttribute('title')) : [],
+          val: cardEl ? Array.from(cardEl.querySelectorAll('.ins-cbar-row[data-perday] .ins-cbar-val')).map((v) => v.textContent.trim()) : [],
+          att: cardEl ? ((cardEl.querySelector('.ins-card-att') || {}).textContent || '') : '',
+          attShown: document.querySelectorAll('.ins-card-att').length,
+          basis: chart ? chart.getAttribute('data-basis') : null,
+          bench: share ? share.getAttribute('data-benchmark') : null,
+          shareTitle: rowEl ? rowEl.getAttribute('title') : '',
+          reason: /Training|Leave/.test((document.getElementById('dept-insights-region') || document.body).innerHTML),
+        };
+      }, metaP.pdAgent);
+      const ansPd = (pdCard.metrics.answered.val / pdCard.days.credited).toFixed(1);
+      const teamPd = (basis.answered / basis.agentDays).toFixed(1);
+      record('P8: an Insights card compares answered PER CREDITED DAY with the team, the count beside the bar unchanged',
+        !!p8.chip && p8.chip.indexOf(ansPd + ' vs ' + teamPd + ' ans/day') !== -1
+          && p8.bars.length === 2 && p8.bars[0].indexOf(ansPd + ' a day worked (team avg ' + teamPd + ' a day)') !== -1
+          && p8.val[0] === String(pdCard.metrics.answered.val),
+        JSON.stringify({ chip: p8.chip, bars: p8.bars, val: p8.val, want: [ansPd, teamPd] }));
+      record('P8: the card of the agent with partial days says so, and only that card; no reason anywhere',
+        p8.att === pdCard.days.credited + ' of ' + (p8.att.match(/of (\d+) workdays/) || [])[1] + ' workdays, ' + pdCard.days.partial + ' partial'
+          && p8.attShown === 1 && !p8.reason, JSON.stringify({ att: p8.att, shown: p8.attShown, reason: p8.reason }));
+      record('P8: the gap chart is on the per-day basis and the call-share benchmark is each agent\'s share of the days worked',
+        p8.basis === 'per-day' && p8.bench === 'days'
+          && p8.shareTitle.indexOf('share of the days worked (' + pdCard.days.credited + ' of ' + basis.agentDays + ' agent-days') !== -1,
+        JSON.stringify({ basis: p8.basis, bench: p8.bench, title: p8.shareTitle }));
+      // Owner 2026-11-16: (1) an agent's own vs-prior badges on COUNTS compare
+      // per credited day; (2) an agent on the team-average exclusion list is
+      // not measured against the team -- "exempt", no team markers, no gap
+      // bar; (3) the % Ans marker is the same manager-excluded team as the
+      // count bars.
+      const exName = (basis.excluded || [])[0];
+      const v2 = await page.evaluate((arg) => {
+        const card = (n) => document.querySelector('[data-ins-agent="' + n + '"]');
+        const pd = card(arg.pd), ex = card(arg.ex);
+        const badge = (row) => { const b = row ? row.querySelector('.ins-cbar-delta .pr-delta') : null;
+          return b ? { basis: b.getAttribute('data-basis') || '', title: b.getAttribute('title') || '' } : null; };
+        const rows = pd ? Array.from(pd.querySelectorAll('.ins-cbar-row')) : [];
+        const canvas = document.getElementById('ins-cards-chart');
+        const chart = (canvas && window.Chart && Chart.getChart) ? Chart.getChart(canvas) : null;
+        return {
+          pdBadges: rows.map(badge),
+          pctTitle: rows[0] ? rows[0].getAttribute('title') : '',
+          pdMarkers: pd ? pd.querySelectorAll('.ins-cbar-team').length : -1,
+          exChip: ex ? ((ex.querySelector('.ins-share-exempt') || {}).textContent || '') : null,
+          exTeamChip: ex ? !!ex.querySelector('.cr-vs-team') : null,
+          exMarkers: ex ? ex.querySelectorAll('.ins-cbar-team').length : -1,
+          exTitles: ex ? Array.from(ex.querySelectorAll('.ins-cbar-row')).map((r) => r.getAttribute('title')) : [],
+          gapExempt: canvas ? canvas.getAttribute('data-exempt') : null,
+          gapLabels: chart ? chart.data.labels.slice() : null,
+          gapNote: chart && chart.options.plugins.title ? [chart.options.plugins.title.display, chart.options.plugins.title.text] : null,
+        };
+      }, { pd: metaP.pdAgent, ex: exName });
+      const pdPrior = pdCard.daysPrior || {};
+      record('vs-prior: the count badges on an agent\'s card compare PER DAY WORKED (their credited days in each window); the rate badge does not',
+        v2.pdBadges.length === 3 && v2.pdBadges[0] && v2.pdBadges[0].basis === ''
+          && v2.pdBadges[1] && v2.pdBadges[1].basis === 'worked' && v2.pdBadges[2] && v2.pdBadges[2].basis === 'worked'
+          && v2.pdBadges[1].title.indexOf('(' + pdCard.days.credited + ' vs ' + pdPrior.credited + ' credited days') !== -1,
+        JSON.stringify({ badges: v2.pdBadges, days: [pdCard.days.credited, pdPrior.credited] }));
+      record('exempt: an agent on the team-average exclusion list gets "exempt" in place of the team chip and no team markers; everyone else keeps theirs',
+        !!exName && v2.exChip === 'exempt' && v2.exTeamChip === false && v2.exMarkers === 0 && v2.pdMarkers === 3
+          && v2.exTitles.length === 3 && v2.exTitles.every((t) => t.indexOf('team avg') === -1), JSON.stringify(v2));
+      record('exempt: the gap chart leaves them out and says so under the chart',
+        v2.gapExempt === exName && !!v2.gapLabels && v2.gapLabels.indexOf(exName) === -1 && v2.gapLabels.indexOf(metaP.pdAgent) !== -1
+          && !!v2.gapNote && v2.gapNote[0] === true && v2.gapNote[1] === 'Not shown: ' + exName + ' (excluded from the team benchmark)',
+        JSON.stringify({ exempt: v2.gapExempt, labels: v2.gapLabels, note: v2.gapNote }));
+      const deptPct = Number(insP.teamStats.pct.val).toFixed(1), basePct = Number(basis.pct).toFixed(1);
+      record('the % Ans marker is the manager-excluded team rate (the count bars\' team), not the department rate',
+        v2.pctTitle.indexOf('(team avg ' + basePct + '%)') !== -1 && deptPct !== basePct,
+        JSON.stringify({ title: v2.pctTitle, dept: deptPct, basis: basePct }));
+    }
+
     const tdcM = await page.evaluate(() => { const el = document.getElementById('dept-team-direct');
       return { shown: !!el && getComputedStyle(el).display !== 'none',
                called: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getDirectCallReport').length }; });
@@ -685,10 +804,14 @@ async function openDept(page, meta) {
       await pl.click('#refresh-btn');
       await pl.waitForTimeout(500);
       const ringsMid = await frosted('dept-team-rings');
+      const qcdMid = await frosted('dept-qcd-snapshot');
       await pl.waitForTimeout(2600);
       const ringsDone = await frosted('dept-team-rings');
+      const qcdDone = await frosted('dept-qcd-snapshot');
       record('P4 follow-on: Team Rings frosts from the page request on a same-department Refresh, and clears when it lands',
         ringsMid && !ringsDone, JSON.stringify({ mid: ringsMid, done: ringsDone }));
+      record('P6: Queue Call Data frosts with it, and clears when the page lands',
+        qcdMid && !qcdDone, JSON.stringify({ mid: qcdMid, done: qcdDone }));
       // The Direct view of the table keeps its rows while a new range loads.
       await pl.evaluate(() => { window.__HARNESS__.delay = {}; });
       await pl.click('#dept-dir-switch [data-dir-pick="direct"]');
@@ -714,7 +837,10 @@ async function openDept(page, meta) {
           h: Math.round(p.getBoundingClientRect().height), hidden: kids.every((c) => getComputedStyle(c).display === 'none'),
           head: getComputedStyle(p.querySelector('.dept-qcd-header')).display !== 'none', label: b.getAttribute('aria-label'),
           buttons: document.querySelectorAll('.dept-side .side-collapse').length,
-          stored: localStorage.getItem('cdr.dept.side.collapsed') };
+          stored: localStorage.getItem('cdr.dept.side.collapsed'),
+          // Which keys the page holds -- so a failure here says whether ONE
+          // key went missing or the whole store did.
+          keys: Object.keys(localStorage).sort().join(',') };
       });
       const open0 = await fold();
       await pl.focus('#dept-team-direct .side-collapse');
@@ -725,6 +851,15 @@ async function openDept(page, meta) {
         open0.buttons === 4 && !open0.folded && open0.expanded === 'true' && /show or hide this panel$/.test(open0.label)
           && shut.folded && shut.expanded === 'false' && shut.hidden && shut.head && shut.h < 90 && shut.h < open0.h
           && shut.stored === '["dept-team-direct"]' && shut.title === 'Show this panel', JSON.stringify({ open0: open0, shut: shut }));
+      // The product owns two things here: the fold WRITES the choice (asserted
+      // just above) and a stored choice is APPLIED on load (asserted below).
+      // Carrying the value across the reload is the browser's job, and under
+      // load headless Chromium drops a just-written key on reload -- measured:
+      // 2 of 5 runs with five drivers side by side, every OTHER key intact, no
+      // product code removing it, and a 1.2 s settle did not help. So the
+      // stored choice is put back by an init script, the way this page's
+      // other preferences are seeded, and the load is what is tested.
+      await pl.addInitScript(() => { localStorage.setItem('cdr.dept.side.collapsed', '["dept-team-direct"]'); });
       await pl.reload();
       await pl.waitForTimeout(1500);
       await pl.click('#my-dept-btn');

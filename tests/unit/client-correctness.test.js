@@ -74,9 +74,9 @@ test('CL-2: length-dependent Insights card deltas compare PER DAY when the windo
   assert.equal(f({ val: 90, prev: 80 }, mm, null), null, 'a rate (% Ans, ATT) is never re-based');
 
   const card = extractFn(ins, 'insBuildCard_');
-  assert.equal((card.match(/insMetricPerDay_\(/g) || []).length, 2, 'the per-day subline renders on the bars AND the secondary metrics');
-  assert.match(card, /meta, perDayKind\) \+ '<\/span>'/, 'the bar badges get meta + the per-day kind');
-  assert.match(card, /insDeltaBadge_\(st, m\[2\], priorLbl, meta, m\[3\]\)/, 'so do the secondary badges');
+  assert.equal((card.match(/insMetricPerDay_\(/g) || []).length, 3, 'the per-day subline renders on the bars (both the P8 per-credited-day bar and the window bar) AND the secondary metrics');
+  assert.match(card, /meta, perDayKind, pair\) \+ '<\/span>'/, 'the bar badges get meta + the per-day kind (+ the agent\'s credited-day pair)');
+  assert.match(card, /insDeltaBadge_\(st, m\[2\], priorLbl, meta, m\[3\], pair\)/, 'so do the secondary badges');
   assert.match(card, /\['ATT', 'att', 'neu', null\]/, 'ATT (per call) is length-independent');
   assert.ok(!/same-length/.test(extractFn(ins, 'insDeltaBadge_')),
     'the badge no longer claims a same-length comparison');
@@ -149,8 +149,9 @@ test('CL-18: every boot step is guarded, and a throwing step is recorded and bea
   const steps = between(init, /initStep_\('initHelpModal'/, /bootFailureNotice_\(false\);/);
   // 29 since G3 retired the Outbound modal (initOutboundReport left with it);
   // 30 with the #81 exception-day editor (initExceptionDays_); 31 with TR-1's
-  // transfer retries (initTransferRetries_).
-  assert.equal((steps.match(/initStep_\(/g) || []).length, 31, 'the 31 surface inits each run under the guard');
+  // transfer retries (initTransferRetries_); 32 with P7's partial-day editor
+  // (initPartialDays_); 33 with P11's callback worklist (initCallbackWorklist_).
+  assert.equal((steps.match(/initStep_\(/g) || []).length, 33, 'the 33 surface inits each run under the guard');
   assert.ok(!/^\s+init[A-Za-z_]*\(\);/m.test(steps) && !/^\s+(ovWireTrendCollapse_|loadEscBadge_)\(\);/m.test(steps),
     'no step in the guarded block is called bare');
   assert.match(src('script-11-qcd-boot.html'), /bootInit_\(\);\s*\n\s*devInstallToggle_\(\);/, 'boot enters through bootInit_');

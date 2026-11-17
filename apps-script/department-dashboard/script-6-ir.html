@@ -1591,14 +1591,46 @@
       // Reuses sourceChipHtml_ from My Dept's Source column path.
       const isFloater = agent.matchedViaQueue && !agent.matchedViaRoster;
       const floaterPill = isFloater ? sourceChipHtml_(agent) : '';
+      // P8 (#94, owner 2026-11-13): the three VOLUME tiles compare with the
+      // team PER CREDITED DAY -- the tile's big number stays the window total
+      // (counts never change), and the line under it reads "24.8 / day ·
+      // Team 21.4 / day". A payload without the per-day pair (cached before
+      // P8) keeps the window-total comparison.
+      const tPer = (teamAvg && teamAvg.perDay && teamAvg.perDay.agentDays != null) ? teamAvg.perDay : null;
+      const aPer = agent.perDay || null;
+      const perDayOn = !!(tPer && aPer);
+      const irMeta = (irLastData && irLastData.meta) || {};
+      const irWorkdays = (irMeta.from && irMeta.to) ? workingDaysBetween_(irMeta.from, irMeta.to) : 0;
+      const volTile = function (label, key, valence, noun, color) {
+        const spark = trendForAgent.map(function (x) { return x[key]; });
+        if (!perDayOn) {
+          return irKpiTile(label, agent.stats[key], teamAvg[key],
+            irDiffBadge(agent.raw[key], teamAvg.raw[key], valence, noun),
+            spark, color, share[key], priorRow(key, valence));
+        }
+        const title = 'Per day worked: ' + agent.stats[key] + ' over ' + attDaysText_(agent.days, irWorkdays)
+          + '. Team: ' + perDayText_(tPer[key]) + ' a day over ' + attNum_(tPer.agentDays) + ' agent-days.';
+        // The agent's own prior window, per credited day too: "Prior 22.9 /
+        // day". With no per-day figure on either side (under one credited day,
+        // no prior activity) the window totals are compared as before.
+        const pPer = agent.priorPerDay || null;
+        const priorHtml = (pStats && pPer && pPer[key] != null && aPer[key] != null)
+          ? irPriorRow_(pStats, pPer[key], aPer[key], valence, perDayText_(pPer[key]) + ' / day')
+          : priorRow(key, valence);
+        return irKpiTile(label, agent.stats[key], perDayText_(tPer[key]) + ' / day',
+          irPerDayBadge_(aPer[key], tPer[key], valence, noun + ' per day worked'),
+          spark, color, share[key], priorHtml,
+          { text: perDayText_(aPer[key]) + ' / day', title: title });
+      };
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
            +     safeName
            +     (floaterPill ? ' ' + floaterPill : '')
            +     excludedPill
-           +     ' <span class="ir-vs">vs Team Avg'
+           +     ' <span class="ir-vs">vs Team Avg' + (perDayOn ? ', per day worked' : '')
            +       (priorStatsAvailable ? ' &middot; vs Prior period' : '')
            +     '</span>'
+           +     (perDayOn ? ' ' + attDaysHtml_(agent.days, irWorkdays, 'ir-days') : '')
            // F58 (broad-scan 2026-10-14): one per agent card, so each says
            // whose data it copies -- a list of identical "Copy data" names
            // gives a screen-reader user nothing to choose between. The name
@@ -1608,21 +1640,9 @@
            +   '</div>'
            +   irInsightsBlock_(agent.insights || [])
            +   '<div class="ir-kpi-grid">'
-           +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
-                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos', 'rung calls'),
-                            trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung,
-                            share.rung,
-                            priorRow('rung', 'pos'))
-           +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
-                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos', 'answered calls'),
-                            trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered,
-                            share.answered,
-                            priorRow('answered', 'pos'))
-           +     irKpiTile('Missed (rings)', agent.stats.missed, teamAvg.missed,
-                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg', 'missed calls'),
-                            trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed,
-                            share.missed,
-                            priorRow('missed', 'neg'))
+           +     volTile('Total Rung',     'rung',     'pos', 'rung calls',     IR_VOLUME_COLORS.rung)
+           +     volTile('Answered',       'answered', 'pos', 'answered calls', IR_VOLUME_COLORS.answered)
+           +     volTile('Missed (rings)', 'missed',   'neg', 'missed calls',   IR_VOLUME_COLORS.missed)
            +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
                             irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos', '% answered'),
                             trendForAgent.map(function (x) { return x.pct; }),      (THEME.accent || '#4E79A7'),
@@ -1645,7 +1665,13 @@
         const card = b.closest('.ir-summary-card');
         if (!card) return;
         const rows = [];
-        rows.push(['Metric', 'Agent', 'Team Avg', '% of Dept'].join('\t'));
+        // P8: with the count tiles on the per-day basis the Team Avg cell is
+        // a per-day figure, so the agent's own per-day figure gets a column
+        // beside it -- a total next to a per-day number would not line up.
+        // A card without the per-day line exports the four columns as before.
+        const hasPerDay = !!card.querySelector('.ds-kpi__perday');
+        rows.push((hasPerDay ? ['Metric', 'Agent', 'Agent / day', 'Team Avg', '% of Dept']
+                             : ['Metric', 'Agent', 'Team Avg', '% of Dept']).join('\t'));
         card.querySelectorAll('.ds-kpi').forEach(function (tile) {
           const label = (tile.querySelector('.ds-kpi__label') || {}).textContent || '';
           const value = (tile.querySelector('.ds-kpi__value') || {}).textContent || '';
@@ -1661,12 +1687,15 @@
           // csvSafeCell_ like the five CSV exporters (the "every CSV cell
           // writer" rule; today's tile text is numeric/static, but the rule
           // exists so that stays a non-decision).
-          rows.push([
+          const perEl = tile.querySelector('.ds-kpi__perday');
+          const cells = [
             csvSafeCell_(label.trim()),
             csvSafeCell_(value.trim()),
-            csvSafeCell_(team.replace(/^Team\s*/i, '').trim()),
-            csvSafeCell_(share),
-          ].join('\t'));
+          ];
+          if (hasPerDay) cells.push(csvSafeCell_(perEl ? perEl.textContent.replace(/\s*\/\s*day\s*$/i, '').trim() : ''));
+          cells.push(csvSafeCell_(team.replace(/^Team\s*/i, '').trim()));
+          cells.push(csvSafeCell_(share));
+          rows.push(cells.join('\t'));
         });
         const tsv = rows.join('\n') + '\n';
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1714,7 +1743,9 @@
    * small "X.X% of dept" tag inline with the value to communicate
    * this agent's portion of the dept's total volume.
    */
-  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share, priorHtml) {
+  // `perDay` (P8): { text, title } -- the agent's own per-day figure, shown
+  // ahead of the team marker on a volume tile; omitted on a rate tile.
+  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share, priorHtml, perDay) {
     const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
     const shareHtml = share
       ? '<span class="ds-kpi__share" title="Share of dept volume in range">'
@@ -1732,8 +1763,10 @@
          +     '<div class="ds-kpi__value' + benchValueCls_(label, value, false, null, irLastDept_) + '">' + escapeHtml(String(value)) + '</div>'
          +     shareHtml
          +   '</div>'
-         +   '<div class="ds-kpi__compare">'
-         +     '<span class="ds-kpi__team">Team ' + escapeHtml(String(teamVal)) + '</span>'
+         +   (perDay ? '<div class="ds-kpi__perday"' + (perDay.title ? ' title="' + escapeHtml(perDay.title) + '"' : '') + '>'
+                        + escapeHtml(String(perDay.text)) + '</div>' : '')
+         +   '<div class="ds-kpi__compare"' + (perDay && perDay.title ? ' title="' + escapeHtml(perDay.title) + '"' : '') + '>'
+         +     '<span class="ds-kpi__team' + (perDay ? ' ds-kpi__team--tight' : '') + '">Team ' + escapeHtml(String(teamVal)) + '</span>'
          +     diffBadgeHtml
          +   '</div>'
          +   (priorHtml || '')
@@ -2077,6 +2110,16 @@
     const explain = escapeHtml((where + metric + '. ' + valence).trim());
     return '<span class="ir-badge ' + cls + '" title="' + explain
          + '" aria-label="' + explain + '">' + label + '</span>';
+  }
+
+  // P8 (#94): the per-day twin of irDiffBadge. An agent with under one
+  // credited day has no pace, so the badge says so instead of "-100%".
+  function irPerDayBadge_(agentPerDay, teamPerDay, type, metricLabel) {
+    if (agentPerDay == null) {
+      return '<span class="ir-badge ir-badge-neu" title="Under one credited day in this range, so there is no'
+        + ' per-day figure to compare." aria-label="No per-day figure: under one credited day">-</span>';
+    }
+    return irDiffBadge(agentPerDay, teamPerDay, type, metricLabel);
   }
 
   function irAttCompare(agentAtt, teamAtt) {
@@ -2713,9 +2756,15 @@
   // adjustment feeds ONLY the classifiers below (trend pill, triage tiers,
   // quiet test, improver/regressor sort, headline, CSV classification
   // columns) -- the card badges keep showing the raw window totals.
-  function insPerDayMetrics_(metrics, meta) {
-    const wdC = Number(meta && meta.currentWorkDays) || 0;
-    const wdP = Number(meta && meta.priorWorkDays) || 0;
+  // `card` (owner 2026-11-16): an AGENT's metrics are normalised by that
+  // agent's own CREDITED days in each window (creditedPair_) -- a day with no
+  // calls is not a day, a day marked partial counts as its share -- so time
+  // off in one window is not a slip. The team's metrics (no card), and a card
+  // without both day blocks, keep the window's working days.
+  function insPerDayMetrics_(metrics, meta, card) {
+    const pair = card ? creditedPair_(card.days, card.daysPrior) : null;
+    const wdC = pair ? pair.cur : (Number(meta && meta.currentWorkDays) || 0);
+    const wdP = pair ? pair.prior : (Number(meta && meta.priorWorkDays) || 0);
     if (!metrics || wdC <= 0 || wdP <= 0 || wdC === wdP) return metrics;
     const out = {};
     Object.keys(metrics).forEach(function (k) {

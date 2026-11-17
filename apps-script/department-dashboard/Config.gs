@@ -295,6 +295,8 @@ const SHEETS = Object.freeze({
   COMPANY_HOLIDAYS: 'Company Holidays',
   DASHBOARD_STANDARDS: 'Dashboard Standards',
   EXCEPTION_DAYS: 'Exception Days',
+  PARTIAL_DAYS: 'Partial Days',
+  CALLBACK_NUMBER_LOG: 'Callback Number Log',
 });
 
 // Phase A (agent role, docs/agent-role-plan.md): Role + Agent Name are
@@ -363,6 +365,41 @@ const QUEUE_REPORT_SUBSCRIBERS_HEADERS = Object.freeze([
 // well as rates -- and every report says so (Operator State #81). The Date
 // column is plain-text pinned at creation, like Company Holidays.
 const EXCEPTION_DAYS_HEADERS = Object.freeze(['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At']);
+// Partial Days (P7, owner 2026-11-16; Operator State #94): an AGENT's day that
+// should count as less than a whole day in the per-day figures -- they left
+// early, were in training, covered a meeting. One row per (date, agent);
+// Credit is the share of a day they were present (PARTIAL_DAY_CREDITS_).
+// RULE A (owner-confirmed): only the DIVISOR of a per-day figure changes --
+// answered per day and outbound per day divide by CREDITED days. Calls are
+// never removed and no total or rate moves; the attendance ("17.5 of 22
+// workdays, 9 partial") is shown beside the figure, and a per-day figure is a
+// dash below PARTIAL_DAY_MIN_CREDITED_ credited days. Read by getPartialDays_
+// (Util.gs), written by the admin editor (PartialDays.gs). The Reason is one
+// of PARTIAL_DAY_REASONS_ and never leaves the admin editor (managers and
+// agents see the mark, not why). The Date column is plain-text pinned.
+const PARTIAL_DAYS_HEADERS = Object.freeze(['Date', 'Agent', 'Credit', 'Reason', 'Added By', 'Added At']);
+// P11 (owner 2026-11-17): the audit trail of the callback worklist's phone-
+// number lookups (CallbackWorklist.gs) -- who asked, when, for which call, and
+// how it ended. It NEVER holds a number. Append-only; Call Date + Call ID are
+// plain-text pinned (a 13-digit id coerces to a Number otherwise).
+const CALLBACK_NUMBER_LOG_HEADERS = Object.freeze(['Timestamp', 'User', 'Role', 'Department', 'Call Date', 'Call ID', 'Result']);
+const PARTIAL_DAY_CREDITS_ = Object.freeze([0, 0.25, 0.5, 0.75]);
+const PARTIAL_DAY_REASONS_ = Object.freeze(['Partial shift', 'Training', 'Meeting', 'Leave', 'Other']);
+const PARTIAL_DAY_MIN_CREDITED_ = 1;
+// P9 (#94): suggestions of likely partial days, for the admin to confirm.
+// The read looks back this many days (the per-call journeys are kept about
+// that long), judges an agent only with this many workdays of history and a
+// usual first-to-last-call span of at least this many hours (a manager or a
+// part-timer has no "usual day" to fall short of), and lists at most this many.
+const PARTIAL_SUGGEST_DAYS_ = 90;
+const PARTIAL_SUGGEST_MIN_DAYS_ = 5;
+const PARTIAL_SUGGEST_MIN_USUAL_HOURS_ = 4;
+const PARTIAL_SUGGEST_MAX_ = 200;
+// A suggestion the admin dismissed is stored as a row with Credit 1 and this
+// reason. A credit of 1 is not a mark (partialDayFromRow_ refuses it), so the
+// row changes no figure and no cache key -- it only stops the suggestion
+// coming back.
+const PARTIAL_DAY_REVIEWED_REASON_ = 'Reviewed: whole day';
 const COMPANY_HOLIDAYS_HEADERS = Object.freeze([
   'Dates', 'Label', 'Active', 'Notes',
 ]);
@@ -997,6 +1034,8 @@ var PROP_REGISTRY_ = Object.freeze({
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     ALL_DEPT_NOTIFY_OPT_IN: 'operator',
     ORPHAN_IGNORE_NAMES: 'operator',   // DCA-7: the Outlier Fix "Not an agent" list (setOrphanIgnored)
+    // P11: the callback worklist's phone-number lookup (CallbackWorklist.gs, Operator State #95).
+    CDR_IMPORT_SS_ID: 'operator', CALLBACK_NUMBERS_MANAGERS: 'operator',
     // Step 5a (Notifications.gs): the manager layer's release switch, and the
     // stored stricter-only values (written by saveNotifyManagerRule).
     NOTIFY_MANAGER_EDIT: 'operator', NOTIFY_MANAGER_RULES: 'operator',

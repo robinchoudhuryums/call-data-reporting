@@ -127,8 +127,8 @@ test('combined: no daily on a part (an older caller) means no grand daily, never
 // -- the queue cards -------------------------------------------------------------
 const QCD_HEADER = ['Month Year', 'Week', 'Date', 'Call Queue', 'Call Source',
   'Total Calls', 'Total Answered', 'Abandoned', 'Longest Wait', 'Avg Answer', 'Abandoned %', 'Violations'];
-function qrow(dateIso, queue, total, answered, abandoned, avg, source) {
-  return ['', '', dateIso, queue, source || 'Total Calls', total, answered, abandoned, '0:01:00', avg, '', 0];
+function qrow(dateIso, queue, total, answered, abandoned, avg, source, longest) {
+  return ['', '', dateIso, queue, source || 'Total Calls', total, answered, abandoned, longest || '0:01:00', avg, '', 0];
 }
 
 test('qcd.range.daily: own queues per date, avg answer weighted, summing to the range block', function () {
@@ -146,13 +146,47 @@ test('qcd.range.daily: own queues per date, avg answer weighted, summing to the 
   install([], { 'QCD Historical Data': grid });
   const snap = h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago', { from: '2026-06-01', to: '2026-06-30' });
   assert.deepEqual(J(snap.range.daily), [
-    ['2026-06-02', 100, 90, 10, 20],
-    ['2026-06-03', 40, 30, 10, 40],
-  ], 'compact [iso, calls, answered, abandoned, avgAnswerSec]');
+    ['2026-06-02', 100, 90, 10, 20, 60],
+    ['2026-06-03', 40, 30, 10, 40, 60],
+  ], 'compact [iso, calls, answered, abandoned, avgAnswerSec, longestWaitSec]');
   const t = snap.range.daily.reduce(function (s, d) { return { c: s.c + d[1], x: s.x + d[3] }; }, { c: 0, x: 0 });
   assert.equal(t.c, snap.range.totalCalls, 'the days sum to the Queue calls tile');
   assert.equal(t.x, snap.range.abandoned);
   assert.equal(snap.mtd.daily, undefined, 'only the range block carries days');
+});
+
+// P6 (owner 2026-11-13): Longest wait -- a MAX across the dept's own queues and
+// the range's days, never a sum or a mean; the same on the per-day tuples.
+test('P6: qcd.range.longestWait is the maximum over own queues and days; each day carries its own', function () {
+  install([]);
+  const owns = h.call('getDeptQcdQueues_', 'CSR');
+  const own = owns[0], own2 = owns[1];
+  const sub = h.call('queuesForDept_', 'CSR').filter(function (q) { return owns.indexOf(q) === -1; })[0];
+  const grid = [QCD_HEADER,
+    qrow('2026-06-02', own, 100, 90, 10, '0:00:20', null, '0:02:10'),
+    qrow('2026-06-02', own, 50, 10, 40, '0:01:00', 'Inbound Only', '0:59:59'),   // not the summed source
+    qrow('2026-06-03', own, 40, 30, 10, '0:00:40', null, '0:04:05'),
+    qrow('2026-06-04', own, 10, 10, 0, '0:00:05', null, '0:00:00'),              // a day with no wait at all
+    qrow('2026-05-28', own, 20, 20, 0, '0:00:10', null, '0:03:00'),              // the prior window
+    qrow('2026-05-20', own, 999, 999, 0, '0:00:10', null, '0:30:00'),            // outside both
+  ];
+  if (own2) grid.push(qrow('2026-06-02', own2, 5, 5, 0, '0:00:30', null, '0:03:20'));     // another OWN queue, same day
+  if (sub) grid.push(qrow('2026-06-03', sub, 500, 500, 0, '0:00:05', null, '0:45:00'));   // a SUB-queue: not the dept's own
+  install([], { 'QCD Historical Data': grid });
+  const snap = h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago',
+    { from: '2026-06-01', to: '2026-06-30', priorFrom: '2026-05-25', priorTo: '2026-05-29' });
+  assert.equal(snap.range.longestWaitSec, 245, 'the longest of the range, on an own queue');
+  assert.equal(snap.range.longestWait, '0:04:05');
+  const byDay = {};
+  snap.range.daily.forEach(function (d) { byDay[d[0]] = d[5]; });
+  assert.equal(byDay['2026-06-02'], own2 ? 200 : 130, 'a day is the max across the own queues');
+  assert.equal(byDay['2026-06-03'], 245, 'the sub-queue\'s 45 minutes is not this department\'s');
+  assert.equal(byDay['2026-06-04'], null, 'no wait recorded reads as none, not zero');
+  assert.equal(Math.max.apply(null, snap.range.daily.map(function (d) { return d[5] || 0; })), snap.range.longestWaitSec,
+    'the card is the tallest of its own bars');
+  assert.equal(snap.rangePrior.longestWaitSec, 180, 'the prior window carries its own, for the chip');
+  assert.equal(snap.mtd.longestWait, null, 'only the range blocks read it');
+  assert.equal(snap.longestWait, null);
 });
 
 // -- the client's pure rules -----------------------------------------------------
@@ -402,4 +436,42 @@ test('QV-4: a week or month bar opens its FIRST workday, and the quick view step
   const same = model(state, daily, ['s'], iso, workday, weekday, ex);
   assert.equal(same.bs, daily);
   assert.equal(dayIdx({ bs: daily, qv: same }, 0), 0);
+});
+
+// -- P6: the Longest wait card's day bars ----------------------------------------
+test('P6: a bar is its bucket\'s LONGEST wait -- the maximum of its days, never their sum', function () {
+  const vm = require('node:vm');
+  const ctx = vm.createContext({ fmtDuration: function (s) { s = Math.round(s); return Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); },
+    fmtNumber: String, answerTierCls_: function () { return ''; }, answerStdFor_: function () { return { target: 80 }; }, ABANDON_STANDARD_: 4 });
+  const at = S5.indexOf('var DTS_METRICS_ = {');
+  const end = S5.indexOf('\n  };', at) + 5;
+  vm.runInContext(extractFn(S5, 'dtsSum_') + '\n' + extractFn(S5, 'dtsDayMap_') + '\n' + S5.slice(at, end), ctx);
+  const map = ctx.dtsDayMap_({ totals: { daily: [] }, qcd: { range: { daily: [
+    ['2026-06-01', 10, 9, 1, 20, 130], ['2026-06-02', 10, 9, 1, 20, 245], ['2026-06-03', 4, 4, 0, 5, null],
+    ['2026-06-04', 4, 4, 0, 5],          // a payload cached before the field: no sixth element
+  ] } } });
+  assert.equal(map['2026-06-02'].max, 245);
+  assert.equal(map['2026-06-03'].max, null);
+  assert.equal(map['2026-06-04'].max, null);
+  const week = ctx.dtsSum_({ days: [map['2026-06-01'], map['2026-06-02'], map['2026-06-03']] });
+  assert.equal(week.max, 245, 'a week bar is its longest day, not 375');
+  assert.equal(ctx.DTS_METRICS_.qmax.v(week), 245);
+  assert.equal(ctx.DTS_METRICS_.qmax.f(week, { n: 3 }), '0:04:05 longest wait in the period');
+  assert.equal(ctx.DTS_METRICS_.qmax.f(ctx.dtsSum_({ days: [map['2026-06-01']] }), { n: 1 }), '0:02:10 longest wait');
+  const quiet = ctx.dtsSum_({ days: [map['2026-06-03']] });
+  assert.equal(ctx.DTS_METRICS_.qmax.v(quiet), null, 'no bar height for a day with none');
+  assert.equal(ctx.DTS_METRICS_.qmax.f(quiet, { n: 1 }), 'no queue calls');
+});
+
+test('P6: the card, its grid and the Queue Call Data frost are wired', function () {
+  const strip = extractFn(S5, 'renderDeptTeamStrip_');
+  assert.match(strip, /data-dts-metric="qmax"/);
+  assert.match(strip, /if \(qr && qr\.longestWait\) \{/, 'only where the payload carries it');
+  assert.match(strip, /strip\.innerHTML = heroTile \+ ansTile \+ qAbdTile \+ qAvgTile \+ qMaxTile \+ trTile;/);
+  assert.match(strip, /strip\.setAttribute\('data-cards', String\(strip\.children\.length\)\);/);
+  const css = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'styles.html'), 'utf8');
+  assert.match(css, /\.dept-team-strip\[data-cards="5"\] \{ grid-template-columns: repeat\(5, minmax\(0, 1fr\)\); \}/);
+  assert.match(css, /\.dept-team-strip\[data-cards="6"\] \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}/);
+  assert.match(S5, /var SIDE_BUSY_PANELS_ = \['dept-qcd-snapshot', 'dept-team-rings', 'dept-team-outbound'\];/,
+    'Queue Call Data frosts with the page like the other side panels');
 });

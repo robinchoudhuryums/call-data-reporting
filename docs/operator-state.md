@@ -79,7 +79,7 @@ When something looks wrong, before assuming a code bug, check:
    `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
    `Orphan Fix Log`, `Dept Config`, `Report Usage`, `Queue Report
    Subscribers`, `Company Holidays` (H1), `Dashboard Standards` (H2, which it
-   also republishes) and `Exception Days` (#81) -- whichever are missing. Idempotent on re-runs
+   also republishes), `Exception Days` (#81), `Partial Days` (#94) and `Callback Number Log` (#95) -- whichever are missing. Idempotent on re-runs
    (existing data untouched). Without re-running setup() after a
    fresh pull, downstream writers (Pipeline Health appends, Digest
    config reads, Orphan Fix log appends) silently no-op against
@@ -329,7 +329,10 @@ When something looks wrong, before assuming a code bug, check:
     rows still write (main metric columns) but JSONB name-list fields
     and `call_history_phones` child rows are skipped; the Caller
     Lookup modal renders an "HMAC_SECRET not set" hint
-    (meta.configured=false) instead of failing.
+    (meta.configured=false) instead of failing. **The callback worklist
+    (#95) depends on it too:** a caller's number is shown only when its HMAC
+    equals the call's stored `caller_hash`, so a missing or different secret
+    on the dashboard makes every lookup read "Could not be confirmed".
 18. Neon Script Properties + scope on the DASHBOARD project (for
     orphan-rename-to-Neon): `NEON_HOST`, `NEON_DB`, `NEON_USER`,
     `NEON_PASS` must also be set on the Department Dashboard project
@@ -1560,7 +1563,7 @@ When something looks wrong, before assuming a code bug, check:
     the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
     real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
     the canonical pair to spot-check. Reversible
-    either way with no redeploy — the scope is part of the `summary:v26` cache
+    either way with no redeploy — the scope is part of the `summary:v27` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
@@ -1601,7 +1604,11 @@ When something looks wrong, before assuming a code bug, check:
     hygiene: the inbound/outbound journey backfills, the per-queue split
     backfill window (#40), and the deferred mirror's pruned-sheet detection
     all assume it runs — and when auditing "how far back can X be rebuilt",
-    this trigger's cadence IS the answer. Since R27 (2026-08) that answer is
+    this trigger's cadence IS the answer. **Since P11 the DASHBOARD reads
+    these tabs too** (the callback worklist's number lookup, #95, by the
+    `Call_Legs_<date>` name and the raw column layout): it is why a number
+    can be shown for about two weeks only, and a rename of the tab prefix or
+    a moved raw column is now a two-project edit (`callback-worklist.test.js`). Since R27 (2026-08) that answer is
     exact year-round: the prune compared fractional days between LOCAL
     midnights, so a window spanning the November fall-back transition pruned
     a day early and the effective retention was 13 days for ~2 weeks each
@@ -2609,6 +2616,11 @@ When something looks wrong, before assuming a code bug, check:
        released TOGETHER") FAILS on any half alone — a visible surface over a
        throwing server reads as a broken app, a released server behind hidden
        surfaces reaches nobody — and fails if the retired modal comes back.
+       **The Callback worklist (#95) is NOT part of this release.** Its menu
+       item stays admin-only; after the flip a manager can reach its LIST
+       endpoint (the same callers the Callbacks section lists) but no number
+       until `CALLBACK_NUMBERS_MANAGERS` is `true`. Giving managers the page
+       is its own commit: a manager entry point, then the switch.
     5. **Verify.** Deploy, then walk **Regression Scenario S46** — it covers
        both the pre-release state (manager sees no outbound surface, the
        `#/report/outbound` link is a plain My Department landing, console call
@@ -4197,6 +4209,40 @@ When something looks wrong, before assuming a code bug, check:
     prints every time in Central (`trWhen_` -> `clCstTime_`, the journey
     drill's shift); the stored values and the editor-run diagnostic's log
     stay Pacific.
+    **P10 (2026-11-16, owner plan 2026-11-13): WAS THE PERSON FREE?** "Not
+    answered first" gains a **Free or on a call** column for the first
+    attempt, and the ranking counts "While free" and "While on a call" apart.
+    A person-transfer attempt is its own internal call, so the per-call direct
+    list (`direct_calls`, #90) already holds it as an inbound internal direct
+    call to the person tried, with `missed_free` / `missed_busy` and who the
+    blocking call was with (`busy_with`). The journey event carries NO call id
+    for it, so the two are matched on **date + person + time** (the attempt's
+    time inside the record's ring, give or take `TR_AVAIL_SLACK_SECS_` = 3 s),
+    and never against a record that names a different caller than the sender
+    (`trAvailMatch_`). A row shows Free / On a call ONLY on a confident match;
+    everything else reads "Not known" with the reason on hover, and the line
+    under the summary counts each: no direct-call records for that date (the
+    per-call list starts at AC-6 and holds ~14 days before it, #90 -- older
+    retries are never known), no record found, more than one fits, or the
+    record disagrees (it says answered). "On a call" is the direct list's own
+    rule: on another call at EVERY ring (CAP-4), busy from answer (S2C-5) to
+    5 s after it ends (the wrap-up tail).
+    **The match rate was NOT measured before this shipped** (it needs
+    production data): after the deploy run **`probeTransferRetryAvailability()`**
+    (dashboard editor, admin, read-only, last 30 days, all departments) and
+    read the VERDICT -- GOOD (90%+ of first attempts on covered dates
+    matched), PARTIAL, POOR, or INCONCLUSIVE (under 20 such attempts). It
+    logs the time offsets of the matches, how many named the sender, call-id
+    samples of each not-matched kind, and what a 30 s allowance would add --
+    the evidence for retuning the 3 s line or the name rule. On PARTIAL /
+    POOR treat the column as a sample, not a count, and send the log back.
+    One extra metered read per run (`transfer-retries`, a few KB: only the
+    cases' own date + person pairs); a failed read costs the column, never
+    the list. Employee names only -- no hash, extension or number is
+    selected. Dashboard-only: `trRetriesOfJourney_` is untouched, so the
+    cdr-import parity stands and `diagnoseTransferRetries` prints no
+    availability. No property, trigger or migration. Pinned by
+    `transfer-retries.test.js` and `drive-admin.js`.
 90. **The per-call DIRECT list -- `direct_calls` and the agent panel's Direct
     tab (AC-6, cdr-import + dashboard, owner 2026-11-04).** Every call to or
     from a person's own line (the queues left out): colleagues by roster name,
@@ -4215,7 +4261,9 @@ When something looks wrong, before assuming a code bug, check:
     outside callers who rang the person's line (from `inbound_calls`), with a
     note, until their source is re-imported (#56). The dashboard serves it
     from `getAgentDay` to ADMINS only, the Direct Calls report's vetting gate;
-    the hash is never selected. Joins the Neon backup (#28, monthly files),
+    the hash is never selected. Since P10 Transfer retries reads it as well
+    (the inbound internal rows of the people tried first, to say whether each
+    was free or on a call, #89). Joins the Neon backup (#28, monthly files),
     the restore list and the retention prune (#57, the per-call horizon).
     Pinned by `tests/unit/direct-calls-capture.test.js`. **ADT-2 (owner
     2026-11-06):** a ring missed while the person was on another call stores
@@ -4292,3 +4340,185 @@ When something looks wrong, before assuming a code bug, check:
     credit until `rebuildDirectCallHeldDates()` (#90) or a re-import (#56).
     The `Dashboard Standards` sheet gains an `Other` row on the next publish
     (#37); team-tools can ignore it. Pinned by `custodial-dept.test.js`.
+
+94. **Partial days -- a day an agent was on the phones for only part of it
+    (P7, owner 2026-11-16).** Admin ▾ → Partial days writes the `Partial
+    Days` sheet (`Date | Agent | Credit | Reason | Added By | Added At`;
+    `setup()` creates it, Date column plain text). One row per (date,
+    agent); Credit is one of 0, 0.25, 0.5, 0.75 (`PARTIAL_DAY_CREDITS_`) and
+    Reason one of a fixed list (`PARTIAL_DAY_REASONS_`: Partial shift,
+    Training, Meeting, Leave, Other) -- no free text, so the sheet cannot
+    collect personal detail. Only an admin can add or remove a mark.
+    **The rule (owner: "pace while present"):** a marked day counts as its
+    credit in the DIVISOR of a per-day figure and nowhere else. Call
+    counts, totals, answer rates, talk time and every team TOTAL are
+    exactly what they were; only "ans/day" (My Department, the agent app's
+    rank) and outbound "/ day" change, plus the two team per-agent-day
+    benchmarks, where a teammate's partial day is credited the same way.
+    A day with no calls was never a day in the divisor, so a full absence
+    needs no mark. An agent with less than one credited day in the window
+    shows a dash instead of a pace (`PARTIAL_DAY_MIN_CREDITED_`). Beside
+    every changed figure the row says so: "19.75 of 22 workdays, 2
+    partial", with the marked dates and shares on hover. **Who sees what:**
+    managers see the attendance line and the dates; agents see the line on
+    their own numbers only; the REASON is shown in the admin editor and
+    nowhere else (it is not in any report payload, nor in the cache tag).
+    **What to know before relying on it:** (1) a mark takes effect within
+    about 5 minutes (the list's cache; the mark re-keys every cached report,
+    no redeploy); (2) the agent name must be the roster spelling -- the
+    editor only offers roster names; (3) calls handled on a credit-0 day
+    stay in the count (calls are never removed), so mark 0 only for a day
+    the few calls should not earn any day's credit; (4) outbound "/ day"
+    credits a mark only on a day the agent placed a call; (5) if the sheet
+    cannot be read, that run treats every day as whole rather than failing
+    the report.
+    **Suggestions (P9, 2026-11-16).** The editor's "Find likely partial
+    days" looks back 90 days (`PARTIAL_SUGGEST_DAYS_`, about as long as the
+    per-call journeys are kept) for the department chosen in the form. For
+    each roster agent and workday it takes the first and last call time
+    from the per-call tables in Neon -- every leg on an inbound call, every
+    outbound call, every direct call -- and lists the days whose span is
+    well short of that agent's OWN usual span (their median day), with the
+    share the span implies: under an eighth of usual "Not a day (0)", then a
+    quarter, half, three quarters; within an eighth of usual is not listed.
+    It only suggests. **Use** puts the day in the form, where the admin
+    still picks the reason and presses Save; **Whole day** dismisses it;
+    **Mark all shown (N)** marks every day on screen at once -- each with
+    its own suggested share, all with the one reason chosen in the form --
+    after asking first with the count and the reason (`savePartialDays`:
+    all-or-nothing, one lock; any of them can be removed afterwards).
+    Not judged, and named under the list: an agent with fewer than 5
+    workdays of calls in the look-back, or whose usual span is under 4 hours
+    (a manager, a part-timer). Never suggested: a weekend, a company
+    holiday, an exception day, or a day that already has a row. Things to
+    know: (1) it needs Neon -- when the call-level tables cannot be reached
+    the editor says so and suggests nothing. The sheet copies are NOT used,
+    on purpose: on the `Inbound Calls` tab the agent names exist only inside
+    the heavy call-path column (tens of megabytes for 90 days), and what
+    could be read cheaply -- outbound calls and the first agent rung -- sees
+    only a slice of each day, which would suggest partial days that were
+    not; (2) a dismissal is stored in the same sheet as a row with Credit
+    1 and the reason "Reviewed: whole day" -- it is NOT a mark, changes no
+    figure, and is listed apart under "Reviewed as whole days", where Remove
+    lets the day be suggested again; do not hand-edit its credit unless you
+    mean to mark the day; (3) the span is first call to last call, so a
+    quiet agent who took an early and a late call looks like a full day,
+    and an agent on a long off-phone task mid-day is not caught; (4) times
+    are shown in Central; (5) the read is aggregated in the database (one
+    row per agent-day comes back, never a call) and counted on the Health
+    page's Neon read gauge as `partialSuggest`; (6) the line under the list
+    ends with how long the read took ("read in 12 s"; also in the execution
+    log) -- it expands every inbound call path in the look-back and stops at
+    a 90-second limit, so if that figure is large, or Find fails on the
+    biggest department, that is the number to bring back: the read can be
+    narrowed, but not without knowing which part is slow. Pinned by
+    `partial-day-suggestions.test.js`; rendered in `drive-admin.js`.
+    **The Individual Report and Insights (P8, 2026-11-16).** Every place
+    those two compare an agent's call VOLUME with the team now compares per
+    credited day instead of per window (the server's day counts come from
+    `agentDaysBlock_`, Util.gs) -- which changes those comparisons
+    for everyone, marks or not, because a day with no calls is not a day: an
+    agent who was out for a week is no longer "40% below the team". The
+    places: the Individual Report's three count tiles (the big number is
+    still the window total; under it "24.8 / day" against "Team 20.1 / day")
+    and its two volume sentences; on Insights the above / below team chip,
+    the Answered and Missed bars on each card (the number beside the bar is
+    still the total), the Gap vs team chart for a count metric, and the
+    call-share benchmark, which is now each agent's share of the days worked
+    rather than a flat equal share. The team figure is calls per credited
+    agent-day over the same people as before (active roster agents, the
+    department's team-average excludes left out). Rates -- % answered, avg
+    talk -- are compared exactly as before, and no count, total or share of
+    the department moves. **An agent's own "vs prior period" on counts is
+    per credited day too (owner 2026-11-16):** the Individual Report's prior
+    row on a count tile reads "Prior 22.9 / day", and on Insights each
+    card's change badges for answered, missed, rung and total talk time, and
+    the Improving / Slipping pill, compare the agent's credited days in the
+    two windows -- so time off in one window is not a slip. The DEPARTMENT's
+    own vs-prior figures (team totals) are not re-based. Where a window has
+    under one credited day for the agent, the totals are compared as before.
+    **Agents on the team-average exclusion list** (a manager on the roster)
+    are not measured against the team on Insights: their card says "exempt"
+    in place of the above / below team chip and carries no team markers,
+    the Gap vs team chart leaves them out and names them under the chart,
+    and the % Ans marker on every card is the same manager-excluded team the
+    count bars use (it had read the department rate). Under one
+    credited day an agent has no per-day figure and the comparison is left
+    blank rather than shown as a large number. Both report caches were
+    re-versioned (now `individual:v14`, `insights:v29`), so the change shows on
+    the first load after the deploy. Pinned by `team-per-day.test.js`;
+    rendered checks in `drive-smoke.js` (the tiles) and
+    `drive-deptoutbound.js` (the Insights surfaces).
+    **Not yet done -- the CSR team app (team-tools, a separate repo; #68).**
+    It does not read this sheet, so any per-day pace it shows still counts
+    a partial day as a whole one. The matching change, to make there:
+    read the `Partial Days` tab of this workbook (a sixth tab on #68's
+    list), columns A-C only (Date as an ISO string or a date in the
+    spreadsheet's timezone, Agent exact-match, Credit a number with
+    0 <= credit < 1; skip any other row -- that includes the Credit-1
+    "Reviewed: whole day" rows P9 writes); for each agent, credited days =
+    the sum over their days with any ring of (the mark's credit, else 1);
+    divide by that instead of the day count; show a dash below 1 credited
+    day; show the "N of M workdays, K partial" line beside the figure; and
+    never read or show column D. If the team app shows no per-day figure,
+    there is nothing to change. Until it is done, a rename or column move
+    on this tab is a one-repo edit. Pinned by `partial-days.test.js`;
+    rendered checks in `drive-admin.js` and `drive-deptoutbound.js`.
+95. **The callback worklist and its phone numbers (P11, owner decision
+    2026-11-17) -- Admin ▾ → Callback worklist, `CDR_IMPORT_SS_ID`,
+    `CALLBACK_NUMBERS_MANAGERS`, the `Callback Number Log` sheet,
+    `probeCallbackNumberLookup`.** The callers who hung up in a queue over the
+    last 14 days and have NOT been called back (late call-backs and callers
+    who got through later are left out), pending ones first by days left,
+    then the missed ones newest first. It is the ONE page in the dashboard
+    where a caller's phone number can be shown; everywhere else a caller is a
+    hash. The owner approved it on five terms, all enforced on the server
+    (`CallbackWorklist.gs`):
+    **(1) Who.** Admins. A manager only for their OWN department, only while
+    `CALLBACK_NUMBERS_MANAGERS` is exactly `true` (default: unset = off; flip
+    it with the page's "Allow managers" button, which asks first), AND only
+    once the outbound views are released to managers (#63) -- until then a
+    manager reaches no callback surface at all, so the switch alone shows
+    them nothing. **There is no manager entry point in the client yet: add
+    the menu item in the same commit as the #63 release.**
+    **(2) Where.** This page only. A number is never written to Neon, a
+    sheet, the cache, a Script Property, an email or a log; the client keeps
+    it in one table cell, clears it when the window closes or reloads, and
+    hides it on paper.
+    **(3) How much.** One call per click (`revealCallbackNumber`); the list
+    never carries a number; `CBW_REVEAL_CAP_` = 40 lookups per person per
+    hour, failed ones included, and a count that cannot be kept shows
+    nothing.
+    **(4) Audit.** Every lookup appends a row to `Callback Number Log`
+    (Timestamp, User, Role, Department, Call Date, Call ID, Result) BEFORE
+    the reply -- `shown`, `not shown: <why>`, or `refused: not on the
+    worklist` -- and never the number. If the row cannot be written the
+    number is not returned. Review the sheet whenever you want to know who
+    looked up what; nothing trims it.
+    **(5) Scope.** The call must be, at that moment, a try of a caller nobody
+    has called back in a department the user may see (re-derived per
+    request), and its day's raw tab must still exist (about 14 days, #43) --
+    older rows read "No longer held".
+    **Where the number comes from:** the `Call_Legs_<date>` tab of the CDR
+    IMPORT workbook, the only place raw numbers are held. Set
+    **`CDR_IMPORT_SS_ID`** on the DASHBOARD project to that workbook's id
+    (the part of its URL between `/d/` and `/edit`; set it per #53), and make
+    sure the deploying account can open it. The outside numbers on the call's
+    incoming legs are the candidates, and the one shown is the candidate
+    whose HMAC equals the call's stored `caller_hash` -- so `HMAC_SECRET`
+    (#17) must be set on the dashboard and match cdr-import, and Neon must be
+    reachable. No match shows "Could not be confirmed", never a guess.
+    **After deploying: run `setup()` (creates `Callback Number Log`; the
+    first lookup creates it too), set `CDR_IMPORT_SS_ID`, then run
+    `probeCallbackNumberLookup()`** (dashboard editor, admin, read-only): it
+    walks every department's worklist, looks each number up the way the page
+    does, and logs COUNTS ONLY -- GOOD (95%+ of the calls whose tab exists
+    were found and confirmed), PARTIAL, POOR, INCONCLUSIVE (under 10 such
+    calls) or NOT CONFIGURED, with call-id samples of each failure. It shows
+    nothing to anyone, so it writes no audit row. A POOR with everything
+    "not confirmed" is a wrong or missing `HMAC_SECRET`. Each lookup costs
+    two Neon reads (the list, then one hash) and a few seconds. A change to
+    cdr-import's raw column layout (`IC_COL`) or to how it picks the caller
+    is a two-project edit: `callback-worklist.test.js` fails on a moved
+    column and on a hashed number that is not among the candidates.
+    Rendered checks in `drive-admin.js`; S74.

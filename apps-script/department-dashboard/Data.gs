@@ -789,6 +789,12 @@ function summaryDailyList_(perDay) {
   });
 }
 
+/** PURE. A summary row's credited days (P7); a row cached before the field falls back to its active days. */
+function rowCreditedDays_(r) {
+  if (!r) return 0;
+  return (r.daysCredited != null) ? (Number(r.daysCredited) || 0) : (Number(r.daysActive) || 0);
+}
+
 function combineSummaries_(primary, parts) {
   if (parts.length === 1) {
     // D-9 (broad-scan 2026-09-17): the requested dept is the payload's
@@ -893,7 +899,7 @@ function combineSummaries_(primary, parts) {
     crossoverAgentCount++;
     if (pairCounted) {
       grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
-      grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+      grand.ansPerDayAgentDays -= rowCreditedDays_(r);   // P7: credited days
     }
     grand.totalUnique   -= Number(r.totalUnique) || 0;
     grand.totalRung     -= Number(r.totalRung) || 0;
@@ -993,7 +999,7 @@ function combineSummaries_(primary, parts) {
       crossoverAgentCount++;
       if (supInTeam && !teamAvgExcludeSet_(r.dept)[name]) {
         grand.ansPerDayAnswered  -= Number(r.totalAnswered) || 0;
-        grand.ansPerDayAgentDays -= Number(r.daysActive) || 0;
+        grand.ansPerDayAgentDays -= rowCreditedDays_(r);   // P7: credited days
       }
       grand.totalUnique   -= Number(r.totalUnique) || 0;
       grand.totalRung     -= Number(r.totalRung) || 0;
@@ -1025,15 +1031,18 @@ function combineSummaries_(primary, parts) {
       if (!days) return;
       const e = scopedDays[name] || (scopedDays[name] = { n: 0, sum: 0, union: {} });
       e.n++;
-      e.sum += Number(r.daysActive) || 0;
+      e.sum += rowCreditedDays_(r);   // P7: credited days
       days.forEach(function (d) { e.union[d] = true; });
     });
   });
   Object.keys(scopedDays).forEach(function (name) {
     const e = scopedDays[name];
     if (e.n < 2) return;
-    grand.ansPerDayAgentDays -= Math.max(0, e.sum - Object.keys(e.union).length);
+    // P7: the union is counted in credited days too -- a marked day shared by
+    // two depts' rows is its credit once, not twice.
+    grand.ansPerDayAgentDays -= Math.max(0, e.sum - creditedDays_(name, Object.keys(e.union)).credited);
   });
+  grand.ansPerDayAgentDays = Math.round(grand.ansPerDayAgentDays * 100) / 100;
   grand.crossoverAgentCount = crossoverAgentCount;
   if (wantDaily) grand.daily = summaryDailyList_(grandDaily);
   // #81: every part's excluded days, merged by date (each dept's roster
@@ -1227,9 +1236,11 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
+  // v27 (P6): qcd.range / rangePrior carry longestWait(Sec) and the per-day
+  // tuples a 6th element (that day's longest wait).
   // v26 (NUM-1 / NUM-7 / NUM-8): csrTransfer leaves out exception days; the
   // combined grand total drops two more kinds of crossover repeat.
-  const cacheKey = 'summary:v26:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v27:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
@@ -1681,6 +1692,10 @@ function computeSummary_(dept, from, to, scope, opts) {
     // before `from`. priorFrom / priorTo are surfaced on meta below.
     const priorBucket = priorAcc[a.agent];
     const priorHasData = !!(priorBucket && priorBucket.rows > 0);
+    // P7 (#94): the agent's CREDITED days -- each active day counts as its
+    // partial-day mark's share, or 1. Only this divisor changes; every count
+    // and rate above is untouched (rule A).
+    const cd = creditedDays_(a.agent, Object.keys(a.days));
     rows.push({
       agent: a.agent,
       matchedViaRoster: a.matchedViaRoster,
@@ -1697,7 +1712,9 @@ function computeSummary_(dept, from, to, scope, opts) {
       // USER window; a.days is user-window only, the E5 prior window
       // accumulates in priorAcc), so PTO does not drag it down. 1 dp; null
       // when no active day so the client renders a dash, never 0.0.
-      ansPerDay: Object.keys(a.days).length ? round1_(a.totalAnswered / Object.keys(a.days).length) : null,
+      // P7: ...per CREDITED day, and a dash (null) below one credited day --
+      // 20 calls over half a day is not "40 a day".
+      ansPerDay: perCreditedDay_(a.totalAnswered, cd.credited),
       priorRung:     priorHasData ? priorBucket.rung     : 0,
       priorMissed:   priorHasData ? priorBucket.missed   : 0,
       priorAnswered: priorHasData ? priorBucket.answered : 0,
@@ -1718,6 +1735,11 @@ function computeSummary_(dept, from, to, scope, opts) {
       csrAvgAbdWaitSeconds: a.csrAvgAbdWaitSecondsCount
         ? Math.round(a.csrAvgAbdWaitSecondsSum / a.csrAvgAbdWaitSecondsCount) : 0,
       daysActive: Object.keys(a.days).length,
+      // P7: the divisor behind ansPerDay, how many of the active days carry a
+      // mark, and the marks themselves ([iso, credit] -- never the reason).
+      daysCredited: cd.credited,
+      partialDays: cd.partial,
+      partialMarks: cd.marks.length ? cd.marks : undefined,
     });
   }
 
@@ -1796,10 +1818,10 @@ function computeSummary_(dept, from, to, scope, opts) {
   rosterRows.forEach(function (r) {
     if (teamExcl[r.agent]) return;
     teamAns  += Number(r.totalAnswered) || 0;
-    teamDays += Number(r.daysActive) || 0;
+    teamDays += rowCreditedDays_(r);   // P7: teammates' partial days are credited too
   });
   totals.ansPerDayAnswered = teamAns;
-  totals.ansPerDayAgentDays = teamDays;
+  totals.ansPerDayAgentDays = Math.round(teamDays * 100) / 100;   // P7: credited days can be fractional
   Object.defineProperty(totals, '_activeDaysByAgent', { value: activeDaysByAgent, enumerable: false });   // AC-3
   totals.ansPerDay = teamDays ? round1_(teamAns / teamDays) : null;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
@@ -2289,7 +2311,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         const inPrior = pFrom && pTo && d3 >= pFrom && d3 <= pTo;
         if (!inRange && !inPrior) continue;
         const bump3 = function (map) {
-          const b3 = map[q3] || (map[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0 });
+          const b3 = map[q3] || (map[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0, lw: 0 });
           b3.total      += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
           b3.answered   += Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
           b3.abandoned  += Number(r3[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
@@ -2300,12 +2322,16 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
             const ansN = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
             const avgS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
             if (ansN > 0 && avgS > 0) { b3.avgWSum += avgS * ansN; b3.avgWN += ansN; }
+            // P6: the longest wait is a MAX, never a sum or a mean (col I --
+            // the longest any caller waited, answered or not).
+            const lwS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]);
+            if (lwS > b3.lw) b3.lw = lwS;
           }
         };
         if (inRange) bump3(byQueueRange);
         if (inPrior) bump3(byQueueRangePrior);
         if (inRange && !queueOwner[q3]) {
-          const dy = byDayRange[d3] || (byDayRange[d3] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0 });
+          const dy = byDayRange[d3] || (byDayRange[d3] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0, maxW: 0 });
           const ansD = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
           dy.total     += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
           dy.answered  += ansD;
@@ -2313,6 +2339,8 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
           if (displays && typeof parseHmsDisplay_ === 'function') {
             const avgD = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
             if (ansD > 0 && avgD > 0) { dy.avgWSum += avgD * ansD; dy.avgWN += ansD; }
+            const lwD = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]);   // P6
+            if (lwD > dy.maxW) dy.maxW = lwD;
           }
         }
       }
@@ -2334,7 +2362,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         if (!queueSet[q4] || queueOwner[q4]) continue;
         const d4 = rowDateIso_(r4[QCD_HISTORICAL_COLS.DATE - 1], tz);
         if (!d4 || d4 < rFrom || d4 > rTo || !excPred(d4, q4)) continue;
-        const dx = byDayExcl[d4] || (byDayExcl[d4] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0 });
+        const dx = byDayExcl[d4] || (byDayExcl[d4] = { total: 0, answered: 0, abandoned: 0, avgWSum: 0, avgWN: 0, maxW: 0 });
         const ansX = Number(r4[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
         dx.total     += Number(r4[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
         dx.answered  += ansX;
@@ -2342,6 +2370,8 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         if (rd && typeof parseHmsDisplay_ === 'function') {
           const avgX = parseHmsDisplay_(rd[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
           if (ansX > 0 && avgX > 0) { dx.avgWSum += avgX * ansX; dx.avgWN += ansX; }
+          const lwX = parseHmsDisplay_(rd[k][QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]);   // P6
+          if (lwX > dx.maxW) dx.maxW = lwX;
         }
       }
     }
@@ -2371,6 +2401,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       // R10-5: answered-weighted avg-answer over the dept's OWN queues (only
       // the range pass populates avgWSum/avgWN; other blocks yield null).
       let ownAvgWSum = 0, ownAvgWN = 0;
+      let ownLongest = 0;   // P6: the longest wait on the dept's OWN queues (range passes only)
       let mainQueueCount = 0, subQueueCount = 0;
       const perQueue = queues.filter(function (q) { return !!byQueueMap[q]; })
         .map(function (q) {
@@ -2380,6 +2411,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
           acc.total += b.total; acc.answered += b.answered;
           acc.abandoned += b.abandoned; acc.violations += b.violations;
           if (!isSub && (b.avgWN || 0) > 0) { ownAvgWSum += b.avgWSum; ownAvgWN += b.avgWN; }
+          if (!isSub && (b.lw || 0) > ownLongest) ownLongest = b.lw;
           if (isSub) subQueueCount++; else mainQueueCount++;
           const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
           return {
@@ -2419,6 +2451,10 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         // tile renders only where the data exists.
         avgAnswerSec:     ownAvgWN > 0 ? Math.round(ownAvgWSum / ownAvgWN) : null,
         avgAnswer:        ownAvgWN > 0 ? formatSecondsHms_(Math.round(ownAvgWSum / ownAvgWN)) : null,
+        // P6: own-queues longest wait over the block (a MAX across queues and
+        // days); null on the blocks that do not read it, like avgAnswer.
+        longestWaitSec:   ownLongest > 0 ? ownLongest : null,
+        longestWait:      ownLongest > 0 ? formatSecondsHms_(ownLongest) : null,
       };
     };
 
@@ -2444,18 +2480,21 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), {
         from: rFrom, to: rTo,
         // Step 4: one COMPACT tuple per date with own-queue activity, oldest
-        // first -- [iso, totalCalls, totalAnswered, abandoned, avgAnswerSec]
-        // (avg answered-weighted like the block's own; null = none). Tuples,
+        // first -- [iso, totalCalls, totalAnswered, abandoned, avgAnswerSec,
+        // longestWaitSec] (avg answered-weighted like the block's own; the
+        // longest wait is that day's MAX across own queues, P6; null = none). Tuples,
         // not objects: a 2-year window is ~500 of them and this payload is
         // cached under CacheService's ~100 KB per-value cap.
         daily: Object.keys(byDayRange).sort().map(function (iso) {
           const dy = byDayRange[iso];
-          return [iso, dy.total, dy.answered, dy.abandoned, dy.avgWN > 0 ? Math.round(dy.avgWSum / dy.avgWN) : null];
+          return [iso, dy.total, dy.answered, dy.abandoned, dy.avgWN > 0 ? Math.round(dy.avgWSum / dy.avgWN) : null,
+                  dy.maxW > 0 ? dy.maxW : null];
         }),
         // #81: the same tuples for the excluded days (absent when none).
         dailyExcluded: Object.keys(byDayExcl).length ? Object.keys(byDayExcl).sort().map(function (iso) {
           const dx = byDayExcl[iso];
-          return [iso, dx.total, dx.answered, dx.abandoned, dx.avgWN > 0 ? Math.round(dx.avgWSum / dx.avgWN) : null];
+          return [iso, dx.total, dx.answered, dx.abandoned, dx.avgWN > 0 ? Math.round(dx.avgWSum / dx.avgWN) : null,
+                  dx.maxW > 0 ? dx.maxW : null];
         }) : undefined,
       }) : null,
       // R11-C1: the same block over the E5 prior window (null when no prior

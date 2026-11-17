@@ -63,6 +63,17 @@ const TR_ROWS = [
     { t: '15:01:00', name: 'Elena Park', kind: 'answer', talk: 20, transfer: true, consult: true },
     trAt('15:02:00', 'Frank Wu', { secs: 22 })]) },
 ];
+// P10: the direct-call records two of the three retried first attempts match
+// (Elena Park free when she declined Anna; on a call with Frank Wu when Ben's
+// rang out). The third call's date holds no direct-call record at all.
+const TR_DIRECT = {
+  rows: [
+    { date: ago(1), agent: 'Elena Park', start: '10:02:00', ring: 3, outcome: 'missed_free', other: 'Anna Reyes', busyWith: null },
+    { date: ago(1), agent: 'Elena Park', start: '11:40:00', ring: 9, outcome: 'answered', other: 'Frank Wu', busyWith: null },
+    { date: ago(2), agent: 'Elena Park', start: '14:01:00', ring: 25, outcome: 'missed_busy', other: 'Ben Ortiz', busyWith: 'Frank Wu' },
+  ],
+  days: [ago(1), ago(2)],
+};
 function mkRs(obj){ let used=false; return { next(){ if(used) return false; used=true; return true; },
   getString(k){ return (obj[k]==null)?null:String(obj[k]); }, getInt(k){ return Number(obj[k])||0; }, close(){} }; }
 function fakeNeonConn() {
@@ -75,6 +86,8 @@ function fakeNeonConn() {
       if (/^SELECT COALESCE\(json_agg\(t ORDER BY t\.occurred_at/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
       if (/escalation_activity/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ACTIVITY) });
       if (/FROM \(/.test(sql) && /escalations/.test(sql)) return mkRs({ j: JSON.stringify(ESC_ROWS) });
+      // P10: the direct-call records behind "free / on a call".
+      if (/FROM direct_calls d JOIN/.test(sql)) return mkRs({ j: JSON.stringify(TR_DIRECT) });
       // TR-1: the transfer-retries read (journeys prefiltered in SQL).
       if (/journey LIKE/.test(sql) && /inbound_calls/.test(sql)) return mkRs({ j: JSON.stringify(TR_ROWS) });
       if (/FILTER/.test(sql) && /escalations/.test(sql)) return mkRs({
@@ -143,7 +156,8 @@ const h = loadGas({
           'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'InboundReport.gs',
           'Escalations.gs', 'Alerts.gs', 'Digest.gs', 'QueueReportEmail.gs',
           'OrphanFix.gs', 'SystemHealth.gs', 'CacheWarm.gs', 'NeonKeepWarm.gs',
-          'Notifications.gs', 'AlertReasons.gs', 'TransferRetries.gs'],
+          'Notifications.gs', 'AlertReasons.gs', 'TransferRetries.gs',
+          'Setup.gs', 'CallerLookup.gs', 'OutboundReport.gs', 'CallbackWorklist.gs'],
 });
 function install(email) {
   h.state.props.SPREADSHEET_ID = 'fake';
@@ -167,6 +181,33 @@ install('admin@ums.com');
 dump('esc-init', () => h.call('getEscalationsInit'));
 dump('esc-list', () => h.call('getEscalations', { department: 'ALL', status: 'all' }));
 dump('esc-activity', () => h.call('getEscalationActivity', { id: 101 }));
+// P11: the callback worklist -- the REAL getCallbackWorklist over a stubbed
+// Not-called-back payload (its engine is unit-pinned) and a fake CDR Import
+// workbook holding two of the three days' raw tabs. The payload carries no
+// number; the harness's revealCallbackNumber mock supplies the one shown.
+const CBW_IDS = { pending: '1783985481001', missed: '1783985481002', missedFirst: '1783985481000', old: '1783985481003', late: '1783985481004' };
+(function () {
+  const ep = (firstIso, status, daysLeft, attempts, late) => ({ firstIso, status, daysLeft, attempts, late: late || { calledBack: null, gotThrough: null } });
+  h.state.props.CDR_IMPORT_SS_ID = 'fake-import';
+  h.state.spreadsheetsById['fake-import'] = makeFakeSpreadsheet({ sheets: {
+    ['Call_Legs_' + ago(1)]: [['h']], ['Call_Legs_' + ago(2)]: [['h']], ['Call_Legs_' + ago(3)]: [['h']], Notes: [['x']] } });
+  h.ctx.getOutboundUncalled = function () {
+    return { meta: { available: true, truncated: false, callbackWindowDays: 3, dataThrough: ago(1) },
+      episodes: [
+        ep(ago(3), 'missed', null, [{ callDate: ago(3), callId: CBW_IDS.missedFirst }, { callDate: ago(2), callId: CBW_IDS.missed }]),
+        ep(ago(1), 'pending', 1, [{ callDate: ago(1), callId: CBW_IDS.pending }]),
+        ep(ago(13), 'missed', null, [{ callDate: ago(13), callId: CBW_IDS.old }]),
+        ep(ago(4), 'missed', null, [{ callDate: ago(4), callId: CBW_IDS.late }], { calledBack: { daysAfter: 5, team: 'own' }, gotThrough: null }),
+      ],
+      calls: [
+        { callDate: ago(1), callId: CBW_IDS.pending, cstStart: '10:41:00', entryQueue: 'A_Q_CSR', dialIn: 'Main CSR Line', waitSeconds: 95 },
+        { callDate: ago(2), callId: CBW_IDS.missed, cstStart: '11:15:00', entryQueue: 'A_Q_Sales', dialIn: null, waitSeconds: 40 },
+        { callDate: ago(13), callId: CBW_IDS.old, cstStart: '09:02:00', entryQueue: 'A_Q_CSR', dialIn: null, waitSeconds: 61 },
+      ] };
+  };
+})();
+dump('callback-worklist', () => h.call('getCallbackWorklist', { department: '' }));
+dump('callback-worklist-ids', () => CBW_IDS);
 dump('transfer-retries', () => h.call('getTransferRetries', { from: ago(30), to: ago(1) }));   // TR-1
 dump('transfer-retries-init', () => h.call('getTransferRetriesInit'));
 dump('alerts-init', () => h.call('getAlertsInit'));

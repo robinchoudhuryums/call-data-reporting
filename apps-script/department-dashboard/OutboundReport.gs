@@ -444,7 +444,32 @@ function outboundBucketDelays_(delays) {
  * `ob_days` (Batch D) counts the days the agent placed at least one call, the
  * denominator of the "/ day" figure.
  */
+/**
+ * P7 (#94): an agent's outbound days in CREDITED days. `obDays` is the count
+ * of days with a call; `markedDays` the ones among them that could carry a
+ * partial-day mark (the query asks only about dates that have one).
+ * `{ credited, partial }`. Pure given the list (typeof-guarded: the suites
+ * that load this file alone see whole days).
+ */
+function obCreditedDays_(name, obDays, markedDays) {
+  var credited = Number(obDays) || 0, partial = 0;
+  if (typeof partialDayCredit_ === 'function') {
+    (markedDays || []).forEach(function (d) {
+      var c = partialDayCredit_(d, name);
+      if (c !== 1) { credited -= (1 - c); partial++; }
+    });
+  }
+  return { credited: Math.round(credited * 100) / 100, partial: partial };
+}
+
 function outboundAgentsSel_(f, t, excSql) {
+  // P7: with partial-day marks in the window, also return which of the MARKED
+  // dates the agent placed a call on (no marks: the text is what it was).
+  var marked = (typeof partialMarkedDatesIn_ === 'function') ? partialMarkedDatesIn_(f, t) : [];
+  var markedSel = marked.length
+    ? ", COALESCE(json_agg(DISTINCT call_date::text) FILTER (WHERE call_date IN ("
+      + marked.map(function (d) { return "'" + d + "'::date"; }).join(', ') + ")), '[]'::json) AS marked_days "
+    : ' ';
   // The tie order is byte order with a blank name first -- what the sheet
   // twin's JS sort (obAgentsFromGrid_) does. The database's default collation
   // ignores case and punctuation and puts NULL last, so the two sources
@@ -466,7 +491,7 @@ function outboundAgentsSel_(f, t, excSql) {
     +     'AND ring_seconds >= ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_real, '
     +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
     +   'COALESCE(sum(attempts),0) AS attempts, '
-    +   'count(DISTINCT call_date) AS ob_days '
+    +   'count(DISTINCT call_date) AS ob_days' + markedSel
     + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date"
     + (excSql || '') + ' '   // EXC-2 (#81): My Department's exception-day clause ('' elsewhere)
     + 'GROUP BY 1) t)';
@@ -698,6 +723,7 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
       const obBrief = Number(r.ob_unconn_brief) || 0;
       const obReal = Number(r.ob_unconn_real) || 0;
       const obTalkSec = Number(r.ob_talk_sec) || 0;
+      const oc = obCreditedDays_(name, r.ob_days, r.marked_days);   // P7
       list.push({
         agent: name,
         dept: homes.length ? homes.join(', ') : 'Unrostered',
@@ -713,7 +739,10 @@ function outboundShapeReport_(scope, obj, deptsByAgent, cbDept, pw) {
         attempts: Number(r.attempts) || 0,
         // Batch D: days with at least one call, and calls per such day.
         obDays: Number(r.ob_days) || 0,
-        obPerDay: (Number(r.ob_days) || 0) ? Math.round(obTotal / Number(r.ob_days) * 10) / 10 : null,
+        // P7: ...per CREDITED day; a dash below one credited day.
+        obDaysCredited: oc.credited,
+        obPartialDays: oc.partial,
+        obPerDay: oc.credited >= 1 ? Math.round(obTotal / oc.credited * 10) / 10 : null,
         obUnconnectedBrief: obBrief,
         obUnconnectedReal: obReal,
         obUnconnectedUnknown: Math.max(0, obTotal - obConnected - obBrief - obReal),
@@ -5755,7 +5784,14 @@ function obAgentsFromGrid_(obGrid, fromIso, toIso, skipFn) {
   }
   // Same ORDER BY as outboundAgentsSel_: ob_total DESC, then agent in byte
   // order (a blank name first).
-  return Object.keys(byAgent).map(function (k) { var a = byAgent[k]; delete a._days; return a; })
+  // P7: the SQL's marked_days twin -- the marked dates this agent has a call on.
+  var marked = (typeof partialMarkedDatesIn_ === 'function') ? partialMarkedDatesIn_(fromIso, toIso) : [];
+  return Object.keys(byAgent).map(function (k) {
+    var a = byAgent[k];
+    if (marked.length) a.marked_days = marked.filter(function (d) { return !!a._days[d]; });
+    delete a._days;
+    return a;
+  })
     .sort(function (x, y) {
       return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
     });
@@ -6301,8 +6337,12 @@ function deptObTotals_(agents, excl) {
     t.obUnconnectedReal += a.obUnconnectedReal || 0;
     t.obUnconnectedUnknown += a.obUnconnectedUnknown || 0;
     var ex = (excl && excl[a.scopeDept]) || {};
-    if (!ex[a.agent]) { t.obPerDayPlaced += a.obTotal || 0; t.obPerDayAgentDays += a.obDays || 0; }
+    if (!ex[a.agent]) {
+      t.obPerDayPlaced += a.obTotal || 0;
+      t.obPerDayAgentDays += (a.obDaysCredited != null ? a.obDaysCredited : (a.obDays || 0));   // P7
+    }
   });
+  t.obPerDayAgentDays = Math.round(t.obPerDayAgentDays * 100) / 100;
   t.obConnectRate = t.obTotal ? Math.round(t.obConnected / t.obTotal * 1000) / 10 : null;
   t.obAttSec = t.obConnected ? Math.round(t.obTalkSec / t.obConnected) : 0;
   t.obPerDay = t.obPerDayAgentDays ? Math.round(t.obPerDayPlaced / t.obPerDayAgentDays * 10) / 10 : null;

@@ -76,6 +76,27 @@
   // metric to plot -- 'abandonedPct' (default, the abandon-standard view) |
   // 'totalCalls' | 'violations'. Persisted in prefs.
   let insQueueMetric = 'abandonedPct';
+  // P6: the queue metrics the trend chart can plot. The two TIME metrics are
+  // seconds (null = none that day / month) and read m:ss on the axis.
+  const INS_QUEUE_METRICS_ = ['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'];
+  const INS_QUEUE_TIME_METRICS_ = ['avgAnswer', 'longestWait'];
+  // PURE. A y-axis step, in seconds, for a time metric: the smallest
+  // clock-friendly step that keeps the axis to eight ticks or fewer.
+  function insTimeAxisStep_(datasets) {
+    let max = 0;
+    (datasets || []).forEach(function (ds) {
+      (ds.data || []).forEach(function (v) { if (v != null && Number(v) > max) max = Number(v); });
+    });
+    const steps = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+    for (let i = 0; i < steps.length; i++) { if (max / steps[i] <= 8) return steps[i]; }
+    return 7200;
+  }
+  // Seconds as m:ss (h:mm:ss from an hour up).
+  function insSecsLabel_(v) {
+    const s = Math.max(0, Math.round(Number(v) || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (r < 10 ? '0' : '') + r;
+  }
   // Round-16 (sub-queue drill fix): Daily-breakdown scope state. '' renders
   // the dept-total dailySeries; a queue name renders that queue's OWN per-day
   // rows (qh.perQueue[i].daily), set when a violation-date chip is clicked so
@@ -789,7 +810,7 @@
         const v = trendSel.value || 'answered';
         if (v.indexOf('queues:') === 0) {
           insActiveTrendMetric = 'queues';
-          insQueueMetric = v.slice(7) || 'abandonedPct';
+          insQueueMetric = INS_QUEUE_METRICS_.indexOf(v.slice(7)) !== -1 ? v.slice(7) : 'abandonedPct';
         } else {
           insActiveTrendMetric = v;
         }
@@ -1889,7 +1910,7 @@
       return {
         name: c.name,
         standing: insClassifyAgent_(c, teamPct),
-        trend: deltaClassify_(insPerDayMetrics_(c.metrics, meta)),
+        trend: deltaClassify_(insPerDayMetrics_(c.metrics, meta, c)),
         judged: rung >= INS_MIN_VOL && !insIsExempt_(c),
       };
     });
@@ -2517,7 +2538,8 @@
     const host = $('ins-share-tally');
     const agentSlices = (cards || [])
       .map(function (c) {
-        return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0) };
+        return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0),
+                 days: (c.days && c.days.credited != null) ? Number(c.days.credited) || 0 : null };   // P8
       })
       .filter(function (d) { return d.value > 0; })
       .sort(function (a, b) { return b.value - a.value; });
@@ -2556,6 +2578,19 @@
       Number(basis && basis.excludedAnsweredShare) || 0));
     const eqShare = other === 0 && benchSlices.length > 1
       ? ((100 - excludedShare) / benchSlices.length) : null;
+    // P8 (#94, owner 2026-11-13): the benchmark is each agent's share of the
+    // DAYS WORKED, not a flat equal share -- someone who was in for half the
+    // days is expected to hold half as much. Credited days: a day with no
+    // calls is not a day, a day marked partial counts as its share. Needs
+    // every benchmark row's days (a payload from before P8 keeps the flat
+    // share); with identical days it IS the flat share.
+    const benchDays = benchSlices.reduce(function (a, s) { return a + (Number(s.days) || 0); }, 0);
+    const byDays = eqShare != null && benchDays > 0
+      && benchSlices.every(function (s) { return s.days != null; });
+    const expectedFor = function (s) {
+      return byDays ? (100 - excludedShare) * (Number(s.days) || 0) / benchDays : eqShare;
+    };
+    host.setAttribute('data-benchmark', eqShare == null ? 'none' : (byDays ? 'days' : 'equal'));
     host.innerHTML = slices.map(function (s) {
       const pct = deptTotal > 0 ? (s.value / deptTotal * 100) : 0;
       let deltaHtml = '', deltaTxt = '';
@@ -2564,15 +2599,21 @@
       // still shows its real share, and a chip names why.
       const isExcluded = !!excludedSet[s.label];
       if (eqShare != null && !s.other && !isExcluded) {
-        const d = pct - eqShare;
+        const exp = expectedFor(s);
+        const d = pct - exp;
         const arrow = d >= 0 ? '▲' : '▼';
         const dCls = Math.abs(d) < 2 ? '' : (d >= 0 ? ' is-up' : ' is-down');
         deltaHtml = ' <span class="ins-share-delta' + dCls + '" aria-hidden="true">'
           + arrow + ' ' + Math.abs(d).toFixed(1) + '</span>';
-        deltaTxt = ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
-          + ' pts vs an equal share (' + benchSlices.length
-          + ' agents share the ' + (100 - excludedShare).toFixed(1)
-          + '% not held by excluded managers = ' + eqShare.toFixed(1) + '% each)';
+        deltaTxt = byDays
+          ? ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
+            + ' pts vs their share of the days worked (' + attNum_(s.days) + ' of '
+            + attNum_(benchDays) + ' agent-days = ' + exp.toFixed(1) + '% of the department’s answered calls'
+            + (excludedShare > 0 ? ', after the ' + excludedShare.toFixed(1) + '% held by excluded managers' : '') + ')'
+          : ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
+            + ' pts vs an equal share (' + benchSlices.length
+            + ' agents share the ' + (100 - excludedShare).toFixed(1)
+            + '% not held by excluded managers = ' + eqShare.toFixed(1) + '% each)';
       } else if (isExcluded) {
         deltaHtml = ' <span class="ins-share-exempt" title="Excluded from the'
           + ' team benchmark (Dept Config \u2192 Team Avg Excludes)">exempt</span>';
@@ -2592,8 +2633,10 @@
       leg.style.display = '';
       leg.innerHTML = (unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls · ' : '')
         + 'sorted most-answered first · shares are of the whole department'
-        + (eqShare != null ? ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)'
-            + (excludedShare > 0 ? ' · managers excluded from the benchmark' : '') : '');
+        + (eqShare != null
+            ? (byDays ? ' · ▲▼ = pts vs each agent’s share of the days worked'
+                      : ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)')
+              + (excludedShare > 0 ? ' · managers excluded from the benchmark' : '') : '');
     }
   }
 
@@ -4083,7 +4126,7 @@
       return 'Calendar view is available for the count and rate metrics (Answered, % Answered, Missed, Call volume, Queue: Abandoned %).';
     }
     if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
-      return 'Calendar view is available for Queue: Abandoned % (the count queue metrics are line-only).';
+      return 'Calendar view is available for Queue: Abandoned % (the other queue metrics are line-only).';
     }
     // R18 (item 8): the span rules are GONE for the queue metric too -- it now
     // falls back to queueHealth.ytdDailySeries the way the team metrics fall
@@ -4203,7 +4246,8 @@
     const queueMetricWrap = $('ins-queue-metric-wrap');
     if (queueMetricWrap) queueMetricWrap.style.display = isQueues ? '' : 'none';
     const qMetricLabel = { abandonedPct: 'abandoned % by queue',
-      totalCalls: 'total calls by queue', violations: 'violations by queue' };
+      totalCalls: 'total calls by queue', violations: 'violations by queue',
+      avgAnswer: 'avg answer time by queue', longestWait: 'longest wait by queue' };
 
     // #4 + gap 1, MERGED (C-1): ONE header writer. These were two consecutive
     // writers to the same element -- the second unconditionally clobbered the
@@ -4245,13 +4289,14 @@
       canvas.style.display = '';
       const qMetric = insQueueMetric || 'abandonedPct';
       const isPct = (qMetric === 'abandonedPct');
+      const isTime = INS_QUEUE_TIME_METRICS_.indexOf(qMetric) !== -1;   // P6: seconds
       // Abandoned % reads the default/legacy series; the other metrics read
       // trend.metrics[qMetric] (server-side, gap 1).
       const mSrc = isPct ? qhTrend : ((qhTrend.metrics && qhTrend.metrics[qMetric]) || {});
       const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
       const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
       const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
-      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : fmtNumber(v); };
+      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); };
       const qNames = Object.keys(perQueue);
       // Round 4 (owner): this tab read visually different from the team tabs
       // (thin flat multi-lines vs their filled single curve). A SINGLE-queue
@@ -4284,7 +4329,9 @@
       // INV-29 months as the team trend; the guard skips the marking if the
       // two ever disagree in length rather than mark the wrong point.
       const teamMonths = (data.trendData && data.trendData.months) || [];
-      const qPart = insPartialChartBits_((!daily && !isPct && (labels || []).length === teamMonths.length)
+      // P6: an average and a maximum are not counts -- a partly covered month
+      // does not understate them, so the time metrics are never marked.
+      const qPart = insPartialChartBits_((!daily && !isPct && !isTime && (labels || []).length === teamMonths.length)
         ? insPartialForData_(data) : []);
       if (qPart.any) {
         datasets.forEach(function (ds) {
@@ -4358,7 +4405,10 @@
           scales: {
             x: { ticks: { maxRotation: 0, autoSkip: true,
               callback: function (v, i) { return qPart.tick(this.getLabelForValue(v), i); } } },
-            y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? (v + '%') : fmtNumber(v); } } },
+            y: { beginAtZero: true, ticks: Object.assign(
+              { callback: function (v) { return isPct ? (v + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); } },
+              // P6: a time axis steps in clock-friendly amounts (0:30, 1:00, 5:00...).
+              isTime ? { stepSize: insTimeAxisStep_(datasets) } : {}) },
           },
         },
       };
@@ -4739,10 +4789,34 @@
   // compares PER DAY -- the same basis as the subline under it
   // (insMetricPerDay_) and the CSV's /day columns -- because a raw 30-day vs
   // 7-day total reads as "+300%" and colours good. Rates never take this path.
-  function insDeltaBadge_(stat, valence, priorLabel, meta, perDayKind) {
+  // `pair` (owner 2026-11-16): an agent's credited days in the two windows
+  // (creditedPair_). With it, a count or a talk-time total is compared PER
+  // CREDITED DAY whatever the windows' lengths; without it (the team's own
+  // tiles, an older payload) the window rules below stand.
+  function insDeltaBadge_(stat, valence, priorLabel, meta, perDayKind, pair) {
     const s = stat || { deltaPct: 0, type: 'volume' };
     const isPct = s.type === 'pctPoints';
     let dp = Number(s.deltaPct || 0);
+    const worked = (pair && (perDayKind === 'volume' || perDayKind === 'time'))
+      ? creditedDeltaPct_(s.val, s.prev, pair) : null;
+    if (worked != null) {
+      dp = worked;
+      const wBase = 'Change PER DAY WORKED vs the prior period (' + attNum_(pair.cur) + ' vs ' + attNum_(pair.prior)
+        + ' credited days: a day with no calls is not counted, a day marked partial counts as its share). '
+        + 'Green = the change is good for this metric, orange = worse.';
+      const wPrior = priorLabel ? 'Prior window: ' + priorLabel + '. ' : '';
+      if (Math.abs(dp) < 0.05) {
+        return '<span class="pr-delta pr-delta-neu" data-basis="worked" title="'
+             + escapeHtml(wPrior + 'No meaningful change per day worked. ' + wBase) + '">–</span>';
+      }
+      let wCls = 'pr-delta-neu';
+      if (valence === 'pos')      wCls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+      else if (valence === 'neg') wCls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
+      const wArrow = dp > 0 ? '▲' : '▼';
+      return '<span class="pr-delta ' + wCls + '" data-basis="worked" title="'
+           + escapeHtml(wPrior + wArrow + ' ' + Math.abs(dp).toFixed(1) + '% per day worked vs the prior period. ' + wBase) + '">'
+           + '<span class="pr-delta-arrow">' + wArrow + '</span> ' + Math.abs(dp).toFixed(1) + '%</span>';
+    }
     const perDay = insPerDayDeltaPct_(s, meta, perDayKind);
     if (perDay != null) dp = perDay;
     // #11e: explain the chip on hover -- what it compares against + the color
@@ -4878,7 +4952,7 @@
       // Classification runs on per-working-day-adjusted metrics (see
       // insPerDayMetrics_) so an unequal-window comparison can't brand an
       // agent "Slipping" over raw volume; badges keep the raw values.
-      const adj = insPerDayMetrics_(c.metrics, meta);
+      const adj = insPerDayMetrics_(c.metrics, meta, c);
       return {
         card: c,
         score: deltaImprovementScore_(adj),
@@ -4916,7 +4990,15 @@
     const teamAvg = {
       answered: ((ts.answered && Number(ts.answered.val)) || 0) / nRoster,
       missed:   ((ts.missed   && Number(ts.missed.val))   || 0) / nRoster,
-      pct:      (ts.pct && Number(ts.pct.val)) || 0,
+      // R18 follow-through (owner 2026-11-16): the % Ans marker is the same
+      // manager-excluded team the count bars and the behind-team rule use --
+      // it read the department rate, so one card mixed two teams.
+      pct:      (meta && meta.teamAvgBasis && meta.teamAvgBasis.agents > 0)
+                  ? (Number(meta.teamAvgBasis.pct) || 0)
+                  : ((ts.pct && Number(ts.pct.val)) || 0),
+      // P8 (#94): the VOLUME comparisons are per CREDITED day. Null on a
+      // payload from before P8, where the window averages above still apply.
+      perDay:   insTeamPerDay_(meta),
     };
 
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta, teamAvg); };
@@ -5100,7 +5182,7 @@
     if (insCardsChartInstance) { try { insCardsChartInstance.destroy(); } catch (e) {} insCardsChartInstance = null; }
     // R7 (N-2): zero-activity agents are excluded from BOTH chart bases
     // (the 'abs' dispatch below passes this filtered set through).
-    const cards = ((insLastData && insLastData.agentData) || []).filter(insAgentHasActivity_);
+    let cards = ((insLastData && insLastData.agentData) || []).filter(insAgentHasActivity_);
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     // Round-16: the density mode is gone -- the basis is simply the saved /
@@ -5111,6 +5193,13 @@
     if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
+    // R18 follow-through (owner 2026-11-16): a gap bar IS a comparison with
+    // the benchmark, so an agent who sits outside it gets no bar -- they are
+    // named under the chart instead (a silent omission would read as "no
+    // calls"). The Trend basis, a per-agent line, still shows them.
+    const exemptNames = cards.filter(insIsExempt_).map(function (c) { return c.name; });
+    cards = cards.filter(function (c) { return !insIsExempt_(c); });
+    canvas.setAttribute('data-exempt', exemptNames.join('|'));
     // R18 (owner ruling): the "vs team average" baseline EXCLUDES managers
     // (server `meta.teamAvgBasis`, INV-26 reaching Insights). A manager on
     // the roster takes a token number of calls, so counting them dragged
@@ -5123,16 +5212,25 @@
       || meta.rosterAgentCount
       || cards.filter(function (c) { return c.matchedViaRoster; }).length
       || cards.length || 1;
+    // P8 (#94): a COUNT metric is compared PER CREDITED DAY -- the agent's
+    // calls a day worked against the team's -- so an agent who was out, or on
+    // a marked part day, is not "below the team" for being absent. An agent
+    // with under one credited day has no pace: no bar, a dash for a label.
+    const tPer = isPct ? null : insTeamPerDay_(meta);
+    const perDayOn = !!tPer && cards.every(function (c) { return c.days && c.days.credited != null; });
     const teamAvg = isPct
       ? (basis ? (Number(basis.pct) || 0) : ((ts.pct && Number(ts.pct.val)) || 0))
-      : (basis
-          ? ((Number(basis[metric]) || 0) / nRoster)
-          : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster));
+      : (perDayOn ? (Number(tPer[metric]) || 0)
+          : (basis
+              ? ((Number(basis[metric]) || 0) / nRoster)
+              : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster)));
     const labels = cards.map(function (c) { return c.name; });
     const vals = cards.map(function (c) {
-      const s = c.metrics && c.metrics[metric]; return s ? (Number(s.val) || 0) : 0;
+      const s = c.metrics && c.metrics[metric];
+      const v = s ? (Number(s.val) || 0) : 0;
+      return perDayOn ? perDayOf_(v, c.days) : v;
     });
-    const gaps = vals.map(function (v) { return Number((v - teamAvg).toFixed(isPct ? 1 : 2)); });
+    const gaps = vals.map(function (v) { return v == null ? 0 : Number((v - teamAvg).toFixed(isPct ? 1 : 2)); });
     // Favorability: for Missed, BELOW team is good; everything else ABOVE.
     const favUp = (metric !== 'missed');
     const good = THEME.good || '#4e9a6b';
@@ -5142,7 +5240,11 @@
       const above = g > 0;
       return (above === favUp) ? good : warn;
     });
-    const fmtV = function (n) { return isPct ? (Number(n).toFixed(1) + '%') : String(Math.round(n)); };
+    const fmtV = function (n) {
+      if (n == null) return '–';
+      return isPct ? (Number(n).toFixed(1) + '%') : (perDayOn ? Number(n).toFixed(1) : String(Math.round(n)));
+    };
+    canvas.setAttribute('data-basis', isPct ? 'rate' : (perDayOn ? 'per-day' : 'window'));
 
     insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
       type: 'bar',
@@ -5160,6 +5262,9 @@
         },
         plugins: {
           legend: { display: false },
+          title: { display: exemptNames.length > 0, position: 'bottom', align: 'start',
+                   color: THEME.muted, font: { size: 11, weight: 'normal' }, padding: { top: 6 },
+                   text: 'Not shown: ' + exemptNames.join(', ') + ' (excluded from the team benchmark)' },
           datalabels: {
             display: true,
             anchor: function (ctx) { return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'end' : 'start'; },
@@ -5170,13 +5275,16 @@
           },
           tooltip: { callbacks: { label: function (ctx) {
             const g = gaps[ctx.dataIndex];
-            return fmtV(vals[ctx.dataIndex]) + '  (team avg ' + fmtV(teamAvg) + ', '
+            if (vals[ctx.dataIndex] == null) return 'Under one credited day: no per-day figure';
+            return fmtV(vals[ctx.dataIndex]) + (perDayOn ? ' a day worked' : '')
+              + '  (team avg ' + fmtV(teamAvg) + ', '
               + (g >= 0 ? '+' : '') + fmtV(g) + ' vs team)';
           } } },
         },
         scales: {
           x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: false } },
-          y: { title: { display: true, text: 'gap vs team avg' + (isPct ? ' (pts)' : '') },
+          y: { grace: '10%',   // P8: per-day gaps are small numbers -- keep the end labels inside the plot
+               title: { display: true, text: 'gap vs team avg' + (isPct ? ' (pts)' : (perDayOn ? ', per day worked' : '')) },
                grid: { color: function (c) { return c.tick.value === 0 ? THEME.ink : THEME.line; } },
                ticks: { callback: function (v) { return isPct ? v + '%' : v; } } },
         },
@@ -5429,14 +5537,29 @@
   // vs-team chip -- the agent's STANDING this period: answered calls vs the
   // team average (the same marker shown on the Answered bar). A LEVEL compare
   // (not the old improvement-vs-improvement, which was the confusing part).
-  function insVsTeamBadge_(agentVal, teamAvgVal) {
+  // P8 (#94): the team's volume per CREDITED agent-day, from the R18 baseline
+  // (`meta.teamAvgBasis`: managers on the exclusion list out). PURE. Null when
+  // the payload carries no agent-days (cached before P8) or under one.
+  function insTeamPerDay_(meta) {
+    var b = meta && meta.teamAvgBasis;
+    var d = Number(b && b.agentDays) || 0;
+    if (!b || b.agentDays == null || d < 1) return null;
+    return { agentDays: d, rung: (Number(b.rung) || 0) / d,
+             missed: (Number(b.missed) || 0) / d, answered: (Number(b.answered) || 0) / d };
+  }
+  // `perDay` true: both values are answered calls PER CREDITED DAY (P8).
+  function insVsTeamBadge_(agentVal, teamAvgVal, perDay) {
     var a = Number(agentVal) || 0, t = Number(teamAvgVal) || 0;
     var tr = Math.round(t);
-    var tol = Math.max(1, t * 0.1);   // within 10% of the average reads "on par"
+    var tol = perDay ? t * 0.1 : Math.max(1, t * 0.1);   // within 10% of the average reads "on par"
     // Name the metric + show the comparison inline so it reads at a glance.
-    var detail = ' · ' + a + ' vs ' + tr + ' ans';
-    var title = 'Answered calls vs the team average this period: ' + a + ' vs ~' + tr
-      + ' (the average teammate). Above = handled more, below = fewer.';
+    var detail = perDay ? ' · ' + perDayText_(a) + ' vs ' + perDayText_(t) + ' ans/day'
+                        : ' · ' + a + ' vs ' + tr + ' ans';
+    var title = perDay
+      ? 'Answered calls per day worked vs the team average: ' + perDayText_(a) + ' vs ' + perDayText_(t)
+        + ' a day. Days with no calls are not counted, and a day marked partial counts as its share.'
+      : 'Answered calls vs the team average this period: ' + a + ' vs ~' + tr
+        + ' (the average teammate). Above = handled more, below = fewer.';
     var g = ' gloss" title="' + escapeHtml(title) + '">';
     if (Math.abs(a - t) <= tol) return '<span class="cr-vs-team cr-vs-team-flat' + g + '≈ on par' + detail + '</span>';
     if (a > t) return '<span class="cr-vs-team cr-vs-team-pos' + g + '▲ above team' + detail + '</span>';
@@ -5468,8 +5591,24 @@
     // (rail) yet "Slipping" (trend pill): above target but down from last period.
     // Floaters keep only the QUEUE chip.
     const trendPill = isFloater ? '' : insTrendPill_(x.trend);
-    const vsTeam = isFloater ? '' : insVsTeamBadge_(
-      Number((mm.answered || {}).val) || 0, Number(ta.answered) || 0);
+    // P8 (#94): per credited day when the payload carries the days. An agent
+    // with under one credited day has no pace, so no chip.
+    const tPer = ta.perDay || null;
+    const ansPer = tPer ? perDayOf_(Number((mm.answered || {}).val) || 0, c.days) : undefined;
+    // R18 follow-through (owner 2026-11-16): an agent on the team-average
+    // exclusion list sits OUTSIDE the benchmark, so their card is not measured
+    // against it -- "exempt" in place of the above / below team chip, and no
+    // team marker on their bars (the Share of answered rows already did this).
+    const exempt = insIsExempt_(c);
+    const vsTeam = isFloater ? ''
+      : exempt ? '<span class="ins-share-exempt" title="Excluded from the team benchmark'
+          + ' (Dept Config \u2192 Team Avg Excludes), so this card is not compared with it">exempt</span>'
+      : (ansPer === undefined
+          ? insVsTeamBadge_(Number((mm.answered || {}).val) || 0, Number(ta.answered) || 0)
+          : (ansPer == null ? '' : insVsTeamBadge_(ansPer, tPer.answered, true)));
+    // The agent's own two windows in credited days: every vs-prior badge on a
+    // count or a talk-time total compares per day worked (owner 2026-11-16).
+    const pair = creditedPair_(c.days, c.daysPrior);
 
     // Primary (featured): % Answered / Answered / Missed as bars vs the
     // TEAM AVERAGE (a marker on each track), with the agent's value as a
@@ -5480,33 +5619,61 @@
       const perDayKind = isPct ? null : 'volume';
       const st = mm[key] || {};
       const val  = Number(st.val)  || 0;
+      const valLbl  = isPct ? val.toFixed(1) + '%' : (st.formatted != null ? String(st.formatted) : String(val));
+      // P8 (#94): a COUNT bar is drawn PER CREDITED DAY -- the fill is the
+      // agent's calls a day, the marker the team's -- while the number beside
+      // it stays the window total (counts never change).
+      const pd = (!isPct && tPer) ? perDayOf_(val, c.days) : undefined;
+      if (pd !== undefined) {
+        const tPd = Number(tPer[key]) || 0;
+        const pdMax = Math.max(pd || 0, tPd, 0.1);
+        const pdTitle = lbl + ': ' + valLbl + ' · '
+          + (pd == null ? 'under one credited day, so no per-day figure'
+                        : perDayText_(pd) + ' a day worked')
+          + (exempt ? '' : ' (team avg ' + perDayText_(tPd) + ' a day)');
+        return '<div class="ins-cbar-row" data-perday="1" title="' + escapeHtml(pdTitle) + '">'
+             +   '<span class="ins-cbar-lbl">' + lbl + '</span>'
+             +   '<span class="ins-cbar-track">'
+             +     (pd == null ? '' : '<span class="ins-cbar-fill ' + cls + '" style="width:' + Math.max(2, Math.min(100, Math.round(pd / pdMax * 100))) + '%"></span>')
+             +     (exempt ? '' : '<span class="ins-cbar-team" style="left:' + Math.min(100, Math.round(tPd / pdMax * 100)) + '%" title="team avg ' + escapeHtml(perDayText_(tPd)) + ' a day"></span>')
+             +   '</span>'
+             +   '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
+             +   '<span class="ins-cbar-delta">' + insDeltaBadge_(st, deltaValence,
+                   st.prev == null ? '' : fmtNumber(Number(st.prev) || 0), meta, perDayKind, pair) + '</span>'
+             + '</div>'
+             + insMetricPerDay_(st, perDayKind, meta, pair);
+      }
       const tAvg = Number(ta[key]) || 0;
       const max  = isPct ? 100 : Math.max(val, tAvg, 1);
-      const valLbl  = isPct ? val.toFixed(1) + '%' : (st.formatted != null ? String(st.formatted) : String(val));
       const tAvgLbl = isPct ? tAvg.toFixed(1) + '%' : String(Math.round(tAvg));
       // #3: the value sits OUTSIDE the track (its own column), not absolutely
       // positioned inside it -- when pinned to the right edge it painted over
       // the team-average marker whenever the team avg was near the agent's
       // value, hiding the key reference. Track now shows only fill + marker.
       return '<div class="ins-cbar-row" title="' + escapeHtml(lbl) + ': ' + escapeHtml(valLbl)
-           +   ' (team avg ' + escapeHtml(tAvgLbl) + ')">'
+           +   (exempt ? '' : ' (team avg ' + escapeHtml(tAvgLbl) + ')') + '">'
            +   '<span class="ins-cbar-lbl">' + lbl + '</span>'
            +   '<span class="ins-cbar-track">'
            +     '<span class="ins-cbar-fill ' + cls + '" style="width:' + Math.max(2, Math.min(100, Math.round(val / max * 100))) + '%"></span>'
-           +     '<span class="ins-cbar-team" style="left:' + Math.min(100, Math.round(tAvg / max * 100)) + '%" title="team avg ' + escapeHtml(tAvgLbl) + '"></span>'
+           +     (exempt ? '' : '<span class="ins-cbar-team" style="left:' + Math.min(100, Math.round(tAvg / max * 100)) + '%" title="team avg ' + escapeHtml(tAvgLbl) + '"></span>')
            +   '</span>'
            +   '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
            +   '<span class="ins-cbar-delta">' + insDeltaBadge_(st, deltaValence,
                  st.prev == null ? '' : (isPct ? (Number(st.prev) || 0).toFixed(1) + '%' : fmtNumber(Number(st.prev) || 0)),
-                 meta, perDayKind) + '</span>'
+                 meta, perDayKind, pair) + '</span>'
            + '</div>'
-           + insMetricPerDay_(st, perDayKind, meta);
+           + insMetricPerDay_(st, perDayKind, meta, pair);
     };
     const primary = '<div class="ins-card-bars2">'
       +   cbar('% Ans',    'pct',      'ins-cbar-pct', true,  'pos')
       +   cbar('Answered', 'answered', 'ins-cbar-ans', false, 'pos')
       +   cbar('Missed',   'missed',   'ins-cbar-miss', false, 'neg')
-      + '</div>';
+      + '</div>'
+      // P8: the days behind the per-day bars, shown only when a day is marked.
+      + ((tPer && c.days && Number(c.days.partial) > 0)
+          ? '<div class="ins-card-att">' + attDaysHtml_(c.days,
+              (meta && meta.from && meta.to) ? workingDaysBetween_(meta.from, meta.to) : 0) + '</div>'
+          : '');
 
     // Secondary (collapsible): Rung / ATT / TTT numbers + deltas.
     // [label, key, valence, per-day kind] -- ATT is per call, so length-independent.
@@ -5519,8 +5686,8 @@
       return '<div class="ins-metric">'
            +   '<div class="ins-metric-label">' + m[0] + '</div>'
            +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
-           +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2], priorLbl, meta, m[3]) + '</div>'
-           +   insMetricPerDay_(st, m[3], meta)
+           +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2], priorLbl, meta, m[3], pair) + '</div>'
+           +   insMetricPerDay_(st, m[3], meta, pair)
            + '</div>';
     }).join('');
 
@@ -5558,17 +5725,20 @@
     return (cur - pri) / pri * 100;
   }
 
-  function insMetricPerDay_(st, kind, meta) {
+  // `pair`: an agent's credited days (creditedPair_) -- the subline then
+  // divides by days worked, matching its badge.
+  function insMetricPerDay_(st, kind, meta, pair) {
     if (!meta || !meta.lengthMismatch) return '';
     if (kind !== 'volume' && kind !== 'time') return '';
     if (st == null || st.val == null || st.prev == null) return '';
-    if (!(meta.currentDays > 0) || !(meta.priorDays > 0)) return '';
+    const dC = pair ? pair.cur : meta.currentDays, dP = pair ? pair.prior : meta.priorDays;
+    if (!(dC > 0) || !(dP > 0)) return '';
     const fmt = (kind === 'time')
       ? function (v) { return crFormatSecondsShort_(v); }
       : function (v) { return v.toFixed(1); };
     return '<div class="ins-metric-perday">'
-         +   fmt(st.val / meta.currentDays) + '/day'
-         +   ' <span class="pr-delta-cap">vs ' + fmt(st.prev / meta.priorDays) + '</span>'
+         +   fmt(st.val / dC) + '/day'
+         +   ' <span class="pr-delta-cap">vs ' + fmt(st.prev / dP) + '</span>'
          + '</div>';
   }
 
@@ -5943,7 +6113,7 @@
       const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
       // Classification columns use the same per-working-day-adjusted
       // metrics as the card trend pills (insPerDayMetrics_).
-      const adjMetrics = insPerDayMetrics_(a.metrics, d.meta);
+      const adjMetrics = insPerDayMetrics_(a.metrics, d.meta, a);
       const cells = [
         a.name,
         isFloater ? 'QUEUE' + ((a.sourceHomes || []).length ? ' · ' + a.sourceHomes.join('/') : '') : 'ROSTER',
@@ -6040,7 +6210,7 @@
           insActiveTrendMetric = 'answered';
         }
       }
-      if (prefs.queueMetric === 'abandonedPct' || prefs.queueMetric === 'totalCalls' || prefs.queueMetric === 'violations') {
+      if (INS_QUEUE_METRICS_.indexOf(prefs.queueMetric) !== -1) {
         insQueueMetric = prefs.queueMetric;
       }
       // R11-C3: both restore onto the consolidated dropdown.

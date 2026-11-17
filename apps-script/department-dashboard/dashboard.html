@@ -133,9 +133,15 @@
             <button class="header-menu-item" id="exception-days-btn" type="button"
                     data-route="/admin/exception-days" data-admin-only role="menuitem"
                     title="Days whose call data is real but unfair to judge by (an outage) -- left out of every report's figures, and every report says so. Admin-only.">Exception days</button>
+            <button class="header-menu-item" id="partial-days-btn" type="button"
+                    data-route="/admin/partial-days" data-admin-only role="menuitem"
+                    title="An agent's day that should count as less than a whole day in the per-day figures (left early, training, a meeting). Only the per-day divisor changes; calls and rates do not. Admin-only.">Partial days</button>
             <button class="header-menu-item" id="transfer-retries-btn" type="button"
                     data-route="/admin/transfer-retries" data-admin-only role="menuitem"
                     title="Calls where an agent tried someone in another department, got no answer, then tried someone else there -- the list to check for transfers declined that should not have been. Admin-only.">Transfer retries</button>
+            <button class="header-menu-item" id="callback-worklist-btn" type="button"
+                    data-route="/admin/callbacks" data-admin-only role="menuitem"
+                    title="The callers nobody has called back yet, most urgent first. The one place a caller's phone number can be shown: one call at a time, and every time is logged. Admin-only.">Callback worklist</button>
           </div>
         </div>
       </nav>
@@ -1494,6 +1500,8 @@
                     <option value="queues:abandonedPct">Queue: Abandoned %</option>
                     <option value="queues:totalCalls">Queue: Total calls</option>
                     <option value="queues:violations">Queue: Violations</option>
+                    <option value="queues:avgAnswer">Queue: Avg answer time</option>
+                    <option value="queues:longestWait">Queue: Longest wait</option>
                   </select>
                 </label>
               </div>
@@ -1862,7 +1870,7 @@
           </section>
           <section class="help-topic" id="help-topic-individual" hidden>
             <h3>Individual Report</h3>
-            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
+            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline; the three count tiles compare with the team <em>per day worked</em> &mdash; a day with no calls is not counted and a day marked partial counts as its share) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
           </section>
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
@@ -1870,17 +1878,17 @@
             <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Trend</strong> bases (Gap = who&rsquo;s above/below the team average; Trend = each agent&rsquo;s metric over time, one line each). The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
-              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
+              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls <em>per day worked</em> vs the team average this period (the marker on the Answered bar). A day with no calls is not counted, and a day marked partial counts as its share, so time off does not read as falling behind. So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
             </ul>
             <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
               <div class="help-mini-card-head">
                 <span class="help-mini-name">Jordan A.</span>
                 <span class="ins-trend-pill ins-trend-up">&#9650; Improving</span>
-                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 142 vs 98 ans</span>
+                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 24.8 vs 20.1 ans/day</span>
               </div>
             </div>
-            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 142 answered vs the ~98 a teammate averaged).</div>
-            <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
+            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 24.8 answered a day worked vs the 20.1 a teammate averaged).</div>
+            <p>The bars compare % Answered / Answered / Missed against the team average &mdash; the two counts per day worked, with the window total printed beside each bar. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
             <h3>Missed Calls</h3>
@@ -2674,6 +2682,83 @@
     </div>
   </div>
 
+  <!-- P7 (owner 2026-11-16, #94): the partial-day editor. Admin-only (server:
+       assertAdmin_ on every call in PartialDays.gs). -->
+  <div id="partial-days-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="partial-days-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="partial-days-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="partial-days-modal-title">Partial days</h2>
+      </div>
+      <div class="modal-panel-body">
+        <p class="al-hint">A day an agent worked only part of &mdash; they left early, were in training, sat in a
+          meeting. Marking it changes one thing: <strong>answered per day</strong> and <strong>outbound per day</strong>
+          count that day as the share you choose instead of a whole day. The agent&rsquo;s calls, totals and answer
+          rate do not change, and the attendance (&ldquo;17.5 of 22 workdays, 9 partial&rdquo;) shows beside the per-day
+          figure. Managers and the agent see that a day is marked, not the reason.</p>
+        <div class="ir-form-grid pd-form">
+          <div class="ir-col">
+            <label for="pd-date">Date</label>
+            <input type="date" id="pd-date">
+          </div>
+          <div class="ir-col">
+            <label for="pd-dept">Department</label>
+            <select id="pd-dept"></select>
+          </div>
+          <div class="ir-col">
+            <label for="pd-agent">Agent</label>
+            <select id="pd-agent"></select>
+          </div>
+          <div class="ir-col">
+            <label for="pd-credit">Counts as</label>
+            <select id="pd-credit"></select>
+          </div>
+          <div class="ir-col">
+            <label for="pd-reason">Reason (admins only)</label>
+            <select id="pd-reason"></select>
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
+            <button class="btn" id="pd-save-btn" type="button">Save</button>
+          </div>
+        </div>
+        <div id="pd-status" role="status" class="status" style="display:none;"></div>
+        <table class="al-config-table" id="pd-table" style="display:none;">
+          <thead><tr><th>Date</th><th>Agent</th><th>Counts as</th><th>Reason</th><th>Added</th><th></th></tr></thead>
+          <tbody id="pd-tbody"></tbody>
+        </table>
+        <div id="pd-empty" class="al-hint" style="display:none;">No partial days yet.</div>
+
+        <!-- P9: suggestions. getPartialDaySuggestions is read-only; nothing is
+             marked until the admin presses Use and then Save, or Whole day. -->
+        <h3 class="pd-sub">Suggestions</h3>
+        <p class="al-hint">Looks back <span id="pd-suggest-days">90</span> days at when each agent&rsquo;s first and last
+          call of the day were, and lists the days that were much shorter than that agent&rsquo;s own usual day. It only
+          suggests: press <strong>Use</strong> to put a day in the form above (then choose a reason and Save), or
+          <strong>Whole day</strong> if the agent worked a normal day and it should not be suggested again.</p>
+        <div class="pd-suggest-bar">
+          <button class="btn btn-secondary" id="pd-suggest-btn" type="button">Find likely partial days</button>
+          <span class="al-hint" id="pd-suggest-scope"></span>
+          <button class="btn btn-secondary" id="pd-suggest-all" type="button" style="display:none;">Mark all shown</button>
+        </div>
+        <div id="pd-suggest-status" role="status" class="status" style="display:none;"></div>
+        <table class="al-config-table" id="pd-suggest-table" style="display:none;">
+          <thead><tr><th>Date</th><th>Agent</th><th>On calls (Central)</th><th>Their usual</th><th>Calls</th><th>Suggested</th><th></th></tr></thead>
+          <tbody id="pd-suggest-tbody"></tbody>
+        </table>
+        <details id="pd-reviewed" class="pd-reviewed" style="display:none;">
+          <summary id="pd-reviewed-summary">Reviewed as whole days</summary>
+          <table class="al-config-table">
+            <thead><tr><th>Date</th><th>Agent</th><th>Reviewed</th><th></th></tr></thead>
+            <tbody id="pd-reviewed-tbody"></tbody>
+          </table>
+        </details>
+      </div>
+    </div>
+  </div>
+
   <!-- TR-1 (owner 2026-11-02): transfer retries -- getTransferRetries
        (TransferRetries.gs, admin-only, read-only, the call paths in Neon). -->
   <div id="transfer-retries-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="transfer-retries-modal-title" style="display:none;">
@@ -2691,7 +2776,8 @@
           voicemail (someone sent it there); a ring that ran out to voicemail stays voicemail. The list to check
           for transfers turned away that should not have been. <strong>Answered, then redirected</strong> lists the
           other shape: the first person tried <em>answered</em> and talked, and the call then went to a colleague of
-          theirs anyway. Times are Central.</p>
+          theirs anyway. Where the first person's own direct-call record for that ring is found, <strong>Not answered
+          first</strong> also says whether they were free or on another call then. Times are Central.</p>
         <div class="ir-form-grid tr-form">
           <div class="ir-col">
             <label for="tr-from">From</label>
@@ -2749,11 +2835,13 @@
           </div>
           <div id="tr-view-missed" style="display:none;">
           <p id="tr-summary" class="tr-summary"></p>
+          <!-- P10: how many first attempts are known free / on a call, and why the rest are not. -->
+          <p id="tr-avail-note" class="al-hint tr-avail-note" style="display:none;"></p>
           <div class="tr-side">
             <div class="tr-callees-wrap">
               <div class="ds-zone-label">Most often not answering first</div>
               <table class="al-config-table tr-callees">
-                <thead><tr><th>Person tried first</th><th>Department</th><th class="num">Times</th><th class="num">Of which declined</th></tr></thead>
+                <thead><tr><th>Person tried first</th><th>Department</th><th class="num">Times</th><th class="num">Of which declined</th><th class="num tr-avail-col">While free</th><th class="num tr-avail-col">While on a call</th></tr></thead>
                 <tbody id="tr-callees"></tbody>
               </table>
             </div>
@@ -2762,11 +2850,60 @@
           <div class="ds-zone-label">Calls</div>
           <div class="tr-cases-wrap">
             <table class="al-config-table tr-cases" id="tr-cases">
-              <thead><tr><th>When</th><th>Call</th><th>Sent by</th><th>Tried first</th><th>How it ended</th><th>Then tried</th><th>How that went</th><th class="num">After</th></tr></thead>
+              <thead><tr><th>When</th><th>Call</th><th>Sent by</th><th>Tried first</th><th>How it ended</th><th class="tr-avail-col">Free or on a call</th><th>Then tried</th><th>How that went</th><th class="num">After</th></tr></thead>
               <tbody id="tr-tbody"></tbody>
             </table>
           </div>
           <p id="tr-note" class="al-hint" style="display:none;"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P11 (owner 2026-11-17): the callback worklist -- getCallbackWorklist /
+       revealCallbackNumber (CallbackWorklist.gs). The ONE page a caller's
+       phone number can appear on: one call per request, every request logged
+       on the server before the reply. The list itself never carries a number. -->
+  <div id="callback-worklist-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="callback-worklist-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="callback-worklist-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="callback-worklist-modal-title">Callback worklist</h2>
+      </div>
+      <div class="modal-panel-body">
+        <p class="al-hint">Callers who hung up in a queue over the last <span id="cbw-days">14</span> days and have not been
+          called back, most urgent first: those still inside the callback window, then the ones already missed.
+          A caller's <strong>phone number is shown one call at a time</strong>, and <strong>every time is logged</strong>
+          with your name, the time and the call. Numbers are never emailed, exported or kept, and they are cleared
+          when this window closes. A number can be shown only while that day's calls are still held (about two weeks).
+          Times are Central.</p>
+        <div class="ir-form-grid cbw-form">
+          <div class="ir-col">
+            <label for="cbw-dept">Department</label>
+            <select id="cbw-dept"><option value="">All departments</option></select>
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
+            <button class="btn" id="cbw-run-btn" type="button">Refresh</button>
+          </div>
+        </div>
+        <!-- Admin-only: whether managers may show numbers (default off). -->
+        <p id="cbw-mgr" class="al-hint cbw-mgr" style="display:none;">
+          <span id="cbw-mgr-text"></span>
+          <button class="btn btn-secondary" id="cbw-mgr-btn" type="button"></button>
+        </p>
+        <div id="cbw-status" role="status" class="status" style="display:none;"></div>
+        <div id="cbw-results" style="display:none;">
+          <p id="cbw-summary" class="tr-summary"></p>
+          <p id="cbw-note" class="al-hint" style="display:none;"></p>
+          <div class="tr-cases-wrap">
+            <table class="al-config-table tr-cases" id="cbw-table">
+              <thead><tr><th>First tried</th><th class="num">Tries</th><th>Latest try</th><th>Queue</th><th>Status</th><th>Call</th><th>Phone number</th></tr></thead>
+              <tbody id="cbw-tbody"></tbody>
+            </table>
           </div>
         </div>
       </div>

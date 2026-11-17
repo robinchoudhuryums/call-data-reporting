@@ -624,6 +624,34 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
               const irExc = await page.evaluate(() => { const el = document.querySelector('#individual-results > .exc-note');
                 return el && getComputedStyle(el).display !== 'none' ? el.textContent : ''; });
               record(role + ': the generated Individual Report says which exception day it left out', /8x8 outage/.test(irExc), irExc);
+              // P8 (#94): the three count tiles compare per credited day --
+              // the agent's own "/ day" line, the team's, and no figure cut
+              // off by the tile's ellipsis; the two rate tiles are as before.
+              const irP = require('./payloads/ir-report.json');
+              const irTiles = await page.evaluate(() => {
+                const c = document.querySelector('#individual-modal .ir-summary-card');
+                if (!c) return null;
+                return {
+                  name: ((c.querySelector('.ir-summary-title') || {}).textContent || ''),
+                  tiles: Array.from(c.querySelectorAll('.ds-kpi')).map((t) => ({
+                    per: ((t.querySelector('.ds-kpi__perday') || {}).textContent || ''),
+                    team: ((t.querySelector('.ds-kpi__compare .ds-kpi__team') || {}).textContent || ''),
+                    cut: (function (el) { return !!el && el.scrollWidth > el.clientWidth + 1; })(t.querySelector('.ds-kpi__compare .ds-kpi__team')),
+                    value: ((t.querySelector('.ds-kpi__value') || {}).textContent || ''),
+                  })),
+                };
+              });
+              const irCard = irTiles ? irP.summaryData.filter((s) => irTiles.name.indexOf(s.name) === 0)[0] : null;
+              const tp = irP.teamAvg.perDay;
+              record(role + ': P8 -- the IR count tiles read "<agent> / day" against "Team <x> / day", totals unchanged, nothing cut off',
+                !!irCard && irTiles.tiles.length === 5
+                  && ['rung', 'answered', 'missed'].every((k, i) =>
+                    irTiles.tiles[i].per === irCard.perDay[k].toFixed(1) + ' / day'
+                    && irTiles.tiles[i].team === 'Team ' + tp[k].toFixed(1) + ' / day'
+                    && irTiles.tiles[i].value === String(irCard.stats[k]) && !irTiles.tiles[i].cut)
+                  && irTiles.tiles[3].per === '' && irTiles.tiles[4].per === ''
+                  && /per day worked/.test(irTiles.name) && irTiles.name.indexOf(irCard.days.active + ' days with calls') !== -1,
+                JSON.stringify(irTiles));
             } else {
               record(role + ': the IR Generate button enables after picking an agent',
                 false, 'still disabled/hidden -- the tone check cannot run');
@@ -1045,6 +1073,38 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
         qdrawn.shown && qdrawn.cells > 0
           && /year to date/i.test(qdrawn.note + ' ' + qdrawn.header),
         JSON.stringify(qdrawn));
+      // P6 (owner 2026-11-13): the two answer-time queue metrics -- seconds
+      // on a minutes:seconds axis, one line per queue, line-only.
+      await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Line');
+        if (btn) btn.click();
+      });
+      await page.waitForTimeout(600);
+      const timeMetric = async (value) => {
+        await page.selectOption('#ins-trend-metric', value);
+        await page.waitForTimeout(1200);
+        return page.evaluate(() => {
+          const c = document.getElementById('ins-trend-chart');
+          const ch = (c && window.Chart) ? Chart.getChart(c) : null;
+          const cal = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Calendar');
+          const vals = ch ? ch.data.datasets.reduce((a, d) => a.concat(d.data.filter((v) => v != null)), []) : [];
+          return { header: (document.getElementById('ins-trend-header') || {}).textContent || '',
+            drawn: !!ch && c.style.display !== 'none', sets: ch ? ch.data.datasets.length : 0,
+            hasValues: vals.length > 0, allSeconds: vals.every((v) => Number.isInteger(v) && v > 0),
+            ticks: ch ? ch.scales.y.ticks.map((t) => t.label) : [],
+            calendarOff: !cal || cal.disabled };
+        });
+      };
+      const lwT = await timeMetric('queues:longestWait');
+      record(role + ': P6 the trend chart plots Queue: Longest wait in minutes:seconds, line-only',
+        lwT.drawn && lwT.sets > 0 && lwT.hasValues && lwT.allSeconds && /longest wait by queue$/.test(lwT.header)
+          && lwT.ticks.length > 1 && lwT.ticks.every((t) => /^(\d+:)?\d+:\d\d$/.test(t)) && lwT.calendarOff,
+        JSON.stringify(lwT));
+      const aaT = await timeMetric('queues:avgAnswer');
+      record(role + ': P6 the trend chart plots Queue: Avg answer time the same way',
+        aaT.drawn && aaT.sets > 0 && aaT.hasValues && aaT.allSeconds && /avg answer time by queue$/.test(aaT.header)
+          && aaT.ticks.every((t) => /^(\d+:)?\d+:\d\d$/.test(t)),
+        JSON.stringify(aaT));
       await page.selectOption('#ins-trend-metric', 'answered');
       await page.waitForTimeout(900);
     }

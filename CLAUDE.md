@@ -140,7 +140,7 @@ npm run lint:gas
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~170 suites pin the invariants, the report
+# Non-zero exit on failure. ~180 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -518,9 +518,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Public write paths are admin-only — INV-01 carries the AUTHORITATIVE
   carve-out list** (OrphanFix.gs incl. the `addOrphanToRoster` New-hire flow /
   `setup()` / DeptConfig.gs / the Access Control editor in Auth.gs / the
-  Alert+Digest config editors / the Exception Days editor (#81) / the append-only
-  `logReportUsage_` telemetry carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
-  with `assertAdmin_()` except the telemetry append and the row-dept-gated
+  Alert+Digest config editors / the Exception Days (#81) and Partial Days (#94)
+  editors / the append-only `logReportUsage_` telemetry and the #95 Callback
+  Number Log audit row; Escalations, INV-55, is the per-dept NEON write path). All start
+  with `assertAdmin_()` except those two appends and the row-dept-gated
   Escalations verbs. Every other
   public-callable function is read-only; helpers that touch
   spreadsheet state end in `_` so Apps Script blocks them from RPC.
@@ -624,7 +625,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Scope (owner ruling, R18): the exclusion applies to PER-AGENT AVERAGES
   AND BENCHMARKS only -- manager volume stays in dept TOTALS and RATES.**
   Consumers are the IR team-average, the My Department team "ans/day"
-  (`summary:v26`, answered per agent per day), the Team Outbound per-day
+  (`summary:v27`, answered per agent per day), the Team Outbound per-day
   figure (`deptOutbound:v1`, Batch D), and, since R18, Insights via
   `meta.teamAvgBasis` (the gap-vs-team baseline, the call-share equal-share
   benchmark, the behind-team classification); Insights' `teamStats`,
@@ -658,23 +659,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `computeQcdSnapshots_` + the Overview parent map (CompanyOverview.gs),
   the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_`
   (Data.gs).
-- **The Performance Report is RETIRED (PR->Insights consolidation).**
-  Its semantics live on in Insights: the INV-28 comparison window is the
+- **The Performance Report is RETIRED into Insights (PR->Insights
+  consolidation).** What still binds: the INV-28 comparison window is the
   immediately-preceding same-workday-count window (R24; NOT "previous
-  calendar month") -- since R17b carried by the agent-card delta badges + the
-  emails (the rollup KPI tile row is hidden); the share-of-answered
-  breakdown sits in Team detail; the **Absolute** chart basis
-  (`insRenderCardsChartAbs_`) is HIDDEN since R16g (the agent table on
-  the same page carries it; renderer inert, A/B remote still reaches it). `PerformanceReport.gs` was
-  DELETED (`deltaBlock_` moved to Util.gs -- Insights consumes it);
-  legacy `#/report/performance` deep links land on the Insights region
-  (router repoint); the `performance:` cache prefix is an orphan
-  and the `cdr.pr.prefs.v1` localStorage key is swept on boot
-  (`sweepOrphanPrefs_`, script-2-chrome). The frozen-literal
-  test in insights-report.test.js pins the inherited semantics
-  (ex-parity gate). NOTE (INV-17): `clasp push -f` does not delete
-  remote files -- PerformanceReport.gs must be removed in the Apps
-  Script web editor.
+  calendar month"), carried by the agent-card delta badges + the emails;
+  `deltaBlock_` lives in Util.gs; legacy `#/report/performance` links land on
+  the Insights region; the `performance:` cache prefix is an orphan and
+  `cdr.pr.prefs.v1` is swept on boot (`sweepOrphanPrefs_`); the **Absolute**
+  chart basis (`insRenderCardsChartAbs_`) is hidden since R16g, renderer
+  inert. `PerformanceReport.gs` was deleted locally and must be removed in the
+  web editor (INV-17). The frozen-literal test in insights-report.test.js pins
+  the inherited semantics; the surface detail is in
+  `docs/client-ui-conventions.md`.
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing. `neonWrite.js` self-contains
@@ -819,6 +815,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   every insurer silently renders "(unlabeled)" -- no error, no count gap, the
   label just never appears. Pinned by `tests/unit/insurance-numbers.test.js`
   (same input, same 64-char hex, same null handling).
+- **A caller's phone number leaves the server in ONE place:
+  `CallbackWorklist.gs::revealCallbackNumber` (P11, owner decision 2026-11-17;
+  Operator State #95).** Everywhere else a caller is a hash -- never add a
+  number to another payload, a cache, a sheet, Neon, an email, an export or a
+  log line. That one reply is gated (admin; a manager only behind
+  `CALLBACK_NUMBERS_MANAGERS` + the #63 release), one call per request under an
+  hourly cap, re-checked against the live worklist, proven against the stored
+  `caller_hash`, and logged to `Callback Number Log` BEFORE it is sent.
+  ENFORCED by `callback-worklist.test.js` and `drive-admin.js`.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -838,7 +843,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `directCallMetrics.js`, the dashboard's `InboundReport.gs` /
   `OutboundReport.gs` / `DirectCallReport.gs` / `CallerLookup.gs`, or the
   `Inbound Calls` / `Outbound Calls` / `Direct Call History` export tabs.**
-  Fourteen bullets moved there in the F8c split (+ the 6d agent-day view)
+  Fourteen bullets moved there in the F8c split (+ the 6d agent-day view,
+  + P9's reader of these tables)
   because they describe how ONE subsystem is built rather than a trap that
   bites unrelated work; the file is authoritative, this is the index:
   Inbound-call capture · Internal-transfer journey enrichment (R11-N) ·
@@ -846,7 +852,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Insurer labels and the Inbound report gate · QCD vs inbound abandons ·
   Dept attribution contract · Outbound-call capture · Outbound report ·
   Temporal abandon heatmap · Direct-extension call metrics ·
-  CSR transfer detail · Agent-day interaction view (6d) · Transfer filter.
+  CSR transfer detail · Agent-day interaction view (6d) · Transfer filter ·
+  Partial-day suggestions (P9).
   **Three rules stayed HERE, because each bites from OUTSIDE that subsystem:**
   (1) **⚠ The DQE and INBOUND queue-name recognizers diverge ON PURPOSE -- do
   not "harmonize" them.** The DQE regex
@@ -1731,7 +1738,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" it or hardcode that default in a second
   place. `subScope` is a cache-key
-  dimension (`summary:v26`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
+  dimension (`summary:v27`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -2031,7 +2038,7 @@ items for anything it flags or doesn't cover.)
 3. Did the user actually have access? (the email match is case-INsensitive -- check the Department cell + Role, and `EMAIL_ALIASES`)
 4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
-6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, thirteen sheets -- and it REPUBLISHES the Dashboard Standards sheet, #37)
+6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, fifteen sheets -- and it REPUBLISHES the Dashboard Standards sheet, #37)
 7. Is `DASHBOARD_URL` set? (alert-email links + every report's "Open in new tab")
 8. Are all three trigger families installed? (daily alerts / the integrated DQE build / daily+weekly+monthly digests)
 9. Did the latest push add an OAuth SCOPE? (Run any function once in the editor to consent)
@@ -2073,7 +2080,7 @@ items for anything it flags or doesn't cover.)
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; when set, an Access Control `agent` row opens the separate agent app -- off, agents get access-denied)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
-48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching; per-dept gates (`COACHING_DEPT_RULES`, team-relative or a flat answer %; Save all), Met / Rotated / Dismissed and the manager email HELD for admins since Step 5b
+48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); arm it from Admin ▾ → Coaching; per-dept gates (`COACHING_DEPT_RULES`); the manager email is HELD for admins (Step 5b)
 49. Inbound Calls tab export trigger -- keeps the heatmap's and the direct-line callbacks' SHEET FALLBACK fresh, plus the one-time re-exports and the BF-1 ring backfill from stored journeys
 50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable; both copies are watched on Health and re-sort themselves (#49, OFB-1/2)
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use for an emailed Individual Report; prefer adding the agent to Access Control
@@ -2106,19 +2113,21 @@ items for anything it flags or doesn't cover.)
 78. `ALERT_REASON_RULES` -- the admin-trial alert reasons (Step 5c): an agent below X% on each of N workdays, callers not called back within a business day; admins-only email, `reason:` Alert Log rows
 79. `probeOutboundCallMix` / `OUTBOUND_MIX_AGENTS` -- read-only: sorts agents' outbound calls into company line / colleague / inbound twin / misdial / redial / external, with sample call ids
 80. `diagnoseDirectCallCounting` (cdr-import) -- read-only: sizes what re-importing a pre-D2 date changes (D2 is not retroactive), then re-import per #56
-81. Exception days -- the `Exception Days` sheet (Admin ▾ → Exception days): a day left out of every windowed figure (counts too) and named on every report; admin-only include switch; per-call report totals since EXC-2 (call-level views mark it); callbacks, heatmap, insurer drill + report emails since EXC-3; team-tools still counts it
-82. Warm-transfer continuations are NOT outbound calls (OBX-1: the capture skips a call named in another call's Transfer To Call ID; not retroactive) + `diagnoseOutboundTransfers` (cdr-import, read-only) sorting the number-live-only calls by shape -- owner-checked genuine calls (OBX-2), so the number-live test is never a rule
-83. Direct calls credited to the person 8x8 names on the leg (DCA-1..5: a reassigned extension credits its new user, never the former employee; a blank name only on a confirmed extension; Spanish + CSR agents to CSR; not retroactive) + `diagnoseDirectCallAttribution` (cdr-import, read-only); a new hire on a former employee's extension is on the orphan list (DCA-6), as is anyone on an extension no roster lists, with a "Not an agent" dismiss (DCA-7)
-84. Transfers / consults to a person on the caller's journey (IXT-1: the Transfer To call plus every internal dial from the answering agent while live, journey-only; not retroactive), the outbound twin (OXT-1: an agent on an inbound AND an outbound call at once gets neither) + `diagnosePersonTransfers` (cdr-import, read-only, both directions + time since connect)
+81. Exception days -- the `Exception Days` sheet (Admin ▾ → Exception days): a day left out of every windowed figure (counts too) and named on every report; admin-only include switch; team-tools still counts it
+82. Warm-transfer continuations are NOT outbound calls (OBX-1; not retroactive) + `diagnoseOutboundTransfers` (cdr-import, read-only); the number-live test is never a rule (OBX-2)
+83. Direct calls are credited to the person 8x8 names on the leg (DCA-1..5; not retroactive) + `diagnoseDirectCallAttribution` (cdr-import, read-only); a reassigned or unlisted extension lands on the orphan list (DCA-6, DCA-7)
+84. Transfers / consults to a PERSON on the caller's journey (IXT-1 inbound, OXT-1 outbound; journey-only, not retroactive) + `diagnosePersonTransfers` (cdr-import, read-only)
 85. `diagnoseHoldHangups` (HOH-0, cdr-import, read-only): is a "hung up on hold" flag a real hang-up (the call's last leg) or a transfer side effect (someone answered after it)?
 86. `diagnoseTransferBounces` (XB-0, cdr-import, read-only): calls sent to another department after being answered that CAME BACK, by department trio and first sender
 87. `diagnoseOutsideNumberLegs` (NX-0, cdr-import, read-only) + NX-2: a CallRecording leg 8x8 marks Incoming is not a caller, so short outbound calls stop reading as inbound (not retroactive; re-run both backfills)
 88. Escalation comments missing from their thread (ESC-C2): `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (dashboard, admin, once after deploy); resolve comments now go into the thread (ESC-C1)
-89. `diagnoseTransferRetries` (TR-0, cdr-import, read-only): a call where an agent tried a person in another department, got no answer, then tried someone else there -- the incorrect-rejection check; on the dashboard as Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned), incl. P3's "answered, then redirected" list
+89. Transfer retries -- `diagnoseTransferRetries` (TR-0, cdr-import, read-only) and Admin ▾ → Transfer retries (TR-1, same rule, parity-pinned): an agent tried one person in another department, then another; P3's "answered, then redirected" list; P10's free / on-a-call column (`probeTransferRetryAvailability`)
 90. The per-call direct list (AC-6): Neon `direct_calls` behind the agent panel's admin-only Direct tab; run `rebuildDirectCallHeldDates()` (cdr-import) after each cdr-import push that changes direct credit -- it re-applies DCA-1..5 (#83) to the held dates
 91. `diagnoseDirectDialIn` (DID-0, cdr-import, read-only): did an outside caller dial the agent's OWN number, or a main line routed through a phone menu (or a colleague)? Per number dialed and per agent, with sample call ids
 92. Outside direct calls split by how they arrived (DID-1..3, admin-only): cdr-import stores `via` + `dial_in` on `direct_calls`; push cdr-import, run `rebuildDirectCallHeldDates()`, and keep `DIAL_IN_LABELS` listing every main line
 93. The `Other` roster column (P5): a home for people in no call-handling team (`CUSTODIAL_DEPTS`); header exactly `Other`, one blank column kept before the insurance block; off the Overview, coaching and cache warming, a department by name everywhere else
+94. Partial days -- the `Partial Days` sheet (Admin ▾ → Partial days): a marked day counts as its share in the DIVISOR of per-day figures only (My Department, IR, Insights; `creditedDays_`); counts and rates never change; the editor suggests likely days (P9); team-tools' matching change is PLANNED, not built
+95. The callback worklist (P11) -- Admin ▾ → Callback worklist: the ONE page a caller's phone number can be shown, one call per click, logged to `Callback Number Log` first; set `CDR_IMPORT_SS_ID`, run `setup()` then `probeCallbackNumberLookup()`; managers need `CALLBACK_NUMBERS_MANAGERS` + the #63 release
 
 ## Cycle Workflow Config
 
@@ -2138,7 +2147,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/AgentDay.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/DayQuickView.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/NeonRetention.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/TransferRetries.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/Notifications.gs, apps-script/department-dashboard/AlertReasons.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/ExceptionDays.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/AgentDay.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/DayQuickView.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/NeonRetention.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/TransferRetries.gs, apps-script/department-dashboard/CallbackWorklist.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/Notifications.gs, apps-script/department-dashboard/AlertReasons.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/ExceptionDays.gs, apps-script/department-dashboard/PartialDays.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -2159,7 +2168,7 @@ below is a finding aid.** Several invariants carry exceptions and version
 history that a one-line summary cannot hold, so open the entry before relying
 on one (INV-30's cache-version table above all).
 
-INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close / Exception Days (#81), a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
+INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close / Exception Days (#81) / Partial Days (#94), a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry and the Callback Number Log audit row (#95); `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDisplayValues()`, never `getValue()` -- spreadsheet-vs-script TZ | Subsystem: Department Dashboard
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard
@@ -2170,7 +2179,7 @@ INV-08 | TTT attribution uses each agent's OWN `leg.talkSec` via `findAgentTalkO
 INV-09 | The Data.gs cache key is versioned (`summary:vN:`); bump on any aggregation-rule change | Subsystem: Department Dashboard
 INV-10 | `HISTORICAL_COLS` must match the real DQE Historical Data column positions (full map in the entry) | Subsystem: Department Dashboard
 INV-11 | ROSTER layout pins: HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6 | Subsystem: Department Dashboard
-INV-12 | `setup()` is idempotent and admin-gated; it creates the thirteen dashboard-managed sheets if missing (incl. `Company Holidays`, H1, `Dashboard Standards`, H2 -- which it also republishes -- and `Exception Days`, #81) and never overwrites rows | Subsystem: Department Dashboard
+INV-12 | `setup()` is idempotent and admin-gated; it creates the fifteen dashboard-managed sheets if missing (incl. `Company Holidays`, H1, `Dashboard Standards`, H2 -- which it also republishes -- `Exception Days`, #81, `Partial Days`, #94, and `Callback Number Log`, #95) and never overwrites rows | Subsystem: Department Dashboard
 INV-13 | Deployed as "Execute as: Me" + "Anyone within domain" -- the deployer's permissions back the script | Subsystem: Department Dashboard
 INV-14 | `SPREADSHEET_ID` comes from Script Properties, never hardcoded | Subsystem: Department Dashboard
 INV-15 | Per-project `.clasp.json` files are gitignored at any depth; scriptIds stay out of the repo | Subsystem: operational/cross-cutting
@@ -2296,6 +2305,8 @@ S69 | Transfer retries: the admin list of transfers tried again in the same depa
 S70 | Direct calls split by how the outside caller arrived: their direct line vs a main line (DID-2, DID-3) | Subsystem: Department Dashboard + CDR Import
 S71 | Links and reloads keep what the user asked for: a digest link loads once, escalation drafts survive, Refresh re-reads every section (CCX) | Subsystem: Department Dashboard
 S72 | Paper, a phone, dark mode and a screen reader: print with a modal open, modals at phone width, tier words, named charts (NPS) | Subsystem: Department Dashboard
+S73 | Partial days: an admin marks a part day, the per-day pace changes and says why, nothing else moves (P7) | Subsystem: Department Dashboard
+S74 | Callback worklist: one caller's number at a time, logged first, gone when the window closes (P11) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

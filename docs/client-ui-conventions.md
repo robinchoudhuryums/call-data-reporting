@@ -166,8 +166,17 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   (rung) / Avg talk time (ADMIN-only -- the `data-admin-metric` option is
   REMOVED at init for non-admins, since `<option>` can't use the
   data-admin-only reveal) / the queue metrics as `queues:<metric>` values
-  (Abandoned % / Total calls / Violations -- these split into the old
-  queues tab + `insQueueMetric`). Plus a **Monthly/Daily**
+  (Abandoned % / Total calls / Violations, and since P6 Avg answer time /
+  Longest wait -- these split into the old queues tab + `insQueueMetric`;
+  the allowed set is `INS_QUEUE_METRICS_`). **The two TIME metrics (P6) are
+  SECONDS** in `queueHealth.trend.metrics.avgAnswer` / `.longestWait`, with
+  `null` where a day or month has none (a gap in the line, never a dip to
+  zero): `fmtVal` and the y axis print m:ss (`insSecsLabel_`), the axis steps
+  by a clock-friendly amount (`insTimeAxisStep_`), they are line-only (no
+  calendar), and they are never marked as partial-month counts -- an average
+  or a maximum is not understated by a part month. The daily values arrive
+  as compact arrays (`dailyAnswerTimes` in QCDReport.gs), not as fields on
+  the per-day rows, which ship per queue per day. Plus a **Monthly/Daily**
   toggle (`insTrendView`), hidden in Calendar mode. Daily for the team metrics reads the
   `trendDaily` response field (daily answered/missed/rung/%/ATT over the selected
   window); Daily for the queue tab reads `queueHealth.trend.daily*`.
@@ -223,7 +232,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v26` already makes a fresh re-generate fast too).
+  `insights:v29` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -285,7 +294,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v26). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v27). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -1413,7 +1422,7 @@ behind the removed button.
   of either bar -- an empty full-width track read as a broken row; the My
   Department table no longer sends such agents at all (IDLE-1, the summary cache's v24,
   `answered-bar.test.js`). Insights follows the same rule on an agent-free
-  run (IDLE-2, `insights:v26`): no card for an agent with no calls in the
+  run (IDLE-2, the insights v26 bump): no card for an agent with no calls in the
   window, so the quiet group and the small-sample banner no longer count them.
 - **Team strip**: Queue calls and Abandoned % carry the vs-prior chip from
   `qcd.rangePrior` like Avg answer (QD-1; abandoned % under 0.25 pts reads
@@ -1436,8 +1445,17 @@ behind the removed button.
 - **Team strip LINKED DAY BARS (Step 4, owner 2026-10-16; admin trial).**
   `dtsAttachDayBars_` (script-5, end of `renderDeptTeamStrip_`) appends a
   `.dts-daybars` block to each tile that names its figure with
-  `data-dts-metric` (`rate` / `answered` / `qcalls` / `qabd` / `qavg`; the CSR
-  Transfer % tile has no per-day source and gets none). Buckets come from the
+  `data-dts-metric` (`rate` / `answered` / `qcalls` / `qabd` / `qavg` / `qmax`;
+  the CSR Transfer % tile has no per-day source and gets none). **P6 (owner
+  2026-11-13): the Longest wait card** (`qmax`) is the longest any caller
+  waited in the dept's OWN queues over the range, answered or not (QCD col I;
+  `qcd.range.longestWait`, a MAX across queues and days). Its bars read the
+  per-day tuple's 6th element and a week / month bar is its longest DAY
+  (`dtsSum_`'s `max`, never a sum); the vs-prior chip warns on a rise and
+  stays muted under `DTS_MAX_NOISE_SEC_` (15 s). The strip's grid follows its
+  card count (`data-cards`, styles.html): four keep the four-up row, five get
+  one row from 1360px, six sit as two rows of three -- so a new card never
+  wraps alone. Buckets come from the
   PURE `dtsDayBuckets_`: one per WORKDAY (weekends and `isCompanyHolidayIso_`
   dates get no bar; a quiet workday is an empty bar), one per Monday-start
   week past 31 workdays, one per calendar month past 130; count cards read
@@ -2590,7 +2608,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   repaint in `onData` (never the SWR pre-paint) and `onError` call
   `sideFrostDisarm_()`. While armed, Team Rings unfrosts only through
   `trpUnfrost_`, so its pre-paint cannot clear the frost early; Team Outbound
-  is also frosted while its own request is out (`obViewSync_`). A new side
+  is also frosted while its own request is out (`obViewSync_`). Queue Call
+  Data joined the list in P6 (it paints from the same summary). A new side
   panel that paints from the summary joins `SIDE_BUSY_PANELS_`. (d) **Every
   side panel folds to its header**: a `.side-collapse` button
   (`data-side-collapse="<panel id>"`, `aria-expanded`) in each
@@ -2881,7 +2900,8 @@ stay pinned by INV-39, INV-53 and INV-06.
   `ansPerDayHtml_`) by "· N.N ans/day" -- answered per day WITH RINGS on an
   agent row, answered per AGENT per day on a total/subtotal row (the team pair
   `ansPerDayAnswered`/`ansPerDayAgentDays`; floaters and team-average excludes
-  out). The bar no longer prints an inline answer rate: the Answer % column
+  out; since P7 the divisor is CREDITED days -- see "Partial days on the
+  client"). The bar no longer prints an inline answer rate: the Answer % column
   beside it is the same figure. Sorts by answered VOLUME (`totalAnswered`,
   owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
   `sortRows`). **The CSV still emits a numeric Total calls column** spliced
@@ -3219,6 +3239,41 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   own shift (owner 2026-11-13 -- it printed them as stored). A new time
   print in this modal goes through `trWhen_`; `transfer-retries.test.js`
   fails on one that does not. Pinned by `drive-admin.js`.
+  **Free or on a call (P10).** A retry's `first.avail` is `{ state, with? }`
+  -- `free`, `busy`, or a reason it is not known (`noDay` / `noRow` /
+  `ambiguous` / `conflict`); `trAvailHtml_` prints Free, "On a call" (the
+  light-yellow busy colour, `.tr-avail--busy`) with whom, or a visible "Not
+  known" whose `title` is the reason (`TR_AVAIL_WHY_`). The column and the
+  ranking's "While free" / "While on a call" are `.tr-avail-col`, shown only
+  while `#tr-view-missed` carries `.tr-has-avail` (at least one attempt
+  known), so a window with nothing known looks as it did; `#tr-avail-note`
+  (`trAvailNote_`) states the match rate and why the rest are not known.
+  Never guess a state on the client: no `avail`, no cell text.
+
+## The callback worklist on the client (P11, owner 2026-11-17)
+
+The one page a caller's phone number can appear on (`#callback-worklist-modal`,
+Admin ▾ → Callback worklist, route `/admin/callbacks`; server rules: Operator
+State #95). The client's whole job is to NOT keep the number:
+
+- The list (`getCallbackWorklist`) never carries one. "Show number"
+  (`cbwReveal_`) asks for ONE call and writes the reply into that row's
+  `.cbw-phone` cell as `.cbw-num` + "logged"; a reply that is not `ok` prints
+  its reason (`CBW_WHY_`), and a refused request leaves the button with the
+  server's message under it.
+- `cbwClear_` empties the table and bumps `CBW_STATE_.seq` on every reload AND
+  in `closeModal`, so a number never outlives the open window and a reply
+  still in flight lands nowhere.
+- Never put a number in `localStorage` / `sessionStorage`, a `title`, an
+  export, the clipboard, a share link or the client-error beacon. `.cbw-num`
+  is hidden under `@media print`.
+- The managers' switch (`#cbw-mgr`) renders only when the payload carries
+  `managersMayReveal` (the server sends it to admins alone); turning it ON is
+  a danger-toned `dsConfirm_`, turning it off is immediate.
+- There is no manager entry point yet (Operator State #95).
+
+Pinned by `callback-worklist.test.js` (a source sweep of the block) and
+`drive-admin.js`.
 
 ## Exception days on the client (#81, owner 2026-10-22)
 
@@ -3278,3 +3333,115 @@ rules: Operator State #81.
 - Pinned by `drive-callbacks.js` (the callback summary's part note) and
   `drive-exceptions.js` (note, switch, bars, band, 360 px, manager),
   `drive-admin.js` (the editor), `drive-smoke.js` (IR note), `drive-agent.js`.
+
+## Partial days on the client (P7, owner 2026-11-16)
+
+The server credits a marked day as its share in the DIVISOR of a per-day
+figure (Operator State #94: rule, credits, who may mark). The client's job is
+to SAY so beside the figure, never to recompute it.
+
+- **The attendance line.** `attendanceText_(credited, partial, workdays)`
+  (script-1-core, pure) prints "19.75 of 22 workdays, 2 partial";
+  `attendanceHtml_` wraps it with the marked dates and shares as its title
+  (`attMarksTitle_`, at most 12 dates) and returns `''` when no mark applied
+  -- so a row with no partial day is byte-identical to before. Workdays come
+  from the window on screen (`attWindowWorkdays_`), holidays and weekends out.
+- **Where it shows.** Under the inbound bar's "ans/day" and the outbound
+  bar's "/ day" on every My Department view (`.lb-attend`; NOT `.lb-att`,
+  which is the avg-talk `<small>`), inside `ansPerDayHtml_`'s classic cell
+  (`.ans-att`), and on the agent app's own KPIs (`#agent-attendance`,
+  `.agent-att`, the agent's own row only). Team rows show no line: their
+  divisor is agent-days (`ansPerDayAgentDays`, now possibly fractional).
+- **The dash.** `ansPerDay` / `obPerDay` arrive `null` when the agent has
+  less than one credited day; the cell prints "–" WITH the attendance line,
+  so the dash is explained. Never divide client-side to fill it in.
+- **The reason never reaches a report payload.** Rows carry `daysCredited`,
+  `partialDays` and `partialMarks` (`[[iso, credit]]`) only; the agent app
+  gets no dated marks at all. The reason exists in `getPartialDaysInit`
+  (admin) and the editor's table.
+- **The editor** (`#partial-days-modal`, route `/admin/partial-days`,
+  script-7-admin `initPartialDays_` / `pdEditor*_`): date, department (only
+  to narrow the agent list), agent (roster names), share and reason are all
+  `<select>`s or a date input -- no free text. Save validates in place
+  (`#pd-status`); Remove goes through `dsConfirm_` in danger tone.
+- **Suggestions in the editor (P9).** A second block under the marks:
+  `#pd-suggest-btn` calls `getPartialDaySuggestions({department})` for the
+  form's department (`pdSuggestLoad_`); `#pd-suggest-tbody` lists the open
+  ones. **A suggestion is never a mark.** `pdSuggestUse_` only fills the
+  form and moves focus to the reason -- it must never call the server
+  (`partial-day-suggestions.test.js` fails if it does); the admin's own Save
+  marks the day. "Whole day" calls `dismissPartialDaySuggestion`, whose row
+  comes back in the init's `reviewed` list (`#pd-reviewed`, a `<details>`).
+  `pdSuggestOpen_(suggestions, data)` is the one filter: a suggestion whose
+  (date, agent) is in `data.days` or `data.reviewed` is gone, so every
+  save / dismiss / remove re-renders the list from the server's own state
+  with no second request. Removing a REVIEW goes through `dsConfirm_`
+  without the danger tone (no figure changes); removing a mark keeps it.
+  The status line under the list (`pdSuggestSummary_`) names the agents who
+  could not be judged -- a silent omission would read as "nothing to flag" --
+  says "Nothing left to look at" (every day found has been dealt with) apart
+  from "Nothing stands out" (none was found), and ends with how long the
+  read took (`readMs`). Each row is one line: the date cell shows the
+  weekday form with the full date as its `title` and the row's
+  `data-pd-date`; on a phone the table is its own sideways scroller (the
+  F81 rule for modal tables), so the dialog never scrolls sideways.
+  **Mark all shown** (`#pd-suggest-all`, `pdSuggestMarkAll_`) is offered
+  only while a suggestion is on screen, always asks first through
+  `dsConfirm_` (the count and the one reason), and sends ONE
+  `savePartialDays` with each day's own share.
+- **Not yet:** the CSV, which still exports the per-day figure without the
+  line.
+- **An agent's own vs-prior, per credited day (owner 2026-11-16).**
+  `creditedPair_(days, daysPrior)` (script-1-core, pure) is the agent's
+  credited days in the two windows, or null when either has under one (or
+  the payload predates the field). With a pair: `insDeltaBadge_(…, pair)`
+  compares a count or a talk-time total per day worked and marks the badge
+  `data-basis="worked"`; `insMetricPerDay_(…, pair)` divides by the same
+  days; `insPerDayMetrics_(metrics, meta, card)` feeds the Improving /
+  Slipping classification from the card's own days. Without one, every
+  window rule stands. The team's own tiles and rollup never get a pair. On
+  the IR the prior row of a count tile is `irPriorRow_` over
+  `priorPerDay` / `perDay` ("Prior 22.9 / day"), falling back to the totals.
+- **Exempt agents on Insights (R18 follow-through).** `insIsExempt_(card)`
+  (on the dept's team-average exclusion list): the card shows
+  `.ins-share-exempt` in place of the team chip and no `.ins-cbar-team`
+  markers; the Gap vs team chart drops them (`canvas[data-exempt]`, and the
+  chart's bottom title names them -- never a silent omission); the Trend
+  basis still draws their line. The % Ans marker on every card reads
+  `meta.teamAvgBasis.pct`, the count bars' own team.
+- **The Individual Report and Insights (P8).** Every agent-vs-team VOLUME
+  comparison is per credited day; the count on screen stays the window
+  total. Shared helpers (script-1-core, all pure): `perDayOf_(count, days)`
+  -- a number, `null` under one credited day, `undefined` when the payload
+  has no `days` block, which is each surface's cue to keep its old window
+  comparison (a payload cached before P8, a hand-built fixture);
+  `attDaysText_` / `attDaysHtml_` ("21 days with calls", or the attendance
+  text when a day is marked); `perDayText_` (one decimal, a dash for none).
+  - *IR tiles* (script-6-ir `volTile`): the three count tiles get their own
+    `.ds-kpi__perday` line ("24.8 / day") above the compare row, whose
+    marker reads "Team 20.1 / day" (`.ds-kpi__team--tight` -- looser tracking
+    let the ellipsis eat the figure) and whose badge is `irPerDayBadge_` (a
+    plain "-" under one credited day, never "-100%"). The card title says
+    "vs Team Avg, per day worked" and carries the days (`.ir-days`). The two
+    rate tiles are untouched.
+  - *Insights cards* (`insBuildCard_`): the chip reads "24.8 vs 20.1
+    ans/day" (`insVsTeamBadge_(a, t, true)`; no chip under one credited
+    day); the Answered / Missed bars carry `data-perday="1"`, draw fill and
+    team marker on a per-day scale and keep the total in `.ins-cbar-val`;
+    `.ins-card-att` shows the attendance only on a card with a marked day.
+    The team pace is `insTeamPerDay_(meta)` -- the R18 baseline
+    (`meta.teamAvgBasis`) over its `agentDays`. **The % Ans bar's marker
+    still reads the dept rate from `teamStats`**, as before.
+  - *Gap vs team chart*: per day for a count metric when EVERY card has
+    days (`canvas[data-basis="per-day"]`), labels to one decimal, a muted
+    zero bar and a dash for an agent under one credited day; `grace: '10%'`
+    keeps the end labels inside the plot.
+  - *Share of answered calls*: the ▲▼ compares each row with that agent's
+    share of the DAYS WORKED (`#ins-share-tally[data-benchmark="days"]`),
+    still after the share held by excluded managers; identical days give
+    the old equal share, and a payload without days falls back to it
+    (`data-benchmark="equal"`).
+  - Pinned by `team-per-day.test.js`; rendered by `drive-smoke.js` (IR
+    tiles) and `drive-deptoutbound.js` (the four Insights surfaces).
+- Pinned by `partial-days.test.js`; rendered by `drive-admin.js` (the editor)
+  and `drive-deptoutbound.js` (the row line and its title as a manager).

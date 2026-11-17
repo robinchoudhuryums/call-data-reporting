@@ -47,7 +47,8 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   twice, one report runs for the linked window, and the provisional window
   ending today is never loaded)
   (since #81 also the generated Individual Report's
-  exception-day note) boots every page as admin AND manager; fails on page /
+  exception-day note; P8: its three count tiles read "<agent> / day" against
+  "Team <x> / day" with the totals unchanged and no figure cut off) boots every page as admin AND manager; fails on page /
   console errors, unexpected unmocked RPCs, **blank chart canvases** (the R12-1
   class: laid out and visible but entirely uniform pixels), and horizontal page
   overflow -- at 1440 px AND, in a separate fresh boot, at 360 px (CL-9), where
@@ -94,7 +95,9 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 - `drive-daybars.js` — (since 2026-10-21 also the target line on % Ans and
   Abandoned %, never among the bars) the team cards' **linked day bars** (Step 4): one
   shared selection, workday / monthly buckets, keyboard + touch, admin-only. Since QD-1
-  it also checks the Queue calls and Abandoned % cards' vs-prior chips.
+  it also checks the Queue calls and Abandoned % cards' vs-prior chips, and since P6 the
+  Longest wait card (its figure is the tallest of its day figures) and the strip's
+  balanced rows for its card count.
 - `drive-dayqv.js` — the **day quick view** (QV-1, owner 2026-10-29;
   admin-only, released with the day bars): a click on a day bar opens THAT
   day; its cards equal the bars' own readouts beside the range figure; it
@@ -137,7 +140,14 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   figures kept under a frost while a new range loads; the follow-ons: whole
   percents on the card, the Direct view keeping its rows, Team Rings frosting
   from the page request, and a side panel folding from the keyboard and
-  staying folded across a reload) the My Department **direction switch** (Inbound + outbound
+  staying folded across a reload; P7: a marked agent's row carries the
+  attendance line with the dates in its hover and no reason; P8: an Insights
+  card's chip and bars per credited day with the count unchanged, the
+  attendance on the marked agent's card only, the gap chart on the per-day
+  basis and the call-share benchmark by days worked; an agent's count
+  badges vs prior per day worked, an exempt agent's card with no team chip or
+  markers and no gap bar (named under the chart), the % Ans marker on the
+  manager-excluded team) the My Department **direction switch** (Inbound + outbound
   by default; four views since DV-1)
   and Team Outbound panel (Batches D/F): payload totals, manager and
   View-as fall back to Inbound, panels never overlap, prior-period chips on
@@ -189,7 +199,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   summary that leads with the unreturned callers and its one-base bar, the
   most-not-called-back default order, and a row's own unreturned-caller list;
   since IC-4 its "How this is counted" ⓘ (no fold).
-- `drive-admin.js` — (NPS, Batch 10: printing with the Inbound report open prints the whole report and nothing behind it, and the screen comes back; five modals at 390 and 768 px do not scroll sideways as a whole and keep Close on screen; every amber or red value says its tier; every canvas is a named image; the three filled category segments use dark ink in dark mode)
+- `drive-admin.js` — (NPS, Batch 10: printing with the Inbound report open prints the whole report and nothing behind it, and the screen comes back; five modals at 390 and 768 px do not scroll sideways as a whole and keep Close on screen; every amber or red value says its tier; every canvas is a named image; the three filled category segments use dark ink in dark mode; P7: the Partial Days editor -- the fixture marks listed with their reason, fixed lists only, a save with no agent refused in place, Save sending date / roster name / share / reason, Remove asking first in danger tone; P9: nothing suggested until asked, Find listing the REAL payload's short days and naming who was not judged, a marked / reviewed / exception day absent, Use filling the form without saving, Whole day moving a day to the reviewed list with no mark added, Save taking the day off the suggestions, and removing a review asking first without the danger tone; the follow-ons: every suggestion cell on one line with the full date as the cell's title, the table being its own sideways scroller at 390 px, the read's duration in the status line, and "Nothing left to look at" once every suggestion is dealt with; Mark all shown asking first with the count and the reason, then one request with each day's own share)
   (KBF, Batch 9: every modal's Escape returns focus to a VISIBLE control -- the opener or its menu's trigger; Help holds 40 Tabs with its topic folds closed; Help topics and theme chips are pressed exactly when selected; the Inbound report's 20 header labels take focus and open their tooltip)
   (CCX-1: text typed on two escalation cards survives a
   "Save comment only" reload, the saved comment comes back empty)
@@ -236,7 +246,7 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   the failure handler. To boot on a DEEP LINK a driver sets
   `window.__HARNESS_HASH__` (e.g. `'/report/outbound'`) in an init script; the
   stubbed `google.script.url.getLocation` answers ASYNCHRONOUSLY like the real
-  one, so the link lands after boot's default page, as in production. P1 (2026-11-13): Outlier Fix's "Apply selected" marking a ticked unlisted-extension person Not an agent in one request, and the pinned Transfer retries header. P3 (2026-11-13): Transfer retries opens on "Answered, then redirected" -- the switch's counts, the summary, the ranked first answerers, and a row's sender detail, talk times and who took the call.
+  one, so the link lands after boot's default page, as in production. P1 (2026-11-13): Outlier Fix's "Apply selected" marking a ticked unlisted-extension person Not an agent in one request, and the pinned Transfer retries header. P3 (2026-11-13): Transfer retries opens on "Answered, then redirected" -- the switch's counts, the summary, the ranked first answerers, and a row's sender detail, talk times and who took the call. P10 (2026-11-16): the Free / On a call (with whom) / Not known cells with the reason on hover, the match-rate line, the ranking's two extra columns, and all of it hidden when nothing is known. P11 (2026-11-17): the Callback worklist -- no number until asked, one lookup per click shown as logged, an unconfirmed number not shown, nothing in browser storage, Refresh / close clearing it, a refused lookup, and the managers' switch asking first.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong

@@ -600,6 +600,158 @@ function getExceptionDays_() {
   return EXCEPTION_DAYS_MEMO_;
 }
 
+// ── Partial days (P7, owner 2026-11-16, Operator State #94) ─────────────────
+// An agent's day that counts as less than a whole day in the PER-DAY figures.
+// Rule A: only the divisor changes -- calls, totals and rates never do. Two
+// layers: the per-execution memo and a 5-minute CacheService copy (busted by
+// the editor's save). A FAILED sheet read is not cached and reads as "no
+// marks" for that execution: the per-day figures fall back to whole days,
+// which is what they were before any mark existed.
+var PARTIAL_DAYS_MEMO_ = null;        // per-execution: the list
+var PARTIAL_DAYS_INDEX_MEMO_ = null;  // per-execution: 'agent\u0000date' -> credit
+var PARTIAL_DAYS_CACHE_KEY_ = 'partialDays:v1';
+
+/** PURE. One sheet row -> { date, agent, credit, reason } or null (blank / bad date / bad credit). */
+function partialDayFromRow_(row, tz) {
+  if (!row) return null;
+  const d = exceptionDayFromRow_([row[0], '', '', ''], tz);   // the same date cell rules
+  if (!d) return null;
+  const agent = String(row[1] == null ? '' : row[1]).trim();
+  if (!agent) return null;
+  const credit = Number(row[2]);
+  if (String(row[2] == null ? '' : row[2]).trim() === '' || !isFinite(credit) || credit < 0 || credit >= 1) return null;
+  return { date: d.date, agent: agent, credit: credit, reason: String(row[3] == null ? '' : row[3]).trim() };
+}
+
+function sheetReadPartialDays_() {
+  const out = { days: [], error: false };
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.PARTIAL_DAYS);
+    if (!sheet) return out;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return out;
+    const width = Math.min(Math.max(sheet.getMaxColumns(), 1), 4);
+    const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    let tz = null;
+    try { tz = ss.getSpreadsheetTimeZone(); } catch (eTz) { tz = null; }
+    rows.forEach(function (r) { const d = partialDayFromRow_(r, tz); if (d) out.days.push(d); });
+    out.days.sort(function (a, b) {
+      return a.date < b.date ? -1 : (a.date > b.date ? 1 : (a.agent < b.agent ? -1 : (a.agent > b.agent ? 1 : 0)));
+    });
+  } catch (e) {
+    out.error = true;
+    try { Logger.log('[partial-days] sheet read failed: ' + (e && e.message ? e.message : e)); } catch (eL) {}
+  }
+  return out;
+}
+
+/** The partial-day marks, oldest first -- [{ date, agent, credit, reason }]. */
+function getPartialDays_() {
+  if (PARTIAL_DAYS_MEMO_) return PARTIAL_DAYS_MEMO_;
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (eC) { cache = null; }
+  if (cache) {
+    try {
+      const hit = cache.get(PARTIAL_DAYS_CACHE_KEY_);
+      if (hit) { PARTIAL_DAYS_MEMO_ = JSON.parse(hit); return PARTIAL_DAYS_MEMO_; }
+    } catch (eH) { /* a bad cache entry just means a sheet read */ }
+  }
+  const read = sheetReadPartialDays_();
+  PARTIAL_DAYS_MEMO_ = read.days;
+  if (!read.error) {
+    const json = JSON.stringify(read.days);
+    try { if (cache && json.length < 90000) cache.put(PARTIAL_DAYS_CACHE_KEY_, json, CACHE_TTL_SECONDS); } catch (ePut) {}
+  }
+  return PARTIAL_DAYS_MEMO_;
+}
+
+/** The editor's save: the next read anywhere goes back to the sheet. */
+function bustPartialDaysCache_() {
+  PARTIAL_DAYS_MEMO_ = null;
+  PARTIAL_DAYS_INDEX_MEMO_ = null;
+  try { CacheService.getScriptCache().remove(PARTIAL_DAYS_CACHE_KEY_); } catch (e) {}
+}
+
+/**
+ * Cache-key suffix: '' while no mark exists (every key is exactly what it
+ * was), else ':p' + a short hash of the (date, agent, credit) list -- the
+ * reason is not in it, since no figure reads it. Folded into
+ * reportFreshnessTag_, so an edit re-keys every 6 h report at once.
+ */
+function partialDaysTag_() {
+  let days;
+  try { days = getPartialDays_(); } catch (e) { return ''; }
+  if (!days || !days.length) return '';
+  const lean = days.map(function (d) { return [d.date, d.agent, d.credit]; });
+  let h = '';
+  try {
+    h = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(lean))
+      .map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('').slice(0, 10);
+  } catch (eH) { h = String(days.length); }
+  return ':p' + h;
+}
+
+/** The credit for (iso, agent): the mark's share of a day, 1 when unmarked. Exact name match (INV-04). */
+function partialDayCredit_(iso, agent) {
+  if (!PARTIAL_DAYS_INDEX_MEMO_) {
+    const idx = {};
+    let days = [];
+    try { days = getPartialDays_() || []; } catch (e) { days = []; }
+    days.forEach(function (d) { idx[d.agent + '\u0000' + d.date] = d.credit; });
+    PARTIAL_DAYS_INDEX_MEMO_ = idx;
+  }
+  const c = PARTIAL_DAYS_INDEX_MEMO_[String(agent) + '\u0000' + String(iso)];
+  return c == null ? 1 : c;
+}
+
+/**
+ * An agent's CREDITED days over the dates they were active: each day counts
+ * as its mark's credit, or 1. `{ credited, partial, marks }` -- `partial` is
+ * how many of those days carry a mark, `marks` the [iso, credit] pairs (no
+ * reason: the figure's readers see the mark, not why).
+ */
+function creditedDays_(agent, isoList) {
+  let credited = 0, partial = 0;
+  const marks = [];
+  (isoList || []).forEach(function (iso) {
+    const c = partialDayCredit_(iso, agent);
+    credited += c;
+    if (c !== 1) { partial++; marks.push([iso, c]); }
+  });
+  marks.sort(function (a, b) { return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0); });
+  return { credited: Math.round(credited * 100) / 100, partial: partial, marks: marks };
+}
+
+/**
+ * P8 (#94): an agent's attendance block from the SET of days they had any
+ * call on -- `{ active, credited, partial, marks? }`. What the Individual
+ * Report and Insights ship beside every per-day comparison; `marks` is
+ * `[[iso, credit]]`, present only when a day is marked (never the reason).
+ */
+function agentDaysBlock_(agent, daySet) {
+  const keys = Object.keys(daySet || {});
+  const cd = creditedDays_(agent, keys);
+  const out = { active: keys.length, credited: cd.credited, partial: cd.partial };
+  if (cd.marks.length) out.marks = cd.marks;
+  return out;
+}
+
+/** PURE. answered-per-day style quotient over credited days; null below the floor (the dash). */
+function perCreditedDay_(count, credited) {
+  const c = Number(credited) || 0;
+  return c >= PARTIAL_DAY_MIN_CREDITED_ ? round1_((Number(count) || 0) / c) : null;
+}
+
+/** The marked dates inside [from, to], distinct and sorted -- what a per-day SQL needs to ask about. */
+function partialMarkedDatesIn_(from, to) {
+  const seen = {};
+  let days = [];
+  try { days = getPartialDays_() || []; } catch (e) { days = []; }
+  days.forEach(function (d) { if (d.date >= from && d.date <= to) seen[d.date] = true; });
+  return Object.keys(seen).sort();
+}
+
 /** The editor's save: the next read anywhere goes back to the sheet. */
 function bustExceptionDaysCache_() {
   EXCEPTION_DAYS_MEMO_ = null;
@@ -926,6 +1078,8 @@ function reportFreshnessTag_() {
   // so every key is unchanged until an admin adds a day).
   var x = '';
   try { x = (typeof exceptionDaysTag_ === 'function') ? exceptionDaysTag_() : ''; } catch (eX) { x = ''; }
+  // P7 (#94): + the partial-day list's tag, on the same terms ('' while none).
+  try { x += (typeof partialDaysTag_ === 'function') ? partialDaysTag_() : ''; } catch (eP) { /* keep x */ }
   try {
     var d = (typeof getLatestDataDate === 'function') ? getLatestDataDate() : null;
     return (d ? String(d) : 'na') + x;

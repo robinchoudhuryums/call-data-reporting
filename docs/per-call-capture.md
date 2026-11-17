@@ -266,6 +266,15 @@ sheets with no raw number stored anywhere, shaped by the same
 `callerLookupShapeCall_`/`...Outbound_`. The day-level "Earlier outbound
 activity" has NO sheet primary and reports `historyAvailable:false`.
 
+> **The one place a number is shown (P11, Operator State #95).** The callback
+> worklist reads a caller's number back out of the day's `Call_Legs_<date>` tab
+> in the CDR Import workbook -- one call per request, admin-gated, logged
+> first -- and shows it only when its HMAC equals that call's stored
+> `caller_hash`. So `caller_hash` is also what PROVES a shown number: a change
+> to how the capture picks or normalizes the caller (`icExternalNumber_`, the
+> `IC_COL` layout, `cdrHashPhone_`) is a two-project edit, pinned by
+> `callback-worklist.test.js`.
+
 ### Per-call journey drill-through
 
 > **Two read-only call-path diagnostics (owner 2026-10-28).**
@@ -1012,7 +1021,12 @@ in the response.
 > (its own best-effort read; never the hash) and `agentDayDirect_` serves it
 > to admins as the agent panel's Direct tab, falling back -- before the
 > capture's first date -- to the outside callers in `inbound_calls` (no entry
-> queue, `first_agent` = the agent).
+> queue, `first_agent` = the agent). **A second reader (P10):** Transfer
+> retries (`trFetchDirectFor_`) reads the inbound internal rows of the people
+> tried first to say whether each was free or on a call -- matched on date +
+> person + time, because a journey's person-transfer event carries no call id
+> (Operator State #89). A change to `call_start`'s clock, to `ring_sec`, to
+> the `missed_free` / `missed_busy` rule or to `other_name` moves that match.
 
 **Direct-extension call metrics are a separate population from the
 DQE/QCD queue metrics, with a "busy" carve-out.** `cdr-import/directCallMetrics.js`
@@ -1283,3 +1297,19 @@ name. Pinned by `transfer-filter.test.js`. **Both CDR Tools dialogs**
 dashboard's light-palette tokens inline**: cdr-import cannot include
 `styles.html`, so a token change there does not reach them. Prose only;
 nothing enforces it.
+
+### Partial-day suggestions (P9)
+
+`PartialDays.gs::pdFetchAgentDaySpans_` (Operator State #94) is a READER of all
+three per-call tables, outside this subsystem's own files: it takes each roster
+agent's first and last call time per day from the `inbound_calls` journey legs
+(expanded in SQL with the same `LIKE '[%'` guard as `inboundJourneyEndSql_`,
+`transfer:true` events left out), from `outbound_calls.call_start` and from
+`direct_calls.call_start`. So three things it depends on: the journey event
+fields `name` / `t` / `secs` / `talk`; `call_start` staying an `HH:MM:SS`
+Pacific string in all three tables; and the journeys' ~90-day retention, which
+is its look-back (`PARTIAL_SUGGEST_DAYS_`). It is aggregated in the database
+and returns one row per agent-day. A missing `direct_calls` table is
+tolerated; an unreachable database is reported, never guessed around. Pinned
+by `partial-day-suggestions.test.js`.
+

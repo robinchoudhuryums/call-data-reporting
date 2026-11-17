@@ -90,9 +90,33 @@ function bars() {
 
   let b = await page.evaluate(bars);
   const metrics = b.map((x) => x.metric);
-  record('every card with daily data carries bars (% answered, queue calls, abandoned %, avg answer)',
-    ['rate', 'qcalls', 'qabd', 'qavg'].every((k) => metrics.indexOf(k) !== -1) && b.every((x) => x.shown),
+  record('every card with daily data carries bars (% answered, queue calls, abandoned %, avg answer, longest wait)',
+    ['rate', 'qcalls', 'qabd', 'qavg', 'qmax'].every((k) => metrics.indexOf(k) !== -1) && b.every((x) => x.shown),
     metrics.join(','));
+  // P6 (owner 2026-11-13): the Longest wait card -- the range block's own
+  // figure, the tallest of its own bars, in a grid that fits the card count.
+  {
+    const s30 = require('./payloads/summary-30d.json');
+    const qr = s30.qcd.range;
+    const lw = await page.evaluate(() => {
+      const strip = document.getElementById('dept-team-strip');
+      const tile = strip.querySelector('.dts-tile[data-dts-metric="qmax"]');
+      const tops = Array.from(strip.children).map((t) => Math.round(t.getBoundingClientRect().top));
+      return { value: tile ? (tile.querySelector('.dts-value') || {}).textContent : null,
+        label: tile ? (tile.querySelector('.dts-label') || {}).textContent.replace(/\s+/g, ' ').trim() : null,
+        chip: tile ? !!tile.querySelector('[class*="wow-chip"]') : false,
+        cards: strip.getAttribute('data-cards'), n: strip.children.length,
+        rows: tops.filter((t, i) => tops.indexOf(t) === i).map((t) => tops.filter((x) => x === t).length),
+        overflow: Array.from(strip.children).some((t) => t.scrollWidth > t.clientWidth + 1) };
+    });
+    const dayMax = Math.max.apply(null, qr.daily.map((d) => d[5] || 0));
+    record('P6: the Longest wait card shows the range\'s longest queue wait, which is the tallest of its day figures',
+      lw.value === qr.longestWait && /^Longest wait queue$/.test(lw.label) && dayMax === qr.longestWaitSec && lw.chip,
+      JSON.stringify({ lw: lw, want: qr.longestWait, dayMax: dayMax }));
+    record('P6: the cards sit in balanced rows for their count -- no lone card on a second row, nothing overflowing',
+      lw.cards === String(lw.n) && !lw.overflow && lw.rows.every((r) => r > 1) && lw.rows.length <= 2,
+      JSON.stringify({ cards: lw.cards, rows: lw.rows, overflow: lw.overflow }));
+  }
   record('one bar per WORKDAY (weekends and company holidays get none)', b.length > 0 && b.every((x) => x.n === want),
     JSON.stringify(b.map((x) => x.n)) + ' want ' + want);
   record('idle: no selection, the readout invites a point', b.every((x) => x.sel === -1 && !x.on && /Point at a bar/.test(x.readout)),
@@ -159,7 +183,8 @@ function bars() {
       && /answered/.test(b.filter((x) => x.metric === 'rate')[0].readout)
       && /calls/.test(b.filter((x) => x.metric === 'qcalls')[0].readout)
       && /abandoned/.test(b.filter((x) => x.metric === 'qabd')[0].readout)
-      && /avg answer/.test(b.filter((x) => x.metric === 'qavg')[0].readout),
+      && /avg answer/.test(b.filter((x) => x.metric === 'qavg')[0].readout)
+      && /^\D*\d+:\d\d:\d\d longest wait$/.test(b.filter((x) => x.metric === 'qmax')[0].readout.replace(b[0].day, '')),
     b.map((x) => x.readout).join(' | '));
   await page.mouse.move(5, 5);
   await page.waitForTimeout(250);

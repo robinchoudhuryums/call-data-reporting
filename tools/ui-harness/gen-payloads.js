@@ -234,7 +234,21 @@ const EXC_DATE = days[days.length - 8];
 const EXCEPTION_DAYS = [['Date', 'Departments', 'Reason', 'Active', 'Added By', 'Added At'],
   [EXC_DATE, '', '8x8 outage', 'TRUE', 'admin@ums.com', '2026-01-01T00:00:00Z']];
 
+// P7 (#94): two partial days for ONE agent inside the 30-day window (never
+// the exception day), so the credited-day divisor, the attendance line and
+// the editor are all driven by the REAL server code. In meta.json for the drivers.
+const PD_AGENT = 'Ben Ortiz';
+const PD_DATES = [days[days.length - 4], days[days.length - 11]];
+// P9: one suggestion the admin already dismissed ("that was a whole day") --
+// a credit-1 row, which is not a mark and must change no figure.
+const PD_REVIEWED = { date: days[days.length - 9], agent: 'Dev Patel' };
+const PARTIAL_DAYS = [['Date', 'Agent', 'Credit', 'Reason', 'Added By', 'Added At'],
+  [PD_DATES[0], PD_AGENT, 0.5, 'Training', 'admin@ums.com', '2026-01-01T00:00:00Z'],
+  [PD_DATES[1], PD_AGENT, 0.25, 'Leave', 'admin@ums.com', '2026-01-01T00:00:00Z'],
+  [PD_REVIEWED.date, PD_REVIEWED.agent, 1, 'Reviewed: whole day', 'admin@ums.com', '2026-01-02T00:00:00Z']];
+
 const SHEETS = {
+  'Partial Days': PARTIAL_DAYS,
   'Exception Days': EXCEPTION_DAYS,
   'DO NOT EDIT!': ROSTER,
   'DQE Historical Data': dqeSheet(dqeRows),
@@ -250,7 +264,7 @@ const h = loadGas({
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'MissedCallsReport.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'Digest.gs',
           'NeonCoverage.gs', 'InboundReport.gs', 'OutboundReport.gs', 'DirectCallReport.gs',
-          'ExceptionDays.gs'],   // #81: the editor's init
+          'ExceptionDays.gs', 'PartialDays.gs'],   // #81: the editor's init
 });
 
 function install(email) {
@@ -631,5 +645,54 @@ dump('qcd-alldept', h.call('getQcdAllDepartments', { from: LATEST, to: LATEST })
 
 // #81: the exception-day editor's first paint, from the REAL init.
 dump('exception-init', h.call('getExceptionDaysInit'));
-dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart, excDate: EXC_DATE });
+// P7 (#94): the partial-day editor's first paint, from the REAL init.
+dump('partial-init', h.call('getPartialDaysInit'));
+// P9: the suggestions, from the REAL getPartialDaySuggestions over a faked
+// span read (the database's per-agent-day rows). Every CSR agent works about
+// 6:35-14:50 Pacific; the short days are placed so each rule has a case:
+//   Carla, 3 workdays ago ........ half a day            -> SUGGESTED (0.5)
+//   Anna, 6 workdays ago ......... about three quarters  -> SUGGESTED (0.75)
+//   Ben on his marked day ........ short, already marked -> not suggested
+//   Dev on the reviewed day ...... short, reviewed whole -> not suggested
+//   Anna on the exception day .... short, an outage day  -> not suggested
+//   Robin (a manager) ............ a 1-hour usual day    -> not judged at all
+const PD_SUGGEST = { carla: days[days.length - 3], anna: days[days.length - 6] };
+(function () {
+  const csr = ['Anna Reyes', 'Ben Ortiz', 'Carla Diaz', 'Dev Patel', 'Robin Choudhury'];
+  const win = days.slice(-40);
+  const inb = [], ob = [];
+  win.forEach(function (d) {
+    csr.forEach(function (a) {
+      let first = 23700, last = 53400, n = 30;
+      if (a === 'Robin Choudhury') { first = 36000; last = 39600; n = 3; }
+      if (a === 'Carla Diaz' && d === PD_SUGGEST.carla) { last = 38000; n = 14; }
+      if (a === 'Anna Reyes' && d === PD_SUGGEST.anna) { last = 46000; n = 22; }
+      if (a === 'Ben Ortiz' && d === PD_DATES[0]) { last = 38000; n = 12; }
+      if (a === 'Dev Patel' && d === PD_REVIEWED.date) { last = 30000; n = 6; }
+      if (a === 'Anna Reyes' && d === EXC_DATE) { last = 30000; n = 5; }
+      inb.push([a, d, first, last - 1800, n]);   // the inbound + outbound statement's rows
+      ob.push([a, d, first + 600, last, 4]);     // (two rows per agent-day, merged by the reader)
+    });
+  });
+  const realConn = h.ctx.getDashboardNeonConn_;
+  h.ctx.getDashboardNeonConn_ = function () {
+    return {
+      prepareStatement: function (sql) {
+        // The direct-call table "does not exist" here: the reader must keep
+        // the inbound + outbound evidence and carry on.
+        if (String(sql).indexOf('FROM direct_calls') !== -1) throw new Error('relation "direct_calls" does not exist');
+        if (String(sql).indexOf('FROM inbound_calls') === -1) throw new Error('harness: only the suggestion span read is faked');
+        let n = 0;
+        return { setString: function () {}, setQueryTimeout: function () {},
+          executeQuery: function () {
+            return { next: function () { return n++ === 0; }, getString: function () { return JSON.stringify(inb.concat(ob)); }, close: function () {} };
+          }, close: function () {} };
+      },
+      close: function () {},
+    };
+  };
+  try { dump('partial-suggest', h.call('getPartialDaySuggestions', { department: 'CSR' })); }
+  finally { h.ctx.getDashboardNeonConn_ = realConn; }
+})();
+dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart, excDate: EXC_DATE, pdAgent: PD_AGENT, pdDates: PD_DATES, pdReviewed: PD_REVIEWED, pdSuggest: PD_SUGGEST });
 console.log('LATEST=' + LATEST);

@@ -78,10 +78,12 @@ const SPECS = [
   ['overviewChartYtd',  'CompanyOverview.gs',     /'overviewChartYtd:v(\d+)/],
   ['presence',          'SystemHealth.gs',        /'presence:v(\d+)'/],
   ['mailThrottle',      'Config.gs',              /'mailThrottle:v(\d+):'/],   // SEC-2 (Batch 8)
+  ['cbwReveal',         'CallbackWorklist.gs',    /'cbwReveal:v(\d+):'/],   // P11: the per-user number-lookup counter
   ['orphanFix:init',    'OrphanFix.gs',           /'orphanFix:init:v(\d+)'/],
   ['deptConfig:init',   'DeptConfig.gs',          /'deptConfig:init:v(\d+)'/],
   ['escSchema',         'Escalations.gs',         /'escSchema:v(\d+):'/],   // AC-5 (broad-scan 2026-10-01)
   ['excDays',           'Util.gs',                /'excDays:v(\d+)'/],   // #81 exception-day list
+  ['partialDays',       'Util.gs',                /'partialDays:v(\d+)'/],   // P7 (#94) partial-day list
 ];
 
 // Build the canonical map from code at load time so every test sees it.
@@ -223,10 +225,12 @@ const ANCHOR_SPECS = {
   overviewChartYtd:    'exception: embeds latestDate in the key (equivalent anchor)',
   presence:            'exception: CacheService presence map, ~15-min prune -- not a report cache',
   mailThrottle:        'exception: SEC-2 per-user report-email counter (rolling 6 h window) -- not a report cache',
+  cbwReveal:           'exception: P11 per-user phone-number lookup counter (rolling 1 h window) -- not a report cache',
   'orphanFix:init':    'exception: busted on every write (bustOrphanFixCache_)',
   'deptConfig:init':   'exception: busted on every write (dcBustCaches_)',
   escSchema:           'exception: AC-5 "schema DDL already ran" flag (1 h TTL, key carries ESC_REQUIRED_COLUMNS_) -- not a report cache',
   excDays:             'exception: the #81 exception-day LIST (5-min tier), busted by every editor save (bustExceptionDaysCache_) -- not a report cache; its hash joins reportFreshnessTag_ instead',
+  partialDays:         'exception: the P7 (#94) partial-day LIST (5-min tier), busted by every editor save (bustPartialDaysCache_) -- not a report cache; its hash joins reportFreshnessTag_ instead',
 };
 
 test('S3: every SPECS prefix has an anchor classification, and tag-anchored files reference reportFreshnessTag_', function () {

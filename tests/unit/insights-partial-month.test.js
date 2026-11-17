@@ -133,7 +133,7 @@ test('wiring: COUNT charts mark the partial month; rates and talk time never do'
   const team = fnSource('insRenderTrendChart_');
   assert.match(team, /insPartialChartBits_\(\(!daily && !isPercent && !isMinutes\) \? insPartialForData_\(data\) : \[\]\)/,
     'the team chart: monthly counts only');
-  assert.match(team, /insPartialChartBits_\(\(!daily && !isPct && \(labels \|\| \[\]\)\.length === teamMonths\.length\)/,
+  assert.match(team, /insPartialChartBits_\(\(!daily && !isPct && !isTime && \(labels \|\| \[\]\)\.length === teamMonths\.length\)/,
     'the queue chart: monthly counts only, and only when its months line up with the team trend');
   // The labels themselves stay untouched -- the point drill parses them.
   assert.doesNotMatch(cards + team, /labels\s*=\s*labels\.map\([^)]*to date/);

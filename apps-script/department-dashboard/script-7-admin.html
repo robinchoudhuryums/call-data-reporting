@@ -3761,6 +3761,38 @@
     return '<span class="tr-out' + cls + '">' + escapeHtml(txt) + '</span>'
       + (x.outcome !== 'answered' && x.secs != null ? ' <span class="al-hint">' + escapeHtml(String(x.secs)) + ' s</span>' : '');
   }
+  // P10: was the person tried first free, or on another call? Shown only on a
+  // confident match to their direct-call record; otherwise "Not known", with why on hover.
+  var TR_AVAIL_WHY_ = { noDay: 'No direct-call records are held for this date',
+                        noRow: 'No direct-call record was found for this ring',
+                        ambiguous: 'More than one direct-call record fits this ring',
+                        conflict: 'The direct-call record says this call was answered' };
+  function trAvailHtml_(x) {
+    const a = x && x.avail;
+    if (!a) return '';
+    if (a.state === 'free') return '<span class="tr-avail tr-avail--free">Free</span>';
+    if (a.state === 'busy') {
+      const w = a.with;
+      const sub = !w || w === 'another call' ? 'on another call' : (w === 'a queue call' ? 'on a queue call' : 'with ' + w);
+      return '<span class="tr-avail tr-avail--busy">On a call</span> <div class="al-hint tr-avail-with">' + escapeHtml(sub) + '</div>';
+    }
+    return '<span class="al-hint tr-avail-unknown" title="' + escapeHtml(TR_AVAIL_WHY_[a.state] || 'Not known') + '">Not known</span>';
+  }
+  function trAvailNote_(av, n) {
+    if (!av || !n) return '';
+    if (av.unavailable) return 'Free or on a call could not be read just now; the list itself is complete.';
+    const known = Number(av.known) || 0;
+    const why = [];
+    if (av.noDay) why.push(fmtNumber(av.noDay) + ' on dates with no direct-call records');
+    if (av.noRow) why.push(fmtNumber(av.noRow) + ' with no record found');
+    if (av.ambiguous) why.push(fmtNumber(av.ambiguous) + ' where more than one record fits');
+    if (av.conflict) why.push(fmtNumber(av.conflict) + ' where the record disagrees');
+    const rest = (Number(av.attempts) || 0) - known;
+    if (!known) return 'Free or on a call is not known for these calls' + (why.length ? ' (' + why.join(', ') + ')' : '') + '.';
+    return 'Free or on a call is known for ' + fmtNumber(known) + ' of ' + fmtNumber(av.attempts) + ' first attempts: '
+      + fmtNumber(av.free || 0) + ' free, ' + fmtNumber(av.busy || 0) + ' on a call.'
+      + (rest > 0 ? ' Not known for ' + fmtNumber(rest) + (why.length ? ' (' + why.join(', ') + ')' : '') + '.' : '');
+  }
   function trRender_(d) {
     const m = d.meta || {};
     const res = $('tr-results');
@@ -3782,12 +3814,21 @@
         + escapeHtml(fmtNumber(bo.quickDecline || 0)) + ' declined quickly, ' + escapeHtml(fmtNumber(bo.rangOut || 0)) + ' rang out, '
         + escapeHtml(fmtNumber(bo.voicemail || 0)) + ' went to voicemail' + (bo.unknown ? ', ' + escapeHtml(fmtNumber(bo.unknown)) + ' not timed' : '') + '.'
       : 'No transfer was tried again in the same department in these dates' + deptNote + '.';
+    // P10: the availability columns show only when at least one attempt is known.
+    const av = sum.avail || null;
+    const hasAvail = !!(n && av && Number(av.known) > 0);
+    const mv = $('tr-view-missed');
+    if (mv) mv.classList.toggle('tr-has-avail', hasAvail);
+    const an = $('tr-avail-note');
+    if (an) { const at = trAvailNote_(av, n); an.textContent = at; an.style.display = at ? '' : 'none'; }
     const callees = sum.callees || [];
     const cw = document.querySelector('#transfer-retries-modal .tr-callees-wrap');
     if (cw) cw.style.display = callees.length ? '' : 'none';
     $('tr-callees').innerHTML = callees.map(function (c) {
       return '<tr><td>' + escapeHtml(c.name) + '</td><td>' + escapeHtml(c.dept) + '</td><td class="num">' + escapeHtml(fmtNumber(c.n))
-        + '</td><td class="num">' + escapeHtml(fmtNumber(c.quickDecline || 0)) + '</td></tr>';
+        + '</td><td class="num">' + escapeHtml(fmtNumber(c.quickDecline || 0)) + '</td>'
+        + '<td class="num tr-avail-col">' + escapeHtml(fmtNumber(c.free || 0)) + '</td>'
+        + '<td class="num tr-avail-col">' + escapeHtml(fmtNumber(c.busy || 0)) + '</td></tr>';
     }).join('');
     const pairs = sum.pairs || [];
     $('tr-pairs').textContent = pairs.length ? 'By department (sent by → tried): ' + pairs.map(function (p) { return p.pair + ' ' + p.n; }).join(' · ') : '';
@@ -3801,6 +3842,7 @@
         + '<td>' + trSenderHtml_(c) + '</td>'
         + '<td>' + escapeHtml(c.first.name) + ' <span class="al-hint">' + escapeHtml(c.dept) + '</span></td>'
         + '<td>' + trOutcomeHtml_(c.first) + '</td>'
+        + '<td class="tr-avail-col">' + trAvailHtml_(c.first) + '</td>'
         + '<td>' + escapeHtml(c.second.name) + (c.moreInDept ? ' <span class="al-hint">+' + escapeHtml(String(c.moreInDept)) + ' more</span>' : '') + '</td>'
         + '<td>' + trOutcomeHtml_(c.second) + '</td>'
         + '<td class="num">' + (c.gapSecs != null ? escapeHtml(String(c.gapSecs)) + ' s' : '–') + '</td></tr>';
@@ -3856,6 +3898,198 @@
     if (nr) nr.textContent = '(' + fmtNumber(rn) + ')';
     if (nm) nm.textContent = '(' + fmtNumber(n) + ')';
     trSetView_(TR_STATE_.view);
+  }
+
+  // ── Callback worklist (P11, owner 2026-11-17) ─────────────────────────────
+  // The callers nobody has called back, and the ONE place a caller's phone
+  // number is shown. The list (getCallbackWorklist) never carries a number;
+  // "Show number" asks the server for ONE call (revealCallbackNumber), which
+  // re-checks the caller is still owed a call, counts the request against an
+  // hourly cap and logs it BEFORE it replies. Nothing here stores a number:
+  // it lives in one table cell and the table is emptied when the modal closes
+  // or reloads. Never add a number to a pref, a cache, an export or a title.
+  var CBW_STATE_ = { seq: 0, depts: false };
+  var CBW_WHY_ = { noTab: 'No longer held', notFound: 'Not found in that day’s calls', noNumber: 'No number on this call',
+                   unconfirmed: 'Could not be confirmed', notConfigured: 'Not set up', error: 'Lookup failed' };
+  function initCallbackWorklist_() {
+    const btn = $('callback-worklist-btn');
+    const modal = $('callback-worklist-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      cbwLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      cbwClear_();   // no number outlives the open window
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('cbw-run-btn')) $('cbw-run-btn').addEventListener('click', cbwLoad_);
+    if ($('cbw-dept')) $('cbw-dept').addEventListener('change', cbwLoad_);
+    if ($('cbw-mgr-btn')) $('cbw-mgr-btn').addEventListener('click', cbwToggleManagers_);
+    const tbody = $('cbw-tbody');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-cbw-id]') : null;
+      if (b) cbwReveal_(b);
+    });
+  }
+  function cbwClear_() {
+    CBW_STATE_.seq++;   // a reply still in flight has nowhere to land
+    const tb = $('cbw-tbody');
+    if (tb) tb.innerHTML = '';
+  }
+  function cbwStatus_(kind, text) {
+    const s = $('cbw-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+  function cbwLoad_() {
+    cbwClear_();
+    const tok = CBW_STATE_.seq;
+    const dept = $('cbw-dept') ? $('cbw-dept').value : '';
+    const res = $('cbw-results');
+    cbwStatus_('', 'Loading…');
+    google.script.run
+      .withSuccessHandler(function (d) {
+        if (tok !== CBW_STATE_.seq) return;
+        cbwRender_(d || {});
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== CBW_STATE_.seq) return;
+        if (res) res.style.display = 'none';
+        cbwStatus_('error', 'Could not load: ' + ((err && err.message) || err));
+      })
+      .getCallbackWorklist({ department: dept });
+  }
+  function cbwPhoneCellHtml_(r, m) {
+    if (!m.canReveal) return '<span class="al-hint">Not available to you</span>';
+    if (!m.numbersConfigured) return '<span class="al-hint">' + escapeHtml(CBW_WHY_.notConfigured) + '</span>';
+    if (r.held === false) return '<span class="al-hint">' + escapeHtml(CBW_WHY_.noTab) + '</span>';
+    return '<button type="button" class="btn btn-secondary cbw-show" data-cbw-date="' + escapeHtml(r.callDate)
+      + '" data-cbw-id="' + escapeHtml(r.callId) + '">Show number</button>';
+  }
+  function cbwStatusHtml_(r) {
+    if (r.status !== 'pending') return '<span class="ds-chip ds-chip--bad">Missed</span>';
+    return '<span class="ds-chip ds-chip--warn">' + (r.awaitingData ? 'Waiting on calls not loaded yet'
+      : (r.daysLeft > 0 ? escapeHtml(String(r.daysLeft)) + ' day' + (r.daysLeft === 1 ? '' : 's') + ' left' : 'Last day')) + '</span>';
+  }
+  function cbwRender_(d) {
+    const m = d.meta || {};
+    const res = $('cbw-results');
+    if ($('cbw-days') && m.days) $('cbw-days').textContent = m.days;
+    const sel = $('cbw-dept');
+    if (sel && !CBW_STATE_.depts && (m.departments || []).length) {
+      CBW_STATE_.depts = true;
+      const cur = sel.value;
+      sel.innerHTML = (isAllDeptViewer_() ? '<option value="">All departments</option>' : '') + m.departments.map(function (x) {
+        return '<option value="' + escapeHtml(x) + '"' + (x === cur ? ' selected' : '') + '>' + escapeHtml(x) + '</option>';
+      }).join('');
+    }
+    // Admin-only: the managers' switch (the server sends it to admins alone).
+    const mg = $('cbw-mgr');
+    if (mg) {
+      const known = typeof m.managersMayReveal === 'boolean';
+      mg.style.display = known ? '' : 'none';
+      if (known) {
+        $('cbw-mgr-text').textContent = m.managersMayReveal
+          ? 'Managers can show numbers for their own department’s callers. '
+          : 'Only admins can show numbers. ';
+        const mb = $('cbw-mgr-btn');
+        mb.textContent = m.managersMayReveal ? 'Turn off for managers' : 'Allow managers';
+        mb.setAttribute('data-on', m.managersMayReveal ? '1' : '0');
+      }
+    }
+    if (m.available === false) {
+      if (res) res.style.display = 'none';
+      cbwStatus_('error', 'The callback list is unavailable right now (it is read from Neon, which is unreachable).');
+      return;
+    }
+    cbwStatus_('', '');
+    if (res) res.style.display = '';
+    const rows = d.rows || [];
+    const pending = rows.filter(function (r) { return r.status === 'pending'; }).length;
+    $('cbw-summary').innerHTML = rows.length
+      ? '<strong>' + escapeHtml(fmtNumber(rows.length)) + '</strong> caller' + (rows.length === 1 ? '' : 's') + ' not called back'
+        + (m.department ? ' (' + escapeHtml(m.department) + ')' : '') + ': ' + escapeHtml(fmtNumber(pending)) + ' still inside the '
+        + escapeHtml(String(m.callbackWindowDays || 3)) + '-day window, ' + escapeHtml(fmtNumber(rows.length - pending)) + ' already missed.'
+      : 'Nobody is waiting on a call back' + (m.department ? ' in ' + escapeHtml(m.department) : '') + ' in these dates.';
+    const notes = [];
+    if (m.canReveal && !m.numbersConfigured) notes.push('Phone numbers are not set up: the CDR_IMPORT_SS_ID property is missing or the import workbook cannot be opened.');
+    if (m.canReveal && m.numbersConfigured) notes.push('You can show up to ' + fmtNumber(m.revealCap || 0) + ' numbers an hour.');
+    if (m.truncated) notes.push('The list is long; the newest callers are shown.');
+    if (m.dataThrough) notes.push('Calls loaded through ' + m.dataThrough + '.');
+    const note = $('cbw-note');
+    if (note) { note.textContent = notes.join(' '); note.style.display = notes.length ? '' : 'none'; }
+    $('cbw-table').style.display = rows.length ? '' : 'none';
+    $('cbw-tbody').innerHTML = rows.map(function (r) {
+      return '<tr>'
+        + '<td>' + escapeHtml(r.firstIso || '') + '</td>'
+        + '<td class="num">' + escapeHtml(fmtNumber(r.attempts)) + '</td>'
+        + '<td>' + escapeHtml(r.callDate || '') + ' <span class="al-hint">' + escapeHtml(String(r.cstStart || '').slice(0, 5)) + '</span></td>'
+        + '<td>' + escapeHtml(r.entryQueue || '') + (r.dialIn ? ' <span class="al-hint">dialed ' + escapeHtml(String(r.dialIn)) + '</span>' : '') + '</td>'
+        + '<td>' + cbwStatusHtml_(r) + '</td>'
+        + '<td>' + parentIdBadge(r.callId, r.callDate, '', { neutral: true }) + '</td>'
+        + '<td class="cbw-phone">' + cbwPhoneCellHtml_(r, m) + '</td></tr>';
+    }).join('');
+    initClipboardOnce();
+  }
+  function cbwReveal_(btn) {
+    const cell = btn.closest('td');
+    const callDate = btn.getAttribute('data-cbw-date'), callId = btn.getAttribute('data-cbw-id');
+    const tok = CBW_STATE_.seq;
+    btn.disabled = true; btn.textContent = 'Looking up…';
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (tok !== CBW_STATE_.seq || !cell || !cell.isConnected) return;   // closed or reloaded: show nothing
+        if (r && r.ok && r.number) {
+          cell.innerHTML = '<span class="cbw-num">' + escapeHtml(String(r.number)) + '</span> <span class="al-hint cbw-logged">logged</span>';
+        } else {
+          cell.innerHTML = '<span class="al-hint">' + escapeHtml(CBW_WHY_[(r && r.state) || 'error'] || CBW_WHY_.error) + '</span>';
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== CBW_STATE_.seq || !cell || !cell.isConnected) return;
+        btn.disabled = false; btn.textContent = 'Show number';
+        let hint = cell.querySelector('.cbw-err');
+        if (!hint) { hint = document.createElement('div'); hint.className = 'al-hint cbw-err'; cell.appendChild(hint); }
+        hint.textContent = (err && err.message) || String(err);
+      })
+      .revealCallbackNumber({ department: $('cbw-dept') ? $('cbw-dept').value : '', callDate: callDate, callId: callId });
+  }
+  function cbwToggleManagers_() {
+    const mb = $('cbw-mgr-btn');
+    const turnOn = mb.getAttribute('data-on') !== '1';
+    const go = function () {
+      mb.disabled = true;
+      google.script.run
+        .withSuccessHandler(function () { mb.disabled = false; cbwLoad_(); })
+        .withFailureHandler(function (err) { mb.disabled = false; cbwStatus_('error', 'Could not change it: ' + ((err && err.message) || err)); })
+        .setCallbackNumbersForManagers(turnOn);
+    };
+    if (!turnOn) { go(); return; }
+    dsConfirm_({
+      title: 'Allow managers to show phone numbers?',
+      message: 'Each manager will be able to show the phone number of a caller their own department has not called back, one call at a time. Every time is logged. Managers still cannot see callbacks at all until the Outbound views are released to them.',
+      confirmLabel: 'Allow managers', tone: 'danger'
+    }).then(function (ok) { if (ok) go(); });
   }
 
   // ── Exception days editor (owner 2026-10-22, #81) ─────────────────────────
@@ -3983,6 +4217,377 @@
         .withSuccessHandler(function (data) { mutationDone_(busyKey); excEditorStatus_('', 'Removed.'); excEditorRender_(data); })
         .withFailureHandler(function (err) { mutationDone_(busyKey); excEditorStatus_('error', (err && err.message) || String(err)); })
         .removeExceptionDay({ date: date });
+    });
+  }
+
+  // ── Partial days editor (P7, owner 2026-11-16, #94) ───────────────────────
+  // Admin-only: the menu item is data-admin-only and every server call starts
+  // with assertAdmin_. One row per (date, agent). The reason is shown HERE
+  // only -- no report payload carries it.
+  var PD_STATE_ = { data: null, suggest: null, suggestDept: '' };
+  function pdCreditLabel_(c) {
+    c = Number(c);
+    if (c === 0) return 'Not a day (0)';
+    if (c === 0.25) return 'A quarter day';
+    if (c === 0.5) return 'Half a day';
+    if (c === 0.75) return 'Three quarters';
+    return String(c) + ' of a day';
+  }
+  function initPartialDays_() {
+    const btn = $('partial-days-btn');
+    const modal = $('partial-days-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      pdEditorLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('pd-dept')) $('pd-dept').addEventListener('change', pdFillAgents_);
+    if ($('pd-save-btn')) $('pd-save-btn').addEventListener('click', pdEditorSave_);
+    const tbody = $('pd-tbody');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-pd-remove]') : null;
+      if (b) pdEditorRemove_(b.getAttribute('data-pd-remove'), b.getAttribute('data-pd-agent'));
+    });
+    // P9: suggestions.
+    if ($('pd-suggest-btn')) $('pd-suggest-btn').addEventListener('click', pdSuggestLoad_);
+    if ($('pd-suggest-all')) $('pd-suggest-all').addEventListener('click', pdSuggestMarkAll_);
+    if ($('pd-dept')) $('pd-dept').addEventListener('change', pdSuggestScope_);
+    const sBody = $('pd-suggest-tbody');
+    if (sBody) sBody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-pd-s]') : null;
+      if (!b) return;
+      const date = b.getAttribute('data-pd-date'), agent = b.getAttribute('data-pd-agent');
+      if (b.getAttribute('data-pd-s') === 'use') pdSuggestUse_(date, agent, b.getAttribute('data-pd-credit'));
+      else pdSuggestDismiss_(date, agent);
+    });
+    const rBody = $('pd-reviewed-tbody');
+    if (rBody) rBody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-pd-remove]') : null;
+      if (b) pdEditorRemove_(b.getAttribute('data-pd-remove'), b.getAttribute('data-pd-agent'), true);
+    });
+  }
+
+  function pdEditorStatus_(kind, text) {
+    const s = $('pd-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+
+  // The agent picker lists the chosen department's roster (exact roster names).
+  function pdFillAgents_() {
+    const data = PD_STATE_.data || {};
+    const dept = ($('pd-dept') && $('pd-dept').value) || '';
+    const sel = $('pd-agent');
+    if (!sel) return;
+    const keep = sel.value;
+    const names = (data.rosters && data.rosters[dept]) || [];
+    sel.innerHTML = '<option value="">Choose…</option>' + names.map(function (n) {
+      return '<option value="' + escapeHtml(n) + '"' + (n === keep ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+    }).join('');
+  }
+
+  function pdEditorRender_(data) {
+    PD_STATE_.data = data || {};
+    const deptSel = $('pd-dept');
+    if (deptSel && data && data.rosters) {
+      const keep = deptSel.value || getRequestedDept() || '';
+      deptSel.innerHTML = Object.keys(data.rosters).map(function (d) {
+        return '<option value="' + escapeHtml(d) + '"' + (d === keep ? ' selected' : '') + '>' + escapeHtml(d) + '</option>';
+      }).join('');
+    }
+    pdFillAgents_();
+    const cSel = $('pd-credit');
+    if (cSel && data && data.credits && !cSel.options.length) {
+      cSel.innerHTML = data.credits.map(function (c) {
+        return '<option value="' + escapeHtml(String(c)) + '"' + (Number(c) === 0.5 ? ' selected' : '') + '>' + escapeHtml(pdCreditLabel_(c)) + '</option>';
+      }).join('');
+    }
+    const rSel = $('pd-reason');
+    if (rSel && data && data.reasons && !rSel.options.length) {
+      rSel.innerHTML = data.reasons.map(function (r) { return '<option value="' + escapeHtml(r) + '">' + escapeHtml(r) + '</option>'; }).join('');
+    }
+    const days = (data && data.days) || [];
+    $('pd-table').style.display = days.length ? '' : 'none';
+    $('pd-empty').style.display = days.length ? 'none' : '';
+    $('pd-tbody').innerHTML = days.map(function (d) {
+      return '<tr>'
+        + '<td>' + escapeHtml(excDateLabel_(d.date)) + ' <span class="al-hint">' + escapeHtml(d.date) + '</span></td>'
+        + '<td>' + escapeHtml(d.agent || '') + '</td>'
+        + '<td>' + escapeHtml(pdCreditLabel_(d.credit)) + '</td>'
+        + '<td>' + escapeHtml(d.reason || '') + '</td>'
+        + '<td class="al-hint">' + escapeHtml(d.addedBy || '') + (d.addedAt ? '<br>' + escapeHtml(String(d.addedAt).slice(0, 10)) : '') + '</td>'
+        + '<td><button type="button" class="link-btn" data-pd-remove="' + escapeHtml(d.date) + '" data-pd-agent="' + escapeHtml(d.agent || '')
+        +   '" aria-label="Remove the partial day for ' + escapeHtml(d.agent || '') + ' on ' + escapeHtml(d.date) + '">Remove</button></td>'
+        + '</tr>';
+    }).join('');
+    pdReviewedRender_(data);
+    pdSuggestScope_();
+    // A day that now has a row (marked or reviewed) is no longer a suggestion.
+    pdSuggestRender_();
+  }
+
+  // ── P9: suggestions ────────────────────────────────────────────────────
+  // getPartialDaySuggestions only SUGGESTS. "Use" fills the form above so the
+  // admin still chooses the reason and presses Save; "Whole day" stores a
+  // reviewed row (credit 1 -- not a mark) so the suggestion stays away.
+  function pdSuggestScope_() {
+    const el = $('pd-suggest-scope');
+    const dept = ($('pd-dept') && $('pd-dept').value) || '';
+    if (el) el.textContent = dept ? 'for ' + dept + ' (the department chosen above)' : '';
+    const n = $('pd-suggest-days');
+    if (n && PD_STATE_.data && PD_STATE_.data.suggestDays) n.textContent = String(PD_STATE_.data.suggestDays);
+  }
+  function pdSuggestStatus_(kind, text) {
+    const s = $('pd-suggest-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+  /** PURE. The suggestions still open: none for a (date, agent) that already has a row. */
+  function pdSuggestOpen_(suggestions, data) {
+    const has = {};
+    ((data && data.days) || []).concat((data && data.reviewed) || []).forEach(function (d) { has[d.date + '|' + d.agent] = true; });
+    return (suggestions || []).filter(function (s) { return !has[s.date + '|' + s.agent]; });
+  }
+  /** PURE. The line under the list: how many agents were judged and who could not be. */
+  function pdSuggestSummary_(res, shown) {
+    if (!res) return '';
+    // Nothing shown is two different facts: the read found nothing, or every
+    // day it found has since been marked or reviewed.
+    const found = (res.suggestions || []).length;
+    const parts = [shown ? shown + ' day' + (shown === 1 ? '' : 's') + ' to look at'
+                         : (found ? 'Nothing left to look at' : 'Nothing stands out')];
+    parts.push(res.from + ' to ' + res.to);
+    parts.push((Number(res.judged) || 0) + ' agent' + (Number(res.judged) === 1 ? '' : 's') + ' checked');
+    const skip = res.notJudged || [];
+    if (skip.length) {
+      parts.push(skip.length + ' not checked (too few days, or a usual day too short to judge): '
+        + skip.slice(0, 6).join(', ') + (skip.length > 6 ? ', …' : ''));
+    }
+    if (res.truncated) parts.push('showing the newest ' + shown);
+    // How long the database read took -- the figure to quote if it feels slow.
+    if (res.readMs != null) {
+      const sec = Math.round(Number(res.readMs) / 1000);
+      parts.push(sec < 1 ? 'read in under a second' : 'read in ' + sec + ' s');
+    }
+    return parts.join(' · ');
+  }
+  function pdSuggestRender_() {
+    const res = PD_STATE_.suggest;
+    const table = $('pd-suggest-table'), body = $('pd-suggest-tbody');
+    if (!table || !body) return;
+    if (!res || !res.available) { table.style.display = 'none'; body.innerHTML = ''; pdSuggestAllSync_(0); return; }
+    const open = pdSuggestOpen_(res.suggestions, PD_STATE_.data);
+    table.style.display = open.length ? '' : 'none';
+    body.innerHTML = open.map(function (s) {
+      const who = escapeHtml(s.agent) + ' on ' + escapeHtml(s.date);
+      // The date is the weekday form only, on one line (the full date is the
+      // cell's title and the row's data-pd-date): with seven columns the
+      // "Wed Nov 11 2026-11-11" form wrapped onto three lines.
+      return '<tr data-pd-date="' + escapeHtml(s.date) + '" data-pd-agent="' + escapeHtml(s.agent) + '">'
+        + '<td class="pd-nowrap" title="' + escapeHtml(s.date) + '">' + escapeHtml(excDateLabel_(s.date)) + '</td>'
+        + '<td class="pd-nowrap">' + escapeHtml(s.agent) + '</td>'
+        + '<td class="pd-nowrap">' + escapeHtml(s.first + ' – ' + s.last) + ' <span class="al-hint">' + escapeHtml(Number(s.hours).toFixed(1)) + ' h</span></td>'
+        + '<td>' + escapeHtml(Number(s.usualHours).toFixed(1)) + ' h</td>'
+        + '<td class="pd-nowrap">' + escapeHtml(String(s.calls)) + ' <span class="al-hint">usually ' + escapeHtml(String(s.usualCalls)) + '</span></td>'
+        + '<td class="pd-nowrap">' + escapeHtml(pdCreditLabel_(s.credit)) + '</td>'
+        + '<td class="pd-suggest-acts">'
+        +   '<button type="button" class="link-btn" data-pd-s="use" data-pd-date="' + escapeHtml(s.date) + '" data-pd-agent="' + escapeHtml(s.agent)
+        +     '" data-pd-credit="' + escapeHtml(String(s.credit)) + '" aria-label="Use: put ' + who + ' in the form">Use</button>'
+        +   '<button type="button" class="link-btn" data-pd-s="whole" data-pd-date="' + escapeHtml(s.date) + '" data-pd-agent="' + escapeHtml(s.agent)
+        +     '" aria-label="Whole day: do not suggest ' + who + ' again">Whole day</button>'
+        + '</td></tr>';
+    }).join('');
+    pdSuggestStatus_('', pdSuggestSummary_(res, open.length));
+    pdSuggestAllSync_(open.length);
+  }
+  // "Mark all shown": offered only while there is something shown.
+  function pdSuggestAllSync_(n) {
+    const b = $('pd-suggest-all');
+    if (!b) return;
+    b.style.display = n > 0 ? '' : 'none';
+    b.textContent = 'Mark all shown (' + n + ')';
+  }
+  // Owner 2026-11-16: mark every suggestion on screen in one go -- each with
+  // its own suggested share, all with the ONE reason chosen in the form. It
+  // asks first and names the count and the reason; any of them can be removed
+  // afterwards from the list of marks.
+  function pdSuggestMarkAll_() {
+    const res = PD_STATE_.suggest;
+    const open = (res && res.available) ? pdSuggestOpen_(res.suggestions, PD_STATE_.data) : [];
+    if (!open.length) return;
+    const reason = ($('pd-reason') && $('pd-reason').value) || '';
+    if (!reason) { pdSuggestStatus_('error', 'Choose a reason in the form above first.'); return; }
+    dsConfirm_({
+      title: 'Mark ' + open.length + ' day' + (open.length === 1 ? '' : 's') + ' as partial?',
+      message: 'Each of the ' + open.length + ' day' + (open.length === 1 ? '' : 's') + ' shown is marked with its suggested share and the reason "'
+        + reason + '". These are suggestions from call times, so check the list first. You can remove any of them afterwards.',
+      confirmLabel: 'Mark ' + open.length,
+    }).then(function (ok) {
+      if (!ok) return;
+      if (mutationBusy_('pdMarkAll')) return;
+      const b = $('pd-suggest-all');
+      if (b) b.disabled = true;
+      pdSuggestStatus_('', 'Marking ' + open.length + '…');
+      google.script.run
+        .withSuccessHandler(function (data) {
+          mutationDone_('pdMarkAll');
+          if (b) b.disabled = false;
+          pdEditorRender_(data);
+          pdEditorStatus_('', 'Marked ' + ((data && data.saved) || open.length) + ' day' + (open.length === 1 ? '' : 's')
+            + '. Per-day figures pick them up within a few minutes.');
+        })
+        .withFailureHandler(function (err) {
+          mutationDone_('pdMarkAll');
+          if (b) b.disabled = false;
+          pdSuggestStatus_('error', (err && err.message) || String(err));
+        })
+        .savePartialDays({ reason: reason,
+          items: open.map(function (s) { return { date: s.date, agent: s.agent, credit: s.credit }; }) });
+    });
+  }
+  function pdSuggestLoad_() {
+    const dept = ($('pd-dept') && $('pd-dept').value) || '';
+    if (!dept) { pdSuggestStatus_('error', 'Choose a department above first.'); return; }
+    const b = $('pd-suggest-btn');
+    if (b) b.disabled = true;
+    pdSuggestStatus_('', 'Looking through the last ' + ((PD_STATE_.data && PD_STATE_.data.suggestDays) || 90) + ' days for ' + dept + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (b) b.disabled = false;
+        PD_STATE_.suggest = res || null;
+        PD_STATE_.suggestDept = dept;
+        if (!res || !res.available) {
+          pdSuggestRender_();
+          pdSuggestStatus_('error', (res && res.reason) || 'Suggestions are not available right now.');
+          return;
+        }
+        pdSuggestRender_();
+      })
+      .withFailureHandler(function (err) {
+        if (b) b.disabled = false;
+        pdSuggestStatus_('error', 'Could not look: ' + ((err && err.message) || err));
+      })
+      .getPartialDaySuggestions({ department: dept });
+  }
+  // Use: the day goes into the form; the admin still picks the reason and saves.
+  function pdSuggestUse_(date, agent, credit) {
+    if ($('pd-date')) $('pd-date').value = date;
+    const deptSel = $('pd-dept');
+    if (deptSel && PD_STATE_.suggestDept && deptSel.value !== PD_STATE_.suggestDept) {
+      deptSel.value = PD_STATE_.suggestDept;
+      pdFillAgents_();
+      pdSuggestScope_();
+    }
+    if ($('pd-agent')) $('pd-agent').value = agent;
+    if ($('pd-credit')) $('pd-credit').value = String(credit);
+    pdEditorStatus_('', agent + ', ' + excDateLabel_(date) + ' is in the form. Choose a reason and press Save.');
+    const r = $('pd-reason');
+    if (r) { try { r.focus(); } catch (e) { /* not focusable yet */ } }
+  }
+  function pdSuggestDismiss_(date, agent) {
+    if (!date || !agent) return;
+    var busyKey = 'pdWhole:' + date + ':' + agent;
+    if (mutationBusy_(busyKey)) return;
+    google.script.run
+      .withSuccessHandler(function (data) { mutationDone_(busyKey); pdEditorRender_(data); })
+      .withFailureHandler(function (err) { mutationDone_(busyKey); pdSuggestStatus_('error', (err && err.message) || String(err)); })
+      .dismissPartialDaySuggestion({ date: date, agent: agent });
+  }
+  function pdReviewedRender_(data) {
+    const box = $('pd-reviewed'), body = $('pd-reviewed-tbody');
+    if (!box || !body) return;
+    const list = (data && data.reviewed) || [];
+    box.style.display = list.length ? '' : 'none';
+    const sum = $('pd-reviewed-summary');
+    if (sum) sum.textContent = 'Reviewed as whole days (' + list.length + ')';
+    body.innerHTML = list.map(function (d) {
+      return '<tr>'
+        + '<td>' + escapeHtml(excDateLabel_(d.date)) + ' <span class="al-hint">' + escapeHtml(d.date) + '</span></td>'
+        + '<td>' + escapeHtml(d.agent || '') + '</td>'
+        + '<td class="al-hint">' + escapeHtml(d.addedBy || '') + (d.addedAt ? ' · ' + escapeHtml(String(d.addedAt).slice(0, 10)) : '') + '</td>'
+        + '<td><button type="button" class="link-btn" data-pd-remove="' + escapeHtml(d.date) + '" data-pd-agent="' + escapeHtml(d.agent || '')
+        +   '" aria-label="Remove the review for ' + escapeHtml(d.agent || '') + ' on ' + escapeHtml(d.date) + '">Remove</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function pdEditorLoad_() {
+    pdEditorStatus_('', 'Loading…');
+    google.script.run
+      .withSuccessHandler(function (data) { pdEditorStatus_('', ''); pdEditorRender_(data); })
+      .withFailureHandler(function (err) { pdEditorStatus_('error', 'Could not load: ' + ((err && err.message) || err)); })
+      .getPartialDaysInit();
+  }
+
+  function pdEditorSave_() {
+    const date = ($('pd-date') && $('pd-date').value) || '';
+    const agent = ($('pd-agent') && $('pd-agent').value) || '';
+    const credit = ($('pd-credit') && $('pd-credit').value);
+    const reason = ($('pd-reason') && $('pd-reason').value) || '';
+    if (!date) { pdEditorStatus_('error', 'Choose a date.'); return; }
+    if (!agent) { pdEditorStatus_('error', 'Choose an agent.'); return; }
+    const b = $('pd-save-btn');
+    if (b) b.disabled = true;
+    pdEditorStatus_('', 'Saving…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (b) b.disabled = false;
+        pdEditorStatus_('', 'Saved. Per-day figures pick it up within a few minutes (refresh a page to see it now).');
+        pdEditorRender_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (b) b.disabled = false;
+        pdEditorStatus_('error', (err && err.message) || String(err));
+      })
+      .savePartialDay({ date: date, agent: agent, credit: Number(credit), reason: reason });
+  }
+
+  // `reviewed` (P9): the row is a dismissed suggestion, not a mark -- removing
+  // it changes no figure, it only lets the day be suggested again.
+  function pdEditorRemove_(date, agent, reviewed) {
+    if (!date || !agent) return;
+    dsConfirm_(reviewed ? {
+      title: 'Remove the review for ' + agent + ' on ' + excDateLabel_(date) + '?',
+      message: 'No figure changes. The day can be suggested as a partial day again.',
+      confirmLabel: 'Remove',
+    } : {
+      title: 'Remove the partial day for ' + agent + ' on ' + excDateLabel_(date) + '?',
+      message: 'That day counts as a whole day again in the per-day figures.',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    }).then(function (ok) {
+      if (!ok) return;
+      var busyKey = 'pdRemove:' + date + ':' + agent;
+      if (mutationBusy_(busyKey)) return;
+      pdEditorStatus_('', 'Removing…');
+      google.script.run
+        .withSuccessHandler(function (data) { mutationDone_(busyKey); pdEditorStatus_('', 'Removed.'); pdEditorRender_(data); })
+        .withFailureHandler(function (err) { mutationDone_(busyKey); pdEditorStatus_('error', (err && err.message) || String(err)); })
+        .removePartialDay({ date: date, agent: agent });
     });
   }
 

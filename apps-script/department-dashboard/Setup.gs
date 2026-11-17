@@ -39,6 +39,9 @@
  *   - Exception Days        (days excluded from every windowed figure --
  *                            an outage; edited from Admin -> Exception days,
  *                            Operator State #81)
+ *   - Partial Days          (an agent's day that counts as less than a whole
+ *                            day in the per-day figures; edited from Admin ->
+ *                            Partial days, Operator State #94)
  *
  * Safe to re-run; existing sheets keep every row (no data overwritten);
  * only BLANK header cells are filled in (OD-8, `healSheetHeaders_` below).
@@ -81,6 +84,10 @@ function setup() {
     [SHEETS.DASHBOARD_STANDARDS,   DASHBOARD_STANDARDS_HEADERS, [4]],
     // Owner 2026-10-22 (#81): the Date column text-pinned like Company Holidays.
     [SHEETS.EXCEPTION_DAYS,        EXCEPTION_DAYS_HEADERS, [1]],
+    // P7 (#94): the Date column text-pinned, like the two date lists above.
+    [SHEETS.PARTIAL_DAYS,          PARTIAL_DAYS_HEADERS, [1]],
+    // P11 (#95): the phone-number lookup audit trail; Call Date + Call ID text-pinned.
+    [SHEETS.CALLBACK_NUMBER_LOG,   CALLBACK_NUMBER_LOG_HEADERS, [5, 6]],
   ];
   const failed = [];
   specs.forEach(function (spec) {

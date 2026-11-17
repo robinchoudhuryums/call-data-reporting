@@ -173,14 +173,14 @@ test('TR-1: one metered read of both tables, journeys with a transfer AND a miss
           close: () => {} }; }, close: () => {} }; }, close: () => {} };
   };
   const out = plain(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }));
-  assert.equal(seen.length, 1, 'one query');
+  assert.equal(seen.length, 2, 'the journeys, then (P10) the direct-call records of the cases found');
   // P3: a missed ring (a retry) OR an answered consult (answered, then redirected).
   assert.match(seen[0].sql, /FROM inbound_calls WHERE call_date BETWEEN \?::date AND \?::date AND COALESCE\(is_internal, false\) = false AND journey LIKE '%"transfer":true%' AND \(journey LIKE '%"missed":true%' OR journey LIKE '%"consult":true%'\) UNION ALL/);
   assert.match(seen[0].sql, /FROM outbound_calls WHERE call_date BETWEEN \?::date AND \?::date AND journey LIKE '%"transfer":true%' AND \(journey LIKE '%"missed":true%' OR journey LIKE '%"consult":true%'\)\) t$/);
   assert.match(seen[0].sql, /UNION ALL SELECT 'outbound', call_date::text, call_id, call_start, agent_name, journey FROM outbound_calls/);
   assert.ok(!/caller_hash|callee_hash|dial_in/.test(seen[0].sql), 'no number or hash is selected');
   assert.deepEqual(seen[0].p, ['2026-10-01', '2026-10-30', '2026-10-01', '2026-10-30']);
-  assert.deepEqual(metered, ['transfer-retries']);
+  assert.deepEqual(metered, ['transfer-retries', 'transfer-retries']);
   assert.equal(out.meta.available, true);
   assert.equal(out.cases.length, 1);
   assert.equal(out.cases[0].first.name, 'Rhea Power');
@@ -188,6 +188,205 @@ test('TR-1: one metered read of both tables, journeys with a transfer AND a miss
   assert.equal(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }).meta.available, false);
   delete dash.ctx.getDashboardNeonConn_;
   delete dash.ctx.neonNoteEgress_;
+});
+
+// ── P10 (owner 2026-11-13): was the person tried first free? ─────────────────
+// A person-transfer attempt is its own internal call, held in `direct_calls` as
+// an inbound internal direct call to the person tried -- with missed_free /
+// missed_busy and who the blocking call was with. The journey event carries no
+// call id for it, so the two are matched on date + person + time (+ sender).
+const dRow = (start, ring, outcome, other, busyWith) => ({ start, ring, outcome, other: other === undefined ? null : other, busyWith: busyWith || null });
+const match = (rows, t, sender, slack) => plain(dash.call('trAvailMatch_', rows, t, sender, slack));
+
+test('P10: an attempt matches the direct-call record whose ring holds its time -- free, or on a call and with whom', function () {
+  assert.deepEqual(match([dRow('10:02:00', 3, 'missed_free', 'Dan')], '10:02:00', 'Dan'), { off: 0, bySender: true, state: 'free' });
+  assert.deepEqual(match([dRow('10:02:00', 20, 'missed_busy', 'Dan', 'Kim Lee')], '10:02:00', 'Dan'),
+    { off: 0, bySender: true, state: 'busy', with: 'Kim Lee' });
+  // a second ring of the same call sits later inside the record's ring
+  assert.equal(match([dRow('10:02:00', 25, 'missed_free', 'Dan')], '10:02:18', 'Dan').state, 'free');
+  // three seconds either side of the ring is allowed, four is not
+  assert.equal(match([dRow('10:02:03', 5, 'missed_free', 'Dan')], '10:02:00', 'Dan').state, 'free');
+  assert.equal(match([dRow('10:02:04', 5, 'missed_free', 'Dan')], '10:02:00', 'Dan').state, 'noRow');
+  assert.equal(match([dRow('10:02:00', 5, 'missed_free', 'Dan')], '10:02:08', 'Dan').state, 'free');
+  assert.equal(match([dRow('10:02:00', 5, 'missed_free', 'Dan')], '10:02:09', 'Dan').state, 'noRow');
+  // the probe's wide pass reaches further
+  assert.equal(match([dRow('10:02:20', 5, 'missed_free', 'Dan')], '10:02:00', 'Dan', 30).state, 'free');
+  assert.equal(match([], '10:02:00', 'Dan').state, 'noRow');
+  assert.equal(match(null, '10:02:00', 'Dan').state, 'noRow');
+  assert.equal(match([dRow('10:02:00', 3, 'missed_free', 'Dan')], '', 'Dan').state, 'noRow', 'an attempt with no time matches nothing');
+});
+
+test('P10: a record naming another caller is never ours; the sender\'s own beats an unnamed one; a tie is no guess', function () {
+  // Someone else rang the same person in the same second: not this attempt.
+  assert.equal(match([dRow('10:02:00', 3, 'missed_busy', 'Someone Else', 'Kim Lee')], '10:02:00', 'Dan').state, 'noRow');
+  // Two records fit; the one naming the sender is the attempt.
+  const two = [dRow('10:02:00', 3, 'missed_busy', null, 'Kim Lee'), dRow('10:02:01', 3, 'missed_free', 'Dan')];
+  assert.deepEqual(match(two, '10:02:00', 'Dan'), { off: -1, bySender: true, state: 'free' });
+  // A record with no caller name is accepted on time alone, and says so.
+  assert.deepEqual(match([dRow('10:02:00', 3, 'missed_free', null)], '10:02:00', 'Dan'), { off: 0, bySender: false, state: 'free' });
+  // Two equally close records: ambiguous, never a pick.
+  assert.equal(match([dRow('10:02:01', 3, 'missed_free', 'Dan'), dRow('10:01:59', 3, 'missed_busy', 'Dan')], '10:02:00', 'Dan').state, 'ambiguous');
+  // The closer of two wins when one is closer.
+  assert.equal(match([dRow('10:02:02', 3, 'missed_free', 'Dan'), dRow('10:02:00', 3, 'missed_busy', 'Dan', 'a queue call')], '10:02:00', 'Dan').state, 'busy');
+  // The record says ANSWERED (or nothing): the journey's missed ring denies it.
+  assert.equal(match([dRow('10:02:00', 3, 'answered', 'Dan')], '10:02:00', 'Dan').state, 'conflict');
+  assert.equal(match([dRow('10:02:00', 3, null, 'Dan')], '10:02:00', 'Dan').state, 'conflict');
+});
+
+const caseOf = (date, callId, sender, name, t) => ({ date, callId, senderName: sender, dept: 'Power', first: { name, t, secs: 3, outcome: 'quickDecline' } });
+
+test('P10: every case gets its state; a date with no direct-call record is told apart from a ring not found', function () {
+  const cases = [
+    caseOf('2026-11-10', 'A1', 'Dan', 'Rhea Power', '10:02:00'),
+    caseOf('2026-11-10', 'A2', 'Dan', 'Omar Power', '11:00:00'),
+    caseOf('2026-11-11', 'A3', 'Dan', 'Rhea Power', '09:00:00'),
+    caseOf('2026-11-01', 'A4', 'Dan', 'Rhea Power', '09:00:00'),
+    caseOf('2026-11-10', 'A5', 'Dan', 'Rhea Power', '15:00:00'),
+  ];
+  const direct = { days: ['2026-11-10', '2026-11-11'], rows: [
+    { date: '2026-11-10', agent: 'Rhea Power', start: '10:02:00', ring: 3, outcome: 'missed_free', other: 'Dan', busyWith: null },
+    { date: '2026-11-10', agent: 'Omar Power', start: '11:00:01', ring: 20, outcome: 'missed_busy', other: null, busyWith: 'an outside caller' },
+    { date: '2026-11-10', agent: 'Rhea Power', start: '15:00:00', ring: 4, outcome: 'answered', other: 'Dan', busyWith: null },
+    // the same second, another person: never read for Rhea
+    { date: '2026-11-11', agent: 'Omar Power', start: '09:00:00', ring: 3, outcome: 'missed_free', other: 'Dan', busyWith: null },
+  ] };
+  const t = plain(dash.call('trAttachAvailability_', cases, direct));
+  const got = plain(cases).map((c) => c.first.avail);
+  assert.deepEqual(got, [{ state: 'free' }, { state: 'busy', with: 'an outside caller' }, { state: 'noRow' }, { state: 'noDay' }, { state: 'conflict' }]);
+  assert.deepEqual([t.attempts, t.known, t.free, t.busy, t.noDay, t.noRow, t.ambiguous, t.conflict], [5, 2, 1, 1, 1, 1, 0, 1]);
+  assert.equal(t.bySender, 1, 'one match had the sender named on the record');
+  assert.deepEqual(t.offsets, { exact: 1, near: 1, inRing: 0 });
+  assert.deepEqual(t.samples.noRow, ['2026-11-11 A3 Rhea Power 09:00:00']);
+  assert.deepEqual(t.samples.conflict, ['2026-11-10 A5 Rhea Power 15:00:00']);
+  // No record at all (the read returned nothing): every case is a date with none.
+  const bare = [caseOf('2026-11-10', 'A1', 'Dan', 'Rhea Power', '10:02:00')];
+  assert.equal(plain(dash.call('trAttachAvailability_', bare, null)).noDay, 1);
+});
+
+test('P10: the ranking counts free and on-a-call apart, past the list cap; with no availability the payload is what it was', function () {
+  const fn = dash.call('trDeptsOfAgentFn_', BY_AGENT, PARENT);
+  const rows = [
+    { kind: 'inbound', date: '2026-10-29', callId: 'A1', start: '10:00:00', agent: null, journey: JSON.stringify(CORPUS[0][0]) },
+    { kind: 'outbound', date: '2026-10-30', callId: 'B1', start: '11:00:00', agent: 'Camila (Cheshta) Bhutani', journey: JSON.stringify(CORPUS[5][0]) },
+  ];
+  const direct = { days: ['2026-10-29', '2026-10-30'], rows: [
+    { date: '2026-10-29', agent: 'Rhea Power', start: '10:02:00', ring: 3, outcome: 'missed_free', other: 'Daniel (Dishant) Sahani', busyWith: null },
+    { date: '2026-10-30', agent: 'Rhea Power', start: '11:00:00', ring: 2, outcome: 'missed_busy', other: 'Camila (Cheshta) Bhutani', busyWith: 'Omar Power' },
+  ] };
+  let seenCases = 0;
+  const withAv = plain(dash.call('trBuildFromRows_', rows, fn, '', { attach: function (cases) {
+    seenCases = cases.length;
+    return dash.call('trAttachAvailability_', cases, direct);
+  } }));
+  assert.equal(seenCases, 2, 'the attach step sees every case, before the tallies');
+  assert.deepEqual(withAv.summary.callees[0], { name: 'Rhea Power', dept: 'Power', n: 2, quickDecline: 2, free: 1, busy: 1 });
+  assert.deepEqual([withAv.summary.avail.known, withAv.summary.avail.free, withAv.summary.avail.busy], [2, 1, 1]);
+  assert.deepEqual(withAv.cases.map((c) => c.first.avail), [{ state: 'busy', with: 'Omar Power' }, { state: 'free' }]);
+  assert.ok(!JSON.stringify(withAv).match(/\d{10}/), 'no phone-number-shaped value in the payload');
+  const bare = plain(dash.call('trBuildFromRows_', rows, fn, ''));
+  assert.equal(bare.summary.avail, undefined);
+  assert.equal(bare.cases[0].first.avail, undefined);
+  assert.deepEqual(bare.summary.callees[0], { name: 'Rhea Power', dept: 'Power', n: 2, quickDecline: 2 });
+});
+
+// A fake connection answering the journeys read, then the direct-call read.
+function trConn(journeyRows, direct, seen) {
+  return { prepareStatement: function (sql) { const p = []; seen.push({ sql, p });
+    return { setString: function (i, v) { p[i - 1] = v; },
+      executeQuery: function () {
+        if (/direct_calls/.test(sql) && direct === 'throw') throw new Error('relation "direct_calls" does not exist');
+        let used = false;
+        return { next: () => { if (used) return false; used = true; return true; },
+          getString: () => JSON.stringify(/direct_calls/.test(sql) ? direct : journeyRows), close: () => {} }; },
+      close: () => {} }; }, close: () => {} };
+}
+const TR_JROWS = [{ kind: 'inbound', date: '2026-10-29', callId: 'A1', start: '10:00:00', agent: null, journey: JSON.stringify(CORPUS[0][0]) }];
+
+test('P10: the direct-call read asks only for the cases\' own (date, person) pairs, inbound internal, with no hash or number', function () {
+  install('admin@x.com');
+  const seen = [];
+  dash.ctx.getDashboardNeonConn_ = function () {
+    return trConn(TR_JROWS, { days: ['2026-10-29'], rows: [
+      { date: '2026-10-29', agent: 'Rhea Power', start: '10:02:00', ring: 3, outcome: 'missed_busy', other: 'Daniel (Dishant) Sahani', busyWith: 'Omar Power' }] }, seen);
+  };
+  const out = plain(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }));
+  delete dash.ctx.getDashboardNeonConn_;
+  assert.equal(seen.length, 2);
+  const q2 = seen[1];
+  assert.match(q2.sql, /FROM direct_calls d JOIN \(SELECT DISTINCT \(x->>0\)::date AS dt, x->>1 AS ag FROM json_array_elements\(\?::json\) x\) p ON d\.call_date = p\.dt AND d\.agent_name = p\.ag WHERE d\.direction = 'in' AND d\.side = 'int'/);
+  assert.match(q2.sql, /to_jsonb\(d\)->>'busy_with'/, 'a table without the busy_with column still answers');
+  assert.match(q2.sql, /WHERE EXISTS \(SELECT 1 FROM direct_calls e WHERE e\.call_date = q\.dt\)/, 'which of the dates hold any record');
+  assert.ok(!/other_hash|other_ext|dial_in|caller_hash/.test(q2.sql), 'employee names only: no hash, extension or dialled number');
+  assert.ok(!/INSERT|UPDATE|DELETE|ALTER|CREATE/i.test(q2.sql), 'read-only');
+  assert.deepEqual(q2.p, [JSON.stringify([['2026-10-29', 'Rhea Power']]), JSON.stringify([['2026-10-29', 'Rhea Power']])]);
+  assert.deepEqual(out.cases[0].first.avail, { state: 'busy', with: 'Omar Power' });
+  assert.equal(out.summary.avail.known, 1);
+  assert.deepEqual(out.summary.callees[0], { name: 'Rhea Power', dept: 'Power', n: 1, quickDecline: 1, free: 0, busy: 1 });
+});
+
+test('P10: a failed direct-call read never costs the list; no retry means no second read', function () {
+  install('admin@x.com');
+  let seen = [];
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn(TR_JROWS, 'throw', seen); };
+  const out = plain(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }));
+  assert.equal(out.meta.available, true, 'the list still reads');
+  assert.equal(out.cases.length, 1);
+  assert.equal(out.cases[0].first.avail, undefined, 'no state is invented');
+  assert.deepEqual(out.summary.avail, { unavailable: true, attempts: 1, known: 0 });
+  // A reply of the wrong shape (an array, an empty string) reads as "no records".
+  seen = [];
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn(TR_JROWS, [], seen); };
+  const odd = plain(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }));
+  assert.deepEqual(odd.cases[0].first.avail, { state: 'noDay' });
+  // No case found: the direct-call table is never asked.
+  seen = [];
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn([], { days: [], rows: [] }, seen); };
+  const none = plain(dash.call('getTransferRetries', { from: '2026-10-01', to: '2026-10-30' }));
+  delete dash.ctx.getDashboardNeonConn_;
+  assert.equal(seen.length, 1);
+  assert.equal(none.summary.avail, undefined);
+});
+
+test('P10: the read-only check is admin-only, reads the last 30 days and gives a verdict on the match rate', function () {
+  install('manager@x.com');
+  assert.throws(() => dash.call('probeTransferRetryAvailability'), /admin/i);
+  install('admin@x.com');
+  // 24 retried calls on one covered date; 22 have a direct-call record.
+  const jrows = [], drows = [];
+  for (let i = 0; i < 24; i++) {
+    const mm = String(i).padStart(2, '0');
+    jrows.push({ kind: 'inbound', date: '2026-11-10', callId: 'C' + i, start: '10:00:00', agent: null,
+      journey: JSON.stringify([ans('10:00:05', 'Daniel (Dishant) Sahani', 300), att('10:' + mm + ':30', 'Rhea Power', { secs: 3 }), cons('10:' + mm + ':50', 'Omar Power')]) });
+    if (i < 22) drows.push({ date: '2026-11-10', agent: 'Rhea Power', start: '10:' + mm + ':30', ring: 3,
+      outcome: i % 2 ? 'missed_busy' : 'missed_free', other: 'Daniel (Dishant) Sahani', busyWith: i % 2 ? 'Omar Power' : null });
+  }
+  // One more record 20 s late: only the wide pass finds it.
+  drows.push({ date: '2026-11-10', agent: 'Rhea Power', start: '10:22:50', ring: 3, outcome: 'missed_free', other: 'Daniel (Dishant) Sahani', busyWith: null });
+  const seen = [];
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn(jrows, { days: ['2026-11-10'], rows: drows }, seen); };
+  const out = plain(dash.call('probeTransferRetryAvailability'));
+  assert.equal(out.verdict, 'GOOD');
+  assert.equal(out.covered, 24);
+  assert.equal(out.ratePct, 91.7);
+  assert.deepEqual([out.tally.known, out.tally.free, out.tally.busy, out.tally.noRow], [22, 11, 11, 2]);
+  assert.equal(out.wide.known, 23, 'the 30 s allowance finds one more');
+  assert.equal(seen.length, 2, 'the journeys and the direct-call records, once each');
+  seen.forEach((q) => assert.ok(!/INSERT|UPDATE|DELETE|ALTER|CREATE/i.test(q.sql), 'writes nothing'));
+  const days = (iso) => Math.round((Date.parse(seen[0].p[1] + 'T00:00:00Z') - Date.parse(iso + 'T00:00:00Z')) / 86400000);
+  assert.equal(days(seen[0].p[0]), 29, 'thirty days, ending yesterday');
+  // Under 20 attempts on covered dates: no verdict either way.
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn(jrows.slice(0, 5), { days: ['2026-11-10'], rows: drows }, []); };
+  assert.equal(dash.call('probeTransferRetryAvailability').verdict, 'INCONCLUSIVE');
+  // Most not found: POOR. A date with no record at all is left out of the rate.
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn(jrows, { days: ['2026-11-10'], rows: drows.slice(0, 6) }, []); };
+  assert.equal(dash.call('probeTransferRetryAvailability').verdict, 'POOR');
+  dash.ctx.getDashboardNeonConn_ = function () { return trConn(jrows, { days: [], rows: [] }, []); };
+  const uncovered = plain(dash.call('probeTransferRetryAvailability'));
+  assert.equal(uncovered.verdict, 'INCONCLUSIVE');
+  assert.equal(uncovered.tally.noDay, 24);
+  dash.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.equal(dash.call('probeTransferRetryAvailability').verdict, 'FAILED');
+  delete dash.ctx.getDashboardNeonConn_;
 });
 
 // ── P3 (owner 2026-11-13): answered, then redirected ─────────────────────────

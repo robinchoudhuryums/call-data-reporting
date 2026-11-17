@@ -439,9 +439,9 @@ const DC_HEADERS = ['Department', 'QCD Queues', 'Overview Parent', 'Team Avg Exc
                     'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes'];
 // QCD row: MonthYear | Week | Date | Queue | Source | Total | Answered |
 //          Abandoned | LongestWait | AvgAnswer | Abandoned % | Violations
-function qcdRow(date, queue, total, abandoned, violations) {
+function qcdRow(date, queue, total, abandoned, violations, longest, avg) {
   return ['Mar 2026', 'W2', date, queue, 'Total Calls', total, total - abandoned,
-          abandoned, '0:05:00', '0:00:30', '', violations];
+          abandoned, longest || '0:05:00', avg || '0:00:30', '', violations];
 }
 
 function installWithQcd(dqeRows, deptConfigRows, qcdRows) {
@@ -679,6 +679,99 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   assert.equal(t.metrics.totalCalls.dailyTotal.join(','), '100,80', 'own-dept daily total calls');
   assert.equal(t.metrics.totalCalls.dailyPerQueue['A_Q_Beta'].join(','), '50,0', 'child daily total calls');
   assert.equal(t.metrics.violations.dailyTotal.join(','), '1,0', 'own-dept daily violations');
+});
+
+// P6 (owner 2026-11-13): the two answer-time metrics on the queue trend. Avg
+// answer is answered-weighted, the longest wait a MAX; both in seconds, and
+// null (a gap in the line) where a day or month has none.
+test('P6: queueHealth.trend.metrics carries avg answer and longest wait, per queue and for the dept\'s own queues', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [
+      ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+      ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+    ],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1, '0:04:10', '0:00:20'),   // 90 answered
+      qcdRow('2026-03-11', 'A_Q_Alpha', 80,  20, 0, '0:02:00', '0:00:50'),   // 60 answered
+      qcdRow('2026-03-10', 'A_Q_Beta',  50,  5,  0, '0:09:00', '0:01:00'),   // the child queue
+      qcdRow('2026-02-10', 'A_Q_Alpha', 10,  0,  0, '0:07:30', '0:00:15'),   // last month
+    ]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const t = data.queueHealth.trend;
+  const m = t.metrics;
+  assert.ok(m.avgAnswer && m.longestWait, 'both metrics present');
+  // Daily, on the same date axis as every other queue metric.
+  assert.equal(t.dailyLabels.join(','), '2026-03-10,2026-03-11');
+  assert.equal(m.avgAnswer.dailyTotal.join(','), '20,50', 'the dept total is its OWN queues');
+  assert.equal(m.longestWait.dailyTotal.join(','), '250,120', 'the child\'s 9 minutes is not the department\'s');
+  assert.equal(JSON.stringify(m.longestWait.dailyPerQueue['A_Q_Beta']), '[540,null]', 'a quiet day is a gap, not zero');
+  assert.equal(JSON.stringify(m.avgAnswer.dailyPerQueue['A_Q_Beta']), '[60,null]');
+  // Monthly: March weights the avg by answered calls (90 x 20s + 60 x 50s) / 150 = 32s.
+  const last = t.labels.length - 1;
+  assert.equal(m.avgAnswer.total[last], 32, 'answered-weighted, never the mean of the days');
+  assert.equal(m.longestWait.total[last], 250, 'the month\'s longest, a maximum');
+  assert.equal(m.longestWait.total[last - 1], 450, 'February has its own');
+  assert.equal(m.avgAnswer.total[last - 1], 15);
+  assert.equal(m.longestWait.total[0], null, 'a month with no calls is a gap');
+  assert.equal(m.longestWait.perQueue['A_Q_Beta'][last], 540);
+  assert.equal(m.longestWait.perQueue['A_Q_Beta'][last - 1], null);
+  // The shipped daily ROWS did not grow: the times travel as compact arrays.
+  assert.ok(!('longestWaitSec' in data.queueHealth.dailySeries[0]) && !('avgAnswerSec' in data.queueHealth.dailySeries[0]),
+    'no new field on the per-day rows that ship per queue per day');
+});
+
+test('P6: a department with two own queues -- the dept total weights avg answer by answered calls ACROSS queues and takes the longer wait', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [['Alpha', 'A_Q_Alpha, A_Q_Alpha2', '', '', '', 'TRUE', 'a@x.com', '', '']],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha',  100, 10, 0, '0:01:00', '0:00:20'),   // 90 answered at 20s
+      qcdRow('2026-03-10', 'A_Q_Alpha2', 10,  0,  0, '0:06:00', '0:02:00'),   // 10 answered at 120s
+    ]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const m = data.queueHealth.trend.metrics;
+  const last = data.queueHealth.trend.labels.length - 1;
+  // (90 x 20 + 10 x 120) / 100 = 30 -- the mean of the two queue averages would be 70.
+  assert.equal(m.avgAnswer.total[last], 30, 'monthly dept total: weighted across queues');
+  assert.equal(m.avgAnswer.dailyTotal.join(','), '30', 'daily dept total: the same weighting');
+  assert.equal(m.longestWait.total[last], 360, 'the longer of the two queues');
+  assert.equal(m.longestWait.dailyTotal.join(','), '360');
+  assert.equal(m.avgAnswer.perQueue['A_Q_Alpha2'][last], 120, 'each queue keeps its own line');
+});
+
+test('P6: the client offers both metrics, formats seconds as m:ss and never marks them as partial counts', function () {
+  const fs = require('fs'), path = require('path'), vm = require('node:vm');
+  const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  const html = fs.readFileSync(path.join(dir, 'dashboard.html'), 'utf8');
+  const s8 = fs.readFileSync(path.join(dir, 'script-8-insights.html'), 'utf8');
+  assert.match(html, /<option value="queues:avgAnswer">Queue: Avg answer time<\/option>\s*<option value="queues:longestWait">Queue: Longest wait<\/option>/);
+  assert.match(s8, /const INS_QUEUE_METRICS_ = \['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'\];/);
+  assert.match(s8, /insQueueMetric = INS_QUEUE_METRICS_\.indexOf\(v\.slice\(7\)\) !== -1 \? v\.slice\(7\) : 'abandonedPct';/, 'an unknown metric falls back');
+  assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(prefs\.queueMetric\) !== -1\) \{/, 'a saved choice restores');
+  assert.match(s8, /!daily && !isPct && !isTime && \(labels \|\| \[\]\)\.length === teamMonths\.length/, 'an average or a maximum is not understated by a partial month');
+  const grab = function (name) {
+    const at = s8.indexOf('function ' + name + '(');
+    let depth = 0;
+    for (let i = s8.indexOf('{', at); i < s8.length; i++) {
+      if (s8[i] === '{') depth++;
+      else if (s8[i] === '}') { depth--; if (depth === 0) return s8.slice(at, i + 1); }
+    }
+  };
+  const ctx = vm.createContext({});
+  vm.runInContext(grab('insSecsLabel_') + '\n' + grab('insTimeAxisStep_'), ctx);
+  assert.equal(ctx.insSecsLabel_(0), '0:00');
+  assert.equal(ctx.insSecsLabel_(30), '0:30');
+  assert.equal(ctx.insSecsLabel_(250), '4:10');
+  assert.equal(ctx.insSecsLabel_(3725), '1:02:05');
+  assert.equal(ctx.insTimeAxisStep_([{ data: [20, 50, null] }]), 10, 'under a minute: 10-second steps');
+  assert.equal(ctx.insTimeAxisStep_([{ data: [250, 120] }, { data: [540, null] }]), 120, 'nine minutes: 2-minute steps');
+  assert.equal(ctx.insTimeAxisStep_([{ data: [null] }]), 5);
+  assert.equal(ctx.insTimeAxisStep_([{ data: [40000] }]), 7200);
 });
 
 test('F-33: email export rejects a reversed custom prior range like the on-screen path', function () {

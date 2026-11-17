@@ -344,7 +344,7 @@ test('NUM-5: the Transfer retries filter folds a sub-queue to its parent', funct
   assert.equal(count(h.call('trFoldDept_', 'PAP', parentOf)), 1, 'which is what the endpoint now passes');
   const src = fs.readFileSync(path.join(DASH, 'TransferRetries.gs'), 'utf8');
   assert.match(src, /var filterDept = dept \? trFoldDept_\(dept, parentOf\) : '';/);
-  assert.match(src, /trBuildFromRows_\(Array\.isArray\(rows\) \? rows : \[\], fn, filterDept\)/);
+  assert.match(src, /trBuildFromRows_\(rows, fn, filterDept, \{ attach: trAvailAttacher_\(conn\) \}\)/);   // P10 added the attach step
   assert.match(src, /out\.meta\.deptAsked = dept; out\.meta\.dept = filterDept;/);
 });
 

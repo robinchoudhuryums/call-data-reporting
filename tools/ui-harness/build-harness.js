@@ -323,6 +323,69 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       st.days = st.days.filter(function (d) { return d.date !== (req && req.date); });
       return st;
     },
+    // P7 (#94): the partial-day editor -- the REAL init, then an in-memory list
+    // so save / remove round-trip the way the server's do.
+    getPartialDaysInit: function () {
+      if (!window.__PD_STATE__) window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init']));
+      return window.__PD_STATE__;
+    },
+    savePartialDay: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      if (!req || !req.agent) throw new Error('Choose an agent.');
+      st.days = st.days.filter(function (d) { return !(d.date === req.date && d.agent === req.agent); });
+      st.days.unshift({ date: req.date, agent: req.agent, credit: Number(req.credit), reason: req.reason,
+        addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
+      return st;
+    },
+    removePartialDay: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      st.days = st.days.filter(function (d) { return !(d.date === (req && req.date) && d.agent === (req && req.agent)); });
+      st.reviewed = (st.reviewed || []).filter(function (d) { return !(d.date === (req && req.date) && d.agent === (req && req.agent)); });
+      return st;
+    },
+    // P9: the suggestions are the REAL getPartialDaySuggestions payload for
+    // CSR (gen-payloads); another department has nothing to suggest. A
+    // dismissal joins the reviewed list, as the server's does.
+    getPartialDaySuggestions: function (req) {
+      var p = JSON.parse(JSON.stringify(P['partial-suggest']));
+      if (!req || req.department !== p.department) { p.department = (req && req.department) || ''; p.suggestions = []; p.judged = 0; p.notJudged = []; }
+      return p;
+    },
+    savePartialDays: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      if (!req || !req.reason) throw new Error('Choose a reason.');
+      (req.items || []).forEach(function (it) {
+        st.days = st.days.filter(function (d) { return !(d.date === it.date && d.agent === it.agent); });
+        st.reviewed = (st.reviewed || []).filter(function (d) { return !(d.date === it.date && d.agent === it.agent); });
+        st.days.unshift({ date: it.date, agent: it.agent, credit: Number(it.credit), reason: req.reason,
+          addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
+      });
+      st.saved = (req.items || []).length;
+      return st;
+    },
+    dismissPartialDaySuggestion: function (req) {
+      var st = window.__PD_STATE__ || (window.__PD_STATE__ = JSON.parse(JSON.stringify(P['partial-init'])));
+      st.reviewed = st.reviewed || [];
+      st.reviewed.unshift({ date: req.date, agent: req.agent, addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
+      return st;
+    },
+    // P11: the callback worklist. The list is the REAL getCallbackWorklist
+    // payload (no number in it); a lookup answers one call at a time: the
+    // pending caller's number, "could not be confirmed" for the missed one,
+    // and the server's refusal when the driver sets window.__CBW_FAIL__.
+    getCallbackWorklist: function (req) {
+      var d = JSON.parse(JSON.stringify(P['callback-worklist']));
+      d.meta.managersMayReveal = !!window.__CBW_MGR__;
+      if (req && req.department) { d.meta.department = req.department; d.meta.companyView = false;
+        if (req.department !== 'CSR') d.rows = []; }
+      return d;
+    },
+    revealCallbackNumber: function (req) {
+      if (window.__CBW_FAIL__) throw new Error('That call is not on the callback worklist any more (it may have been called back). Refresh the list.');
+      if (req && req.callId === P['callback-worklist-ids'].missed) return { ok: false, state: 'unconfirmed' };
+      return { ok: true, state: 'found', number: '(214) 555-0101' };
+    },
+    setCallbackNumbersForManagers: function (on) { window.__CBW_MGR__ = on === true; return { managersMayReveal: on === true }; },
     // TR-1: the REAL getTransferRetries over gen-phase3's fake journeys; a
     // department pick filters the same cases the way the server does.
     getTransferRetriesInit: function () { return P['transfer-retries-init']; },

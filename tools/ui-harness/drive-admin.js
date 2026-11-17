@@ -243,10 +243,35 @@ const MODALS = [
       record('Transfer Retries: the first-attempt times are Central, two hours on from the stored Pacific values',
         st.whens.indexOf('12:02:00') >= 0 && st.whens.indexOf('16:01:00') >= 0 && st.whens.indexOf('10:02:00') < 0, JSON.stringify(st.whens));
       record('Transfer Retries: the person tried first is tallied, with the quick declines', st.callees.length === 1
-        && /^Elena Park Sales 3 2$/.test(st.callees[0]), JSON.stringify(st.callees));
+        && /^Elena Park Sales 3 2 1 1$/.test(st.callees[0]), JSON.stringify(st.callees));
       record('Transfer Retries: every row has its call-path chip; the outbound call is marked; declines are flagged',
         st.paths === 3 && st.outbound === 1 && st.decline === 2, JSON.stringify(st));
       record('Transfer Retries: the department picker lists every department', st.depts > 3, 'options=' + st.depts);
+      // P10 (owner 2026-11-13): was the person tried first free, or on another
+      // call? Two of the three first attempts match a direct-call record (one
+      // free, one on a call with Frank Wu); the third date holds none.
+      const av = await page.evaluate(() => {
+        const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+        const head = Array.from(document.querySelectorAll('#tr-cases thead th'));
+        const col = head.findIndex((th) => th.textContent.trim() === 'Free or on a call');
+        const cells = Array.from(document.querySelectorAll('#tr-tbody tr')).map((r) => r.cells[col]);
+        const busy = document.querySelector('#tr-tbody .tr-avail--busy');
+        return { col, colShown: shown(head[col]),
+          note: (document.getElementById('tr-avail-note') || {}).textContent || '', noteShown: shown(document.getElementById('tr-avail-note')),
+          cells: cells.map((c) => c ? c.textContent.replace(/\s+/g, ' ').trim() : null),
+          why: cells.map((c) => { const u = c && c.querySelector('.tr-avail-unknown'); return u ? u.getAttribute('title') : ''; }),
+          calleeHead: Array.from(document.querySelectorAll('#tr-view-missed .tr-callees thead th')).filter(shown).map((th) => th.textContent.trim()),
+          busyBg: busy ? getComputedStyle(busy).backgroundColor : '', paper: getComputedStyle(document.body).backgroundColor,
+          digits: /\d{7,}/.test(cells.map((c) => c ? c.textContent : '').join(' ')) };
+      });
+      record('P10: Transfer retries says whether the person tried first was free or on a call, and with whom',
+        av.col === 5 && av.colShown && JSON.stringify(av.cells) === JSON.stringify(['Free', 'On a call with Frank Wu', 'Not known'])
+          && av.why[2] === 'No direct-call records are held for this date' && !av.digits
+          && !!av.busyBg && av.busyBg !== 'rgba(0, 0, 0, 0)' && av.busyBg !== av.paper, JSON.stringify(av));
+      record('P10: the match rate is on the page, with why the rest are not known; the ranking counts free and on-a-call apart',
+        av.noteShown && av.note.trim() === 'Free or on a call is known for 2 of 3 first attempts: 1 free, 1 on a call. Not known for 1 (1 on dates with no direct-call records).'
+          && JSON.stringify(av.calleeHead) === JSON.stringify(['Person tried first', 'Department', 'Times', 'Of which declined', 'While free', 'While on a call']),
+        JSON.stringify({ note: av.note, calleeHead: av.calleeHead }));
       // P1 (owner 2026-11-13): the case table's header row stays in view while
       // its rows scroll, and its call-id chips are neutral (not abandoned calls).
       const hdr = await page.evaluate(() => {
@@ -268,10 +293,100 @@ const MODALS = [
       const none = await page.evaluate(() => ({ summary: (document.getElementById('tr-summary') || {}).textContent || '',
         rows: document.querySelectorAll('#tr-tbody tr').length,
         call: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getTransferRetries').slice(-1)[0] }));
+      const noAv = await page.evaluate(() => {
+        const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+        return { note: shown(document.getElementById('tr-avail-note')),
+          cols: Array.from(document.querySelectorAll('#tr-view-missed th.tr-avail-col')).filter(shown).length };
+      });
+      record('P10: with nothing known, the availability columns and the note are not shown', !noAv.note && noAv.cols === 0, JSON.stringify(noAv));
       record('Transfer Retries: picking a department re-asks for it and says when there is nothing',
         /^No transfer was tried again/.test(none.summary.trim()) && none.rows === 0 && none.call && none.call.args[0].dept === 'Power',
         JSON.stringify(none));
       await page.selectOption('#tr-dept', ''); await page.waitForTimeout(400);
+    } },
+  // P11 (owner 2026-11-17): the callback worklist -- the REAL
+  // getCallbackWorklist payload (three callers still owed a call; a fourth,
+  // called back late, is not listed) and the one place a number can be shown.
+  { name: 'Callback Worklist', btn: '#callback-worklist-btn', sel: '#callback-worklist-modal', adminMenu: true,
+    probe: async function (page, record) {
+      await page.waitForTimeout(500);
+      const ids = require('./payloads/callback-worklist-ids.json');
+      const snap = () => page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#cbw-tbody tr'));
+        const modal = document.getElementById('callback-worklist-modal');
+        return { summary: (document.getElementById('cbw-summary') || {}).textContent || '',
+          note: (document.getElementById('cbw-note') || {}).textContent || '',
+          status: rows.map((r) => r.cells[4].textContent.replace(/\s+/g, ' ').trim()),
+          tries: rows.map((r) => r.cells[1].textContent.trim()),
+          phone: rows.map((r) => r.cells[6].textContent.replace(/\s+/g, ' ').trim()),
+          buttons: document.querySelectorAll('#cbw-tbody button[data-cbw-id]').length,
+          nums: document.querySelectorAll('#cbw-tbody .cbw-num').length,
+          chips: document.querySelectorAll('#cbw-tbody .pid-journey').length,
+          digits: /\(\d{3}\) \d{3}-\d{4}|\d{10}/.test(modal.textContent.replace(/#\d+/g, '')),
+          mgr: (document.getElementById('cbw-mgr-text') || {}).textContent || '', mgrBtn: (document.getElementById('cbw-mgr-btn') || {}).textContent || '',
+          reveals: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'revealCallbackNumber').map((c) => c.args[0]) };
+      });
+      const s0 = await snap();
+      record('P11: the worklist lists the callers still owed a call, most urgent first, and shows no number until asked',
+        /^3 callers not called back: 1 still inside the 3-day window, 2 already missed\.$/.test(s0.summary.trim())
+          && JSON.stringify(s0.status) === JSON.stringify(['1 day left', 'Missed', 'Missed']) && JSON.stringify(s0.tries) === JSON.stringify(['1', '2', '1'])
+          && JSON.stringify(s0.phone) === JSON.stringify(['Show number', 'Show number', 'No longer held'])
+          && s0.chips === 3 && s0.nums === 0 && !s0.digits && s0.reveals.length === 0, JSON.stringify(s0));
+      record('P11: the page says how many numbers an hour, and that only admins can show them',
+        /You can show up to 40 numbers an hour\./.test(s0.note) && /^Only admins can show numbers\./.test(s0.mgr.trim()) && s0.mgrBtn === 'Allow managers',
+        JSON.stringify({ note: s0.note, mgr: s0.mgr, mgrBtn: s0.mgrBtn }));
+      await page.click('#cbw-tbody tr:nth-child(1) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const s1 = await snap();
+      record('P11: Show number asks for ONE call and shows its number, marked as logged',
+        s1.phone[0] === '(214) 555-0101 logged' && s1.phone[1] === 'Show number' && s1.nums === 1 && s1.reveals.length === 1
+          && s1.reveals[0].callId === ids.pending && s1.reveals[0].department === '' && /^\d{4}-\d{2}-\d{2}$/.test(s1.reveals[0].callDate), JSON.stringify(s1));
+      await page.click('#cbw-tbody tr:nth-child(2) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const s2 = await snap();
+      record('P11: a number that cannot be confirmed is not shown, and says so', s2.phone[1] === 'Could not be confirmed' && s2.nums === 1 && s2.reveals.length === 2,
+        JSON.stringify(s2.phone));
+      const stored = await page.evaluate(() => { let all = ''; try { for (let i = 0; i < localStorage.length; i++) all += localStorage.getItem(localStorage.key(i)); } catch (e) {}
+        try { for (let i = 0; i < sessionStorage.length; i++) all += sessionStorage.getItem(sessionStorage.key(i)); } catch (e) {}
+        return /555-0101|5550101/.test(all); });
+      record('P11: the shown number is in no browser storage', stored === false, 'found=' + stored);
+      // Reload: the number is gone, and a refused lookup says why and leaves the button.
+      await page.click('#cbw-run-btn'); await page.waitForTimeout(400);
+      await page.evaluate(() => { window.__CBW_FAIL__ = true; });
+      await page.click('#cbw-tbody tr:nth-child(1) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const s3 = await snap();
+      await page.evaluate(() => { window.__CBW_FAIL__ = false; });
+      record('P11: Refresh clears a shown number; a refused lookup says why and can be tried again',
+        s3.nums === 0 && /^Show number\s*That call is not on the callback worklist any more/.test(s3.phone[0]) && s3.buttons === 2, JSON.stringify(s3.phone));
+      // The managers' switch asks first (a danger-toned confirm), then says what is on.
+      await page.click('#cbw-mgr-btn');
+      await page.waitForSelector('.ds-confirm-ok', { timeout: 3000 }).catch(() => {});
+      const dlg = await page.evaluate(() => ({ open: !!document.querySelector('.ds-confirm-ok'), danger: !!document.querySelector('.ds-confirm--danger'),
+        body: ((document.querySelector('.ds-confirm-body') || {}).textContent) || '' }));
+      if (dlg.open) await page.click('.ds-confirm-ok');
+      await page.waitForTimeout(450);
+      const s4 = await snap();
+      const sw = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'setCallbackNumbersForManagers').map((c) => c.args[0]));
+      record('P11: allowing managers asks first, then the page says managers can show numbers for their own department',
+        dlg.open && dlg.danger && /one call at a time\. Every time is logged/.test(dlg.body) && JSON.stringify(sw) === JSON.stringify([true])
+          && /^Managers can show numbers for their own department/.test(s4.mgr.trim()) && s4.mgrBtn === 'Turn off for managers', JSON.stringify({ dlg, sw, mgr: s4.mgr }));
+      await page.click('#cbw-mgr-btn'); await page.waitForTimeout(450);
+      const s5 = await snap();
+      record('P11: turning it off needs no confirmation', /^Only admins can show numbers\./.test(s5.mgr.trim()) && !(await page.$('.ds-confirm-ok')), s5.mgr);
+      // Show a number, close the window, open it again: no number survives.
+      await page.click('#cbw-tbody tr:nth-child(1) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const before = (await snap()).nums;
+      await page.click('#callback-worklist-close'); await page.waitForTimeout(200);
+      const closed = await page.evaluate(() => ({ nums: document.querySelectorAll('.cbw-num').length, rows: document.querySelectorAll('#cbw-tbody tr').length,
+        // (the modal, not the body: the harness's own mock source holds the fixture number)
+        digits: /555-0101/.test(document.getElementById('callback-worklist-modal').textContent) }));
+      record('P11: closing the window removes the shown number from the page', before === 1 && closed.nums === 0 && closed.rows === 0 && !closed.digits,
+        JSON.stringify({ before, closed }));
+      await page.evaluate(() => document.getElementById('callback-worklist-btn').click()); await page.waitForTimeout(500);
+      const s6 = await snap();
+      record('P11: reopened, every row asks again', s6.nums === 0 && s6.buttons === 2, JSON.stringify(s6.phone));
+      await page.selectOption('#cbw-dept', 'Sales'); await page.waitForTimeout(450);
+      const s7 = await snap();
+      record('P11: a department with nobody waiting says so', /^Nobody is waiting on a call back in Sales in these dates\.$/.test(s7.summary.trim()) && s7.buttons === 0, s7.summary);
+      await page.selectOption('#cbw-dept', ''); await page.waitForTimeout(400);
     } },
   { name: 'Exception Days', btn: '#exception-days-btn', sel: '#exception-days-modal', adminMenu: true,
     probe: async function (page, record) {
@@ -300,6 +415,165 @@ const MODALS = [
       await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
       const r2 = await rows();
       record('Exception Days: confirming removes the day from the list', r2.length === 1 && !r2.some((t) => /carrier fault/.test(t)), JSON.stringify(r2));
+    } },
+  // P7 (#94): the partial-day editor.
+  { name: 'Partial Days', btn: '#partial-days-btn', sel: '#partial-days-modal', adminMenu: true,
+    probe: async function (page, record) {
+      const meta = require('./payloads/meta.json');
+      const rows = () => page.evaluate(() => Array.from(document.querySelectorAll('#pd-tbody tr')).map((r) => r.textContent.replace(/\s+/g, ' ').trim()));
+      const r0 = await rows();
+      record('Partial Days: the two fixture marks are listed with the agent, the share and (here only) the reason',
+        r0.length === 2 && r0.every((t) => t.indexOf(meta.pdAgent) !== -1) && r0.some((t) => /Half a day/.test(t) && /Training/.test(t))
+          && r0.some((t) => /A quarter day/.test(t) && /Leave/.test(t)), JSON.stringify(r0));
+      const form = await page.evaluate(() => ({
+        depts: document.querySelectorAll('#pd-dept option').length,
+        credits: Array.from(document.querySelectorAll('#pd-credit option')).map((o) => o.value),
+        reasons: Array.from(document.querySelectorAll('#pd-reason option')).map((o) => o.value),
+        freeText: !!document.querySelector('#partial-days-modal input[type="text"], #partial-days-modal textarea') }));
+      record('Partial Days: the share and the reason are fixed lists -- no free text to hold personal detail',
+        form.depts > 3 && JSON.stringify(form.credits) === JSON.stringify(['0', '0.25', '0.5', '0.75']) && form.reasons.length === 5 && !form.freeText,
+        JSON.stringify(form));
+      await page.fill('#pd-date', meta.latest);
+      await page.selectOption('#pd-agent', '');
+      await page.click('#pd-save-btn'); await page.waitForTimeout(300);
+      const err = await page.evaluate(() => { const s = document.getElementById('pd-status'); return s && s.style.display !== 'none' ? s.textContent : ''; });
+      record('Partial Days: a save with no agent is refused in place', /agent/i.test(err), err);
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.selectOption('#pd-dept', 'CSR'); await page.waitForTimeout(200);
+      await page.selectOption('#pd-agent', 'Anna Reyes');
+      await page.selectOption('#pd-credit', '0.75');
+      await page.selectOption('#pd-reason', 'Meeting');
+      await page.click('#pd-save-btn'); await page.waitForTimeout(800);
+      const saved = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDay').map((c) => c.args[0]));
+      const r1 = await rows();
+      record('Partial Days: Save sends the date, the roster name, the share and the reason, and lists the mark',
+        saved.length === 1 && saved[0].date === meta.latest && saved[0].agent === 'Anna Reyes' && saved[0].credit === 0.75 && saved[0].reason === 'Meeting'
+          && r1.length === 3 && r1.some((t) => /Anna Reyes/.test(t) && /Three quarters/.test(t)), JSON.stringify({ saved: saved, rows: r1 }));
+      await page.click('#pd-tbody button[data-pd-remove="' + meta.latest + '"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(300);
+      const dlg = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok'); return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')) }; });
+      record('Partial Days: Remove asks first, in DANGER tone', dlg.open && dlg.danger, JSON.stringify(dlg));
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const r2 = await rows();
+      record('Partial Days: confirming removes that one mark', r2.length === 2 && !r2.some((t) => /Anna Reyes/.test(t)), JSON.stringify(r2));
+
+      // P9: suggestions -- the REAL getPartialDaySuggestions payload for CSR.
+      const sug = require('./payloads/partial-suggest.json');
+      // Each row as "<date> <text>": the cell shows the weekday form only, the
+      // full date is the row's data-pd-date.
+      const sRows = () => page.evaluate(() => Array.from(document.querySelectorAll('#pd-suggest-tbody tr')).map((r) =>
+        (r.getAttribute('data-pd-date') || '') + ' ' + r.textContent.replace(/\s+/g, ' ').trim()));
+      const sState = () => page.evaluate(() => ({
+        status: (function (el) { return el && el.style.display !== 'none' ? el.textContent : ''; })(document.getElementById('pd-suggest-status')),
+        table: getComputedStyle(document.getElementById('pd-suggest-table')).display !== 'none',
+        reviewed: (document.getElementById('pd-reviewed-summary') || {}).textContent,
+        reviewedShown: getComputedStyle(document.getElementById('pd-reviewed')).display !== 'none',
+        marks: document.querySelectorAll('#pd-tbody tr').length,
+      }));
+      const s0 = await sState();
+      record('P9: nothing is suggested until asked; the day already reviewed as whole is listed apart from the marks',
+        !s0.table && s0.reviewedShown && s0.reviewed === 'Reviewed as whole days (1)' && s0.marks === 2
+          && !(await rows()).some((t) => t.indexOf(meta.pdReviewed.agent) !== -1), JSON.stringify(s0));
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.selectOption('#pd-dept', 'CSR'); await page.waitForTimeout(200);
+      await page.click('#pd-suggest-btn'); await page.waitForTimeout(900);
+      const asked = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'getPartialDaySuggestions').map((c) => c.args[0]));
+      const sr = await sRows();
+      const s1 = await sState();
+      record('P9: Find asks for the chosen department and lists each short day with its times, the usual day and a suggested share',
+        asked.length === 1 && asked[0].department === 'CSR' && sr.length === sug.suggestions.length && sr.length === 2
+          && sr.some((t) => /Carla Diaz/.test(t) && /8:35 – 12:33/.test(t) && /8\.3 h/.test(t) && /Half a day/.test(t))
+          && sr.some((t) => /Anna Reyes/.test(t) && /Three quarters/.test(t)), JSON.stringify({ asked: asked, rows: sr }));
+      record('P9: a marked day, a reviewed day and an exception day are not suggested, and the status says who could not be judged',
+        !sr.some((t) => t.indexOf(meta.pdDates[0]) !== -1 && /Ben Ortiz/.test(t)) && !sr.some((t) => /Dev Patel/.test(t))
+          && !sr.some((t) => t.indexOf(meta.excDate) !== -1)
+          && /2 days to look at/.test(s1.status) && /4 agents checked/.test(s1.status) && /1 not checked[^:]*: Robin Choudhury/.test(s1.status)
+          && /read in (under a second|\d+ s)$/.test(s1.status), s1.status);
+      // Follow-on: every cell on one line (the date wrapped onto three), and at
+      // phone width the table scrolls inside its own box, never the dialog.
+      const lay = await page.evaluate(() => {
+        const rowsEl = Array.from(document.querySelectorAll('#pd-suggest-tbody tr'));
+        const first = rowsEl[0] && rowsEl[0].cells[0];
+        const lh = first ? parseFloat(getComputedStyle(first).lineHeight) || 20 : 20;
+        return { dateText: first ? first.textContent.trim() : '', title: first ? first.getAttribute('title') : '',
+          oneLine: rowsEl.every((r) => Array.from(r.cells).slice(0, 6).every((c) => c.getBoundingClientRect().height < lh * 2.4 + 24)) };
+      });
+      record('P9 follow-on: a suggestion row keeps each cell on one line; the cell shows the weekday form with the full date as its title',
+        lay.oneLine && /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}$/.test(lay.dateText) && lay.title === meta.pdSuggest.carla, JSON.stringify(lay));
+      await page.setViewportSize({ width: 390, height: 800 }); await page.waitForTimeout(300);
+      const narrow = await page.evaluate(() => {
+        const panel = document.querySelector('#partial-days-modal .modal-panel'), body = document.querySelector('#partial-days-modal .modal-panel-body');
+        const box = document.getElementById('pd-suggest-table');   // its own scroller at this width (F81)
+        return { panelOver: panel.scrollWidth - panel.clientWidth, bodyOver: body ? body.scrollWidth - body.clientWidth : 0,
+          boxScrolls: box.scrollWidth > box.clientWidth, vw: window.innerWidth };
+      });
+      await page.setViewportSize({ width: 1440, height: 1000 }); await page.waitForTimeout(300);
+      record('P9 follow-on: at 390 px the one-line suggestions table is its own sideways scroller and the dialog does not scroll sideways',
+        narrow.boxScrolls && narrow.panelOver <= 1 && narrow.bodyOver <= 1, JSON.stringify(narrow));
+      // Use: the form is filled; NOTHING is saved until the admin presses Save.
+      await page.click('#pd-suggest-tbody button[data-pd-s="use"][data-pd-agent="Carla Diaz"]'); await page.waitForTimeout(300);
+      const used = await page.evaluate(() => ({ date: document.getElementById('pd-date').value, agent: document.getElementById('pd-agent').value,
+        credit: document.getElementById('pd-credit').value, focus: (document.activeElement || {}).id,
+        saves: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDay').length,
+        status: document.getElementById('pd-status').textContent }));
+      record('P9: Use puts the day in the form and moves to the reason -- nothing is saved yet',
+        used.date === meta.pdSuggest.carla && used.agent === 'Carla Diaz' && used.credit === '0.5' && used.focus === 'pd-reason'
+          && used.saves === 0 && /Choose a reason and press Save/.test(used.status), JSON.stringify(used));
+      // Whole day: the suggestion is dismissed and joins the reviewed list.
+      await page.click('#pd-suggest-tbody button[data-pd-s="whole"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(700);
+      const dis = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'dismissPartialDaySuggestion').map((c) => c.args[0]));
+      const sr2 = await sRows();
+      const s2 = await sState();
+      record('P9: Whole day dismisses that suggestion: it leaves the list, joins the reviewed days, and no mark is added',
+        dis.length === 1 && dis[0].date === meta.pdSuggest.anna && dis[0].agent === 'Anna Reyes' && sr2.length === 1 && /Carla Diaz/.test(sr2[0])
+          && s2.reviewed === 'Reviewed as whole days (2)' && s2.marks === 2, JSON.stringify({ dis: dis, rows: sr2, s: s2 }));
+      // Save the form the suggestion filled: the day becomes a mark and stops being a suggestion.
+      await page.selectOption('#pd-reason', 'Leave');
+      await page.click('#pd-save-btn'); await page.waitForTimeout(800);
+      const sv = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDay').map((c) => c.args[0]));
+      const sr3 = await sRows();
+      const s3 = await sState();
+      record('P9: saving the suggested day marks it (the admin\'s own reason) and takes it off the suggestions',
+        sv.length === 1 && sv[0].date === meta.pdSuggest.carla && sv[0].agent === 'Carla Diaz' && sv[0].credit === 0.5 && sv[0].reason === 'Leave'
+          && sr3.length === 0 && !s3.table && s3.marks === 3 && /^Nothing left to look at/.test(s3.status), JSON.stringify({ sv: sv, rows: sr3, s: s3 }));
+      // A reviewed day can be put back: Remove asks first, without the danger tone (no figure changes).
+      await page.evaluate(() => { document.getElementById('pd-reviewed').open = true; });
+      await page.click('#pd-reviewed-tbody button[data-pd-remove="' + meta.pdSuggest.anna + '"][data-pd-agent="Anna Reyes"]'); await page.waitForTimeout(300);
+      const dlg2 = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok');
+        return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')), text: (document.querySelector('.ds-confirm') || document.body).textContent.slice(0, 400) }; });
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const sr4 = await sRows();
+      const s4 = await sState();
+      record('P9: removing a review asks first, plainly (no figure changes), and the day is suggested again',
+        dlg2.open && !dlg2.danger && /No figure changes/.test(dlg2.text) && s4.reviewed === 'Reviewed as whole days (1)'
+          && sr4.length === 1 && /Anna Reyes/.test(sr4[0]), JSON.stringify({ dlg: dlg2, rows: sr4, s: s4 }));
+
+      // Mark all shown (owner 2026-11-16). Take Carla's mark off again so two
+      // suggestions are on screen, then mark both at once.
+      await page.click('#pd-tbody button[data-pd-remove="' + meta.pdSuggest.carla + '"][data-pd-agent="Carla Diaz"]'); await page.waitForTimeout(300);
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(800);
+      const allBtn = () => page.evaluate(() => { const b = document.getElementById('pd-suggest-all');
+        return { shown: getComputedStyle(b).display !== 'none', text: b.textContent.trim() }; });
+      const a0 = await allBtn();
+      await page.evaluate(() => { window.__HARNESS__.calls = []; });
+      await page.selectOption('#pd-reason', 'Training');
+      await page.click('#pd-suggest-all'); await page.waitForTimeout(300);
+      const dlg3 = await page.evaluate(() => { const ok = document.querySelector('.ds-confirm-ok');
+        return { open: !!ok, ok: ok ? ok.textContent.trim() : '', text: (document.querySelector('.ds-confirm') || document.body).textContent.slice(0, 500),
+          sentYet: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDays').length }; });
+      record('Mark all shown: offered with the count, and it asks first -- naming the count and the one reason -- before anything is sent',
+        a0.shown && a0.text === 'Mark all shown (2)' && dlg3.open && dlg3.ok === 'Mark 2' && /Mark 2 days as partial\?/.test(dlg3.text)
+          && /the reason "Training"/.test(dlg3.text) && /check the list first/.test(dlg3.text) && dlg3.sentYet === 0, JSON.stringify({ a0: a0, dlg: dlg3 }));
+      await page.click('.ds-confirm-ok'); await page.waitForTimeout(900);
+      const many = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'savePartialDays').map((c) => c.args[0]));
+      const sr5 = await sRows();
+      const s5 = await sState();
+      const a1 = await allBtn();
+      const items = many.length === 1 ? many[0].items.map((i) => i.date + ' ' + i.agent + ' ' + i.credit).sort() : [];
+      record('Mark all shown: ONE request with each day\'s own suggested share and the chosen reason; the days become marks and the button goes',
+        many.length === 1 && many[0].reason === 'Training'
+          && JSON.stringify(items) === JSON.stringify([meta.pdSuggest.anna + ' Anna Reyes 0.75', meta.pdSuggest.carla + ' Carla Diaz 0.5'].sort())
+          && sr5.length === 0 && s5.marks === 4 && !a1.shown && /^Nothing left to look at/.test(s5.status),
+        JSON.stringify({ many: many, rows: sr5, s: s5, a1: a1 }));
     } },
   // (G3: the Outbound report modal is retired. Its content is driven on My
   // Department by drive-callbacks.js / drive-deptoutbound.js and its
