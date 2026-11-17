@@ -304,6 +304,90 @@ const MODALS = [
         JSON.stringify(none));
       await page.selectOption('#tr-dept', ''); await page.waitForTimeout(400);
     } },
+  // P11 (owner 2026-11-17): the callback worklist -- the REAL
+  // getCallbackWorklist payload (three callers still owed a call; a fourth,
+  // called back late, is not listed) and the one place a number can be shown.
+  { name: 'Callback Worklist', btn: '#callback-worklist-btn', sel: '#callback-worklist-modal', adminMenu: true,
+    probe: async function (page, record) {
+      await page.waitForTimeout(500);
+      const ids = require('./payloads/callback-worklist-ids.json');
+      const snap = () => page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('#cbw-tbody tr'));
+        const modal = document.getElementById('callback-worklist-modal');
+        return { summary: (document.getElementById('cbw-summary') || {}).textContent || '',
+          note: (document.getElementById('cbw-note') || {}).textContent || '',
+          status: rows.map((r) => r.cells[4].textContent.replace(/\s+/g, ' ').trim()),
+          tries: rows.map((r) => r.cells[1].textContent.trim()),
+          phone: rows.map((r) => r.cells[6].textContent.replace(/\s+/g, ' ').trim()),
+          buttons: document.querySelectorAll('#cbw-tbody button[data-cbw-id]').length,
+          nums: document.querySelectorAll('#cbw-tbody .cbw-num').length,
+          chips: document.querySelectorAll('#cbw-tbody .pid-journey').length,
+          digits: /\(\d{3}\) \d{3}-\d{4}|\d{10}/.test(modal.textContent.replace(/#\d+/g, '')),
+          mgr: (document.getElementById('cbw-mgr-text') || {}).textContent || '', mgrBtn: (document.getElementById('cbw-mgr-btn') || {}).textContent || '',
+          reveals: (window.__HARNESS__.calls || []).filter((c) => c.fn === 'revealCallbackNumber').map((c) => c.args[0]) };
+      });
+      const s0 = await snap();
+      record('P11: the worklist lists the callers still owed a call, most urgent first, and shows no number until asked',
+        /^3 callers not called back: 1 still inside the 3-day window, 2 already missed\.$/.test(s0.summary.trim())
+          && JSON.stringify(s0.status) === JSON.stringify(['1 day left', 'Missed', 'Missed']) && JSON.stringify(s0.tries) === JSON.stringify(['1', '2', '1'])
+          && JSON.stringify(s0.phone) === JSON.stringify(['Show number', 'Show number', 'No longer held'])
+          && s0.chips === 3 && s0.nums === 0 && !s0.digits && s0.reveals.length === 0, JSON.stringify(s0));
+      record('P11: the page says how many numbers an hour, and that only admins can show them',
+        /You can show up to 40 numbers an hour\./.test(s0.note) && /^Only admins can show numbers\./.test(s0.mgr.trim()) && s0.mgrBtn === 'Allow managers',
+        JSON.stringify({ note: s0.note, mgr: s0.mgr, mgrBtn: s0.mgrBtn }));
+      await page.click('#cbw-tbody tr:nth-child(1) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const s1 = await snap();
+      record('P11: Show number asks for ONE call and shows its number, marked as logged',
+        s1.phone[0] === '(214) 555-0101 logged' && s1.phone[1] === 'Show number' && s1.nums === 1 && s1.reveals.length === 1
+          && s1.reveals[0].callId === ids.pending && s1.reveals[0].department === '' && /^\d{4}-\d{2}-\d{2}$/.test(s1.reveals[0].callDate), JSON.stringify(s1));
+      await page.click('#cbw-tbody tr:nth-child(2) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const s2 = await snap();
+      record('P11: a number that cannot be confirmed is not shown, and says so', s2.phone[1] === 'Could not be confirmed' && s2.nums === 1 && s2.reveals.length === 2,
+        JSON.stringify(s2.phone));
+      const stored = await page.evaluate(() => { let all = ''; try { for (let i = 0; i < localStorage.length; i++) all += localStorage.getItem(localStorage.key(i)); } catch (e) {}
+        try { for (let i = 0; i < sessionStorage.length; i++) all += sessionStorage.getItem(sessionStorage.key(i)); } catch (e) {}
+        return /555-0101|5550101/.test(all); });
+      record('P11: the shown number is in no browser storage', stored === false, 'found=' + stored);
+      // Reload: the number is gone, and a refused lookup says why and leaves the button.
+      await page.click('#cbw-run-btn'); await page.waitForTimeout(400);
+      await page.evaluate(() => { window.__CBW_FAIL__ = true; });
+      await page.click('#cbw-tbody tr:nth-child(1) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const s3 = await snap();
+      await page.evaluate(() => { window.__CBW_FAIL__ = false; });
+      record('P11: Refresh clears a shown number; a refused lookup says why and can be tried again',
+        s3.nums === 0 && /^Show number\s*That call is not on the callback worklist any more/.test(s3.phone[0]) && s3.buttons === 2, JSON.stringify(s3.phone));
+      // The managers' switch asks first (a danger-toned confirm), then says what is on.
+      await page.click('#cbw-mgr-btn');
+      await page.waitForSelector('.ds-confirm-ok', { timeout: 3000 }).catch(() => {});
+      const dlg = await page.evaluate(() => ({ open: !!document.querySelector('.ds-confirm-ok'), danger: !!document.querySelector('.ds-confirm--danger'),
+        body: ((document.querySelector('.ds-confirm-body') || {}).textContent) || '' }));
+      if (dlg.open) await page.click('.ds-confirm-ok');
+      await page.waitForTimeout(450);
+      const s4 = await snap();
+      const sw = await page.evaluate(() => (window.__HARNESS__.calls || []).filter((c) => c.fn === 'setCallbackNumbersForManagers').map((c) => c.args[0]));
+      record('P11: allowing managers asks first, then the page says managers can show numbers for their own department',
+        dlg.open && dlg.danger && /one call at a time\. Every time is logged/.test(dlg.body) && JSON.stringify(sw) === JSON.stringify([true])
+          && /^Managers can show numbers for their own department/.test(s4.mgr.trim()) && s4.mgrBtn === 'Turn off for managers', JSON.stringify({ dlg, sw, mgr: s4.mgr }));
+      await page.click('#cbw-mgr-btn'); await page.waitForTimeout(450);
+      const s5 = await snap();
+      record('P11: turning it off needs no confirmation', /^Only admins can show numbers\./.test(s5.mgr.trim()) && !(await page.$('.ds-confirm-ok')), s5.mgr);
+      // Show a number, close the window, open it again: no number survives.
+      await page.click('#cbw-tbody tr:nth-child(1) button[data-cbw-id]'); await page.waitForTimeout(350);
+      const before = (await snap()).nums;
+      await page.click('#callback-worklist-close'); await page.waitForTimeout(200);
+      const closed = await page.evaluate(() => ({ nums: document.querySelectorAll('.cbw-num').length, rows: document.querySelectorAll('#cbw-tbody tr').length,
+        // (the modal, not the body: the harness's own mock source holds the fixture number)
+        digits: /555-0101/.test(document.getElementById('callback-worklist-modal').textContent) }));
+      record('P11: closing the window removes the shown number from the page', before === 1 && closed.nums === 0 && closed.rows === 0 && !closed.digits,
+        JSON.stringify({ before, closed }));
+      await page.evaluate(() => document.getElementById('callback-worklist-btn').click()); await page.waitForTimeout(500);
+      const s6 = await snap();
+      record('P11: reopened, every row asks again', s6.nums === 0 && s6.buttons === 2, JSON.stringify(s6.phone));
+      await page.selectOption('#cbw-dept', 'Sales'); await page.waitForTimeout(450);
+      const s7 = await snap();
+      record('P11: a department with nobody waiting says so', /^Nobody is waiting on a call back in Sales in these dates\.$/.test(s7.summary.trim()) && s7.buttons === 0, s7.summary);
+      await page.selectOption('#cbw-dept', ''); await page.waitForTimeout(400);
+    } },
   { name: 'Exception Days', btn: '#exception-days-btn', sel: '#exception-days-modal', adminMenu: true,
     probe: async function (page, record) {
       const meta = require('./payloads/meta.json');

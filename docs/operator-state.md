@@ -79,7 +79,7 @@ When something looks wrong, before assuming a code bug, check:
    `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
    `Orphan Fix Log`, `Dept Config`, `Report Usage`, `Queue Report
    Subscribers`, `Company Holidays` (H1), `Dashboard Standards` (H2, which it
-   also republishes) and `Exception Days` (#81) -- whichever are missing. Idempotent on re-runs
+   also republishes), `Exception Days` (#81), `Partial Days` (#94) and `Callback Number Log` (#95) -- whichever are missing. Idempotent on re-runs
    (existing data untouched). Without re-running setup() after a
    fresh pull, downstream writers (Pipeline Health appends, Digest
    config reads, Orphan Fix log appends) silently no-op against
@@ -2609,6 +2609,11 @@ When something looks wrong, before assuming a code bug, check:
        released TOGETHER") FAILS on any half alone — a visible surface over a
        throwing server reads as a broken app, a released server behind hidden
        surfaces reaches nobody — and fails if the retired modal comes back.
+       **The Callback worklist (#95) is NOT part of this release.** Its menu
+       item stays admin-only; after the flip a manager can reach its LIST
+       endpoint (the same callers the Callbacks section lists) but no number
+       until `CALLBACK_NUMBERS_MANAGERS` is `true`. Giving managers the page
+       is its own commit: a manager entry point, then the switch.
     5. **Verify.** Deploy, then walk **Regression Scenario S46** — it covers
        both the pre-release state (manager sees no outbound surface, the
        `#/report/outbound` link is a plain My Department landing, console call
@@ -4449,3 +4454,61 @@ When something looks wrong, before assuming a code bug, check:
     there is nothing to change. Until it is done, a rename or column move
     on this tab is a one-repo edit. Pinned by `partial-days.test.js`;
     rendered checks in `drive-admin.js` and `drive-deptoutbound.js`.
+95. **The callback worklist and its phone numbers (P11, owner decision
+    2026-11-17) -- Admin ▾ → Callback worklist, `CDR_IMPORT_SS_ID`,
+    `CALLBACK_NUMBERS_MANAGERS`, the `Callback Number Log` sheet,
+    `probeCallbackNumberLookup`.** The callers who hung up in a queue over the
+    last 14 days and have NOT been called back (late call-backs and callers
+    who got through later are left out), pending ones first by days left,
+    then the missed ones newest first. It is the ONE page in the dashboard
+    where a caller's phone number can be shown; everywhere else a caller is a
+    hash. The owner approved it on five terms, all enforced on the server
+    (`CallbackWorklist.gs`):
+    **(1) Who.** Admins. A manager only for their OWN department, only while
+    `CALLBACK_NUMBERS_MANAGERS` is exactly `true` (default: unset = off; flip
+    it with the page's "Allow managers" button, which asks first), AND only
+    once the outbound views are released to managers (#63) -- until then a
+    manager reaches no callback surface at all, so the switch alone shows
+    them nothing. **There is no manager entry point in the client yet: add
+    the menu item in the same commit as the #63 release.**
+    **(2) Where.** This page only. A number is never written to Neon, a
+    sheet, the cache, a Script Property, an email or a log; the client keeps
+    it in one table cell, clears it when the window closes or reloads, and
+    hides it on paper.
+    **(3) How much.** One call per click (`revealCallbackNumber`); the list
+    never carries a number; `CBW_REVEAL_CAP_` = 40 lookups per person per
+    hour, failed ones included, and a count that cannot be kept shows
+    nothing.
+    **(4) Audit.** Every lookup appends a row to `Callback Number Log`
+    (Timestamp, User, Role, Department, Call Date, Call ID, Result) BEFORE
+    the reply -- `shown`, `not shown: <why>`, or `refused: not on the
+    worklist` -- and never the number. If the row cannot be written the
+    number is not returned. Review the sheet whenever you want to know who
+    looked up what; nothing trims it.
+    **(5) Scope.** The call must be, at that moment, a try of a caller nobody
+    has called back in a department the user may see (re-derived per
+    request), and its day's raw tab must still exist (about 14 days, #43) --
+    older rows read "No longer held".
+    **Where the number comes from:** the `Call_Legs_<date>` tab of the CDR
+    IMPORT workbook, the only place raw numbers are held. Set
+    **`CDR_IMPORT_SS_ID`** on the DASHBOARD project to that workbook's id
+    (the part of its URL between `/d/` and `/edit`; set it per #53), and make
+    sure the deploying account can open it. The outside numbers on the call's
+    incoming legs are the candidates, and the one shown is the candidate
+    whose HMAC equals the call's stored `caller_hash` -- so `HMAC_SECRET`
+    (#17) must be set on the dashboard and match cdr-import, and Neon must be
+    reachable. No match shows "Could not be confirmed", never a guess.
+    **After deploying: run `setup()` (creates `Callback Number Log`; the
+    first lookup creates it too), set `CDR_IMPORT_SS_ID`, then run
+    `probeCallbackNumberLookup()`** (dashboard editor, admin, read-only): it
+    walks every department's worklist, looks each number up the way the page
+    does, and logs COUNTS ONLY -- GOOD (95%+ of the calls whose tab exists
+    were found and confirmed), PARTIAL, POOR, INCONCLUSIVE (under 10 such
+    calls) or NOT CONFIGURED, with call-id samples of each failure. It shows
+    nothing to anyone, so it writes no audit row. A POOR with everything
+    "not confirmed" is a wrong or missing `HMAC_SECRET`. Each lookup costs
+    two Neon reads (the list, then one hash) and a few seconds. A change to
+    cdr-import's raw column layout (`IC_COL`) or to how it picks the caller
+    is a two-project edit: `callback-worklist.test.js` fails on a moved
+    column and on a hashed number that is not among the candidates.
+    Rendered checks in `drive-admin.js`; S74.

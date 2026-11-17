@@ -150,8 +150,8 @@ test('CL-18: every boot step is guarded, and a throwing step is recorded and bea
   // 29 since G3 retired the Outbound modal (initOutboundReport left with it);
   // 30 with the #81 exception-day editor (initExceptionDays_); 31 with TR-1's
   // transfer retries (initTransferRetries_); 32 with P7's partial-day editor
-  // (initPartialDays_).
-  assert.equal((steps.match(/initStep_\(/g) || []).length, 32, 'the 32 surface inits each run under the guard');
+  // (initPartialDays_); 33 with P11's callback worklist (initCallbackWorklist_).
+  assert.equal((steps.match(/initStep_\(/g) || []).length, 33, 'the 33 surface inits each run under the guard');
   assert.ok(!/^\s+init[A-Za-z_]*\(\);/m.test(steps) && !/^\s+(ovWireTrendCollapse_|loadEscBadge_)\(\);/m.test(steps),
     'no step in the guarded block is called bare');
   assert.match(src('script-11-qcd-boot.html'), /bootInit_\(\);\s*\n\s*devInstallToggle_\(\);/, 'boot enters through bootInit_');

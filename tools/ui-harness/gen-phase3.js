@@ -156,7 +156,8 @@ const h = loadGas({
           'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'InboundReport.gs',
           'Escalations.gs', 'Alerts.gs', 'Digest.gs', 'QueueReportEmail.gs',
           'OrphanFix.gs', 'SystemHealth.gs', 'CacheWarm.gs', 'NeonKeepWarm.gs',
-          'Notifications.gs', 'AlertReasons.gs', 'TransferRetries.gs'],
+          'Notifications.gs', 'AlertReasons.gs', 'TransferRetries.gs',
+          'Setup.gs', 'CallerLookup.gs', 'OutboundReport.gs', 'CallbackWorklist.gs'],
 });
 function install(email) {
   h.state.props.SPREADSHEET_ID = 'fake';
@@ -180,6 +181,33 @@ install('admin@ums.com');
 dump('esc-init', () => h.call('getEscalationsInit'));
 dump('esc-list', () => h.call('getEscalations', { department: 'ALL', status: 'all' }));
 dump('esc-activity', () => h.call('getEscalationActivity', { id: 101 }));
+// P11: the callback worklist -- the REAL getCallbackWorklist over a stubbed
+// Not-called-back payload (its engine is unit-pinned) and a fake CDR Import
+// workbook holding two of the three days' raw tabs. The payload carries no
+// number; the harness's revealCallbackNumber mock supplies the one shown.
+const CBW_IDS = { pending: '1783985481001', missed: '1783985481002', missedFirst: '1783985481000', old: '1783985481003', late: '1783985481004' };
+(function () {
+  const ep = (firstIso, status, daysLeft, attempts, late) => ({ firstIso, status, daysLeft, attempts, late: late || { calledBack: null, gotThrough: null } });
+  h.state.props.CDR_IMPORT_SS_ID = 'fake-import';
+  h.state.spreadsheetsById['fake-import'] = makeFakeSpreadsheet({ sheets: {
+    ['Call_Legs_' + ago(1)]: [['h']], ['Call_Legs_' + ago(2)]: [['h']], ['Call_Legs_' + ago(3)]: [['h']], Notes: [['x']] } });
+  h.ctx.getOutboundUncalled = function () {
+    return { meta: { available: true, truncated: false, callbackWindowDays: 3, dataThrough: ago(1) },
+      episodes: [
+        ep(ago(3), 'missed', null, [{ callDate: ago(3), callId: CBW_IDS.missedFirst }, { callDate: ago(2), callId: CBW_IDS.missed }]),
+        ep(ago(1), 'pending', 1, [{ callDate: ago(1), callId: CBW_IDS.pending }]),
+        ep(ago(13), 'missed', null, [{ callDate: ago(13), callId: CBW_IDS.old }]),
+        ep(ago(4), 'missed', null, [{ callDate: ago(4), callId: CBW_IDS.late }], { calledBack: { daysAfter: 5, team: 'own' }, gotThrough: null }),
+      ],
+      calls: [
+        { callDate: ago(1), callId: CBW_IDS.pending, cstStart: '10:41:00', entryQueue: 'A_Q_CSR', dialIn: 'Main CSR Line', waitSeconds: 95 },
+        { callDate: ago(2), callId: CBW_IDS.missed, cstStart: '11:15:00', entryQueue: 'A_Q_Sales', dialIn: null, waitSeconds: 40 },
+        { callDate: ago(13), callId: CBW_IDS.old, cstStart: '09:02:00', entryQueue: 'A_Q_CSR', dialIn: null, waitSeconds: 61 },
+      ] };
+  };
+})();
+dump('callback-worklist', () => h.call('getCallbackWorklist', { department: '' }));
+dump('callback-worklist-ids', () => CBW_IDS);
 dump('transfer-retries', () => h.call('getTransferRetries', { from: ago(30), to: ago(1) }));   // TR-1
 dump('transfer-retries-init', () => h.call('getTransferRetriesInit'));
 dump('alerts-init', () => h.call('getAlertsInit'));

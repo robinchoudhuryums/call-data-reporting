@@ -139,6 +139,9 @@
             <button class="header-menu-item" id="transfer-retries-btn" type="button"
                     data-route="/admin/transfer-retries" data-admin-only role="menuitem"
                     title="Calls where an agent tried someone in another department, got no answer, then tried someone else there -- the list to check for transfers declined that should not have been. Admin-only.">Transfer retries</button>
+            <button class="header-menu-item" id="callback-worklist-btn" type="button"
+                    data-route="/admin/callbacks" data-admin-only role="menuitem"
+                    title="The callers nobody has called back yet, most urgent first. The one place a caller's phone number can be shown: one call at a time, and every time is logged. Admin-only.">Callback worklist</button>
           </div>
         </div>
       </nav>
@@ -2852,6 +2855,55 @@
             </table>
           </div>
           <p id="tr-note" class="al-hint" style="display:none;"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P11 (owner 2026-11-17): the callback worklist -- getCallbackWorklist /
+       revealCallbackNumber (CallbackWorklist.gs). The ONE page a caller's
+       phone number can appear on: one call per request, every request logged
+       on the server before the reply. The list itself never carries a number. -->
+  <div id="callback-worklist-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="callback-worklist-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="callback-worklist-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="callback-worklist-modal-title">Callback worklist</h2>
+      </div>
+      <div class="modal-panel-body">
+        <p class="al-hint">Callers who hung up in a queue over the last <span id="cbw-days">14</span> days and have not been
+          called back, most urgent first: those still inside the callback window, then the ones already missed.
+          A caller's <strong>phone number is shown one call at a time</strong>, and <strong>every time is logged</strong>
+          with your name, the time and the call. Numbers are never emailed, exported or kept, and they are cleared
+          when this window closes. A number can be shown only while that day's calls are still held (about two weeks).
+          Times are Central.</p>
+        <div class="ir-form-grid cbw-form">
+          <div class="ir-col">
+            <label for="cbw-dept">Department</label>
+            <select id="cbw-dept"><option value="">All departments</option></select>
+          </div>
+          <div class="ir-col">
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
+            <button class="btn" id="cbw-run-btn" type="button">Refresh</button>
+          </div>
+        </div>
+        <!-- Admin-only: whether managers may show numbers (default off). -->
+        <p id="cbw-mgr" class="al-hint cbw-mgr" style="display:none;">
+          <span id="cbw-mgr-text"></span>
+          <button class="btn btn-secondary" id="cbw-mgr-btn" type="button"></button>
+        </p>
+        <div id="cbw-status" role="status" class="status" style="display:none;"></div>
+        <div id="cbw-results" style="display:none;">
+          <p id="cbw-summary" class="tr-summary"></p>
+          <p id="cbw-note" class="al-hint" style="display:none;"></p>
+          <div class="tr-cases-wrap">
+            <table class="al-config-table tr-cases" id="cbw-table">
+              <thead><tr><th>First tried</th><th class="num">Tries</th><th>Latest try</th><th>Queue</th><th>Status</th><th>Call</th><th>Phone number</th></tr></thead>
+              <tbody id="cbw-tbody"></tbody>
+            </table>
           </div>
         </div>
       </div>

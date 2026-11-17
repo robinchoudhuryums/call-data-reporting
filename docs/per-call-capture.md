@@ -266,6 +266,15 @@ sheets with no raw number stored anywhere, shaped by the same
 `callerLookupShapeCall_`/`...Outbound_`. The day-level "Earlier outbound
 activity" has NO sheet primary and reports `historyAvailable:false`.
 
+> **The one place a number is shown (P11, Operator State #95).** The callback
+> worklist reads a caller's number back out of the day's `Call_Legs_<date>` tab
+> in the CDR Import workbook -- one call per request, admin-gated, logged
+> first -- and shows it only when its HMAC equals that call's stored
+> `caller_hash`. So `caller_hash` is also what PROVES a shown number: a change
+> to how the capture picks or normalizes the caller (`icExternalNumber_`, the
+> `IC_COL` layout, `cdrHashPhone_`) is a two-project edit, pinned by
+> `callback-worklist.test.js`.
+
 ### Per-call journey drill-through
 
 > **Two read-only call-path diagnostics (owner 2026-10-28).**

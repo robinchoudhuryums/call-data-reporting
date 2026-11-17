@@ -3250,6 +3250,31 @@ constants and `computeThresholdDrift_` in `Alerts.gs`) are unchanged.
   (`trAvailNote_`) states the match rate and why the rest are not known.
   Never guess a state on the client: no `avail`, no cell text.
 
+## The callback worklist on the client (P11, owner 2026-11-17)
+
+The one page a caller's phone number can appear on (`#callback-worklist-modal`,
+Admin ▾ → Callback worklist, route `/admin/callbacks`; server rules: Operator
+State #95). The client's whole job is to NOT keep the number:
+
+- The list (`getCallbackWorklist`) never carries one. "Show number"
+  (`cbwReveal_`) asks for ONE call and writes the reply into that row's
+  `.cbw-phone` cell as `.cbw-num` + "logged"; a reply that is not `ok` prints
+  its reason (`CBW_WHY_`), and a refused request leaves the button with the
+  server's message under it.
+- `cbwClear_` empties the table and bumps `CBW_STATE_.seq` on every reload AND
+  in `closeModal`, so a number never outlives the open window and a reply
+  still in flight lands nowhere.
+- Never put a number in `localStorage` / `sessionStorage`, a `title`, an
+  export, the clipboard, a share link or the client-error beacon. `.cbw-num`
+  is hidden under `@media print`.
+- The managers' switch (`#cbw-mgr`) renders only when the payload carries
+  `managersMayReveal` (the server sends it to admins alone); turning it ON is
+  a danger-toned `dsConfirm_`, turning it off is immediate.
+- There is no manager entry point yet (Operator State #95).
+
+Pinned by `callback-worklist.test.js` (a source sweep of the block) and
+`drive-admin.js`.
+
 ## Exception days on the client (#81, owner 2026-10-22)
 
 The server leaves an exception day out of every figure; the client's job is to

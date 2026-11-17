@@ -208,8 +208,10 @@ ships both, and the stamp says `+dirty`) or the branch is not `main`;
   external team-tools reader consumes) and `Exception Days` (#81: days
   every report leaves out, edited from Admin ▾ → Exception days) and
   `Partial Days` (P7: part days that count as a share in per-day
-  figures, edited from Admin ▾ → Partial days) —
-  fourteen total, created only if
+  figures, edited from Admin ▾ → Partial days) and `Callback Number Log`
+  (P11: who asked the callback worklist for a caller's phone number,
+  never the number) —
+  fifteen total, created only if
   missing; `setup()` also REPUBLISHES Dashboard Standards on every run.
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property

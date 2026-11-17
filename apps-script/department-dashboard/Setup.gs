@@ -86,6 +86,8 @@ function setup() {
     [SHEETS.EXCEPTION_DAYS,        EXCEPTION_DAYS_HEADERS, [1]],
     // P7 (#94): the Date column text-pinned, like the two date lists above.
     [SHEETS.PARTIAL_DAYS,          PARTIAL_DAYS_HEADERS, [1]],
+    // P11 (#95): the phone-number lookup audit trail; Call Date + Call ID text-pinned.
+    [SHEETS.CALLBACK_NUMBER_LOG,   CALLBACK_NUMBER_LOG_HEADERS, [5, 6]],
   ];
   const failed = [];
   specs.forEach(function (spec) {

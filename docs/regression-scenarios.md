@@ -150,7 +150,7 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
   Steps:
     - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards + Exception Days + Partial Days (each with their header row + frozen first row; Company Holidays col A, Dashboard Standards col D, Exception Days col A and Partial Days col A plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all fourteen and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards + Exception Days + Partial Days + Callback Number Log (each with their header row + frozen first row; Company Holidays col A, Dashboard Standards col D, Exception Days col A and Partial Days col A plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all fifteen and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click solos the trend line | Subsystem: Department Dashboard
   Steps:
@@ -802,4 +802,19 @@ S73 | Partial days: an admin marks a part day, the per-day pace changes and says
     - P8 -- Insights on My Department (open the agents section): each card's chip reads like "above team · 24.8 vs 20.1 ans/day"; the number beside the Answered and Missed bars is still the total; the Gap vs team chart for Answered is labelled per day worked. In Team detail, hovering a row of Share of answered calls says "vs their share of the days worked" and gives the agent-days. With a part day marked for one agent, only that agent's card shows the attendance line.
   Expected: every step as described. AUTOMATED COUNTERPART: `tests/unit/partial-days.test.js`, `tools/ui-harness/drive-admin.js` (the editor) and `drive-deptoutbound.js` (the row line as a manager).
   Fails if: a count, a total or an answer rate moved; the reason is visible to a manager or an agent; a manager can save a mark; the pace shows a huge number for an agent credited a fraction of a day; pressing Find, Use or Whole day changes a figure; a suggestion appears for a weekend, a holiday, an exception day, or a day already marked or reviewed; a manager is suggested for their ordinary short days.
+
+S74 | Callback worklist: one caller's number at a time, logged first, gone when the window closes (P11) | Subsystem: Department Dashboard
+  Steps:
+    - Once after deploy: run `setup()`, set `CDR_IMPORT_SS_ID` (Operator State #95), then run `probeCallbackNumberLookup()` in the dashboard editor and read its VERDICT. Its log holds counts and call ids only -- no phone number.
+    - As the ADMIN, Admin ▾ → Callback worklist. It lists the callers who hung up in a queue over the last 14 days and have not been called back: the ones still inside the callback window first (fewest days left first), then the missed ones, newest first. No phone number is on the page. A line says how many numbers an hour you can show, and "Only admins can show numbers."
+    - Pick a recent row and press "Show number": after a few seconds the number appears with "logged" beside it. Open the row's "↳ path" and check it is that caller's call; confirm the number against 8x8 for one row.
+    - Open the `Callback Number Log` sheet: a new row has your address, role, the department, the call date, the call id and "shown" -- and no number anywhere on the sheet.
+    - A row older than about two weeks reads "No longer held" and has no button.
+    - Press Refresh, or close the window and open it again: the number you showed is gone and every row asks again.
+    - Print the page with a number showing (Ctrl+P preview): the number is not on the preview.
+    - Pick a department: only that department's callers remain; one with nobody waiting says so.
+    - "Allow managers" asks before it turns on; the line then reads "Managers can show numbers for their own department's callers." Turn it off again (no question asked) unless the owner has released it.
+    - As a MANAGER: no Callback worklist item in any menu. In the console, `google.script.run.withFailureHandler(function (e) { console.log(e.message); }).revealCallbackNumber({ callDate: '<a listed date>', callId: '<its call id>' })` is refused ("admin-only while it is being vetted"), and the log sheet gains no row.
+    - In the console as the admin, ask for a call that is NOT on the list (any other call id): refused as "not on the callback worklist", and the log sheet records "refused: not on the worklist".
+  Expected: as described; a number appears only in the one cell, only after a click, and only for a listed caller; the log sheet holds every lookup and never a number; nothing about the worklist is emailed or exported.
 

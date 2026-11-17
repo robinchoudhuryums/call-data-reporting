@@ -8918,6 +8918,13 @@ tr.subq-group-head.ob-group-head:hover td { background: var(--accent-soft); }
 .tr-took { font-weight: 600; }
 .tr-out--decline { color: var(--bad); font-weight: 600; }
 .tr-out--ok { color: var(--good); }
+/* P11 (owner 2026-11-17): the callback worklist. A shown number is the one
+   thing on this page that must never reach paper. */
+.cbw-num { font-family: var(--mono); font-weight: 600; white-space: nowrap; user-select: all; }
+.cbw-mgr .btn { margin-left: 6px; }
+.cbw-show, .cbw-mgr .btn { padding: 3px 10px; font-size: 12px; }
+.cbw-err { color: var(--bad); white-space: normal; max-width: 260px; }
+@media print { .cbw-num { display: none !important; } .cbw-phone::after { content: 'not printed'; } }
 /* P10 (owner 2026-11-13): was the person tried first free, or on another call?
    The columns exist only once at least one attempt is known (.tr-has-avail). */
 .tr-avail-col { display: none; }

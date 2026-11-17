@@ -369,6 +369,23 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       st.reviewed.unshift({ date: req.date, agent: req.agent, addedBy: 'admin@ums.com', addedAt: '2026-11-16T00:00:00Z' });
       return st;
     },
+    // P11: the callback worklist. The list is the REAL getCallbackWorklist
+    // payload (no number in it); a lookup answers one call at a time: the
+    // pending caller's number, "could not be confirmed" for the missed one,
+    // and the server's refusal when the driver sets window.__CBW_FAIL__.
+    getCallbackWorklist: function (req) {
+      var d = JSON.parse(JSON.stringify(P['callback-worklist']));
+      d.meta.managersMayReveal = !!window.__CBW_MGR__;
+      if (req && req.department) { d.meta.department = req.department; d.meta.companyView = false;
+        if (req.department !== 'CSR') d.rows = []; }
+      return d;
+    },
+    revealCallbackNumber: function (req) {
+      if (window.__CBW_FAIL__) throw new Error('That call is not on the callback worklist any more (it may have been called back). Refresh the list.');
+      if (req && req.callId === P['callback-worklist-ids'].missed) return { ok: false, state: 'unconfirmed' };
+      return { ok: true, state: 'found', number: '(214) 555-0101' };
+    },
+    setCallbackNumbersForManagers: function (on) { window.__CBW_MGR__ = on === true; return { managersMayReveal: on === true }; },
     // TR-1: the REAL getTransferRetries over gen-phase3's fake journeys; a
     // department pick filters the same cases the way the server does.
     getTransferRetriesInit: function () { return P['transfer-retries-init']; },

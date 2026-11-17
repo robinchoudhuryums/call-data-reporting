@@ -296,6 +296,7 @@ const SHEETS = Object.freeze({
   DASHBOARD_STANDARDS: 'Dashboard Standards',
   EXCEPTION_DAYS: 'Exception Days',
   PARTIAL_DAYS: 'Partial Days',
+  CALLBACK_NUMBER_LOG: 'Callback Number Log',
 });
 
 // Phase A (agent role, docs/agent-role-plan.md): Role + Agent Name are
@@ -377,6 +378,11 @@ const EXCEPTION_DAYS_HEADERS = Object.freeze(['Date', 'Departments', 'Reason', '
 // of PARTIAL_DAY_REASONS_ and never leaves the admin editor (managers and
 // agents see the mark, not why). The Date column is plain-text pinned.
 const PARTIAL_DAYS_HEADERS = Object.freeze(['Date', 'Agent', 'Credit', 'Reason', 'Added By', 'Added At']);
+// P11 (owner 2026-11-17): the audit trail of the callback worklist's phone-
+// number lookups (CallbackWorklist.gs) -- who asked, when, for which call, and
+// how it ended. It NEVER holds a number. Append-only; Call Date + Call ID are
+// plain-text pinned (a 13-digit id coerces to a Number otherwise).
+const CALLBACK_NUMBER_LOG_HEADERS = Object.freeze(['Timestamp', 'User', 'Role', 'Department', 'Call Date', 'Call ID', 'Result']);
 const PARTIAL_DAY_CREDITS_ = Object.freeze([0, 0.25, 0.5, 0.75]);
 const PARTIAL_DAY_REASONS_ = Object.freeze(['Partial shift', 'Training', 'Meeting', 'Leave', 'Other']);
 const PARTIAL_DAY_MIN_CREDITED_ = 1;
@@ -1028,6 +1034,8 @@ var PROP_REGISTRY_ = Object.freeze({
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     ALL_DEPT_NOTIFY_OPT_IN: 'operator',
     ORPHAN_IGNORE_NAMES: 'operator',   // DCA-7: the Outlier Fix "Not an agent" list (setOrphanIgnored)
+    // P11: the callback worklist's phone-number lookup (CallbackWorklist.gs, Operator State #95).
+    CDR_IMPORT_SS_ID: 'operator', CALLBACK_NUMBERS_MANAGERS: 'operator',
     // Step 5a (Notifications.gs): the manager layer's release switch, and the
     // stored stricter-only values (written by saveNotifyManagerRule).
     NOTIFY_MANAGER_EDIT: 'operator', NOTIFY_MANAGER_RULES: 'operator',

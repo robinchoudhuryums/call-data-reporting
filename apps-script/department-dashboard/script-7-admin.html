@@ -3900,6 +3900,198 @@
     trSetView_(TR_STATE_.view);
   }
 
+  // ── Callback worklist (P11, owner 2026-11-17) ─────────────────────────────
+  // The callers nobody has called back, and the ONE place a caller's phone
+  // number is shown. The list (getCallbackWorklist) never carries a number;
+  // "Show number" asks the server for ONE call (revealCallbackNumber), which
+  // re-checks the caller is still owed a call, counts the request against an
+  // hourly cap and logs it BEFORE it replies. Nothing here stores a number:
+  // it lives in one table cell and the table is emptied when the modal closes
+  // or reloads. Never add a number to a pref, a cache, an export or a title.
+  var CBW_STATE_ = { seq: 0, depts: false };
+  var CBW_WHY_ = { noTab: 'No longer held', notFound: 'Not found in that day’s calls', noNumber: 'No number on this call',
+                   unconfirmed: 'Could not be confirmed', notConfigured: 'Not set up', error: 'Lookup failed' };
+  function initCallbackWorklist_() {
+    const btn = $('callback-worklist-btn');
+    const modal = $('callback-worklist-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      cbwLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      cbwClear_();   // no number outlives the open window
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      returnFocusTo_(btn);   // F71: the opener may sit in a closed menu
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('cbw-run-btn')) $('cbw-run-btn').addEventListener('click', cbwLoad_);
+    if ($('cbw-dept')) $('cbw-dept').addEventListener('change', cbwLoad_);
+    if ($('cbw-mgr-btn')) $('cbw-mgr-btn').addEventListener('click', cbwToggleManagers_);
+    const tbody = $('cbw-tbody');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-cbw-id]') : null;
+      if (b) cbwReveal_(b);
+    });
+  }
+  function cbwClear_() {
+    CBW_STATE_.seq++;   // a reply still in flight has nowhere to land
+    const tb = $('cbw-tbody');
+    if (tb) tb.innerHTML = '';
+  }
+  function cbwStatus_(kind, text) {
+    const s = $('cbw-status');
+    if (!s) return;
+    s.className = 'status' + (kind === 'error' ? ' status-error' : '');
+    s.textContent = text || '';
+    s.style.display = text ? '' : 'none';
+  }
+  function cbwLoad_() {
+    cbwClear_();
+    const tok = CBW_STATE_.seq;
+    const dept = $('cbw-dept') ? $('cbw-dept').value : '';
+    const res = $('cbw-results');
+    cbwStatus_('', 'Loading…');
+    google.script.run
+      .withSuccessHandler(function (d) {
+        if (tok !== CBW_STATE_.seq) return;
+        cbwRender_(d || {});
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== CBW_STATE_.seq) return;
+        if (res) res.style.display = 'none';
+        cbwStatus_('error', 'Could not load: ' + ((err && err.message) || err));
+      })
+      .getCallbackWorklist({ department: dept });
+  }
+  function cbwPhoneCellHtml_(r, m) {
+    if (!m.canReveal) return '<span class="al-hint">Not available to you</span>';
+    if (!m.numbersConfigured) return '<span class="al-hint">' + escapeHtml(CBW_WHY_.notConfigured) + '</span>';
+    if (r.held === false) return '<span class="al-hint">' + escapeHtml(CBW_WHY_.noTab) + '</span>';
+    return '<button type="button" class="btn btn-secondary cbw-show" data-cbw-date="' + escapeHtml(r.callDate)
+      + '" data-cbw-id="' + escapeHtml(r.callId) + '">Show number</button>';
+  }
+  function cbwStatusHtml_(r) {
+    if (r.status !== 'pending') return '<span class="ds-chip ds-chip--bad">Missed</span>';
+    return '<span class="ds-chip ds-chip--warn">' + (r.awaitingData ? 'Waiting on calls not loaded yet'
+      : (r.daysLeft > 0 ? escapeHtml(String(r.daysLeft)) + ' day' + (r.daysLeft === 1 ? '' : 's') + ' left' : 'Last day')) + '</span>';
+  }
+  function cbwRender_(d) {
+    const m = d.meta || {};
+    const res = $('cbw-results');
+    if ($('cbw-days') && m.days) $('cbw-days').textContent = m.days;
+    const sel = $('cbw-dept');
+    if (sel && !CBW_STATE_.depts && (m.departments || []).length) {
+      CBW_STATE_.depts = true;
+      const cur = sel.value;
+      sel.innerHTML = (isAllDeptViewer_() ? '<option value="">All departments</option>' : '') + m.departments.map(function (x) {
+        return '<option value="' + escapeHtml(x) + '"' + (x === cur ? ' selected' : '') + '>' + escapeHtml(x) + '</option>';
+      }).join('');
+    }
+    // Admin-only: the managers' switch (the server sends it to admins alone).
+    const mg = $('cbw-mgr');
+    if (mg) {
+      const known = typeof m.managersMayReveal === 'boolean';
+      mg.style.display = known ? '' : 'none';
+      if (known) {
+        $('cbw-mgr-text').textContent = m.managersMayReveal
+          ? 'Managers can show numbers for their own department’s callers. '
+          : 'Only admins can show numbers. ';
+        const mb = $('cbw-mgr-btn');
+        mb.textContent = m.managersMayReveal ? 'Turn off for managers' : 'Allow managers';
+        mb.setAttribute('data-on', m.managersMayReveal ? '1' : '0');
+      }
+    }
+    if (m.available === false) {
+      if (res) res.style.display = 'none';
+      cbwStatus_('error', 'The callback list is unavailable right now (it is read from Neon, which is unreachable).');
+      return;
+    }
+    cbwStatus_('', '');
+    if (res) res.style.display = '';
+    const rows = d.rows || [];
+    const pending = rows.filter(function (r) { return r.status === 'pending'; }).length;
+    $('cbw-summary').innerHTML = rows.length
+      ? '<strong>' + escapeHtml(fmtNumber(rows.length)) + '</strong> caller' + (rows.length === 1 ? '' : 's') + ' not called back'
+        + (m.department ? ' (' + escapeHtml(m.department) + ')' : '') + ': ' + escapeHtml(fmtNumber(pending)) + ' still inside the '
+        + escapeHtml(String(m.callbackWindowDays || 3)) + '-day window, ' + escapeHtml(fmtNumber(rows.length - pending)) + ' already missed.'
+      : 'Nobody is waiting on a call back' + (m.department ? ' in ' + escapeHtml(m.department) : '') + ' in these dates.';
+    const notes = [];
+    if (m.canReveal && !m.numbersConfigured) notes.push('Phone numbers are not set up: the CDR_IMPORT_SS_ID property is missing or the import workbook cannot be opened.');
+    if (m.canReveal && m.numbersConfigured) notes.push('You can show up to ' + fmtNumber(m.revealCap || 0) + ' numbers an hour.');
+    if (m.truncated) notes.push('The list is long; the newest callers are shown.');
+    if (m.dataThrough) notes.push('Calls loaded through ' + m.dataThrough + '.');
+    const note = $('cbw-note');
+    if (note) { note.textContent = notes.join(' '); note.style.display = notes.length ? '' : 'none'; }
+    $('cbw-table').style.display = rows.length ? '' : 'none';
+    $('cbw-tbody').innerHTML = rows.map(function (r) {
+      return '<tr>'
+        + '<td>' + escapeHtml(r.firstIso || '') + '</td>'
+        + '<td class="num">' + escapeHtml(fmtNumber(r.attempts)) + '</td>'
+        + '<td>' + escapeHtml(r.callDate || '') + ' <span class="al-hint">' + escapeHtml(String(r.cstStart || '').slice(0, 5)) + '</span></td>'
+        + '<td>' + escapeHtml(r.entryQueue || '') + (r.dialIn ? ' <span class="al-hint">dialed ' + escapeHtml(String(r.dialIn)) + '</span>' : '') + '</td>'
+        + '<td>' + cbwStatusHtml_(r) + '</td>'
+        + '<td>' + parentIdBadge(r.callId, r.callDate, '', { neutral: true }) + '</td>'
+        + '<td class="cbw-phone">' + cbwPhoneCellHtml_(r, m) + '</td></tr>';
+    }).join('');
+    initClipboardOnce();
+  }
+  function cbwReveal_(btn) {
+    const cell = btn.closest('td');
+    const callDate = btn.getAttribute('data-cbw-date'), callId = btn.getAttribute('data-cbw-id');
+    const tok = CBW_STATE_.seq;
+    btn.disabled = true; btn.textContent = 'Looking up…';
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (tok !== CBW_STATE_.seq || !cell || !cell.isConnected) return;   // closed or reloaded: show nothing
+        if (r && r.ok && r.number) {
+          cell.innerHTML = '<span class="cbw-num">' + escapeHtml(String(r.number)) + '</span> <span class="al-hint cbw-logged">logged</span>';
+        } else {
+          cell.innerHTML = '<span class="al-hint">' + escapeHtml(CBW_WHY_[(r && r.state) || 'error'] || CBW_WHY_.error) + '</span>';
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== CBW_STATE_.seq || !cell || !cell.isConnected) return;
+        btn.disabled = false; btn.textContent = 'Show number';
+        let hint = cell.querySelector('.cbw-err');
+        if (!hint) { hint = document.createElement('div'); hint.className = 'al-hint cbw-err'; cell.appendChild(hint); }
+        hint.textContent = (err && err.message) || String(err);
+      })
+      .revealCallbackNumber({ department: $('cbw-dept') ? $('cbw-dept').value : '', callDate: callDate, callId: callId });
+  }
+  function cbwToggleManagers_() {
+    const mb = $('cbw-mgr-btn');
+    const turnOn = mb.getAttribute('data-on') !== '1';
+    const go = function () {
+      mb.disabled = true;
+      google.script.run
+        .withSuccessHandler(function () { mb.disabled = false; cbwLoad_(); })
+        .withFailureHandler(function (err) { mb.disabled = false; cbwStatus_('error', 'Could not change it: ' + ((err && err.message) || err)); })
+        .setCallbackNumbersForManagers(turnOn);
+    };
+    if (!turnOn) { go(); return; }
+    dsConfirm_({
+      title: 'Allow managers to show phone numbers?',
+      message: 'Each manager will be able to show the phone number of a caller their own department has not called back, one call at a time. Every time is logged. Managers still cannot see callbacks at all until the Outbound views are released to them.',
+      confirmLabel: 'Allow managers', tone: 'danger'
+    }).then(function (ok) { if (ok) go(); });
+  }
+
   // ── Exception days editor (owner 2026-10-22, #81) ─────────────────────────
   // Admin-only: the menu item is data-admin-only and every server call starts
   // with assertAdmin_. One row per date; Remove is dsConfirm_-gated because it
