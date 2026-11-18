@@ -4517,7 +4517,17 @@ When something looks wrong, before assuming a code bug, check:
     calls) or NOT CONFIGURED, with call-id samples of each failure. It shows
     nothing to anyone, so it writes no audit row. A POOR with everything
     "not confirmed" is a wrong or missing `HMAC_SECRET`. Each lookup costs
-    two Neon reads (the list, then one hash) and a few seconds. A change to
+    two Neon reads (the list, then one hash) and a few seconds.
+    **First live run (2026-11-18): GOOD, 51 of 51 found and confirmed -- but
+    6 min 23 s, about 7.5 s a call.** P11-S1 answered that: a lookup now asks
+    Sheets to SEARCH the day tab's two id columns (a text finder) instead of
+    pulling both columns, and reads the call's legs as one block instead of
+    one read per leg; the check itself reads the stored hashes once and each
+    day's id columns once, and logs how long it took. A search that finds
+    nothing falls back to the old scan, so the worst case is the old speed,
+    never a different answer. Each click logs `revealCallbackNumber: list
+    check N ms, lookup + audit N ms, <state>` (Executions) -- if a click is
+    still slow, that line says which half. A change to
     cdr-import's raw column layout (`IC_COL`) or to how it picks the caller
     is a two-project edit: `callback-worklist.test.js` fails on a moved
     column and on a hashed number that is not among the candidates.

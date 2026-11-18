@@ -46,6 +46,9 @@ var CBW_REVEAL_CAP_ = 40;
 var CBW_REVEAL_WINDOW_S_ = 3600;
 // A call's leg group is a handful of rows; refuse a runaway match.
 var CBW_MAX_LEGS_ = 80;
+// P11-S1: a call's legs are read as ONE block when they sit within this many
+// rows of each other (they nearly always do); further apart, one read per leg.
+var CBW_SPAN_MAX_ROWS_ = 3000;
 // The raw tab's columns this reads (cdr-import's IC_COL; parity-pinned by
 // callback-worklist.test.js -- a moved column there fails the suite here).
 var CBW_COL_ = { CALL_ID: 0, DIRECTION: 5, CALLER: 8, CALLEE: 10, PARENT_CALL_ID: 14 };
@@ -151,28 +154,71 @@ function cbwCandidateNumbers_(legs) {
   return out;
 }
 
-/**
- * The legs of ONE call in a raw tab: every row whose own call id or parent
- * call id is `callId` (the capture's root grouping). Reads the two id columns,
- * then only the matched rows. Returns [] when the call is not in the tab.
- */
-function cbwLegsOfCall_(sheet, callId) {
+/** A raw tab's data-row count and the width this reads, or null when it holds no usable rows. */
+function cbwTabDims_(sheet) {
   var last = sheet.getLastRow();
-  if (last < 2) return [];
+  if (last < 2) return null;
   var width = Math.min(sheet.getMaxColumns(), CBW_COL_.PARENT_CALL_ID + 1);
-  if (width <= CBW_COL_.CALLEE) return [];
-  var n = last - 1;
-  var own = sheet.getRange(2, CBW_COL_.CALL_ID + 1, n, 1).getDisplayValues();
-  var par = width > CBW_COL_.PARENT_CALL_ID ? sheet.getRange(2, CBW_COL_.PARENT_CALL_ID + 1, n, 1).getDisplayValues() : null;
-  var id = String(callId);
-  var hits = [];
-  for (var i = 0; i < n; i++) {
-    if (String(own[i][0]).trim() === id || (par && String(par[i][0]).trim() === id)) hits.push(i);
-    if (hits.length > CBW_MAX_LEGS_) break;
+  if (width <= CBW_COL_.CALLEE) return null;
+  return { n: last - 1, width: width };
+}
+
+/** The tab's two id columns as display text ({ own, par }) -- the whole-column read the search avoids. */
+function cbwIdColumns_(sheet, dims) {
+  return {
+    own: sheet.getRange(2, CBW_COL_.CALL_ID + 1, dims.n, 1).getDisplayValues(),
+    par: dims.width > CBW_COL_.PARENT_CALL_ID ? sheet.getRange(2, CBW_COL_.PARENT_CALL_ID + 1, dims.n, 1).getDisplayValues() : null
+  };
+}
+
+/**
+ * The 0-based data-row offsets of ONE call's legs: every row whose own call id
+ * or parent call id is `callId` (the capture's root grouping), ascending.
+ *
+ * P11-S1 (2026-11-18, from the first live run: ~7.5 s a lookup): the page asks
+ * Sheets to SEARCH the two id columns (a text finder, entire-cell) instead of
+ * pulling both columns here to scan them. A search that finds nothing -- or a
+ * finder that is not there -- falls back to the scan, which trims each cell,
+ * so "not in its tab" is still decided by the same rule as before. `cols` (the
+ * feasibility check passes it) is a tab's id columns already read once.
+ */
+function cbwFindLegRows_(sheet, callId, dims, cols) {
+  var id = String(callId), seen = {}, out = [];
+  var add = function (i) { if (!seen[i]) { seen[i] = true; out.push(i); } };
+  if (!cols) {
+    try {
+      [CBW_COL_.CALL_ID, CBW_COL_.PARENT_CALL_ID].forEach(function (c) {
+        if (c >= dims.width) return;
+        sheet.getRange(2, c + 1, dims.n, 1).createTextFinder(id).matchEntireCell(true).findAll()
+          .forEach(function (r) { add(r.getRow() - 2); });
+      });
+    } catch (e) { seen = {}; out = []; }
+    if (!out.length) cols = cbwIdColumns_(sheet, dims);
   }
-  return hits.slice(0, CBW_MAX_LEGS_).map(function (i) {
-    return sheet.getRange(i + 2, 1, 1, width).getDisplayValues()[0];
-  });
+  if (cols) {
+    for (var i = 0; i < dims.n; i++) {
+      if (String(cols.own[i][0]).trim() === id || (cols.par && String(cols.par[i][0]).trim() === id)) add(i);
+    }
+  }
+  return out.sort(function (x, y) { return x - y; });
+}
+
+/**
+ * The legs of ONE call in a raw tab, in row order ([] when the call is not in
+ * the tab). The rows are read as one block when they sit close together, so a
+ * twelve-leg call is one read, not twelve.
+ */
+function cbwLegsOfCall_(sheet, callId, cols) {
+  var dims = cbwTabDims_(sheet);
+  if (!dims) return [];
+  var hits = cbwFindLegRows_(sheet, callId, dims, cols).slice(0, CBW_MAX_LEGS_);
+  if (!hits.length) return [];
+  var lo = hits[0], hi = hits[hits.length - 1];
+  if (hi - lo + 1 <= CBW_SPAN_MAX_ROWS_) {
+    var block = sheet.getRange(lo + 2, 1, hi - lo + 1, dims.width).getDisplayValues();
+    return hits.map(function (i) { return block[i - lo]; });
+  }
+  return hits.map(function (i) { return sheet.getRange(i + 2, 1, 1, dims.width).getDisplayValues()[0]; });
 }
 
 /** PURE. "+15551234567" -> "(555) 123-4567"; anything else as it is. */
@@ -183,22 +229,34 @@ function cbwFormatNumber_(n) {
   return String(n || '');
 }
 
-/** The stored caller_hash of one inbound call, or null (no row / anonymous / unreadable). */
-function cbwStoredHash_(callDate, callId) {
+/**
+ * The stored caller_hash of each (callDate, callId) pair, as { 'date|id': hash }
+ * -- ONE statement however many calls are asked for (the feasibility check asks
+ * for the whole worklist at once; a lookup asks for one). A call with no row or
+ * no hash is simply absent. Returns {} when Neon cannot be read.
+ */
+function cbwStoredHashes_(pairs) {
+  var out = {};
+  if (!pairs || !pairs.length) return out;
   var conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) return null;
-    var stmt = conn.prepareStatement('SELECT caller_hash AS h FROM inbound_calls WHERE call_date = ?::date AND call_id = ?');
-    stmt.setString(1, callDate); stmt.setString(2, callId);
+    if (!conn) return out;
+    var stmt = conn.prepareStatement(
+      "SELECT COALESCE(json_agg(json_build_array(c.call_date::text, c.call_id, c.caller_hash)), '[]')::text AS j "
+      + "FROM inbound_calls c JOIN (SELECT DISTINCT (x->>0)::date AS dt, x->>1 AS id FROM json_array_elements(?::json) x) p "
+      + "ON c.call_date = p.dt AND c.call_id = p.id WHERE c.caller_hash IS NOT NULL");
+    stmt.setString(1, JSON.stringify(pairs));
     var rs = stmt.executeQuery();
-    var h = rs.next() ? rs.getString('h') : null;
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(h ? String(h).length : 0, 'callback-worklist');
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'callback-worklist');
     rs.close(); stmt.close();
-    return h ? String(h) : null;
+    var rows = JSON.parse(json || '[]');
+    (Array.isArray(rows) ? rows : []).forEach(function (r) { if (r && r[2]) out[r[0] + '|' + r[1]] = String(r[2]); });
+    return out;
   } catch (e) {
-    Logger.log('Callback worklist: the stored caller hash could not be read: ' + (e && e.message ? e.message : e));
-    return null;
+    Logger.log('Callback worklist: the stored caller hashes could not be read: ' + (e && e.message ? e.message : e));
+    return {};
   } finally {
     try { if (conn) conn.close(); } catch (ce) {}
   }
@@ -209,19 +267,33 @@ function cbwStoredHash_(callDate, callId) {
  * state is: found | notConfigured | noTab | notFound | noNumber |
  * unconfirmed. `number` is set ONLY for `found`, and only when its HMAC
  * equals the call's stored caller_hash. Never logs or stores a number.
+ * `shared` (the feasibility check only) carries reads worth making once for
+ * many calls: { hashes: cbwStoredHashes_'s map, tabs: {} (filled here, one
+ * entry per date: the sheet and its two id columns) }.
  */
-function cbwResolveNumber_(callDate, callId, ss) {
+function cbwResolveNumber_(callDate, callId, ss, shared) {
   var book = ss || cbwOpenImport_();
   if (!book) return { state: 'notConfigured' };
-  var sheet = book.getSheetByName(CBW_TAB_PREFIX_ + callDate);
-  if (!sheet) return { state: 'noTab' };
-  var legs = cbwLegsOfCall_(sheet, callId);
+  var tab = shared && shared.tabs ? shared.tabs[callDate] : null;
+  if (!tab) {
+    var sh = book.getSheetByName(CBW_TAB_PREFIX_ + callDate);
+    tab = { sheet: sh || null, cols: null };
+    if (shared && shared.tabs) {
+      var dims = sh ? cbwTabDims_(sh) : null;
+      if (dims) tab.cols = cbwIdColumns_(sh, dims);
+      shared.tabs[callDate] = tab;
+    }
+  }
+  if (!tab.sheet) return { state: 'noTab' };
+  var legs = cbwLegsOfCall_(tab.sheet, callId, tab.cols);
   if (!legs.length) return { state: 'notFound' };
   var cands = cbwCandidateNumbers_(legs);
   if (!cands.length) return { state: 'noNumber' };
   var secret = null;
   try { secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET'); } catch (e) { secret = null; }
-  var stored = secret ? cbwStoredHash_(callDate, callId) : null;
+  var key = callDate + '|' + callId;
+  var stored = !secret ? null
+    : ((shared && shared.hashes) ? (shared.hashes[key] || null) : (cbwStoredHashes_([[callDate, callId]])[key] || null));
   if (!secret || !stored) return { state: 'unconfirmed' };
   for (var i = 0; i < cands.length; i++) {
     if (callerLookupHashPhone_(cands[i], secret) === stored) return { state: 'found', number: cands[i] };
@@ -332,6 +404,7 @@ function revealCallbackNumber(req) {
   if (!isIsoDate_(callDate)) throw new Error('callDate must be YYYY-MM-DD.');
   if (!/^[A-Za-z0-9._\-]{1,64}$/.test(callId)) throw new Error('That call id is not valid.');
   cbwAssertRevealCap_(user.email);
+  var t0 = Date.now();
 
   // SCOPE, re-derived now: the call must be an attempt of an episode nobody
   // has called back, in a department this user may see.
@@ -348,6 +421,7 @@ function revealCallbackNumber(req) {
     throw new Error('That call is not on the callback worklist any more (it may have been called back). Refresh the list.');
   }
 
+  var t1 = Date.now();
   var res;
   try { res = cbwResolveNumber_(callDate, callId); }
   catch (e) {
@@ -360,6 +434,8 @@ function revealCallbackNumber(req) {
     Logger.log('revealCallbackNumber: the audit row could not be written, so nothing is shown: ' + (le && le.message ? le.message : le));
     throw new Error('This request could not be logged, so the number is not shown. Try again, or tell an admin.');
   }
+  // P11-S1: where a slow click spends its time (the state only -- never the value).
+  Logger.log('revealCallbackNumber: list check ' + (t1 - t0) + ' ms, lookup + audit ' + (Date.now() - t1) + ' ms, ' + res.state);
   if (res.state !== 'found') return { ok: false, state: res.state };
   return { ok: true, state: 'found', number: cbwFormatNumber_(res.number) };
 }
@@ -400,8 +476,11 @@ function probeCallbackNumberLookup() {
     Logger.log('probeCallbackNumberLookup: the callback list could not be read (Neon unreachable?).');
     return out;
   }
+  var t0 = Date.now();
   var rows = cbwRowsFrom_(resp, cbwHeldDates_(ss));
   out.rows = rows.length;
+  // P11-S1: the stored hashes in ONE read, and each day's id columns once.
+  var shared = { hashes: cbwStoredHashes_(rows.map(function (r) { return [r.callDate, r.callId]; })), tabs: {} };
   var bump = function (state, r) {
     out.counts[state] = (out.counts[state] || 0) + 1;
     if (state !== 'found') {
@@ -411,7 +490,7 @@ function probeCallbackNumberLookup() {
   };
   rows.forEach(function (r) {
     var res;
-    try { res = cbwResolveNumber_(r.callDate, r.callId, ss); } catch (e) { res = { state: 'error' }; }
+    try { res = cbwResolveNumber_(r.callDate, r.callId, ss, shared); } catch (e) { res = { state: 'error' }; }
     bump(res.state, r);
   });
   var held = rows.length - (out.counts.noTab || 0);
@@ -426,6 +505,8 @@ function probeCallbackNumberLookup() {
   L.push('Not shown: call not in its tab ' + (out.counts.notFound || 0) + ', no outside number on the call ' + (out.counts.noNumber || 0)
     + ', not confirmed against the stored hash ' + (out.counts.unconfirmed || 0) + ', lookup error ' + (out.counts.error || 0) + '.');
   Object.keys(out.samples).forEach(function (k) { L.push('  ' + k + ' samples (date, call id): ' + out.samples[k].join(' | ')); });
+  out.seconds = Math.round((Date.now() - t0) / 100) / 10;
+  L.push('Took ' + out.seconds + ' s for ' + rows.length + ' calls (the check shares its reads; one click on the page reads one call).');
   if ((out.counts.unconfirmed || 0) === held && held) L.push('NOTE: nothing was confirmed -- check HMAC_SECRET on the dashboard matches cdr-import (Operator State #17).');
   Logger.log(L.join('\n'));
   return out;

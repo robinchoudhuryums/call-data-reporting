@@ -77,6 +77,35 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       return sliceGrid(sheet._data, startRow, startCol, numRows, numCols);
     },
     getValue: function () { return this.getValues()[0][0]; },
+    getRow: function () { return startRow; },
+    getColumn: function () { return startCol; },
+    // Real Range.createTextFinder, modelled for what the code under test uses
+    // (P11-S1): it searches the DISPLAYED text of the range's cells, as a
+    // case-insensitive substring by default; matchEntireCell(true) /
+    // matchCase(true) tighten it (an entire-cell match does NOT trim, as in
+    // Sheets); findAll() returns one single-cell range per match in row-major
+    // order. Each findAll is counted on sheet._finderCalls.
+    createTextFinder: function (text) {
+      const range = this;
+      let entire = false, mcase = false;
+      const finder = {
+        matchEntireCell: function (b) { entire = !!b; return finder; },
+        matchCase: function (b) { mcase = !!b; return finder; },
+        findAll: function () {
+          sheet._finderCalls = (sheet._finderCalls || 0) + 1;
+          const want = mcase ? String(text) : String(text).toLowerCase();
+          const out = [];
+          range.getDisplayValues().forEach(function (row, r) {
+            row.forEach(function (cell, c) {
+              const v = mcase ? String(cell) : String(cell).toLowerCase();
+              if (entire ? v === want : v.indexOf(want) !== -1) out.push(makeFakeRange(sheet, startRow + r, startCol + c, 1, 1));
+            });
+          });
+          return out;
+        },
+      };
+      return finder;
+    },
     // Real setValue writes the ONE value into EVERY cell of the range.
     setValue: function (v) {
       const grid = [];
