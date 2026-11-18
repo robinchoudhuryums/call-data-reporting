@@ -88,6 +88,7 @@ function uncalled(over) {
 }
 
 let stored = {};      // 'date|id' -> the call's stored caller_hash
+let hashQueries = []; // every stored-hash read: { sql, p }
 let uncalledCalls = [];
 function install(email, opts) {
   opts = opts || {};
@@ -116,11 +117,18 @@ function install(email, opts) {
   stored[D2 + '|9002'] = hashOf('+14695550202');
   uncalledCalls = [];
   h.ctx.getOutboundUncalled = function (req) { uncalledCalls.push(J(req)); return (opts.uncalled || uncalled)(); };
+  hashQueries = [];
   h.ctx.getDashboardNeonConn_ = function () {
     return { prepareStatement: function (sql) { const p = [];
       return { setString: function (i, v) { p[i - 1] = v; },
-        executeQuery: function () { let used = false; const v = stored[p[0] + '|' + p[1]];
-          return { next: () => { if (used || v == null) return false; used = true; return true; }, getString: () => v, close: () => {} }; },
+        executeQuery: function () {
+          // cbwStoredHashes_: the (date, id) pairs arrive as ONE bound JSON
+          // parameter; the reply is [[date, id, hash], ...] for the pairs stored.
+          hashQueries.push({ sql: sql, p: p.slice() });
+          const pairs = JSON.parse(p[0] || '[]');
+          const rows = pairs.filter((x) => stored[x[0] + '|' + x[1]] != null).map((x) => [x[0], x[1], stored[x[0] + '|' + x[1]]]);
+          let used = false;
+          return { next: () => { if (used) return false; used = true; return true; }, getString: () => JSON.stringify(rows), close: () => {} }; },
         close: () => {} }; }, close: () => {} };
   };
 }
@@ -306,6 +314,86 @@ test('P11: PARITY -- the number the import hashed for a call is always among the
   Object.keys(CB).forEach((k) => assert.equal(CB[k], IC[k], 'column ' + k + ' is where the import reads it'));
   // And the hash rule is the import's: the same number, the same digest.
   assert.equal(hashOf('+12145550101'), imp.call('cdrHashPhone_', '+12145550101', SECRET));
+});
+
+// ── P11-S1 (2026-11-18): the first live run took ~7.5 s a lookup ─────────────
+// Each lookup pulled both id columns of the day's tab and then read every leg
+// row with its own call. It now SEARCHES the two columns and reads the legs as
+// one block; the feasibility check shares one hash read and each day's columns.
+function watchReads(sheet) {
+  const reads = [];
+  const real = sheet.getRange;
+  sheet.getRange = function (r, c, nr, nc) {
+    const range = real.apply(sheet, arguments);
+    const disp = range.getDisplayValues;
+    range.getDisplayValues = function () { reads.push([r, c, nr || 1, nc || 1]); return disp.apply(range, arguments); };
+    return range;
+  };
+  return reads;
+}
+const tabOf = (iso) => h.state.spreadsheetsById[IMPORT_ID].getSheetByName('Call_Legs_' + iso);
+
+test('P11-S1: a lookup searches the id columns instead of reading them, and reads the call\'s legs as one block', function () {
+  install('admin@x.com');
+  const sheet = tabOf(D1);
+  const n = sheet.getLastRow() - 1;
+  const reads = watchReads(sheet);
+  assert.equal(h.call('revealCallbackNumber', { callDate: D1, callId: '9002' }).number, '(469) 555-0202');
+  assert.equal(sheet._finderCalls, 2, 'one search per id column');
+  // (the fake's finder reads its own range; the code under test must not)
+  const blocks = reads.filter((x) => x[3] > 1);
+  assert.deepEqual(blocks, [[4, 1, 2, 15]], 'the two legs (rows 4-5) in ONE read, 15 columns wide');
+  assert.equal(reads.filter((x) => x[3] === 1 && x[2] === n).length, 2, 'only the two searches touched a whole column');
+  // The same answer when the legs are too far apart for one block: one read per leg.
+  install('admin@x.com');
+  h.ctx.CBW_SPAN_MAX_ROWS_ = 1;
+  const far = watchReads(tabOf(D1));
+  try { assert.equal(h.call('revealCallbackNumber', { callDate: D1, callId: '9002' }).number, '(469) 555-0202'); }
+  finally { h.ctx.CBW_SPAN_MAX_ROWS_ = 3000; }
+  assert.deepEqual(far.filter((x) => x[3] > 1), [[4, 1, 1, 15], [5, 1, 1, 15]]);
+  // One stored-hash read per lookup, the pair bound as a parameter.
+  assert.equal(hashQueries.length, 1);
+  assert.match(hashQueries[0].sql, /FROM inbound_calls c JOIN \(SELECT DISTINCT \(x->>0\)::date AS dt, x->>1 AS id FROM json_array_elements\(\?::json\) x\) p ON c\.call_date = p\.dt AND c\.call_id = p\.id WHERE c\.caller_hash IS NOT NULL$/);
+  assert.deepEqual(hashQueries[0].p, [JSON.stringify([[D1, '9002']])]);
+  assert.ok(hashQueries[0].sql.indexOf('9002') === -1, 'the call id is never SQL text');
+});
+
+test('P11-S1: a search that finds nothing, or no finder at all, falls back to the scan -- the answer never changes', function () {
+  // A padded id cell: an entire-cell search misses it, the trimming scan does not.
+  install('admin@x.com');
+  let sheet = tabOf(D1);
+  sheet._data[1][0] = ' 9001 '; sheet._data[2][0] = ' 9001 ';
+  let reads = watchReads(sheet);
+  assert.equal(h.call('revealCallbackNumber', { callDate: D1, callId: '9001' }).number, '(214) 555-0101');
+  assert.equal(sheet._finderCalls, 2);
+  assert.ok(reads.length >= 5, 'the search, then the scan of both columns, then the block');
+  // A sheet whose ranges have no text finder (an API that throws): the scan alone.
+  install('admin@x.com');
+  sheet = tabOf(D1);
+  const real = sheet.getRange;
+  sheet.getRange = function () { const r = real.apply(sheet, arguments); r.createTextFinder = function () { throw new Error('Service error: Spreadsheets'); }; return r; };
+  assert.equal(h.call('revealCallbackNumber', { callDate: D1, callId: '9002' }).number, '(469) 555-0202');
+  // A call that is not in its tab is still "not found" -- decided by the scan.
+  install('admin@x.com', { uncalled: () => uncalled({ episodes: [{ firstIso: D1, status: 'missed', attempts: [{ callDate: D1, callId: '7777' }], late: {} }] }) });
+  assert.equal(h.call('revealCallbackNumber', { callDate: D1, callId: '7777' }).state, 'notFound');
+  // A substring is never a match: 900 is not call 9001, in the search or the scan.
+  assert.equal(h.call('cbwLegsOfCall_', tabOf(D1), '900').length, 0);
+  assert.equal(h.call('cbwLegsOfCall_', tabOf(D1), '9001').length, 2);
+});
+
+test('P11-S1: the feasibility check reads the stored hashes once and each day\'s id columns once', function () {
+  const many = () => uncalled({ episodes: Array.from({ length: 12 }, (_, i) => ({ firstIso: D1, status: 'missed', attempts: [{ callDate: i % 3 ? D1 : D2, callId: i % 2 ? '9001' : '9002' }], late: {} })) });
+  install('admin@x.com', { uncalled: many });
+  stored[D2 + '|9001'] = hashOf('+12145550101');
+  const r1 = watchReads(tabOf(D1)), r2 = watchReads(tabOf(D2));
+  const out = J(h.call('probeCallbackNumberLookup'));
+  assert.deepEqual([out.verdict, out.counts.found, out.rows], ['GOOD', 12, 12]);
+  assert.equal(hashQueries.length, 1, 'one Neon read for all twelve calls');
+  assert.equal(JSON.parse(hashQueries[0].p[0]).length, 12);
+  const cols = (reads) => reads.filter((x) => x[3] === 1 && x[2] > 1).length;
+  assert.deepEqual([cols(r1), cols(r2)], [2, 2], 'each day: its two id columns, once');
+  assert.equal((tabOf(D1)._finderCalls || 0) + (tabOf(D2)._finderCalls || 0), 0, 'the check scans the columns it already holds');
+  assert.equal(typeof out.seconds, 'number');
 });
 
 test('P11: the feasibility check logs counts only, writes nothing, and reads its verdict from confirmed numbers', function () {
