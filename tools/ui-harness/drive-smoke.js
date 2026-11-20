@@ -1473,6 +1473,61 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
         } else {
           record('admin: Step 3 a brief row opens its section in place under the row (chart drawn, focus kept)', false, 'no trend row');
         }
+        // MD3 (owner 2026-11-20): ONE trend chart. The Team row shows it By
+        // agent (above the gap bars), the Trend row as the Team total; with
+        // both open it sits in the row opened last and the other offers it
+        // back; a row that closes hands it over. Both rows end closed.
+        {
+          const md3 = function () {
+            return page.evaluate(function () {
+              const vis = function (el) { return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none'; };
+              const w = document.getElementById('ins-trend-wrap');
+              const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ins-trend-chart') : null;
+              const sets = ch ? ch.data.datasets : [];
+              const scope = Array.from(document.querySelectorAll('#ins-trend-scope .seg-btn'))
+                .filter(function (b) { return b.classList.contains('active'); }).map(function (b) { return b.getAttribute('data-scope'); }).join(',');
+              return {
+                host: (w && w.parentNode && w.parentNode.id) || '', wraps: document.querySelectorAll('#ins-trend-wrap').length,
+                width: ch ? ch.width : 0, agentLines: sets.filter(function (d) { return d._agent; }).length,
+                ref: sets.filter(function (d) { return d._ref; }).length, scope: scope,
+                awayAgents: vis(document.getElementById('ins-trend-away-agents')), awayTrend: vis(document.getElementById('ins-trend-away-trend')),
+                monthly: vis(document.getElementById('ins-trend-view-toggle')), render: vis(document.getElementById('ins-trend-render-toggle')),
+                basis: vis(document.getElementById('ins-cards-chart-mode')),
+                gapAboveChart: !!(w && document.getElementById('ins-cards-chart')
+                  && (w.compareDocumentPosition(document.getElementById('ins-cards-chart')) & Node.DOCUMENT_POSITION_FOLLOWING)),
+              };
+            });
+          };
+          const rowClick = async function (key) {
+            await page.evaluate(function (k) {
+              const b = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="' + k + '"]');
+              if (b) b.click();
+            }, key);
+            await page.waitForTimeout(900);
+          };
+          await rowClick('agents');
+          const t1 = await md3();
+          record('admin: MD3 the Team row opens the trend chart By agent, above the gap bars (agent lines + a dashed team reference, monthly only)',
+            t1.wraps === 1 && t1.host === 'ins-trend-host-agents' && t1.scope === 'agent' && t1.width > 0 && t1.agentLines >= 2
+              && t1.ref === 1 && !t1.monthly && !t1.render && !t1.basis && t1.gapAboveChart && !t1.awayAgents,
+            JSON.stringify(t1));
+          await rowClick('trend');
+          const t2 = await md3();
+          record('admin: MD3 the Trend row takes the chart as the Team total; the Team row says where it went and offers it back',
+            t2.host === 'ins-trend-host-trend' && t2.scope === 'team' && t2.width > 0 && t2.agentLines === 0 && t2.ref === 0
+              && t2.render && t2.awayAgents && !t2.awayTrend,
+            JSON.stringify(t2));
+          await page.evaluate(function () { const b = document.querySelector('[data-trend-claim="agents"]'); if (b) b.click(); });
+          await page.waitForTimeout(700);
+          const t3 = await md3();
+          record('admin: MD3 "Show it here, by agent" brings the chart back to the Team row',
+            t3.host === 'ins-trend-host-agents' && t3.scope === 'agent' && t3.agentLines >= 2 && t3.awayTrend && !t3.awayAgents, JSON.stringify(t3));
+          await rowClick('agents');   // closes Team while it holds the chart; Trend is still open
+          const t4 = await md3();
+          record('admin: MD3 closing the row that holds the chart hands it to the other open row',
+            t4.host === 'ins-trend-host-trend' && t4.scope === 'team' && t4.width > 0 && !t4.awayTrend, JSON.stringify(t4));
+          await rowClick('trend');
+        }
         // The brief follows the page's dates even with the bottom region
         // COLLAPSED (it used to freeze on the old window until reopened).
         {
@@ -1556,6 +1611,40 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           await page.waitForTimeout(800);
         }
       } else {
+        // MD3: with no brief the ONE trend chart stays in the Trends fold and
+        // the switch alone picks the scope. Left as found (fold shut, Team total).
+        {
+          const read = function () {
+            return page.evaluate(function () {
+              const vis = function (el) { return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none'; };
+              const w = document.getElementById('ins-trend-wrap');
+              const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ins-trend-chart') : null;
+              const sets = ch ? ch.data.datasets : [];
+              return { host: (w && w.parentNode && w.parentNode.id) || '', width: ch ? ch.width : 0,
+                agentLines: sets.filter(function (d) { return d._agent; }).length, ref: sets.filter(function (d) { return d._ref; }).length,
+                sw: vis(document.getElementById('ins-trend-scope')), basis: vis(document.getElementById('ins-cards-chart-mode')),
+                hostAgentsEmpty: !document.getElementById('ins-trend-host-agents').firstElementChild,
+                away: vis(document.getElementById('ins-trend-away-agents')) || vis(document.getElementById('ins-trend-away-trend')),
+                header: ((document.getElementById('ins-trend-header') || {}).textContent || '') };
+            });
+          };
+          const wasOpen = await page.evaluate(function () { const f = document.getElementById('ins-trend-fold'); const o = f.open; f.open = true; return o; });
+          await page.waitForTimeout(800);
+          const m1 = await read();
+          await page.evaluate(function () { document.querySelector('#ins-trend-scope .seg-btn[data-scope="agent"]').click(); });
+          await page.waitForTimeout(700);
+          const m2 = await read();
+          await page.evaluate(function () { document.querySelector('#ins-trend-scope .seg-btn[data-scope="team"]').click(); });
+          await page.waitForTimeout(700);
+          const m3 = await read();
+          record(role + ': MD3 the Trends fold holds the one chart; the switch draws By agent (agent lines + the team reference) and back; the Agents fold has no Trend basis',
+            m1.host === 'ins-trend-host-trend' && m1.sw && m1.width > 0 && m1.agentLines === 0 && m1.hostAgentsEmpty && !m1.away && !m1.basis
+              && m2.agentLines >= 2 && m2.ref === 1 && /by agent/.test(m2.header) && m2.host === 'ins-trend-host-trend'
+              && m3.agentLines === 0 && /team trend/.test(m3.header),
+            JSON.stringify({ m1: m1, m2: m2, m3: m3 }));
+          if (!wasOpen) await page.evaluate(function () { document.getElementById('ins-trend-fold').open = false; });
+          await page.waitForTimeout(300);
+        }
         record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
           ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));
         record(role + ': UX-2 no brief for a manager, and the headline banner stays',

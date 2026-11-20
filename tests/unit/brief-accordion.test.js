@@ -414,3 +414,131 @@ test('IC-3: a brief row slides open AND shut on a user toggle; a rebuild and red
   assert.match(extractFn(S8, 'insBriefReducedMotion_'), /prefers-reduced-motion: reduce/);
   assert.ok(/insBriefApply_\(key\);/.test(S8), 'the rebuild path restores rows without animating');
 });
+
+// ---- MD3 (owner 2026-11-20): ONE trend chart, "Team total / By agent" ------
+//
+// THE RULE: the Agents fold's per-agent "Trend" basis and the Trends fold's
+// team line are ONE chart (#ins-trend-wrap) with a scope switch. In the brief
+// accordion the row a viewer opens takes the chart -- Team shows it By agent,
+// Trend shows it as the Team total -- and with no brief it stays in the Trends
+// fold. The pure rules are driven here; the moves are RENDERED by drive-smoke.
+
+const lift = function (name) {
+  // eslint-disable-next-line no-new-func
+  return new Function('return (' + extractFn(S8, name) + ');')();
+};
+
+test('MD3: the row a viewer opens takes the chart; a closing row hands it to the other only if that one is open', function () {
+  const taker = lift('insTrendRowTaker_');
+  assert.equal(taker('agents', true, 'trend', false), 'agents', 'opening Team takes it');
+  assert.equal(taker('trend', true, 'agents', true), 'trend', 'opening Trend takes it, even from an open Team row');
+  assert.equal(taker('agents', false, 'agents', true), 'trend', 'Team closes while holding it and Trend is open: Trend gets it');
+  assert.equal(taker('trend', false, 'trend', true), 'agents', 'and the other way round');
+  assert.equal(taker('agents', false, 'agents', false), null, 'nobody is open to take it: it stays where it is');
+  assert.equal(taker('agents', false, 'trend', true), null, 'a row that does not hold the chart closes without moving it');
+  const scope = lift('insTrendScopeForRow_');
+  assert.equal(scope('agents'), 'agent', 'the Team row opens on By agent');
+  assert.equal(scope('trend'), 'team', 'the Trend row opens on Team total');
+  const tog = extractFn(S8, 'insBriefToggle_');
+  assert.ok(tog.indexOf('insTrendOnRowToggle_(key, INS_BRIEF_OPEN_[key])') < tog.indexOf('insBriefApply_(key, true)'),
+    'the chart is claimed before the row opens, so the section\'s draw-on-open finds it in place');
+  assert.match(tog, /if \(key === 'agents' \|\| key === 'trend'\)/, 'only the two rows that share the chart');
+  // A claim sets the scope and redraws; it never writes the saved scope.
+  const claim = extractFn(S8, 'insTrendClaim_');
+  assert.match(claim, /insTrendScope = insTrendScopeForRow_\(owner\);/);
+  assert.match(claim, /insDrawTrendChart_\(insLastData\)/, 'a moved canvas is redrawn, not resized');
+  assert.ok(!/insSavePrefs_/.test(claim), 'the saved scope belongs to the switch');
+  assert.match(S8, /insTrendScope = next;\s*insTrendScopePref_ = next;\s*insSavePrefs_\(\);/, 'a click on the switch is saved');
+  assert.ok(!/insTrendScopePref_/.test(claim), 'a row never changes the saved scope');
+  assert.match(extractFn(S8, 'insSavePrefs_'), /trendScope: insTrendScopePref_,/,
+    'any later prefs save (a sort change, say) writes the CHOSEN scope, not the one a row put on screen');
+});
+
+test('MD3: with no brief the chart goes home to the Trends fold; the notes show only in the accordion', function () {
+  const r = extractFn(S8, 'insRenderBrief_');
+  const gone = r.slice(r.indexOf('if (!insBriefActive_()'), r.indexOf("box.style.display = 'none'"));
+  assert.match(gone, /insTrendMoveTo_\('trend'\);/, 'a manager / View-as never has the chart in the Agents fold');
+  assert.match(gone, /insTrendScope = insTrendScopePref_;/, 'and sees the scope the viewer chose, not the one a row left');
+  // The notes follow every mount and unmount (Print unmounts and remounts on its own).
+  assert.match(extractFn(S8, 'insBriefMountAll_'), /insTrendAwaySync_\(\);/);
+  assert.match(extractFn(S8, 'insBriefUnmountAll_'), /insTrendAwaySync_\(\);/);
+  assert.match(extractFn(S8, 'insTrendAwaySync_'), /note\.hidden = !\(k !== owner && fold && insBriefMounted_\(fold\)\);/);
+  // The draw-on-open gate follows the fold HOLDING the chart.
+  assert.match(extractFn(S8, 'insTrendChartOpen_'), /insFoldOpen_\(\(f && f\.getAttribute\('data-fold'\)\) \|\| 'trend'\)/);
+  assert.ok(!/insFoldOpen_\('trend'\)/.test(S8), 'no draw gate still asks about the Trends fold by name');
+  assert.match(S8, /if \(fold\.open && insLastData && fold === insTrendHostFold_\(\)\) insDrawTrendChart_\(insLastData\);/);
+});
+
+test('MD3: markup -- one chart, a host in each section, the switch, and no Trend basis left in the Agents fold', function () {
+  assert.equal((HTML.match(/id="ins-trend-wrap"/g) || []).length, 1, 'ONE chart element');
+  assert.equal((HTML.match(/id="ins-trend-chart"/g) || []).length, 1);
+  const agents = HTML.slice(HTML.indexOf('<details id="ins-agents-fold"'), HTML.indexOf('<!-- /Agents fold -->'));
+  const trends = HTML.slice(HTML.indexOf('<details id="ins-trend-fold"'), HTML.indexOf('<!-- /Trends fold -->'));
+  assert.match(agents, /id="ins-trend-host-agents" class="ins-trend-host"><\/div>/, 'an EMPTY host: the chart starts at home');
+  assert.ok(agents.indexOf('id="ins-trend-host-agents"') < agents.indexOf('Per-agent comparison'), 'above the gap bars');
+  assert.ok(!/data-mode="trend"/.test(agents), 'the Trend basis button is gone');
+  assert.match(agents, /data-mode="gap"/, 'the gap bars stay');
+  const host = trends.indexOf('id="ins-trend-host-trend"');
+  assert.ok(host > 0 && trends.indexOf('id="ins-trend-wrap"') > host, 'the chart\'s home is the Trends fold');
+  assert.match(trends, /id="ins-trend-scope"[\s\S]*?data-scope="team"[^>]*>Team total<[\s\S]*?data-scope="agent"[^>]*>By agent</);
+  const sel = trends.slice(trends.indexOf('id="ins-trend-agent-metric"'));
+  assert.deepEqual((sel.slice(0, sel.indexOf('</select>')).match(/value="(\w+)"/g) || []).join(','),
+    'value="answered",value="missed",value="pct"', 'By agent offers the three agent metrics');
+  ['agents', 'trend'].forEach(function (k) {
+    assert.match(HTML, new RegExp('id="ins-trend-away-' + k + '" class="ins-trend-away" hidden>[\\s\\S]{0,160}data-trend-claim="' + k + '"'),
+      'a hidden note in the ' + k + ' section offers the chart back');
+  });
+  assert.match(CSS, /\.ins-trend-host:empty \{ display: none; \}/);
+  // The basis sub-toggle is hidden for everyone; the A/B remote reaches the switch.
+  assert.match(extractFn(S8, 'insApplyCardsView_'), /if \(modeSeg\)\s+modeSeg\.style\.display = 'none';/);
+  assert.ok(!/data-ab-mode="trend"/.test(HTML), 'the remote has no Trend basis button');
+  assert.match(HTML, /data-ab-scope="team">Team<\/button>\s*<button type="button" data-ab-scope="agent">Agent</);
+  assert.match(S8, /abForward\('ins-trend-scope', 'data-scope', sb\.getAttribute\('data-ab-scope'\)\)/);
+  assert.ok(!/insRenderCardsChartTrend_/.test(S8), 'the old renderer is gone, not left as a second chart');
+});
+
+test('MD3: By agent is monthly, three metrics, and hides the controls that belong to Team total', function () {
+  const sync = extractFn(S8, 'insTrendScopeSync_');
+  ['ins-trend-view-toggle', 'ins-trend-render-toggle', 'ins-datalabels-box', 'ins-trend-calendar'].forEach(function (id) {
+    assert.match(sync, new RegExp("show\\('" + id + "', false\\)"), id + ' is a Team total control');
+  });
+  assert.match(sync, /show\('ins-trend-metric-row', !byAgent\);\s*show\('ins-trend-agent-metric-row', byAgent\);/);
+  assert.match(sync, /seg\.style\.display = eligible \? '' : 'none';/, 'no agents to plot: no switch, and the team chart draws');
+  const render = extractFn(S8, 'insRenderTrendChart_');
+  assert.match(render, /if \(insTrendScopeSync_\(agentCards\.length > 0\)\) \{\s*insRenderTrendByAgent_\(canvas, data, agentCards\);\s*return;/);
+  const by = extractFn(S8, 'insRenderTrendByAgent_');
+  assert.match(by, /insChartInstance = safeChart_\(/, 'the SAME chart instance the team scope uses');
+  assert.match(by, /datalabels: \{ display: false \}/, 'many overlaid lines: no data labels (INV-41)');
+  assert.match(by, /const name = ds && ds\._agent;/, 'only an agent line drills to the Individual Report');
+  assert.match(by, /skipLabel: \[ref\.label\]/, 'the reference is never dimmed or soloed');
+});
+
+test('MD3: the dashed reference -- the team rate for % Answered, the average per agent shown for a count', function () {
+  const ref = lift('insTrendAgentRef_');
+  const team = [{ rung: 100, pct: 91.26 }, { rung: 0, pct: 0 }, { rung: 50, pct: 80 }];
+  assert.deepEqual(ref([], team, 'pct', 3), { label: 'Team', data: [91.3, null, 80] },
+    'the team\'s own monthly rate; a month with no rings is a gap, not 0%');
+  const cards = [
+    { name: 'A', trendMonthly: [{ answered: 10 }, { answered: 20 }, null] },
+    { name: 'B', trendMonthly: [{ answered: 30 }, null, null] },
+    { name: 'Boss', excludedFromTeamAvg: true, trendMonthly: [{ answered: 500 }, { answered: 500 }, { answered: 500 }] },
+  ];
+  const out = ref(cards, team, 'answered', 3);
+  assert.equal(out.label, 'Average per agent shown');
+  assert.deepEqual(out.data, [20, 20, null],
+    'active agents only that month; the excluded manager is out (INV-26); nobody active is a gap');
+});
+
+test('MD3: a saved "Trend" basis from before the merge carries over as By agent with its metric', function () {
+  const from = lift('insTrendPrefsFrom_');
+  assert.deepEqual(from({ cardsChartMode: 'trend', cardsChartMetric: 'pct' }), { scope: 'agent', metric: 'pct' });
+  assert.deepEqual(from({ cardsChartMode: 'trend', cardsChartMetric: 'rung' }), { scope: 'agent', metric: 'answered' },
+    'a metric By agent does not offer falls back');
+  assert.deepEqual(from({ cardsChartMode: 'gap', cardsChartMetric: 'missed' }), { scope: 'team', metric: 'answered' },
+    'the gap chart\'s metric is not the trend chart\'s');
+  assert.deepEqual(from({ trendScope: 'team', cardsChartMode: 'trend' }), { scope: 'team', metric: 'answered' },
+    'a scope saved since the merge wins over the old basis');
+  assert.deepEqual(from({ trendScope: 'agent', trendAgentMetric: 'missed' }), { scope: 'agent', metric: 'missed' });
+  assert.deepEqual(from(null), { scope: 'team', metric: 'answered' });
+  assert.match(extractFn(S8, 'insSavePrefs_'), /trendScope: insTrendScopePref_,[\s\S]*?trendAgentMetric: insTrendAgentMetric,/);
+});

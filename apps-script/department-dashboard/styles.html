@@ -4523,6 +4523,20 @@
     flex-wrap: wrap;
   }
 
+  /* MD3: the ONE trend chart's two places. The host in the Agents fold is
+     empty (and takes no room) unless the brief's Team row holds the chart;
+     the note under a host says the chart is in the other row and offers it
+     back. */
+  .ins-trend-host:empty { display: none; }
+  #ins-trend-host-agents:not(:empty) { margin-bottom: 14px; }
+  .ins-trend-away {
+    margin: 2px 0 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ins-trend-away .link-btn { margin-left: 6px; color: var(--accent); text-decoration: underline; }
+  .ins-trend-away .link-btn:hover { color: var(--ink); }
+
   /* Insights: Queue health section (QCD consolidation). */
   .ins-qh-chart-wrap { margin: 10px 0 12px; }
   .ins-qh-canvas-wrap { height: 190px; position: relative; }

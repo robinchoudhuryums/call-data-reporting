@@ -104,15 +104,46 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   fold-in. PR's three views all live here now: the ds-kpi rollup
   tiles, the share-of-answered donut (`insRenderShareChart_`), and the
   Volume & Efficiency stacked bars as the per-agent Chart view's
-  **Absolute** sub-toggle (`insRenderCardsChartAbs_`; 'gap'|'abs'|'trend' in
+  **Absolute** sub-toggle (`insRenderCardsChartAbs_`; 'gap'|'abs' in
   `insCardsChartMode`, persisted in prefs; the metric selector shows for
-  gap + trend, hidden for Absolute). **The per-agent Chart view has a third
-  basis, Trend (R11-E4, `insRenderCardsChartTrend_`):** one LINE per selected
-  agent for the chosen metric (% Answered / Answered / Missed / Rung) over the
-  12-mo axis (`trendData.labels`), from the per-agent `trendMonthly` series
-  the server now sends; it reuses the Overview `chartSpotlight*` model
-  (legend hover-dim, click-pin/solo, Shift/Cmd/Ctrl add, Alt-hide) and
-  point-clicks drill into that agent's IR. **The donut shows TRUE dept shares
+  gap, hidden for Absolute). **MD3 (owner 2026-11-20): ONE trend chart,
+  "Team total / By agent".** The per-agent "Trend" basis that used to be a
+  third option here (R11-E4) is now a SCOPE of the Trends fold's chart
+  (`#ins-trend-scope`, `insTrendScope` = `team` | `agent`, saved as
+  `trendScope`), drawn on the same canvas and chart instance. **Team total**
+  is the team line with every metric, Monthly / Daily and Line / Calendar.
+  **By agent** (`insRenderTrendByAgent_`) is one line per active agent over
+  the 12-month axis (`trendData.labels`, each card's `trendMonthly`), MONTHLY
+  only, for Answered / Missed / % Answered (`#ins-trend-agent-metric`,
+  `trendAgentMetric`), with a dashed neutral REFERENCE (PURE
+  `insTrendAgentRef_`): the team's own monthly rate for % Answered, and for a
+  count the average per agent shown who was active that month, leaving out
+  team-average-excluded managers (INV-26) -- the team TOTAL would dwarf
+  every agent line on a shared axis. It keeps the Overview `chartSpotlight*`
+  model (legend hover-dim, click-pin/solo, Shift/Cmd/Ctrl add, Alt-hide; the
+  reference is exempt) and a point click drills into that agent's IR; the
+  controls that belong to Team total hide (`insTrendScopeSync_`), and the
+  switch itself hides when there are no agents to plot. The Agents fold
+  keeps ONLY the gap bars: its basis sub-toggle is hidden for everyone
+  (`insApplyCardsView_`; the admin A/B remote still reaches Gap / Abs). A
+  prefs blob saved on the old Trend basis carries over as By agent with its
+  metric (PURE `insTrendPrefsFrom_`). **Where the chart sits:**
+  `#ins-trend-wrap` is ONE element whose home is the Trends fold
+  (`#ins-trend-host-trend`). In the brief accordion the row a viewer OPENS
+  takes it (`insTrendClaim_`, from `insBriefToggle_`): the Team row shows it
+  By agent in `#ins-trend-host-agents`, above the gap bars and the team
+  detail; the Trend row shows it as the Team total. With both rows open it
+  sits in the one opened last and the other shows a one-line note offering
+  it back (`.ins-trend-away`, `data-trend-claim`); a row that closes while
+  holding it hands it to the other row if that one is open (PURE
+  `insTrendRowTaker_`). A claim sets the scope but never SAVES it -- the
+  saved scope belongs to the switch. With no brief (a manager, View-as)
+  `insRenderBrief_` sends the chart home and it never leaves the Trends
+  fold. Two traps: a moved canvas is REDRAWN (`insDrawTrendChart_`), never
+  resized; and every draw-on-open gate asks about the fold HOLDING the chart
+  (`insTrendChartOpen_` / `insTrendHostFold_`), never `insFoldOpen_('trend')`
+  by name. Pinned by `brief-accordion.test.js` (the MD3 block) and
+  `drive-smoke.js` (both roles). **The donut shows TRUE dept shares
   (R11-E6):** slices divide by `meta.answeredDeptTotal` (the whole dept's
   answered, all active roster agents, current window) and the unselected
   agents fold into a muted "Other agents" slice, so an agent's share is
@@ -621,11 +652,12 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   the same client-only anti-intimidation layer below.
 - **Insights floating admin A/B remote is client-only (R11-J).** A small
   collapsible fixed card (`#ins-ab-panel`, bottom-right above the Help FAB)
-  for live A/B testing of the four Insights view toggles -- Agents Cards/Chart,
-  chart Basis Gap/Abs/Trend, Trends Line/Calendar, and the trend Metric select.
+  for live A/B testing of the Insights view toggles -- Agents Cards/Chart,
+  chart Basis Gap/Abs, the trend chart's Scope Team/Agent (MD3), Trends
+  Line/Calendar, and the trend Metric select.
   It's a REMOTE, not a parallel state: each button FORWARDS a `.click()` to the
   real segmented control (`ins-cards-view-toggle` / `ins-cards-chart-mode` /
-  `ins-trend-render-toggle`) and the select mirrors `#ins-trend-metric`, so all
+  `ins-trend-scope` / `ins-trend-render-toggle`) and the select mirrors `#ins-trend-metric`, so all
   existing state/prefs/render wiring fires ONCE; `insSyncAbPanel_` (called from
   `insApplyCardsView_` + `insRenderTrendChart_`) reflects live state +
   calendar-eligibility back onto it. Admin-gated via `data-admin-only`; it lives
@@ -1633,11 +1665,12 @@ behind the removed button.
   the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
   SAME page carries the Absolute information, so the section defaults to the
   one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap).
-  **R16g completes that logic: the Absolute OPTION is HIDDEN too** — the
-  sub-toggle shows only Gap vs team / Trend (the abs button keeps its
-  markup + wiring + renderer inert per the Round-16 removal convention; the
-  admin A/B remote still reaches it). The metric selector dropped **Rung**
-  (≈ answered + missed, so its gap/trend lines restated the other two; a
+  **R16g completes that logic: the Absolute OPTION is HIDDEN too** (the abs
+  button keeps its markup + wiring + renderer inert per the Round-16 removal
+  convention; the admin A/B remote still reaches it), **and since MD3 the
+  whole sub-toggle is hidden** -- Trend became the Trends chart's "By agent"
+  scope, leaving Gap as the only visible basis. The metric selector dropped **Rung**
+  (≈ answered + missed, so its gap bars restated the other two; a
   saved `'rung'` pref self-heals to answered; the renderers still accept it
   if fed). All cards code is kept — single-agent reports still
   force cards, and the admin A/B remote's Cards button still reaches the
@@ -3083,7 +3116,10 @@ stay pinned by INV-39, INV-53 and INV-06.
   then the team detail (`INS_BRIEF_TARGET_` entries carry an `ids` list, and
   mount / unmount / apply / restore / `insOpenSection_` walk it); in the slot
   the second section's `<summary>` stays as a plain, non-clickable
-  sub-heading. The queue-wait verdict is server-side
+  sub-heading. **MD3:** the Team row also takes the ONE trend chart and
+  shows it By agent, above the gap bars; the Trend row shows it as the Team
+  total (see the MD3 paragraph in the Insights bullet above).
+  The queue-wait verdict is server-side
   (`queueHealth.perQueue[].wait`, InsightsReport.gs). Each tier renders as an
   ICON (Step 1, owner 2026-10-16: `insBriefTierIconHtml_` -- green thumbs-up,
   amber exclamation mark, red flag, grey circle-with-dash), aria-hidden, with

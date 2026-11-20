@@ -1211,6 +1211,15 @@
             <span class="ins-fold-head" id="ins-agents-fold-head"></span>
           </summary>
           <div class="ins-fold-body">
+        <!-- MD3 (owner 2026-11-20): the ONE trend chart (#ins-trend-wrap, at
+             home in the Trends fold) is shown HERE, on "By agent", while the
+             brief's Team row holds it (insTrendClaim_). Empty for a viewer
+             with no brief -- the chart then stays in the Trends fold. -->
+        <div id="ins-trend-host-agents" class="ins-trend-host"></div>
+        <p id="ins-trend-away-agents" class="ins-trend-away" hidden>
+          The trend chart is open in the Trend section, on Team total.
+          <button type="button" class="link-btn" data-trend-claim="agents">Show it here, by agent</button>
+        </p>
         <h3 class="al-section-title">Per-agent comparison (vs prior period)</h3>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
@@ -1231,7 +1240,11 @@
             <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
             <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
           </div>
-          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one
+          <!-- MD3: this sub-toggle is HIDDEN for every viewer (insApplyCardsView_)
+               -- its Trend basis moved into the Trends fold's chart as "By
+               agent", and Gap is the only visible basis left. The markup and
+               wiring stay so the admin A/B remote can still reach Gap / Abs.
+               Chart-view sub-toggle: Gap vs team (diverging bars, one
                metric) / Absolute (PR's stacked Answered+Missed volumes + %
                dots -- the Performance Report's Volume & Efficiency view).
                The third "vs Prior" basis (Compare Ranges' grouped bars) was
@@ -1259,15 +1272,11 @@
               <span class="seg-title">Absolute</span>
               <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
             </button>
-            <button type="button" class="seg-btn" data-mode="trend" role="radio" aria-checked="false">
-              <span class="seg-title">Trend</span>
-              <span class="seg-hint">each agent&#8217;s metric over time (one line each)</span>
-            </button>
           </div>
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>
             <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
-                 missed, so its gap/trend lines restated the other two. The
+                 missed, so its gap bars restated the other two. The
                  renderers still accept 'rung' if fed; a saved pref self-heals
                  in insRestorePrefs_.) -->
             <select id="ins-cards-chart-metric">
@@ -1480,10 +1489,38 @@
             <span class="ins-fold-head" id="ins-trend-fold-head">12-month team trend</span>
           </summary>
           <div class="ins-fold-body">
+        <!-- MD3: the chart's HOME. In the brief accordion the Team row can
+             take it (see #ins-trend-host-agents); the note then says where
+             it went and offers it back. -->
+        <p id="ins-trend-away-trend" class="ins-trend-away" hidden>
+          The trend chart is open in the Team section, by agent.
+          <button type="button" class="link-btn" data-trend-claim="trend">Show it here, as the team total</button>
+        </p>
+        <div id="ins-trend-host-trend" class="ins-trend-host">
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ins-trend-headrow">
             <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
             <div class="ins-trend-headctl">
+              <!-- MD3 (owner 2026-11-20): ONE trend chart, two scopes. Team
+                   total = the team's line (every metric, Monthly / Daily,
+                   Line / Calendar). By agent = one line per agent with the
+                   team as a dashed reference: monthly only, three metrics. -->
+              <div class="segmented" id="ins-trend-scope" role="radiogroup" aria-label="Trend chart scope">
+                <button type="button" class="seg-btn active" data-scope="team" role="radio" aria-checked="true"
+                        title="The team as one line">Team total</button>
+                <button type="button" class="seg-btn" data-scope="agent" role="radio" aria-checked="false"
+                        title="One line per agent, month by month, with the team as a dashed reference">By agent</button>
+              </div>
+              <div class="ins-trend-metric-row" id="ins-trend-agent-metric-row" style="display:none;">
+                <label class="ir-sort-control">
+                  <span class="ir-sort-label">Metric:</span>
+                  <select id="ins-trend-agent-metric">
+                    <option value="answered">Answered</option>
+                    <option value="missed">Missed</option>
+                    <option value="pct">% Answered</option>
+                  </select>
+                </label>
+              </div>
               <!-- R11-C3 consolidation: ONE metric dropdown (queue metrics ride
                    the same list; Avg talk time is admin-only -- the option is
                    REMOVED for non-admins at init). R12-13: it lives IN the
@@ -1534,6 +1571,7 @@
                Chart.js). Populated by insRenderTrendCalendar_. -->
           <div id="ins-trend-calendar" class="ins-trend-calendar" style="display:none;"></div>
         </div>
+        </div><!-- /#ins-trend-host-trend -->
           </div>
         </details>
         <!-- /Trends fold -->
@@ -1568,7 +1606,13 @@
           <div class="ins-ab-seg">
             <button type="button" data-ab-mode="gap">Gap</button>
             <button type="button" data-ab-mode="abs">Abs</button>
-            <button type="button" data-ab-mode="trend">Trend</button>
+          </div>
+        </div>
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Scope</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-scope="team">Team</button>
+            <button type="button" data-ab-scope="agent">Agent</button>
           </div>
         </div>
         <div class="ins-ab-row">

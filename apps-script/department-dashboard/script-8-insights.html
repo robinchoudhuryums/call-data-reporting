@@ -64,6 +64,18 @@
   // (the Basis sub-toggle / the admin A/B remote).
   let insCardsChartMode = 'gap';
   let insCardsChartInstance = null;
+  // MD3 (owner 2026-11-20): the Trends chart's scope. 'team' = the team line
+  // (every metric, Monthly / Daily, Line / Calendar); 'agent' = one line per
+  // agent with the team as a dashed reference (monthly, three metrics) -- the
+  // Agents fold's old "Trend" basis, merged into this one chart. Persisted in
+  // the ins prefs blob (trendScope / trendAgentMetric).
+  let insTrendScope = 'team';
+  // The scope the VIEWER chose on the switch -- the one that is saved. A brief
+  // row sets insTrendScope while it holds the chart (Team = By agent, Trend =
+  // Team total) without touching this, and the chart returns to it when the
+  // brief goes away.
+  let insTrendScopePref_ = 'team';
+  let insTrendAgentMetric = 'answered';   // 'answered' | 'missed' | 'pct'
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
   // replaced the doughnut with HTML share-tally rows, no chart instance)
@@ -386,7 +398,7 @@
       if (insCardsView === 'chart' && insCardsChartInstance && !insCardsChartInstance.width) {
         insRenderCardsChart_();
       }
-      if (insChartInstance && !insChartInstance.width && insFoldOpen_('trend')) {
+      if (insChartInstance && !insChartInstance.width && insTrendChartOpen_()) {
         insDrawTrendChart_(insLastData);
       }
     } catch (e) { /* decoration only -- the rendered report stands */ }
@@ -440,7 +452,7 @@
       if (insLastData) {
         try {
           if (insCardsView === 'chart') insRenderCardsChart_();
-          if (insFoldOpen_('trend')) insDrawTrendChart_(insLastData);
+          if (insTrendChartOpen_()) insDrawTrendChart_(insLastData);
           if (insDetailOpen_()) insRenderDeferredCharts_();
         } catch (e) { /* redraw is best-effort decoration of a rendered report */ }
       }
@@ -604,6 +616,33 @@
       if (insLastData) insRenderTrendChart_(insLastData);
     });
 
+    // MD3: Team total / By agent, the by-agent metric, and the two "show it
+    // here" buttons the brief accordion offers when the chart is in the other
+    // row. A click on the switch is the viewer's own choice, so it is saved.
+    const trendScopeSeg = $('ins-trend-scope');
+    if (trendScopeSeg) trendScopeSeg.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b || b.disabled) return;
+      const next = b.getAttribute('data-scope') === 'agent' ? 'agent' : 'team';
+      if (next === insTrendScope) return;
+      insTrendScope = next;
+      insTrendScopePref_ = next;
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+    const trendAgentMetricSel = $('ins-trend-agent-metric');
+    if (trendAgentMetricSel) trendAgentMetricSel.addEventListener('change', function () {
+      insTrendAgentMetric = INS_TREND_AGENT_METRICS_.indexOf(trendAgentMetricSel.value) !== -1 ? trendAgentMetricSel.value : 'answered';
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+    // On the document: in the accordion these sit inside #ins-brief, which is
+    // outside #insights-page.
+    document.addEventListener('click', function (e) {
+      const cb = e.target.closest && e.target.closest('[data-trend-claim]');
+      if (cb) insTrendClaim_(cb.getAttribute('data-trend-claim') === 'agents' ? 'agents' : 'trend');
+    });
+
     // Phase 2 #10: Line/Calendar renderer toggle (team-metric tabs only;
     // insRenderTrendChart_ shows it only when the calendar is applicable).
     const trendRenderToggle = $('ins-trend-render-toggle');
@@ -745,7 +784,9 @@
       fold.addEventListener('toggle', function () {
         const key = fold.getAttribute('data-fold') || '';
         if (key) insFoldSet_(key, fold.open);
-        if (key === 'trend' && fold.open && insLastData) insDrawTrendChart_(insLastData);
+        // MD3: the trend chart draws when the fold HOLDING it opens -- its
+        // home, or the Agents fold while the brief's Team row has it.
+        if (fold.open && insLastData && fold === insTrendHostFold_()) insDrawTrendChart_(insLastData);
         if (key === 'cb' && fold.open) insCbSync_();   // G1: lazy fetch / draw-on-open
         // UX-2: the Agents fold's Chart view is a canvas (the C3 trap) -- redraw on open.
         if (key === 'agents' && fold.open && insLastData && insCardsView === 'chart') {
@@ -856,6 +897,8 @@
         if (vb) { abForward('ins-cards-view-toggle', 'data-view', vb.getAttribute('data-ab-view')); return; }
         const mb = e.target.closest('[data-ab-mode]');
         if (mb) { abForward('ins-cards-chart-mode', 'data-mode', mb.getAttribute('data-ab-mode')); return; }
+        const sb = e.target.closest('[data-ab-scope]');   // MD3
+        if (sb) { abForward('ins-trend-scope', 'data-scope', sb.getAttribute('data-ab-scope')); return; }
         const rb = e.target.closest('[data-ab-render]');
         if (rb) { abForward('ins-trend-render-toggle', 'data-render', rb.getAttribute('data-ab-render')); return; }
       });
@@ -2016,6 +2059,8 @@
     if (!box) return;
     if (!insBriefActive_() || !data || !data.teamStats) {
       insBriefRestoreFolds_();   // home for good: back to the viewer's own fold layout
+      insTrendMoveTo_('trend');  // MD3: with no brief the chart lives in the Trends fold,
+      insTrendScope = insTrendScopePref_;   // on the scope the viewer chose, not a row's
       box.style.display = 'none'; box.innerHTML = '';
       if (res) res.classList.remove('ins-has-brief');
       return;
@@ -2124,6 +2169,7 @@
       });
     });
     INS_BRIEF_MOUNTED_ = {};
+    insTrendAwaySync_();   // MD3: at home neither section shows the "it is in the other row" note
   }
   // Back home with the brief gone (View-as, no payload): each section takes the
   // viewer's saved fold state again -- the accordion left them all closed.
@@ -2161,6 +2207,7 @@
       });
       insBriefApply_(key);
     });
+    insTrendAwaySync_();   // MD3
   }
   // IC-3 (owner 2026-11-02): a row's section slides open AND shut, like the
   // agent panel (apAnimateOpen_/apAnimateClose_). Only a user toggle animates
@@ -2213,7 +2260,72 @@
   }
   function insBriefToggle_(key, force) {
     INS_BRIEF_OPEN_[key] = (force === undefined) ? !INS_BRIEF_OPEN_[key] : !!force;
+    // MD3: the Team and Trend rows share the ONE trend chart.
+    if (key === 'agents' || key === 'trend') insTrendOnRowToggle_(key, INS_BRIEF_OPEN_[key]);
     insBriefApply_(key, true);
+  }
+
+  // ---- MD3 (owner 2026-11-20): the ONE trend chart and where it sits --------
+  // #ins-trend-wrap is a single element whose home is the Trends fold. In the
+  // brief accordion the row a viewer OPENS takes it: the Team row shows it on
+  // "By agent" (above the gap bars and the team detail), the Trend row on
+  // "Team total". With both rows open it sits in the one opened last, and the
+  // other shows a one-line note offering it back. A row that closes hands the
+  // chart to the other row if that one is open. With no brief (a manager,
+  // View-as) it never leaves the Trends fold and the switch alone picks the
+  // scope. A claim never writes the saved scope -- that belongs to the switch.
+  var INS_TREND_HOSTS_ = { agents: 'ins-trend-host-agents', trend: 'ins-trend-host-trend' };
+  var INS_TREND_AGENT_METRICS_ = ['answered', 'missed', 'pct'];
+  function insTrendOwner_() {
+    var w = $('ins-trend-wrap');
+    return (w && w.parentNode && w.parentNode.id === INS_TREND_HOSTS_.agents) ? 'agents' : 'trend';
+  }
+  function insTrendHostFold_() {
+    var w = $('ins-trend-wrap');
+    return (w && w.closest) ? w.closest('details[data-fold]') : null;
+  }
+  // Whether the fold holding the chart is open (the draw-on-open gate).
+  function insTrendChartOpen_() {
+    var f = insTrendHostFold_();
+    return insFoldOpen_((f && f.getAttribute('data-fold')) || 'trend');
+  }
+  function insTrendAwaySync_() {
+    var owner = insTrendOwner_();
+    ['agents', 'trend'].forEach(function (k) {
+      var note = $('ins-trend-away-' + k);
+      if (!note) return;
+      var fold = note.closest ? note.closest('details[data-fold]') : null;
+      // Only in the accordion: at home a section either has the chart or never does.
+      note.hidden = !(k !== owner && fold && insBriefMounted_(fold));
+    });
+  }
+  function insTrendMoveTo_(owner) {
+    var w = $('ins-trend-wrap'), host = $(INS_TREND_HOSTS_[owner]);
+    if (!w || !host) return false;
+    var moved = w.parentNode !== host;
+    if (moved) host.appendChild(w);
+    insTrendAwaySync_();
+    return moved;
+  }
+  // PURE: the scope a row shows the chart on.
+  function insTrendScopeForRow_(owner) { return owner === 'agents' ? 'agent' : 'team'; }
+  function insTrendClaim_(owner) {
+    insTrendMoveTo_(owner);
+    insTrendScope = insTrendScopeForRow_(owner);
+    // A moved canvas is redrawn, never resized (the C3-safe path); the draw is
+    // measure-guarded, so a row still sliding open draws once it has a size.
+    if (insLastData) insDrawTrendChart_(insLastData);
+  }
+  // PURE: which row (if any) takes the chart when `key` goes to `open`.
+  function insTrendRowTaker_(key, open, owner, otherOpen) {
+    var other = key === 'agents' ? 'trend' : 'agents';
+    if (open) return key;
+    return (owner === key && otherOpen) ? other : null;
+  }
+  function insTrendOnRowToggle_(key, open) {
+    var other = key === 'agents' ? 'trend' : 'agents';
+    var taker = insTrendRowTaker_(key, open, insTrendOwner_(), !!INS_BRIEF_OPEN_[other]);
+    if (taker) insTrendClaim_(taker);
   }
   // Step 3: a jump that opens a section (an agent chip, a calendar day) must
   // open its brief ROW when the section sits in the accordion -- setting the
@@ -2458,7 +2570,7 @@
     // is fold-gated the same way -- drawn only while its fold is open (a
     // canvas built inside a closed <details> is the C3 zero-height trap);
     // the fold's toggle handler draws on expand.
-    if (insFoldOpen_('trend')) {
+    if (insTrendChartOpen_()) {
       insDrawTrendChart_(data);
     }
     if (insDetailOpen_()) {
@@ -4147,6 +4259,14 @@
     destroyOrphanedChartOnCanvas_('ins-trend-chart');
     if (insChartInstance) { try { insChartInstance.destroy(); } catch (e) {} insChartInstance = null; }
 
+    // MD3: ONE chart, two scopes. By agent needs agent cards that carry a
+    // monthly series; without them the switch hides and the chart is the team's.
+    const agentCards = insTrendAgentCards_(data);
+    if (insTrendScopeSync_(agentCards.length > 0)) {
+      insRenderTrendByAgent_(canvas, data, agentCards);
+      return;
+    }
+
     const metric = insActiveTrendMetric;
     const isQueues = (metric === 'queues');
     const qhTrend = (data.queueHealth && data.queueHealth.trend) || null;
@@ -5065,6 +5185,7 @@
     };
     setActive('data-ab-view', insCardsView);
     setActive('data-ab-mode', insCardsChartMode);
+    setActive('data-ab-scope', insTrendScope);   // MD3
     setActive('data-ab-render', insTrendRender);
     // Basis only applies in Chart view -- dim + disable it in Cards view.
     const basisRow = $('ins-ab-basis-row');
@@ -5117,7 +5238,10 @@
     // The metric selector applies to the gap + prior bases -- Absolute
     // always shows Answered + Missed volumes (+ % dots) for every agent.
     if (metricWrap) metricWrap.style.display = (chartView && insCardsChartMode !== 'abs') ? '' : 'none';
-    if (modeSeg)    modeSeg.style.display = chartView ? '' : 'none';
+    // MD3: Gap is the only visible basis (Trend moved to the Trends chart as
+    // "By agent"; Abs has been hidden since R16g), so the sub-toggle is hidden
+    // for everyone. The admin A/B remote still forwards clicks to it.
+    if (modeSeg)    modeSeg.style.display = 'none';
     if (chartView) insRenderCardsChart_();
     // R7 (I-4): one-shot fade on whichever view just became visible, so
     // Cards⇄Chart / Gap⇄Absolute swaps read as a transition, not a pop
@@ -5178,7 +5302,7 @@
     // carries the Absolute information).
     const mode = insCardsChartMode;
     if (mode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
-    if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
+    // (MD3: the 'trend' basis is gone from this chart -- see insTrendByAgentConfig_.)
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
     // R18 follow-through (owner 2026-11-16): a gap bar IS a comparison with
@@ -5285,41 +5409,102 @@
     });
   }
 
-  /**
-   * R11-E (item 4): per-agent TREND line chart -- one line per selected agent
-   * for the chosen metric (insCardsChartMetric) over the 12-month trend axis
-   * (insLastData.trendData.labels; each card carries a `trendMonthly` series
-   * aligned to it). Reuses the Overview chart's spotlight/pin model
-   * (chartSpotlight*): hover a legend item to dim the rest, click to pin/solo,
-   * Shift/Cmd/Ctrl-click to add to the pinned set, Alt-click to hide. Clicking a
-   * data point drills into that agent's Individual Report. Data labels are off
-   * (many overlaid lines, the Overview multi-line convention, INV-41).
-   */
-  function insRenderCardsChartTrend_(canvas, cards) {
-    const td = (insLastData && insLastData.trendData) || {};
-    const labels = td.labels || [];
-    const allowed = ['pct', 'answered', 'missed', 'rung'];
-    const metric = allowed.indexOf(insCardsChartMetric) >= 0 ? insCardsChartMetric : 'pct';
-    const isPct = (metric === 'pct');
-    const metricLabel = { pct: '% Answered', answered: 'Answered', missed: 'Missed', rung: 'Call volume (rung)' }[metric];
-    const fmtV = function (n) { return n == null ? '—' : (isPct ? Number(n).toFixed(1) + '%' : String(Math.round(n))); };
-    if (!labels.length || !cards.length) {
-      // Nothing to plot -- leave the (already-destroyed) canvas blank.
-      return;
+  // ---- MD3 (owner 2026-11-20): the By agent scope of the ONE trend chart ----
+  // The Agents fold's old "Trend" basis (R11-E item 4), drawn on the Trends
+  // chart's own canvas: one line per agent over the 12-month axis
+  // (trendData.labels; each card carries a `trendMonthly` series aligned to
+  // it), plus the team as a dashed reference. Monthly only, three metrics.
+  // The agents plotted: active in the window, and carrying a monthly series.
+  function insTrendAgentCards_(data) {
+    if (!data || !data.trendData || !(data.trendData.labels || []).length) return [];
+    return (data.agentData || []).filter(function (c) {
+      return insAgentHasActivity_(c) && Array.isArray(c.trendMonthly);
+    });
+  }
+  // Reflect the scope on the switch and swap the controls each scope owns.
+  // Returns true when the chart should draw By agent.
+  function insTrendScopeSync_(eligible) {
+    const byAgent = eligible && insTrendScope === 'agent';
+    const seg = $('ins-trend-scope');
+    if (seg) {
+      seg.style.display = eligible ? '' : 'none';
+      seg.querySelectorAll('.seg-btn').forEach(function (b) {
+        const on = (b.getAttribute('data-scope') === 'agent') === byAgent;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
     }
+    const show = function (id, on) { const el = $(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('ins-trend-metric-row', !byAgent);
+    show('ins-trend-agent-metric-row', byAgent);
+    const canvas = $('ins-trend-chart');
+    if (canvas) canvas.setAttribute('aria-label', byAgent ? 'Each agent over the last 12 months, with the team as a reference' : 'Team trend over time');
+    if (byAgent) {
+      // Monthly / Daily, Line / Calendar and the data labels belong to Team
+      // total (the team render re-shows whichever of them apply).
+      show('ins-trend-view-toggle', false);
+      show('ins-trend-render-toggle', false);
+      show('ins-datalabels-box', false);
+      show('ins-trend-calendar', false);
+      show('ins-trend-canvas-wrap', true);
+      const wrap = $('ins-trend-wrap');
+      if (wrap) wrap.classList.remove('ir-chart-wrap--cal');
+      if (canvas) canvas.style.display = '';
+      const sel = $('ins-trend-agent-metric');
+      if (sel) sel.value = insTrendAgentMetric;
+    }
+    return byAgent;
+  }
+  // PURE. The dashed reference on the By agent view. % Answered: the team's
+  // own monthly rate (null on a month with no rings). A count: the average
+  // per agent SHOWN who was active that month, leaving out anyone on the
+  // team-average exclusion list (INV-26) -- the team total would dwarf every
+  // agent line on a shared axis. `n` = the number of months on the axis.
+  function insTrendAgentRef_(cards, teamSeries, metric, n) {
+    var out = [], i;
+    if (metric === 'pct') {
+      for (i = 0; i < n; i++) {
+        var s = (teamSeries || [])[i];
+        out.push((s && Number(s.rung) > 0) ? Number((Number(s.pct) || 0).toFixed(1)) : null);
+      }
+      return { label: 'Team', data: out };
+    }
+    for (i = 0; i < n; i++) {
+      var sum = 0, k = 0;
+      (cards || []).forEach(function (c) {
+        if (!c || c.excludedFromTeamAvg) return;
+        var b = (c.trendMonthly || [])[i];
+        if (!b || b[metric] == null) return;
+        sum += Number(b[metric]) || 0;
+        k++;
+      });
+      out.push(k ? Math.round((sum / k) * 10) / 10 : null);
+    }
+    return { label: 'Average per agent shown', data: out };
+  }
+  function insRenderTrendByAgent_(canvas, data, cards) {
+    const td = data.trendData || {};
+    const labels = td.labels || [];
+    const metric = INS_TREND_AGENT_METRICS_.indexOf(insTrendAgentMetric) !== -1 ? insTrendAgentMetric : 'answered';
+    const isPct = (metric === 'pct');
+    const metricLabel = { pct: '% Answered', answered: 'Answered', missed: 'Missed' }[metric];
+    const fmtV = function (n) { return n == null ? '—' : (isPct ? Number(n).toFixed(1) + '%' : String(Math.round(n * 10) / 10)); };
+    const headerEl = $('ins-trend-header');
+    if (headerEl) {
+      const tm = data.meta || {};
+      headerEl.textContent = '12-month trend by agent' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : '') + ' — ' + metricLabel;
+    }
+    insSyncAbPanel_();
     // Step 1: on a COUNT metric, mark a partly covered month (dashed in,
     // hollow point, "(to date)", pace in the tooltip). % Answered is a rate
     // and needs none of it.
-    const part = insPartialChartBits_(isPct ? [] : insPartialForData_(insLastData));
+    const part = insPartialChartBits_(isPct ? [] : insPartialForData_(data));
     const datasets = cards.map(function (c, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       // R11-M (metric-aware gaps): a per-agent series has real ABSENCES (months
       // the agent wasn't active). For COUNT metrics an absent month is 0 (drop
       // to 0 and recover); for % Answered a 0 would read as "answered none of
-      // their calls", so keep the null and BREAK the line (spanGaps:false) over
-      // the gap. This fixes the R11-H1 regression -- it copied the CONTINUOUS
-      // team trend's tension:0.4 + spanGaps:true, which drew one straight line
-      // ACROSS an absence (the "slow decline" instead of a drop-and-recover).
+      // their calls", so keep the null and BREAK the line (spanGaps:false).
       const series = (c.trendMonthly || []).map(function (b) {
         const v = (b && b[metric] != null) ? Number(b[metric]) : null;
         return (v == null && !isPct) ? 0 : v;
@@ -5327,6 +5512,7 @@
       return {
         label: c.name,
         data: series,
+        _agent: c.name,
         borderColor: color,
         backgroundColor: 'rgba(0,0,0,0)',
         borderWidth: 2.2,
@@ -5346,7 +5532,19 @@
         fill: false,
       };
     });
-    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
+    // The team reference: neutral ink, dashed, in front, never soloed or
+    // dimmed and never a drill target (the Overview's Company-line treatment).
+    const ref = insTrendAgentRef_(cards, td.series || [], metric, labels.length);
+    const hasRef = ref.data.some(function (v) { return v != null; });
+    if (hasRef) {
+      datasets.push({
+        label: ref.label, data: ref.data, _ref: true,
+        borderColor: THEME.ink, backgroundColor: 'rgba(0,0,0,0)',
+        borderDash: [6, 4], borderWidth: 2, pointRadius: 0, pointHoverRadius: 3,
+        cubicInterpolationMode: 'monotone', tension: 0, spanGaps: false, fill: false, order: 0,
+      });
+    }
+    insChartInstance = safeChart_(canvas.getContext('2d'), {
       type: 'line',
       data: { labels: labels, datasets: datasets },
       options: {
@@ -5355,7 +5553,7 @@
         onClick: function (evt, els) {
           if (els && els.length) {
             const ds = datasets[els[0].datasetIndex];
-            const name = ds && ds.label;
+            const name = ds && ds._agent;
             if (name && typeof irDrillToAgent_ === 'function') {
               irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
             }
@@ -5363,7 +5561,8 @@
         },
         onHover: function (evt, els) {
           if (evt && evt.native && evt.native.target) {
-            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
+            const ds = (els && els.length) ? datasets[els[0].datasetIndex] : null;
+            evt.native.target.style.cursor = (ds && ds._agent) ? 'pointer' : 'default';
           }
         },
         plugins: {
@@ -5372,6 +5571,7 @@
             chartSpotlightLegend_()),
           datalabels: { display: false },
           tooltip: {
+            filter: function (ctx) { return chartTooltipPinFilter_(ctx); },
             callbacks: {
               label: function (ctx) { return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y) + part.note(ctx.dataIndex, ctx.parsed.y); },
             },
@@ -5390,7 +5590,7 @@
         },
       },
     });
-    chartSpotlightStash_(insCardsChartInstance, {});
+    if (insChartInstance) chartSpotlightStash_(insChartInstance, hasRef ? { skipLabel: [ref.label] } : {});
   }
 
   /**
@@ -6164,12 +6364,24 @@
         cardsView:   insCardsView,
         cardsChartMetric: insCardsChartMetric,
         cardsChartMode: insCardsChartMode,
+        trendScope: insTrendScopePref_,          // MD3: team | agent (the switch's choice, never a row's)
+        trendAgentMetric: insTrendAgentMetric,   // MD3: the By agent metric
         // (Round-16: the D1 density field is GONE -- fold open-state lives in
         // its own cdr.ins.folds key; an old saved density still seeds the
         // folds once via insFoldsLoad_'s migration.)
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
+  }
+  // MD3: PURE. The Trends chart scope + By agent metric a prefs blob asks for.
+  function insTrendPrefsFrom_(prefs) {
+    var ok = ['answered', 'missed', 'pct'];
+    var p = prefs || {};
+    var old = p.cardsChartMode === 'trend';   // the retired Agents-fold basis
+    var scope = (p.trendScope === 'agent' || p.trendScope === 'team') ? p.trendScope : (old ? 'agent' : 'team');
+    var metric = ok.indexOf(p.trendAgentMetric) !== -1 ? p.trendAgentMetric
+      : ((old && ok.indexOf(p.cardsChartMetric) !== -1) ? p.cardsChartMetric : 'answered');
+    return { scope: scope, metric: metric };
   }
   function insRestorePrefs_() {
     try {
@@ -6250,6 +6462,13 @@
         insCardsChartMode = prefs.cardsChartMode;
         insSyncCardsChartMode_();
       }
+      // MD3: the Trends chart's scope. A blob from before the merge that was
+      // saved on the old per-agent "Trend" basis carries over as By agent,
+      // with the metric it was showing.
+      const carried = insTrendPrefsFrom_(prefs);
+      insTrendScope = carried.scope;
+      insTrendScopePref_ = carried.scope;
+      insTrendAgentMetric = carried.metric;
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
     } catch (e) { /* ignore */ }
   }
