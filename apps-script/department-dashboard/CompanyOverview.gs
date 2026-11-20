@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v31` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v32` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -110,7 +110,9 @@
 // `directPriorWindows`; admin-only, stripped for everyone else.
 // v31 (NUM-4): under QUEUE_SPLIT_SCOPE=dept the card periods take the tile's
 // own fail-open verdict (its 30-day span), so a tile is narrowed, or not, as one.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v31';
+// v32 (MD2, owner 2026-11-20): each dept gains `trendChartAvgAnswerSec` and
+// companyAggregate its admin-only twin -- the chart's "Avg answer time" view.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v32';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -153,7 +155,8 @@ var OV_CHART_TREND_DAYS = 90;
 // trend / trendAbandoned / trendAbandonedPct -- its own prefix, because this
 // payload is cached separately from the Overview blob.
 // v4 (NUM-4): the dept lines take the tile's fail-open verdict (see v31 above).
-var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v4';
+// v5 (MD2): each dept gains `trendAvgAnswerSec`; `company` its admin-only twin.
+var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v5';
 
 // F6: CacheService's documented per-value ceiling, and the tripwire below it.
 // The Overview blob is the biggest cached payload in the app and its
@@ -224,7 +227,21 @@ function ovDeptChartSeries_(labels, dqeDaily, qcdDaily) {
       var q = qcdDaily[iso];
       return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
     }),
+    // MD2 (owner 2026-11-20): average time to ANSWER an answered queue call,
+    // whole seconds, weighted by answered calls (ovAvgAnswerSec_). Null on a
+    // day with no answered queue calls -- a line break, never a zero.
+    trendAvgAnswerSec: labels.map(function (iso) { return ovAvgAnswerSec_(qcdDaily[iso]); }),
   };
+}
+
+/**
+ * MD2: one day's answered-weighted average answer time in whole seconds, from
+ * the `aaSum` / `aaN` pair computeQcdSnapshots_ accumulates (the RPT-8 rule
+ * the queue report uses: sum(avg * answered) / sum(answered)), or null when
+ * the day has no answered queue calls.
+ */
+function ovAvgAnswerSec_(q) {
+  return (q && Number(q.aaN) > 0) ? Math.round(Number(q.aaSum) / Number(q.aaN)) : null;
 }
 
 /**
@@ -1039,6 +1056,7 @@ function ovFormatDept_(d, c) {
     trendChartAnswered: chartSeries.trendAnswered,    // 90-day chart (answered count, 6b)
     trendChartAbandoned: chartSeries.trendAbandoned,  // 90-day chart (abandoned count)
     trendChartAbandonedPct: chartSeries.trendAbandonedPct,
+    trendChartAvgAnswerSec: chartSeries.trendAvgAnswerSec,   // MD2: avg answer time (queue), seconds
     // Card period slider (Yesterday / Last 30 / 60 / 90 / YTD -- R50 added
     // the middle two so this set covers the chart's range control). `latest`
     // above stays the Yesterday view for back-compat; the client picks a
@@ -1512,6 +1530,10 @@ function ovCompanyAggregate_(company, companyRosterUnion, w, companyQcdDaily) {
       const q = companyQcdDaily[iso];
       return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
     }),
+    // MD2 (owner 2026-11-20): the company avg-answer-time line is ADMIN-ONLY.
+    // It is deliberately NOT named in personalizeOverview_'s companyTrendLine
+    // allowlist, so a manager's payload never carries it.
+    trendChartAvgAnswerSec: chartTrendIsoLabels.map(function (iso) { return ovAvgAnswerSec_(companyQcdDaily[iso]); }),
   };
   return companyAggregate;
 }
@@ -1708,7 +1730,8 @@ function getOverviewChartTrend(req) {
       const series = ovDeptChartSeries_(labels, deptDaily[d], (snap && snap.daily) || {});
       return { name: d, parent: overviewParentMap[d] || null,
                trend: series.trend, trendAnswered: series.trendAnswered,
-               trendAbandoned: series.trendAbandoned, trendAbandonedPct: series.trendAbandonedPct };
+               trendAbandoned: series.trendAbandoned, trendAbandonedPct: series.trendAbandonedPct,
+               trendAvgAnswerSec: series.trendAvgAnswerSec };   // MD2
     });
 
   const data = {
@@ -1729,6 +1752,8 @@ function getOverviewChartTrend(req) {
         const q = companyQcdYtd[iso];
         return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
       }),
+      // MD2: ADMIN-ONLY -- not in ovStripChartTrend_'s allowlist.
+      trendAvgAnswerSec: labels.map(function (iso) { return ovAvgAnswerSec_(companyQcdYtd[iso]); }),
     },
   };
   const json = JSON.stringify(data);
@@ -2323,6 +2348,9 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
     // place to see the combined view.
 
     const values = grid.values;
+    // MD2: the H:MM:SS avg-answer cell is read from the DISPLAY grid (INV-02),
+    // which both read sources fill and the exception filter keeps aligned.
+    const displays = grid.displays || null;
 
     // First pass: track the latest date per dept (so we can grab
     // the right "latest day" totals in a second pass).
@@ -2334,7 +2362,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
 
     // Single pass accumulating both latestDay and MTD violations.
     const acc = {};   // dept -> { latestDay: {date, total, abandoned, violations}, mtdViolations }
-    const companyQcdDaily = {};   // iso -> { totalCalls, abandoned }, once per queue row
+    const companyQcdDaily = {};   // iso -> { totalCalls, abandoned, aaSum, aaN }, once per queue row
     for (let i = 0; i < values.length; i++) {
       const r = values[i];
       const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
@@ -2356,6 +2384,13 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
       const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
       const violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+      // MD2: the answered-weighted avg-answer pair (RPT-8: a row counts only
+      // when it has both an average and answered calls).
+      const totalAnswered = Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+      const avgAnswerSec = (displays && displays[i])
+        ? (parseHmsDisplay_(displays[i][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]) || 0) : 0;
+      const aaSum = (avgAnswerSec > 0 && totalAnswered > 0) ? avgAnswerSec * totalAnswered : 0;
+      const aaN   = aaSum > 0 ? totalAnswered : 0;
 
       // COMPANY per-day QCD, accumulated ONCE PER QUEUE ROW -- deliberately
       // OUTSIDE the per-dept fan-out below. Summing the per-dept `daily` maps
@@ -2366,9 +2401,10 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
       // non-hidden on-roster union.
       if (dateIso >= sinceIso && depts.some(ovDeptVisibleForCompany_)) {
         let cq = companyQcdDaily[dateIso];
-        if (!cq) { cq = { totalCalls: 0, abandoned: 0 }; companyQcdDaily[dateIso] = cq; }
+        if (!cq) { cq = { totalCalls: 0, abandoned: 0, aaSum: 0, aaN: 0 }; companyQcdDaily[dateIso] = cq; }
         cq.totalCalls += totalCalls;
         cq.abandoned  += abandoned;
+        cq.aaSum += aaSum; cq.aaN += aaN;   // MD2
       }
 
       depts.forEach(function (dept) {
@@ -2381,7 +2417,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
             latestViolations: 0,
             mtdViolations:   0,
             perQueue:        {},   // queue -> { totalCalls, abandoned, violations }
-            daily:           {},   // iso -> { totalCalls, abandoned } (window rows, summed across queues) -- feeds the Overview chart's Abandoned metrics
+            daily:           {},   // iso -> { totalCalls, abandoned, aaSum, aaN } (window rows, summed across queues) -- feeds the Overview chart's Abandoned + avg-answer metrics
             queueDaily:      {},   // QD-2: queue -> iso -> [total, abandoned, violations], rows >= periodFromIso
           };
           acc[dept] = a;
@@ -2403,9 +2439,10 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ, opts) {
         // (>= sinceIso) count -- MTD-only older rows are excluded from the axis.
         if (dateIso >= sinceIso) {
           var dday = a.daily[dateIso];
-          if (!dday) { dday = { totalCalls: 0, abandoned: 0 }; a.daily[dateIso] = dday; }
+          if (!dday) { dday = { totalCalls: 0, abandoned: 0, aaSum: 0, aaN: 0 }; a.daily[dateIso] = dday; }
           dday.totalCalls += totalCalls;
           dday.abandoned  += abandoned;
+          dday.aaSum += aaSum; dday.aaN += aaN;   // MD2
         }
 
         // Latest-day totals: accumulate across queues for the latest

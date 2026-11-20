@@ -256,6 +256,8 @@
                 title="Abandoned call count per day (queue data)">Abandoned calls</button>
               <button type="button" class="ir-tab" data-metric="abandonedPct" aria-pressed="false"
                 title="Abandoned % per day (queue data)">Abandoned %</button>
+              <button type="button" class="ir-tab" data-metric="avgAnswer" aria-pressed="false"
+                title="Average time to answer an answered queue call, per day (queue data; not talk time)">Avg answer time</button>
               <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="true"
                 title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Fit</button>
               <label class="ov-subq-toggle" title="Show sub-queue (child) lines on the chart (dashed, in their parent's colour). On by default; uncheck to declutter to top-level departments only.">
@@ -1937,6 +1939,7 @@
             <ul>
               <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Judged against the answer-rate target (see &ldquo;The color-coding standards&rdquo;).</li>
               <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 4%+ in a day = violation.</li>
+              <li><strong>Avg answer time</strong> &mdash; how long an answered queue call waited before someone picked up, averaged over the answered calls. Queue data, not talk time. A view on the Overview chart.</li>
               <li><strong>ATT</strong> &mdash; Average Talk Time per answered call. Longer isn&rsquo;t automatically worse.</li>
               <li><strong>TTT</strong> &mdash; Total Talk Time (sum of an agent&rsquo;s own talk on answered calls).</li>
               <li><strong>Violations</strong> &mdash; days a queue went over the 4% abandon line (month-to-date in totals).</li>

@@ -1001,6 +1001,59 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
       }
     }
 
+    // MD2 (owner 2026-11-20): the "Avg answer time" view. Dept lines in whole
+    // seconds from queue data, an m:ss axis, NO target line, and the Company
+    // line for an admin ONLY -- a manager's payload does not carry that series
+    // (pinned server-side by overview-chart-answered + the CH-4 golden), so
+    // the rendered check here is that none is drawn. Switched back afterwards:
+    // the checks below read the % view.
+    {
+      const clickMetric = async (m) => {
+        await page.evaluate((mm) => {
+          const b = document.querySelector('#ov-chart-tabs .ir-tab[data-metric="' + mm + '"]');
+          if (b) b.click();
+        }, m);
+        await page.waitForTimeout(700);
+      };
+      await clickMetric('avgAnswer');
+      const aa = await page.evaluate(() => {
+        const ch = (window.Chart && window.Chart.getChart) ? window.Chart.getChart('ov-trend-chart') : null;
+        if (!ch) return { chart: false };
+        const sets = ch.data.datasets || [];
+        const deptVals = [];
+        // A bridged exception day carries an interpolated value, not a figure.
+        sets.filter((d) => d._deptName).forEach((d) => d.data.forEach((v, i) => {
+          if (v != null && !(d._bridged && d._bridged[i])) deptVals.push(v);
+        }));
+        const c = sets.find((d) => d.label === 'Company') || null;
+        // Read from the axis OPTIONS: the Overview may be off screen at this
+        // point in the walk, and a zero-height canvas lays out a single tick.
+        const yo = (ch.options.scales && ch.options.scales.y) || {};
+        const cb = yo.ticks && yo.ticks.callback;
+        const tab = document.querySelector('#ov-chart-tabs .ir-tab[data-metric="avgAnswer"]');
+        return {
+          chart: true,
+          points: deptVals.length,
+          whole: deptVals.every((v) => Number.isInteger(v) && v > 0 && v < 3600),
+          tick65: cb ? String(cb(65)) : '', step: yo.ticks ? yo.ticks.stepSize : null, axisMin: yo.min, axisMax: yo.max,
+          company: !!c, companyPoints: c ? c.data.filter((v) => v != null).length : 0,
+          dashed: sets.filter((d) => (d.borderDash || []).length === 2 && !d._deptName && d.label !== 'Company').length,
+          header: ((document.getElementById('ov-chart-header-label') || {}).textContent || '').trim(),
+          pressed: !!tab && tab.getAttribute('aria-pressed') === 'true',
+        };
+      });
+      record(role + ': MD2 the Avg answer time view draws dept lines in whole seconds on an m:ss axis, with no target line',
+        aa.chart && aa.pressed && aa.points > 0 && aa.whole && aa.tick65 === '1:05'
+          && aa.step > 0 && aa.axisMax > aa.axisMin && aa.axisMax % aa.step === 0 && aa.axisMin % aa.step === 0 && aa.dashed === 0 && /\(queue\)/.test(aa.header),
+        JSON.stringify(aa));
+      if (role === 'admin') {
+        record('admin: MD2 the Company line is on the Avg answer time view', aa.company && aa.companyPoints > 0, JSON.stringify(aa));
+      } else {
+        record('manager: MD2 no Company line on the Avg answer time view (admin-only)', aa.company === false, JSON.stringify(aa));
+      }
+      await clickMetric('pct');
+    }
+
     // same fix the email got in R18 -- a per-section unit made bar length
     // incomparable between departments, which is the same misread whether the
     // rows sit in an inbox or on a page. Asserted as the PROPERTY (monotonic

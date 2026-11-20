@@ -1279,15 +1279,28 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   manager, takes no dept hue, and its point sits inside the dept spread).
   **Metric views are a
   registry** (`OV_CHART_METRICS_`, script-3-overview): each entry names the
-  per-dept payload field, a `pct`/`count` unit, the axis title, an optional
+  per-dept payload field, a `pct`/`count`/`secs` unit, the axis title, an optional
   dashed baseline and a formatter; a tab button's `data-metric` is the
   registry key, and the tab wiring is generic, so a new metric is an entry
-  plus a button. Four now: % Answered and **Answered calls (6b)** are DQE
-  ring figures; Abandoned calls and Abandoned % are QCD queue-level —
+  plus a button. Five now: % Answered and **Answered calls (6b)** are DQE
+  ring figures; Abandoned calls, Abandoned % and **Avg answer time (MD2)**
+  are QCD queue-level —
   different populations, so Abandoned % is not 100 − % Answered and an
   Answered count never reconciles against an Abandoned one (hence the
   "(rings)" / "(queue)" header qualifiers). A count series is null on a day
   with no rows so a weekday gap BREAKS the line; a real 0 renders as 0.
+  **Avg answer time (MD2, owner 2026-11-20)** is the time to ANSWER an
+  answered queue call -- not talk time -- in whole seconds, weighted by
+  answered calls (`ovAvgAnswerSec_` over the `aaSum` / `aaN` pair
+  `computeQcdSnapshots_` adds to each day; the queue report's RPT-8 rule),
+  from each dept's DIRECT queues like the abandoned views, and null on a day
+  with no answered queue calls. Its `secs` unit draws an m:ss axis whose ends
+  and ticks snap to one clock-friendly step (`ovFmtSecs_`, `ovSecsStep_`).
+  There is NO target line (no answer-time standard exists), and its Company
+  line is ADMIN-ONLY: the series rides `companyAggregate` / `company` and is
+  on neither non-admin allowlist (INV-39), so a manager's chart draws none.
+  Pinned by `overview-chart-answered.test.js`, `overview-qcd-snapshot.test.js`,
+  the CH-4 golden and `drive-smoke.js` (both roles).
   An axis-zoom toggle button (`ov-axis-zoom-btn`)
   flips the y-axis between Full (0-100%) and Fit (auto-scale to the
   data range) — **Fit is the DEFAULT since R12-8b** (owner: lines

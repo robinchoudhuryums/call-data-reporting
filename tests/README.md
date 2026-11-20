@@ -700,12 +700,16 @@ tests/
                               pre-capture window),
                               overview-dqe-silence, overview-qcd-snapshot
                               (computeQcdSnapshots_ + the L4 prior-window
-                              read), overview-chart-answered (6b: the
+                              read; MD2: the answered-weighted avg-answer
+                              pair on both grid shapes), overview-chart-answered (6b: the
                               Overview chart's answered-COUNT series --
                               the null-vs-real-zero convention, plus the
                               source pins tying the two payloads, the two
                               cache prefixes, the range slice, the metric
-                              registry and the tab button to one name),
+                              registry and the tab button to one name;
+                              MD2: the Avg answer time view -- the weighted
+                              series, its admin-only company line on both
+                              payloads, the m:ss helpers),
                               qcd-alldept-order (6a: in-app Daily Call
                               Queue Report section order -- own dept
                               pinned, then the email's worst-first

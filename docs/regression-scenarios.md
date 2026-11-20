@@ -175,6 +175,7 @@ S25 | Company aggregate visibility is admin-only | Subsystem: Department Dashboa
     - Open Overview as a manager (non-admin).
     - Open Overview as an admin.
   Expected: manager sees the dept grid + 30-day trend chart but no "Company snapshot · admin only" hero; admin sees that hero at the top with rung/answered/missed/ATT/active counts + a 30-day company-wide sparkline.
+    - MD2 (2026-11-20): on the Overview chart click "Avg answer time". One line per department, the axis and the hover text in m:ss (e.g. "CSR: 0:24"), the heading ends "(queue)", and there is no dashed target line. An admin also sees the black Company line; a manager sees none on this view (they still get it on % Answered and Abandoned %). Switch 30d / 60d / 90d / YTD: the view follows each range. A day when a department answered no queue calls is a gap in its line, not a point at 0:00.
 
 S26 | Big-roster reports complete without cache-key error | Subsystem: Department Dashboard
   Steps:

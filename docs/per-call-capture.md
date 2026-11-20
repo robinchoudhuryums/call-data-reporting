@@ -637,7 +637,7 @@ card periods (Yesterday / 30 / 60 / 90 / YTD, the same starts as the inbound
 stats). It attributes through the same `deptsForAgent` roster map as the DQE
 tiles, so an agent on two rosters counts in both and an off-roster dialler in
 none. These are dept TOTALS, so `TEAM_AVG_EXCLUDES` does not apply. The result
-rides the cached `companyOverview:v31` blob, so the 5-minute auto-refresh never
+rides the cached `companyOverview:v32` blob, so the 5-minute auto-refresh never
 reaches Neon. The read is metered as `overviewOutbound`. It has NO sheet
 fallback, on purpose: a YTD tail of the Outbound Calls tab costs far more than
 the line is worth. A failed read omits the field, the tiles show no line, and
@@ -657,7 +657,7 @@ period's INV-28 prior (`ovOutboundPriorWindows_`), plus `coverageStart` and
 `through`. The rate is answered ÷ (answered + missed while free), the Direct
 Calls report's rule; busy rings are shown, not rated. A prior is kept only
 when its window starts on or after capture. Metered as `overviewDirect`, no
-sheet fallback, `companyOverview:v31`. It is ADMIN-ONLY like the Direct Calls
+sheet fallback, `companyOverview:v32`. It is ADMIN-ONLY like the Direct Calls
 report, with no release switch: `personalizeOverview_` strips `dept.direct`,
 `directCoverageStart`, `directThrough` and `directPriorWindows` for every
 non-admin, whatever `OUTBOUND_VETTING_GATE_` says. Exception days (#81) are not
@@ -671,7 +671,7 @@ widening the read's lower bound to the earliest prior start -- still ONE
 statement, still metered `overviewOutbound`. Each period's `prior` is null
 when its window starts before `coverageStart` (comparing against an
 uncaptured period would read as pure growth); `outboundPriorWindows` carries
-the windows for the hover text and is stripped with the line (companyOverview:v31).
+the windows for the hover text and is stripped with the line (companyOverview:v32).
 My Department needs no server change: it calls `getDeptOutboundSummary` a
 second time for the summary's own `meta.priorFrom/priorTo`.
 
