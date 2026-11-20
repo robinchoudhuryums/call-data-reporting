@@ -215,16 +215,24 @@ async function md4Pass(browser, role) {
   await page.addInitScript(() => {
     localStorage.setItem('cdr.tour.done', '1');
     localStorage.setItem('cdr.ins.intro.v1', '1');
+    // A prefs blob from before MD4 (the Trend chart was on "Queue:
+    // Violations"), written BEFORE any page script runs on the second load.
+    // The key is per user (insPrefsKey_), so the first load only learns it;
+    // seeding after a load raced the page's own late prefs saves.
+    try {
+      const key = sessionStorage.getItem('md4.key');
+      if (key && !sessionStorage.getItem('md4.seeded')) {
+        sessionStorage.setItem('md4.seeded', '1');
+        localStorage.setItem(key, '{"trendMetric":"queues","queueMetric":"violations","trendView":"monthly"}');
+      }
+    } catch (e) { /* storage blocked: the check below reports it */ }
   });
   await page.goto('file://' + path.join(__dirname, 'site', 'index-' + role + '.html'));
-  await page.waitForTimeout(2500);
-  // A prefs blob from before MD4 (the Trend chart was on "Queue: Violations"),
-  // written under the page's own per-user key (insPrefsKey_), then a reload.
+  await page.waitForTimeout(2000);
   const seeded = await page.evaluate(() => {
     try {
       const who = (window.__USER__ && window.__USER__.email) || '';
-      window.__md4Key = 'cdr.ins.prefs.v2:' + who;
-      localStorage.setItem(window.__md4Key, '{"trendMetric":"queues","queueMetric":"violations","trendView":"monthly"}');
+      sessionStorage.setItem('md4.key', 'cdr.ins.prefs.v2:' + who);
       return true;
     } catch (e) { return false; }
   }).catch(() => false);
