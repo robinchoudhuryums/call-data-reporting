@@ -982,3 +982,75 @@ test('MD4 F-b: the series is capped, and a one-day window or an agent with no ro
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
   assert.ok(Number(/INSIGHTS_CACHE_KEY_PREFIX = 'insights:v(\d+)'/.exec(src)[1]) >= 30);
 });
+
+// ── MD4-S (owner 2026-11-20): the Insights payload against the cache cap ─────
+//
+// THE RULE: the payload's size is LOGGED on every cache write, and the one
+// optional block in it -- the per-agent daily series -- is shed before the
+// value can crowd CacheService's ~100 KB cap, so it can never be what leaves a
+// window uncached. The object returned to the caller is the one that was
+// cached, so a first serve and a cached serve agree.
+test('MD4-S: a normal payload is cached whole and its size is logged', function () {
+  const fit = h.ctx.insFitForCache_;
+  const data = { meta: {}, agentData: [{ name: 'Anna', trendDays: [[1, 1, 0, 100], null] }, { name: 'Ben', trendDays: null }] };
+  const out = fit(data);
+  assert.equal(out.info.dropped, false);
+  assert.equal(out.json, JSON.stringify(data));
+  assert.equal(out.info.bytes, out.json.length);
+  assert.equal(out.info.dailyBytes, JSON.stringify([[1, 1, 0, 100], null]).length, 'the series\' own share is measured');
+  assert.equal(data.meta.agentDailyDropped, undefined);
+  const line = h.ctx.insCacheSizeLine_('CSR', '2026-10-21', '2026-11-19', out.info);
+  assert.match(line, /^\[insights-cache\] CSR 2026-10-21\.\.2026-11-19: \d+ bytes \(\d+% of the ~102400 cap; 2 agents; per-agent daily series \d+ bytes\)$/);
+});
+
+test('MD4-S: past the drop line the per-agent daily series goes, the rest stays, and the payload says so', function () {
+  const fit = h.ctx.insFitForCache_;
+  const pad = 'x'.repeat(89 * 1024);   // the rest of the report, just under the line on its own
+  const mk = function () {
+    return { meta: { department: 'CSR' }, pad: pad,
+      agentData: [{ name: 'Anna', metrics: { answered: 5 }, trendDays: new Array(400).fill([10, 8, 2, 80]) },
+                  { name: 'Ben', metrics: { answered: 3 }, trendDays: null }] };
+  };
+  const data = mk();
+  assert.ok(JSON.stringify(data).length >= 90 * 1024, 'fixture is past the drop line');
+  const out = fit(data);
+  assert.equal(out.info.dropped, true);
+  assert.equal(data.agentData[0].trendDays, null, 'the series is shed from the object the caller returns');
+  assert.equal(data.agentData[0].metrics.answered, 5, 'nothing else on the card moves');
+  assert.equal(data.meta.agentDailyDropped, true, 'the client is told why Daily is off');
+  assert.equal(out.json, JSON.stringify(data), 'what is cached is what is returned');
+  assert.ok(out.info.bytesAfter < out.info.bytes);
+  const line = h.ctx.insCacheSizeLine_('CSR', 'a', 'b', out.info);
+  assert.match(line, /per-agent daily series DROPPED \(was \d+ bytes of \d+\)/);
+  assert.match(line, /By agent offers Monthly only for this window\.$/);
+  // A large payload with NO daily series is left alone (there is nothing optional to shed) and warned about.
+  const big = { meta: {}, pad: 'x'.repeat(95 * 1024), agentData: [{ name: 'Anna', trendDays: null }] };
+  const o2 = fit(big);
+  assert.equal(o2.info.dropped, false);
+  assert.equal(big.meta.agentDailyDropped, undefined);
+  assert.match(h.ctx.insCacheSizeLine_('CSR', 'a', 'b', o2.info), /APPROACHING the CacheService limit/);
+});
+
+test('MD4-S: the cache write goes through the fit, logs the size, and a failed put says the window is uncached', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.match(src, /const fit = insFitForCache_\(data\);\s*Logger\.log\(insCacheSizeLine_\(dept, from, to, fit\.info\)\);\s*try \{ cache\.put\(cacheKey, fit\.json, REPORT_CACHE_TTL_SECONDS\);/);
+  assert.match(src, /InsightsReport cache put FAILED at %s bytes[\s\S]{0,120}UNCACHED/);
+  assert.ok(!/cache\.put\(cacheKey, JSON\.stringify\(data\)/.test(src), 'no unmeasured put left');
+  // Behavioural: a real run logs the line and returns the object it cached.
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5,  missed: 1, answered: 4, att: '0:03:00' }),
+  ]);
+  const logs = [];
+  const realLog = h.ctx.Logger.log;
+  h.ctx.Logger.log = function () { logs.push(Array.prototype.slice.call(arguments).join(' ')); return realLog.apply(h.ctx.Logger, arguments); };
+  try {
+    const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-13', agents: ['Anna'] });
+    assert.ok(logs.some(function (l) { return /^\[insights-cache\] Alpha 2026-03-09\.\.2026-03-13: \d+ bytes/.test(l); }), 'the size line is logged on the write');
+    assert.ok(Array.isArray(agent(data, 'Anna').trendDays), 'a small report keeps its daily series');
+    assert.equal(data.meta.agentDailyDropped, undefined);
+  } finally { h.ctx.Logger.log = realLog; }
+  // The client names the real reason when the series was shed.
+  const s8 = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-8-insights.html'), 'utf8');
+  assert.match(s8, /data\.meta && data\.meta\.agentDailyDropped\)\s*\? 'By agent, the daily view is off for this report/);
+});

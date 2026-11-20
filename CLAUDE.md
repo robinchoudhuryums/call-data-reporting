@@ -1068,7 +1068,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   series (~0.3 KB/dept, so ~46 KB est.) -- roughly
   25+ depts away, so this is instrumentation, not
   a live risk, and it is LOG-only: nothing surfaces on the Health
-  page.
+  page. **Insights is measured too (MD4-S):** every cache write logs
+  `[insights-cache] <dept> <window>: N bytes`, and its one optional block
+  (the per-agent daily series) is shed at 90 KB (`insFitForCache_`,
+  `insights-report.test.js`).
 - **CSV exports must neutralize formula injection.** Agent names
   originate from the external CDR feed and flow into client-side
   CSV downloads, so they're untrusted input to a spreadsheet app

@@ -953,7 +953,9 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     INV-25 weighted ATT, INV-29 trend window, INV-53 roster gating, and
     IDLE-2 (an agent-free run drops agents with no calls in the window; an
     explicit pick keeps its card; the email follows the same rule),
-    and MD4 F-b (each card's capped per-day series, `trendDays`);
+    MD4 F-b (each card's capped per-day series, `trendDays`), and MD4-S
+    (the payload's size is logged on every cache write; the daily series is
+    shed near the cache cap);
     INV-35's working-day math lives in util.test.js
     (`countWorkingDays_`) + the Insights suite. `loadRosterCanonicalNames_`
     (pipeline) — INV-24 paren-strip map + ambiguity, INV-46 alias

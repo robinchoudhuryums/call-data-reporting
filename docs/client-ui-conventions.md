@@ -123,7 +123,12 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `insTrendAgentPoint_` reads either). The server ships `trendDays` only for
   a window of up to `meta.agentDailyMaxDays` (45) days of data -- agents x
   days x ~15 bytes would otherwise crowd the ~100 KB cache value -- and past
-  it the Daily button is DISABLED with a reason, never hidden. The Monthly /
+  it the Daily button is DISABLED with a reason, never hidden. The same
+  series is also the payload's one OPTIONAL block (MD4-S): when the whole
+  serialized report reaches 90 KB the server sheds it before caching
+  (`insFitForCache_`, `meta.agentDailyDropped` -- the button then says the
+  report is too large, not that the window is too long), and every cache
+  write logs its size (`[insights-cache] ...`, `insCacheSizeLine_`). The Monthly /
   Daily switch is the SAME one Team total uses (`insTrendView`;
   `insTrendViewSync_` owns its state for both scopes); the Calendar stays
   Team total only. Each view carries a dashed neutral REFERENCE (PURE

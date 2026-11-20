@@ -5638,8 +5638,13 @@
     const agentDailyOk = hasDayAxis && cards.some(function (c) { return Array.isArray(c.trendDays); });
     const daily = insTrendView === 'daily' && agentDailyOk;
     const capDays = Number(data.meta && data.meta.agentDailyMaxDays) || 0;
-    insTrendViewSync_(hasDayAxis, daily ? 'daily' : 'monthly', agentDailyOk ? ''
-      : ('By agent, the daily view covers windows of up to ' + (capDays || 45) + ' days of data. Shorten the dates, or use Monthly.'));
+    // MD4-S: the server sheds the series when the whole report would crowd
+    // its cache value (meta.agentDailyDropped) -- say that, not the day cap.
+    const dailyOffWhy = agentDailyOk ? ''
+      : ((data.meta && data.meta.agentDailyDropped)
+        ? 'By agent, the daily view is off for this report: with every agent\'s daily detail it is too large to hold. Pick fewer agents or a shorter window, or use Monthly.'
+        : ('By agent, the daily view covers windows of up to ' + (capDays || 45) + ' days of data. Shorten the dates, or use Monthly.'));
+    insTrendViewSync_(hasDayAxis, daily ? 'daily' : 'monthly', dailyOffWhy);
     const td = daily ? data.trendDaily : (data.trendData || {});
     const labels = td.labels || [];
     const metric = INS_TREND_AGENT_METRICS_.indexOf(insTrendAgentMetric) !== -1 ? insTrendAgentMetric : 'answered';
