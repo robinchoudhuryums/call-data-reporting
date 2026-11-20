@@ -103,19 +103,30 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   Insights has diverged from what managers were promised at the PR
   fold-in. PR's three views all live here now: the ds-kpi rollup
   tiles, the share-of-answered donut (`insRenderShareChart_`), and the
-  Volume & Efficiency stacked bars as the per-agent Chart view's
-  **Absolute** sub-toggle (`insRenderCardsChartAbs_`; 'gap'|'abs' in
-  `insCardsChartMode`, persisted in prefs; the metric selector shows for
-  gap, hidden for Absolute). **MD3 (owner 2026-11-20): ONE trend chart,
+  Volume & Efficiency stacked bars -- which were the per-agent Chart view's
+  **Absolute** basis until MD4 (F-c) DELETED it: hidden since R16g because
+  the agent table on the same page carries those volumes, it was dead code,
+  so the renderer, the `#ins-cards-chart-mode` sub-toggle, the
+  `insCardsChartMode` state and its prefs field are all gone. The Agents
+  section's chart is the gap bars, with its metric selector. **MD3 (owner 2026-11-20): ONE trend chart,
   "Team total / By agent".** The per-agent "Trend" basis that used to be a
   third option here (R11-E4) is now a SCOPE of the Trends fold's chart
   (`#ins-trend-scope`, `insTrendScope` = `team` | `agent`, saved as
   `trendScope`), drawn on the same canvas and chart instance. **Team total**
   is the team line with every metric, Monthly / Daily and Line / Calendar.
-  **By agent** (`insRenderTrendByAgent_`) is one line per active agent over
-  the 12-month axis (`trendData.labels`, each card's `trendMonthly`), MONTHLY
-  only, for Answered / Missed / % Answered (`#ins-trend-agent-metric`,
-  `trendAgentMetric`), with a dashed neutral REFERENCE (PURE
+  **By agent** (`insRenderTrendByAgent_`) is one line per active agent, for
+  Answered / Missed / % Answered (`#ins-trend-agent-metric`,
+  `trendAgentMetric`): MONTHLY over the 12-month axis (`trendData.labels`,
+  each card's `trendMonthly`) or, since MD4 (F-b), DAILY over the selected
+  window (`trendDaily.labels`, each card's `trendDays` -- compact
+  `[rung, answered, missed, pct]` tuples, null on a day with no row; PURE
+  `insTrendAgentPoint_` reads either). The server ships `trendDays` only for
+  a window of up to `meta.agentDailyMaxDays` (45) days of data -- agents x
+  days x ~15 bytes would otherwise crowd the ~100 KB cache value -- and past
+  it the Daily button is DISABLED with a reason, never hidden. The Monthly /
+  Daily switch is the SAME one Team total uses (`insTrendView`;
+  `insTrendViewSync_` owns its state for both scopes); the Calendar stays
+  Team total only. Each view carries a dashed neutral REFERENCE (PURE
   `insTrendAgentRef_`): the team's own monthly rate for % Answered, and for a
   count the average per agent shown who was active that month, leaving out
   team-average-excluded managers (INV-26) -- the team TOTAL would dwarf
@@ -196,10 +207,34 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   "too many selectors"): Answered / % Answered / Missed / Call volume
   (rung) / Avg talk time (ADMIN-only -- the `data-admin-metric` option is
   REMOVED at init for non-admins, since `<option>` can't use the
-  data-admin-only reveal) / the queue metrics as `queues:<metric>` values
-  (Abandoned % / Total calls / Violations, and since P6 Avg answer time /
-  Longest wait -- these split into the old queues tab + `insQueueMetric`;
-  the allowed set is `INS_QUEUE_METRICS_`). **The two TIME metrics (P6) are
+  data-admin-only reveal). **MD4 (owner 2026-11-20): the queue metrics LEFT
+  this dropdown -- "Trends = people, Queue health = queues".** The per-queue
+  series (Abandoned % / Total calls / Violations / Avg answer time / Longest
+  wait; `INS_QUEUE_METRICS_`, state `insQueueMetric`, still saved as
+  `queueMetric`) is the Queue health section's OWN chart
+  (`insRenderQhChart_` on `#ins-qh-chart`, beside the per-queue table in
+  `.ins-qh-cols`, drawn fold-gated and measure-guarded by `insDrawQhChart_`).
+  Its metric comes from `#ins-qh-chart-metric` OR from the table's three
+  column-heading BUTTONS (`.ins-qh-th-btn`, `aria-pressed` on the charted
+  one, marked by underline as well as colour; the Abandoned count has no
+  series so its heading stays a label). Views: Monthly / Daily / Calendar
+  (`insQhChartView`, saved as `qhChartView`; PURE `insQhResolveView_` --
+  Calendar is Abandoned % only, Daily needs a daily series; an unavailable
+  view is disabled with a reason). Hovering OR focusing a table row
+  (`tr.ins-qh-row[data-queue]`) highlights that queue's line through the
+  shared `chartSpotlightApply_` / `chartSpotlightClear_` (`insQhHighlight_`;
+  a pinned queue wins). The legend spotlight, the violation-day markers, the
+  point drill and the partial-month marking are the ones the queue view
+  always had. **The two calendars share ONE renderer:**
+  `insRenderTrendCalendar_(data, { queue: true })` draws into
+  `#ins-qh-calendar` with its own month position (`INS_CAL_STATE_.queue`),
+  and the eligibility helpers take the scope as an argument
+  (`insCalendarEligible_(data, queue)`), never from `insActiveTrendMetric`.
+  A prefs blob saved on a "Queue:" Trend entry SELF-HEALS once (PURE
+  `insQhHealFromPrefs_`): the Trend metric falls back to Answered, the
+  healed prefs are saved, and Queue health opens on that metric. Pinned by
+  `brief-accordion.test.js` (the MD4 block) and `drive-smoke.js`.
+  **The two TIME metrics (P6) are
   SECONDS** in `queueHealth.trend.metrics.avgAnswer` / `.longestWait`, with
   `null` where a day or month has none (a gap in the line, never a dip to
   zero): `fmtVal` and the y axis print m:ss (`insSecsLabel_`), the axis steps
@@ -312,10 +347,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   chart lives at the BOTTOM in its own "Trends" section** (now a Round-16
   FOLD; drawn on open) -- it's the one view the window controls don't govern
   (always ~12 months); the share tally stays deferred inside Team-detail
-  (`insRenderDeferredCharts_` is share-only now). NB since R11-C3 the
-  by-queue metrics are entries in the ONE `#ins-trend-metric` dropdown
-  ("Queue: Abandoned %" etc. -- internally `data-metric="queues"` +
-  `insQueueMetric`; the old sub-tab row + queue select are retired).
+  (`insRenderDeferredCharts_` is share-only now). NB since MD4 the
+  by-queue metrics are NOT in the `#ins-trend-metric` dropdown -- they are
+  the Queue health section's own chart (see the MD4 note above).
   (2) **Hand-off (the department is the shared global
   selector, so only DATES are carried):** `handoffToInsights_(from,to,scroll)`
   (a parametrized `launcherOpenInsights_`) and `handoffToMyDept_(from,to,{missed})`
@@ -436,18 +470,19 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   now also releases via `.ir-chart-wrap--cal`); an **'Abandoned %'**
   cell rendering (dept-total daily abandoned % from
   `queueHealth.dailySeries`, colored on the abandon standard (4%)) makes the
-  Queue: Abandoned % metric calendar-eligible too; and the
+  queue Abandoned % metric calendar-eligible too (since MD4 that calendar is
+  the Queue health chart's Calendar view); and the
   Line⇄Calendar toggle stays VISIBLE but disabled with a reason
   tooltip (`insCalendarIneligibleReason_`) on ineligible metrics/windows
   instead of vanishing (the discoverability fix — it used to hide
   entirely, which read as "the calendar view is gone"). **Since R11-C3
   the calendar has NO metric selector of its own** — the cell metric is
   DERIVED from the ONE `#ins-trend-metric` dropdown
-  (`insActiveTrendMetric` → ans/pct/missed/vol, or abd for Queue:
-  Abandoned %; a muted `.ins-cal-metric-lbl` label names it in the
+  (`insActiveTrendMetric` → ans/pct/missed/vol; the QUEUE calendar is always
+  abd; a muted `.ins-cal-metric-lbl` label names it in the
   toolbar; the old per-calendar segment + the `insCalMetric` pref are
   vestigial). Calendar-capable metrics: Answered / % Answered / Missed
-  / Call volume + Queue: Abandoned %; ATT and the count queue metrics
+  / Call volume, and queue Abandoned % in Queue health; ATT and the count queue metrics
   stay line-only (`insCalendarEligible_`). The Monthly/Daily toggle
   hides while Calendar is active (a calendar is inherently daily), and
   the calendar's day-drill + month-nav clicks are wired DIRECTLY on the
@@ -653,10 +688,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
 - **Insights floating admin A/B remote is client-only (R11-J).** A small
   collapsible fixed card (`#ins-ab-panel`, bottom-right above the Help FAB)
   for live A/B testing of the Insights view toggles -- Agents Cards/Chart,
-  chart Basis Gap/Abs, the trend chart's Scope Team/Agent (MD3), Trends
-  Line/Calendar, and the trend Metric select.
+  the trend chart's Scope Team/Agent (MD3), Trends Line/Calendar, and the
+  trend Metric select (the Basis row went with the basis sub-toggle, MD4).
   It's a REMOTE, not a parallel state: each button FORWARDS a `.click()` to the
-  real segmented control (`ins-cards-view-toggle` / `ins-cards-chart-mode` /
+  real segmented control (`ins-cards-view-toggle` /
   `ins-trend-scope` / `ins-trend-render-toggle`) and the select mirrors `#ins-trend-metric`, so all
   existing state/prefs/render wiring fires ONCE; `insSyncAbPanel_` (called from
   `insApplyCardsView_` + `insRenderTrendChart_`) reflects live state +
@@ -1665,11 +1700,9 @@ behind the removed button.
   the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
   SAME page carries the Absolute information, so the section defaults to the
   one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap).
-  **R16g completes that logic: the Absolute OPTION is HIDDEN too** (the abs
-  button keeps its markup + wiring + renderer inert per the Round-16 removal
-  convention; the admin A/B remote still reaches it), **and since MD3 the
-  whole sub-toggle is hidden** -- Trend became the Trends chart's "By agent"
-  scope, leaving Gap as the only visible basis. The metric selector dropped **Rung**
+  **R16g hid the Absolute option, MD3 moved Trend into the Trends chart as
+  "By agent", and MD4 (F-c) DELETED the sub-toggle and the Absolute renderer**
+  -- Gap is the one chart here. The metric selector dropped **Rung**
   (≈ answered + missed, so its gap bars restated the other two; a
   saved `'rung'` pref self-heals to answered; the renderers still accept it
   if fed). All cards code is kept — single-agent reports still
@@ -3116,7 +3149,13 @@ stay pinned by INV-39, INV-53 and INV-06.
   then the team detail (`INS_BRIEF_TARGET_` entries carry an `ids` list, and
   mount / unmount / apply / restore / `insOpenSection_` walk it); in the slot
   the second section's `<summary>` stays as a plain, non-clickable
-  sub-heading. **MD3:** the Team row also takes the ONE trend chart and
+  sub-heading. **A handler for anything inside a section must be bound on
+  the section itself or on the DOCUMENT, never on `#insights-page` (MD4
+  F-a):** `#ins-brief` sits outside that element, so a listener delegated
+  there never sees a click in a section the brief is holding -- the agent
+  card's "open Individual Report" link did nothing for the admin until it
+  moved to the document (`insInSection_` keeps it to Insights' own markup;
+  `brief-accordion.test.js` fails on a `page.addEventListener`). **MD3:** the Team row also takes the ONE trend chart and
   shows it By agent, above the gap bars; the Trend row shows it as the Team
   total (see the MD3 paragraph in the Insights bullet above).
   The queue-wait verdict is server-side

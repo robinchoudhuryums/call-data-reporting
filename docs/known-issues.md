@@ -1673,11 +1673,9 @@ existing per-dept dropdown):
 - **Insights → Queue health** (the retired QCD modal's replacement):
   headline tiles + secondary strip, per-queue rows with expandable
   per-call-source detail + violation dates, the collapsed Daily
-  breakdown table, and the consolidated trend chart's queue metrics
-  (since R11-C3 the "Queue: Abandoned % / Total calls / Violations"
-  entries in the ONE `#ins-trend-metric` dropdown — the old by-queue
-  tab + metric sub-selector are retired; violation-day warn markers +
-  legend spotlight unchanged).
+  breakdown table, and the section's own queue trend chart (MD4: the
+  per-queue series moved here from the Trend dropdown's "Queue:"
+  entries; violation-day warn markers + legend spotlight unchanged).
 - **Overview tile chips**: an abandoned % chip (+ "N aban") for the card
   window whenever QCD data exists (QD-2; warn-tinted when P >= the 4% abandon
   standard), and a "X viol MTD" chip, always shown and tiered 0 green / 1-3

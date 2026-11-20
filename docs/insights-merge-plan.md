@@ -120,10 +120,9 @@ untouched across every phase. This is a client-side restructure.
   `#dept-missed-section` (`qsSpotlight_`), and the lens switcher's "Agent
   table" side scrolls to the table. `handoffToMyDept_` survives as the
   fallback when the target isn't rendered.
-- **Agents section defaults to Gap vs team** (`insCardsChartMode = 'gap'`);
-  a saved `'abs'` pref SELF-HEALS to gap (most blobs carry `'abs'` from
-  mere usage under the old default, not intent — the non-admin `'att'`
-  self-heal precedent). Abs/Trend stay one click away.
+- **Agents section is Gap vs team.** (History: it once had an Absolute and a
+  Trend basis beside it. MD3 moved Trend into the Trends chart as "By agent"
+  and MD4 deleted the Absolute basis and the sub-toggle, 2026-11-20.)
 - **A/B panel scoped to "region on screen"**: an IntersectionObserver on
   the region toggles `.ins-ab-offscreen` (CSS `display:none !important`
   beats the admin reveal loop's inline `display:''`), so the fixed remote
