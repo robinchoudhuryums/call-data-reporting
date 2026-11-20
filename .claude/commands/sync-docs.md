@@ -1,8 +1,12 @@
+---
+description: "Detect and fix documentation drift, roadmap currency included; propose promoting invariant candidates to the library"
+---
+
 Read CLAUDE.md and README before starting. Do not make any changes until the comparison is complete and you have asked for approval.
 
 You are detecting documentation drift — places where the docs no longer match the code, or where state that needs documentation is hiding in the operator's head.
 
-Run all five checks; produce a single drift report at the end.
+Run all seven checks; produce a single drift report at the end.
 
 ═══════════════════════════════════════════ CHECK 1 — CLAUDE.md CURRENCY ═══════════════════════════════════════════
 
@@ -74,6 +78,29 @@ removal, verify every fix code, `INV-`/`S`/Operator-State reference, backticked
 identifier, and Script Property name in the removed text still resolves
 somewhere in the live doc set — and say so in the report.
 
+═══════════════════════════════════════════ CHECK 6 — INVARIANT CANDIDATES ═══════════════════════════════════════════
+
+Has /reflect, a Verification Pass or a Seams audit proposed rules (pasted, or
+under .cycle/blocks/ — the "Invariant candidates" and "Proposed additions"
+lines) that are not in the Invariant Library? Propose adding each under the ID
+it was given, with its Subsystem and a Verify field; if the library already
+uses that ID, give the candidate the next free number and say so. A candidate
+the operator declines is dropped and its number is not reused.
+
+In this project the library's full text is `docs/invariants.md` and CLAUDE.md
+carries a one-line index of it; `tests/unit/claude-md-split.test.js` fails when
+the two drift apart, so a promotion is an edit to BOTH.
+
+═══════════════════════════════════════════ CHECK 7 — ROADMAP CURRENCY ═══════════════════════════════════════════
+
+If the project keeps a roadmap (ROADMAP.md, or the file its docs name — here
+`docs/next-steps.md`), does each item's status still match the code and the
+changelog? Flag an item that shipped and is not marked done, one marked in
+progress or queued for a cycle that has already run, and a stated top priority
+that names finished work. Propose the status edits. Choosing the next priority
+is the operator's decision: say that the stated one is spent and ask, do not
+pick one.
+
 ═══════════════════════════════════════════ OUTPUT — DOCUMENTATION DRIFT REPORT ═══════════════════════════════════════════
 
 ---DOCUMENTATION DRIFT REPORT---
@@ -98,6 +125,12 @@ DOC WEIGHT:
 
 CLAUDE.md [size] KB, [headroom] KB headroom. Largest bullets: [list].
 [bullet] | [narrative that belongs in fix-history / rule now covered by a test / shipped-since-written] | [proposed cut, with confirmation that every dropped reference still resolves] (or "None — nothing prunable")
+INVARIANT CANDIDATES:
+
+[INV-NN as proposed] | [source block] | [proposed library entry: rule, Subsystem, Verify] | [promote / renumbered to INV-MM / already in library] (or "None")
+ROADMAP CURRENCY:
+
+[item] | [status the roadmap states] | [what the code / changelog shows] | [proposed status edit] (or "None")
 PROPOSED CHANGES (file-by-file):
 
 [file] | [change] | [rationale]
