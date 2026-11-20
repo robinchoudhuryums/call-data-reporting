@@ -7,8 +7,9 @@
 //   - queue health: red at a window abandon rate of 4.00% or more; amber for a
 //     violation day, or an avg answer 1.5x the queue's OWN prior-3-month
 //     median (judged only at 5+ calls a day); green otherwise;
-//   - agents: red = behind the team AND slipping; amber = behind, or slipping
-//     while on par; "slipping" is ignored on windows more than 7 days apart;
+//   - agents (MD1, owner 2026-11-20): amber = someone is behind the team,
+//     green = nobody is; the direction of change ("slipping") is not read, so
+//     there is no red tier for now and an on-par agent is never named;
 //   - trend: the latest WHOLE month vs the average of the 3 before it -- red
 //     at 12+ points down, amber 8 to 12 down, green 8+ up;
 //   - callbacks: always grey (no standard yet); team detail rides the Team
@@ -115,26 +116,59 @@ test('queue health: 4.00% is red, 4+ violation days or a slow queue is amber, el
     'a queue with no calls in the window is not judged');
 });
 
-test('agents: behind + slipping is red; behind, or slipping while on par, is amber', function () {
+test('agents (MD1): amber when anyone is behind the team, green otherwise -- the direction of change is never read', function () {
   const r = function (name, standing, trend, judged) {
     return { name: name, standing: standing, trend: trend, judged: judged !== false };
   };
-  let v = agentsV([r('Ann', 'attention', 'regressed'), r('Bo', 'steady', 'mixed'), r('Cy', 'strong', 'improved')], false);
-  assert.equal(v.tier, 'red');
-  assert.match(v.text, /Ann \(behind, slipping\)/);
-  v = agentsV([r('Ann', 'attention', 'improved'), r('Bo', 'steady', 'mixed')], false);
+  // Behind is amber whatever the trend: there is no red tier for now.
+  let v = agentsV([r('Ann', 'attention', 'regressed'), r('Bo', 'steady', 'mixed'), r('Cy', 'strong', 'improved')]);
+  assert.equal(v.tier, 'amber', 'behind and down on last period is amber, not red');
+  assert.equal(v.text, 'Ann (behind)');
+  assert.deepEqual([v.red.length, v.amber.length], [0, 1]);
+  v = agentsV([r('Ann', 'attention', 'improved'), r('Bo', 'steady', 'mixed')]);
   assert.equal(v.tier, 'amber', 'behind but improving');
-  v = agentsV([r('Ann', 'steady', 'regressed'), r('Bo', 'steady', 'mixed')], false);
-  assert.equal(v.tier, 'amber', 'slipping while on par');
-  v = agentsV([r('Ann', 'strong', 'regressed'), r('Bo', 'steady', 'mixed')], false);
-  assert.equal(v.tier, 'green', 'ahead of the team and slipping is not flagged');
-  v = agentsV([r('Ann', 'attention', 'regressed'), r('Bo', 'steady', 'regressed')], true);
-  assert.equal(v.tier, 'amber', 'unequal windows: slipping ignored, so amber at most');
-  assert.equal(v.amber.length, 1, 'and the on-par slip no longer counts');
-  assert.equal(agentsV([r('Ann', 'attention', 'regressed'), r('Bo', 'steady', 'mixed', false)], false).tier, 'grey',
+  // On par or ahead and down on last period: not named, not counted, green.
+  v = agentsV([r('Ann', 'steady', 'regressed'), r('Bo', 'steady', 'mixed')]);
+  assert.equal(v.tier, 'green', 'on par and down on last period is no longer flagged');
+  assert.equal(v.text, 'Nobody is behind the team average');
+  assert.equal(v.amber.length, 0);
+  v = agentsV([r('Ann', 'strong', 'regressed'), r('Bo', 'steady', 'regressed')]);
+  assert.equal(v.tier, 'green');
+  // The same rows with every trend swapped read the same: the trend is not an input.
+  const a1 = agentsV([r('Ann', 'attention', 'regressed'), r('Bo', 'steady', 'regressed'), r('Cy', 'strong', 'regressed')]);
+  const a2 = agentsV([r('Ann', 'attention', 'improved'), r('Bo', 'steady', 'improved'), r('Cy', 'strong', 'improved')]);
+  assert.deepEqual([a1.tier, a1.text], [a2.tier, a2.text]);
+  assert.ok(!/slip/i.test(JSON.stringify([a1, a2, v])), 'the word never reaches the row');
+  assert.equal(agentsV([r('Ann', 'attention', 'regressed'), r('Bo', 'steady', 'mixed', false)]).tier, 'grey',
     'fewer than 2 judged agents is not enough to compare');
   const many = ['A', 'B', 'C', 'D', 'E'].map(function (n) { return r(n, 'attention', 'mixed'); });
-  assert.match(agentsV(many, false).text, /\+2 more$/, 'the list is capped at three names');
+  assert.match(agentsV(many).text, /^A \(behind\), B \(behind\), C \(behind\) \+2 more$/, 'the list is capped at three names');
+});
+
+test('MD1: the card pill shows only an improvement; the section head counts behind and on track, nothing else', function () {
+  const text = fs.readFileSync(path.join(DIR, F), 'utf8');
+  // insTrendPill_ leans on escapeHtml (a client global): give it one.
+  const start = text.indexOf('function insTrendPill_(');
+  const end = text.indexOf('\n  }\n', start) + 5;
+  // eslint-disable-next-line no-new-func
+  const pill = new Function('escapeHtml', 'return (' + text.slice(start, end) + ');')(function (x) { return String(x); });
+  assert.match(pill('improved'), /^<span class="ins-trend-pill ins-trend-up gloss" title="[^"]+">▲ Improving<\/span>$/);
+  assert.equal(pill('regressed'), '', 'a drop gets no pill');
+  assert.equal(pill('mixed'), '', 'nor does a mixed period -- "Steady" on a drop would be untrue');
+  assert.equal(pill(undefined), '');
+  assert.ok(!/slip/i.test(pill('improved')), 'the hover text does not name it either');
+  // The fold head: two counts that add up to the judged agents.
+  const head = text.slice(text.indexOf('function insSyncFoldHeads_('), text.indexOf("var dHead = $('ins-detail-fold-head');"));
+  assert.match(head, /behind \+ ' behind the team · ' \+ onTrack \+ ' on track'/);
+  assert.ok(!/slipping|regressed/.test(head.replace(/\/\/[^\n]*/g, '')), 'no third count');
+  // No user-visible "Slipping" / "slipping" string is left in the client or the page.
+  ['script-8-insights.html', 'script-6-ir.html', 'dashboard.html'].forEach(function (f) {
+    const src = fs.readFileSync(path.join(DIR, f), 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"])\/\/[^\n]*/g, '$1');
+    assert.ok(!/slipping/i.test(src), f + ' still shows the word outside a comment');
+  });
+  // The sort that orders by it stays (owner: it only orders the list).
+  assert.match(fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8'), /<option value="regressors">Biggest regressors<\/option>/);
 });
 
 test('trend: latest WHOLE month vs its prior 3-month average, 8 / 12 point bands', function () {

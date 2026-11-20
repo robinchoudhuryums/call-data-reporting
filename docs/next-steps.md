@@ -740,7 +740,9 @@ Insights ranked brief + one-line sections (Agents the only section open):
    or slipping-while-on-par = amber). Callbacks, Team detail and the 12-month
    trend stay grey until a standard exists. Tie order Queue -> Agents ->
    Callbacks -> Team detail -> Trend; on a >7-day window mismatch the Agents
-   row drops "slipping" (amber at most); a row the viewer cannot see is
+   row drops "slipping" (amber at most) -- SUPERSEDED by MD1 (2026-11-20):
+   "slipping" is gone from every surface, the Agents row is amber when anyone
+   is behind and green otherwise; a row the viewer cannot see is
    omitted, a config gap is a grey row; every row carries its word label.
 2. **Visibility** -- admins first (`data-admin-only`, so View-as hides it)
    for ~2 weeks, then release to managers.

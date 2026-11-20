@@ -4433,8 +4433,10 @@ When something looks wrong, before assuming a code bug, check:
     per credited day too (owner 2026-11-16):** the Individual Report's prior
     row on a count tile reads "Prior 22.9 / day", and on Insights each
     card's change badges for answered, missed, rung and total talk time, and
-    the Improving / Slipping pill, compare the agent's credited days in the
-    two windows -- so time off in one window is not a slip. The DEPARTMENT's
+    the improved / regressed classification behind the "Improving" pill and
+    the regressors sort, compare the agent's credited days in the two windows
+    -- so time off in one window is not a drop (since MD1 only "Improving"
+    is ever shown). The DEPARTMENT's
     own vs-prior figures (team totals) are not re-based. Where a window has
     under one credited day for the agent, the totals are compared as before.
     **Agents on the team-average exclusion list** (a manager on the roster)

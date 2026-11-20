@@ -204,7 +204,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   (rung/missed/answered/ttt) have their deltaPct recomputed on
   per-working-day values using `meta.currentWorkDays`/`priorWorkDays`
   (INV-35's `countWorkingDays_`, holidays excluded), so a shorter or
-  holiday-bearing window can't brand an agent "▼ Slipping" on raw
+  holiday-bearing window can't classify an agent as down on raw
   counts alone; rates (pct/att) and equal-workday comparisons are
   unchanged, and the card DELTA BADGES keep showing raw window totals
   -- only the trend pill / triage / quiet / improver-sort / headline /
@@ -3053,7 +3053,17 @@ stay pinned by INV-39, INV-53 and INV-06.
   quotes (`insBriefTopShare_` skips `insIsExempt_`); and a run for another
   dept or window frosts the brief ("Loading <dept>…", `insBriefLoading_`,
   `data-brief-dept`) until the next render or a failure lifts it
-  (drive-crossstate pins it with a held reply, `__HARNESS__.delay`). **BR-4
+  (drive-crossstate pins it with a held reply, `__HARNESS__.delay`). **MD1
+  (owner 2026-11-20): "slipping" is REMOVED from every surface.** The Team
+  row is amber when any judged agent is behind the team and green otherwise
+  -- `insBriefAgents_(rows)` no longer reads the direction of change, so the
+  row has no red tier for now and an agent on par with the team is never
+  named; the Agents head reads "N behind the team · N on track"; and
+  `insTrendPill_` renders "▲ Improving" or nothing (no "Slipping", no
+  "Steady"). The classification itself (`improved` / `regressed` / `mixed`)
+  is still computed: the "Biggest regressors" sort reads it. Do not put the
+  word, or a count of it, back on a surface without an owner ruling;
+  `insights-brief.test.js` sweeps the client for it. **BR-4
   (owner 2026-10-29):** Agents and Team detail are ONE row, key `agents`,
   label "Team": the Agents tier, text "<agents verdict> · talk time <ATT> per
   call" (PURE `insBriefTeamText_`); it mounts BOTH sections, the agent cards
@@ -3397,8 +3407,8 @@ to SAY so beside the figure, never to recompute it.
   the payload predates the field). With a pair: `insDeltaBadge_(…, pair)`
   compares a count or a talk-time total per day worked and marks the badge
   `data-basis="worked"`; `insMetricPerDay_(…, pair)` divides by the same
-  days; `insPerDayMetrics_(metrics, meta, card)` feeds the Improving /
-  Slipping classification from the card's own days. Without one, every
+  days; `insPerDayMetrics_(metrics, meta, card)` feeds the improved /
+  regressed classification from the card's own days. Without one, every
   window rule stands. The team's own tiles and rollup never get a pair. On
   the IR the prior row of a count tile is `irPriorRow_` over
   `priorPerDay` / `perDay` ("Prior 22.9 / day"), falling back to the totals.

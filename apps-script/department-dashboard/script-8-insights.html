@@ -1704,31 +1704,20 @@
     return { tier: 'green', text: 'Every queue under ' + std + '% abandoned, with no violation days' };
   }
 
-  // Agents: rows = [{name, standing:'attention'|'steady'|'strong', trend:
-  // 'improved'|'regressed'|'mixed', judged}] (judged = enough rung calls and
-  // not a team-average-excluded manager). Red = behind the team AND slipping;
-  // amber = behind, or slipping while on par; green = nobody behind. On
-  // windows more than 7 days apart in length "slipping" is ignored, so the
-  // row can reach amber but not red.
-  function insBriefAgents_(rows, lengthMismatch) {
+  // Agents: rows = [{name, standing:'attention'|'steady'|'strong', judged}]
+  // (judged = enough rung calls and not a team-average-excluded manager).
+  // Amber = someone is behind the team; green = nobody is. MD1 (owner
+  // 2026-11-20): the direction of change ("slipping") is NOT read here any
+  // more -- it branded an agent who is doing well but down on last period --
+  // so this row has no red tier for now, and an agent on par with the team is
+  // never named. `red` stays in the result (always empty) for its readers.
+  function insBriefAgents_(rows) {
     var judged = (rows || []).filter(function (r) { return r && r.judged; });
     if (judged.length < 2) return { tier: 'grey', text: 'Too few agents with enough calls to compare', red: [], amber: [] };
-    var slipping = function (r) { return !lengthMismatch && r.trend === 'regressed'; };
-    var red = judged.filter(function (r) { return r.standing === 'attention' && slipping(r); });
-    var amber = judged.filter(function (r) {
-      return (r.standing === 'attention' && !slipping(r)) || (r.standing === 'steady' && slipping(r));
-    });
-    var name = function (r) {
-      return r.name + (r.standing === 'attention' ? (slipping(r) ? ' (behind, slipping)' : ' (behind)') : ' (slipping)');
-    };
-    var list = function (arr) {
-      var shown = arr.slice(0, 3).map(name).join(', ');
-      return shown + (arr.length > 3 ? ' +' + (arr.length - 3) + ' more' : '');
-    };
-    var flagged = red.concat(amber);
-    if (red.length) return { tier: 'red', text: list(flagged), red: red, amber: amber };
-    if (amber.length) return { tier: 'amber', text: list(amber), red: red, amber: amber };
-    return { tier: 'green', text: 'Nobody is behind the team average', red: red, amber: amber };
+    var behind = judged.filter(function (r) { return r.standing === 'attention'; });
+    if (!behind.length) return { tier: 'green', text: 'Nobody is behind the team average', red: [], amber: [] };
+    var shown = behind.slice(0, 3).map(function (r) { return r.name + ' (behind)'; }).join(', ');
+    return { tier: 'amber', text: shown + (behind.length > 3 ? ' +' + (behind.length - 3) + ' more' : ''), red: [], amber: behind };
   }
 
   // Trend: the latest WHOLE month's answer rate against the average of the 3
@@ -1931,10 +1920,10 @@
     if (aHead) {
       var judged = agentRows.filter(function (r) { return r.judged; });
       var behind = judged.filter(function (r) { return r.standing === 'attention'; }).length;
-      var slip = judged.filter(function (r) { return r.trend === 'regressed'; }).length;
       var onTrack = judged.filter(function (r) { return r.standing !== 'attention'; }).length;
+      // MD1: no "slipping" count -- behind + on track add up to the judged agents.
       aHead.textContent = judged.length
-        ? behind + ' behind the team · ' + slip + ' slipping · ' + onTrack + ' on track'
+        ? behind + ' behind the team · ' + onTrack + ' on track'
         : (agentRows.length ? agentRows.length + ' agent' + (agentRows.length === 1 ? '' : 's') + ', too few calls to compare' : '');
     }
     var dHead = $('ins-detail-fold-head');
@@ -2021,8 +2010,7 @@
     insBriefUnmountAll_();
     var agentRows = insBriefAgentRows_(data);
     var meta = (data && data.meta) || {};
-    var mismatch = Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
-    var agentsV = insBriefAgents_(agentRows, mismatch);
+    var agentsV = insBriefAgents_(agentRows);
     var trendV = insBriefTrend_(insBriefTrendMonths_(data), meta.trendEnd || meta.to);
     insSyncFoldHeads_(data, agentsV, trendV, agentRows);
     if (!box) return;
@@ -5515,23 +5503,20 @@
     });
   }
 
-  // Trend pill -- the SECONDARY signal: direction of change vs the prior period
+  // Trend pill -- the SECONDARY signal: an agent who is UP on the prior period
   // (rung/missed/answered/% answered). Distinct from the card's rail + tier,
-  // which now show current STANDING vs the 92% target (#11c). Carries a gloss
-  // tooltip.
+  // which show current STANDING vs the answer-rate target (#11c). MD1 (owner
+  // 2026-11-20): only "Improving" is shown. A drop ("Slipping") and a mixed
+  // period ("Steady") get NO pill -- the label read as a mark against agents
+  // doing well, and "Steady" on a drop would be untrue. The classification
+  // itself is unchanged (the "Biggest regressors" sort still reads it).
   function insTrendPill_(direction) {
-    var map = {
-      improved:  ['ins-trend-up',   '▲ Improving'],
-      regressed: ['ins-trend-down', '▼ Slipping'],
-      mixed:     ['ins-trend-flat', '≈ Steady'],
-    };
-    var m = map[direction] || map.mixed;
-    var title = 'Trend vs the prior period across rung, missed, answered and % answered '
-      + '(▲ improving / ▼ slipping / ≈ steady). Volume metrics are compared PER WORKING DAY, '
-      + 'so a shorter or holiday-bearing window doesn\'t read as a slip on raw counts alone. '
-      + 'This is the direction of change — separate from '
-      + 'the card\'s standing rail/tier, which shows the current level vs the 92% target.';
-    return '<span class="ins-trend-pill ' + m[0] + ' gloss" title="' + escapeHtml(title) + '">' + m[1] + '</span>';
+    if (direction !== 'improved') return '';
+    var title = 'Up on the prior period across rung, missed, answered and % answered. '
+      + 'Volume metrics are compared PER WORKING DAY, so a shorter or holiday-bearing window '
+      + 'does not move it on raw counts alone. This is the direction of change — separate from '
+      + 'the card\'s standing rail/tier, which shows the current level vs the answer-rate target.';
+    return '<span class="ins-trend-pill ins-trend-up gloss" title="' + escapeHtml(title) + '">▲ Improving</span>';
   }
 
   // vs-team chip -- the agent's STANDING this period: answered calls vs the
@@ -5587,8 +5572,8 @@
     // Three DISTINCT, labeled signals: the left RAIL + tier show STANDING (#11c:
     // current % answered vs the 92% target); the trend pill shows the direction
     // of change vs the prior period (secondary); the vs-team chip shows answered
-    // calls vs the team average this period. A card can legitimately be "Strong"
-    // (rail) yet "Slipping" (trend pill): above target but down from last period.
+    // calls vs the team average this period. The pill shows only an improvement
+    // (MD1): a card that is down on last period carries no pill.
     // Floaters keep only the QUEUE chip.
     const trendPill = isFloater ? '' : insTrendPill_(x.trend);
     // P8 (#94): per credited day when the payload carries the days. An agent

@@ -1333,6 +1333,11 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           headlineShown: vis(head), headlineHasText: !!(head && head.textContent.trim()),
           inOrder: inOrder, agentsOpen: !!(ids[0] && ids[0].open),
           agentsHead: ((document.getElementById('ins-agents-fold-head') || {}).textContent || '').trim(),
+          // MD1: the direction of change is no longer a verdict -- no "slipping"
+          // anywhere in the region, and the only trend pill is an improvement.
+          md1Slip: /slipping/i.test(((document.getElementById('dept-insights-region') || {}).textContent || '')),
+          md1DownPills: document.querySelectorAll('.ins-trend-pill.ins-trend-down, .ins-trend-pill.ins-trend-flat').length,
+          md1Cards: document.querySelectorAll('#dept-insights-region [data-trend]').length,
           // Step 3: placement, collapsed-on-load, sections mounted in their rows.
           placed: after(document.getElementById('dept-team-strip'), brief) && after(brief, document.getElementById('dqe-table-title')),
           allCollapsed: slots.length > 0 && slots.every(function (sl) { return sl.hidden; })
@@ -1340,6 +1345,9 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           mounted: !!(ids[0] && brief && brief.contains(ids[0])),
         };
       });
+      record(role + ': MD1 the Agents heading counts behind and on track only; nothing reads "slipping" and no card carries a downward or steady pill',
+        /^(\d+ behind the team \u00b7 \d+ on track|\d+ agents?, too few calls to compare)$/.test(ux2.agentsHead) && !ux2.md1Slip && ux2.md1DownPills === 0,
+        JSON.stringify({ head: ux2.agentsHead, slip: ux2.md1Slip, downPills: ux2.md1DownPills, cards: ux2.md1Cards }));
       if (role === 'admin') {
         record('admin: UX-2 the ranked brief renders (top line + an icon row per section, word kept for screen readers, most urgent first)',
           ux2.briefVisible && ux2.rows >= 4 && ux2.ranked && ux2.words && /Answer rate|No calls/.test(ux2.top),

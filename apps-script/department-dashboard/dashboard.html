@@ -1202,7 +1202,7 @@
         <!-- A3: Agents zone. UX-2 (owner 2026-10-13): a FOLD like the others,
              FIRST in the report and OPEN by default (insFoldsLoad_'s `agents`
              default); its collapsed head (#ins-agents-fold-head) carries the
-             behind / slipping / on-track count. -->
+             behind / on-track count (MD1: no "slipping" count). -->
         <details id="ins-agents-fold" class="ins-fold" data-fold="agents" open>
           <summary class="ins-fold-summary">
             <span class="ds-zone-label">Agents</span>
@@ -1877,7 +1877,7 @@
             <p>Insights is a <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, rendered at the bottom of the page and generated automatically with it. Just scroll down; collapsing the <strong>Insights</strong> heading tucks it away for the session, and your generated report stays put when you navigate away and come back.</p>
             <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Trend</strong> bases (Gap = who&rsquo;s above/below the team average; Trend = each agent&rsquo;s metric over time, one line each). The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
-              <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
+              <li>An <strong>&#9650; Improving</strong> pill marks an agent who is up on the prior period (across rung, missed, answered, % answered). There is no pill otherwise. Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls <em>per day worked</em> vs the team average this period (the marker on the Answered bar). A day with no calls is not counted, and a day marked partial counts as its share, so time off does not read as falling behind. So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
             </ul>
             <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
@@ -1887,7 +1887,7 @@
                 <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 24.8 vs 20.1 ans/day</span>
               </div>
             </div>
-            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 24.8 answered a day worked vs the 20.1 a teammate averaged).</div>
+            <div class="help-figure-cap">The &ldquo;Improving&rdquo; pill = up on last period; the chip = standing vs the team average (here, 24.8 answered a day worked vs the 20.1 a teammate averaged).</div>
             <p>The bars compare % Answered / Answered / Missed against the team average &mdash; the two counts per day worked, with the window total printed beside each bar. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
