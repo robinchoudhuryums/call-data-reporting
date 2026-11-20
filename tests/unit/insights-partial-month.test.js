@@ -127,14 +127,17 @@ test('chart bits: dashed segment into the partial point, "(to date)" tick, pace 
 });
 
 test('wiring: COUNT charts mark the partial month; rates and talk time never do', () => {
-  const cards = fnSource('insRenderCardsChartTrend_');
-  assert.match(cards, /insPartialChartBits_\(isPct \? \[\] : insPartialForData_\(insLastData\)\)/,
-    'the per-agent chart skips % Answered');
+  // MD3: the per-agent lines are the Trends chart's "By agent" scope now.
+  const cards = fnSource('insRenderTrendByAgent_');
+  assert.match(cards, /insPartialChartBits_\(\(isPct \|\| daily\) \? \[\] : insPartialForData_\(data\)\)/,
+    'the per-agent chart skips % Answered (and, MD4 F-b, its daily view)');
   const team = fnSource('insRenderTrendChart_');
   assert.match(team, /insPartialChartBits_\(\(!daily && !isPercent && !isMinutes\) \? insPartialForData_\(data\) : \[\]\)/,
     'the team chart: monthly counts only');
-  assert.match(team, /insPartialChartBits_\(\(!daily && !isPct && !isTime && \(labels \|\| \[\]\)\.length === teamMonths\.length\)/,
+  // MD4: the queue chart is the Queue health section's own renderer now.
+  const queue = fnSource('insRenderQhChart_');
+  assert.match(queue, /insPartialChartBits_\(\(!daily && !isPct && !isTime && \(labels \|\| \[\]\)\.length === teamMonths\.length\)/,
     'the queue chart: monthly counts only, and only when its months line up with the team trend');
   // The labels themselves stay untouched -- the point drill parses them.
-  assert.doesNotMatch(cards + team, /labels\s*=\s*labels\.map\([^)]*to date/);
+  assert.doesNotMatch(cards + team + queue, /labels\s*=\s*labels\.map\([^)]*to date/);
 });

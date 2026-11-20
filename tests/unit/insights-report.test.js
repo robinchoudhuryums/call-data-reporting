@@ -749,9 +749,11 @@ test('P6: the client offers both metrics, formats seconds as m:ss and never mark
   const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
   const html = fs.readFileSync(path.join(dir, 'dashboard.html'), 'utf8');
   const s8 = fs.readFileSync(path.join(dir, 'script-8-insights.html'), 'utf8');
-  assert.match(html, /<option value="queues:avgAnswer">Queue: Avg answer time<\/option>\s*<option value="queues:longestWait">Queue: Longest wait<\/option>/);
+  // MD4: the two metrics are options of the Queue health chart's own select now.
+  assert.match(html, /id="ins-qh-chart-metric">[\s\S]*?<option value="avgAnswer">Avg answer time<\/option>\s*<option value="longestWait">Longest wait<\/option>/);
   assert.match(s8, /const INS_QUEUE_METRICS_ = \['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'\];/);
-  assert.match(s8, /insQueueMetric = INS_QUEUE_METRICS_\.indexOf\(v\.slice\(7\)\) !== -1 \? v\.slice\(7\) : 'abandonedPct';/, 'an unknown metric falls back');
+  assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(metric\) === -1 \|\| metric === insQueueMetric\) return;/, 'an unknown metric is refused');
+  assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(insQueueMetric\) === -1\) insQueueMetric = 'abandonedPct';/, 'and a bad stored one falls back');
   assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(prefs\.queueMetric\) !== -1\) \{/, 'a saved choice restores');
   assert.match(s8, /!daily && !isPct && !isTime && \(labels \|\| \[\]\)\.length === teamMonths\.length/, 'an average or a maximum is not understated by a partial month');
   const grab = function (name) {
@@ -932,4 +934,123 @@ test('IDLE-2: the emailed report applies the same agent-free rule as the screen'
     'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
   assert.equal((src.match(/customPriorFrom, customPriorTo, \{ dropIdle: agentFree \}\)/g) || []).length, 2,
     'getInsightsReport and sendInsightsReportEmail both pass dropIdle for an agent-free run');
+});
+
+// ── MD4 F-b (owner 2026-11-20): the per-agent DAILY series ───────────────────
+//
+// THE RULE: each card carries `trendDays`, aligned to trendDaily.labels --
+// `[rung, answered, missed, pct]` on a day the agent has a row, null on a day
+// they do not -- so the trend chart's "By agent" scope has a Daily view. It is
+// capped (INSIGHTS_AGENT_DAILY_MAX_DAYS_ days of data): past that the field is
+// null and the client offers Monthly only. Floaters never get one (INV-53).
+test('MD4 F-b: each card carries its daily series aligned to the team day axis; an absent day is null', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '502', rung: 4,  missed: 0, answered: 4, att: '0:02:00' }),   // Anna absent
+    dqeRow({ date: '2026-03-11', agent: 'Anna', ext: '501', rung: 5,  missed: 5, answered: 0, att: '0:00:00' }),
+    dqeRow({ date: '2026-03-11', agent: 'Cara', ext: '501', rung: 90, missed: 9, answered: 80, att: '0:05:00' }),  // floater
+    dqeRow({ date: '2026-03-04', agent: 'Anna', ext: '501', rung: 7,  missed: 0, answered: 7, att: '0:03:00' }),   // prior window
+  ]);
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-13', agents: ['Anna', 'Ben', 'Cara'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(data.trendDaily.labels)), ['03-09', '03-10', '03-11'], 'the day axis is the team\'s');
+  const J = function (x) { return JSON.parse(JSON.stringify(x)); };
+  assert.deepEqual(J(agent(data, 'Anna').trendDays), [[10, 8, 2, 80], null, [5, 0, 5, 0]],
+    'tuples on her days, null on the day she has no row; a day she answered nothing is a real 0');
+  assert.deepEqual(J(agent(data, 'Ben').trendDays), [null, [4, 4, 0, 100], null]);
+  assert.equal(agent(data, 'Cara'), undefined, 'a floater has no card, so no series (INV-53)');
+  assert.equal(data.meta.agentDailyMaxDays, 45);
+  // The window's own rows only: the prior-window day is not on the axis.
+  assert.equal(agent(data, 'Anna').trendDays.length, 3);
+});
+
+test('MD4 F-b: the series is capped, and a one-day window or an agent with no row has none', function () {
+  const series = h.ctx.insAgentDaySeries_;
+  const keys = function (n) { const out = []; for (let i = 0; i < n; i++) out.push('2026-01-' + String(i + 1).padStart(2, '0')); return out; };
+  const by = { '2026-01-01': { rung: 3, answered: 2, missed: 1 } };
+  assert.equal(series(by, keys(1)), null, 'one day is not a trend');
+  assert.equal(series(null, keys(5)), null);
+  assert.equal(series({}, keys(5)), null, 'no row in the window: no series, not five nulls');
+  const two = JSON.parse(JSON.stringify(series(by, keys(2))));
+  assert.equal(two.length, 2);
+  assert.deepEqual(two[0].slice(0, 3), [3, 2, 1]);
+  assert.equal(two[1], null);
+  // The cap: 45 days ships, 46 does not.
+  const long = function (n) { const k = []; const b = {}; for (let i = 0; i < n; i++) { const iso = 'd' + String(i).padStart(3, '0'); k.push(iso); b[iso] = { rung: 1, answered: 1, missed: 0 }; } return series(b, k); };
+  assert.equal(long(45).length, 45);
+  assert.equal(long(46), null, 'past the cap the client is told to use Monthly instead');
+  // The cache prefix moved with the payload shape.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.ok(Number(/INSIGHTS_CACHE_KEY_PREFIX = 'insights:v(\d+)'/.exec(src)[1]) >= 30);
+});
+
+// ── MD4-S (owner 2026-11-20): the Insights payload against the cache cap ─────
+//
+// THE RULE: the payload's size is LOGGED on every cache write, and the one
+// optional block in it -- the per-agent daily series -- is shed before the
+// value can crowd CacheService's ~100 KB cap, so it can never be what leaves a
+// window uncached. The object returned to the caller is the one that was
+// cached, so a first serve and a cached serve agree.
+test('MD4-S: a normal payload is cached whole and its size is logged', function () {
+  const fit = h.ctx.insFitForCache_;
+  const data = { meta: {}, agentData: [{ name: 'Anna', trendDays: [[1, 1, 0, 100], null] }, { name: 'Ben', trendDays: null }] };
+  const out = fit(data);
+  assert.equal(out.info.dropped, false);
+  assert.equal(out.json, JSON.stringify(data));
+  assert.equal(out.info.bytes, out.json.length);
+  assert.equal(out.info.dailyBytes, JSON.stringify([[1, 1, 0, 100], null]).length, 'the series\' own share is measured');
+  assert.equal(data.meta.agentDailyDropped, undefined);
+  const line = h.ctx.insCacheSizeLine_('CSR', '2026-10-21', '2026-11-19', out.info);
+  assert.match(line, /^\[insights-cache\] CSR 2026-10-21\.\.2026-11-19: \d+ bytes \(\d+% of the ~102400 cap; 2 agents; per-agent daily series \d+ bytes\)$/);
+});
+
+test('MD4-S: past the drop line the per-agent daily series goes, the rest stays, and the payload says so', function () {
+  const fit = h.ctx.insFitForCache_;
+  const pad = 'x'.repeat(89 * 1024);   // the rest of the report, just under the line on its own
+  const mk = function () {
+    return { meta: { department: 'CSR' }, pad: pad,
+      agentData: [{ name: 'Anna', metrics: { answered: 5 }, trendDays: new Array(400).fill([10, 8, 2, 80]) },
+                  { name: 'Ben', metrics: { answered: 3 }, trendDays: null }] };
+  };
+  const data = mk();
+  assert.ok(JSON.stringify(data).length >= 90 * 1024, 'fixture is past the drop line');
+  const out = fit(data);
+  assert.equal(out.info.dropped, true);
+  assert.equal(data.agentData[0].trendDays, null, 'the series is shed from the object the caller returns');
+  assert.equal(data.agentData[0].metrics.answered, 5, 'nothing else on the card moves');
+  assert.equal(data.meta.agentDailyDropped, true, 'the client is told why Daily is off');
+  assert.equal(out.json, JSON.stringify(data), 'what is cached is what is returned');
+  assert.ok(out.info.bytesAfter < out.info.bytes);
+  const line = h.ctx.insCacheSizeLine_('CSR', 'a', 'b', out.info);
+  assert.match(line, /per-agent daily series DROPPED \(was \d+ bytes of \d+\)/);
+  assert.match(line, /By agent offers Monthly only for this window\.$/);
+  // A large payload with NO daily series is left alone (there is nothing optional to shed) and warned about.
+  const big = { meta: {}, pad: 'x'.repeat(95 * 1024), agentData: [{ name: 'Anna', trendDays: null }] };
+  const o2 = fit(big);
+  assert.equal(o2.info.dropped, false);
+  assert.equal(big.meta.agentDailyDropped, undefined);
+  assert.match(h.ctx.insCacheSizeLine_('CSR', 'a', 'b', o2.info), /APPROACHING the CacheService limit/);
+});
+
+test('MD4-S: the cache write goes through the fit, logs the size, and a failed put says the window is uncached', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.match(src, /const fit = insFitForCache_\(data\);\s*Logger\.log\(insCacheSizeLine_\(dept, from, to, fit\.info\)\);\s*try \{ cache\.put\(cacheKey, fit\.json, REPORT_CACHE_TTL_SECONDS\);/);
+  assert.match(src, /InsightsReport cache put FAILED at %s bytes[\s\S]{0,120}UNCACHED/);
+  assert.ok(!/cache\.put\(cacheKey, JSON\.stringify\(data\)/.test(src), 'no unmeasured put left');
+  // Behavioural: a real run logs the line and returns the object it cached.
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5,  missed: 1, answered: 4, att: '0:03:00' }),
+  ]);
+  const logs = [];
+  const realLog = h.ctx.Logger.log;
+  h.ctx.Logger.log = function () { logs.push(Array.prototype.slice.call(arguments).join(' ')); return realLog.apply(h.ctx.Logger, arguments); };
+  try {
+    const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-13', agents: ['Anna'] });
+    assert.ok(logs.some(function (l) { return /^\[insights-cache\] Alpha 2026-03-09\.\.2026-03-13: \d+ bytes/.test(l); }), 'the size line is logged on the write');
+    assert.ok(Array.isArray(agent(data, 'Anna').trendDays), 'a small report keeps its daily series');
+    assert.equal(data.meta.agentDailyDropped, undefined);
+  } finally { h.ctx.Logger.log = realLog; }
+  // The client names the real reason when the series was shed.
+  const s8 = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'script-8-insights.html'), 'utf8');
+  assert.match(s8, /data\.meta && data\.meta\.agentDailyDropped\)\s*\? 'By agent, the daily view is off for this report/);
 });

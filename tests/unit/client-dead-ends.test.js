@@ -274,7 +274,9 @@ test('UD-1 / UD-2 / UD-7 / UD-8: the phone breakpoints, the retired print CSS go
   const css = src('styles.html');
   assert.ok(/@media \(max-width: 700px\) \{ \.ir-row \{ grid-template-columns: 1fr; \} \}/.test(css), 'UD-1');
   assert.ok(/#ins-heatmap \{\s*flex: 1 1 420px; min-width: min\(360px, 100%\)/.test(css), 'UD-2 heatmap floor');
-  assert.ok(/\.ins-qh-table-card \{ flex: 1 1 420px; min-width: min\(340px, 100%\)/.test(css), 'UD-2 table-card floor');
+  // MD4: the basis grew to 520px (the table sits beside the queue chart); the UD-2 FLOOR is what is pinned.
+  assert.ok(/\.ins-qh-table-card \{ flex: 1 1 \d+px; min-width: min\(340px, 100%\)/.test(css), 'UD-2 table-card floor');
+  assert.ok(/\.ins-qh-chart-card \{ flex: 1 1 \d+px; min-width: min\(340px, 100%\)/.test(css), 'MD4: the chart card has the same phone floor');
   assert.ok(!/body\.(pr|cr)-printing/.test(css) && !/\.pr-th-sortable\s*[{:]/.test(css), 'UD-7: the retired Performance / Compare Ranges print + sort rules are gone');
   const print = between(css, /@media print \{/, /\n  \}\n/);
   ['#help-fab', '#ins-ab-panel', '#dev-overlay', '.toast-container', '.tour-overlay', '.ds-confirm-overlay', '.modal-backdrop']

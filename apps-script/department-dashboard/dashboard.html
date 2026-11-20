@@ -256,6 +256,8 @@
                 title="Abandoned call count per day (queue data)">Abandoned calls</button>
               <button type="button" class="ir-tab" data-metric="abandonedPct" aria-pressed="false"
                 title="Abandoned % per day (queue data)">Abandoned %</button>
+              <button type="button" class="ir-tab" data-metric="avgAnswer" aria-pressed="false"
+                title="Average time to answer an answered queue call, per day (queue data; not talk time)">Avg answer time</button>
               <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="true"
                 title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Fit</button>
               <label class="ov-subq-toggle" title="Show sub-queue (child) lines on the chart (dashed, in their parent's colour). On by default; uncheck to declutter to top-level departments only.">
@@ -1202,13 +1204,22 @@
         <!-- A3: Agents zone. UX-2 (owner 2026-10-13): a FOLD like the others,
              FIRST in the report and OPEN by default (insFoldsLoad_'s `agents`
              default); its collapsed head (#ins-agents-fold-head) carries the
-             behind / slipping / on-track count. -->
+             behind / on-track count (MD1: no "slipping" count). -->
         <details id="ins-agents-fold" class="ins-fold" data-fold="agents" open>
           <summary class="ins-fold-summary">
             <span class="ds-zone-label">Agents</span>
             <span class="ins-fold-head" id="ins-agents-fold-head"></span>
           </summary>
           <div class="ins-fold-body">
+        <!-- MD3 (owner 2026-11-20): the ONE trend chart (#ins-trend-wrap, at
+             home in the Trends fold) is shown HERE, on "By agent", while the
+             brief's Team row holds it (insTrendClaim_). Empty for a viewer
+             with no brief -- the chart then stays in the Trends fold. -->
+        <div id="ins-trend-host-agents" class="ins-trend-host"></div>
+        <p id="ins-trend-away-agents" class="ins-trend-away" hidden>
+          The trend chart is open in the Trend section, on Team total.
+          <button type="button" class="link-btn" data-trend-claim="agents">Show it here, by agent</button>
+        </p>
         <h3 class="al-section-title">Per-agent comparison (vs prior period)</h3>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
@@ -1229,43 +1240,14 @@
             <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
             <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
           </div>
-          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one
-               metric) / Absolute (PR's stacked Answered+Missed volumes + %
-               dots -- the Performance Report's Volume & Efficiency view).
-               The third "vs Prior" basis (Compare Ranges' grouped bars) was
-               RETIRED by owner note (3-way selector read as confusing; the
-               prior values live on in the card delta-badge hover tooltips).
-               seg-rich: two-line labels (title + hint) so the remaining two
-               options read as distinct CHOICES, not a cryptic toggle. The
-               metric selector applies to gap only; Absolute shows all
-               volumes at once. -->
-          <div class="segmented seg-rich" id="ins-cards-chart-mode" role="radiogroup"
-               aria-label="Chart comparison basis" style="display:none;">
-            <button type="button" class="seg-btn active" data-mode="gap" role="radio" aria-checked="true">
-              <span class="seg-title">Gap vs team</span>
-              <span class="seg-hint">who&#8217;s above / below the team average</span>
-            </button>
-            <!-- R16g (owner): the Absolute OPTION is HIDDEN -- since the M1
-                 merge the agent table at the top of the SAME page carries the
-                 per-agent answered/missed volumes, so this view restated it.
-                 The Round-16 removal convention: markup + wiring + renderer
-                 (insRenderCardsChartAbs_) stay inert, the saved-'abs' pref
-                 already self-heals to gap (M3), and the admin A/B remote can
-                 still reach it for live comparison. Un-hiding = drop the
-                 display:none. -->
-            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false" style="display:none;">
-              <span class="seg-title">Absolute</span>
-              <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
-            </button>
-            <button type="button" class="seg-btn" data-mode="trend" role="radio" aria-checked="false">
-              <span class="seg-title">Trend</span>
-              <span class="seg-hint">each agent&#8217;s metric over time (one line each)</span>
-            </button>
-          </div>
+          <!-- MD4 (F-c): the chart-view BASIS sub-toggle is REMOVED. Gap vs team
+               is the one chart here -- the per-agent Trend basis became the
+               Trends chart's "By agent" scope (MD3) and the Absolute basis
+               (hidden since R16g) was deleted with its renderer. -->
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>
             <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
-                 missed, so its gap/trend lines restated the other two. The
+                 missed, so its gap bars restated the other two. The
                  renderers still accept 'rung' if fed; a saved pref self-heals
                  in insRestorePrefs_.) -->
             <select id="ins-cards-chart-metric">
@@ -1337,9 +1319,8 @@
               <div id="ins-qh-tiles" class="pr-kpi-row"></div>
               <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
             </div>
-          <!-- The per-queue abandoned-% trend chart now lives in the
-               consolidated trend chart below (its "Abandoned % by Queue"
-               tab); this section keeps the tiles + per-queue detail table. -->
+          <!-- MD4 (owner 2026-11-20): the per-queue trend chart is back in
+               this section, beside the table it belongs with (below). -->
           <!-- Phase 1 ds-* migration (see docs/design-update-plan.md):
                the per-queue detail table moved from .qcd-source-table to the
                shared .ds-table inside a .ds-card (the card supplies the
@@ -1352,13 +1333,54 @@
               <table class="ds-table">
                 <thead><tr>
                   <th>Queue</th>
-                  <th class="num">Total Calls</th>
+                  <!-- MD4: a header that has a trend is a real button that
+                       switches the chart beside the table to that metric
+                       (aria-pressed marks the one on the chart). "Abandoned"
+                       (the count) has no trend series, so it stays a label. -->
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="totalCalls" aria-pressed="false"
+                      title="Show total calls over time on the chart">Total Calls</button></th>
                   <th class="num">Abandoned</th>
-                  <th class="num">Abandoned %</th>
-                  <th class="num">Violations</th>
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="abandonedPct" aria-pressed="false"
+                      title="Show abandoned % over time on the chart">Abandoned %</button></th>
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="violations" aria-pressed="false"
+                      title="Show violations over time on the chart">Violations</button></th>
                 </tr></thead>
                 <tbody id="ins-qh-tbody"></tbody>
               </table>
+            </div>
+            <!-- MD4 (owner 2026-11-20): the queue trend chart, beside the
+                 table. One line per queue (+ the dept total when there are
+                 several). Hovering or focusing a table row highlights that
+                 queue's line. Hidden when the dept has no queue trend. -->
+            <div class="ds-card ins-qh-chart-card" id="ins-qh-chart-card" style="display:none;">
+              <div class="ins-qh-chart-head">
+                <div class="ir-chart-header" id="ins-qh-chart-title">Queue trend</div>
+                <div class="ins-qh-chart-ctl">
+                  <label class="ir-sort-control">
+                    <span class="ir-sort-label">Metric:</span>
+                    <select id="ins-qh-chart-metric">
+                      <option value="abandonedPct">Abandoned %</option>
+                      <option value="totalCalls">Total calls</option>
+                      <option value="violations">Violations</option>
+                      <option value="avgAnswer">Avg answer time</option>
+                      <option value="longestWait">Longest wait</option>
+                    </select>
+                  </label>
+                  <div class="segmented" id="ins-qh-chart-view" role="radiogroup" aria-label="Queue trend view">
+                    <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+                    <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+                    <button type="button" class="seg-btn" data-view="calendar" role="radio" aria-checked="false">Calendar</button>
+                  </div>
+                  <div class="ir-toggle-box" id="ins-qh-datalabels-box">
+                    <label class="ir-toggle-label">
+                      <input type="checkbox" id="ins-qh-show-datalabels"> Show data labels
+                    </label>
+                  </div>
+                  <button type="button" class="chart-help-btn" data-charthelp="insQh" aria-label="Chart tips" title="Chart tips">?</button>
+                </div>
+              </div>
+              <div class="ins-qh-canvas-wrap" id="ins-qh-canvas-wrap"><canvas id="ins-qh-chart" role="img" aria-label="Queue trend over time"></canvas></div>
+              <div id="ins-qh-calendar" class="ins-trend-calendar" style="display:none;"></div>
             </div>
           </div>
           <!-- Consolidation Phase 1 (gap 3): the per-day numeric table the QCD
@@ -1390,7 +1412,7 @@
               <div id="ins-qh-daily-legend" class="ans-tally-legend" style="display:none;"></div>
             </div>
           </details>
-          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart at the bottom of the report switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;Abd&nbsp;%&rdquo; tab&rsquo;s metric selector.</div>
+          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the chart beside the table shows each queue over time; its Metric menu, or the Total&nbsp;Calls / Abandoned&nbsp;% / Violations column headings, pick what is charted.</div>
         </div>
           </div>
         </details>
@@ -1478,12 +1500,40 @@
             <span class="ins-fold-head" id="ins-trend-fold-head">12-month team trend</span>
           </summary>
           <div class="ins-fold-body">
+        <!-- MD3: the chart's HOME. In the brief accordion the Team row can
+             take it (see #ins-trend-host-agents); the note then says where
+             it went and offers it back. -->
+        <p id="ins-trend-away-trend" class="ins-trend-away" hidden>
+          The trend chart is open in the Team section, by agent.
+          <button type="button" class="link-btn" data-trend-claim="trend">Show it here, as the team total</button>
+        </p>
+        <div id="ins-trend-host-trend" class="ins-trend-host">
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ins-trend-headrow">
             <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
             <div class="ins-trend-headctl">
-              <!-- R11-C3 consolidation: ONE metric dropdown (queue metrics ride
-                   the same list; Avg talk time is admin-only -- the option is
+              <!-- MD3 (owner 2026-11-20): ONE trend chart, two scopes. Team
+                   total = the team's line (every metric, Monthly / Daily,
+                   Line / Calendar). By agent = one line per agent with the
+                   team as a dashed reference: monthly only, three metrics. -->
+              <div class="segmented" id="ins-trend-scope" role="radiogroup" aria-label="Trend chart scope">
+                <button type="button" class="seg-btn active" data-scope="team" role="radio" aria-checked="true"
+                        title="The team as one line">Team total</button>
+                <button type="button" class="seg-btn" data-scope="agent" role="radio" aria-checked="false"
+                        title="One line per agent, month by month, with the team as a dashed reference">By agent</button>
+              </div>
+              <div class="ins-trend-metric-row" id="ins-trend-agent-metric-row" style="display:none;">
+                <label class="ir-sort-control">
+                  <span class="ir-sort-label">Metric:</span>
+                  <select id="ins-trend-agent-metric">
+                    <option value="answered">Answered</option>
+                    <option value="missed">Missed</option>
+                    <option value="pct">% Answered</option>
+                  </select>
+                </label>
+              </div>
+              <!-- R11-C3 consolidation: ONE metric dropdown (Avg talk time is
+                   admin-only -- the option is
                    REMOVED for non-admins at init). R12-13: it lives IN the
                    toolbar row beside Monthly/Daily + Line/Calendar now (it
                    previously rendered as a detached centered row over the
@@ -1497,11 +1547,10 @@
                     <option value="missed">Missed</option>
                     <option value="volume">Call volume (rung)</option>
                     <option value="att" data-admin-metric="1">Avg talk time</option>
-                    <option value="queues:abandonedPct">Queue: Abandoned %</option>
-                    <option value="queues:totalCalls">Queue: Total calls</option>
-                    <option value="queues:violations">Queue: Violations</option>
-                    <option value="queues:avgAnswer">Queue: Avg answer time</option>
-                    <option value="queues:longestWait">Queue: Longest wait</option>
+                    <!-- MD4 (owner 2026-11-20): the five "Queue:" entries are
+                         GONE from here -- the per-queue trend is the Queue
+                         health section's own chart (#ins-qh-chart). Trends =
+                         people, Queue health = queues. -->
                   </select>
                 </label>
               </div>
@@ -1532,6 +1581,7 @@
                Chart.js). Populated by insRenderTrendCalendar_. -->
           <div id="ins-trend-calendar" class="ins-trend-calendar" style="display:none;"></div>
         </div>
+        </div><!-- /#ins-trend-host-trend -->
           </div>
         </details>
         <!-- /Trends fold -->
@@ -1561,12 +1611,11 @@
             <button type="button" data-ab-view="chart">Chart</button>
           </div>
         </div>
-        <div class="ins-ab-row" id="ins-ab-basis-row">
-          <span class="ins-ab-lbl">Basis</span>
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Scope</span>
           <div class="ins-ab-seg">
-            <button type="button" data-ab-mode="gap">Gap</button>
-            <button type="button" data-ab-mode="abs">Abs</button>
-            <button type="button" data-ab-mode="trend">Trend</button>
+            <button type="button" data-ab-scope="team">Team</button>
+            <button type="button" data-ab-scope="agent">Agent</button>
           </div>
         </div>
         <div class="ins-ab-row">
@@ -1875,9 +1924,9 @@
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
             <p>Insights is a <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, rendered at the bottom of the page and generated automatically with it. Just scroll down; collapsing the <strong>Insights</strong> heading tucks it away for the session, and your generated report stays put when you navigate away and come back.</p>
-            <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Trend</strong> bases (Gap = who&rsquo;s above/below the team average; Trend = each agent&rsquo;s metric over time, one line each). The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
+            <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the Agents section charts each agent&rsquo;s <strong>gap vs the team average</strong>. The Trends chart has a <strong>Team total / By agent</strong> switch: Team total is the team as one line, By agent is one line per agent (monthly, or daily on a window of up to about two months) with the team as a dashed reference. The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
-              <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
+              <li>An <strong>&#9650; Improving</strong> pill marks an agent who is up on the prior period (across rung, missed, answered, % answered). There is no pill otherwise. Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls <em>per day worked</em> vs the team average this period (the marker on the Answered bar). A day with no calls is not counted, and a day marked partial counts as its share, so time off does not read as falling behind. So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
             </ul>
             <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
@@ -1887,7 +1936,7 @@
                 <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 24.8 vs 20.1 ans/day</span>
               </div>
             </div>
-            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 24.8 answered a day worked vs the 20.1 a teammate averaged).</div>
+            <div class="help-figure-cap">The &ldquo;Improving&rdquo; pill = up on last period; the chip = standing vs the team average (here, 24.8 answered a day worked vs the 20.1 a teammate averaged).</div>
             <p>The bars compare % Answered / Answered / Missed against the team average &mdash; the two counts per day worked, with the window total printed beside each bar. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
@@ -1896,7 +1945,7 @@
           </section>
           <section class="help-topic" id="help-topic-qcd" hidden>
             <h3>QCD (Queue Call Data)</h3>
-            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 4%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the trend chart&rsquo;s &ldquo;by queue&rdquo; tab shows one line per queue plus a dept total, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 4% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
+            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 4%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the section&rsquo;s own trend chart, beside the table, shows one line per queue plus a dept total (hover a queue&rsquo;s row to highlight its line; the Total Calls, Abandoned % and Violations headings switch what is charted), and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 4% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
           </section>
           <section class="help-topic" id="help-topic-inbound" hidden>
             <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>
@@ -1937,6 +1986,7 @@
             <ul>
               <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Judged against the answer-rate target (see &ldquo;The color-coding standards&rdquo;).</li>
               <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 4%+ in a day = violation.</li>
+              <li><strong>Avg answer time</strong> &mdash; how long an answered queue call waited before someone picked up, averaged over the answered calls. Queue data, not talk time. A view on the Overview chart.</li>
               <li><strong>ATT</strong> &mdash; Average Talk Time per answered call. Longer isn&rsquo;t automatically worse.</li>
               <li><strong>TTT</strong> &mdash; Total Talk Time (sum of an agent&rsquo;s own talk on answered calls).</li>
               <li><strong>Violations</strong> &mdash; days a queue went over the 4% abandon line (month-to-date in totals).</li>

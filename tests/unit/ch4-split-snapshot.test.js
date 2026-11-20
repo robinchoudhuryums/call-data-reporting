@@ -298,7 +298,9 @@ function ovInstall(opts) {
   ho.ctx.inboundQueuesForDept_ = function (d) { return { CSR: ['A_Q_CSR'], Spanish: ['A_Q_Spanish'] }[d] || []; };
   ho.ctx.computeQcdSnapshots_ = function (depts, since) {
     const daily = {};
-    daily[LATEST] = { totalCalls: 40, abandoned: 2 };
+    // MD2: the answered-weighted avg-answer pair (aaSum / aaN). The day before
+    // has none on purpose -- the golden pins both a figure and a gap.
+    daily[LATEST] = { totalCalls: 40, abandoned: 2, aaSum: 912, aaN: 38 };
     daily[isoMinus(1)] = { totalCalls: 35, abandoned: 1 };
     return {
       CSR: { latestDate: LATEST, totalCalls: 40, abandonedPct: 5, violations: 1, daily: JSON.parse(JSON.stringify(daily)) },

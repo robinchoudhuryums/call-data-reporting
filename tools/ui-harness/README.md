@@ -42,6 +42,11 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
 ### Asserting drivers (pass/fail — these gate CI)
 - `drive-smoke.js [admin|manager]` — (SPEED-2: the gate runs it as two
   shards, one per role, side by side; with no argument it checks both)
+  (MD1–MD4, 2026-11-20: no "slipping" anywhere; the Overview chart's Avg
+  answer time view and its admin-only Company line; the ONE trend chart
+  moving between the brief's Team and Trend rows; Queue health's own chart
+  -- row hover / focus, column-heading buttons, calendar -- and a fresh-page
+  pass for the prefs self-heal, By agent Daily and the card link in a brief row)
   (CCX-2 / CCX-8: three deep-link boots per role -- an Insights link, a
   department link and one with mangled dates -- asserting no request is sent
   twice, one report runs for the linked window, and the provisional window

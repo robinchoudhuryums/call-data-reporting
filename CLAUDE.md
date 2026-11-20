@@ -666,8 +666,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `deltaBlock_` lives in Util.gs; legacy `#/report/performance` links land on
   the Insights region; the `performance:` cache prefix is an orphan and
   `cdr.pr.prefs.v1` is swept on boot (`sweepOrphanPrefs_`); the **Absolute**
-  chart basis (`insRenderCardsChartAbs_`) is hidden since R16g, renderer
-  inert. `PerformanceReport.gs` was deleted locally and must be removed in the
+  chart basis was hidden in R16g and DELETED in MD4. `PerformanceReport.gs` was deleted locally and must be removed in the
   web editor (INV-17). The frozen-literal test in insights-report.test.js pins
   the inherited semantics; the surface detail is in
   `docs/client-ui-conventions.md`.
@@ -964,8 +963,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `Alerts.gs`)) because they describe how a SURFACE IS BUILT rather than a trap that
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
-  incl. the consolidated trend chart + per-agent cards/chart bases + IR
-  drill-through) · Insights header dates (DELETED in M4 -- the dept
+  incl. the ONE trend chart with its Team total / By agent switch (MD3),
+  Queue health's own trend chart (MD4), the gap bars + IR drill-through) · Insights header dates (DELETED in M4 -- the dept
   controls row is the page's single date authority; `insSyncToDeptWindow_`),
   trend-at-bottom, the INSIGHTS REGION (the M1 merge + N1: the whole ex-page
   renders open-inline on My Department, generating with it) · Insights per-section FOLDS (replaced the
@@ -1057,18 +1056,22 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   regardless of selection size. Never concatenate raw agent names
   into a cache key — always go through `hashAgents_`. **The other
   CacheService limit is the ~100 KB PER-VALUE cap, and the Overview
-  blob is the only payload near it (F6).** `CompanyOverview.gs` logs
-  the serialized length on every put, warns past
+  blob is the only payload near it (F6).** `CompanyOverview.gs` measures
+  the serialized length on every put, logs a warning past
   `OVERVIEW_CACHE_WARN_BYTES` (80 KB) and, on a failed put, says
   explicitly that the Overview is now UNCACHED so every request pays
   the full compute (`OVERVIEW_CACHE_MAX_BYTES` = 100 KB documents the
   cap; it is not enforced). MEASURED at ~27 KB for the 14 visible depts
   (16 on the roster, 2 in `OVERVIEW_HIDDEN_DEPTS`; ~1.9
   KB/dept) before Batches E/F added the tiles' outbound block (~0.5 KB/dept)
-  and OVD-1 the direct-line block (~0.6 KB/dept, so ~42 KB est.) -- roughly
-  30+ depts away, so this is instrumentation, not
+  and OVD-1 the direct-line block (~0.6 KB/dept) and MD2 a fifth chart
+  series (~0.3 KB/dept, so ~46 KB est.) -- roughly
+  25+ depts away, so this is instrumentation, not
   a live risk, and it is LOG-only: nothing surfaces on the Health
-  page.
+  page. **Insights is measured too (MD4-S):** every cache write logs
+  `[insights-cache] <dept> <window>: N bytes`, and its one optional block
+  (the per-agent daily series) is shed at 90 KB (`insFitForCache_`,
+  `insights-report.test.js`).
 - **CSV exports must neutralize formula injection.** Agent names
   originate from the external CDR feed and flow into client-side
   CSV downloads, so they're untrusted input to a spreadsheet app
@@ -1097,7 +1100,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   mixed bar+line charts in this plugin version. **A per-report "Show
   data labels" toggle** (checkbox `<report>-show-datalabels`, off by
   default, the `datalabels.display` read straight from `.checked`) is
-  wired on IR / Insights; each persists it in its prefs blob
+  wired on IR / Insights (two there since MD4: the Trends chart and the
+  Queue health chart); each persists it in its prefs blob
   (the retired QCD modal's standalone `cdr.qcd.datalabels` key is swept
   on boot by `sweepOrphanPrefs_`).
   The Overview multi-dept overlay + the Missed Calls radar intentionally

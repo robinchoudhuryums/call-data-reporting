@@ -1254,13 +1254,21 @@
       'Click a point on a line to open that department & day in My Department.',
       'Zoom toggles the y-axis between the full 0–100% scale and a fit to the data.',
       '30d / 60d / 90d / YTD change the chart window; the sub-queues box shows or hides dashed child-queue lines.',
+      'Avg answer time is how long an answered queue call waited before pickup (queue data, not talk time). A gap in a line is a day with no answered queue calls.',
     ],
     insTrend: [
-      'The Metric dropdown switches what the chart shows (team metrics + the Queue: entries); Monthly / Daily switches the axis.',
+      'Team total / By agent switches between the team as one line and one line per agent. By agent is monthly, for Answered, Missed or % Answered, with the team as a dashed reference.',
+      'By agent: click a name in the legend to solo that agent (Shift-click to compare several); click a point to open that agent’s Individual Report.',
+      'Team total: the Metric dropdown switches what the chart shows; Monthly / Daily switches the axis. The per-queue trend is in the Queue health section.',
       'Line ⇄ Calendar re-renders the daily series as a month grid (windows of 14+ days).',
       'Click a data point — or a calendar day — to reload the whole report scoped to that month or day.',
-      'On the Abd % tab, click a legend entry to pin/isolate that queue’s line; hover previews.',
       '"Show data labels" prints the values on the chart.',
+    ],
+    insQh: [
+      'One line per queue (and a dashed department total when there are several). The Metric menu — or the Total Calls, Abandoned % and Violations column headings in the table — picks what is charted.',
+      'Hover or Tab to a queue’s row in the table to highlight its line; click a legend entry to pin that queue.',
+      'Monthly / Daily switch the axis; Calendar shows Abandoned % day by day.',
+      'Click a point to reload the report for that month or day.',
     ],
     ir: [
       'With 2+ agents, click a legend chip to isolate that agent across all charts; click again to release.',

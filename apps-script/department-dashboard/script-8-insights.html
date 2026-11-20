@@ -36,8 +36,8 @@
   // window (the old all-weeks render clipped past the first month inside the
   // fixed-height chart slot). Defaults to the MOST RECENT month; resets when
   // the report window changes.
-  let insCalMonth_ = '';
-  let insCalWinKey_ = '';
+  // MD4: one month position per calendar (team in Trends, queue in Queue health).
+  const INS_CAL_STATE_ = { team: { win: '', month: '' }, queue: { win: '', month: '' } };
   // I5a/R11-H history: the Agents default moved cards -> trend chart -> the
   // Absolute chart (Round-16 owner). A saved pref (insRestorePrefs_) still
   // wins; single-agent reports force cards.
@@ -48,22 +48,32 @@
   // KEPT: single-agent reports still force cards (a one-card grid needs no
   // chart), and un-hiding the toggle restores the choice wholesale.
   let insCardsView = 'chart';   // 'cards' | 'chart' (#3)
-  let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
-  // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
-  // | 'abs' (absolute stacked Answered+Missed per agent + % Answered dots --
-  // the retired Performance Report's Volume & Efficiency view). The third
-  // 'prior' basis (Compare Ranges' grouped current-vs-prior bars) was
-  // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
-  // the prior values stay reachable via the card delta-badge hover
-  // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  // 'gap' | 'abs' | 'trend'. M3 (owner): Gap vs team is the default basis --
-  // since the M1 merge the agent table on the SAME page already carries the
-  // Absolute information (per-agent answered/missed volume tallies + rate),
-  // so the section defaults to the one view the table can't show: each
-  // agent's position vs the team average. Abs/Trend stay one click away
-  // (the Basis sub-toggle / the admin A/B remote).
-  let insCardsChartMode = 'gap';
+  let insCardsChartMetric = 'answered';   // metric for the Chart view (the gap bars)
+  // MD4 (F-c): the chart-view BASIS switch is gone. Gap vs team is the one
+  // chart here: the per-agent Trend basis became the Trends chart's "By
+  // agent" scope (MD3), the Absolute basis (the retired Performance Report's
+  // volume view, hidden since R16g) was removed with its renderer, and the
+  // earlier 'prior' basis was retired long before. An old prefs blob's
+  // `cardsChartMode` is read only by insTrendPrefsFrom_ (the Trend carry-over).
   let insCardsChartInstance = null;
+  // MD3 (owner 2026-11-20): the Trends chart's scope. 'team' = the team line
+  // (every metric, Monthly / Daily, Line / Calendar); 'agent' = one line per
+  // agent with the team as a dashed reference (monthly, three metrics) -- the
+  // Agents fold's old "Trend" basis, merged into this one chart. Persisted in
+  // the ins prefs blob (trendScope / trendAgentMetric).
+  let insTrendScope = 'team';
+  // The scope the VIEWER chose on the switch -- the one that is saved. A brief
+  // row sets insTrendScope while it holds the chart (Team = By agent, Trend =
+  // Team total) without touching this, and the chart returns to it when the
+  // brief goes away.
+  let insTrendScopePref_ = 'team';
+  let insTrendAgentMetric = 'answered';   // 'answered' | 'missed' | 'pct'
+  // MD4: the Queue health section's own trend chart (insRenderQhChart_). Its
+  // metric is insQueueMetric (saved as queueMetric, as before the move).
+  let insQhChartInstance = null;
+  let insQhChartView = 'monthly';   // 'monthly' | 'daily' | 'calendar' (saved as qhChartView)
+  let insQhShowLabels = false;      // saved as qhShowLabels
+  let insQhHealPending_ = false;    // a pre-MD4 blob was on a "Queue:" Trend entry
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
   // replaced the doughnut with HTML share-tally rows, no chart instance)
@@ -386,9 +396,10 @@
       if (insCardsView === 'chart' && insCardsChartInstance && !insCardsChartInstance.width) {
         insRenderCardsChart_();
       }
-      if (insChartInstance && !insChartInstance.width && insFoldOpen_('trend')) {
+      if (insChartInstance && !insChartInstance.width && insTrendChartOpen_()) {
         insDrawTrendChart_(insLastData);
       }
+      if (insQhChartInstance && !insQhChartInstance.width) insDrawQhChart_(insLastData);   // MD4
     } catch (e) { /* decoration only -- the rendered report stands */ }
   }
   // Re-measure charts rendered on a previous visit: the region's content is
@@ -400,7 +411,7 @@
   function insResizeCharts_() {
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () { requestAnimationFrame(function () {
-      [insChartInstance, insCardsChartInstance].forEach(function (c) {
+      [insChartInstance, insCardsChartInstance, insQhChartInstance].forEach(function (c) {
         try { if (c) c.resize(); } catch (e) { /* destroyed mid-swap */ }
       });
     }); });
@@ -440,7 +451,8 @@
       if (insLastData) {
         try {
           if (insCardsView === 'chart') insRenderCardsChart_();
-          if (insFoldOpen_('trend')) insDrawTrendChart_(insLastData);
+          if (insTrendChartOpen_()) insDrawTrendChart_(insLastData);
+          insDrawQhChart_(insLastData);   // MD4 (fold-gated inside)
           if (insDetailOpen_()) insRenderDeferredCharts_();
         } catch (e) { /* redraw is best-effort decoration of a rendered report */ }
       }
@@ -604,6 +616,71 @@
       if (insLastData) insRenderTrendChart_(insLastData);
     });
 
+    // MD3: Team total / By agent, the by-agent metric, and the two "show it
+    // here" buttons the brief accordion offers when the chart is in the other
+    // row. A click on the switch is the viewer's own choice, so it is saved.
+    const trendScopeSeg = $('ins-trend-scope');
+    if (trendScopeSeg) trendScopeSeg.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b || b.disabled) return;
+      const next = b.getAttribute('data-scope') === 'agent' ? 'agent' : 'team';
+      if (next === insTrendScope) return;
+      insTrendScope = next;
+      insTrendScopePref_ = next;
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+    const trendAgentMetricSel = $('ins-trend-agent-metric');
+    if (trendAgentMetricSel) trendAgentMetricSel.addEventListener('change', function () {
+      insTrendAgentMetric = INS_TREND_AGENT_METRICS_.indexOf(trendAgentMetricSel.value) !== -1 ? trendAgentMetricSel.value : 'answered';
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+    // On the document: in the accordion these sit inside #ins-brief, which is
+    // outside #insights-page.
+    document.addEventListener('click', function (e) {
+      const cb = e.target.closest && e.target.closest('[data-trend-claim]');
+      if (cb) insTrendClaim_(cb.getAttribute('data-trend-claim') === 'agents' ? 'agents' : 'trend');
+    });
+
+    // MD4: the Queue health chart's controls. The table's column-header
+    // buttons and its row hover / focus are delegated on the document: in the
+    // admin brief the section sits inside #ins-brief, outside #insights-page.
+    const qhMetricSel = $('ins-qh-chart-metric');
+    if (qhMetricSel) qhMetricSel.addEventListener('change', function () { insQhSetMetric_(qhMetricSel.value); });
+    const qhViewSeg = $('ins-qh-chart-view');
+    if (qhViewSeg) qhViewSeg.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b || b.disabled) return;
+      const next = b.getAttribute('data-view') || 'monthly';
+      if (next === insQhChartView) return;
+      insQhChartView = next;
+      insSavePrefs_();
+      if (insLastData) insDrawQhChart_(insLastData);
+    });
+    const qhLabels = $('ins-qh-show-datalabels');
+    if (qhLabels) qhLabels.addEventListener('change', function () {
+      insQhShowLabels = !!qhLabels.checked;
+      insSavePrefs_();
+      if (insLastData) insDrawQhChart_(insLastData);
+    });
+    document.addEventListener('click', function (e) {
+      const hb = e.target.closest && e.target.closest('.ins-qh-th-btn');
+      if (hb && !hb.disabled) insQhSetMetric_(hb.getAttribute('data-qh-metric') || '');
+    });
+    const qhRowQueue = function (t) {
+      const row = t && t.closest ? t.closest('#ins-qh-tbody tr.ins-qh-row') : null;
+      return row ? (row.getAttribute('data-queue') || '') : '';
+    };
+    document.addEventListener('mouseover', function (e) { const q = qhRowQueue(e.target); if (q) insQhHighlight_(q); });
+    document.addEventListener('mouseout', function (e) {
+      if (qhRowQueue(e.target) && !qhRowQueue(e.relatedTarget)) insQhHighlight_('');
+    });
+    document.addEventListener('focusin', function (e) { const q = qhRowQueue(e.target); if (q) insQhHighlight_(q); });
+    document.addEventListener('focusout', function (e) {
+      if (qhRowQueue(e.target) && !qhRowQueue(e.relatedTarget)) insQhHighlight_('');
+    });
+
     // Phase 2 #10: Line/Calendar renderer toggle (team-metric tabs only;
     // insRenderTrendChart_ shows it only when the calendar is applicable).
     const trendRenderToggle = $('ins-trend-render-toggle');
@@ -638,8 +715,8 @@
       const nBtn = e.target.closest('[data-cal-nav]');
       if (nBtn) {
         const ym = nBtn.getAttribute('data-cal-nav') || '';
-        if (ym && ym !== insCalMonth_) {
-          insCalMonth_ = ym;
+        if (ym && ym !== INS_CAL_STATE_.team.month) {
+          INS_CAL_STATE_.team.month = ym;
           if (insLastData) insRenderTrendCalendar_(insLastData);
         }
         return;
@@ -658,17 +735,21 @@
       insSavePrefs_();
       if (insLastData) {
         insRenderTrendChart_(insLastData);
-        // The Absolute cards chart reads the toggle too (the gap chart's
-        // value labels are always on -- they carry the absolute numbers).
-        if (insCardsView === 'chart' && insCardsChartMode === 'abs') insRenderCardsChart_();
       }
     });
 
-    // Per-card IR drill-through (delegated on the page section so it covers
-    // both the main card grid and the quiet-agents collapsible).
-    page.addEventListener('click', function (e) {
-      const link = e.target.closest('.ins-card-ir-link');
-      if (!link) return;
+    // Per-card IR drill-through. Delegated on the DOCUMENT (MD4 F-a): it
+    // covers the main card grid and the quiet-agents collapsible, AND the
+    // same cards while the admin brief holds the Agents section -- #ins-brief
+    // sits outside #insights-page, so a listener on the page never saw a
+    // click there and the link did nothing. insInSection_ keeps it to
+    // Insights' own markup.
+    const insInSection_ = function (el) {
+      return !!(el && el.closest && (el.closest('#insights-page') || el.closest('#ins-brief')));
+    };
+    document.addEventListener('click', function (e) {
+      const link = e.target.closest && e.target.closest('.ins-card-ir-link');
+      if (!link || !insInSection_(link)) return;
       const agent = link.getAttribute('data-agent');
       if (!agent || typeof irDrillToAgent_ !== 'function') return;
       irDrillToAgent_(agent, $('ins-from').value, $('ins-to').value, { fromInsights: true });
@@ -690,9 +771,9 @@
     // no marker param is possible).
     let insIrPrefetchTimer = null;
     const insIrPrefetched_ = {};
-    page.addEventListener('mouseover', function (e) {
+    document.addEventListener('mouseover', function (e) {
       const card = e.target.closest && e.target.closest('.ins-card');
-      if (!card || !page.contains(card)) return;
+      if (!card || !insInSection_(card)) return;
       const link = card.querySelector('.ins-card-ir-link');
       const agent = link && link.getAttribute('data-agent');
       if (!agent) return;
@@ -714,9 +795,9 @@
           .getIndividualReport(excReq_(req));
       }, 300);
     });
-    page.addEventListener('mouseout', function (e) {
+    document.addEventListener('mouseout', function (e) {
       const card = e.target.closest && e.target.closest('.ins-card');
-      if (!card) return;
+      if (!card || !insInSection_(card)) return;
       if (e.relatedTarget && card.contains(e.relatedTarget)) return;   // still inside the card
       if (insIrPrefetchTimer) { clearTimeout(insIrPrefetchTimer); insIrPrefetchTimer = null; }
     });
@@ -745,7 +826,10 @@
       fold.addEventListener('toggle', function () {
         const key = fold.getAttribute('data-fold') || '';
         if (key) insFoldSet_(key, fold.open);
-        if (key === 'trend' && fold.open && insLastData) insDrawTrendChart_(insLastData);
+        // MD3: the trend chart draws when the fold HOLDING it opens -- its
+        // home, or the Agents fold while the brief's Team row has it.
+        if (fold.open && insLastData && fold === insTrendHostFold_()) insDrawTrendChart_(insLastData);
+        if (key === 'qh' && fold.open && insLastData) insDrawQhChart_(insLastData);   // MD4: draw-on-open
         if (key === 'cb' && fold.open) insCbSync_();   // G1: lazy fetch / draw-on-open
         // UX-2: the Agents fold's Chart view is a canvas (the C3 trap) -- redraw on open.
         if (key === 'agents' && fold.open && insLastData && insCardsView === 'chart') {
@@ -782,18 +866,6 @@
       insSavePrefs_();
       if (insCardsView === 'chart') insRenderCardsChart_();
     });
-    // Chart-view basis sub-toggle: Gap vs team / Absolute (PR's volume view).
-    const cardsChartModeSeg = $('ins-cards-chart-mode');
-    if (cardsChartModeSeg) cardsChartModeSeg.addEventListener('click', function (e) {
-      const b = e.target.closest('.seg-btn');
-      if (!b) return;
-      const next = b.getAttribute('data-mode') || 'gap';
-      if (next === insCardsChartMode) return;
-      insCardsChartMode = next;
-      insSyncCardsChartMode_();
-      insSavePrefs_();
-      insApplyCardsView_();   // re-toggles the gap-only metric selector + re-renders
-    });
 
     // R11-C3 (owner-approved consolidation): ONE metric dropdown replaced
     // the trend sub-tabs, the per-queue metric select, and the calendar's
@@ -807,13 +879,8 @@
         if (attOpt) attOpt.remove();
       }
       trendSel.addEventListener('change', function () {
-        const v = trendSel.value || 'answered';
-        if (v.indexOf('queues:') === 0) {
-          insActiveTrendMetric = 'queues';
-          insQueueMetric = INS_QUEUE_METRICS_.indexOf(v.slice(7)) !== -1 ? v.slice(7) : 'abandonedPct';
-        } else {
-          insActiveTrendMetric = v;
-        }
+        // MD4: the five "Queue:" entries moved to the Queue health chart.
+        insActiveTrendMetric = trendSel.value || 'answered';
         insSavePrefs_();
         if (insLastData) insRenderTrendChart_(insLastData);
       });
@@ -854,8 +921,8 @@
         }
         const vb = e.target.closest('[data-ab-view]');
         if (vb) { abForward('ins-cards-view-toggle', 'data-view', vb.getAttribute('data-ab-view')); return; }
-        const mb = e.target.closest('[data-ab-mode]');
-        if (mb) { abForward('ins-cards-chart-mode', 'data-mode', mb.getAttribute('data-ab-mode')); return; }
+        const sb = e.target.closest('[data-ab-scope]');   // MD3
+        if (sb) { abForward('ins-trend-scope', 'data-scope', sb.getAttribute('data-ab-scope')); return; }
         const rb = e.target.closest('[data-ab-render]');
         if (rb) { abForward('ins-trend-render-toggle', 'data-render', rb.getAttribute('data-ab-render')); return; }
       });
@@ -1704,31 +1771,20 @@
     return { tier: 'green', text: 'Every queue under ' + std + '% abandoned, with no violation days' };
   }
 
-  // Agents: rows = [{name, standing:'attention'|'steady'|'strong', trend:
-  // 'improved'|'regressed'|'mixed', judged}] (judged = enough rung calls and
-  // not a team-average-excluded manager). Red = behind the team AND slipping;
-  // amber = behind, or slipping while on par; green = nobody behind. On
-  // windows more than 7 days apart in length "slipping" is ignored, so the
-  // row can reach amber but not red.
-  function insBriefAgents_(rows, lengthMismatch) {
+  // Agents: rows = [{name, standing:'attention'|'steady'|'strong', judged}]
+  // (judged = enough rung calls and not a team-average-excluded manager).
+  // Amber = someone is behind the team; green = nobody is. MD1 (owner
+  // 2026-11-20): the direction of change ("slipping") is NOT read here any
+  // more -- it branded an agent who is doing well but down on last period --
+  // so this row has no red tier for now, and an agent on par with the team is
+  // never named. `red` stays in the result (always empty) for its readers.
+  function insBriefAgents_(rows) {
     var judged = (rows || []).filter(function (r) { return r && r.judged; });
     if (judged.length < 2) return { tier: 'grey', text: 'Too few agents with enough calls to compare', red: [], amber: [] };
-    var slipping = function (r) { return !lengthMismatch && r.trend === 'regressed'; };
-    var red = judged.filter(function (r) { return r.standing === 'attention' && slipping(r); });
-    var amber = judged.filter(function (r) {
-      return (r.standing === 'attention' && !slipping(r)) || (r.standing === 'steady' && slipping(r));
-    });
-    var name = function (r) {
-      return r.name + (r.standing === 'attention' ? (slipping(r) ? ' (behind, slipping)' : ' (behind)') : ' (slipping)');
-    };
-    var list = function (arr) {
-      var shown = arr.slice(0, 3).map(name).join(', ');
-      return shown + (arr.length > 3 ? ' +' + (arr.length - 3) + ' more' : '');
-    };
-    var flagged = red.concat(amber);
-    if (red.length) return { tier: 'red', text: list(flagged), red: red, amber: amber };
-    if (amber.length) return { tier: 'amber', text: list(amber), red: red, amber: amber };
-    return { tier: 'green', text: 'Nobody is behind the team average', red: red, amber: amber };
+    var behind = judged.filter(function (r) { return r.standing === 'attention'; });
+    if (!behind.length) return { tier: 'green', text: 'Nobody is behind the team average', red: [], amber: [] };
+    var shown = behind.slice(0, 3).map(function (r) { return r.name + ' (behind)'; }).join(', ');
+    return { tier: 'amber', text: shown + (behind.length > 3 ? ' +' + (behind.length - 3) + ' more' : ''), red: [], amber: behind };
   }
 
   // Trend: the latest WHOLE month's answer rate against the average of the 3
@@ -1931,10 +1987,10 @@
     if (aHead) {
       var judged = agentRows.filter(function (r) { return r.judged; });
       var behind = judged.filter(function (r) { return r.standing === 'attention'; }).length;
-      var slip = judged.filter(function (r) { return r.trend === 'regressed'; }).length;
       var onTrack = judged.filter(function (r) { return r.standing !== 'attention'; }).length;
+      // MD1: no "slipping" count -- behind + on track add up to the judged agents.
       aHead.textContent = judged.length
-        ? behind + ' behind the team · ' + slip + ' slipping · ' + onTrack + ' on track'
+        ? behind + ' behind the team · ' + onTrack + ' on track'
         : (agentRows.length ? agentRows.length + ' agent' + (agentRows.length === 1 ? '' : 's') + ', too few calls to compare' : '');
     }
     var dHead = $('ins-detail-fold-head');
@@ -2021,13 +2077,14 @@
     insBriefUnmountAll_();
     var agentRows = insBriefAgentRows_(data);
     var meta = (data && data.meta) || {};
-    var mismatch = Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
-    var agentsV = insBriefAgents_(agentRows, mismatch);
+    var agentsV = insBriefAgents_(agentRows);
     var trendV = insBriefTrend_(insBriefTrendMonths_(data), meta.trendEnd || meta.to);
     insSyncFoldHeads_(data, agentsV, trendV, agentRows);
     if (!box) return;
     if (!insBriefActive_() || !data || !data.teamStats) {
       insBriefRestoreFolds_();   // home for good: back to the viewer's own fold layout
+      insTrendMoveTo_('trend');  // MD3: with no brief the chart lives in the Trends fold,
+      insTrendScope = insTrendScopePref_;   // on the scope the viewer chose, not a row's
       box.style.display = 'none'; box.innerHTML = '';
       if (res) res.classList.remove('ins-has-brief');
       return;
@@ -2136,6 +2193,7 @@
       });
     });
     INS_BRIEF_MOUNTED_ = {};
+    insTrendAwaySync_();   // MD3: at home neither section shows the "it is in the other row" note
   }
   // Back home with the brief gone (View-as, no payload): each section takes the
   // viewer's saved fold state again -- the accordion left them all closed.
@@ -2173,6 +2231,7 @@
       });
       insBriefApply_(key);
     });
+    insTrendAwaySync_();   // MD3
   }
   // IC-3 (owner 2026-11-02): a row's section slides open AND shut, like the
   // agent panel (apAnimateOpen_/apAnimateClose_). Only a user toggle animates
@@ -2225,7 +2284,72 @@
   }
   function insBriefToggle_(key, force) {
     INS_BRIEF_OPEN_[key] = (force === undefined) ? !INS_BRIEF_OPEN_[key] : !!force;
+    // MD3: the Team and Trend rows share the ONE trend chart.
+    if (key === 'agents' || key === 'trend') insTrendOnRowToggle_(key, INS_BRIEF_OPEN_[key]);
     insBriefApply_(key, true);
+  }
+
+  // ---- MD3 (owner 2026-11-20): the ONE trend chart and where it sits --------
+  // #ins-trend-wrap is a single element whose home is the Trends fold. In the
+  // brief accordion the row a viewer OPENS takes it: the Team row shows it on
+  // "By agent" (above the gap bars and the team detail), the Trend row on
+  // "Team total". With both rows open it sits in the one opened last, and the
+  // other shows a one-line note offering it back. A row that closes hands the
+  // chart to the other row if that one is open. With no brief (a manager,
+  // View-as) it never leaves the Trends fold and the switch alone picks the
+  // scope. A claim never writes the saved scope -- that belongs to the switch.
+  var INS_TREND_HOSTS_ = { agents: 'ins-trend-host-agents', trend: 'ins-trend-host-trend' };
+  var INS_TREND_AGENT_METRICS_ = ['answered', 'missed', 'pct'];
+  function insTrendOwner_() {
+    var w = $('ins-trend-wrap');
+    return (w && w.parentNode && w.parentNode.id === INS_TREND_HOSTS_.agents) ? 'agents' : 'trend';
+  }
+  function insTrendHostFold_() {
+    var w = $('ins-trend-wrap');
+    return (w && w.closest) ? w.closest('details[data-fold]') : null;
+  }
+  // Whether the fold holding the chart is open (the draw-on-open gate).
+  function insTrendChartOpen_() {
+    var f = insTrendHostFold_();
+    return insFoldOpen_((f && f.getAttribute('data-fold')) || 'trend');
+  }
+  function insTrendAwaySync_() {
+    var owner = insTrendOwner_();
+    ['agents', 'trend'].forEach(function (k) {
+      var note = $('ins-trend-away-' + k);
+      if (!note) return;
+      var fold = note.closest ? note.closest('details[data-fold]') : null;
+      // Only in the accordion: at home a section either has the chart or never does.
+      note.hidden = !(k !== owner && fold && insBriefMounted_(fold));
+    });
+  }
+  function insTrendMoveTo_(owner) {
+    var w = $('ins-trend-wrap'), host = $(INS_TREND_HOSTS_[owner]);
+    if (!w || !host) return false;
+    var moved = w.parentNode !== host;
+    if (moved) host.appendChild(w);
+    insTrendAwaySync_();
+    return moved;
+  }
+  // PURE: the scope a row shows the chart on.
+  function insTrendScopeForRow_(owner) { return owner === 'agents' ? 'agent' : 'team'; }
+  function insTrendClaim_(owner) {
+    insTrendMoveTo_(owner);
+    insTrendScope = insTrendScopeForRow_(owner);
+    // A moved canvas is redrawn, never resized (the C3-safe path); the draw is
+    // measure-guarded, so a row still sliding open draws once it has a size.
+    if (insLastData) insDrawTrendChart_(insLastData);
+  }
+  // PURE: which row (if any) takes the chart when `key` goes to `open`.
+  function insTrendRowTaker_(key, open, owner, otherOpen) {
+    var other = key === 'agents' ? 'trend' : 'agents';
+    if (open) return key;
+    return (owner === key && otherOpen) ? other : null;
+  }
+  function insTrendOnRowToggle_(key, open) {
+    var other = key === 'agents' ? 'trend' : 'agents';
+    var taker = insTrendRowTaker_(key, open, insTrendOwner_(), !!INS_BRIEF_OPEN_[other]);
+    if (taker) insTrendClaim_(taker);
   }
   // Step 3: a jump that opens a section (an agent chip, a calendar day) must
   // open its brief ROW when the section sits in the accordion -- setting the
@@ -2443,6 +2567,7 @@
 
     insRenderLengthWarning_(data.meta);
     insRenderQueueHealth_(data.queueHealth);
+    insDrawQhChart_(data);   // MD4: the section's own trend chart (fold-gated)
     // UX-1: the Outbound summary + Callbacks sections moved under the outbound
     // agent table and follow the PAGE's window (obViewSync_, script-5) -- an
     // Insights render no longer drives them.
@@ -2470,7 +2595,7 @@
     // is fold-gated the same way -- drawn only while its fold is open (a
     // canvas built inside a closed <details> is the C3 zero-height trap);
     // the fold's toggle handler draws on expand.
-    if (insFoldOpen_('trend')) {
+    if (insTrendChartOpen_()) {
       insDrawTrendChart_(data);
     }
     if (insDetailOpen_()) {
@@ -2483,6 +2608,13 @@
     // R17d: land the out-of-window calendar day-click on the Daily breakdown
     // for the date now in the window. Read-and-clear unconditionally so a
     // date the rebuilt table still lacks can't leave the flag armed.
+    // MD4: the one-time landing for a pre-move "Queue:" Trend pref -- save the
+    // healed prefs (so it happens once) and open Queue health on that metric.
+    if (insQhHealPending_) {
+      insQhHealPending_ = false;
+      insSavePrefs_();
+      if ($('ins-qh-fold') && insBriefQueueVisible_(data.queueHealth)) insOpenSection_('ins-qh-fold', true);
+    }
     if (insCalDayPending_) {
       const calIso = insCalDayPending_;
       insCalDayPending_ = null;
@@ -3460,9 +3592,8 @@
     const sec = $('ins-qh-secondary');
     if (sec) { sec.innerHTML = ''; sec.style.display = 'none'; }
 
-    // The per-queue abandoned-% chart now lives in the consolidated trend
-    // chart above (the "Abandoned % by Queue" tab); this section keeps the
-    // tiles + the per-queue detail table.
+    // MD4: the per-queue trend chart sits beside this table (insRenderQhChart_);
+    // a row's data-queue is what the hover / focus highlight matches on.
     const tbody = $('ins-qh-tbody');
     if (tbody) {
       tbody.innerHTML = (qh.perQueue || []).map(function (q) {
@@ -3494,7 +3625,7 @@
         // F13 -> a11y tidy-up (the E-8 contract): the disclosure is a real
         // <button> in the first cell that owns aria-expanded and the native
         // Enter/Space; the row stays the mouse target, not a tab stop.
-        let html = '<tr class="ins-qh-row qcd-expandable">'
+        let html = '<tr class="ins-qh-row qcd-expandable" data-queue="' + escapeHtml(q.queue) + '">'
           + '<td><button type="button" class="qcd-expand-toggle" aria-expanded="false">'
           +   escapeHtml(q.queue) + subTag + chevron + '</button>' + srcLine + '</td>'
           + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
@@ -4072,7 +4203,7 @@
    * window can still show a calendar -- of the year, clearly captioned as
    * such, never of the selected window.
    */
-  function insCalendarUsesYtd_(data) {
+  function insCalendarUsesYtd_(data, queue) {
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
     const windowFits = span != null && span >= INS_CALENDAR_MIN_DAYS_
@@ -4081,7 +4212,7 @@
     // because queueHealth.dailySeries is window-scoped and no YTD queue series
     // existed; QCDReport now accumulates one inside the 12-month trend pass it
     // already runs (trend.ytdLabels/ytdTotal), so the reason is gone.
-    if (insActiveTrendMetric === 'queues') {
+    if (queue) {
       const qh = (data && data.queueHealth) || {};
       const winOkQ = windowFits && (((qh.dailySeries) || []).length > 1);
       if (winOkQ) return false;
@@ -4093,10 +4224,10 @@
     return (((data && data.trendYtd && data.trendYtd.labels) || []).length > 1);
   }
 
-  function insCalendarEligible_(data) {
+  function insCalendarEligible_(data, queue) {
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
-    if (insActiveTrendMetric === 'queues') {
+    if (queue) {
       // R11-C3: only the abandoned-% queue metric has a calendar rendering
       // (the count metrics are line-only).
       if (insQueueMetric !== 'abandonedPct') return false;
@@ -4106,7 +4237,7 @@
       const qh = (data && data.queueHealth) || {};
       if (span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
           && ((qh.dailySeries) || []).length > 1) return true;
-      return insCalendarUsesYtd_(data);
+      return insCalendarUsesYtd_(data, true);
     }
     // R11-C3: every team COUNT/RATE metric is calendar-capable; ATT stays
     // line-only (a duration grid reads poorly and invites misreading).
@@ -4121,19 +4252,19 @@
   // R7 (I-1): why the Calendar option is unavailable right now -- shown as the
   // disabled toggle's hover title so the feature stays discoverable instead of
   // vanishing on ineligible tabs/windows.
-  function insCalendarIneligibleReason_(data) {
-    if (insActiveTrendMetric === 'att') {
-      return 'Calendar view is available for the count and rate metrics (Answered, % Answered, Missed, Call volume, Queue: Abandoned %).';
+  function insCalendarIneligibleReason_(data, queue) {
+    if (!queue && insActiveTrendMetric === 'att') {
+      return 'Calendar view is available for the count and rate metrics (Answered, % Answered, Missed, Call volume).';
     }
-    if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
-      return 'Calendar view is available for Queue: Abandoned % (the other queue metrics are line-only).';
+    if (queue && insQueueMetric !== 'abandonedPct') {
+      return 'The calendar shows Abandoned % (the other queue metrics are line-only).';
     }
     // R18 (item 8): the span rules are GONE for the queue metric too -- it now
     // falls back to queueHealth.ytdDailySeries the way the team metrics fall
     // back to trendYtd, so the only remaining reason is "no daily series at
     // all" (a dept with no mapped queues, or a year with under two QCD days).
-    if (insActiveTrendMetric === 'queues') {
-      return 'Queue calendar view needs at least two days of queue data — this department has none in the selected window or year to date.';
+    if (queue) {
+      return 'The queue calendar needs at least two days of queue data — this department has none in the selected window or year to date.';
     }
     return 'Calendar view is unavailable here — this tab has no daily series to draw.';
   }
@@ -4144,9 +4275,8 @@
   function insSyncTrendMetricSel_() {
     const sel = $('ins-trend-metric');
     if (!sel) return;
-    const want = insActiveTrendMetric === 'queues'
-      ? ('queues:' + (insQueueMetric || 'abandonedPct'))
-      : insActiveTrendMetric;
+    // MD4: 'queues' is no longer a Trend metric (it self-heals to Answered below).
+    const want = insActiveTrendMetric;
     sel.value = want;
     if (sel.value !== want) { insActiveTrendMetric = 'answered'; sel.value = 'answered'; }
   }
@@ -4159,9 +4289,15 @@
     destroyOrphanedChartOnCanvas_('ins-trend-chart');
     if (insChartInstance) { try { insChartInstance.destroy(); } catch (e) {} insChartInstance = null; }
 
+    // MD3: ONE chart, two scopes. By agent needs agent cards that carry a
+    // monthly series; without them the switch hides and the chart is the team's.
+    const agentCards = insTrendAgentCards_(data);
+    if (insTrendScopeSync_(agentCards.length > 0)) {
+      insRenderTrendByAgent_(canvas, data, agentCards);
+      return;
+    }
+
     const metric = insActiveTrendMetric;
-    const isQueues = (metric === 'queues');
-    const qhTrend = (data.queueHealth && data.queueHealth.trend) || null;
 
     // Phase 2 #10: Line/Calendar renderer switch. The toggle shows only when
     // the calendar is applicable; picking Calendar swaps the canvas for the
@@ -4204,50 +4340,19 @@
     if (useCalendar) {
       const vt0 = $('ins-trend-view-toggle');
       if (vt0) vt0.style.display = 'none';   // calendar is inherently daily
-      const qmw0 = $('ins-queue-metric-wrap');
-      if (qmw0) qmw0.style.display = 'none';
       const head0 = $('ins-trend-header');
-      const tm0 = data.meta || {};
       // R17d: name the range the CELLS cover -- the YTD fallback's own span
-      // when it is in play, the selected window otherwise. R18 (item 8): the
-      // queue metric has its OWN ytd series, so read its first/last row rather
-      // than the team trendYtd span (the two need not start on the same day).
-      let ytd0 = null;
-      if (insCalendarUsesYtd_(data)) {
-        if (insActiveTrendMetric === 'queues') {
-          const qy0 = ((data && data.queueHealth && data.queueHealth.ytdDailySeries) || []);
-          if (qy0.length) ytd0 = { from: qy0[0].date, to: qy0[qy0.length - 1].date };
-        } else {
-          ytd0 = data.trendYtd || {};
-        }
-      }
-      if (head0) {
-        head0.textContent = ytd0
-          ? ('Daily calendar · ' + isoDateShort_(ytd0.from || '') + '–' + isoDateShort_(ytd0.to || '') + ' (year to date)')
-          : ('Daily calendar'
-             + (tm0.from && tm0.to ? ' · ' + isoDateShort_(tm0.from) + '–' + isoDateShort_(tm0.to) + ' (selected window)' : ''));
-      }
+      // when it is in play, the selected window otherwise.
+      if (head0) head0.textContent = insCalendarHeading_(data, false);
       insRenderTrendCalendar_(data);
       return;
     }
 
-    // Daily availability + Monthly/Daily toggle visibility. Queues view
-    // uses the QCD daily series; the team metrics use trendDaily.
-    const hasDaily = isQueues
-      ? !!(qhTrend && (qhTrend.dailyLabels || []).length > 1)
-      : !!(data.trendDaily && (data.trendDaily.labels || []).length > 1);
-    const toggle = $('ins-trend-view-toggle');
-    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
+    // Daily availability + Monthly/Daily toggle visibility (trendDaily).
+    const hasDaily = !!(data.trendDaily && (data.trendDaily.labels || []).length > 1);
     if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
     const daily = (insTrendView === 'daily') && hasDaily;
-
-    // gap 1: the per-queue metric sub-selector is only meaningful on the
-    // By Queue tab -- show it there, hide it on the team-metric tabs.
-    const queueMetricWrap = $('ins-queue-metric-wrap');
-    if (queueMetricWrap) queueMetricWrap.style.display = isQueues ? '' : 'none';
-    const qMetricLabel = { abandonedPct: 'abandoned % by queue',
-      totalCalls: 'total calls by queue', violations: 'violations by queue',
-      avgAnswer: 'avg answer time by queue', longestWait: 'longest wait by queue' };
+    insTrendViewSync_(hasDaily, daily ? 'daily' : 'monthly', '');
 
     // #4 + gap 1, MERGED (C-1): ONE header writer. These were two consecutive
     // writers to the same element -- the second unconditionally clobbered the
@@ -4260,8 +4365,7 @@
       const tm = data.meta || {};
       headerEl.textContent = (daily
           ? ('Daily team trend' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
-          : ('12-month team trend' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : '')))
-        + (isQueues ? ' — ' + (qMetricLabel[insQueueMetric] || 'by queue') : '');
+          : ('12-month team trend' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : '')));
     }
 
     const fmtMin = function (val) {
@@ -4273,147 +4377,10 @@
     const insShowLabels = !!($('ins-show-datalabels') && $('ins-show-datalabels').checked);
 
     let chartConfig;
-    let spotlightOpts = null;   // set on the multi-queue By-Queue view
 
-    if (isQueues) {
-      // By Queue (gap 1): one line per queue + own-only dept total, for the
-      // metric the sub-selector picks (insQueueMetric). Abandoned % is the
-      // default and adds the abandon-threshold line + % formatting (the QCD
-      // violation rule); Total Calls / Violations are integer counts with no
-      // threshold line. Hidden gracefully if there's no queue trend (unmapped
-      // dept / QCD unavailable).
-      if (!qhTrend || !(qhTrend.labels || []).length) {
-        canvas.style.display = 'none';
-        return;
-      }
-      canvas.style.display = '';
-      const qMetric = insQueueMetric || 'abandonedPct';
-      const isPct = (qMetric === 'abandonedPct');
-      const isTime = INS_QUEUE_TIME_METRICS_.indexOf(qMetric) !== -1;   // P6: seconds
-      // Abandoned % reads the default/legacy series; the other metrics read
-      // trend.metrics[qMetric] (server-side, gap 1).
-      const mSrc = isPct ? qhTrend : ((qhTrend.metrics && qhTrend.metrics[qMetric]) || {});
-      const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
-      const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
-      const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
-      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); };
-      const qNames = Object.keys(perQueue);
-      // Round 4 (owner): this tab read visually different from the team tabs
-      // (thin flat multi-lines vs their filled single curve). A SINGLE-queue
-      // dept -- the common case -- now renders in the same filled
-      // single-series style as the team tabs; multi-queue keeps the
-      // comparative multi-line look (fills would occlude, the Overview-chart
-      // convention) but with the same line weight/curve as the rest.
-      const singleQ = qNames.length === 1;
-      const datasets = qNames.map(function (q, i) {
-        const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-        return singleQ
-          ? { label: q, data: perQueue[q], borderColor: c,
-              backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, c); },
-              borderWidth: 2.2, tension: 0.4, fill: true,
-              pointBackgroundColor: c, pointBorderColor: THEME.paperCard,
-              pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5 }
-          : { label: q, data: perQueue[q], borderColor: c, backgroundColor: c,
-              borderWidth: 2.2, pointRadius: 2.5, tension: 0.4, fill: false };
-      });
-      if (qNames.length > 1 && totalSer.length) {
-        datasets.push({ label: 'Dept total', data: totalSer,
-          borderColor: THEME.ink, backgroundColor: THEME.ink,
-          borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
-      }
-      if (qNames.length > 1) {
-        spotlightOpts = isPct ? { skipLabel: QCD_THRESH_LABEL_ } : {};
-      }
-      // Step 1: Total calls / Violations are COUNTS -- mark a partly covered
-      // month on the monthly view. The queue trend is built over the same
-      // INV-29 months as the team trend; the guard skips the marking if the
-      // two ever disagree in length rather than mark the wrong point.
-      const teamMonths = (data.trendData && data.trendData.months) || [];
-      // P6: an average and a maximum are not counts -- a partly covered month
-      // does not understate them, so the time metrics are never marked.
-      const qPart = insPartialChartBits_((!daily && !isPct && !isTime && (labels || []).length === teamMonths.length)
-        ? insPartialForData_(data) : []);
-      if (qPart.any) {
-        datasets.forEach(function (ds) {
-          const base = ds.borderColor;
-          ds.segment = qPart.segment;
-          ds.pointBackgroundColor = function (ctx) { return qPart.at(ctx.dataIndex) ? THEME.paperCard : base; };
-          ds.pointBorderColor = function (ctx) { return qPart.at(ctx.dataIndex) ? base : THEME.paperCard; };
-          if (!ds.pointRadius) ds.pointRadius = function (ctx) { return qPart.at(ctx.dataIndex) ? 3 : 0; };
-        });
-      }
-      if (isPct) {
-        // Violation-day markers (ported from the retired QCD chart, #6):
-        // points at/over the standard render warn-colored + enlarged on every %
-        // series so "which days/months breached" reads at a glance.
-        const warnC = THEME.warn || '#c66b4b';
-        datasets.forEach(function (ds) {
-          const base = ds.borderColor;
-          const baseR = ds.pointRadius || 1.5;
-          ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= ABANDON_STANDARD_ ? warnC : base; });
-          ds.pointBorderColor     = ds.pointBackgroundColor;
-          ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= ABANDON_STANDARD_ ? 4.5 : baseR; });
-        });
-        datasets.push({ label: QCD_THRESH_LABEL_, data: labels.map(function () { return ABANDON_STANDARD_; }),
-          borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
-          pointRadius: 0, fill: false, order: 99 });
-      }
-      chartConfig = {
-        type: 'line',
-        data: { labels: labels, datasets: datasets },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          onClick: function (evt, items, chartObj) { insTrendPointDrill_(evt, chartObj, daily); },
-          plugins: {
-            datalabels: {
-              display: insShowLabels,
-              align: 'top', anchor: 'center',
-              backgroundColor: THEME.paperCard,
-              color: function (c) { return c.dataset.borderColor; },
-              borderColor: function (c) { return c.dataset.borderColor; },
-              borderWidth: 1, borderRadius: 2,
-              font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
-              formatter: function (value, c) {
-                if (c.dataset.label === QCD_THRESH_LABEL_ || value == null) return '';
-                return fmtVal(value);
-              },
-            },
-            // Multi-queue legend gets the shared spotlight (hover-dim +
-            // click-to-pin, ported from the retired QCD chart) so one queue's
-            // line can be isolated; the threshold line stays out of the dimming.
-            // Round 4: a single-queue view hides the one-item legend (the
-            // team tabs are legendless too); multi-queue keeps the
-            // spotlight legend.
-            legend: Object.assign({ display: qNames.length > 1, position: 'bottom',
-              labels: { boxWidth: 18,
-              filter: function (item) { return item.text !== QCD_THRESH_LABEL_; } } },
-              (qNames.length > 1 ? chartSpotlightLegend_() : {})),
-            tooltip: {
-              filter: function (ctx) { return ctx.dataset.label !== QCD_THRESH_LABEL_ && chartTooltipPinFilter_(ctx); },
-              callbacks: {
-                label: function (ctx) {
-                  return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y))
-                    + (ctx.parsed.y == null ? '' : qPart.note(ctx.dataIndex, ctx.parsed.y));
-                },
-                footer: function () {
-                  return 'Click the point to reload for this ' + (daily ? 'day' : 'month');
-                },
-              },
-            },
-          },
-          scales: {
-            x: { ticks: { maxRotation: 0, autoSkip: true,
-              callback: function (v, i) { return qPart.tick(this.getLabelForValue(v), i); } } },
-            y: { beginAtZero: true, ticks: Object.assign(
-              { callback: function (v) { return isPct ? (v + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); } },
-              // P6: a time axis steps in clock-friendly amounts (0:30, 1:00, 5:00...).
-              isTime ? { stepSize: insTimeAxisStep_(datasets) } : {}) },
-          },
-        },
-      };
-    } else {
-      // Team metrics: answered / % answered / avg talk time.
+    {
+      // Team metrics: answered / % answered / avg talk time. (MD4: the per-queue
+      // series moved to the Queue health section's own chart, insRenderQhChart_.)
       const src = daily ? data.trendDaily : data.trendData;
       const labels = (src && src.labels) || [];
       const series = (src && src.series) || [];
@@ -4529,9 +4496,299 @@
     }
 
     insChartInstance = safeChart_(canvas.getContext('2d'), chartConfig);
-    if (spotlightOpts && insChartInstance) {
-      chartSpotlightStash_(insChartInstance, spotlightOpts);
+  }
+
+  // ---- MD4 (owner 2026-11-20): the Queue health section's OWN trend chart ----
+  // The per-queue series that used to sit behind the Trend dropdown's five
+  // "Queue:" entries, drawn beside the per-queue table it belongs with. One
+  // line per queue (+ the dept total when there are several), for the metric
+  // in #ins-qh-chart-metric -- which a table column header also sets. Monthly
+  // / Daily / Calendar (the calendar is Abandoned % only). Hovering or
+  // focusing a queue's table row highlights that queue's line.
+  const INS_QH_METRIC_LABEL_ = { abandonedPct: 'Abandoned %', totalCalls: 'Total calls',
+    violations: 'Violations', avgAnswer: 'Avg answer time', longestWait: 'Longest wait' };
+  // PURE: the queue chart's view after the rules -- Calendar only for
+  // Abandoned % with a series to fill it, Daily only with a daily series.
+  function insQhResolveView_(view, metric, hasDaily, calendarOk) {
+    if (view === 'calendar') return (metric === 'abandonedPct' && calendarOk) ? 'calendar' : 'monthly';
+    if (view === 'daily') return hasDaily ? 'daily' : 'monthly';
+    return 'monthly';
+  }
+  // PURE: a prefs blob from before MD4 whose Trend chart was on a "Queue:"
+  // entry. Returns null when it was not, else the view the Queue health chart
+  // should open on (the metric itself rides the old queueMetric field).
+  function insQhHealFromPrefs_(prefs) {
+    var p = prefs || {};
+    if (p.trendMetric !== 'queues') return null;
+    return { view: p.trendRender === 'calendar' ? 'calendar' : (p.trendView === 'daily' ? 'daily' : 'monthly') };
+  }
+  var insQhDrawAttempts_ = 0;
+  function insDrawQhChart_(data) {
+    var card = $('ins-qh-chart-card');
+    if (!card) return;
+    var qhTrend = data && data.queueHealth && data.queueHealth.trend;
+    var has = !!(qhTrend && (qhTrend.labels || []).length);
+    card.style.display = has ? '' : 'none';
+    insQhHeadersSync_(has);
+    if (!has) {
+      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+      return;
     }
+    // A canvas built inside a closed fold measures zero (the C3 trap): draw
+    // only while the fold is open, and wait for the card to have a size.
+    if (!insFoldOpen_('qh')) return;
+    var measurable = card.offsetParent !== null && card.clientWidth > 0;
+    if (!measurable) {
+      if (insQhDrawAttempts_ < 30 && typeof requestAnimationFrame === 'function') {
+        insQhDrawAttempts_++;
+        requestAnimationFrame(function () { insDrawQhChart_(data); });
+      }
+      return;
+    }
+    insQhDrawAttempts_ = 0;
+    insRenderQhChart_(data);
+  }
+  // The table's column headers that chart a metric: pressed state + whether
+  // they are live at all (no trend = plain headers).
+  function insQhHeadersSync_(has) {
+    document.querySelectorAll('.ins-qh-th-btn').forEach(function (b) {
+      b.disabled = !has;
+      b.setAttribute('aria-pressed', (has && b.getAttribute('data-qh-metric') === insQueueMetric) ? 'true' : 'false');
+    });
+  }
+  function insQhSetMetric_(metric) {
+    if (INS_QUEUE_METRICS_.indexOf(metric) === -1 || metric === insQueueMetric) return;
+    insQueueMetric = metric;
+    insSavePrefs_();
+    if (insLastData) insDrawQhChart_(insLastData);
+  }
+  // Row hover / focus -> that queue's line (a transient highlight; pins win).
+  function insQhHighlight_(queue) {
+    var ch = insQhChartInstance;
+    if (!ch || !ch.data || !ch._spotlightStashed || chartSpotlightHasPins_(ch)) return;
+    if (!queue) { chartSpotlightClear_(ch); return; }
+    var idx = -1;
+    ch.data.datasets.forEach(function (ds, i) { if (ds.label === queue) idx = i; });
+    if (idx >= 0) chartSpotlightApply_(ch, idx); else chartSpotlightClear_(ch);
+  }
+  function insRenderQhChart_(data) {
+    const canvas = $('ins-qh-chart');
+    if (!canvas) return;
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-qh-chart');
+    if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+    const qhTrend = (data.queueHealth && data.queueHealth.trend) || null;
+    if (!qhTrend || !(qhTrend.labels || []).length) return;
+    if (INS_QUEUE_METRICS_.indexOf(insQueueMetric) === -1) insQueueMetric = 'abandonedPct';
+    const hasDaily = (qhTrend.dailyLabels || []).length > 1;
+    const calendarOk = insCalendarEligible_(data, true);
+    const view = insQhResolveView_(insQhChartView, insQueueMetric, hasDaily, calendarOk);
+    const daily = view === 'daily';
+    const useCalendar = view === 'calendar';
+    const showLabels = insQhShowLabels;
+
+    // Controls: the metric select, the view switch, the data-labels box.
+    const sel = $('ins-qh-chart-metric');
+    if (sel) sel.value = insQueueMetric;
+    insQhHeadersSync_(true);
+    const seg = $('ins-qh-chart-view');
+    if (seg) seg.querySelectorAll('.seg-btn').forEach(function (b) {
+      const v = b.getAttribute('data-view') || 'monthly';
+      const on = v === view;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      b.disabled = (v === 'daily' && !hasDaily) || (v === 'calendar' && !(insQueueMetric === 'abandonedPct' && calendarOk));
+      if (v === 'calendar') {
+        b.title = b.disabled
+          ? (insQueueMetric !== 'abandonedPct'
+              ? 'The calendar shows Abandoned % (the other queue metrics are line-only).'
+              : insCalendarIneligibleReason_(data, true))
+          : 'Calendar days — which DAYS were over the abandon threshold.';
+      }
+    });
+    const dl = $('ins-qh-show-datalabels');
+    if (dl) dl.checked = showLabels;
+    const dlBox = $('ins-qh-datalabels-box');
+    if (dlBox) dlBox.style.display = useCalendar ? 'none' : '';
+    const calHost = $('ins-qh-calendar');
+    const canvasWrap = $('ins-qh-canvas-wrap');
+    if (calHost) calHost.style.display = useCalendar ? '' : 'none';
+    if (canvasWrap) canvasWrap.style.display = useCalendar ? 'none' : '';
+    const title = $('ins-qh-chart-title');
+    const tm = data.meta || {};
+    const mLabel = INS_QH_METRIC_LABEL_[insQueueMetric] || 'Abandoned %';
+    if (useCalendar) {
+      if (title) title.textContent = insCalendarHeading_(data, true) + ' — ' + mLabel;
+      insRenderTrendCalendar_(data, { queue: true });
+      return;
+    }
+    if (title) {
+      title.textContent = mLabel + ' by queue · '
+        + (daily
+          ? ('daily' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
+          : ('12 months' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : '')));
+    }
+    canvas.setAttribute('aria-label', mLabel + ' by queue, ' + (daily ? 'by day over the selected window' : 'by month over the last 12 months'));
+
+    let chartConfig;
+    let spotlightOpts = null;   // set when there are several queues
+    // By Queue (gap 1): one line per queue + own-only dept total, for the
+    // metric the section's selector (or a table column header) picks (insQueueMetric). Abandoned % is the
+    // default and adds the abandon-threshold line + % formatting (the QCD
+    // violation rule); Total Calls / Violations are integer counts with no
+    // threshold line. Hidden gracefully if there's no queue trend (unmapped
+    // dept / QCD unavailable).
+    canvas.style.display = '';
+    const qMetric = insQueueMetric || 'abandonedPct';
+    const isPct = (qMetric === 'abandonedPct');
+    const isTime = INS_QUEUE_TIME_METRICS_.indexOf(qMetric) !== -1;   // P6: seconds
+    // Abandoned % reads the default/legacy series; the other metrics read
+    // trend.metrics[qMetric] (server-side, gap 1).
+    const mSrc = isPct ? qhTrend : ((qhTrend.metrics && qhTrend.metrics[qMetric]) || {});
+    const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
+    const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
+    const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
+    const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); };
+    const qNames = Object.keys(perQueue);
+    // Round 4 (owner): this tab read visually different from the team tabs
+    // (thin flat multi-lines vs their filled single curve). A SINGLE-queue
+    // dept -- the common case -- now renders in the same filled
+    // single-series style as the team tabs; multi-queue keeps the
+    // comparative multi-line look (fills would occlude, the Overview-chart
+    // convention) but with the same line weight/curve as the rest.
+    const singleQ = qNames.length === 1;
+    const datasets = qNames.map(function (q, i) {
+      const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return singleQ
+        ? { label: q, data: perQueue[q], borderColor: c,
+            backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, c); },
+            borderWidth: 2.2, tension: 0.4, fill: true,
+            pointBackgroundColor: c, pointBorderColor: THEME.paperCard,
+            pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5 }
+        : { label: q, data: perQueue[q], borderColor: c, backgroundColor: c,
+            borderWidth: 2.2, pointRadius: 2.5, tension: 0.4, fill: false };
+    });
+    if (qNames.length > 1 && totalSer.length) {
+      datasets.push({ label: 'Dept total', data: totalSer,
+        borderColor: THEME.ink, backgroundColor: THEME.ink,
+        borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
+    }
+    if (qNames.length > 1) {
+      spotlightOpts = isPct ? { skipLabel: QCD_THRESH_LABEL_ } : {};
+    }
+    // Step 1: Total calls / Violations are COUNTS -- mark a partly covered
+    // month on the monthly view. The queue trend is built over the same
+    // INV-29 months as the team trend; the guard skips the marking if the
+    // two ever disagree in length rather than mark the wrong point.
+    const teamMonths = (data.trendData && data.trendData.months) || [];
+    // P6: an average and a maximum are not counts -- a partly covered month
+    // does not understate them, so the time metrics are never marked.
+    const qPart = insPartialChartBits_((!daily && !isPct && !isTime && (labels || []).length === teamMonths.length)
+      ? insPartialForData_(data) : []);
+    if (qPart.any) {
+      datasets.forEach(function (ds) {
+        const base = ds.borderColor;
+        ds.segment = qPart.segment;
+        ds.pointBackgroundColor = function (ctx) { return qPart.at(ctx.dataIndex) ? THEME.paperCard : base; };
+        ds.pointBorderColor = function (ctx) { return qPart.at(ctx.dataIndex) ? base : THEME.paperCard; };
+        if (!ds.pointRadius) ds.pointRadius = function (ctx) { return qPart.at(ctx.dataIndex) ? 3 : 0; };
+      });
+    }
+    if (isPct) {
+      // Violation-day markers (ported from the retired QCD chart, #6):
+      // points at/over the standard render warn-colored + enlarged on every %
+      // series so "which days/months breached" reads at a glance.
+      const warnC = THEME.warn || '#c66b4b';
+      datasets.forEach(function (ds) {
+        const base = ds.borderColor;
+        const baseR = ds.pointRadius || 1.5;
+        ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= ABANDON_STANDARD_ ? warnC : base; });
+        ds.pointBorderColor     = ds.pointBackgroundColor;
+        ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= ABANDON_STANDARD_ ? 4.5 : baseR; });
+      });
+      datasets.push({ label: QCD_THRESH_LABEL_, data: labels.map(function () { return ABANDON_STANDARD_; }),
+        borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
+        pointRadius: 0, fill: false, order: 99 });
+    }
+    chartConfig = {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        onClick: function (evt, items, chartObj) { insTrendPointDrill_(evt, chartObj, daily); },
+        plugins: {
+          datalabels: {
+            display: showLabels,
+            align: 'top', anchor: 'center',
+            backgroundColor: THEME.paperCard,
+            color: function (c) { return c.dataset.borderColor; },
+            borderColor: function (c) { return c.dataset.borderColor; },
+            borderWidth: 1, borderRadius: 2,
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+            formatter: function (value, c) {
+              if (c.dataset.label === QCD_THRESH_LABEL_ || value == null) return '';
+              return fmtVal(value);
+            },
+          },
+          // Multi-queue legend gets the shared spotlight (hover-dim +
+          // click-to-pin, ported from the retired QCD chart) so one queue's
+          // line can be isolated; the threshold line stays out of the dimming.
+          // Round 4: a single-queue view hides the one-item legend (the
+          // team tabs are legendless too); multi-queue keeps the
+          // spotlight legend.
+          legend: Object.assign({ display: qNames.length > 1, position: 'bottom',
+            labels: { boxWidth: 18,
+            filter: function (item) { return item.text !== QCD_THRESH_LABEL_; } } },
+            (qNames.length > 1 ? chartSpotlightLegend_() : {})),
+          tooltip: {
+            filter: function (ctx) { return ctx.dataset.label !== QCD_THRESH_LABEL_ && chartTooltipPinFilter_(ctx); },
+            callbacks: {
+              label: function (ctx) {
+                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y))
+                  + (ctx.parsed.y == null ? '' : qPart.note(ctx.dataIndex, ctx.parsed.y));
+              },
+              footer: function () {
+                return 'Click the point to reload for this ' + (daily ? 'day' : 'month');
+              },
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 0, autoSkip: true,
+            callback: function (v, i) { return qPart.tick(this.getLabelForValue(v), i); } } },
+          y: { beginAtZero: true, ticks: Object.assign(
+            { callback: function (v) { return isPct ? (v + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); } },
+            // P6: a time axis steps in clock-friendly amounts (0:30, 1:00, 5:00...).
+            isTime ? { stepSize: insTimeAxisStep_(datasets) } : {}) },
+        },
+      },
+    };
+
+    insQhChartInstance = safeChart_(canvas.getContext('2d'), chartConfig);
+    if (spotlightOpts && insQhChartInstance) {
+      chartSpotlightStash_(insQhChartInstance, spotlightOpts);
+      insQhChartInstance._spotlightStashed = true;
+    }
+  }
+  // The calendar's heading for either scope: the YTD fallback's own span when
+  // it is in play, the selected window otherwise. R18 (item 8): the queue
+  // series has its OWN first / last day, which need not match the team's.
+  function insCalendarHeading_(data, queue) {
+    const tm = (data && data.meta) || {};
+    let ytd = null;
+    if (insCalendarUsesYtd_(data, queue)) {
+      if (queue) {
+        const qy = ((data && data.queueHealth && data.queueHealth.ytdDailySeries) || []);
+        if (qy.length) ytd = { from: qy[0].date, to: qy[qy.length - 1].date };
+      } else {
+        ytd = data.trendYtd || {};
+      }
+    }
+    return ytd
+      ? ('Daily calendar · ' + isoDateShort_(ytd.from || '') + '–' + isoDateShort_(ytd.to || '') + ' (year to date)')
+      : ('Daily calendar'
+         + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''));
   }
 
   /**
@@ -4569,22 +4826,26 @@
       .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }
 
-  function insRenderTrendCalendar_(data) {
-    const host = $('ins-trend-calendar');
+  function insRenderTrendCalendar_(data, opts) {
+    // MD4: two calendars share this renderer -- the team one in Trends and
+    // the queue Abandoned % one in Queue health -- each with its own host and
+    // its own month position.
+    const isQueueCal = !!(opts && opts.queue);
+    const host = $(isQueueCal ? 'ins-qh-calendar' : 'ins-trend-calendar');
+    const calSt = INS_CAL_STATE_[isQueueCal ? 'queue' : 'team'];
     if (!host) return;
     const meta = (data && data.meta) || {};
     // R17d: when the selected window can't fill a calendar, render the
     // YEAR-TO-DATE series instead (server v20 `trendYtd`) -- with its OWN
     // from/to driving the month list + the in-window gate, and a caption
     // saying so, since the cells then do NOT describe the selected window.
-    const usesYtd = insCalendarUsesYtd_(data);
+    const usesYtd = insCalendarUsesYtd_(data, isQueueCal);
     const td = (usesYtd ? (data && data.trendYtd) : (data && data.trendDaily)) || {};
     // R18: in YTD mode the QUEUE metric drives its window from its OWN series
     // (QCD-sourced) rather than the team one (DQE-sourced). The two ranges are
     // Jan 1..end by construction, but their COVERAGE can differ -- a dept with
     // queue data and no DQE rows (or the reverse) would otherwise render a
     // month list the cells can't fill.
-    const isQueueCal = insActiveTrendMetric === 'queues';
     const qhYtdRows = (data && data.queueHealth && data.queueHealth.ytdDailySeries) || [];
     let calFrom, calTo;
     if (usesYtd && isQueueCal && qhYtdRows.length) {
@@ -4612,7 +4873,7 @@
     // volume -> count ramps, Queue: Abandoned % -> abd cells. Eligibility
     // (insCalendarEligible_) guarantees the backing series exists.
     let calMetric;
-    if (insActiveTrendMetric === 'queues') calMetric = hasAbd ? 'abd' : 'pct';
+    if (isQueueCal) calMetric = 'abd';
     else if (insActiveTrendMetric === 'pct') calMetric = 'pct';
     else if (insActiveTrendMetric === 'missed') calMetric = 'missed';
     else if (insActiveTrendMetric === 'volume') calMetric = 'vol';
@@ -4632,10 +4893,11 @@
     const months = insCalMonthsInWindow_(calFrom, calTo);
     if (!months.length) { host.innerHTML = ''; return; }
     const winKey = String(calFrom || '') + '|' + String(calTo || '');
-    if (winKey !== insCalWinKey_ || months.indexOf(insCalMonth_) === -1) {
-      insCalWinKey_ = winKey;
-      insCalMonth_ = months[months.length - 1];   // default: most recent month
+    if (winKey !== calSt.win || months.indexOf(calSt.month) === -1) {
+      calSt.win = winKey;
+      calSt.month = months[months.length - 1];   // default: most recent month
     }
+    const insCalMonth_ = calSt.month;
     const mi = months.indexOf(insCalMonth_);
 
     const legend = isMissed
@@ -4775,9 +5037,9 @@
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
         const ym = btn.getAttribute('data-cal-nav') || '';
-        if (ym && ym !== insCalMonth_) {
-          insCalMonth_ = ym;
-          if (insLastData) insRenderTrendCalendar_(insLastData);
+        if (ym && ym !== calSt.month) {
+          calSt.month = ym;
+          if (insLastData) insRenderTrendCalendar_(insLastData, opts);
         }
       });
     });
@@ -5076,16 +5338,8 @@
       });
     };
     setActive('data-ab-view', insCardsView);
-    setActive('data-ab-mode', insCardsChartMode);
+    setActive('data-ab-scope', insTrendScope);   // MD3
     setActive('data-ab-render', insTrendRender);
-    // Basis only applies in Chart view -- dim + disable it in Cards view.
-    const basisRow = $('ins-ab-basis-row');
-    if (basisRow) {
-      basisRow.style.opacity = (insCardsView === 'chart') ? '' : '0.45';
-      basisRow.querySelectorAll('[data-ab-mode]').forEach(function (b) {
-        b.disabled = (insCardsView !== 'chart');
-      });
-    }
     // Trend render eligibility mirrors the real toggle's disabled state.
     const realRender = $('ins-trend-render-toggle');
     const renderDisabled = !!(realRender && realRender.classList.contains('is-disabled'));
@@ -5108,7 +5362,7 @@
     // Round-16: the density mode is gone -- the view is simply insCardsView
     // (chart by default; single-agent reports still force cards upstream).
     const chartView = (insCardsView === 'chart');
-    // I5a: sync the Cards/Chart toggle + Gap/Absolute sub-toggle to the active
+    // I5a: sync the Cards/Chart toggle to the active
     // state on every render, so a role default (or programmatic change) with no
     // saved pref is reflected in the buttons.
     const vseg = $('ins-cards-view-toggle');
@@ -5117,22 +5371,18 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-checked', on ? 'true' : 'false');
     });
-    insSyncCardsChartMode_();
     const cardsWrap = $('ins-agent-cards');
     const chartWrap = $('ins-cards-chart-wrap');
     const det = $('ins-quiet-details');
     const metricWrap = $('ins-cards-chart-metric-wrap');
-    const modeSeg = $('ins-cards-chart-mode');
     if (cardsWrap)  cardsWrap.style.display = chartView ? 'none' : '';
     if (det)        det.style.display = chartView ? 'none' : (insHasQuiet_ ? '' : 'none');
     if (chartWrap)  chartWrap.style.display = chartView ? '' : 'none';
-    // The metric selector applies to the gap + prior bases -- Absolute
-    // always shows Answered + Missed volumes (+ % dots) for every agent.
-    if (metricWrap) metricWrap.style.display = (chartView && insCardsChartMode !== 'abs') ? '' : 'none';
-    if (modeSeg)    modeSeg.style.display = chartView ? '' : 'none';
+    // The metric selector belongs to the gap bars (the Chart view).
+    if (metricWrap) metricWrap.style.display = chartView ? '' : 'none';
     if (chartView) insRenderCardsChart_();
     // R7 (I-4): one-shot fade on whichever view just became visible, so
-    // Cards⇄Chart / Gap⇄Absolute swaps read as a transition, not a pop
+    // Cards⇄Chart swaps read as a transition, not a pop
     // (reduced-motion no-ops via CSS).
     const shownWrap = chartView ? chartWrap : cardsWrap;
     if (shownWrap) {
@@ -5141,17 +5391,6 @@
       shownWrap.classList.add('ins-view-fade');
     }
     insSyncAbPanel_();   // R11-J: keep the floating admin remote in sync
-  }
-
-  // Reflect insCardsChartMode on the sub-toggle's buttons (restore + click).
-  function insSyncCardsChartMode_() {
-    const seg = $('ins-cards-chart-mode');
-    if (!seg) return;
-    seg.querySelectorAll('.seg-btn').forEach(function (x) {
-      const active = (x.getAttribute('data-mode') || 'gap') === insCardsChartMode;
-      x.classList.toggle('active', active);
-      x.setAttribute('aria-checked', active ? 'true' : 'false');
-    });
   }
 
   /**
@@ -5180,17 +5419,12 @@
     refreshChartTheme();
     destroyOrphanedChartOnCanvas_('ins-cards-chart');
     if (insCardsChartInstance) { try { insCardsChartInstance.destroy(); } catch (e) {} insCardsChartInstance = null; }
-    // R7 (N-2): zero-activity agents are excluded from BOTH chart bases
-    // (the 'abs' dispatch below passes this filtered set through).
+    // R7 (N-2): zero-activity agents are excluded from the chart.
     let cards = ((insLastData && insLastData.agentData) || []).filter(insAgentHasActivity_);
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
-    // Round-16: the density mode is gone -- the basis is simply the saved /
-    // default insCardsChartMode ('gap' since M3; the same-page agent table
-    // carries the Absolute information).
-    const mode = insCardsChartMode;
-    if (mode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
-    if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
+    // MD4 (F-c): Gap vs team is the only basis left on this chart (the trend
+    // lines are the Trends chart's "By agent" scope -- insRenderTrendByAgent_).
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
     // R18 follow-through (owner 2026-11-16): a gap bar IS a comparison with
@@ -5297,48 +5531,155 @@
     });
   }
 
-  /**
-   * R11-E (item 4): per-agent TREND line chart -- one line per selected agent
-   * for the chosen metric (insCardsChartMetric) over the 12-month trend axis
-   * (insLastData.trendData.labels; each card carries a `trendMonthly` series
-   * aligned to it). Reuses the Overview chart's spotlight/pin model
-   * (chartSpotlight*): hover a legend item to dim the rest, click to pin/solo,
-   * Shift/Cmd/Ctrl-click to add to the pinned set, Alt-click to hide. Clicking a
-   * data point drills into that agent's Individual Report. Data labels are off
-   * (many overlaid lines, the Overview multi-line convention, INV-41).
-   */
-  function insRenderCardsChartTrend_(canvas, cards) {
-    const td = (insLastData && insLastData.trendData) || {};
-    const labels = td.labels || [];
-    const allowed = ['pct', 'answered', 'missed', 'rung'];
-    const metric = allowed.indexOf(insCardsChartMetric) >= 0 ? insCardsChartMetric : 'pct';
-    const isPct = (metric === 'pct');
-    const metricLabel = { pct: '% Answered', answered: 'Answered', missed: 'Missed', rung: 'Call volume (rung)' }[metric];
-    const fmtV = function (n) { return n == null ? '—' : (isPct ? Number(n).toFixed(1) + '%' : String(Math.round(n))); };
-    if (!labels.length || !cards.length) {
-      // Nothing to plot -- leave the (already-destroyed) canvas blank.
-      return;
+  // ---- MD3 (owner 2026-11-20): the By agent scope of the ONE trend chart ----
+  // The Agents fold's old "Trend" basis (R11-E item 4), drawn on the Trends
+  // chart's own canvas: one line per agent over the 12-month axis
+  // (trendData.labels; each card carries a `trendMonthly` series aligned to
+  // it), plus the team as a dashed reference. Monthly only, three metrics.
+  // The agents plotted: active in the window, and carrying a monthly series.
+  function insTrendAgentCards_(data) {
+    if (!data || !data.trendData || !(data.trendData.labels || []).length) return [];
+    return (data.agentData || []).filter(function (c) {
+      return insAgentHasActivity_(c) && Array.isArray(c.trendMonthly);
+    });
+  }
+  // MD4 (F-b): the Monthly / Daily switch serves BOTH scopes, so one function
+  // owns its visibility, its pressed state and whether Daily is available
+  // (`dailyOffWhy` = the hover text when it is not; '' = available).
+  function insTrendViewSync_(show, active, dailyOffWhy) {
+    const t = $('ins-trend-view-toggle');
+    if (!t) return;
+    t.style.display = show ? '' : 'none';
+    t.querySelectorAll('.seg-btn').forEach(function (b) {
+      const v = b.getAttribute('data-view') || 'monthly';
+      const on = v === active;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      if (v === 'daily') { b.disabled = !!dailyOffWhy; b.title = dailyOffWhy || ''; }
+    });
+  }
+  // Reflect the scope on the switch and swap the controls each scope owns.
+  // Returns true when the chart should draw By agent.
+  function insTrendScopeSync_(eligible) {
+    const byAgent = eligible && insTrendScope === 'agent';
+    const seg = $('ins-trend-scope');
+    if (seg) {
+      seg.style.display = eligible ? '' : 'none';
+      seg.querySelectorAll('.seg-btn').forEach(function (b) {
+        const on = (b.getAttribute('data-scope') === 'agent') === byAgent;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
     }
+    const show = function (id, on) { const el = $(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('ins-trend-metric-row', !byAgent);
+    show('ins-trend-agent-metric-row', byAgent);
+    const canvas = $('ins-trend-chart');
+    if (canvas) canvas.setAttribute('aria-label', byAgent ? 'Each agent over the last 12 months, with the team as a reference' : 'Team trend over time');
+    if (byAgent) {
+      // Line / Calendar and the data labels belong to Team total (the team
+      // render re-shows whichever of them apply). Monthly / Daily applies to
+      // both scopes (MD4 F-b) -- insTrendViewSync_ owns that switch.
+      show('ins-trend-render-toggle', false);
+      show('ins-datalabels-box', false);
+      show('ins-trend-calendar', false);
+      show('ins-trend-canvas-wrap', true);
+      const wrap = $('ins-trend-wrap');
+      if (wrap) wrap.classList.remove('ir-chart-wrap--cal');
+      if (canvas) canvas.style.display = '';
+      const sel = $('ins-trend-agent-metric');
+      if (sel) sel.value = insTrendAgentMetric;
+    }
+    return byAgent;
+  }
+  // PURE. The dashed reference on the By agent view. % Answered: the team's
+  // own monthly rate (null on a month with no rings). A count: the average
+  // per agent SHOWN who was active that month, leaving out anyone on the
+  // team-average exclusion list (INV-26) -- the team total would dwarf every
+  // agent line on a shared axis. `n` = the number of months on the axis.
+  // MD4 (F-b): `daily` reads each card's per-day tuples instead of its months.
+  // PURE: one agent's value at axis position i -- null when the agent has no
+  // row there. Monthly buckets are objects; daily ones are compact
+  // [rung, answered, missed, pct] tuples (InsightsReport.gs insAgentDaySeries_).
+  function insTrendAgentPoint_(card, i, metric, daily) {
+    var b = card && (daily ? (card.trendDays || [])[i] : (card.trendMonthly || [])[i]);
+    if (!b) return null;
+    var v = daily ? b[{ rung: 0, answered: 1, missed: 2, pct: 3 }[metric]] : b[metric];
+    return v == null ? null : Number(v);
+  }
+  function insTrendAgentRef_(cards, teamSeries, metric, n, daily) {
+    var out = [], i;
+    if (metric === 'pct') {
+      for (i = 0; i < n; i++) {
+        var s = (teamSeries || [])[i];
+        out.push((s && Number(s.rung) > 0) ? Number((Number(s.pct) || 0).toFixed(1)) : null);
+      }
+      return { label: 'Team', data: out };
+    }
+    for (i = 0; i < n; i++) {
+      var sum = 0, k = 0;
+      (cards || []).forEach(function (c) {
+        if (!c || c.excludedFromTeamAvg) return;
+        var v = insTrendAgentPoint_(c, i, metric, daily);
+        if (v == null) return;
+        sum += v || 0;
+        k++;
+      });
+      out.push(k ? Math.round((sum / k) * 10) / 10 : null);
+    }
+    return { label: 'Average per agent shown', data: out };
+  }
+  function insRenderTrendByAgent_(canvas, data, cards) {
+    // MD4 (F-b): Monthly (the 12-month axis) or Daily (the selected window,
+    // from each card's `trendDays`). The server ships the daily series only
+    // for a window of up to meta.agentDailyMaxDays days of data.
+    const dayAxis = (data.trendDaily && data.trendDaily.labels) || [];
+    const hasDayAxis = dayAxis.length > 1;
+    const agentDailyOk = hasDayAxis && cards.some(function (c) { return Array.isArray(c.trendDays); });
+    const daily = insTrendView === 'daily' && agentDailyOk;
+    const capDays = Number(data.meta && data.meta.agentDailyMaxDays) || 0;
+    // MD4-S: the server sheds the series when the whole report would crowd
+    // its cache value (meta.agentDailyDropped) -- say that, not the day cap.
+    const dailyOffWhy = agentDailyOk ? ''
+      : ((data.meta && data.meta.agentDailyDropped)
+        ? 'By agent, the daily view is off for this report: with every agent\'s daily detail it is too large to hold. Pick fewer agents or a shorter window, or use Monthly.'
+        : ('By agent, the daily view covers windows of up to ' + (capDays || 45) + ' days of data. Shorten the dates, or use Monthly.'));
+    insTrendViewSync_(hasDayAxis, daily ? 'daily' : 'monthly', dailyOffWhy);
+    const td = daily ? data.trendDaily : (data.trendData || {});
+    const labels = td.labels || [];
+    const metric = INS_TREND_AGENT_METRICS_.indexOf(insTrendAgentMetric) !== -1 ? insTrendAgentMetric : 'answered';
+    const isPct = (metric === 'pct');
+    const metricLabel = { pct: '% Answered', answered: 'Answered', missed: 'Missed' }[metric];
+    const fmtV = function (n) { return n == null ? '—' : (isPct ? Number(n).toFixed(1) + '%' : String(Math.round(n * 10) / 10)); };
+    const headerEl = $('ins-trend-header');
+    if (headerEl) {
+      const tm = data.meta || {};
+      headerEl.textContent = (daily
+        ? ('Daily trend by agent' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
+        : ('12-month trend by agent' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : ''))) + ' — ' + metricLabel;
+    }
+    canvas.setAttribute('aria-label', daily
+      ? 'Each agent day by day over the selected window, with the team as a reference'
+      : 'Each agent over the last 12 months, with the team as a reference');
+    insSyncAbPanel_();
     // Step 1: on a COUNT metric, mark a partly covered month (dashed in,
     // hollow point, "(to date)", pace in the tooltip). % Answered is a rate
-    // and needs none of it.
-    const part = insPartialChartBits_(isPct ? [] : insPartialForData_(insLastData));
+    // and needs none of it; the daily view has no partial buckets.
+    const part = insPartialChartBits_((isPct || daily) ? [] : insPartialForData_(data));
     const datasets = cards.map(function (c, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       // R11-M (metric-aware gaps): a per-agent series has real ABSENCES (months
       // the agent wasn't active). For COUNT metrics an absent month is 0 (drop
       // to 0 and recover); for % Answered a 0 would read as "answered none of
-      // their calls", so keep the null and BREAK the line (spanGaps:false) over
-      // the gap. This fixes the R11-H1 regression -- it copied the CONTINUOUS
-      // team trend's tension:0.4 + spanGaps:true, which drew one straight line
-      // ACROSS an absence (the "slow decline" instead of a drop-and-recover).
-      const series = (c.trendMonthly || []).map(function (b) {
-        const v = (b && b[metric] != null) ? Number(b[metric]) : null;
+      // their calls", so keep the null and BREAK the line (spanGaps:false).
+      const series = labels.map(function (_l, i) {
+        const v = insTrendAgentPoint_(c, i, metric, daily);
         return (v == null && !isPct) ? 0 : v;
       });
       return {
         label: c.name,
         data: series,
+        _agent: c.name,
         borderColor: color,
         backgroundColor: 'rgba(0,0,0,0)',
         borderWidth: 2.2,
@@ -5358,7 +5699,19 @@
         fill: false,
       };
     });
-    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
+    // The team reference: neutral ink, dashed, in front, never soloed or
+    // dimmed and never a drill target (the Overview's Company-line treatment).
+    const ref = insTrendAgentRef_(cards, td.series || [], metric, labels.length, daily);
+    const hasRef = ref.data.some(function (v) { return v != null; });
+    if (hasRef) {
+      datasets.push({
+        label: ref.label, data: ref.data, _ref: true,
+        borderColor: THEME.ink, backgroundColor: 'rgba(0,0,0,0)',
+        borderDash: [6, 4], borderWidth: 2, pointRadius: 0, pointHoverRadius: 3,
+        cubicInterpolationMode: 'monotone', tension: 0, spanGaps: false, fill: false, order: 0,
+      });
+    }
+    insChartInstance = safeChart_(canvas.getContext('2d'), {
       type: 'line',
       data: { labels: labels, datasets: datasets },
       options: {
@@ -5367,7 +5720,7 @@
         onClick: function (evt, els) {
           if (els && els.length) {
             const ds = datasets[els[0].datasetIndex];
-            const name = ds && ds.label;
+            const name = ds && ds._agent;
             if (name && typeof irDrillToAgent_ === 'function') {
               irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
             }
@@ -5375,7 +5728,8 @@
         },
         onHover: function (evt, els) {
           if (evt && evt.native && evt.native.target) {
-            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
+            const ds = (els && els.length) ? datasets[els[0].datasetIndex] : null;
+            evt.native.target.style.cursor = (ds && ds._agent) ? 'pointer' : 'default';
           }
         },
         plugins: {
@@ -5384,6 +5738,7 @@
             chartSpotlightLegend_()),
           datalabels: { display: false },
           tooltip: {
+            filter: function (ctx) { return chartTooltipPinFilter_(ctx); },
             callbacks: {
               label: function (ctx) { return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y) + part.note(ctx.dataIndex, ctx.parsed.y); },
             },
@@ -5402,136 +5757,23 @@
         },
       },
     });
-    chartSpotlightStash_(insCardsChartInstance, {});
+    if (insChartInstance) chartSpotlightStash_(insChartInstance, hasRef ? { skipLabel: [ref.label] } : {});
   }
 
-  /**
-   * vs-Prior basis for the cards Chart view: the Compare Ranges report's
-   * grouped per-agent bars, absorbed here for the CR retirement -- one
-   * current-window bar + one (muted) prior-window bar per agent for the
-   * metric the selector picks. Values from the same deltaBlock_ stats the
-   * cards render (st.val / st.prev); click drills into IR like the other
-   * bases; datalabels always on (they carry the values, like gap mode).
-   */
-
-  /**
-   * Absolute basis for the cards Chart view: the Performance Report's
-   * "Volume & Efficiency" chart, absorbed here for the PR retirement --
-   * one stacked bar per agent (Answered green + Missed red; stack height =
-   * rung) with a "% Answered" dot per agent on a right-hand 0-100% axis.
-   * Built client-side from agentData (each card already carries the
-   * absolute answered/missed/pct values). Data labels honor the report's
-   * "Show data labels" toggle; click a bar/dot drills into IR (same as gap).
-   */
-  function insRenderCardsChartAbs_(canvas, cards) {
-    const labels   = cards.map(function (c) { return c.name; });
-    const val = function (c, key) {
-      const s = c.metrics && c.metrics[key];
-      return s ? (Number(s.val) || 0) : 0;
-    };
-    const answered = cards.map(function (c) { return val(c, 'answered'); });
-    const missed   = cards.map(function (c) { return val(c, 'missed'); });
-    const pct      = cards.map(function (c) { return Number(val(c, 'pct').toFixed(1)); });
-    const showLabels = !!($('ins-show-datalabels') && $('ins-show-datalabels').checked);
-    const drill = function (evt, els) {
-      if (els && els.length) {
-        const name = labels[els[0].index];
-        if (name && typeof irDrillToAgent_ === 'function') {
-          irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
-        }
-      }
-    };
-    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [
-          { label: 'Answered', type: 'bar', data: answered,
-            backgroundColor: IR_VOLUME_COLORS.answered, stack: 'vol', yAxisID: 'y', order: 2 },
-          { label: 'Missed', type: 'bar', data: missed,
-            backgroundColor: IR_VOLUME_COLORS.missed, stack: 'vol', yAxisID: 'y', order: 2 },
-          { label: '% Answered', type: 'line', data: pct,
-            // Discrete per-agent dots, not a connected line -- agents are
-            // independent categories (the PR chart's showLine:false rationale).
-            showLine: false,
-            borderColor: THEME.accent, backgroundColor: THEME.accent,
-            fill: false, yAxisID: 'y1',
-            pointRadius: 6, pointHoverRadius: 8,
-            pointBackgroundColor: THEME.accent,
-            pointBorderColor: THEME.paperCard, pointBorderWidth: 2,
-            order: 1 },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        onClick: drill,
-        plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
-          tooltip: { callbacks: { label: function (ctx) {
-            if (ctx.dataset.type === 'line') return '% Answered: ' + ctx.parsed.y + '%';
-            return ctx.dataset.label + ': ' + fmtNumber(ctx.parsed.y);
-          } } },
-          datalabels: {
-            display: showLabels,
-            color: function (ctx) {
-              if (ctx.dataset.type === 'line') return THEME.accent;
-              const bg = ctx.dataset.backgroundColor;
-              return typeof bg === 'string' ? bg : THEME.ink;
-            },
-            backgroundColor: THEME.paperCard,
-            borderColor: function (ctx) {
-              if (ctx.dataset.type === 'line') return THEME.accent;
-              const bg = ctx.dataset.backgroundColor;
-              return typeof bg === 'string' ? bg : THEME.line;
-            },
-            borderWidth: 1, borderRadius: 2,
-            padding: { top: 2, bottom: 2, left: 4, right: 4 },
-            anchor: 'center',
-            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'center'; },
-            clamp: true, clip: false,
-            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
-            formatter: function (value, ctx) {
-              if (value == null) return '';
-              if (ctx.dataset.type === 'line') return value + '%';
-              return value > 0 ? value : '';
-            },
-          },
-        },
-        scales: {
-          x: { stacked: true, ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 } },
-          y: { stacked: true, beginAtZero: true, position: 'left',
-               title: { display: true, text: 'Calls', font: { size: 11 } } },
-          y1: { beginAtZero: true, max: 100, position: 'right',
-                title: { display: true, text: '% Answered', font: { size: 11 } },
-                grid: { drawOnChartArea: false },
-                ticks: { callback: function (v) { return v + '%'; } } },
-        },
-        onHover: function (evt, els) {
-          if (evt && evt.native && evt.native.target) {
-            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
-          }
-        },
-      },
-    });
-  }
-
-  // Trend pill -- the SECONDARY signal: direction of change vs the prior period
+  // Trend pill -- the SECONDARY signal: an agent who is UP on the prior period
   // (rung/missed/answered/% answered). Distinct from the card's rail + tier,
-  // which now show current STANDING vs the 92% target (#11c). Carries a gloss
-  // tooltip.
+  // which show current STANDING vs the answer-rate target (#11c). MD1 (owner
+  // 2026-11-20): only "Improving" is shown. A drop ("Slipping") and a mixed
+  // period ("Steady") get NO pill -- the label read as a mark against agents
+  // doing well, and "Steady" on a drop would be untrue. The classification
+  // itself is unchanged (the "Biggest regressors" sort still reads it).
   function insTrendPill_(direction) {
-    var map = {
-      improved:  ['ins-trend-up',   '▲ Improving'],
-      regressed: ['ins-trend-down', '▼ Slipping'],
-      mixed:     ['ins-trend-flat', '≈ Steady'],
-    };
-    var m = map[direction] || map.mixed;
-    var title = 'Trend vs the prior period across rung, missed, answered and % answered '
-      + '(▲ improving / ▼ slipping / ≈ steady). Volume metrics are compared PER WORKING DAY, '
-      + 'so a shorter or holiday-bearing window doesn\'t read as a slip on raw counts alone. '
-      + 'This is the direction of change — separate from '
-      + 'the card\'s standing rail/tier, which shows the current level vs the 92% target.';
-    return '<span class="ins-trend-pill ' + m[0] + ' gloss" title="' + escapeHtml(title) + '">' + m[1] + '</span>';
+    if (direction !== 'improved') return '';
+    var title = 'Up on the prior period across rung, missed, answered and % answered. '
+      + 'Volume metrics are compared PER WORKING DAY, so a shorter or holiday-bearing window '
+      + 'does not move it on raw counts alone. This is the direction of change — separate from '
+      + 'the card\'s standing rail/tier, which shows the current level vs the answer-rate target.';
+    return '<span class="ins-trend-pill ins-trend-up gloss" title="' + escapeHtml(title) + '">▲ Improving</span>';
   }
 
   // vs-team chip -- the agent's STANDING this period: answered calls vs the
@@ -5587,8 +5829,8 @@
     // Three DISTINCT, labeled signals: the left RAIL + tier show STANDING (#11c:
     // current % answered vs the 92% target); the trend pill shows the direction
     // of change vs the prior period (secondary); the vs-team chip shows answered
-    // calls vs the team average this period. A card can legitimately be "Strong"
-    // (rail) yet "Slipping" (trend pill): above target but down from last period.
+    // calls vs the team average this period. The pill shows only an improvement
+    // (MD1): a card that is down on last period carries no pill.
     // Floaters keep only the QUEUE chip.
     const trendPill = isFloater ? '' : insTrendPill_(x.trend);
     // P8 (#94): per credited day when the payload carries the days. An agent
@@ -6178,13 +6420,26 @@
         cardSort:    insCardSort,
         cardsView:   insCardsView,
         cardsChartMetric: insCardsChartMetric,
-        cardsChartMode: insCardsChartMode,
+        qhChartView: insQhChartView,             // MD4: monthly | daily | calendar
+        qhShowLabels: insQhShowLabels,           // MD4
+        trendScope: insTrendScopePref_,          // MD3: team | agent (the switch's choice, never a row's)
+        trendAgentMetric: insTrendAgentMetric,   // MD3: the By agent metric
         // (Round-16: the D1 density field is GONE -- fold open-state lives in
         // its own cdr.ins.folds key; an old saved density still seeds the
         // folds once via insFoldsLoad_'s migration.)
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
+  }
+  // MD3: PURE. The Trends chart scope + By agent metric a prefs blob asks for.
+  function insTrendPrefsFrom_(prefs) {
+    var ok = ['answered', 'missed', 'pct'];
+    var p = prefs || {};
+    var old = p.cardsChartMode === 'trend';   // the retired Agents-fold basis
+    var scope = (p.trendScope === 'agent' || p.trendScope === 'team') ? p.trendScope : (old ? 'agent' : 'team');
+    var metric = ok.indexOf(p.trendAgentMetric) !== -1 ? p.trendAgentMetric
+      : ((old && ok.indexOf(p.cardsChartMetric) !== -1) ? p.cardsChartMetric : 'answered');
+    return { scope: scope, metric: metric };
   }
   function insRestorePrefs_() {
     try {
@@ -6202,6 +6457,21 @@
       if (prefs.cardSort) {
         insCardSort = prefs.cardSort;
         if ($('ins-card-sort')) $('ins-card-sort').value = insCardSort;
+      }
+      // MD4: the Queue health chart's own view + labels. A blob from before
+      // the move whose Trend chart was on a "Queue:" entry SELF-HEALS: the
+      // Trend metric falls back to Answered, and the Queue health section
+      // opens once on that metric (its queueMetric field), in the view the
+      // Trend chart was in.
+      if (prefs.qhChartView === 'monthly' || prefs.qhChartView === 'daily' || prefs.qhChartView === 'calendar') {
+        insQhChartView = prefs.qhChartView;
+      }
+      insQhShowLabels = prefs.qhShowLabels === true;
+      const qhHeal = insQhHealFromPrefs_(prefs);
+      if (qhHeal) {
+        prefs.trendMetric = 'answered';
+        insQhChartView = qhHeal.view;
+        insQhHealPending_ = true;
       }
       if (prefs.trendMetric) {
         insActiveTrendMetric = prefs.trendMetric;
@@ -6254,17 +6524,13 @@
         insCardsChartMetric = prefs.cardsChartMetric;
         if ($('ins-cards-chart-metric')) $('ins-cards-chart-metric').value = insCardsChartMetric;
       }
-      // 'prior' basis retired (owner note: the 3-way sub-selector read as
-      // confusing); a saved 'prior' pref falls back to the default gap view.
-      // M3 (owner): a saved 'abs' SELF-HEALS to the gap default too -- most
-      // blobs carry 'abs' from mere usage under the old default (prefs save
-      // the active mode on every change), not from intent, and the agent
-      // table on the same page now carries the Absolute information. The
-      // in-session sub-toggle / A/B remote still switch freely.
-      if (prefs.cardsChartMode === 'gap') {
-        insCardsChartMode = prefs.cardsChartMode;
-        insSyncCardsChartMode_();
-      }
+      // MD3: the Trends chart's scope. A blob from before the merge that was
+      // saved on the old per-agent "Trend" basis carries over as By agent,
+      // with the metric it was showing.
+      const carried = insTrendPrefsFrom_(prefs);
+      insTrendScope = carried.scope;
+      insTrendScopePref_ = carried.scope;
+      insTrendAgentMetric = carried.metric;
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
     } catch (e) { /* ignore */ }
   }

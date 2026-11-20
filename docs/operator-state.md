@@ -68,6 +68,14 @@ When something looks wrong, before assuming a code bug, check:
    without waiting), 5 min for the latest-date + freshness pill lookups
    (`CACHE_TTL_SECONDS`). A Dept Config or roster edit is NOT a freshness
    change, so it can lag the full 6 h on the report surfaces (D-4, open).
+   **A report that is slow on every load, not just the first, may be too
+   large to cache** (CacheService holds ~100 KB per value). The execution
+   log says so: Insights writes `[insights-cache] <dept> <window>: N bytes`
+   on every cache write and `InsightsReport cache put FAILED ... UNCACHED`
+   when one fails (MD4-S; at 90 KB it first sheds the per-agent daily
+   series, and By agent then offers Monthly only for that window); the
+   Overview warns from 80 KB (`CompanyOverview: cached blob is N bytes`) and
+   its YTD chart past 92,000 bytes (`overviewChartTrend: payload is N bytes`).
 5. Did the source-pipeline bugs (window inclusion / ATT denominator / leg
    attribution — see `known-issues.md`) get re-introduced? Spot-check Sonia
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.
@@ -4433,8 +4441,10 @@ When something looks wrong, before assuming a code bug, check:
     per credited day too (owner 2026-11-16):** the Individual Report's prior
     row on a count tile reads "Prior 22.9 / day", and on Insights each
     card's change badges for answered, missed, rung and total talk time, and
-    the Improving / Slipping pill, compare the agent's credited days in the
-    two windows -- so time off in one window is not a slip. The DEPARTMENT's
+    the improved / regressed classification behind the "Improving" pill and
+    the regressors sort, compare the agent's credited days in the two windows
+    -- so time off in one window is not a drop (since MD1 only "Improving"
+    is ever shown). The DEPARTMENT's
     own vs-prior figures (team totals) are not re-based. Where a window has
     under one credited day for the agent, the totals are compared as before.
     **Agents on the team-average exclusion list** (a manager on the roster)
@@ -4445,7 +4455,7 @@ When something looks wrong, before assuming a code bug, check:
     count bars use (it had read the department rate). Under one
     credited day an agent has no per-day figure and the comparison is left
     blank rather than shown as a large number. Both report caches were
-    re-versioned (now `individual:v14`, `insights:v29`), so the change shows on
+    re-versioned (now `individual:v14`, `insights:v30`), so the change shows on
     the first load after the deploy. Pinned by `team-per-day.test.js`;
     rendered checks in `drive-smoke.js` (the tiles) and
     `drive-deptoutbound.js` (the Insights surfaces).

@@ -897,10 +897,10 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v31` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v32` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v17` |
-| `InsightsReport.gs` | `insights:vN:` | `v29` |
+| `InsightsReport.gs` | `insights:vN:` | `v30` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v5` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v7` |
@@ -1673,11 +1673,9 @@ existing per-dept dropdown):
 - **Insights → Queue health** (the retired QCD modal's replacement):
   headline tiles + secondary strip, per-queue rows with expandable
   per-call-source detail + violation dates, the collapsed Daily
-  breakdown table, and the consolidated trend chart's queue metrics
-  (since R11-C3 the "Queue: Abandoned % / Total calls / Violations"
-  entries in the ONE `#ins-trend-metric` dropdown — the old by-queue
-  tab + metric sub-selector are retired; violation-day warn markers +
-  legend spotlight unchanged).
+  breakdown table, and the section's own queue trend chart (MD4: the
+  per-queue series moved here from the Trend dropdown's "Queue:"
+  entries; violation-day warn markers + legend spotlight unchanged).
 - **Overview tile chips**: an abandoned % chip (+ "N aban") for the card
   window whenever QCD data exists (QD-2; warn-tinted when P >= the 4% abandon
   standard), and a "X viol MTD" chip, always shown and tiered 0 green / 1-3
@@ -1789,7 +1787,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v31`) on success. Per-(dept,
+constant -- currently `companyOverview:v32`) on success. Per-(dept,
 range) caches (`summary:v27`, `individual:v14`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user

@@ -263,14 +263,20 @@ test('the company aggregate is counted ONCE per row, never summed from the dept 
     'the QCD snapshot builder returns the company map it accumulated per queue row');
 });
 
-test('the client treats it as a reference series on PERCENTAGE metrics only', function () {
+test('the client treats it as a reference series on the RATE and average metrics, never a count', function () {
   const ov = read('script-3-overview.html');
-  // Only the two pct metrics name a company field; the count metrics must not,
-  // or a company "answered calls" line would just restate the dept sum.
+  // The two pct metrics and (MD2, admins only) avg answer time name a company
+  // field; the count metrics must not, or a company "answered calls" line
+  // would just restate the dept sum.
   const reg = ov.slice(ov.indexOf('const OV_CHART_METRICS_ = {'), ov.indexOf('const OV_CHART_METRIC_KEY_'));
-  assert.equal((reg.match(/companyField:/g) || []).length, 2, 'exactly two metrics carry a company line');
+  assert.equal((reg.match(/companyField:/g) || []).length, 3, 'exactly three metrics carry a company line');
   assert.match(reg, /companyField: 'trend'/);
   assert.match(reg, /companyField: 'trendAbandonedPct'/);
+  assert.match(reg, /companyField: 'trendAvgAnswerSec'/);
+  ['answeredCalls', 'abandonedCalls'].forEach(function (k) {
+    const blk = reg.slice(reg.indexOf('\n    ' + k + ': {'));
+    assert.ok(!/companyField/.test(blk.slice(0, blk.indexOf('\n    },'))), k + ' is a count: no company line');
+  });
   // It must not take a dept hue: IR_CHART_COLORS carries dept IDENTITY.
   const ds = ov.slice(ov.indexOf('const companySeries ='), ov.indexOf('// Metric-specific dashed reference baseline'));
   assert.ok(!/IR_CHART_COLORS/.test(ds) && !/colorByDept/.test(ds),
@@ -294,7 +300,7 @@ test('the client treats it as a reference series on PERCENTAGE metrics only', fu
 // still decides which shape a request gets.
 test('UI-3 + Step 2 #6: a manager (or an admin previewing one) gets the company LINE only, by allowlist', function () {
   const cached = JSON.stringify({ available: true, latestDate: '2026-09-22', depts: [],
-    company: { trend: [90], trendAbandonedPct: [2.5], secretFigure: 7 } });
+    company: { trend: [90], trendAbandonedPct: [2.5], trendAvgAnswerSec: [24], secretFigure: 7 } });
   const saved = {};
   const stub = {
     resolveUser_: function () { return stub.__user; },
@@ -313,6 +319,8 @@ test('UI-3 + Step 2 #6: a manager (or an admin previewing one) gets the company 
     const J = (x) => JSON.parse(JSON.stringify(x));
     const LINE = { trend: [90], trendAbandonedPct: [2.5] };
     assert.equal(call(admin, {}).company.secretFigure, 7, 'a plain admin keeps the whole company block');
+    // MD2: the company avg-answer-time line is admin-only; LINE below has no such key.
+    assert.deepEqual(J(call(admin, {}).company.trendAvgAnswerSec), [24], 'an admin keeps the avg-answer company line');
     assert.equal(call(admin, { viewAsDept: '' }).company.secretFigure, 7, 'an empty view-as is not a preview');
     assert.deepEqual(J(call(admin, { viewAsDept: 'Sales' }).company), LINE,
       'an admin previewing Sales sees what a Sales manager sees -- the line, nothing else');
@@ -350,14 +358,16 @@ test('UI-3 follow-on: both Overview endpoints log the REAL caller under view-as'
 test('Step 2 #6: personalizeOverview_ gives a manager the company line only, never the aggregate figures', function () {
   const J = (x) => JSON.parse(JSON.stringify(x));
   const blob = { latestDate: '2026-10-15', depts: [],
-    companyAggregate: { rung: 500, answered: 400, trendChart: [88.1, null], trendChartAbandonedPct: [2.1, 3.4], futureFigure: 9 } };
+    companyAggregate: { rung: 500, answered: 400, trendChart: [88.1, null], trendChartAbandonedPct: [2.1, 3.4],
+      trendChartAvgAnswerSec: [24, 31], futureFigure: 9 } };
   const admin = h.call('personalizeOverview_', blob, { role: 'admin', email: 'a@x' });
   assert.equal(admin.companyAggregate.rung, 500, 'an admin keeps the aggregate');
+  assert.deepEqual(J(admin.companyAggregate.trendChartAvgAnswerSec), [24, 31], 'MD2: and the avg-answer company line');
   assert.equal(admin.companyTrendLine, undefined, 'and needs no separate line field');
   const mgr = J(h.call('personalizeOverview_', blob, { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'm@x' }));
   assert.equal(mgr.companyAggregate, undefined, 'the aggregate figures are stripped for a manager');
   assert.deepEqual(mgr.companyTrendLine, { trendChart: [88.1, null], trendChartAbandonedPct: [2.1, 3.4] },
-    'the manager gets the two line series and nothing else (a field added later stays stripped)');
+    'the manager gets the two line series and nothing else (a field added later stays stripped; MD2: the avg-answer company line is admin-only)');
   const none = J(h.call('personalizeOverview_', { latestDate: '2026-10-15', depts: [] }, { role: 'manager', department: 'CSR', departments: ['CSR'] }));
   assert.equal(none.companyTrendLine, undefined, 'no aggregate, no line field');
   // The client reads the line from either field.
@@ -379,4 +389,73 @@ test('Step 2 #6: the Overview chart opens with the manager default once, without
   assert.match(fit, /chart\._spotlightDefaultPins\) \{/, 'the default keeps the natural y-axis');
   const toggle = ov.slice(ov.indexOf('function chartSpotlightTogglePin_('), ov.indexOf('function chartSpotlightTogglePin_(') + 400);
   assert.match(toggle, /chart\._spotlightDefaultPins = false;/, 'a click replaces the default (and zooms as before)');
+});
+
+// ── MD2 (owner 2026-11-20): the "Avg answer time" view ──────────────────────
+//
+// THE RULE: average time to ANSWER an answered queue call (queue data, not
+// talk time), per department per day, weighted by answered calls; null on a
+// day with no answered queue calls. It is in BOTH payloads, the company line
+// is admin-only in both, and it has no target line.
+
+test('MD2: trendAvgAnswerSec is the answered-weighted seconds per day; a day with no answered calls is null', function () {
+  const out = series(LABELS, {}, {
+    '2026-07-20': { totalCalls: 105, abandoned: 5, aaSum: 2400, aaN: 100 },
+    '2026-07-21': { totalCalls: 10, abandoned: 10, aaSum: 0, aaN: 0 },   // every caller hung up
+    '2026-07-23': { totalCalls: 3, abandoned: 0, aaSum: 100, aaN: 3 },   // 33.33 -> 33
+  });
+  assert.deepEqual(out.trendAvgAnswerSec, [24, null, null, 33]);
+  assert.deepEqual(out.trendAbandoned, [5, 10, null, 0], 'the abandoned series beside it is unchanged');
+  // A daily map built before MD2 (no pair) reads as "no figure", never 0 or NaN.
+  assert.deepEqual(series(['2026-07-20'], {}, { '2026-07-20': { totalCalls: 5, abandoned: 1 } }).trendAvgAnswerSec, [null]);
+});
+
+test('MD2: both payloads ship the series, and neither company allowlist names it', function () {
+  const gs = read('CompanyOverview.gs');
+  assert.match(gs, /trendChartAvgAnswerSec: chartSeries\.trendAvgAnswerSec/, 'the 90-day blob, per dept');
+  assert.match(gs, /trendAvgAnswerSec: series\.trendAvgAnswerSec/, 'the YTD payload, per dept');
+  assert.match(gs, /trendChartAvgAnswerSec: chartTrendIsoLabels\.map\(function \(iso\) \{ return ovAvgAnswerSec_\(companyQcdDaily\[iso\]\); \}\)/,
+    'the 90-day company line, inside companyAggregate');
+  assert.match(gs, /trendAvgAnswerSec: labels\.map\(function \(iso\) \{ return ovAvgAnswerSec_\(companyQcdYtd\[iso\]\); \}\)/,
+    'the YTD company line');
+  // INV-39: admin-only by NOT being on either allowlist.
+  const strip = gs.slice(gs.indexOf('function ovStripChartTrend_('), gs.indexOf('function computeOverviewPipelineFreshness_'));
+  assert.ok(!/AvgAnswer/.test(strip.slice(strip.indexOf('out.company = {'))), 'ovStripChartTrend_ must not hand a manager the avg-answer company line');
+  const pers = gs.slice(gs.indexOf('out.companyTrendLine = {'), gs.indexOf('delete out.pipelineFreshness;'));
+  assert.ok(pers.length > 0 && !/AvgAnswer/.test(pers), 'nor must personalizeOverview_');
+  // Floors: both prefixes moved with the payload shape.
+  assert.ok(Number(/COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v(\d+)'/.exec(gs)[1]) >= 32);
+  assert.ok(Number(/OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v(\d+)'/.exec(gs)[1]) >= 5);
+});
+
+test('MD2: the client slices, registers, formats and offers the view', function () {
+  const frag = read('script-3-overview.html');
+  assert.match(frag, /trendAvgAnswerSec: \(d\.trendChartAvgAnswerSec \|\| \[\]\)\.slice\(startIdx\)/, 'the 30/60/90 slice, per dept');
+  assert.match(frag, /trendAvgAnswerSec: \(ca\.trendChartAvgAnswerSec \|\| \[\]\)\.slice\(startIdx\)/, 'and the company line');
+  const reg = frag.slice(frag.indexOf('\n    avgAnswer: {'), frag.indexOf('const OV_CHART_METRIC_KEY_'));
+  assert.match(reg, /field: 'trendAvgAnswerSec', unit: 'secs'/);
+  assert.match(reg, /baseline: null/, 'no target line: there is no answer-time standard');
+  assert.match(reg, /\(queue\)/, 'the header says it is queue data');
+  assert.match(read('dashboard.html'), /data-metric="avgAnswer"[\s\S]{0,200}not talk time[\s\S]{0,40}>Avg answer time<\/button>/,
+    'the tab exists and its hover text says what it is not');
+  // The two pure helpers, lifted from the fragment.
+  const lift = function (name) {
+    const m = new RegExp('function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}').exec(frag);
+    assert.ok(m, name + ' not found');
+    return m[0];
+  };
+  const fns = new Function(lift('ovFmtSecs_') + '\n' + lift('ovSecsStep_') + '\nreturn { fmt: ovFmtSecs_, step: ovSecsStep_ };')();
+  assert.equal(fns.fmt(23), '0:23');
+  assert.equal(fns.fmt(65), '1:05');
+  assert.equal(fns.fmt(0), '0:00');
+  assert.equal(fns.fmt(59.6), '1:00', 'rounds to a whole second before splitting');
+  assert.equal(fns.fmt(3725), '62:05', 'hours roll into the minutes');
+  assert.equal(fns.step(40), 5);
+  assert.equal(fns.step(100), 15);
+  assert.equal(fns.step(240), 30);
+  assert.equal(fns.step(400), 60);
+  // The axis uses them: a seconds axis formats its ticks and snaps to the step.
+  const axis = frag.slice(frag.indexOf('function ovYAxis_('), frag.indexOf('var ovDefaultPinsDone_'));
+  assert.match(axis, /mcfg\.unit === 'secs'[\s\S]*?ovFmtSecs_\(v\)/);
+  assert.match(axis, /axis\.ticks\.stepSize = step/);
 });

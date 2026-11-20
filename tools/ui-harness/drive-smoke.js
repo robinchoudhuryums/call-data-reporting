@@ -200,6 +200,114 @@ async function phonePass(browser, role) {
 // F47 (broad-scan 2026-10-14): a YTD chart range saved from an earlier visit
 // is FETCHED at boot -- it used to draw 90 days under a lit YTD button, and a
 // click on YTD did nothing because the range was already "selected".
+// MD4 follow-ons (owner 2026-11-20), on a fresh page so the main walk's state
+// is untouched:
+//   F-a -- an agent card's "open Individual Report" link works when the brief
+//          holds the Agents section. #ins-brief sits outside #insights-page,
+//          where the handler used to be bound, so for the admin it did nothing.
+//   F-b -- By agent has a Daily view on a window short enough to ship the
+//          per-agent day series (the 30-day payload), and a pre-MD4 prefs blob
+//          left on a "Queue:" Trend entry lands in Queue health once.
+async function md4Pass(browser, role) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + String(e && e.message ? e.message : e)));
+  await page.addInitScript(() => {
+    localStorage.setItem('cdr.tour.done', '1');
+    localStorage.setItem('cdr.ins.intro.v1', '1');
+    // A prefs blob from before MD4 (the Trend chart was on "Queue:
+    // Violations"), written BEFORE any page script runs on the second load.
+    // The key is per user (insPrefsKey_), so the first load only learns it;
+    // seeding after a load raced the page's own late prefs saves.
+    try {
+      const key = sessionStorage.getItem('md4.key');
+      if (key && !sessionStorage.getItem('md4.seeded')) {
+        sessionStorage.setItem('md4.seeded', '1');
+        localStorage.setItem(key, '{"trendMetric":"queues","queueMetric":"violations","trendView":"monthly"}');
+      }
+    } catch (e) { /* storage blocked: the check below reports it */ }
+  });
+  await page.goto('file://' + path.join(__dirname, 'site', 'index-' + role + '.html'));
+  await page.waitForTimeout(2000);
+  const seeded = await page.evaluate(() => {
+    try {
+      const who = (window.__USER__ && window.__USER__.email) || '';
+      sessionStorage.setItem('md4.key', 'cdr.ins.prefs.v2:' + who);
+      return true;
+    } catch (e) { return false; }
+  }).catch(() => false);
+  if (seeded) { await page.reload(); await page.waitForTimeout(2500); }
+  await page.click('#my-dept-btn');
+  await page.waitForTimeout(3500);
+  await page.locator('#date-presets .date-preset-chip', { hasText: 'Last 30 days' }).click();
+  await page.waitForTimeout(3500);
+  const tag = role + ': MD4 ';
+  const click = async (sel) => { await page.evaluate((x) => { const b = document.querySelector(x); if (b) b.click(); }, sel); await page.waitForTimeout(800); };
+
+  if (seeded) {
+    const heal = await page.evaluate(() => {
+      const f = document.getElementById('ins-qh-fold');
+      const row = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="queue"]');
+      const sel = document.getElementById('ins-trend-metric');
+      let saved = {};
+      try {
+        const who = (window.__USER__ && window.__USER__.email) || '';
+        saved = JSON.parse(localStorage.getItem('cdr.ins.prefs.v2:' + who) || '{}');
+      } catch (e) {}
+      return { open: !!(f && f.open), row: row ? row.getAttribute('aria-expanded') : null,
+        trendMetric: sel ? sel.value : '', qhMetric: (document.getElementById('ins-qh-chart-metric') || {}).value,
+        savedTrend: saved.trendMetric, title: (document.getElementById('ins-qh-chart-title') || {}).textContent || '' };
+    });
+    record(tag + 'a saved "Queue:" Trend choice lands in Queue health on that metric, once (the Trend chart falls back to Answered and the fix is saved)',
+      heal.open && (heal.row === null || heal.row === 'true') && heal.trendMetric === 'answered' && heal.qhMetric === 'violations'
+        && /^Violations by queue/.test(heal.title) && heal.savedTrend === 'answered',
+      JSON.stringify(heal));
+  }
+
+  // F-b: the Daily view of By agent.
+  if (role === 'admin') await click('#ins-brief .ins-brief-row[data-brief-key="agents"]');
+  else { await page.evaluate(() => { document.getElementById('ins-trend-fold').open = true; }); await page.waitForTimeout(800); await click('#ins-trend-scope .seg-btn[data-scope="agent"]'); }
+  const before = await page.evaluate(() => {
+    const d = document.querySelector('#ins-trend-view-toggle .seg-btn[data-view="daily"]');
+    const t = document.getElementById('ins-trend-view-toggle');
+    return { shown: !!t && t.offsetParent !== null, dailyOff: !d || d.disabled };
+  });
+  await click('#ins-trend-view-toggle .seg-btn[data-view="daily"]');
+  const dly = await page.evaluate(() => {
+    const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ins-trend-chart') : null;
+    const sets = ch ? ch.data.datasets : [];
+    const want = (window.__HARNESS_PAYLOADS__ && window.__HARNESS_PAYLOADS__.insights && window.__HARNESS_PAYLOADS__.insights.trendDaily.labels.length) || 0;
+    return { pts: ch ? ch.data.labels.length : 0, want: want, width: ch ? ch.width : 0,
+      agentLines: sets.filter((d) => d._agent).length, ref: sets.filter((d) => d._ref).length,
+      header: (document.getElementById('ins-trend-header') || {}).textContent || '',
+      label: (document.getElementById('ins-trend-chart') || { getAttribute: function () { return ''; } }).getAttribute('aria-label') };
+  });
+  record(tag + 'By agent has a Daily view on a 30-day window: one line per agent across the window\'s days, plus the reference',
+    before.shown && !before.dailyOff && dly.width > 0 && dly.pts > 1 && (!dly.want || dly.pts === dly.want)
+      && dly.agentLines >= 2 && dly.ref === 1 && /^Daily trend by agent/.test(dly.header) && /day by day/.test(dly.label),
+    JSON.stringify({ before: before, daily: dly }));
+  await click('#ins-trend-view-toggle .seg-btn[data-view="monthly"]');
+
+  // F-a: the card link inside the brief (admin) / at home (manager).
+  await click('#ins-cards-view-toggle .seg-btn[data-view="cards"]');
+  const link = await page.evaluate(() => {
+    const l = document.querySelector('.ins-card-ir-link');
+    if (!l) return { link: false };
+    window.__irBefore = window.__HARNESS__.calls.filter((c) => c.fn === 'getIndividualReport').length;
+    const out = { link: true, inBrief: !!l.closest('#ins-brief'), visible: l.offsetParent !== null };
+    l.click();
+    return out;
+  });
+  await page.waitForTimeout(1500);
+  const ir = await page.evaluate(() => ({
+    calls: window.__HARNESS__.calls.filter((c) => c.fn === 'getIndividualReport').length - (window.__irBefore || 0),
+  }));
+  record(tag + 'an agent card\'s Individual Report link works' + (role === 'admin' ? ' while the brief holds the Agents section' : ' in the Agents section'),
+    link.link && link.visible && (role !== 'admin' || link.inBrief) && ir.calls >= 1, JSON.stringify({ link: link, ir: ir }));
+  record(tag + 'no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await page.close();
+}
+
 async function ytdBootPass(browser, role) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
@@ -1001,6 +1109,59 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
       }
     }
 
+    // MD2 (owner 2026-11-20): the "Avg answer time" view. Dept lines in whole
+    // seconds from queue data, an m:ss axis, NO target line, and the Company
+    // line for an admin ONLY -- a manager's payload does not carry that series
+    // (pinned server-side by overview-chart-answered + the CH-4 golden), so
+    // the rendered check here is that none is drawn. Switched back afterwards:
+    // the checks below read the % view.
+    {
+      const clickMetric = async (m) => {
+        await page.evaluate((mm) => {
+          const b = document.querySelector('#ov-chart-tabs .ir-tab[data-metric="' + mm + '"]');
+          if (b) b.click();
+        }, m);
+        await page.waitForTimeout(700);
+      };
+      await clickMetric('avgAnswer');
+      const aa = await page.evaluate(() => {
+        const ch = (window.Chart && window.Chart.getChart) ? window.Chart.getChart('ov-trend-chart') : null;
+        if (!ch) return { chart: false };
+        const sets = ch.data.datasets || [];
+        const deptVals = [];
+        // A bridged exception day carries an interpolated value, not a figure.
+        sets.filter((d) => d._deptName).forEach((d) => d.data.forEach((v, i) => {
+          if (v != null && !(d._bridged && d._bridged[i])) deptVals.push(v);
+        }));
+        const c = sets.find((d) => d.label === 'Company') || null;
+        // Read from the axis OPTIONS: the Overview may be off screen at this
+        // point in the walk, and a zero-height canvas lays out a single tick.
+        const yo = (ch.options.scales && ch.options.scales.y) || {};
+        const cb = yo.ticks && yo.ticks.callback;
+        const tab = document.querySelector('#ov-chart-tabs .ir-tab[data-metric="avgAnswer"]');
+        return {
+          chart: true,
+          points: deptVals.length,
+          whole: deptVals.every((v) => Number.isInteger(v) && v > 0 && v < 3600),
+          tick65: cb ? String(cb(65)) : '', step: yo.ticks ? yo.ticks.stepSize : null, axisMin: yo.min, axisMax: yo.max,
+          company: !!c, companyPoints: c ? c.data.filter((v) => v != null).length : 0,
+          dashed: sets.filter((d) => (d.borderDash || []).length === 2 && !d._deptName && d.label !== 'Company').length,
+          header: ((document.getElementById('ov-chart-header-label') || {}).textContent || '').trim(),
+          pressed: !!tab && tab.getAttribute('aria-pressed') === 'true',
+        };
+      });
+      record(role + ': MD2 the Avg answer time view draws dept lines in whole seconds on an m:ss axis, with no target line',
+        aa.chart && aa.pressed && aa.points > 0 && aa.whole && aa.tick65 === '1:05'
+          && aa.step > 0 && aa.axisMax > aa.axisMin && aa.axisMax % aa.step === 0 && aa.axisMin % aa.step === 0 && aa.dashed === 0 && /\(queue\)/.test(aa.header),
+        JSON.stringify(aa));
+      if (role === 'admin') {
+        record('admin: MD2 the Company line is on the Avg answer time view', aa.company && aa.companyPoints > 0, JSON.stringify(aa));
+      } else {
+        record('manager: MD2 no Company line on the Avg answer time view (admin-only)', aa.company === false, JSON.stringify(aa));
+      }
+      await clickMetric('pct');
+    }
+
     // same fix the email got in R18 -- a per-section unit made bar length
     // incomparable between departments, which is the same misread whether the
     // rows sit in an inbox or on a page. Asserted as the PROPERTY (monotonic
@@ -1048,65 +1209,110 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
     // assertion is the same three-part one as the team metrics -- enabled,
     // drawn, and CAPTIONED -- because an uncaptioned year of abandon rates
     // reads as the selected day's.
-    if (role === 'admin') {
-      await page.selectOption('#ins-trend-metric', 'queues:abandonedPct');
-      await page.waitForTimeout(1500);
-      const qcal = await page.evaluate(() => {
-        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn'))
-          .find((x) => (x.textContent || '').trim() === 'Calendar');
-        if (btn && !btn.disabled) btn.click();
-        return btn ? { enabled: !btn.disabled, title: (btn.closest('#ins-trend-render-toggle') || {}).title } : null;
-      });
+    // MD4 (owner 2026-11-20): the queue series left the Trend dropdown for
+    // the Queue health section's OWN chart, so these run there now.
+    {
+      await openInsSection(page, 'ins-qh-fold');
       await page.waitForTimeout(1200);
-      const qdrawn = await page.evaluate(() => {
-        const host = document.getElementById('ins-trend-calendar');
-        return {
-          shown: !!host && host.style.display !== 'none',
-          cells: host ? host.querySelectorAll('.ins-cal-drill').length : 0,
-          note: host ? ((host.querySelector('.ins-cal-ytd-note') || {}).textContent || '') : '',
-          header: (document.getElementById('ins-trend-header') || {}).textContent || '',
-        };
-      });
-      record(role + ': the queue abandon-% metric offers the calendar at any window length',
-        !!qcal && qcal.enabled, JSON.stringify(qcal));
-      record(role + ': the queue calendar draws from the year-to-date queue series, captioned',
-        qdrawn.shown && qdrawn.cells > 0
-          && /year to date/i.test(qdrawn.note + ' ' + qdrawn.header),
-        JSON.stringify(qdrawn));
-      // P6 (owner 2026-11-13): the two answer-time queue metrics -- seconds
-      // on a minutes:seconds axis, one line per queue, line-only.
-      await page.evaluate(() => {
-        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Line');
-        if (btn) btn.click();
-      });
-      await page.waitForTimeout(600);
-      const timeMetric = async (value) => {
-        await page.selectOption('#ins-trend-metric', value);
-        await page.waitForTimeout(1200);
+      const qhRead = function () {
         return page.evaluate(() => {
-          const c = document.getElementById('ins-trend-chart');
+          const vis = (el) => !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none';
+          const c = document.getElementById('ins-qh-chart');
           const ch = (c && window.Chart) ? Chart.getChart(c) : null;
-          const cal = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Calendar');
-          const vals = ch ? ch.data.datasets.reduce((a, d) => a.concat(d.data.filter((v) => v != null)), []) : [];
-          return { header: (document.getElementById('ins-trend-header') || {}).textContent || '',
-            drawn: !!ch && c.style.display !== 'none', sets: ch ? ch.data.datasets.length : 0,
-            hasValues: vals.length > 0, allSeconds: vals.every((v) => Number.isInteger(v) && v > 0),
-            ticks: ch ? ch.scales.y.ticks.map((t) => t.label) : [],
-            calendarOff: !cal || cal.disabled };
+          const cal = document.querySelector('#ins-qh-chart-view .seg-btn[data-view="calendar"]');
+          const host = document.getElementById('ins-qh-calendar');
+          const sets = ch ? ch.data.datasets : [];
+          const vals = sets.filter((d) => !/threshold/.test(d.label)).reduce((a, d) => a.concat(d.data.filter((v) => v != null)), []);
+          return {
+            card: vis(document.getElementById('ins-qh-chart-card')),
+            title: (document.getElementById('ins-qh-chart-title') || {}).textContent || '',
+            drawn: !!ch && ch.width > 0, sets: sets.length, hasValues: vals.length > 0,
+            allSeconds: vals.every((v) => Number.isInteger(v) && v > 0),
+            ticks: ch ? ch.scales.y.ticks.map((t) => String(t.label)) : [],
+            widths: sets.filter((d) => !/threshold|Dept total/.test(d.label)).map((d) => d.borderWidth),
+            calendarOff: !cal || cal.disabled, calShown: vis(host),
+            calCells: host ? host.querySelectorAll('.ins-cal-drill').length : 0,
+            calNote: host ? ((host.querySelector('.ins-cal-ytd-note') || {}).textContent || '') : '',
+            pressed: Array.from(document.querySelectorAll('.ins-qh-th-btn')).filter((b) => b.getAttribute('aria-pressed') === 'true')
+              .map((b) => b.getAttribute('data-qh-metric')).join(','),
+            trendOpts: Array.from(document.querySelectorAll('#ins-trend-metric option')).map((o) => o.value).join(','),
+            label: c ? (c.getAttribute('aria-label') || '') : '',
+          };
         });
       };
-      const lwT = await timeMetric('queues:longestWait');
-      record(role + ': P6 the trend chart plots Queue: Longest wait in minutes:seconds, line-only',
-        lwT.drawn && lwT.sets > 0 && lwT.hasValues && lwT.allSeconds && /longest wait by queue$/.test(lwT.header)
+      const qhMetric = async (value) => { await page.selectOption('#ins-qh-chart-metric', value); await page.waitForTimeout(900); };
+      const qhView = async (view) => {
+        await page.evaluate((v) => { const b = document.querySelector('#ins-qh-chart-view .seg-btn[data-view="' + v + '"]'); if (b && !b.disabled) b.click(); }, view);
+        await page.waitForTimeout(900);
+      };
+      await qhMetric('abandonedPct');
+      await qhView('monthly');
+      const q0 = await qhRead();
+      record(role + ': MD4 Queue health has its own trend chart beside the table (one line per queue), and the Trend dropdown has no "Queue:" entries',
+        q0.card && q0.drawn && q0.sets >= 2 && q0.hasValues && /^Abandoned % by queue/.test(q0.title) && q0.pressed === 'abandonedPct'
+          && !/queues:/.test(q0.trendOpts) && /^answered,pct,missed,volume/.test(q0.trendOpts) && /by queue/.test(q0.label),
+        JSON.stringify(q0));
+      // A column header is a real button that switches the charted metric.
+      await page.evaluate(() => { const b = document.querySelector('.ins-qh-th-btn[data-qh-metric="totalCalls"]'); if (b) b.click(); });
+      await page.waitForTimeout(900);
+      const q1 = await qhRead();
+      record(role + ': MD4 a table column heading switches the chart to that metric',
+        q1.drawn && /^Total calls by queue/.test(q1.title) && q1.pressed === 'totalCalls' && q1.calendarOff, JSON.stringify(q1));
+      // Hovering AND focusing a queue's row highlights that queue's line.
+      const base = q1.widths.slice();
+      const rowSel = '#ins-qh-tbody tr.ins-qh-row[data-queue]';
+      const multi = base.length > 1;
+      await page.hover(rowSel + ' td.num');
+      await page.waitForTimeout(300);
+      const hov = (await qhRead()).widths;
+      await page.mouse.move(4, 4);
+      await page.waitForTimeout(300);
+      const out = (await qhRead()).widths;
+      await page.focus(rowSel + ' .qcd-expand-toggle');
+      await page.waitForTimeout(300);
+      const foc = (await qhRead()).widths;
+      await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+      await page.waitForTimeout(300);
+      const blur = (await qhRead()).widths;
+      record(role + ': MD4 hovering a queue\'s table row highlights its line, and so does keyboard focus; leaving restores every line',
+        !multi || (hov[0] > base[0] && hov.slice(1).every((w, i) => w === base[i + 1]) && String(out) === String(base)
+          && foc[0] > base[0] && String(blur) === String(base)),
+        JSON.stringify({ base: base, hover: hov, out: out, focus: foc, blur: blur }));
+      // R18 (item 8), relocated: the queue Abandoned % calendar at any window
+      // length -- drawn from the year-to-date queue series, and CAPTIONED.
+      await qhMetric('abandonedPct');
+      const calBefore = await qhRead();
+      await qhView('calendar');
+      const qc = await qhRead();
+      record(role + ': the queue abandon-% metric offers the calendar at any window length',
+        !calBefore.calendarOff, JSON.stringify({ calendarOff: calBefore.calendarOff }));
+      record(role + ': the queue calendar draws from the year-to-date queue series, captioned',
+        qc.calShown && qc.calCells > 0 && /year to date/i.test(qc.calNote + ' ' + qc.title), JSON.stringify(qc));
+      // P6 (owner 2026-11-13), relocated: the two answer-time queue metrics --
+      // seconds on a minutes:seconds axis, one line per queue, line-only.
+      await qhView('monthly');
+      await qhMetric('longestWait');
+      const lwT = await qhRead();
+      record(role + ': P6 the queue chart plots Longest wait in minutes:seconds, line-only',
+        lwT.drawn && lwT.sets > 0 && lwT.hasValues && lwT.allSeconds && /^Longest wait by queue/.test(lwT.title)
           && lwT.ticks.length > 1 && lwT.ticks.every((t) => /^(\d+:)?\d+:\d\d$/.test(t)) && lwT.calendarOff,
         JSON.stringify(lwT));
-      const aaT = await timeMetric('queues:avgAnswer');
-      record(role + ': P6 the trend chart plots Queue: Avg answer time the same way',
-        aaT.drawn && aaT.sets > 0 && aaT.hasValues && aaT.allSeconds && /avg answer time by queue$/.test(aaT.header)
+      await qhMetric('avgAnswer');
+      const aaT = await qhRead();
+      record(role + ': P6 the queue chart plots Avg answer time the same way',
+        aaT.drawn && aaT.sets > 0 && aaT.hasValues && aaT.allSeconds && /^Avg answer time by queue/.test(aaT.title)
           && aaT.ticks.every((t) => /^(\d+:)?\d+:\d\d$/.test(t)),
         JSON.stringify(aaT));
-      await page.selectOption('#ins-trend-metric', 'answered');
-      await page.waitForTimeout(900);
+      await qhMetric('abandonedPct');
+      // The block this replaced left the TRENDS chart on Line for the admin (an
+      // earlier step puts it on Calendar); the checks further down assume that.
+      if (role === 'admin') {
+        await page.evaluate(() => {
+          const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn')).find((x) => (x.textContent || '').trim() === 'Line');
+          if (btn) btn.click();
+        });
+        await page.waitForTimeout(600);
+      }
     }
 
     // R18 (item 4a): flipping light -> dark REPAINTS the charts that are on
@@ -1333,6 +1539,13 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           headlineShown: vis(head), headlineHasText: !!(head && head.textContent.trim()),
           inOrder: inOrder, agentsOpen: !!(ids[0] && ids[0].open),
           agentsHead: ((document.getElementById('ins-agents-fold-head') || {}).textContent || '').trim(),
+          // MD1: the direction of change is no longer a verdict -- no "slipping"
+          // anywhere in the region, and the only trend pill is an improvement.
+          md1Slip: ['dept-insights-region', 'ins-brief', 'ins-agents-fold'].some(function (id) {
+            return /slipping/i.test(((document.getElementById(id) || {}).textContent || ''));
+          }),
+          md1DownPills: document.querySelectorAll('.ins-trend-pill.ins-trend-down, .ins-trend-pill.ins-trend-flat').length,
+          md1Cards: document.querySelectorAll('[data-trend]').length,
           // Step 3: placement, collapsed-on-load, sections mounted in their rows.
           placed: after(document.getElementById('dept-team-strip'), brief) && after(brief, document.getElementById('dqe-table-title')),
           allCollapsed: slots.length > 0 && slots.every(function (sl) { return sl.hidden; })
@@ -1340,6 +1553,9 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           mounted: !!(ids[0] && brief && brief.contains(ids[0])),
         };
       });
+      record(role + ': MD1 the Agents heading counts behind and on track only; nothing reads "slipping" and no card carries a downward or steady pill',
+        /^(\d+ behind the team \u00b7 \d+ on track|\d+ agents?, too few calls to compare)$/.test(ux2.agentsHead) && !ux2.md1Slip && ux2.md1DownPills === 0,
+        JSON.stringify({ head: ux2.agentsHead, slip: ux2.md1Slip, downPills: ux2.md1DownPills, cards: ux2.md1Cards }));
       if (role === 'admin') {
         record('admin: UX-2 the ranked brief renders (top line + an icon row per section, word kept for screen readers, most urgent first)',
           ux2.briefVisible && ux2.rows >= 4 && ux2.ranked && ux2.words && /Answer rate|No calls/.test(ux2.top),
@@ -1409,6 +1625,61 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           record('admin: Step 3 a second click collapses it', c.hidden && c.expanded === 'false', JSON.stringify(c));
         } else {
           record('admin: Step 3 a brief row opens its section in place under the row (chart drawn, focus kept)', false, 'no trend row');
+        }
+        // MD3 (owner 2026-11-20): ONE trend chart. The Team row shows it By
+        // agent (above the gap bars), the Trend row as the Team total; with
+        // both open it sits in the row opened last and the other offers it
+        // back; a row that closes hands it over. Both rows end closed.
+        {
+          const md3 = function () {
+            return page.evaluate(function () {
+              const vis = function (el) { return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none'; };
+              const w = document.getElementById('ins-trend-wrap');
+              const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ins-trend-chart') : null;
+              const sets = ch ? ch.data.datasets : [];
+              const scope = Array.from(document.querySelectorAll('#ins-trend-scope .seg-btn'))
+                .filter(function (b) { return b.classList.contains('active'); }).map(function (b) { return b.getAttribute('data-scope'); }).join(',');
+              return {
+                host: (w && w.parentNode && w.parentNode.id) || '', wraps: document.querySelectorAll('#ins-trend-wrap').length,
+                width: ch ? ch.width : 0, agentLines: sets.filter(function (d) { return d._agent; }).length,
+                ref: sets.filter(function (d) { return d._ref; }).length, scope: scope,
+                awayAgents: vis(document.getElementById('ins-trend-away-agents')), awayTrend: vis(document.getElementById('ins-trend-away-trend')),
+                monthly: vis(document.getElementById('ins-trend-view-toggle')), render: vis(document.getElementById('ins-trend-render-toggle')),
+                basis: !!document.getElementById('ins-cards-chart-mode'),
+                gapAboveChart: !!(w && document.getElementById('ins-cards-chart')
+                  && (w.compareDocumentPosition(document.getElementById('ins-cards-chart')) & Node.DOCUMENT_POSITION_FOLLOWING)),
+              };
+            });
+          };
+          const rowClick = async function (key) {
+            await page.evaluate(function (k) {
+              const b = document.querySelector('#ins-brief .ins-brief-row[data-brief-key="' + k + '"]');
+              if (b) b.click();
+            }, key);
+            await page.waitForTimeout(900);
+          };
+          await rowClick('agents');
+          const t1 = await md3();
+          record('admin: MD3 the Team row opens the trend chart By agent, above the gap bars (agent lines + a dashed team reference, monthly only)',
+            t1.wraps === 1 && t1.host === 'ins-trend-host-agents' && t1.scope === 'agent' && t1.width > 0 && t1.agentLines >= 2
+              && t1.ref === 1 && !t1.monthly && !t1.render && !t1.basis && t1.gapAboveChart && !t1.awayAgents,
+            JSON.stringify(t1));
+          await rowClick('trend');
+          const t2 = await md3();
+          record('admin: MD3 the Trend row takes the chart as the Team total; the Team row says where it went and offers it back',
+            t2.host === 'ins-trend-host-trend' && t2.scope === 'team' && t2.width > 0 && t2.agentLines === 0 && t2.ref === 0
+              && t2.render && t2.awayAgents && !t2.awayTrend,
+            JSON.stringify(t2));
+          await page.evaluate(function () { const b = document.querySelector('[data-trend-claim="agents"]'); if (b) b.click(); });
+          await page.waitForTimeout(700);
+          const t3 = await md3();
+          record('admin: MD3 "Show it here, by agent" brings the chart back to the Team row',
+            t3.host === 'ins-trend-host-agents' && t3.scope === 'agent' && t3.agentLines >= 2 && t3.awayTrend && !t3.awayAgents, JSON.stringify(t3));
+          await rowClick('agents');   // closes Team while it holds the chart; Trend is still open
+          const t4 = await md3();
+          record('admin: MD3 closing the row that holds the chart hands it to the other open row',
+            t4.host === 'ins-trend-host-trend' && t4.scope === 'team' && t4.width > 0 && !t4.awayTrend, JSON.stringify(t4));
+          await rowClick('trend');
         }
         // The brief follows the page's dates even with the bottom region
         // COLLAPSED (it used to freeze on the old window until reopened).
@@ -1493,6 +1764,44 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           await page.waitForTimeout(800);
         }
       } else {
+        // MD3: with no brief the ONE trend chart stays in the Trends fold and
+        // the switch alone picks the scope. Left as found (fold shut, Team total).
+        {
+          const read = function () {
+            return page.evaluate(function () {
+              const vis = function (el) { return !!el && el.offsetParent !== null && getComputedStyle(el).display !== 'none'; };
+              const w = document.getElementById('ins-trend-wrap');
+              const ch = (window.Chart && Chart.getChart) ? Chart.getChart('ins-trend-chart') : null;
+              const sets = ch ? ch.data.datasets : [];
+              return { host: (w && w.parentNode && w.parentNode.id) || '', width: ch ? ch.width : 0,
+                agentLines: sets.filter(function (d) { return d._agent; }).length, ref: sets.filter(function (d) { return d._ref; }).length,
+                sw: vis(document.getElementById('ins-trend-scope')), basis: !!document.getElementById('ins-cards-chart-mode'),
+                hostAgentsEmpty: !document.getElementById('ins-trend-host-agents').firstElementChild,
+                away: vis(document.getElementById('ins-trend-away-agents')) || vis(document.getElementById('ins-trend-away-trend')),
+                cal: vis(document.getElementById('ins-trend-calendar')),
+                header: ((document.getElementById('ins-trend-header') || {}).textContent || '') };
+            });
+          };
+          const wasOpen = await page.evaluate(function () { const f = document.getElementById('ins-trend-fold'); const o = f.open; f.open = true; return o; });
+          await page.waitForTimeout(800);
+          const m1 = await read();
+          await page.evaluate(function () { document.querySelector('#ins-trend-scope .seg-btn[data-scope="agent"]').click(); });
+          await page.waitForTimeout(700);
+          const m2 = await read();
+          await page.evaluate(function () { document.querySelector('#ins-trend-scope .seg-btn[data-scope="team"]').click(); });
+          await page.waitForTimeout(700);
+          const m3 = await read();
+          // Team total may be on Line or on Calendar here (an earlier step
+          // picks one): By agent always draws the lines, and Team total must
+          // come back exactly as it was left.
+          record(role + ': MD3 the Trends fold holds the one chart; the switch draws By agent (agent lines + the team reference) and back; the Agents fold has no Trend basis',
+            m1.host === 'ins-trend-host-trend' && m1.sw && (m1.width > 0 || m1.cal) && m1.agentLines === 0 && m1.hostAgentsEmpty && !m1.away && !m1.basis
+              && m2.agentLines >= 2 && m2.ref === 1 && m2.width > 0 && !m2.cal && /by agent/.test(m2.header) && m2.host === 'ins-trend-host-trend'
+              && m3.agentLines === 0 && m3.header === m1.header && m3.cal === m1.cal && (m3.width > 0) === (m1.width > 0),
+            JSON.stringify({ m1: m1, m2: m2, m3: m3 }));
+          if (!wasOpen) await page.evaluate(function () { document.getElementById('ins-trend-fold').open = false; });
+          await page.waitForTimeout(300);
+        }
         record(role + ': UX-2 Agents leads the report as an open fold, then Queue health, Team detail, Trend',
           ux2.inOrder && ux2.agentsOpen && !!ux2.agentsHead, JSON.stringify({ inOrder: ux2.inOrder, open: ux2.agentsOpen, head: ux2.agentsHead }));
         record(role + ': UX-2 no brief for a manager, and the headline banner stays',
@@ -1598,6 +1907,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
     await phonePass(browser, role);   // CL-9
     await historyPass(browser, role); // CL-23
     await ytdBootPass(browser, role); // F47
+    await md4Pass(browser, role); // MD4: F-a, F-b, the prefs heal
     await ovDefaultPinsPass(browser, role); // Step 2 #6
     await deepLinkPass(browser, role);      // CCX-2 / CCX-8
   }

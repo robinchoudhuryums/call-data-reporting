@@ -414,3 +414,250 @@ test('IC-3: a brief row slides open AND shut on a user toggle; a rebuild and red
   assert.match(extractFn(S8, 'insBriefReducedMotion_'), /prefers-reduced-motion: reduce/);
   assert.ok(/insBriefApply_\(key\);/.test(S8), 'the rebuild path restores rows without animating');
 });
+
+// ---- MD3 (owner 2026-11-20): ONE trend chart, "Team total / By agent" ------
+//
+// THE RULE: the Agents fold's per-agent "Trend" basis and the Trends fold's
+// team line are ONE chart (#ins-trend-wrap) with a scope switch. In the brief
+// accordion the row a viewer opens takes the chart -- Team shows it By agent,
+// Trend shows it as the Team total -- and with no brief it stays in the Trends
+// fold. The pure rules are driven here; the moves are RENDERED by drive-smoke.
+
+const lift = function (name) {
+  // eslint-disable-next-line no-new-func
+  return new Function('return (' + extractFn(S8, name) + ');')();
+};
+
+test('MD3: the row a viewer opens takes the chart; a closing row hands it to the other only if that one is open', function () {
+  const taker = lift('insTrendRowTaker_');
+  assert.equal(taker('agents', true, 'trend', false), 'agents', 'opening Team takes it');
+  assert.equal(taker('trend', true, 'agents', true), 'trend', 'opening Trend takes it, even from an open Team row');
+  assert.equal(taker('agents', false, 'agents', true), 'trend', 'Team closes while holding it and Trend is open: Trend gets it');
+  assert.equal(taker('trend', false, 'trend', true), 'agents', 'and the other way round');
+  assert.equal(taker('agents', false, 'agents', false), null, 'nobody is open to take it: it stays where it is');
+  assert.equal(taker('agents', false, 'trend', true), null, 'a row that does not hold the chart closes without moving it');
+  const scope = lift('insTrendScopeForRow_');
+  assert.equal(scope('agents'), 'agent', 'the Team row opens on By agent');
+  assert.equal(scope('trend'), 'team', 'the Trend row opens on Team total');
+  const tog = extractFn(S8, 'insBriefToggle_');
+  assert.ok(tog.indexOf('insTrendOnRowToggle_(key, INS_BRIEF_OPEN_[key])') < tog.indexOf('insBriefApply_(key, true)'),
+    'the chart is claimed before the row opens, so the section\'s draw-on-open finds it in place');
+  assert.match(tog, /if \(key === 'agents' \|\| key === 'trend'\)/, 'only the two rows that share the chart');
+  // A claim sets the scope and redraws; it never writes the saved scope.
+  const claim = extractFn(S8, 'insTrendClaim_');
+  assert.match(claim, /insTrendScope = insTrendScopeForRow_\(owner\);/);
+  assert.match(claim, /insDrawTrendChart_\(insLastData\)/, 'a moved canvas is redrawn, not resized');
+  assert.ok(!/insSavePrefs_/.test(claim), 'the saved scope belongs to the switch');
+  assert.match(S8, /insTrendScope = next;\s*insTrendScopePref_ = next;\s*insSavePrefs_\(\);/, 'a click on the switch is saved');
+  assert.ok(!/insTrendScopePref_/.test(claim), 'a row never changes the saved scope');
+  assert.match(extractFn(S8, 'insSavePrefs_'), /trendScope: insTrendScopePref_,/,
+    'any later prefs save (a sort change, say) writes the CHOSEN scope, not the one a row put on screen');
+});
+
+test('MD3: with no brief the chart goes home to the Trends fold; the notes show only in the accordion', function () {
+  const r = extractFn(S8, 'insRenderBrief_');
+  const gone = r.slice(r.indexOf('if (!insBriefActive_()'), r.indexOf("box.style.display = 'none'"));
+  assert.match(gone, /insTrendMoveTo_\('trend'\);/, 'a manager / View-as never has the chart in the Agents fold');
+  assert.match(gone, /insTrendScope = insTrendScopePref_;/, 'and sees the scope the viewer chose, not the one a row left');
+  // The notes follow every mount and unmount (Print unmounts and remounts on its own).
+  assert.match(extractFn(S8, 'insBriefMountAll_'), /insTrendAwaySync_\(\);/);
+  assert.match(extractFn(S8, 'insBriefUnmountAll_'), /insTrendAwaySync_\(\);/);
+  assert.match(extractFn(S8, 'insTrendAwaySync_'), /note\.hidden = !\(k !== owner && fold && insBriefMounted_\(fold\)\);/);
+  // The draw-on-open gate follows the fold HOLDING the chart.
+  assert.match(extractFn(S8, 'insTrendChartOpen_'), /insFoldOpen_\(\(f && f\.getAttribute\('data-fold'\)\) \|\| 'trend'\)/);
+  assert.ok(!/insFoldOpen_\('trend'\)/.test(S8), 'no draw gate still asks about the Trends fold by name');
+  assert.match(S8, /if \(fold\.open && insLastData && fold === insTrendHostFold_\(\)\) insDrawTrendChart_\(insLastData\);/);
+});
+
+test('MD3: markup -- one chart, a host in each section, the switch, and no Trend basis left in the Agents fold', function () {
+  assert.equal((HTML.match(/id="ins-trend-wrap"/g) || []).length, 1, 'ONE chart element');
+  assert.equal((HTML.match(/id="ins-trend-chart"/g) || []).length, 1);
+  const agents = HTML.slice(HTML.indexOf('<details id="ins-agents-fold"'), HTML.indexOf('<!-- /Agents fold -->'));
+  const trends = HTML.slice(HTML.indexOf('<details id="ins-trend-fold"'), HTML.indexOf('<!-- /Trends fold -->'));
+  assert.match(agents, /id="ins-trend-host-agents" class="ins-trend-host"><\/div>/, 'an EMPTY host: the chart starts at home');
+  assert.ok(agents.indexOf('id="ins-trend-host-agents"') < agents.indexOf('Per-agent comparison'), 'above the gap bars');
+  assert.ok(!/data-mode="trend"/.test(agents), 'the Trend basis button is gone');
+  // MD4 (F-c): ...and so is the rest of the basis sub-toggle; the gap chart stays.
+  assert.ok(!/id="ins-cards-chart-mode"/.test(HTML) && !/data-mode="(gap|abs)"/.test(HTML), 'no basis sub-toggle left');
+  assert.match(agents, /id="ins-cards-chart"/, 'the gap bars stay');
+  const host = trends.indexOf('id="ins-trend-host-trend"');
+  assert.ok(host > 0 && trends.indexOf('id="ins-trend-wrap"') > host, 'the chart\'s home is the Trends fold');
+  assert.match(trends, /id="ins-trend-scope"[\s\S]*?data-scope="team"[^>]*>Team total<[\s\S]*?data-scope="agent"[^>]*>By agent</);
+  const sel = trends.slice(trends.indexOf('id="ins-trend-agent-metric"'));
+  assert.deepEqual((sel.slice(0, sel.indexOf('</select>')).match(/value="(\w+)"/g) || []).join(','),
+    'value="answered",value="missed",value="pct"', 'By agent offers the three agent metrics');
+  ['agents', 'trend'].forEach(function (k) {
+    assert.match(HTML, new RegExp('id="ins-trend-away-' + k + '" class="ins-trend-away" hidden>[\\s\\S]{0,160}data-trend-claim="' + k + '"'),
+      'a hidden note in the ' + k + ' section offers the chart back');
+  });
+  assert.match(CSS, /\.ins-trend-host:empty \{ display: none; \}/);
+  // MD4 (F-c): the dead basis code is gone -- state, renderer, remote buttons, prefs field.
+  assert.ok(!/insCardsChartMode\b/.test(S8.replace(/\/\/[^\n]*/g, '')), 'no basis state');
+  assert.ok(!/insRenderCardsChartAbs_|insSyncCardsChartMode_/.test(S8), 'the Absolute renderer and the basis sync are deleted');
+  assert.ok(!/data-ab-mode/.test(HTML) && !/data-ab-mode/.test(S8), 'the remote has no Basis row');
+  assert.ok(!/cardsChartMode:/.test(extractFn(S8, 'insSavePrefs_')), 'the basis is no longer saved');
+  assert.match(HTML, /data-ab-scope="team">Team<\/button>\s*<button type="button" data-ab-scope="agent">Agent</);
+  assert.match(S8, /abForward\('ins-trend-scope', 'data-scope', sb\.getAttribute\('data-ab-scope'\)\)/);
+  assert.ok(!/insRenderCardsChartTrend_/.test(S8), 'the old renderer is gone, not left as a second chart');
+});
+
+test('MD3: By agent offers three metrics and hides the controls that belong to Team total', function () {
+  const sync = extractFn(S8, 'insTrendScopeSync_');
+  // (MD4 F-b: Monthly / Daily now serves By agent too -- see the last test in this file.)
+  ['ins-trend-render-toggle', 'ins-datalabels-box', 'ins-trend-calendar'].forEach(function (id) {
+    assert.match(sync, new RegExp("show\\('" + id + "', false\\)"), id + ' is a Team total control');
+  });
+  assert.match(sync, /show\('ins-trend-metric-row', !byAgent\);\s*show\('ins-trend-agent-metric-row', byAgent\);/);
+  assert.match(sync, /seg\.style\.display = eligible \? '' : 'none';/, 'no agents to plot: no switch, and the team chart draws');
+  const render = extractFn(S8, 'insRenderTrendChart_');
+  assert.match(render, /if \(insTrendScopeSync_\(agentCards\.length > 0\)\) \{\s*insRenderTrendByAgent_\(canvas, data, agentCards\);\s*return;/);
+  const by = extractFn(S8, 'insRenderTrendByAgent_');
+  assert.match(by, /insChartInstance = safeChart_\(/, 'the SAME chart instance the team scope uses');
+  assert.match(by, /datalabels: \{ display: false \}/, 'many overlaid lines: no data labels (INV-41)');
+  assert.match(by, /const name = ds && ds\._agent;/, 'only an agent line drills to the Individual Report');
+  assert.match(by, /skipLabel: \[ref\.label\]/, 'the reference is never dimmed or soloed');
+});
+
+test('MD3: the dashed reference -- the team rate for % Answered, the average per agent shown for a count', function () {
+  // eslint-disable-next-line no-new-func
+  const ref = new Function(extractFn(S8, 'insTrendAgentPoint_') + '\nreturn (' + extractFn(S8, 'insTrendAgentRef_') + ');')();
+  const team = [{ rung: 100, pct: 91.26 }, { rung: 0, pct: 0 }, { rung: 50, pct: 80 }];
+  assert.deepEqual(ref([], team, 'pct', 3), { label: 'Team', data: [91.3, null, 80] },
+    'the team\'s own monthly rate; a month with no rings is a gap, not 0%');
+  const cards = [
+    { name: 'A', trendMonthly: [{ answered: 10 }, { answered: 20 }, null] },
+    { name: 'B', trendMonthly: [{ answered: 30 }, null, null] },
+    { name: 'Boss', excludedFromTeamAvg: true, trendMonthly: [{ answered: 500 }, { answered: 500 }, { answered: 500 }] },
+  ];
+  const out = ref(cards, team, 'answered', 3);
+  assert.equal(out.label, 'Average per agent shown');
+  assert.deepEqual(out.data, [20, 20, null],
+    'active agents only that month; the excluded manager is out (INV-26); nobody active is a gap');
+});
+
+test('MD3: a saved "Trend" basis from before the merge carries over as By agent with its metric', function () {
+  const from = lift('insTrendPrefsFrom_');
+  assert.deepEqual(from({ cardsChartMode: 'trend', cardsChartMetric: 'pct' }), { scope: 'agent', metric: 'pct' });
+  assert.deepEqual(from({ cardsChartMode: 'trend', cardsChartMetric: 'rung' }), { scope: 'agent', metric: 'answered' },
+    'a metric By agent does not offer falls back');
+  assert.deepEqual(from({ cardsChartMode: 'gap', cardsChartMetric: 'missed' }), { scope: 'team', metric: 'answered' },
+    'the gap chart\'s metric is not the trend chart\'s');
+  assert.deepEqual(from({ trendScope: 'team', cardsChartMode: 'trend' }), { scope: 'team', metric: 'answered' },
+    'a scope saved since the merge wins over the old basis');
+  assert.deepEqual(from({ trendScope: 'agent', trendAgentMetric: 'missed' }), { scope: 'agent', metric: 'missed' });
+  assert.deepEqual(from(null), { scope: 'team', metric: 'answered' });
+  assert.match(extractFn(S8, 'insSavePrefs_'), /trendScope: insTrendScopePref_,[\s\S]*?trendAgentMetric: insTrendAgentMetric,/);
+});
+
+// ---- MD4 (owner 2026-11-20): Queue health gets its own trend chart ----------
+//
+// THE RULE: the per-queue trend lives in the Queue health section, beside the
+// table it belongs with -- not behind five "Queue:" entries in the Trend
+// dropdown. A table row highlights its queue's line on hover AND focus, three
+// column headers are real buttons that pick the charted metric, and a prefs
+// blob saved on a "Queue:" Trend entry self-heals. Rendered by drive-smoke.
+
+test('MD4: the Trend dropdown has no "Queue:" entries; the Queue health chart offers all five metrics', function () {
+  const trendSel = HTML.slice(HTML.indexOf('<select id="ins-trend-metric">'), HTML.indexOf('</select>', HTML.indexOf('<select id="ins-trend-metric">')));
+  assert.deepEqual((trendSel.match(/<option value="([^"]+)"/g) || []).map(function (o) { return o.replace(/.*="|"/g, ''); }),
+    ['answered', 'pct', 'missed', 'volume', 'att'], 'Trends = people');
+  assert.ok(!/queues:/.test(HTML.replace(/<!--[\s\S]*?-->/g, '')), 'no "queues:" option value anywhere');
+  const qhSel = HTML.slice(HTML.indexOf('<select id="ins-qh-chart-metric">'), HTML.indexOf('</select>', HTML.indexOf('<select id="ins-qh-chart-metric">')));
+  assert.deepEqual((qhSel.match(/<option value="([^"]+)"/g) || []).map(function (o) { return o.replace(/.*="|"/g, ''); }),
+    ['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'], 'Queue health = queues');
+  const qh = HTML.slice(HTML.indexOf('<details id="ins-qh-fold"'), HTML.indexOf('<details id="ins-qh-daily"'));
+  assert.ok(qh.indexOf('id="ins-qh-chart"') > qh.indexOf('id="ins-qh-tbody"'), 'the chart sits in the section, after the table, inside .ins-qh-cols');
+  assert.match(qh, /<canvas id="ins-qh-chart" role="img" aria-label="[^"]+">/, 'a named chart');
+  assert.match(extractFn(S8, 'insRenderQhChart_'), /insQhChartInstance = safeChart_\(/, 'through safeChart_ like every chart');
+  assert.ok(!/isQueues/.test(extractFn(S8, 'insRenderTrendChart_')) && !/insActiveTrendMetric === 'queues'/.test(S8),
+    'the Trends chart has no queue branch left');
+  assert.ok(!/queues:/.test(extractFn(S8, 'insSyncTrendMetricSel_')));
+});
+
+test('MD4: three column headers are real buttons that pick the metric; a row is matched to its line by queue name', function () {
+  const head = HTML.slice(HTML.indexOf('<div class="ds-card ins-qh-table-card"'), HTML.indexOf('<tbody id="ins-qh-tbody">'));
+  const btns = (head.match(/<button type="button" class="ins-qh-th-btn" data-qh-metric="(\w+)" aria-pressed="false"/g) || [])
+    .map(function (b) { return /data-qh-metric="(\w+)"/.exec(b)[1]; });
+  assert.deepEqual(btns, ['totalCalls', 'abandonedPct', 'violations']);
+  assert.match(head, /<th class="num">Abandoned<\/th>/, 'the Abandoned COUNT has no trend series, so it stays a plain heading');
+  assert.match(extractFn(S8, 'insQhHeadersSync_'), /b\.setAttribute\('aria-pressed', \(has && b\.getAttribute\('data-qh-metric'\) === insQueueMetric\) \? 'true' : 'false'\);/);
+  assert.match(CSS, /\.ins-qh-th-btn\[aria-pressed="true"\] \{[^}]*text-decoration: underline solid/, 'the pressed header is marked by more than colour');
+  assert.match(S8, /'<tr class="ins-qh-row qcd-expandable" data-queue="' \+ escapeHtml\(q\.queue\) \+ '">'/);
+  // Hover AND focus, delegated on the document (the section may sit inside #ins-brief).
+  ['mouseover', 'mouseout', 'focusin', 'focusout'].forEach(function (ev) {
+    assert.match(S8, new RegExp("document\\.addEventListener\\('" + ev + "', function \\(e\\) \\{[\\s\\S]{0,60}qhRowQueue"), ev + ' drives the highlight');
+  });
+  const hl = extractFn(S8, 'insQhHighlight_');
+  assert.match(hl, /chartSpotlightHasPins_\(ch\)\) return;/, 'a pinned queue wins over a hover');
+  assert.match(hl, /if \(ds\.label === queue\) idx = i;/);
+});
+
+test('MD4: the view rules -- Calendar is Abandoned % only, Daily needs a daily series', function () {
+  const view = lift('insQhResolveView_');
+  assert.equal(view('calendar', 'abandonedPct', true, true), 'calendar');
+  assert.equal(view('calendar', 'totalCalls', true, true), 'monthly', 'the other queue metrics are line-only');
+  assert.equal(view('calendar', 'abandonedPct', true, false), 'monthly', 'no series to fill a calendar');
+  assert.equal(view('daily', 'violations', true, false), 'daily');
+  assert.equal(view('daily', 'violations', false, false), 'monthly', 'a one-day window has no daily line');
+  assert.equal(view('nonsense', 'abandonedPct', true, true), 'monthly');
+  // The two calendars share one renderer, each with its own host and month.
+  const cal = extractFn(S8, 'insRenderTrendCalendar_');
+  assert.match(cal, /const host = \$\(isQueueCal \? 'ins-qh-calendar' : 'ins-trend-calendar'\);/);
+  assert.match(cal, /const calSt = INS_CAL_STATE_\[isQueueCal \? 'queue' : 'team'\];/);
+  assert.match(extractFn(S8, 'insRenderQhChart_'), /insRenderTrendCalendar_\(data, \{ queue: true \}\);/);
+  // Draw-on-open: fold-gated and measure-guarded.
+  const draw = extractFn(S8, 'insDrawQhChart_');
+  assert.match(draw, /if \(!insFoldOpen_\('qh'\)\) return;/);
+  assert.match(S8, /if \(key === 'qh' && fold\.open && insLastData\) insDrawQhChart_\(insLastData\);/);
+});
+
+test('MD4: a prefs blob saved on a "Queue:" Trend entry self-heals once into the Queue health chart', function () {
+  const heal = lift('insQhHealFromPrefs_');
+  assert.equal(heal({ trendMetric: 'answered' }), null);
+  assert.equal(heal(null), null);
+  assert.deepEqual(heal({ trendMetric: 'queues', queueMetric: 'violations' }), { view: 'monthly' });
+  assert.deepEqual(heal({ trendMetric: 'queues', trendView: 'daily' }), { view: 'daily' });
+  assert.deepEqual(heal({ trendMetric: 'queues', trendRender: 'calendar', trendView: 'daily' }), { view: 'calendar' });
+  const restore = extractFn(S8, 'insRestorePrefs_');
+  assert.match(restore, /if \(qhHeal\) \{\s*prefs\.trendMetric = 'answered';\s*insQhChartView = qhHeal\.view;\s*insQhHealPending_ = true;/);
+  // ...and the landing saves the healed prefs before opening the section, so it happens once.
+  assert.match(S8, /if \(insQhHealPending_\) \{\s*insQhHealPending_ = false;\s*insSavePrefs_\(\);[\s\S]{0,160}insOpenSection_\('ins-qh-fold', true\);/);
+  assert.match(extractFn(S8, 'insSavePrefs_'), /qhChartView: insQhChartView,[\s\S]*?qhShowLabels: insQhShowLabels,/);
+});
+
+test('MD4 F-a: the agent card handlers are delegated on the document, so they work inside a brief row', function () {
+  // #ins-brief sits OUTSIDE #insights-page: a listener on the page never saw
+  // a click on a card the brief was holding, and the link did nothing.
+  assert.ok(HTML.indexOf('<div id="ins-brief"') < HTML.indexOf('<div id="insights-page"'), 'the brief is not inside the Insights page element');
+  assert.match(S8, /document\.addEventListener\('click', function \(e\) \{\s*const link = e\.target\.closest && e\.target\.closest\('\.ins-card-ir-link'\);\s*if \(!link \|\| !insInSection_\(link\)\) return;/);
+  assert.ok(!/\bpage\.addEventListener\(/.test(S8), 'nothing is delegated on #insights-page any more');
+  assert.match(S8, /el\.closest\('#insights-page'\) \|\| el\.closest\('#ins-brief'\)/);
+});
+
+test('MD4 F-b: By agent has a Daily view from each card\'s per-day tuples; the reference follows', function () {
+  const point = lift('insTrendAgentPoint_');
+  const card = { trendMonthly: [{ answered: 40, pct: 90 }, null], trendDays: [[10, 8, 2, 80], null] };
+  assert.equal(point(card, 0, 'answered', false), 40);
+  assert.equal(point(card, 0, 'answered', true), 8, 'daily tuples are [rung, answered, missed, pct]');
+  assert.equal(point(card, 0, 'missed', true), 2);
+  assert.equal(point(card, 0, 'pct', true), 80);
+  assert.equal(point(card, 1, 'answered', true), null);
+  assert.equal(point({}, 0, 'answered', true), null, 'a card with no daily series');
+  // The reference line on the daily axis (insTrendAgentRef_ calls the point reader).
+  // eslint-disable-next-line no-new-func
+  const ref = new Function(extractFn(S8, 'insTrendAgentPoint_') + '\nreturn (' + extractFn(S8, 'insTrendAgentRef_') + ');')();
+  const cards = [
+    { trendDays: [[10, 8, 2, 80], [6, 6, 0, 100]] },
+    { trendDays: [[4, 2, 2, 50], null] },
+    { excludedFromTeamAvg: true, trendDays: [[99, 99, 0, 100], [99, 99, 0, 100]] },
+  ];
+  assert.deepEqual(ref(cards, [], 'answered', 2, true).data, [5, 6], 'the average per agent shown, per DAY, excluded manager out');
+  assert.deepEqual(ref(cards, [{ rung: 14, pct: 71.43 }, { rung: 0 }], 'pct', 2, true), { label: 'Team', data: [71.4, null] });
+  const by = extractFn(S8, 'insRenderTrendByAgent_');
+  assert.match(by, /const daily = insTrendView === 'daily' && agentDailyOk;/, 'the SAME Monthly / Daily switch as Team total');
+  assert.match(by, /insPartialChartBits_\(\(isPct \|\| daily\) \? \[\] : insPartialForData_\(data\)\)/, 'no partial-month marking on a daily axis');
+  const sync = extractFn(S8, 'insTrendViewSync_');
+  assert.match(sync, /if \(v === 'daily'\) \{ b\.disabled = !!dailyOffWhy; b\.title = dailyOffWhy \|\| ''; \}/,
+    'past the cap Daily is disabled and says why, rather than vanishing');
+  assert.ok(!/show\('ins-trend-view-toggle', false\)/.test(extractFn(S8, 'insTrendScopeSync_')), 'By agent no longer hides the switch');
+});

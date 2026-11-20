@@ -1690,7 +1690,31 @@
       header: 'Abandoned % per department (queue)',
       fmt: function (v) { return v.toFixed(1) + '%'; },
     },
+    // MD2 (owner 2026-11-20): average time to ANSWER an answered queue call
+    // (queue data, NOT talk time), weighted by answered calls. No baseline --
+    // there is no answer-time standard. The Company line is admin-only: a
+    // manager's payload does not carry the series, so none is drawn.
+    avgAnswer: {
+      companyField: 'trendAvgAnswerSec',
+      field: 'trendAvgAnswerSec', unit: 'secs', axisTitle: 'Avg answer time (m:ss)',
+      baseline: null, baselineLabel: '',
+      header: 'Average time to answer per department (queue)',
+      fmt: function (v) { return ovFmtSecs_(v); },
+    },
   };
+  // MD2: whole seconds as m:ss ("0:23", "1:05"); hours roll into the minutes.
+  function ovFmtSecs_(v) {
+    var s = Math.max(0, Math.round(Number(v) || 0));
+    var r = s % 60;
+    return Math.floor(s / 60) + ':' + (r < 10 ? '0' : '') + r;
+  }
+  // MD2: a tick spacing that lands on clock-friendly values (0:15, 0:30, 1:00)
+  // and keeps the axis to about eight ticks.
+  function ovSecsStep_(span) {
+    var steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+    for (var i = 0; i < steps.length; i++) if (span / steps[i] <= 8) return steps[i];
+    return 3600;
+  }
   const OV_CHART_METRIC_KEY_ = 'cdr.ov.chartmetric';
   let ovChartMetric = (function () {
     try { var v = localStorage.getItem(OV_CHART_METRIC_KEY_); return OV_CHART_METRICS_[v] ? v : 'pct'; }
@@ -1741,7 +1765,7 @@
 
   // Normalize the chart's data source to a single shape regardless of which
   // range is active: { trendLabels, trendIsoLabels, depts:[{name,parent,
-  // trend,trendAnswered,trendAbandoned,trendAbandonedPct}], latestDate }. The
+  // trend,trendAnswered,trendAbandoned,trendAbandonedPct,trendAvgAnswerSec}], latestDate }. The
   // 30/60/90 ranges slice the payload's 90-day trendChart* fields down to the
   // trailing N-day window; YTD returns the on-demand payload verbatim (already
   // normalized to trend/trendAnswered/trendAbandoned/trendAbandonedPct). Falls back to the
@@ -1778,6 +1802,7 @@
         trendAnswered: (d.trendChartAnswered || []).slice(startIdx),
         trendAbandoned: (d.trendChartAbandoned || []).slice(startIdx),
         trendAbandonedPct: (d.trendChartAbandonedPct || []).slice(startIdx),
+        trendAvgAnswerSec: (d.trendChartAvgAnswerSec || []).slice(startIdx),   // MD2
       };
     });
     // The company reference line rides `companyAggregate` for admins; since
@@ -1787,6 +1812,8 @@
     const company = ca ? {
       trend: (ca.trendChart || []).slice(startIdx),
       trendAbandonedPct: (ca.trendChartAbandonedPct || []).slice(startIdx),
+      // MD2: admin-only -- absent from a manager's companyTrendLine, so [] here.
+      trendAvgAnswerSec: (ca.trendChartAvgAnswerSec || []).slice(startIdx),
     } : null;
     return {
       trendLabels: lab.slice(startIdx),
@@ -1878,7 +1905,9 @@
     const axis = {
       ticks: { callback: mcfg.unit === 'pct'
         ? function (v) { return v + '%'; }
-        : function (v) { return Number(v).toLocaleString(); } },
+        : (mcfg.unit === 'secs'
+          ? function (v) { return ovFmtSecs_(v); }
+          : function (v) { return Number(v).toLocaleString(); }) },
       title: { display: true, text: mcfg.axisTitle, font: { size: 11 } },
     };
     if (zoom === 'fit' && hasData) {
@@ -1891,6 +1920,13 @@
       axis.min = 0;
       if (mcfg.field === 'trend') axis.max = 100;
       else axis.max = hasData ? Math.ceil(hi * 1.15) + (mcfg.unit === 'pct' ? 1 : 0) : undefined;
+    }
+    // MD2: a seconds axis snaps its ends and its ticks to one clock-friendly step.
+    if (mcfg.unit === 'secs' && axis.max != null) {
+      const step = ovSecsStep_(Math.max(1, axis.max - axis.min));
+      axis.min = Math.floor(axis.min / step) * step;
+      axis.max = Math.max(axis.min + step, Math.ceil(axis.max / step) * step);
+      axis.ticks.stepSize = step;
     }
     return axis;
   }
@@ -1915,7 +1951,7 @@
     }
     var pins = {};
     want.forEach(function (k) { if (have[k]) pins[k] = true; });
-    // The Company line draws on the percentage metrics only; with no line to
+    // A manager has a Company line on the percentage metrics only; with no line to
     // anchor on (and, for an ALL manager, no own dept) there is no default.
     return Object.keys(pins).length ? pins : null;
   }
@@ -2052,7 +2088,8 @@
     // would collide with an existing dept), so it reads by WEIGHT and LABEL in
     // neutral ink instead -- the same family as the dashed baseline above,
     // one step louder because it is real data rather than a fixed goal.
-    // Percentage metrics only. Admins get it inside companyAggregate; since
+    // The percentage metrics, plus (MD2, admins only) avg answer time -- a
+    // count has no company line. Admins get it inside companyAggregate; since
     // Step 2 #6 (owner 2026-10-16) managers get the line alone
     // (`companyTrendLine`) -- the aggregate figures stay admin-only.
     const companySeries = (mcfg.companyField && view.company)
@@ -2646,7 +2683,8 @@
     });
   }
 
-  // Metric tabs (% Answered / Abandoned calls / Abandoned %) in the
+  // Metric tabs (% Answered / Answered calls / Abandoned calls / Abandoned % /
+  // Avg answer time) in the
   // ov-chart-tabs row. Wired once; re-renders from ovLastData on switch and
   // persists the choice. The grid tiles are untouched (they stay latest-day).
   let ovMetricTabsWired = false;

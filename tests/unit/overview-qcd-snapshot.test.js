@@ -107,6 +107,73 @@ test('#1: per-day abandoned series accumulates in-window rows + excludes pre-win
   assert.ok(!out.CSR.daily['2026-05-20'], 'pre-window date excluded from the daily series');
 });
 
+// MD2 (owner 2026-11-20): the Overview chart's "Avg answer time" view.
+// computeQcdSnapshots_ adds an answered-weighted pair to each day -- aaSum =
+// sum(avgAnswerSec * totalAnswered), aaN = sum(totalAnswered) -- for the dept
+// AND for the once-per-queue-row company map. The H:MM:SS cell is read from the
+// DISPLAY grid (INV-02), which both read sources fill.
+function qcdRowAA(dateIso, queue, answered, avgAnswer) {
+  return ['', '', dateIso, queue, 'Total Calls', answered + 5, answered, 5, '0:01:00', avgAnswer, '', 0];
+}
+
+test('MD2: the per-day avg-answer pair is weighted by answered calls, for the dept and the company', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRowAA('2026-06-02', q, 90, '0:00:20'),   // 90 answered at 20 s
+        qcdRowAA('2026-06-02', q, 10, '0:01:00'),   // 10 answered at 60 s -> (1800 + 600) / 100 = 24 s
+        qcdRowAA('2026-06-03', q, 0,  '0:00:00'),   // nobody answered -> no pair, a line break
+        qcdRowAA('2026-06-04', q, 40, ''),          // answered but no average stored -> not counted (RPT-8)
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+
+  const out = h.call('computeQcdSnapshots_', ['CSR'], '2026-06-01', 'America/Chicago');
+  const d = out.CSR.daily;
+  assert.equal(d['2026-06-02'].aaSum, 2400);
+  assert.equal(d['2026-06-02'].aaN, 100);
+  assert.equal(h.call('ovAvgAnswerSec_', d['2026-06-02']), 24, 'weighted, not the mean of 20 and 60');
+  assert.equal(h.call('ovAvgAnswerSec_', d['2026-06-03']), null, 'no answered calls is a gap, never a zero');
+  assert.equal(h.call('ovAvgAnswerSec_', d['2026-06-04']), null, 'a blank average does not count as zero seconds');
+  assert.equal(d['2026-06-02'].abandoned, 10, 'the abandoned figures on the same day are untouched');
+  assert.equal(h.call('ovAvgAnswerSec_', out._companyDaily['2026-06-02']), 24, 'the company map carries the same pair');
+});
+
+test('MD2: the pair is read from a Neon-shaped grid too (durations live in `displays` only)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  // QCD_HISTORICAL_COLS (Config.gs, INV-50): C date, D queue, E source, F total, G answered, H abandoned, J avg answer.
+  const C = { DATE: 3, CALL_QUEUE: 4, CALL_SOURCE: 5, TOTAL_CALLS: 6, TOTAL_ANSWERED: 7, ABANDONED: 8, AVG_ANSWER: 10 };
+  const mk = function (iso, answered, avg) {
+    const v = [], d = [];
+    for (let c = 0; c < 12; c++) { v.push(''); d.push(''); }
+    v[C.DATE - 1] = iso; v[C.CALL_QUEUE - 1] = q; v[C.CALL_SOURCE - 1] = 'Total Calls';
+    v[C.TOTAL_CALLS - 1] = answered + 1; v[C.TOTAL_ANSWERED - 1] = answered; v[C.ABANDONED - 1] = 1;
+    d[C.AVG_ANSWER - 1] = avg;
+    return { v: v, d: d };
+  };
+  const rows = [mk('2026-06-02', 30, '0:00:10'), mk('2026-06-02', 10, '0:00:50')];
+  const saved = h.ctx.readQcdGrid_;
+  h.ctx.readQcdGrid_ = function () {
+    return { values: rows.map(function (r) { return r.v; }), displays: rows.map(function (r) { return r.d; }), ssTZ: 'America/Chicago' };
+  };
+  try {
+    const out = h.call('computeQcdSnapshots_', ['CSR'], '2026-06-01', 'America/Chicago');
+    assert.equal(h.call('ovAvgAnswerSec_', out.CSR.daily['2026-06-02']), 20, '(300 + 500) / 40');
+    // A grid with no display cells (an older test double) degrades to "no figure", never a throw.
+    h.ctx.readQcdGrid_ = function () { return { values: rows.map(function (r) { return r.v; }), ssTZ: 'America/Chicago' }; };
+    const bare = h.call('computeQcdSnapshots_', ['CSR'], '2026-06-01', 'America/Chicago');
+    assert.equal(h.call('ovAvgAnswerSec_', bare.CSR.daily['2026-06-02']), null);
+    assert.equal(bare.CSR.daily['2026-06-02'].abandoned, 2, 'and the abandoned series still builds');
+  } finally { h.ctx.readQcdGrid_ = saved; }
+});
+
 // summary:v12: the My Department QCD side-panel period toggle (Yesterday / MTD).
 // computeDeptQcdSnapshot_ ships the latest-day block at the top level (Yesterday)
 // PLUS an `mtd` block (+ `mtdStart`) summing every row in the latest date's
