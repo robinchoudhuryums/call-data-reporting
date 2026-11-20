@@ -935,3 +935,50 @@ test('IDLE-2: the emailed report applies the same agent-free rule as the screen'
   assert.equal((src.match(/customPriorFrom, customPriorTo, \{ dropIdle: agentFree \}\)/g) || []).length, 2,
     'getInsightsReport and sendInsightsReportEmail both pass dropIdle for an agent-free run');
 });
+
+// ── MD4 F-b (owner 2026-11-20): the per-agent DAILY series ───────────────────
+//
+// THE RULE: each card carries `trendDays`, aligned to trendDaily.labels --
+// `[rung, answered, missed, pct]` on a day the agent has a row, null on a day
+// they do not -- so the trend chart's "By agent" scope has a Daily view. It is
+// capped (INSIGHTS_AGENT_DAILY_MAX_DAYS_ days of data): past that the field is
+// null and the client offers Monthly only. Floaters never get one (INV-53).
+test('MD4 F-b: each card carries its daily series aligned to the team day axis; an absent day is null', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '502', rung: 4,  missed: 0, answered: 4, att: '0:02:00' }),   // Anna absent
+    dqeRow({ date: '2026-03-11', agent: 'Anna', ext: '501', rung: 5,  missed: 5, answered: 0, att: '0:00:00' }),
+    dqeRow({ date: '2026-03-11', agent: 'Cara', ext: '501', rung: 90, missed: 9, answered: 80, att: '0:05:00' }),  // floater
+    dqeRow({ date: '2026-03-04', agent: 'Anna', ext: '501', rung: 7,  missed: 0, answered: 7, att: '0:03:00' }),   // prior window
+  ]);
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-13', agents: ['Anna', 'Ben', 'Cara'] });
+  assert.deepEqual(JSON.parse(JSON.stringify(data.trendDaily.labels)), ['03-09', '03-10', '03-11'], 'the day axis is the team\'s');
+  const J = function (x) { return JSON.parse(JSON.stringify(x)); };
+  assert.deepEqual(J(agent(data, 'Anna').trendDays), [[10, 8, 2, 80], null, [5, 0, 5, 0]],
+    'tuples on her days, null on the day she has no row; a day she answered nothing is a real 0');
+  assert.deepEqual(J(agent(data, 'Ben').trendDays), [null, [4, 4, 0, 100], null]);
+  assert.equal(agent(data, 'Cara'), undefined, 'a floater has no card, so no series (INV-53)');
+  assert.equal(data.meta.agentDailyMaxDays, 45);
+  // The window's own rows only: the prior-window day is not on the axis.
+  assert.equal(agent(data, 'Anna').trendDays.length, 3);
+});
+
+test('MD4 F-b: the series is capped, and a one-day window or an agent with no row has none', function () {
+  const series = h.ctx.insAgentDaySeries_;
+  const keys = function (n) { const out = []; for (let i = 0; i < n; i++) out.push('2026-01-' + String(i + 1).padStart(2, '0')); return out; };
+  const by = { '2026-01-01': { rung: 3, answered: 2, missed: 1 } };
+  assert.equal(series(by, keys(1)), null, 'one day is not a trend');
+  assert.equal(series(null, keys(5)), null);
+  assert.equal(series({}, keys(5)), null, 'no row in the window: no series, not five nulls');
+  const two = JSON.parse(JSON.stringify(series(by, keys(2))));
+  assert.equal(two.length, 2);
+  assert.deepEqual(two[0].slice(0, 3), [3, 2, 1]);
+  assert.equal(two[1], null);
+  // The cap: 45 days ships, 46 does not.
+  const long = function (n) { const k = []; const b = {}; for (let i = 0; i < n; i++) { const iso = 'd' + String(i).padStart(3, '0'); k.push(iso); b[iso] = { rung: 1, answered: 1, missed: 0 }; } return series(b, k); };
+  assert.equal(long(45).length, 45);
+  assert.equal(long(46), null, 'past the cap the client is told to use Monthly instead');
+  // The cache prefix moved with the payload shape.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.ok(Number(/INSIGHTS_CACHE_KEY_PREFIX = 'insights:v(\d+)'/.exec(src)[1]) >= 30);
+});

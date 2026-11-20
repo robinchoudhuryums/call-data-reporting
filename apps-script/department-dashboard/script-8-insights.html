@@ -4350,10 +4350,9 @@
 
     // Daily availability + Monthly/Daily toggle visibility (trendDaily).
     const hasDaily = !!(data.trendDaily && (data.trendDaily.labels || []).length > 1);
-    const toggle = $('ins-trend-view-toggle');
-    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
     if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
     const daily = (insTrendView === 'daily') && hasDaily;
+    insTrendViewSync_(hasDaily, daily ? 'daily' : 'monthly', '');
 
     // #4 + gap 1, MERGED (C-1): ONE header writer. These were two consecutive
     // writers to the same element -- the second unconditionally clobbered the
@@ -5544,6 +5543,21 @@
       return insAgentHasActivity_(c) && Array.isArray(c.trendMonthly);
     });
   }
+  // MD4 (F-b): the Monthly / Daily switch serves BOTH scopes, so one function
+  // owns its visibility, its pressed state and whether Daily is available
+  // (`dailyOffWhy` = the hover text when it is not; '' = available).
+  function insTrendViewSync_(show, active, dailyOffWhy) {
+    const t = $('ins-trend-view-toggle');
+    if (!t) return;
+    t.style.display = show ? '' : 'none';
+    t.querySelectorAll('.seg-btn').forEach(function (b) {
+      const v = b.getAttribute('data-view') || 'monthly';
+      const on = v === active;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      if (v === 'daily') { b.disabled = !!dailyOffWhy; b.title = dailyOffWhy || ''; }
+    });
+  }
   // Reflect the scope on the switch and swap the controls each scope owns.
   // Returns true when the chart should draw By agent.
   function insTrendScopeSync_(eligible) {
@@ -5563,9 +5577,9 @@
     const canvas = $('ins-trend-chart');
     if (canvas) canvas.setAttribute('aria-label', byAgent ? 'Each agent over the last 12 months, with the team as a reference' : 'Team trend over time');
     if (byAgent) {
-      // Monthly / Daily, Line / Calendar and the data labels belong to Team
-      // total (the team render re-shows whichever of them apply).
-      show('ins-trend-view-toggle', false);
+      // Line / Calendar and the data labels belong to Team total (the team
+      // render re-shows whichever of them apply). Monthly / Daily applies to
+      // both scopes (MD4 F-b) -- insTrendViewSync_ owns that switch.
       show('ins-trend-render-toggle', false);
       show('ins-datalabels-box', false);
       show('ins-trend-calendar', false);
@@ -5583,7 +5597,17 @@
   // per agent SHOWN who was active that month, leaving out anyone on the
   // team-average exclusion list (INV-26) -- the team total would dwarf every
   // agent line on a shared axis. `n` = the number of months on the axis.
-  function insTrendAgentRef_(cards, teamSeries, metric, n) {
+  // MD4 (F-b): `daily` reads each card's per-day tuples instead of its months.
+  // PURE: one agent's value at axis position i -- null when the agent has no
+  // row there. Monthly buckets are objects; daily ones are compact
+  // [rung, answered, missed, pct] tuples (InsightsReport.gs insAgentDaySeries_).
+  function insTrendAgentPoint_(card, i, metric, daily) {
+    var b = card && (daily ? (card.trendDays || [])[i] : (card.trendMonthly || [])[i]);
+    if (!b) return null;
+    var v = daily ? b[{ rung: 0, answered: 1, missed: 2, pct: 3 }[metric]] : b[metric];
+    return v == null ? null : Number(v);
+  }
+  function insTrendAgentRef_(cards, teamSeries, metric, n, daily) {
     var out = [], i;
     if (metric === 'pct') {
       for (i = 0; i < n; i++) {
@@ -5596,9 +5620,9 @@
       var sum = 0, k = 0;
       (cards || []).forEach(function (c) {
         if (!c || c.excludedFromTeamAvg) return;
-        var b = (c.trendMonthly || [])[i];
-        if (!b || b[metric] == null) return;
-        sum += Number(b[metric]) || 0;
+        var v = insTrendAgentPoint_(c, i, metric, daily);
+        if (v == null) return;
+        sum += v || 0;
         k++;
       });
       out.push(k ? Math.round((sum / k) * 10) / 10 : null);
@@ -5606,7 +5630,17 @@
     return { label: 'Average per agent shown', data: out };
   }
   function insRenderTrendByAgent_(canvas, data, cards) {
-    const td = data.trendData || {};
+    // MD4 (F-b): Monthly (the 12-month axis) or Daily (the selected window,
+    // from each card's `trendDays`). The server ships the daily series only
+    // for a window of up to meta.agentDailyMaxDays days of data.
+    const dayAxis = (data.trendDaily && data.trendDaily.labels) || [];
+    const hasDayAxis = dayAxis.length > 1;
+    const agentDailyOk = hasDayAxis && cards.some(function (c) { return Array.isArray(c.trendDays); });
+    const daily = insTrendView === 'daily' && agentDailyOk;
+    const capDays = Number(data.meta && data.meta.agentDailyMaxDays) || 0;
+    insTrendViewSync_(hasDayAxis, daily ? 'daily' : 'monthly', agentDailyOk ? ''
+      : ('By agent, the daily view covers windows of up to ' + (capDays || 45) + ' days of data. Shorten the dates, or use Monthly.'));
+    const td = daily ? data.trendDaily : (data.trendData || {});
     const labels = td.labels || [];
     const metric = INS_TREND_AGENT_METRICS_.indexOf(insTrendAgentMetric) !== -1 ? insTrendAgentMetric : 'answered';
     const isPct = (metric === 'pct');
@@ -5615,21 +5649,26 @@
     const headerEl = $('ins-trend-header');
     if (headerEl) {
       const tm = data.meta || {};
-      headerEl.textContent = '12-month trend by agent' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : '') + ' — ' + metricLabel;
+      headerEl.textContent = (daily
+        ? ('Daily trend by agent' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
+        : ('12-month trend by agent' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : ''))) + ' — ' + metricLabel;
     }
+    canvas.setAttribute('aria-label', daily
+      ? 'Each agent day by day over the selected window, with the team as a reference'
+      : 'Each agent over the last 12 months, with the team as a reference');
     insSyncAbPanel_();
     // Step 1: on a COUNT metric, mark a partly covered month (dashed in,
     // hollow point, "(to date)", pace in the tooltip). % Answered is a rate
-    // and needs none of it.
-    const part = insPartialChartBits_(isPct ? [] : insPartialForData_(data));
+    // and needs none of it; the daily view has no partial buckets.
+    const part = insPartialChartBits_((isPct || daily) ? [] : insPartialForData_(data));
     const datasets = cards.map(function (c, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       // R11-M (metric-aware gaps): a per-agent series has real ABSENCES (months
       // the agent wasn't active). For COUNT metrics an absent month is 0 (drop
       // to 0 and recover); for % Answered a 0 would read as "answered none of
       // their calls", so keep the null and BREAK the line (spanGaps:false).
-      const series = (c.trendMonthly || []).map(function (b) {
-        const v = (b && b[metric] != null) ? Number(b[metric]) : null;
+      const series = labels.map(function (_l, i) {
+        const v = insTrendAgentPoint_(c, i, metric, daily);
         return (v == null && !isPct) ? 0 : v;
       });
       return {
@@ -5657,7 +5696,7 @@
     });
     // The team reference: neutral ink, dashed, in front, never soloed or
     // dimmed and never a drill target (the Overview's Company-line treatment).
-    const ref = insTrendAgentRef_(cards, td.series || [], metric, labels.length);
+    const ref = insTrendAgentRef_(cards, td.series || [], metric, labels.length, daily);
     const hasRef = ref.data.some(function (v) { return v != null; });
     if (hasRef) {
       datasets.push({

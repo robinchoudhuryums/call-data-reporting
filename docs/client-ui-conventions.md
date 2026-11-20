@@ -263,7 +263,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v29` already makes a fresh re-generate fast too).
+  `insights:v30` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /

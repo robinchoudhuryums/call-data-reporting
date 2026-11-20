@@ -575,7 +575,7 @@ complete set of prefixes.
 | `CompanyOverview.gs` | `companyOverview:vN` | `v32` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v17` |
-| `InsightsReport.gs` | `insights:vN:` | `v29` |
+| `InsightsReport.gs` | `insights:vN:` | `v30` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v5` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v7` |

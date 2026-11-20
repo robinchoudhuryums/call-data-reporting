@@ -129,8 +129,8 @@ test('chart bits: dashed segment into the partial point, "(to date)" tick, pace 
 test('wiring: COUNT charts mark the partial month; rates and talk time never do', () => {
   // MD3: the per-agent lines are the Trends chart's "By agent" scope now.
   const cards = fnSource('insRenderTrendByAgent_');
-  assert.match(cards, /insPartialChartBits_\(isPct \? \[\] : insPartialForData_\(data\)\)/,
-    'the per-agent chart skips % Answered');
+  assert.match(cards, /insPartialChartBits_\(\(isPct \|\| daily\) \? \[\] : insPartialForData_\(data\)\)/,
+    'the per-agent chart skips % Answered (and, MD4 F-b, its daily view)');
   const team = fnSource('insRenderTrendChart_');
   assert.match(team, /insPartialChartBits_\(\(!daily && !isPercent && !isMinutes\) \? insPartialForData_\(data\) : \[\]\)/,
     'the team chart: monthly counts only');

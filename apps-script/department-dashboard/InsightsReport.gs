@@ -93,7 +93,12 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v29';  // v29: agentData[].daysPrior -- an agent's own vs-prior volume is per CREDITED day too; v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+// MD4 (F-b): the per-agent daily series ships only for a window with at most
+// this many days of data. Past it the series would crowd the cache value
+// (CacheService caps one at ~100 KB: agents x days x ~15 bytes) for a chart
+// nobody can read day by day; the monthly lines are the view for a long window.
+const INSIGHTS_AGENT_DAILY_MAX_DAYS_ = 45;
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v30';  // v30: MD4 agentData[].trendDays (the per-agent daily series, capped) + meta.agentDailyMaxDays; v29: agentData[].daysPrior -- an agent's own vs-prior volume is per CREDITED day too; v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -497,6 +502,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // R11-E (item 4): per-agent monthly series for the per-agent trend line chart
   // (one line per selected agent, month axis = trendLabels). agent -> ym -> {}.
   const perAgentMonthly = {};
+  // MD4 (F-b): per-agent DAILY buckets for the SELECTED window, so the trend
+  // chart's "By agent" scope has a Daily view. agent -> iso -> {}.
+  const perAgentDaily = {};
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -549,6 +557,12 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         const ag = perAgentCurr[agent];
         ag.rung += rung; ag.missed += missed; ag.answered += answered;
         ag.ttt += tttSec; ag.att_sum += attTotal;
+      }
+      // MD4 (F-b): the same gate as the monthly buckets below (selected ROSTER cards).
+      if (isSelected && isTeamRoster) {
+        const pad = perAgentDaily[agent] || (perAgentDaily[agent] = {});
+        const padb = pad[dateIso] || (pad[dateIso] = { rung: 0, answered: 0, missed: 0 });
+        padb.rung += rung; padb.answered += answered; padb.missed += missed;
       }
       if (isTeamRoster) {
         // R11-E (item 6): the donut denominator is the whole department.
@@ -626,6 +640,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     att:      deltaBlock_(currAtt,           prevAtt,           'volume',    formatSecondsHms_(currAtt)),
   };
 
+  // MD4 (F-b): the day axis the per-agent daily series aligns to -- the SAME
+  // keys trendDaily is built from below (dailyTeam is complete by here).
+  const agentDailyKeys = Object.keys(dailyTeam).sort();
+
   // --- Per-agent cards ----------------------------------------------
   // ROSTER-ONLY report (matches the My Department table's Phase 14 flip,
   // commit 80e17da): queue-only floaters -- agents matched into the dept only
@@ -699,6 +717,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
         return { rung: b.rung, answered: b.answered, missed: b.missed, pct: round1_(pct) };
       }),
+      // MD4 (F-b): this agent's DAILY series for the selected window, aligned
+      // to trendDaily.labels. null on a day with no row; the whole field is
+      // null past the day cap or for an agent with no row in the window.
+      trendDays: insAgentDaySeries_(perAgentDaily[agent], agentDailyKeys),
     };
   }).sort(function (a, b) { return b.rawAnswered - a.rawAnswered; });
 
@@ -807,6 +829,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     meta: {
       department: dept,
       from: from, to: to,
+      agentDailyMaxDays: INSIGHTS_AGENT_DAILY_MAX_DAYS_,   // MD4 (F-b): why a long window has no by-agent Daily view
       exceptionDays: exceptionDaysMeta_(excInfo, from, to).length ? exceptionDaysMeta_(excInfo, from, to) : undefined,   // #81
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
@@ -876,6 +899,27 @@ var INS_QUEUE_WAIT_MIN_CALLS_PER_DAY_ = 5;
  * figures plus `flagged`, or `insufficient: true` when the three prior months
  * are not all on hand with answered calls.
  */
+/**
+ * MD4 (F-b): PURE. One agent's daily series aligned to `dayKeys` (ISO, the
+ * keys trendDaily is built from): `[rung, answered, missed, pct]` per day,
+ * null on a day the agent has no row. Compact tuples, not objects -- this
+ * rides every Insights payload. Returns null (no series at all) for fewer
+ * than two days, past INSIGHTS_AGENT_DAILY_MAX_DAYS_, or an agent with no
+ * row in the window.
+ */
+function insAgentDaySeries_(byIso, dayKeys) {
+  var keys = dayKeys || [];
+  if (!byIso || keys.length < 2 || keys.length > INSIGHTS_AGENT_DAILY_MAX_DAYS_) return null;
+  var any = false;
+  var out = keys.map(function (iso) {
+    var b = byIso[iso];
+    if (!b) return null;
+    any = true;
+    return [b.rung, b.answered, b.missed, round1_(answerRatePct_(b.answered, b.missed, b.rung))];   // DD-2
+  });
+  return any ? out : null;
+}
+
 function insQueueWaitVerdict_(row, monthly, daily, fromIso) {
   var avg = Number(row && row.avgAnswerSec) || 0;
   var calls = Number(row && row.totalCalls) || 0;

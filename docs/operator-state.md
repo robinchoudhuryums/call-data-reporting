@@ -4447,7 +4447,7 @@ When something looks wrong, before assuming a code bug, check:
     count bars use (it had read the department rate). Under one
     credited day an agent has no per-day figure and the comparison is left
     blank rather than shown as a large number. Both report caches were
-    re-versioned (now `individual:v14`, `insights:v29`), so the change shows on
+    re-versioned (now `individual:v14`, `insights:v30`), so the change shows on
     the first load after the deploy. Pinned by `team-per-day.test.js`;
     rendered checks in `drive-smoke.js` (the tiles) and
     `drive-deptoutbound.js` (the Insights surfaces).
