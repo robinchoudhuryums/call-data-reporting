@@ -1625,6 +1625,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
                 sw: vis(document.getElementById('ins-trend-scope')), basis: vis(document.getElementById('ins-cards-chart-mode')),
                 hostAgentsEmpty: !document.getElementById('ins-trend-host-agents').firstElementChild,
                 away: vis(document.getElementById('ins-trend-away-agents')) || vis(document.getElementById('ins-trend-away-trend')),
+                cal: vis(document.getElementById('ins-trend-calendar')),
                 header: ((document.getElementById('ins-trend-header') || {}).textContent || '') };
             });
           };
@@ -1637,10 +1638,13 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
           await page.evaluate(function () { document.querySelector('#ins-trend-scope .seg-btn[data-scope="team"]').click(); });
           await page.waitForTimeout(700);
           const m3 = await read();
+          // Team total may be on Line or on Calendar here (an earlier step
+          // picks one): By agent always draws the lines, and Team total must
+          // come back exactly as it was left.
           record(role + ': MD3 the Trends fold holds the one chart; the switch draws By agent (agent lines + the team reference) and back; the Agents fold has no Trend basis',
-            m1.host === 'ins-trend-host-trend' && m1.sw && m1.width > 0 && m1.agentLines === 0 && m1.hostAgentsEmpty && !m1.away && !m1.basis
-              && m2.agentLines >= 2 && m2.ref === 1 && /by agent/.test(m2.header) && m2.host === 'ins-trend-host-trend'
-              && m3.agentLines === 0 && /team trend/.test(m3.header),
+            m1.host === 'ins-trend-host-trend' && m1.sw && (m1.width > 0 || m1.cal) && m1.agentLines === 0 && m1.hostAgentsEmpty && !m1.away && !m1.basis
+              && m2.agentLines >= 2 && m2.ref === 1 && m2.width > 0 && !m2.cal && /by agent/.test(m2.header) && m2.host === 'ins-trend-host-trend'
+              && m3.agentLines === 0 && m3.header === m1.header && m3.cal === m1.cal && (m3.width > 0) === (m1.width > 0),
             JSON.stringify({ m1: m1, m2: m2, m3: m3 }));
           if (!wasOpen) await page.evaluate(function () { document.getElementById('ins-trend-fold').open = false; });
           await page.waitForTimeout(300);
