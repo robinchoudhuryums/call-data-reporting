@@ -68,6 +68,14 @@ When something looks wrong, before assuming a code bug, check:
    without waiting), 5 min for the latest-date + freshness pill lookups
    (`CACHE_TTL_SECONDS`). A Dept Config or roster edit is NOT a freshness
    change, so it can lag the full 6 h on the report surfaces (D-4, open).
+   **A report that is slow on every load, not just the first, may be too
+   large to cache** (CacheService holds ~100 KB per value). The execution
+   log says so: Insights writes `[insights-cache] <dept> <window>: N bytes`
+   on every cache write and `InsightsReport cache put FAILED ... UNCACHED`
+   when one fails (MD4-S; at 90 KB it first sheds the per-agent daily
+   series, and By agent then offers Monthly only for that window); the
+   Overview warns from 80 KB (`CompanyOverview: cached blob is N bytes`) and
+   its YTD chart past 92,000 bytes (`overviewChartTrend: payload is N bytes`).
 5. Did the source-pipeline bugs (window inclusion / ATT denominator / leg
    attribution — see `known-issues.md`) get re-introduced? Spot-check Sonia
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.

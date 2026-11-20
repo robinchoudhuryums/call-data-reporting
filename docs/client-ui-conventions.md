@@ -84,9 +84,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   columns were already shared (INV-35). (CR's per-agent P1-vs-P2
   grouped bars briefly lived on as a third "vs Prior" cards-chart
   basis, RETIRED by owner note post-conversion -- the 3-way
-  sub-selector read as confusing; the remaining Gap-vs-team /
-  Absolute options render as two-line `seg-rich` choices, and a
-  saved 'prior' pref restores as 'gap'.) Deliberately NOT carried over:
+  sub-selector read as confusing. The whole basis selector is gone since
+  MD4: the Agents chart is Gap vs team only.) Deliberately NOT carried over:
   floater cards (Insights is roster-only, insights v15 -- floaters
   proved to be false positives in prod; IR still surfaces them).
   Legacy `#/report/compare` deep links land on Insights (page
@@ -140,8 +139,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   reference is exempt) and a point click drills into that agent's IR; the
   controls that belong to Team total hide (`insTrendScopeSync_`), and the
   switch itself hides when there are no agents to plot. The Agents fold
-  keeps ONLY the gap bars: its basis sub-toggle is hidden for everyone
-  (`insApplyCardsView_`; the admin A/B remote still reaches Gap / Abs). A
+  keeps ONLY the gap bars: its basis sub-toggle was hidden by MD3 and
+  DELETED by MD4 (F-c), with the Absolute renderer and the A/B Basis row. A
   prefs blob saved on the old Trend basis carries over as By agent with its
   metric (PURE `insTrendPrefsFrom_`). **Where the chart sits:**
   `#ins-trend-wrap` is ONE element whose home is the Trends fold
@@ -1702,9 +1701,9 @@ behind the removed button.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
-  the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
-  SAME page carries the Absolute information, so the section defaults to the
-  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap).
+  **Gap vs team** (M3 — since the M1 merge the agent table on the
+  SAME page carries the per-agent volumes, so the section shows the
+  one view the table can't).
   **R16g hid the Absolute option, MD3 moved Trend into the Trends chart as
   "By agent", and MD4 (F-c) DELETED the sub-toggle and the Absolute renderer**
   -- Gap is the one chart here. The metric selector dropped **Rung**
@@ -1931,7 +1930,7 @@ behind the removed button.
   + agent-free auto-run); both same-page hand-offs became in-page scrolls
   (`qsSpotlight_('dept-missed-section')` / scroll to the table,
   `handoffToMyDept_` kept as the not-rendered fallback); the Agents chart
-  defaults to Gap vs team with a saved `'abs'` self-heal; the fixed A/B
+  is Gap vs team (the only basis since MD4); the fixed A/B
   remote hides while the region is off-screen (IntersectionObserver →
   `.ins-ab-offscreen`). **M4 (shipped): the transition machinery is
   retired** — `handoffToInsights_`, the header-dates row + wiring, the
