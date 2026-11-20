@@ -666,8 +666,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `deltaBlock_` lives in Util.gs; legacy `#/report/performance` links land on
   the Insights region; the `performance:` cache prefix is an orphan and
   `cdr.pr.prefs.v1` is swept on boot (`sweepOrphanPrefs_`); the **Absolute**
-  chart basis (`insRenderCardsChartAbs_`) is hidden since R16g, renderer
-  inert. `PerformanceReport.gs` was deleted locally and must be removed in the
+  chart basis was hidden in R16g and DELETED in MD4. `PerformanceReport.gs` was deleted locally and must be removed in the
   web editor (INV-17). The frozen-literal test in insights-report.test.js pins
   the inherited semantics; the surface detail is in
   `docs/client-ui-conventions.md`.

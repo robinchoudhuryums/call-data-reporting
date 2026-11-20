@@ -749,9 +749,11 @@ test('P6: the client offers both metrics, formats seconds as m:ss and never mark
   const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
   const html = fs.readFileSync(path.join(dir, 'dashboard.html'), 'utf8');
   const s8 = fs.readFileSync(path.join(dir, 'script-8-insights.html'), 'utf8');
-  assert.match(html, /<option value="queues:avgAnswer">Queue: Avg answer time<\/option>\s*<option value="queues:longestWait">Queue: Longest wait<\/option>/);
+  // MD4: the two metrics are options of the Queue health chart's own select now.
+  assert.match(html, /id="ins-qh-chart-metric">[\s\S]*?<option value="avgAnswer">Avg answer time<\/option>\s*<option value="longestWait">Longest wait<\/option>/);
   assert.match(s8, /const INS_QUEUE_METRICS_ = \['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'\];/);
-  assert.match(s8, /insQueueMetric = INS_QUEUE_METRICS_\.indexOf\(v\.slice\(7\)\) !== -1 \? v\.slice\(7\) : 'abandonedPct';/, 'an unknown metric falls back');
+  assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(metric\) === -1 \|\| metric === insQueueMetric\) return;/, 'an unknown metric is refused');
+  assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(insQueueMetric\) === -1\) insQueueMetric = 'abandonedPct';/, 'and a bad stored one falls back');
   assert.match(s8, /if \(INS_QUEUE_METRICS_\.indexOf\(prefs\.queueMetric\) !== -1\) \{/, 'a saved choice restores');
   assert.match(s8, /!daily && !isPct && !isTime && \(labels \|\| \[\]\)\.length === teamMonths\.length/, 'an average or a maximum is not understated by a partial month');
   const grab = function (name) {

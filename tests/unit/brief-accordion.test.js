@@ -477,7 +477,9 @@ test('MD3: markup -- one chart, a host in each section, the switch, and no Trend
   assert.match(agents, /id="ins-trend-host-agents" class="ins-trend-host"><\/div>/, 'an EMPTY host: the chart starts at home');
   assert.ok(agents.indexOf('id="ins-trend-host-agents"') < agents.indexOf('Per-agent comparison'), 'above the gap bars');
   assert.ok(!/data-mode="trend"/.test(agents), 'the Trend basis button is gone');
-  assert.match(agents, /data-mode="gap"/, 'the gap bars stay');
+  // MD4 (F-c): ...and so is the rest of the basis sub-toggle; the gap chart stays.
+  assert.ok(!/id="ins-cards-chart-mode"/.test(HTML) && !/data-mode="(gap|abs)"/.test(HTML), 'no basis sub-toggle left');
+  assert.match(agents, /id="ins-cards-chart"/, 'the gap bars stay');
   const host = trends.indexOf('id="ins-trend-host-trend"');
   assert.ok(host > 0 && trends.indexOf('id="ins-trend-wrap"') > host, 'the chart\'s home is the Trends fold');
   assert.match(trends, /id="ins-trend-scope"[\s\S]*?data-scope="team"[^>]*>Team total<[\s\S]*?data-scope="agent"[^>]*>By agent</);
@@ -489,9 +491,11 @@ test('MD3: markup -- one chart, a host in each section, the switch, and no Trend
       'a hidden note in the ' + k + ' section offers the chart back');
   });
   assert.match(CSS, /\.ins-trend-host:empty \{ display: none; \}/);
-  // The basis sub-toggle is hidden for everyone; the A/B remote reaches the switch.
-  assert.match(extractFn(S8, 'insApplyCardsView_'), /if \(modeSeg\)\s+modeSeg\.style\.display = 'none';/);
-  assert.ok(!/data-ab-mode="trend"/.test(HTML), 'the remote has no Trend basis button');
+  // MD4 (F-c): the dead basis code is gone -- state, renderer, remote buttons, prefs field.
+  assert.ok(!/insCardsChartMode\b/.test(S8.replace(/\/\/[^\n]*/g, '')), 'no basis state');
+  assert.ok(!/insRenderCardsChartAbs_|insSyncCardsChartMode_/.test(S8), 'the Absolute renderer and the basis sync are deleted');
+  assert.ok(!/data-ab-mode/.test(HTML) && !/data-ab-mode/.test(S8), 'the remote has no Basis row');
+  assert.ok(!/cardsChartMode:/.test(extractFn(S8, 'insSavePrefs_')), 'the basis is no longer saved');
   assert.match(HTML, /data-ab-scope="team">Team<\/button>\s*<button type="button" data-ab-scope="agent">Agent</);
   assert.match(S8, /abForward\('ins-trend-scope', 'data-scope', sb\.getAttribute\('data-ab-scope'\)\)/);
   assert.ok(!/insRenderCardsChartTrend_/.test(S8), 'the old renderer is gone, not left as a second chart');

@@ -1492,7 +1492,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
                 ref: sets.filter(function (d) { return d._ref; }).length, scope: scope,
                 awayAgents: vis(document.getElementById('ins-trend-away-agents')), awayTrend: vis(document.getElementById('ins-trend-away-trend')),
                 monthly: vis(document.getElementById('ins-trend-view-toggle')), render: vis(document.getElementById('ins-trend-render-toggle')),
-                basis: vis(document.getElementById('ins-cards-chart-mode')),
+                basis: !!document.getElementById('ins-cards-chart-mode'),
                 gapAboveChart: !!(w && document.getElementById('ins-cards-chart')
                   && (w.compareDocumentPosition(document.getElementById('ins-cards-chart')) & Node.DOCUMENT_POSITION_FOLLOWING)),
               };
@@ -1622,7 +1622,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
               const sets = ch ? ch.data.datasets : [];
               return { host: (w && w.parentNode && w.parentNode.id) || '', width: ch ? ch.width : 0,
                 agentLines: sets.filter(function (d) { return d._agent; }).length, ref: sets.filter(function (d) { return d._ref; }).length,
-                sw: vis(document.getElementById('ins-trend-scope')), basis: vis(document.getElementById('ins-cards-chart-mode')),
+                sw: vis(document.getElementById('ins-trend-scope')), basis: !!document.getElementById('ins-cards-chart-mode'),
                 hostAgentsEmpty: !document.getElementById('ins-trend-host-agents').firstElementChild,
                 away: vis(document.getElementById('ins-trend-away-agents')) || vis(document.getElementById('ins-trend-away-trend')),
                 cal: vis(document.getElementById('ins-trend-calendar')),

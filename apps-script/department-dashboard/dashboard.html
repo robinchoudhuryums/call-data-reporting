@@ -1240,39 +1240,10 @@
             <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
             <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
           </div>
-          <!-- MD3: this sub-toggle is HIDDEN for every viewer (insApplyCardsView_)
-               -- its Trend basis moved into the Trends fold's chart as "By
-               agent", and Gap is the only visible basis left. The markup and
-               wiring stay so the admin A/B remote can still reach Gap / Abs.
-               Chart-view sub-toggle: Gap vs team (diverging bars, one
-               metric) / Absolute (PR's stacked Answered+Missed volumes + %
-               dots -- the Performance Report's Volume & Efficiency view).
-               The third "vs Prior" basis (Compare Ranges' grouped bars) was
-               RETIRED by owner note (3-way selector read as confusing; the
-               prior values live on in the card delta-badge hover tooltips).
-               seg-rich: two-line labels (title + hint) so the remaining two
-               options read as distinct CHOICES, not a cryptic toggle. The
-               metric selector applies to gap only; Absolute shows all
-               volumes at once. -->
-          <div class="segmented seg-rich" id="ins-cards-chart-mode" role="radiogroup"
-               aria-label="Chart comparison basis" style="display:none;">
-            <button type="button" class="seg-btn active" data-mode="gap" role="radio" aria-checked="true">
-              <span class="seg-title">Gap vs team</span>
-              <span class="seg-hint">who&#8217;s above / below the team average</span>
-            </button>
-            <!-- R16g (owner): the Absolute OPTION is HIDDEN -- since the M1
-                 merge the agent table at the top of the SAME page carries the
-                 per-agent answered/missed volumes, so this view restated it.
-                 The Round-16 removal convention: markup + wiring + renderer
-                 (insRenderCardsChartAbs_) stay inert, the saved-'abs' pref
-                 already self-heals to gap (M3), and the admin A/B remote can
-                 still reach it for live comparison. Un-hiding = drop the
-                 display:none. -->
-            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false" style="display:none;">
-              <span class="seg-title">Absolute</span>
-              <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
-            </button>
-          </div>
+          <!-- MD4 (F-c): the chart-view BASIS sub-toggle is REMOVED. Gap vs team
+               is the one chart here -- the per-agent Trend basis became the
+               Trends chart's "By agent" scope (MD3) and the Absolute basis
+               (hidden since R16g) was deleted with its renderer. -->
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>
             <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
@@ -1348,9 +1319,8 @@
               <div id="ins-qh-tiles" class="pr-kpi-row"></div>
               <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
             </div>
-          <!-- The per-queue abandoned-% trend chart now lives in the
-               consolidated trend chart below (its "Abandoned % by Queue"
-               tab); this section keeps the tiles + per-queue detail table. -->
+          <!-- MD4 (owner 2026-11-20): the per-queue trend chart is back in
+               this section, beside the table it belongs with (below). -->
           <!-- Phase 1 ds-* migration (see docs/design-update-plan.md):
                the per-queue detail table moved from .qcd-source-table to the
                shared .ds-table inside a .ds-card (the card supplies the
@@ -1363,13 +1333,54 @@
               <table class="ds-table">
                 <thead><tr>
                   <th>Queue</th>
-                  <th class="num">Total Calls</th>
+                  <!-- MD4: a header that has a trend is a real button that
+                       switches the chart beside the table to that metric
+                       (aria-pressed marks the one on the chart). "Abandoned"
+                       (the count) has no trend series, so it stays a label. -->
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="totalCalls" aria-pressed="false"
+                      title="Show total calls over time on the chart">Total Calls</button></th>
                   <th class="num">Abandoned</th>
-                  <th class="num">Abandoned %</th>
-                  <th class="num">Violations</th>
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="abandonedPct" aria-pressed="false"
+                      title="Show abandoned % over time on the chart">Abandoned %</button></th>
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="violations" aria-pressed="false"
+                      title="Show violations over time on the chart">Violations</button></th>
                 </tr></thead>
                 <tbody id="ins-qh-tbody"></tbody>
               </table>
+            </div>
+            <!-- MD4 (owner 2026-11-20): the queue trend chart, beside the
+                 table. One line per queue (+ the dept total when there are
+                 several). Hovering or focusing a table row highlights that
+                 queue's line. Hidden when the dept has no queue trend. -->
+            <div class="ds-card ins-qh-chart-card" id="ins-qh-chart-card" style="display:none;">
+              <div class="ins-qh-chart-head">
+                <div class="ir-chart-header" id="ins-qh-chart-title">Queue trend</div>
+                <div class="ins-qh-chart-ctl">
+                  <label class="ir-sort-control">
+                    <span class="ir-sort-label">Metric:</span>
+                    <select id="ins-qh-chart-metric">
+                      <option value="abandonedPct">Abandoned %</option>
+                      <option value="totalCalls">Total calls</option>
+                      <option value="violations">Violations</option>
+                      <option value="avgAnswer">Avg answer time</option>
+                      <option value="longestWait">Longest wait</option>
+                    </select>
+                  </label>
+                  <div class="segmented" id="ins-qh-chart-view" role="radiogroup" aria-label="Queue trend view">
+                    <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+                    <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+                    <button type="button" class="seg-btn" data-view="calendar" role="radio" aria-checked="false">Calendar</button>
+                  </div>
+                  <div class="ir-toggle-box" id="ins-qh-datalabels-box">
+                    <label class="ir-toggle-label">
+                      <input type="checkbox" id="ins-qh-show-datalabels"> Show data labels
+                    </label>
+                  </div>
+                  <button type="button" class="chart-help-btn" data-charthelp="insQh" aria-label="Chart tips" title="Chart tips">?</button>
+                </div>
+              </div>
+              <div class="ins-qh-canvas-wrap" id="ins-qh-canvas-wrap"><canvas id="ins-qh-chart" role="img" aria-label="Queue trend over time"></canvas></div>
+              <div id="ins-qh-calendar" class="ins-trend-calendar" style="display:none;"></div>
             </div>
           </div>
           <!-- Consolidation Phase 1 (gap 3): the per-day numeric table the QCD
@@ -1401,7 +1412,7 @@
               <div id="ins-qh-daily-legend" class="ans-tally-legend" style="display:none;"></div>
             </div>
           </details>
-          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart at the bottom of the report switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;Abd&nbsp;%&rdquo; tab&rsquo;s metric selector.</div>
+          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the chart beside the table shows each queue over time; its Metric menu, or the Total&nbsp;Calls / Abandoned&nbsp;% / Violations column headings, pick what is charted.</div>
         </div>
           </div>
         </details>
@@ -1521,8 +1532,8 @@
                   </select>
                 </label>
               </div>
-              <!-- R11-C3 consolidation: ONE metric dropdown (queue metrics ride
-                   the same list; Avg talk time is admin-only -- the option is
+              <!-- R11-C3 consolidation: ONE metric dropdown (Avg talk time is
+                   admin-only -- the option is
                    REMOVED for non-admins at init). R12-13: it lives IN the
                    toolbar row beside Monthly/Daily + Line/Calendar now (it
                    previously rendered as a detached centered row over the
@@ -1536,11 +1547,10 @@
                     <option value="missed">Missed</option>
                     <option value="volume">Call volume (rung)</option>
                     <option value="att" data-admin-metric="1">Avg talk time</option>
-                    <option value="queues:abandonedPct">Queue: Abandoned %</option>
-                    <option value="queues:totalCalls">Queue: Total calls</option>
-                    <option value="queues:violations">Queue: Violations</option>
-                    <option value="queues:avgAnswer">Queue: Avg answer time</option>
-                    <option value="queues:longestWait">Queue: Longest wait</option>
+                    <!-- MD4 (owner 2026-11-20): the five "Queue:" entries are
+                         GONE from here -- the per-queue trend is the Queue
+                         health section's own chart (#ins-qh-chart). Trends =
+                         people, Queue health = queues. -->
                   </select>
                 </label>
               </div>
@@ -1599,13 +1609,6 @@
           <div class="ins-ab-seg">
             <button type="button" data-ab-view="cards">Cards</button>
             <button type="button" data-ab-view="chart">Chart</button>
-          </div>
-        </div>
-        <div class="ins-ab-row" id="ins-ab-basis-row">
-          <span class="ins-ab-lbl">Basis</span>
-          <div class="ins-ab-seg">
-            <button type="button" data-ab-mode="gap">Gap</button>
-            <button type="button" data-ab-mode="abs">Abs</button>
           </div>
         </div>
         <div class="ins-ab-row">

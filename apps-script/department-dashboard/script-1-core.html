@@ -578,6 +578,10 @@
         if (typeof insRenderCardsChart_ === 'function' && visible('ins-cards-chart')) {
           insRenderCardsChart_();
         }
+        // MD4: the Queue health section's own trend chart (fold-gated inside).
+        if (typeof insDrawQhChart_ === 'function' && visible('ins-qh-chart-card')) {
+          insDrawQhChart_(insLastData);
+        }
       }
     } catch (e) { /* as above */ }
   }
