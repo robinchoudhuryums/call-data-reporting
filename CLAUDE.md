@@ -30,7 +30,7 @@ Open the entry before you rely on it — a summary cannot carry the exceptions.
 drift apart, and caps this file's size.
 
 - [`docs/invariants.md`](docs/invariants.md) — the **Invariant Library** in full
-  (`INV-01`…`INV-55`). Indexed under Cycle Workflow Config → Invariant Library.
+  (`INV-01`…`INV-75`). Indexed under Cycle Workflow Config → Invariant Library.
   This is what the INVARIANT CHECK step reads.
 - [`docs/operator-state.md`](docs/operator-state.md) — the **Operator State
   Checklist** in full (Script Properties, triggers, sheets, migrations).
@@ -122,8 +122,8 @@ bash scripts/check-duplicated-files.sh
 # H3 (ported from team-tools): the UNDECLARED-IDENTIFIER net. Lints each Apps
 # Script project as ONE concatenation -- the one global scope the platform
 # loads -- so a name that reads fine and throws ReferenceError at runtime is
-# caught statically (no selective-load suite or shape pin can see it; it
-# caught a live one in team-tools the week it landed). Needs eslint (`npm ci`,
+# caught statically (no selective-load suite or shape pin can see it). Needs
+# eslint (`npm ci`,
 # a devDependency -- `npm run ci` stays zero-dep); with eslint absent it SKIPS
 # and exits 0, EXCEPT under CI=true, where absence FAILS (the F-9 rule). Runs
 # in CI as the `lint` job. Its zero-dep twin, the duplicate-top-level-name pin
@@ -220,10 +220,9 @@ scripts/deploy.sh apps-script/cdr-import     # no id -- ditto (triggers/menus ru
 
 # Rendered-UI gate (F7). Boots the REAL client (dashboard.html + script.html
 # + styles.html) in headless Chromium against payloads computed by the REAL
-# server code -- the only automated check on ~20K lines of script.html, and
-# it has caught render bugs the .gs harness structurally cannot see (R12-1
-# blank missed-chart, R12-2 gray trend arrows). SEPARATE from `npm run ci`
-# on purpose: that suite is zero-dep, this needs playwright.
+# server code -- the only automated check on ~20K lines of script.html.
+# SEPARATE from `npm run ci` on purpose: that suite is zero-dep, this needs
+# playwright.
 npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # One-time: cd tools/ui-harness && npm init -y && npm i playwright@1.62.1
 # (the Chart.js / datalabels / html2canvas-pro bundles are COMMITTED under
@@ -243,9 +242,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # (F1), and the agent app's teammate-name privacy is asserted at the rendered
 # page by build-agent.js + drive-agent.js. drive.js / drive-insights.js /
 # drive-phase3.js emit screenshots for a human and are deliberately NOT in the
-# gate. Runs in CI as the `ui-harness` job and is BLOCKING since 2026-07: it
-# caught two production bugs nothing else could see (CSS appended after
-# `</style>` rendering as text; the header dept selector throwing). Re-run it
+# gate. Runs in CI as the `ui-harness` job and is BLOCKING. Re-run it
 # after touching script.html or any script-*.html fragment, styles.html,
 # dashboard.html, agent.html / agentApp.html, or any payload shape.
 ```
@@ -261,10 +258,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 >
 > **How to write one (this section is the file's main growth surface).**
 > CLAUDE.md is injected into EVERY session's context, so size is a real and
-> recurring cost: it hit 372 KB once and was split to 150 KB, grew back to
-> 178 KB in a week — ~77% of that regrowth EXISTING bullets accreting prose,
-> not new subjects — and stood at 97% of the 200 KB cap by the 2026-09-17 T-6
-> trim (`claude-md-split` now warns past 90%). Three habits keep it flat:
+> recurring cost (`claude-md-split` caps it at 200 KB and warns past 90%; the
+> regrowth history is under F8 / T-6 / C2 in fix-history). Three habits keep
+> it flat:
 >
 > 1. **One bullet states a RULE and the trap it prevents. The incident that
 >    taught it goes to `docs/fix-history.md` under its fix code**, with a
@@ -273,41 +269,31 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 >    learned it?* Measurements, eliminated hypotheses, "before the fix it
 >    did X", and commit archaeology are all the second kind.
 > 2. **Write the bullet ONCE, at the END of a phased rollout.** Amending the
->    same bullet per phase is what produced the biggest ones here — the
->    sub-queue and queue-split work alone added ~12 KB across six commits,
->    each a reasonable-looking paragraph.
+>    same bullet per phase is what produced the biggest ones here.
 > 3. **A rule enforced by a test needs one line, not three paragraphs** —
 >    name the test and let it carry the detail. A rule that CAN be enforced
 >    by a test usually should be: prose could not keep the "all DQE readers
 >    are cut over" claim true (B-2), and a tripwire could. **Corollary (C2):
 >    when a new convention is WRITTEN, answer "what enforces this?" in the
->    same commit and name the enforcement in the bullet.** Three holes found
->    in one audit were each a convention missing exactly that step: a third
->    duplication pair outside the INV-16 guard (F2), two cache prefixes in
->    the INV-30 docs but not in cache-version-sync's SPECS (F3b), and a
->    second read-source dimension with no B-2-style tripwire (F11). "None —
->    prose only" is an acceptable answer; an unanswered question is not.
+>    same commit and name the enforcement in the bullet.** "None — prose
+>    only" is an acceptable answer; an unanswered question is not.
 >    **What enforces C2 itself:** only its testable half. `claude-md-split`
 >    fails when this file names a test / script / driver / `docs/` file that
 >    does NOT exist — a doc advertising a guarantee that was renamed away is
 >    worse than one admitting a rule is prose-only. The other half ("does THIS
->    claim have a test?") is deliberately NOT mechanized: a bullet-level
->    "cites an enforcement" check was measured against F1/F2/F3 and would have
->    caught NONE — the gap is always one unenforced claim inside a bullet that
->    cites a test for a different one. Answering C2 stays a human step.
+>    claim have a test?") is deliberately NOT mechanized (a bullet-level check
+>    was measured and caught none of the known gaps -- C2 in fix-history).
+>    Answering C2 stays a human step.
 >
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
 > ratchet: every bullet stays under 4 KB (the once-grandfathered oversize five
 > have all been trimmed under it -- keep them there).
 >
 > **The 2026-09-18 pass added a fourth habit: when a bullet FAMILY describes
-> one subsystem, split the family, not the bullets.** The Neon mirror +
-> read-back layer was eight bullets and 18 KB of "how this is built", so it
-> became [`docs/neon-layer.md`](docs/neon-layer.md) with the two rules that
-> bite from outside it left inline; an index that re-tells its own doc gets
-> compressed to one-liners the same way (F8d in fix-history). Both moves are
-> cheaper than shaving prose from bullets already under budget, which is
-> where this section's remaining weight now sits.
+> one subsystem, split the family, not the bullets.** The Neon layer became
+> [`docs/neon-layer.md`](docs/neon-layer.md) that way, with the two rules that
+> bite from outside it left inline; an index that re-tells its own doc is
+> compressed to one-liners the same way (F8d in fix-history).
 
 - **Spreadsheet TZ ≠ script TZ**. The CDR Report spreadsheet is on
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
@@ -2227,6 +2213,26 @@ INV-52 | `CDR` / `Q Path` / `CSR Transfer` historical schemas -- written by cdr-
 INV-53 | Queue-only FLOATERS are excluded from every dept-level total and team average across all reports | Subsystem: Department Dashboard
 INV-54 | `Dept Config` schema + the sheet-overrides-constant accessor semantics; THREE cross-project consumers, one of them capture-time queue recognition | Subsystem: Department Dashboard
 INV-55 | Escalations is the FIRST public PER-DEPT (non-admin) write path -- INV-01's four mitigations with the admin gate swapped for a row-level dept gate | Subsystem: Department Dashboard
+INV-56 | Neon JDBC URLs carry NO connection properties; bound statements with `setQueryTimeout` instead | Subsystem: Department Dashboard + CDR Import + CDR Reporting Tools
+INV-57 | A CDR root is a leg TREE: internal-origin figures scope to the ORIGINATOR's legs | Subsystem: CDR Import
+INV-58 | A Neon-read surface with a sheet copy falls back through the SAME shaper, discloses `fallbackSource`, is never cached | Subsystem: Department Dashboard
+INV-59 | A hard Neon connect failure is memoized PER EXECUTION in a plain var, never in CacheService | Subsystem: Department Dashboard
+INV-60 | `Inbound Calls` export columns are APPEND-ONLY (readers address them by position) | Subsystem: CDR Reporting Tools + Department Dashboard
+INV-61 | Both callback sources (Neon and the sheet fallback) feed ONE episode engine; the sheet adapter mirrors the SQL clause by clause | Subsystem: Department Dashboard
+INV-62 | No caller hash or number leaves the server on a callback / direct-line path (the P11 reveal is the one number exception) | Subsystem: Department Dashboard
+INV-63 | A column ANOTHER project adds is read through `to_jsonb`; missing = NULL = unknown, never 0 or a misdial | Subsystem: Department Dashboard + CDR Import
+INV-64 | A misdial is a first ring STRICTLY under `OUTBOUND_BRIEF_RING_SEC_`; out of every rate; two mirrors equal it | Subsystem: Department Dashboard + CDR Import
+INV-65 | Every report window is clamped to its OWN source's latest data date at that report's run chokepoint | Subsystem: Department Dashboard
+INV-66 | A correction is never rendered in the error tone; a status element shared between tones restores its own | Subsystem: Department Dashboard
+INV-67 | A windowed read over a dated sheet is bounded by a min/max SPAN with the row filter kept; a tail scan needs a completeness check | Subsystem: Department Dashboard + CDR Import
+INV-68 | Daily Neon writers: inline size-packed literals, the bound insert as fallback, inline == bound pinned | Subsystem: CDR Import + CDR Reporting Tools
+INV-69 | A Neon retention floor must exceed the longest dashboard read window over that table | Subsystem: Department Dashboard
+INV-70 | A digest send waits for its window's data on the ACTIVE read source; one retry that replaces, never stacks | Subsystem: Department Dashboard
+INV-71 | The force-path date delete reads only the date column and removes contiguous blocks; it never rewrites a whole historical sheet | Subsystem: CDR Import
+INV-72 | A REMOVED escalation copy is read-only to every write verb | Subsystem: Department Dashboard
+INV-73 | A linked escalation group holds at most ONE copy per department, enforced by the verbs AND a partial unique index | Subsystem: Department Dashboard
+INV-74 | A linked group's thread is readable only through a copy the viewer can access -- live and in the offline snapshot | Subsystem: Department Dashboard
+INV-75 | ALL-manager dept email is opt-in; the admin copy is a separate [Copy] message, never a BCC | Subsystem: Department Dashboard + CDR Reporting Tools
 
 ### Policy Configuration
 Policy threshold: 6/10
