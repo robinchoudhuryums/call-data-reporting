@@ -46,7 +46,7 @@ If you're new to this codebase or chasing a bug, start with the docs:
 `CLAUDE.md` holds the rules you must follow when changing code. Six of its
 reference sections live in their own files (it got too big to read); **each is
 still LIVE TRUTH, and CLAUDE.md carries a one-line index for each entry** —
-[`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-55`),
+[`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-75`),
 [`docs/operator-state.md`](docs/operator-state.md) (the numbered operator
 checklist), [`docs/regression-scenarios.md`](docs/regression-scenarios.md)
 (`S1`…`S61`),
