@@ -22,3 +22,14 @@ node_modules/
 *.swo
 .idea/
 .vscode/
+
+# Audit reports saved by /broad-scan, /audit and /targeted-audit (their SAVE
+# REPORT step, claude-workflow-tools v1.56.0). They are written in full,
+# unfixed security findings included, and this repository is public, so they
+# stay out of git (owner decision 2026-11-23). A report therefore lives only
+# in the session that wrote it: a later session needs it pasted. Implement,
+# reflect and verification blocks are still committed.
+.cycle/blocks/*-scan.md
+.cycle/blocks/*-scan-[0-9]*.md
+.cycle/blocks/*-audit-*.md
+!.cycle/blocks/*-implement.md
