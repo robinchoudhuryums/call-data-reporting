@@ -323,14 +323,20 @@ async function qhPass(browser, role) {
     await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
     await page.waitForTimeout(300);
     const blur = await read();
+    await page.focus(label); await page.waitForTimeout(300);
+    const focAll = await read();
+    await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+    await page.waitForTimeout(300);
     const idx = hov.lines.indexOf(haveChips.queue);
     record(tag + 'QH2 hovering or focusing a violation date marks that day on its queue\'s line; the label marks every listed day; leaving clears it',
       !!hov.marks && hov.marks.points.length === 1 && hov.marks.datasetIndex === idx && idx >= 0
         && (base.length < 3 || hov.widths[idx] > base[idx])
         && !!all.marks && all.marks.points.length === haveChips.n
         && out.marks === null && String(out.widths) === String(base)
-        && !!foc.marks && foc.marks.points.length === 1 && blur.marks === null,
-      JSON.stringify({ chips: haveChips, hover: hov.marks, all: all.marks && all.marks.points.length, out: out.marks, focus: foc.marks, base: base, hovW: hov.widths }));
+        && !!foc.marks && foc.marks.points.length === 1 && blur.marks === null
+        && !!focAll.marks && focAll.marks.points.length === haveChips.n,
+      JSON.stringify({ chips: haveChips, hover: hov.marks, all: all.marks && all.marks.points.length, out: out.marks, focus: foc.marks,
+        focusLabel: focAll.marks && focAll.marks.points.length, base: base, hovW: hov.widths }));
 
     // Monthly: the month is marked, with how many violation days it holds.
     await viewBtn('monthly');

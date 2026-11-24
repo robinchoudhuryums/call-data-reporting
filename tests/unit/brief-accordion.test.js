@@ -663,7 +663,7 @@ test('QH2: hover AND focus drive the mark; a pin wins; the Calendar outlines the
     assert.match(S8, new RegExp("document\\.addEventListener\\('" + ev + "', function \\(e\\) \\{\\s*const v = qhViolTarget\\(e\\.target\\);"), ev + ' drives the mark');
   });
   assert.match(S8, /dates: chip \? \[chip\.getAttribute\('data-date'\) \|\| ''\] : \(label \? all : \[\]\) \};/, 'a chip marks one day, the label marks all, the gap between marks none');
-  assert.match(S8, /<strong class="ins-viol-label"/);
+  assert.match(S8, /<strong class="ins-viol-label" tabindex="0"/, 'the label is a tab stop: a keyboard reaches "mark them all" too');
   const mark = extractFn(S8, 'insQhMark_');
   assert.match(mark, /if \(ch\._spotlightStashed && !chartSpotlightHasPins_\(ch\)\) \{/, 'a pinned queue wins over the dimming');
   assert.match(mark, /c\.classList\.add\('is-viol-mark'\)/, 'the Calendar view outlines the day cell');

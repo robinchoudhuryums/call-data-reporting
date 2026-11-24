@@ -3685,9 +3685,11 @@
           // Drill: each date is a chip that jumps to (and flashes) that day's
           // row in the Daily breakdown table below (insJumpToDailyRow_).
           // QH2: hovering a chip marks that day on the chart above; hovering
-          // the label marks every day in the list (insQhMark_).
-          detail += '<div class="qcd-detail-viol"><strong class="ins-viol-label"'
-            + ' title="Hover to mark every one of these days on the chart">Violation dates:</strong> '
+          // the label marks every day in the list (insQhMark_). The label is
+          // a tab stop, so a keyboard reaches "mark them all" too (the F79
+          // rule: nothing explains itself to a mouse only).
+          detail += '<div class="qcd-detail-viol"><strong class="ins-viol-label" tabindex="0"'
+            + ' title="Hover or Tab here to mark every one of these days on the chart">Violation dates:</strong> '
             + q.violationDates.map(function (iso) {
                 // data-queue scopes the Daily breakdown to THIS queue's own
                 // per-day rows on click (sub-queue drill fix) -- without it

@@ -246,8 +246,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   240 px tall. Do not put them side by side again without measuring the
   table's `scrollWidth`. (QH2) A violation date MARKS its day on the chart:
   hover or keyboard focus on a `.ins-viol-date` chip marks that one day, and
-  hover on the `.ins-viol-label` marks every day in the list (`insQhMark_`,
-  delegated on the document like the row highlight). Daily = a ring on that
+  hover or focus on the `.ins-viol-label` (a tab stop, the F79 rule) marks
+  every day in the list (`insQhMark_`, delegated on the document like the
+  row highlight). Daily = a ring on that
   queue's point + a dashed guide; Monthly = the month's point with a note
   "N violation days" counted from the queue's whole list (the view never
   switches on hover); Calendar = `.is-viol-mark` outlines the day cells of the
