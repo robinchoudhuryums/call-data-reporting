@@ -740,6 +740,18 @@ test('QH4: with no view picked the window chooses -- Daily at 45 days or less, M
   assert.match(extractFn(S8, 'insRestorePrefs_'), /const qhSaved = insQhPickedFromPrefs_\(prefs\);\s*insQhChartView = qhSaved\.view;\s*insQhViewPicked = qhSaved\.picked;/);
 });
 
+test('FO-260-3: the queue chart\'s Daily axis prints "Oct 26"; the label under it stays an ISO date', function () {
+  const render = extractFn(S8, 'insRenderQhChart_');
+  assert.match(render, /const lbl = this\.getLabelForValue\(v\);\s*return daily \? isoDateShort_\(lbl\) : qPart\.tick\(lbl, i\);/,
+    'only the tick text is shortened; Monthly keeps its partial-month tick');
+  assert.match(render, /const labels   = daily \? qhTrend\.dailyLabels : qhTrend\.labels;/, 'the labels are still the dates themselves');
+  // The formatter it borrows: no year, no zero padding.
+  const short = new Function('return (' + extractFn(S9, 'isoDateShort_') + ');')();
+  assert.equal(short('2026-10-26'), 'Oct 26');
+  assert.equal(short('2026-11-03'), 'Nov 3');
+  assert.equal(short('Nov, 26'), 'Nov, 26', 'anything that is not a date passes through');
+});
+
 test('MD4 F-a: the agent card handlers are delegated on the document, so they work inside a brief row', function () {
   // #ins-brief sits OUTSIDE #insights-page: a listener on the page never saw
   // a click on a card the brief was holding, and the link did nothing.
