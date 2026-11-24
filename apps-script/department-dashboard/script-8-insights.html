@@ -5000,7 +5000,13 @@
         },
         scales: {
           x: { ticks: { maxRotation: 0, autoSkip: true,
-            callback: function (v, i) { return qPart.tick(this.getLabelForValue(v), i); } } },
+            // FO-260-3 (owner 2026-11-24): the Daily axis prints "Oct 26", not
+            // the raw date. Only the TICK text changes -- the label itself stays
+            // an ISO date, which the point drill and the violation marks read.
+            callback: function (v, i) {
+              const lbl = this.getLabelForValue(v);
+              return daily ? isoDateShort_(lbl) : qPart.tick(lbl, i);
+            } } },
           y: { beginAtZero: true, ticks: Object.assign(
             { callback: function (v) { return isPct ? (v + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); } },
             // P6: a time axis steps in clock-friendly amounts (0:30, 1:00, 5:00...).

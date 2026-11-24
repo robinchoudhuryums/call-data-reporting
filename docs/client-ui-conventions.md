@@ -276,7 +276,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   was chosen, so PURE `insQhPickedFromPrefs_` reads an old Monthly as "no
   choice" and an old Daily / Calendar as a choice. The view-button handler
   must not early-return on `next === insQhChartView` alone -- the view on
-  screen may be the automatic one. Pinned by `brief-accordion.test.js` (the
+  screen may be the automatic one. The Daily axis TICKS read "Oct 26"
+  (`isoDateShort_`, FO-260-3) while the labels under them stay ISO dates --
+  the point drill and the violation marks read the label, so shorten the
+  tick, never the label. Pinned by `brief-accordion.test.js` (the
   QH block) and `drive-smoke.js` (`qhPass`).
   **The two TIME metrics (P6) are
   SECONDS** in `queueHealth.trend.metrics.avgAnswer` / `.longestWait`, with

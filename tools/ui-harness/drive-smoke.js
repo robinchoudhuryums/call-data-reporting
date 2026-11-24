@@ -242,6 +242,8 @@ async function qhPass(browser, role) {
       title: (document.getElementById('ins-qh-chart-title') || {}).textContent || '',
       lines: ch ? ch.data.datasets.map((d) => d.label) : [],
       widths: ch ? ch.data.datasets.map((d) => d.borderWidth) : [],
+      xTicks: ch ? ch.scales.x.ticks.map((t) => String(t.label)) : [],
+      firstLabel: ch ? String(ch.data.labels[0]) : '',
       marks: ch ? (ch.$qhMarks || null) : null,
       calMarks: cal ? cal.querySelectorAll('.is-viol-mark').length : 0,
       fold: toggle ? toggle.textContent.trim() : '', foldOpen: toggle ? toggle.getAttribute('aria-expanded') : '',
@@ -270,6 +272,11 @@ async function qhPass(browser, role) {
   record(tag + 'QH4 with no view picked the window chooses: Monthly for a one-day window, Daily for Last 30 days',
     oneDay.view === 'monthly' && month.view === 'daily' && / · daily · /.test(month.title) && before.qhViewPicked !== true,
     JSON.stringify({ oneDay: oneDay.view, month: month.view, title: month.title, picked: before.qhViewPicked }));
+
+  // FO-260-3: the Daily axis says "Oct 26"; the label under it is still the date.
+  record(tag + 'FO-260-3 the queue chart\'s Daily axis prints short dates ("Oct 26") over ISO labels',
+    month.xTicks.length > 1 && month.xTicks.every((t) => /^[A-Z][a-z]{2} \d{1,2}$/.test(t)) && /^\d{4}-\d{2}-\d{2}$/.test(month.firstLabel),
+    JSON.stringify({ ticks: month.xTicks.slice(0, 4), firstLabel: month.firstLabel }));
 
   // QH1: stacked, full width, no sideways scroll.
   const full = (b) => !!(b && month.cols && b.w >= month.cols.w - 2);
