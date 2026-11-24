@@ -216,8 +216,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   series (Abandoned % / Total calls / Violations / Avg answer time / Longest
   wait; `INS_QUEUE_METRICS_`, state `insQueueMetric`, still saved as
   `queueMetric`) is the Queue health section's OWN chart
-  (`insRenderQhChart_` on `#ins-qh-chart`, beside the per-queue table in
-  `.ins-qh-cols`, drawn fold-gated and measure-guarded by `insDrawQhChart_`).
+  (`insRenderQhChart_` on `#ins-qh-chart`, ABOVE the per-queue table in
+  `.ins-qh-cols` since QH1, drawn fold-gated and measure-guarded by
+  `insDrawQhChart_`).
   Its metric comes from `#ins-qh-chart-metric` OR from the table's three
   column-heading BUTTONS (`.ins-qh-th-btn`, `aria-pressed` on the charted
   one, marked by underline as well as colour; the Abandoned count has no
@@ -238,6 +239,45 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `insQhHealFromPrefs_`): the Trend metric falls back to Answered, the
   healed prefs are saved, and Queue health opens on that metric. Pinned by
   `brief-accordion.test.js` (the MD4 block) and `drive-smoke.js`.
+  **QH1-QH4 (owner 2026-11-24) -- the chart and its table.** (QH1) The chart
+  card is STACKED above the table card and both are `flex: 1 1 100%`, at
+  every viewport: beside the two sticky side panels the pair shared ~1,000 px,
+  so the chart was cramped and the table scrolled sideways. The canvas is
+  240 px tall. Do not put them side by side again without measuring the
+  table's `scrollWidth`. (QH2) A violation date MARKS its day on the chart:
+  hover or keyboard focus on a `.ins-viol-date` chip marks that one day, and
+  hover or focus on the `.ins-viol-label` (a tab stop, the F79 rule) marks
+  every day in the list (`insQhMark_`, delegated on the document like the
+  row highlight). Daily = a ring on that
+  queue's point + a dashed guide; Monthly = the month's point with a note
+  "N violation days" counted from the queue's whole list (the view never
+  switches on hover); Calendar = `.is-viol-mark` outlines the day cells of the
+  month on screen. The marks are drawn by an inline chart plugin
+  (`INS_QH_MARK_PLUGIN_`, reads `chart.$qhMarks`), so they survive redraws and
+  take their colours from `THEME.*`; the x position comes from PURE
+  `insQhMarkPoints_` -- the daily labels ARE ISO dates, and the month keys are
+  read back from the axis labels themselves (`insTrendLabelToRange_`), so a
+  mark can only land where the axis shows that month. The other queues dim
+  through the row highlight's spotlight, and a pinned queue still wins. The
+  chip's click is unchanged (the Daily breakdown jump). (QH3) Queues with
+  ZERO calls in the selected period (PURE `insQhEmptyQueues_`; never all of
+  them) are built as usual, marked `.ins-qh-empty`, placed last, and hidden
+  behind ONE row (`.ins-qh-empty-head`, text from PURE `insQhEmptyLabel_`,
+  which NAMES them). Open / closed is the class `is-empty-open` on the tbody,
+  which survives a re-render; the hide rule is `!important` because a detail
+  row's own show / hide is an inline `display`. On the chart a queue is left
+  off only when it has no calls anywhere in the span ON SCREEN (PURE
+  `insQhChartQueues_`, judged on the Total calls series for that view), and
+  colours stay keyed to the full queue list. (QH4) Until someone clicks a
+  view, the WINDOW picks it: PURE `insQhAutoView_` -- Daily at 45 days or
+  less when a daily series exists, Monthly otherwise. A click sets
+  `insQhViewPicked` (saved as `qhViewPicked`) and wins from then on. Every
+  blob saved before QH4 carries `qhChartView: 'monthly'` whether or not it
+  was chosen, so PURE `insQhPickedFromPrefs_` reads an old Monthly as "no
+  choice" and an old Daily / Calendar as a choice. The view-button handler
+  must not early-return on `next === insQhChartView` alone -- the view on
+  screen may be the automatic one. Pinned by `brief-accordion.test.js` (the
+  QH block) and `drive-smoke.js` (`qhPass`).
   **The two TIME metrics (P6) are
   SECONDS** in `queueHealth.trend.metrics.avgAnswer` / `.longestWait`, with
   `null` where a day or month has none (a gap in the line, never a dip to

@@ -200,6 +200,177 @@ async function phonePass(browser, role) {
 // F47 (broad-scan 2026-10-14): a YTD chart range saved from an earlier visit
 // is FETCHED at boot -- it used to draw 90 days under a lit YTD button, and a
 // click on YTD did nothing because the range was already "selected".
+// QH1-QH4 (owner 2026-11-24), on a fresh page with no saved Insights prefs:
+//   QH4 -- nobody has picked a view, so the window picks it: Monthly for the
+//          one-day landing window, Daily for Last 30 days; a clicked view
+//          then wins and is saved as a choice.
+//   QH1 -- the chart is stacked above the table, both at the section's full
+//          width, and the table has no sideways scroll.
+//   QH3 -- queues with no calls this period sit behind one fold row that
+//          names them, and have no line on the chart.
+//   QH2 -- a violation date marks its day on the chart (hover and focus; the
+//          label marks them all), on Daily, Monthly and Calendar; a click
+//          still opens the Daily breakdown.
+async function qhPass(browser, role) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + String(e && e.message ? e.message : e)));
+  await page.addInitScript(() => {
+    localStorage.setItem('cdr.tour.done', '1');
+    localStorage.setItem('cdr.ins.intro.v1', '1');
+  });
+  await page.goto('file://' + path.join(__dirname, 'site', 'index-' + role + '.html'));
+  await page.waitForTimeout(2000);
+  await page.click('#my-dept-btn');
+  await page.waitForTimeout(3500);
+  await openInsSection(page, 'ins-qh-fold');
+  await page.waitForTimeout(1500);
+  const tag = role + ': ';
+  const read = () => page.evaluate(() => {
+    const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, w: b.width }; };
+    const c = document.getElementById('ins-qh-chart');
+    const ch = (c && window.Chart) ? Chart.getChart(c) : null;
+    const tc = document.querySelector('.ins-qh-table-card');
+    const tb = document.getElementById('ins-qh-tbody');
+    const cal = document.getElementById('ins-qh-calendar');
+    const toggle = document.querySelector('.ins-qh-empty-toggle');
+    const emptyRows = tb ? Array.from(tb.querySelectorAll('tr.ins-qh-row.ins-qh-empty')) : [];
+    return {
+      cols: box(document.querySelector('.ins-qh-cols')), chart: box(document.getElementById('ins-qh-chart-card')), table: box(tc),
+      scroll: tc ? [tc.scrollWidth, tc.clientWidth] : null,
+      view: ((document.querySelector('#ins-qh-chart-view .seg-btn.active') || {}).getAttribute || function () { return ''; }).call(document.querySelector('#ins-qh-chart-view .seg-btn.active') || document.body, 'data-view') || '',
+      title: (document.getElementById('ins-qh-chart-title') || {}).textContent || '',
+      lines: ch ? ch.data.datasets.map((d) => d.label) : [],
+      widths: ch ? ch.data.datasets.map((d) => d.borderWidth) : [],
+      marks: ch ? (ch.$qhMarks || null) : null,
+      calMarks: cal ? cal.querySelectorAll('.is-viol-mark').length : 0,
+      fold: toggle ? toggle.textContent.trim() : '', foldOpen: toggle ? toggle.getAttribute('aria-expanded') : '',
+      emptyNames: emptyRows.map((r) => r.getAttribute('data-queue')),
+      emptyShown: emptyRows.filter((r) => getComputedStyle(r).display !== 'none').length,
+      liveRows: tb ? tb.querySelectorAll('tr.ins-qh-row:not(.ins-qh-empty)').length : 0,
+      dailyOpen: !!(document.getElementById('ins-qh-daily') || {}).open,
+    };
+  });
+  const savedPrefs = () => page.evaluate(() => {
+    try { return JSON.parse(localStorage.getItem('cdr.ins.prefs.v2:' + ((window.__USER__ && window.__USER__.email) || '')) || '{}'); } catch (e) { return {}; }
+  });
+  const viewBtn = async (v) => {
+    await page.evaluate((x) => { const b = document.querySelector('#ins-qh-chart-view .seg-btn[data-view="' + x + '"]'); if (b && !b.disabled) b.click(); }, v);
+    await page.waitForTimeout(900);
+  };
+
+  // QH4: the landing window is one day -> no daily line -> Monthly.
+  const oneDay = await read();
+  await page.locator('#date-presets .date-preset-chip', { hasText: 'Last 30 days' }).click();
+  await page.waitForTimeout(3500);
+  await openInsSection(page, 'ins-qh-fold');
+  await page.waitForTimeout(1200);
+  const month = await read();
+  const before = await savedPrefs();
+  record(tag + 'QH4 with no view picked the window chooses: Monthly for a one-day window, Daily for Last 30 days',
+    oneDay.view === 'monthly' && month.view === 'daily' && / · daily · /.test(month.title) && before.qhViewPicked !== true,
+    JSON.stringify({ oneDay: oneDay.view, month: month.view, title: month.title, picked: before.qhViewPicked }));
+
+  // QH1: stacked, full width, no sideways scroll.
+  const full = (b) => !!(b && month.cols && b.w >= month.cols.w - 2);
+  record(tag + 'QH1 the queue chart sits above its table, both at the section\'s full width, and the table does not scroll sideways',
+    !!month.chart && !!month.table && month.chart.bottom <= month.table.top + 1 && full(month.chart) && full(month.table)
+      && month.scroll[0] <= month.scroll[1] + 1,
+    JSON.stringify({ cols: month.cols, chart: month.chart, table: month.table, scroll: month.scroll }));
+
+  // QH3: the fold row, and no line for a queue with no calls in the span.
+  await page.evaluate(() => { const t = document.querySelector('.ins-qh-empty-toggle'); if (t) t.click(); });
+  await page.waitForTimeout(300);
+  const opened = await read();
+  await page.evaluate(() => { const t = document.querySelector('.ins-qh-empty-toggle'); if (t) t.click(); });
+  await page.waitForTimeout(300);
+  const closed = await read();
+  const n = month.emptyNames.length;
+  record(tag + 'QH3 queues with no calls this period sit behind one row that names them, open on a click, and have no line on the chart',
+    n > 0 && month.liveRows > 0 && month.emptyShown === 0 && month.foldOpen === 'false'
+      && new RegExp('^' + n + ' queues? with no calls this period: ').test(month.fold)
+      && month.emptyNames.slice(0, 3).every((q) => month.fold.indexOf(q) !== -1)
+      && month.emptyNames.every((q) => month.lines.indexOf(q) === -1)
+      && opened.emptyShown === n && opened.foldOpen === 'true' && closed.emptyShown === 0 && closed.foldOpen === 'false',
+    JSON.stringify({ fold: month.fold, empty: month.emptyNames, lines: month.lines, opened: opened.emptyShown, closed: closed.emptyShown }));
+
+  // QH2: a violation date marks its day. Open the first queue that has dates.
+  const haveChips = await page.evaluate(() => {
+    const chip = document.querySelector('#ins-qh-tbody tr:not(.ins-qh-empty) .ins-viol-date');
+    if (!chip) return null;
+    const detail = chip.closest('tr.qcd-detail-row');
+    const row = detail ? detail.previousElementSibling : null;
+    const t = row ? row.querySelector('.qcd-expand-toggle') : null;
+    if (t && t.getAttribute('aria-expanded') !== 'true') t.click();
+    const box = chip.closest('.qcd-detail-viol');
+    return { queue: chip.getAttribute('data-queue'), n: box.querySelectorAll('.ins-viol-date').length };
+  });
+  await page.waitForTimeout(400);
+  if (!haveChips) {
+    record(tag + 'QH2 a violation date marks its day on the queue chart', false, 'the fixture has no violation dates in this window');
+  } else {
+    const chip = '#ins-qh-tbody tr:not(.ins-qh-empty) .ins-viol-date';
+    const label = '#ins-qh-tbody tr:not(.ins-qh-empty) .ins-viol-label';
+    const base = (await read()).widths;
+    await page.hover(chip); await page.waitForTimeout(300);
+    const hov = await read();
+    await page.hover(label); await page.waitForTimeout(300);
+    const all = await read();
+    await page.mouse.move(4, 4); await page.waitForTimeout(300);
+    const out = await read();
+    await page.focus(chip); await page.waitForTimeout(300);
+    const foc = await read();
+    await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+    await page.waitForTimeout(300);
+    const blur = await read();
+    await page.focus(label); await page.waitForTimeout(300);
+    const focAll = await read();
+    await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+    await page.waitForTimeout(300);
+    const idx = hov.lines.indexOf(haveChips.queue);
+    record(tag + 'QH2 hovering or focusing a violation date marks that day on its queue\'s line; the label marks every listed day; leaving clears it',
+      !!hov.marks && hov.marks.points.length === 1 && hov.marks.datasetIndex === idx && idx >= 0
+        && (base.length < 3 || hov.widths[idx] > base[idx])
+        && !!all.marks && all.marks.points.length === haveChips.n
+        && out.marks === null && String(out.widths) === String(base)
+        && !!foc.marks && foc.marks.points.length === 1 && blur.marks === null
+        && !!focAll.marks && focAll.marks.points.length === haveChips.n,
+      JSON.stringify({ chips: haveChips, hover: hov.marks, all: all.marks && all.marks.points.length, out: out.marks, focus: foc.marks,
+        focusLabel: focAll.marks && focAll.marks.points.length, base: base, hovW: hov.widths }));
+
+    // Monthly: the month is marked, with how many violation days it holds.
+    await viewBtn('monthly');
+    const picked = await savedPrefs();
+    await page.hover(label); await page.waitForTimeout(300);
+    const mon = await read();
+    await page.mouse.move(4, 4); await page.waitForTimeout(200);
+    const monTotal = mon.marks ? mon.marks.points.reduce((a, p) => a + p.count, 0) : 0;
+    record(tag + 'QH2 on Monthly a violation date marks its month and says how many violation days the month holds; QH4 the clicked view is saved as a choice',
+      mon.view === 'monthly' && !!mon.marks && mon.marks.points.length >= 1 && monTotal === haveChips.n
+        && mon.marks.points.every((p) => /^\d+ violation days?$/.test(p.note || ''))
+        && picked.qhViewPicked === true && picked.qhChartView === 'monthly',
+      JSON.stringify({ marks: mon.marks, want: haveChips.n, saved: [picked.qhChartView, picked.qhViewPicked] }));
+
+    // Calendar: the day cells are outlined (only days on the month shown).
+    await viewBtn('calendar');
+    await page.hover(label); await page.waitForTimeout(300);
+    const cal = await read();
+    await page.mouse.move(4, 4); await page.waitForTimeout(200);
+    const calOut = await read();
+    record(tag + 'QH2 on the Calendar the violation days are outlined, and cleared on leaving',
+      cal.view !== 'calendar' || (cal.calMarks >= 1 && cal.calMarks <= haveChips.n && calOut.calMarks === 0),
+      JSON.stringify({ view: cal.view, marked: cal.calMarks, after: calOut.calMarks }));
+
+    // The click is still the jump to the Daily breakdown.
+    await page.click(chip);
+    await page.waitForTimeout(500);
+    const jumped = await read();
+    record(tag + 'QH2 clicking a violation date still opens that day in the Daily breakdown', jumped.dailyOpen, JSON.stringify({ dailyOpen: jumped.dailyOpen }));
+  }
+  record(tag + 'QH the Queue health pass raised no page error', errors.length === 0, errors.join(' | '));
+  await page.close();
+}
+
 // MD4 follow-ons (owner 2026-11-20), on a fresh page so the main walk's state
 // is untouched:
 //   F-a -- an agent card's "open Individual Report" link works when the brief
@@ -1248,7 +1419,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
       await qhMetric('abandonedPct');
       await qhView('monthly');
       const q0 = await qhRead();
-      record(role + ': MD4 Queue health has its own trend chart beside the table (one line per queue), and the Trend dropdown has no "Queue:" entries',
+      record(role + ': MD4 Queue health has its own trend chart with the table (one line per queue), and the Trend dropdown has no "Queue:" entries',
         q0.card && q0.drawn && q0.sets >= 2 && q0.hasValues && /^Abandoned % by queue/.test(q0.title) && q0.pressed === 'abandonedPct'
           && !/queues:/.test(q0.trendOpts) && /^answered,pct,missed,volume/.test(q0.trendOpts) && /by queue/.test(q0.label),
         JSON.stringify(q0));
@@ -1908,6 +2079,7 @@ const ROLES = ROLE_ARG ? [ROLE_ARG] : ALL_ROLES;
     await historyPass(browser, role); // CL-23
     await ytdBootPass(browser, role); // F47
     await md4Pass(browser, role); // MD4: F-a, F-b, the prefs heal
+    await qhPass(browser, role);  // QH1-QH4: the stacked queue chart, violation marks, the fold row, the default view
     await ovDefaultPinsPass(browser, role); // Step 2 #6
     await deepLinkPass(browser, role);      // CCX-2 / CCX-8
   }

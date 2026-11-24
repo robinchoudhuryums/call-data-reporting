@@ -1319,37 +1319,11 @@
               <div id="ins-qh-tiles" class="pr-kpi-row"></div>
               <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
             </div>
-          <!-- MD4 (owner 2026-11-20): the per-queue trend chart is back in
-               this section, beside the table it belongs with (below). -->
-          <!-- Phase 1 ds-* migration (see docs/design-update-plan.md):
-               the per-queue detail table moved from .qcd-source-table to the
-               shared .ds-table inside a .ds-card (the card supplies the
-               border/radius/elevation chrome ds-table intentionally omits).
-               Contained to this one Insights table; QCD's own .qcd-source-table
-               instances are untouched. The .num / .qcd-warn-* classes the JS
-               row builder emits stay harmless: ds-table right-aligns every
-               cell except the first, and the warn classes are color-only. -->
-            <div class="ds-card ins-qh-table-card" style="overflow:auto;">
-              <table class="ds-table">
-                <thead><tr>
-                  <th>Queue</th>
-                  <!-- MD4: a header that has a trend is a real button that
-                       switches the chart beside the table to that metric
-                       (aria-pressed marks the one on the chart). "Abandoned"
-                       (the count) has no trend series, so it stays a label. -->
-                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="totalCalls" aria-pressed="false"
-                      title="Show total calls over time on the chart">Total Calls</button></th>
-                  <th class="num">Abandoned</th>
-                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="abandonedPct" aria-pressed="false"
-                      title="Show abandoned % over time on the chart">Abandoned %</button></th>
-                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="violations" aria-pressed="false"
-                      title="Show violations over time on the chart">Violations</button></th>
-                </tr></thead>
-                <tbody id="ins-qh-tbody"></tbody>
-              </table>
-            </div>
-            <!-- MD4 (owner 2026-11-20): the queue trend chart, beside the
-                 table. One line per queue (+ the dept total when there are
+            <!-- MD4 (owner 2026-11-20): the queue trend chart belongs to this
+                 section. QH1 (owner 2026-11-24): it sits ABOVE the table and
+                 both take the full width -- side by side, beside the two
+                 sticky panels, the chart was cramped and the table scrolled
+                 sideways. One line per queue (+ the dept total when there are
                  several). Hovering or focusing a table row highlights that
                  queue's line. Hidden when the dept has no queue trend. -->
             <div class="ds-card ins-qh-chart-card" id="ins-qh-chart-card" style="display:none;">
@@ -1382,6 +1356,33 @@
               <div class="ins-qh-canvas-wrap" id="ins-qh-canvas-wrap"><canvas id="ins-qh-chart" role="img" aria-label="Queue trend over time"></canvas></div>
               <div id="ins-qh-calendar" class="ins-trend-calendar" style="display:none;"></div>
             </div>
+          <!-- Phase 1 ds-* migration (see docs/design-update-plan.md):
+               the per-queue detail table moved from .qcd-source-table to the
+               shared .ds-table inside a .ds-card (the card supplies the
+               border/radius/elevation chrome ds-table intentionally omits).
+               Contained to this one Insights table; QCD's own .qcd-source-table
+               instances are untouched. The .num / .qcd-warn-* classes the JS
+               row builder emits stay harmless: ds-table right-aligns every
+               cell except the first, and the warn classes are color-only. -->
+            <div class="ds-card ins-qh-table-card" style="overflow:auto;">
+              <table class="ds-table">
+                <thead><tr>
+                  <th>Queue</th>
+                  <!-- MD4: a header that has a trend is a real button that
+                       switches the chart above the table to that metric
+                       (aria-pressed marks the one on the chart). "Abandoned"
+                       (the count) has no trend series, so it stays a label. -->
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="totalCalls" aria-pressed="false"
+                      title="Show total calls over time on the chart">Total Calls</button></th>
+                  <th class="num">Abandoned</th>
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="abandonedPct" aria-pressed="false"
+                      title="Show abandoned % over time on the chart">Abandoned %</button></th>
+                  <th class="num"><button type="button" class="ins-qh-th-btn" data-qh-metric="violations" aria-pressed="false"
+                      title="Show violations over time on the chart">Violations</button></th>
+                </tr></thead>
+                <tbody id="ins-qh-tbody"></tbody>
+              </table>
+            </div>
           </div>
           <!-- Consolidation Phase 1 (gap 3): the per-day numeric table the QCD
                modal shows, collapsed by default to keep the section compact.
@@ -1412,7 +1413,7 @@
               <div id="ins-qh-daily-legend" class="ans-tally-legend" style="display:none;"></div>
             </div>
           </details>
-          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the chart beside the table shows each queue over time; its Metric menu, or the Total&nbsp;Calls / Abandoned&nbsp;% / Violations column headings, pick what is charted.</div>
+          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the chart above the table shows each queue over time; its Metric menu, or the Total&nbsp;Calls / Abandoned&nbsp;% / Violations column headings, pick what is charted. Hover a violation date to mark that day on the chart.</div>
         </div>
           </div>
         </details>
@@ -1945,7 +1946,7 @@
           </section>
           <section class="help-topic" id="help-topic-qcd" hidden>
             <h3>QCD (Queue Call Data)</h3>
-            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 4%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the section&rsquo;s own trend chart, beside the table, shows one line per queue plus a dept total (hover a queue&rsquo;s row to highlight its line; the Total Calls, Abandoned % and Violations headings switch what is charted), and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 4% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
+            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 4%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the section&rsquo;s own trend chart, above the table, shows one line per queue plus a dept total (hover a queue&rsquo;s row to highlight its line, or a violation date to mark that day; the Total Calls, Abandoned % and Violations headings switch what is charted; it opens day by day for a window of 45 days or less and month by month for a longer one, until you pick a view), queues with no calls in the period fold into one row, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 4% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
           </section>
           <section class="help-topic" id="help-topic-inbound" hidden>
             <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>

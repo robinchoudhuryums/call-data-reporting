@@ -47,6 +47,10 @@ bite-checking a manager assertion, rebuild the manager site AFTER the mutation.
   moving between the brief's Team and Trend rows; Queue health's own chart
   -- row hover / focus, column-heading buttons, calendar -- and a fresh-page
   pass for the prefs self-heal, By agent Daily and the card link in a brief row)
+  (QH1–QH4, 2026-11-24, a fresh-page `qhPass`: the queue chart stacked above
+  its table at full width with no sideways scroll; the default view following
+  the window; the "no calls this period" fold row; violation dates marking the
+  chart on Daily, Monthly and Calendar)
   (CCX-2 / CCX-8: three deep-link boots per role -- an Insights link, a
   department link and one with mangled dates -- asserting no request is sent
   twice, one report runs for the linked window, and the provisional window
