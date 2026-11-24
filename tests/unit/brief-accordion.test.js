@@ -566,7 +566,9 @@ test('MD4: the Trend dropdown has no "Queue:" entries; the Queue health chart of
   assert.deepEqual((qhSel.match(/<option value="([^"]+)"/g) || []).map(function (o) { return o.replace(/.*="|"/g, ''); }),
     ['abandonedPct', 'totalCalls', 'violations', 'avgAnswer', 'longestWait'], 'Queue health = queues');
   const qh = HTML.slice(HTML.indexOf('<details id="ins-qh-fold"'), HTML.indexOf('<details id="ins-qh-daily"'));
-  assert.ok(qh.indexOf('id="ins-qh-chart"') > qh.indexOf('id="ins-qh-tbody"'), 'the chart sits in the section, after the table, inside .ins-qh-cols');
+  // QH1 (owner 2026-11-24): the chart sits ABOVE the table, inside .ins-qh-cols.
+  assert.ok(qh.indexOf('id="ins-qh-chart"') > qh.indexOf('class="ins-qh-cols"')
+    && qh.indexOf('id="ins-qh-chart"') < qh.indexOf('id="ins-qh-tbody"'), 'the chart sits in the section, above the table, inside .ins-qh-cols');
   assert.match(qh, /<canvas id="ins-qh-chart" role="img" aria-label="[^"]+">/, 'a named chart');
   assert.match(extractFn(S8, 'insRenderQhChart_'), /insQhChartInstance = safeChart_\(/, 'through safeChart_ like every chart');
   assert.ok(!/isQueues/.test(extractFn(S8, 'insRenderTrendChart_')) && !/insActiveTrendMetric === 'queues'/.test(S8),
@@ -582,7 +584,7 @@ test('MD4: three column headers are real buttons that pick the metric; a row is 
   assert.match(head, /<th class="num">Abandoned<\/th>/, 'the Abandoned COUNT has no trend series, so it stays a plain heading');
   assert.match(extractFn(S8, 'insQhHeadersSync_'), /b\.setAttribute\('aria-pressed', \(has && b\.getAttribute\('data-qh-metric'\) === insQueueMetric\) \? 'true' : 'false'\);/);
   assert.match(CSS, /\.ins-qh-th-btn\[aria-pressed="true"\] \{[^}]*text-decoration: underline solid/, 'the pressed header is marked by more than colour');
-  assert.match(S8, /'<tr class="ins-qh-row qcd-expandable" data-queue="' \+ escapeHtml\(q\.queue\) \+ '">'/);
+  assert.match(S8, /'<tr class="ins-qh-row qcd-expandable' \+ emptyCls \+ '" data-queue="' \+ escapeHtml\(q\.queue\) \+ '">'/);
   // Hover AND focus, delegated on the document (the section may sit inside #ins-brief).
   ['mouseover', 'mouseout', 'focusin', 'focusout'].forEach(function (ev) {
     assert.match(S8, new RegExp("document\\.addEventListener\\('" + ev + "', function \\(e\\) \\{[\\s\\S]{0,60}qhRowQueue"), ev + ' drives the highlight');
@@ -623,6 +625,119 @@ test('MD4: a prefs blob saved on a "Queue:" Trend entry self-heals once into the
   // ...and the landing saves the healed prefs before opening the section, so it happens once.
   assert.match(S8, /if \(insQhHealPending_\) \{\s*insQhHealPending_ = false;\s*insSavePrefs_\(\);[\s\S]{0,160}insOpenSection_\('ins-qh-fold', true\);/);
   assert.match(extractFn(S8, 'insSavePrefs_'), /qhChartView: insQhChartView,[\s\S]*?qhShowLabels: insQhShowLabels,/);
+});
+
+// ── QH1-QH4 (owner 2026-11-24): the Queue health chart and its table ─────────
+// The owner's screenshot: beside the two sticky panels the chart and the table
+// shared ~1,000 px, so the chart was cramped and the table scrolled sideways.
+// QH1 stacks them; QH2 lets a violation date mark its day on the chart; QH3
+// folds queues with no calls; QH4 opens the chart on the view that fits the
+// window. Rendered by drive-smoke.
+
+test('QH1: the chart is stacked above the table and both take the full width', function () {
+  assert.ok(HTML.indexOf('<div class="ds-card ins-qh-chart-card"') < HTML.indexOf('<div class="ds-card ins-qh-table-card"'), 'chart card first');
+  assert.match(CSS, /\.ins-qh-cols > \.ins-qh-table-card \{ flex: 1 1 100%; min-width: min\(340px, 100%\); margin: 0; \}/);
+  assert.match(CSS, /\.ins-qh-cols > \.ins-qh-chart-card \{ flex: 1 1 100%; min-width: min\(340px, 100%\); margin: 0; padding: 12px 14px; \}/);
+  assert.match(CSS, /\.ins-qh-chart-card \.ins-qh-canvas-wrap \{ height: 240px; \}/, 'wide and short');
+  // The words a reader sees say where the chart is.
+  assert.ok(!/chart beside the table|trend chart, beside the table/.test(HTML), 'no "beside the table" left in the page text');
+});
+
+test('QH2: a violation date lands on the right point -- the exact day on Daily, its month (with a day count) on Monthly', function () {
+  const pts = lift('insQhMarkPoints_');
+  const days = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05'];
+  assert.deepEqual(pts(['2026-11-04'], true, days, [], []), [{ index: 2, count: 1 }]);
+  assert.deepEqual(pts(['2026-11-05', '2026-11-02'], true, days, [], []), [{ index: 0, count: 1 }, { index: 3, count: 1 }], 'sorted by x');
+  assert.deepEqual(pts(['2026-10-30'], true, days, [], []), [], 'a date the axis does not carry is dropped, never guessed');
+  const months = ['2026-09', '2026-10', '2026-11'];
+  const all = ['2026-10-30', '2026-11-02', '2026-11-03', '2026-11-04'];
+  assert.deepEqual(pts(['2026-11-03'], false, [], months, all), [{ index: 2, count: 3 }], 'one chip: its month, counted from the whole list');
+  assert.deepEqual(pts(all, false, [], months, all), [{ index: 1, count: 1 }, { index: 2, count: 3 }], 'the label: every month that holds one');
+  assert.deepEqual(pts(['2026-11-03'], false, [], [], all), [], 'no month keys -> no Monthly mark');
+  assert.deepEqual(pts([], true, days, months, all), []);
+});
+
+test('QH2: hover AND focus drive the mark; a pin wins; the Calendar outlines the day; a click still jumps', function () {
+  // Delegated on the document (the section may sit inside #ins-brief).
+  ['mouseover', 'mouseout', 'focusin', 'focusout'].forEach(function (ev) {
+    assert.match(S8, new RegExp("document\\.addEventListener\\('" + ev + "', function \\(e\\) \\{\\s*const v = qhViolTarget\\(e\\.target\\);"), ev + ' drives the mark');
+  });
+  assert.match(S8, /dates: chip \? \[chip\.getAttribute\('data-date'\) \|\| ''\] : \(label \? all : \[\]\) \};/, 'a chip marks one day, the label marks all, the gap between marks none');
+  assert.match(S8, /<strong class="ins-viol-label"/);
+  const mark = extractFn(S8, 'insQhMark_');
+  assert.match(mark, /if \(ch\._spotlightStashed && !chartSpotlightHasPins_\(ch\)\) \{/, 'a pinned queue wins over the dimming');
+  assert.match(mark, /c\.classList\.add\('is-viol-mark'\)/, 'the Calendar view outlines the day cell');
+  assert.match(mark, /if \(!st\.daily\) \{\s*points\.forEach\(function \(p\) \{ p\.note = p\.count \+ \(p\.count === 1 \? ' violation day' : ' violation days'\); \}\);/);
+  assert.match(CSS, /\.ins-cal-cell\.is-viol-mark \{ outline: 3px solid var\(--warn\)/, 'an outline, not only a colour');
+  const render = extractFn(S8, 'insRenderQhChart_');
+  assert.match(render, /plugins: \[INS_QH_MARK_PLUGIN_\],/, 'the marks are drawn by the chart, so they survive its redraws');
+  assert.match(render, /monthKeys: daily \? \[\] : \(labels \|\| \[\]\)\.map\(function \(l\) \{\s*const r = insTrendLabelToRange_\(l, false\);\s*return r \? r\.from\.slice\(0, 7\) : '';/,
+    'the month keys are read back from the axis labels themselves, so a mark can only land on the month shown');
+  // The plugin reads colours from THEME (canvas-safe), never a raw CSS token.
+  const plug = S8.slice(S8.indexOf('var INS_QH_MARK_PLUGIN_ = {'), S8.indexOf('function insQhMark_('));
+  assert.ok(/THEME\.muted/.test(plug) && /THEME\.warn/.test(plug) && !/getPropertyValue|var\(--/.test(plug));
+  // The chip's click is the jump it always was.
+  assert.match(S8, /var chip = e\.target\.closest\('\.ins-viol-date'\);\s*if \(chip && tbody\.contains\(chip\)\) \{/);
+});
+
+test('QH3: queues with no calls this period fold into one row that names them; never all of them', function () {
+  const empty = lift('insQhEmptyQueues_');
+  const rows = [{ queue: 'A', totalCalls: 5154 }, { queue: 'B', totalCalls: 0 }, { queue: 'C' }, { queue: 'D', totalCalls: 194 }];
+  assert.deepEqual(empty(rows), ['B', 'C']);
+  assert.deepEqual(empty([{ queue: 'A', totalCalls: 3 }]), [], 'nothing empty, nothing folded');
+  assert.deepEqual(empty([{ queue: 'A', totalCalls: 0 }, { queue: 'B', totalCalls: 0 }]), [], 'every queue empty: show them, a lone fold row explains nothing');
+  assert.deepEqual(empty([]), []);
+  const label = lift('insQhEmptyLabel_');
+  assert.equal(label(['A_Q_Intake', 'Backup CSR']), '2 queues with no calls this period: A_Q_Intake, Backup CSR');
+  assert.equal(label(['A_Q_Intake']), '1 queue with no calls this period: A_Q_Intake');
+  assert.equal(label(['a', 'b', 'c', 'd', 'e']), '5 queues with no calls this period: a, b, c and 2 more');
+  // The rows are still built (the fold shows them) and the open state rides the tbody.
+  assert.match(S8, /tbody\.innerHTML = qhLiveHtml\.join\(''\) \+ qhFoldRow \+ qhEmptyHtml\.join\(''\);/);
+  assert.match(S8, /'<tr class="qcd-detail-row' \+ emptyCls \+ '" style="display:none;">/, 'the detail row folds with its queue');
+  assert.match(S8, /class="ins-qh-empty-toggle" aria-expanded="' \+ \(emptyOpen \? 'true' : 'false'\) \+ '"/);
+  assert.match(S8, /tbody\.classList\.toggle\('is-empty-open', nowOpen\);\s*emptyToggle\.setAttribute\('aria-expanded', nowOpen \? 'true' : 'false'\);/);
+  assert.match(CSS, /#ins-qh-tbody:not\(\.is-empty-open\) > tr\.ins-qh-empty \{ display: none !important; \}/);
+});
+
+test('QH3: a queue leaves the chart only when it has no calls anywhere in the span on screen', function () {
+  const live = lift('insQhChartQueues_');
+  const calls = { A: [10, 12, 9], B: [0, 0, 0], C: [0, 4, 0], D: [null, null, null] };
+  assert.deepEqual(live(['A', 'B', 'C', 'D'], calls), ['A', 'C'], 'empty this month but live earlier keeps its line');
+  assert.deepEqual(live(['A', 'B'], null), ['A', 'B'], 'no call series to judge by: draw them all');
+  assert.deepEqual(live(['A', 'E'], calls), ['A', 'E'], 'a queue with no series of its own is kept');
+  assert.deepEqual(live(['B', 'D'], calls), ['B', 'D'], 'every queue empty: an empty chart explains nothing');
+  const render = extractFn(S8, 'insRenderQhChart_');
+  assert.match(render, /qCallsSrc \? \(daily \? qCallsSrc\.dailyPerQueue : qCallsSrc\.perQueue\) : null\);/, 'judged on the span the view shows');
+  assert.match(render, /IR_CHART_COLORS\[qAllNames\.indexOf\(q\) % IR_CHART_COLORS\.length\]/, 'a queue keeps its colour whether or not a neighbour is drawn');
+});
+
+test('QH4: with no view picked the window chooses -- Daily at 45 days or less, Monthly beyond; a click wins and is remembered', function () {
+  const auto = lift('insQhAutoView_');
+  assert.equal(auto(19, true), 'daily');
+  assert.equal(auto(45, true), 'daily');
+  assert.equal(auto(46, true), 'monthly');
+  assert.equal(auto(19, false), 'monthly', 'a one-day window has no daily line');
+  assert.equal(auto(0, true), 'monthly', 'no usable window');
+  const days = lift('insQhWindowDays_');
+  assert.equal(days('2026-11-01', '2026-11-19'), 19);
+  assert.equal(days('2026-11-19', '2026-11-19'), 1);
+  assert.equal(days('2026-03-01', '2026-03-31'), 31, 'counted in whole days across the clock change');
+  assert.equal(days('2026-11-19', '2026-11-01'), 0);
+  assert.equal(days('', '2026-11-01'), 0);
+  const picked = lift('insQhPickedFromPrefs_');
+  assert.deepEqual(picked({ qhChartView: 'monthly' }), { view: 'monthly', picked: false }, 'an old Monthly was the default, not a choice');
+  assert.deepEqual(picked({ qhChartView: 'daily' }), { view: 'daily', picked: true }, 'an old Daily was chosen');
+  assert.deepEqual(picked({ qhChartView: 'calendar' }), { view: 'calendar', picked: true });
+  assert.deepEqual(picked({ qhChartView: 'monthly', qhViewPicked: true }), { view: 'monthly', picked: true }, 'a clicked Monthly stays Monthly on a short window');
+  assert.deepEqual(picked({ qhChartView: 'daily', qhViewPicked: false }), { view: 'daily', picked: false });
+  assert.deepEqual(picked({}), { view: 'monthly', picked: false });
+  assert.deepEqual(picked(null), { view: 'monthly', picked: false });
+  const render = extractFn(S8, 'insRenderQhChart_');
+  assert.match(render, /const wantView = insQhViewPicked \? insQhChartView\s*: insQhAutoView_\(insQhWindowDays_\(qhWin\.from, qhWin\.to\), hasDaily\);\s*const view = insQhResolveView_\(wantView, insQueueMetric, hasDaily, calendarOk\);/);
+  // The view on screen may be the automatic one, so a click on the stored view still counts.
+  assert.match(S8, /if \(next === insQhChartView && insQhViewPicked\) return;\s*insQhChartView = next;\s*insQhViewPicked = true;\s*insSavePrefs_\(\);/);
+  assert.match(extractFn(S8, 'insSavePrefs_'), /qhViewPicked: insQhViewPicked,/);
+  assert.match(extractFn(S8, 'insRestorePrefs_'), /const qhSaved = insQhPickedFromPrefs_\(prefs\);\s*insQhChartView = qhSaved\.view;\s*insQhViewPicked = qhSaved\.picked;/);
 });
 
 test('MD4 F-a: the agent card handlers are delegated on the document, so they work inside a brief row', function () {

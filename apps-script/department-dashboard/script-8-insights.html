@@ -72,6 +72,10 @@
   // metric is insQueueMetric (saved as queueMetric, as before the move).
   let insQhChartInstance = null;
   let insQhChartView = 'monthly';   // 'monthly' | 'daily' | 'calendar' (saved as qhChartView)
+  // QH4 (owner 2026-11-24): true once someone CLICKS a view (saved as
+  // qhViewPicked). Until then the chart opens on the view that fits the
+  // window (insQhAutoView_): Daily for a short window, Monthly otherwise.
+  let insQhViewPicked = false;
   let insQhShowLabels = false;      // saved as qhShowLabels
   let insQhHealPending_ = false;    // a pre-MD4 blob was on a "Queue:" Trend entry
   let insHasQuiet_ = false;        // whether the current render has quiet agents
@@ -653,8 +657,12 @@
       const b = e.target.closest('.seg-btn');
       if (!b || b.disabled) return;
       const next = b.getAttribute('data-view') || 'monthly';
-      if (next === insQhChartView) return;
+      // QH4: the view on screen may be the automatic one, which need not be
+      // the stored one -- so a click always counts, unless it re-picks a view
+      // that was already chosen by hand.
+      if (next === insQhChartView && insQhViewPicked) return;
       insQhChartView = next;
+      insQhViewPicked = true;
       insSavePrefs_();
       if (insLastData) insDrawQhChart_(insLastData);
     });
@@ -679,6 +687,36 @@
     document.addEventListener('focusin', function (e) { const q = qhRowQueue(e.target); if (q) insQhHighlight_(q); });
     document.addEventListener('focusout', function (e) {
       if (qhRowQueue(e.target) && !qhRowQueue(e.relatedTarget)) insQhHighlight_('');
+    });
+    // QH2 (owner 2026-11-24): a violation date marks its day on the chart. A
+    // chip (hover or keyboard focus) marks that one day; the "Violation
+    // dates" label marks every day in the list. Delegated on the document,
+    // like the row highlight above (the section may sit inside #ins-brief).
+    const qhViolTarget = function (t) {
+      const box = t && t.closest ? t.closest('#ins-qh-tbody .qcd-detail-viol') : null;
+      if (!box) return null;
+      const chips = Array.prototype.slice.call(box.querySelectorAll('.ins-viol-date'));
+      const all = chips.map(function (c) { return c.getAttribute('data-date') || ''; }).filter(Boolean);
+      const chip = t.closest('.ins-viol-date');
+      const label = t.closest('.ins-viol-label');
+      return { box: box, queue: chips.length ? (chips[0].getAttribute('data-queue') || '') : '', all: all,
+        dates: chip ? [chip.getAttribute('data-date') || ''] : (label ? all : []) };
+    };
+    document.addEventListener('mouseover', function (e) {
+      const v = qhViolTarget(e.target);
+      if (v) insQhMark_(v.queue, v.dates, v.all);
+    });
+    document.addEventListener('mouseout', function (e) {
+      const v = qhViolTarget(e.target);
+      if (v && !(e.relatedTarget && v.box.contains(e.relatedTarget))) insQhMark_('', [], []);
+    });
+    document.addEventListener('focusin', function (e) {
+      const v = qhViolTarget(e.target);
+      if (v) insQhMark_(v.queue, v.dates, v.all);
+    });
+    document.addEventListener('focusout', function (e) {
+      const v = qhViolTarget(e.target);
+      if (v && !(e.relatedTarget && v.box.contains(e.relatedTarget))) insQhMark_('', [], []);
     });
 
     // Phase 2 #10: Line/Calendar renderer toggle (team-metric tabs only;
@@ -3592,11 +3630,19 @@
     const sec = $('ins-qh-secondary');
     if (sec) { sec.innerHTML = ''; sec.style.display = 'none'; }
 
-    // MD4: the per-queue trend chart sits beside this table (insRenderQhChart_);
+    // MD4 / QH1: the per-queue trend chart sits above this table (insRenderQhChart_);
     // a row's data-queue is what the hover / focus highlight matches on.
     const tbody = $('ins-qh-tbody');
     if (tbody) {
-      tbody.innerHTML = (qh.perQueue || []).map(function (q) {
+      // QH3 (owner 2026-11-24): queues with no calls in the selected period
+      // fold into ONE row under the others (insQhEmptyQueues_). Their rows are
+      // still built -- the fold row shows them -- so nothing is unreachable.
+      const qhEmpty = insQhEmptyQueues_(qh.perQueue || []);
+      const qhLiveHtml = [];
+      const qhEmptyHtml = [];
+      (qh.perQueue || []).forEach(function (q) {
+        const isEmptyQ = qhEmpty.indexOf(q.queue) !== -1;
+        const emptyCls = isEmptyQ ? ' ins-qh-empty' : '';
         const pctCls = benchValueCls_('abandoned %', q.abandonedPctStr);
         const violCls = q.violations > 3 ? ' qcd-warn-strong' : (q.violations > 0 ? ' qcd-warn-light' : '');
         // Tag child sub-queue rows so the separation is visible (seq #5/#1).
@@ -3625,7 +3671,7 @@
         // F13 -> a11y tidy-up (the E-8 contract): the disclosure is a real
         // <button> in the first cell that owns aria-expanded and the native
         // Enter/Space; the row stays the mouse target, not a tab stop.
-        let html = '<tr class="ins-qh-row qcd-expandable" data-queue="' + escapeHtml(q.queue) + '">'
+        let html = '<tr class="ins-qh-row qcd-expandable' + emptyCls + '" data-queue="' + escapeHtml(q.queue) + '">'
           + '<td><button type="button" class="qcd-expand-toggle" aria-expanded="false">'
           +   escapeHtml(q.queue) + subTag + chevron + '</button>' + srcLine + '</td>'
           + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
@@ -3638,7 +3684,10 @@
         if (hasViolDates) {
           // Drill: each date is a chip that jumps to (and flashes) that day's
           // row in the Daily breakdown table below (insJumpToDailyRow_).
-          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+          // QH2: hovering a chip marks that day on the chart above; hovering
+          // the label marks every day in the list (insQhMark_).
+          detail += '<div class="qcd-detail-viol"><strong class="ins-viol-label"'
+            + ' title="Hover to mark every one of these days on the chart">Violation dates:</strong> '
             + q.violationDates.map(function (iso) {
                 // data-queue scopes the Daily breakdown to THIS queue's own
                 // per-day rows on click (sub-queue drill fix) -- without it
@@ -3646,7 +3695,7 @@
                 // sub-queue row is the wrong queue's data.
                 return '<button type="button" class="ins-viol-date" data-date="'
                   + escapeHtml(String(iso)) + '" data-queue="' + escapeHtml(q.queue)
-                  + '" title="Show this day in the Daily breakdown (scoped to ' + escapeHtml(q.queue) + ')">'
+                  + '" title="Hover: mark this day on the chart. Click: show it in the Daily breakdown (scoped to ' + escapeHtml(q.queue) + ')">'
                   + fmtViolDate_(iso) + '</button>';
               }).join(' ') + '</div>';
         }
@@ -3661,10 +3710,21 @@
           + ' title="Show the no-ring abandoned calls the Missed report attributes to this queue (agent-ring lens, DQE)">'
           + '&#8627; no-ring abandons</button>'
           + '<div class="ins-qh-missed-slot"></div></div>';
-        html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
+        html += '<tr class="qcd-detail-row' + emptyCls + '" style="display:none;"><td colspan="5">'
           + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
-        return html;
-      }).join('');
+        (isEmptyQ ? qhEmptyHtml : qhLiveHtml).push(html);
+      });
+      // The fold row. Open / closed lives on the tbody (.is-empty-open), which
+      // survives a re-render, so a viewer who opened it keeps it open.
+      let qhFoldRow = '';
+      if (qhEmpty.length) {
+        const emptyOpen = tbody.classList.contains('is-empty-open');
+        qhFoldRow = '<tr class="ins-qh-empty-head"><td colspan="5">'
+          + '<button type="button" class="ins-qh-empty-toggle" aria-expanded="' + (emptyOpen ? 'true' : 'false') + '">'
+          + escapeHtml(insQhEmptyLabel_(qhEmpty))
+          + ' <span class="qcd-expand-icon">' + (emptyOpen ? '&#9660;' : '&#9654;') + '</span></button></td></tr>';
+      }
+      tbody.innerHTML = qhLiveHtml.join('') + qhFoldRow + qhEmptyHtml.join('');
       // Delegated expand/collapse, wired ONCE per tbody (re-render replaces
       // rows but keeps the tbody element + this listener).
       if (!tbody._insQhExpandWired) {
@@ -3694,6 +3754,17 @@
           if (mbtn && tbody.contains(mbtn)) {
             e.preventDefault();
             insQhMissedDrill_(mbtn);
+            return;
+          }
+          // QH3: the "N queues with no calls" row shows / hides those queues.
+          var emptyToggle = e.target.closest('.ins-qh-empty-toggle');
+          if (emptyToggle && tbody.contains(emptyToggle)) {
+            e.preventDefault();
+            var nowOpen = !tbody.classList.contains('is-empty-open');
+            tbody.classList.toggle('is-empty-open', nowOpen);
+            emptyToggle.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
+            var emptyIcon = emptyToggle.querySelector('.qcd-expand-icon');
+            if (emptyIcon) emptyIcon.textContent = nowOpen ? '\u25BC' : '\u25B6';
             return;
           }
           var row = e.target.closest('.qcd-expandable');
@@ -4500,7 +4571,7 @@
 
   // ---- MD4 (owner 2026-11-20): the Queue health section's OWN trend chart ----
   // The per-queue series that used to sit behind the Trend dropdown's five
-  // "Queue:" entries, drawn beside the per-queue table it belongs with. One
+  // "Queue:" entries, drawn above the per-queue table it belongs with (QH1). One
   // line per queue (+ the dept total when there are several), for the metric
   // in #ins-qh-chart-metric -- which a table column header also sets. Monthly
   // / Daily / Calendar (the calendar is Abandoned % only). Hovering or
@@ -4509,6 +4580,166 @@
     violations: 'Violations', avgAnswer: 'Avg answer time', longestWait: 'Longest wait' };
   // PURE: the queue chart's view after the rules -- Calendar only for
   // Abandoned % with a series to fill it, Daily only with a daily series.
+  // QH4 -- PURE. The view the chart opens on while nobody has picked one: a
+  // short window is read day by day, a long one month by month.
+  function insQhAutoView_(windowDays, hasDaily) {
+    return (hasDaily && windowDays > 0 && windowDays <= 45) ? 'daily' : 'monthly';
+  }
+  // PURE: calendar days in from..to, both ends counted (0 = no usable window).
+  function insQhWindowDays_(fromIso, toIso) {
+    var a = Date.parse(String(fromIso || '') + 'T00:00:00Z');
+    var b = Date.parse(String(toIso || '') + 'T00:00:00Z');
+    if (isNaN(a) || isNaN(b) || b < a) return 0;
+    return Math.round((b - a) / 86400000) + 1;
+  }
+  // PURE: the saved view and whether it was CHOSEN. Before QH4 every prefs
+  // save wrote qhChartView whether or not anyone had clicked, and Monthly was
+  // the default -- so an old Monthly is "no choice made", an old Daily or
+  // Calendar is a choice.
+  function insQhPickedFromPrefs_(prefs) {
+    var p = prefs || {};
+    var v = p.qhChartView;
+    if (v !== 'monthly' && v !== 'daily' && v !== 'calendar') return { view: 'monthly', picked: false };
+    if (p.qhViewPicked === true) return { view: v, picked: true };
+    if (p.qhViewPicked === false) return { view: v, picked: false };
+    return { view: v, picked: v !== 'monthly' };
+  }
+  // QH3 -- PURE. The queues that fold into the "no calls this period" row:
+  // zero calls in the selected window. Never ALL of them -- a table that is
+  // only a fold row explains nothing.
+  function insQhEmptyQueues_(perQueue) {
+    var rows = perQueue || [];
+    var empty = rows.filter(function (q) { return !(Number(q && q.totalCalls) > 0); })
+      .map(function (q) { return q.queue; });
+    return (empty.length && empty.length < rows.length) ? empty : [];
+  }
+  // PURE: the fold row's text. It NAMES the queues, so folding hides no fact.
+  function insQhEmptyLabel_(names) {
+    var n = (names || []).length;
+    var shown = (names || []).slice(0, 3).join(', ');
+    var more = n > 3 ? (' and ' + (n - 3) + ' more') : '';
+    return n + (n === 1 ? ' queue' : ' queues') + ' with no calls this period: ' + shown + more;
+  }
+  // PURE: the queues the chart draws. A queue leaves the chart only when it
+  // has no calls ANYWHERE in the span on screen (callsByQueue = the Total
+  // calls series for this view) -- one that is empty this month but took
+  // calls earlier keeps its Monthly line. No call series to judge by, or
+  // every queue empty: draw them all.
+  function insQhChartQueues_(names, callsByQueue) {
+    var list = (names || []).slice();
+    if (!callsByQueue) return list;
+    var live = list.filter(function (q) {
+      var ser = callsByQueue[q];
+      if (!ser) return true;
+      return ser.some(function (v) { return Number(v) > 0; });
+    });
+    return live.length ? live : list;
+  }
+  // QH2 -- PURE. Where a list of dates lands on the chart's x axis. Daily:
+  // one point per date (the daily labels ARE the dates). Monthly: one point
+  // per month, counting how many of `allDates` fall in it (the note beside
+  // the mark). A date the axis does not carry is dropped, never guessed.
+  function insQhMarkPoints_(dates, daily, dailyLabels, monthKeys, allDates) {
+    var out = [];
+    var list = (dates || []).map(String);
+    if (daily) {
+      list.forEach(function (iso) {
+        var i = (dailyLabels || []).indexOf(iso);
+        if (i >= 0) out.push({ index: i, count: 1 });
+      });
+    } else {
+      var hit = {};
+      list.forEach(function (iso) {
+        var i = (monthKeys || []).indexOf(iso.slice(0, 7));
+        if (i >= 0) hit[i] = true;
+      });
+      var counts = {};
+      (allDates && allDates.length ? allDates : list).map(String).forEach(function (iso) {
+        var i = (monthKeys || []).indexOf(iso.slice(0, 7));
+        if (i >= 0) counts[i] = (counts[i] || 0) + 1;
+      });
+      Object.keys(hit).forEach(function (k) { out.push({ index: Number(k), count: counts[k] || 1 }); });
+    }
+    out.sort(function (a, b) { return a.index - b.index; });
+    return out;
+  }
+  // QH2: draws the marks insQhMark_ leaves on the chart -- a dashed guide at
+  // each marked x, a ring on the marked queue's point, and (Monthly) how many
+  // violation days that month holds. Colours come from THEME (canvas-safe).
+  var INS_QH_MARK_PLUGIN_ = {
+    id: 'insQhMarks',
+    afterDatasetsDraw: function (chart) {
+      var m = chart.$qhMarks;
+      if (!m || !m.points || !m.points.length) return;
+      var ctx = chart.ctx, area = chart.chartArea, xs = chart.scales && chart.scales.x;
+      if (!ctx || !area || !xs) return;
+      var meta = (m.datasetIndex >= 0 && chart.isDatasetVisible(m.datasetIndex))
+        ? chart.getDatasetMeta(m.datasetIndex) : null;
+      ctx.save();
+      m.points.forEach(function (p) {
+        var x = xs.getPixelForValue(p.index);
+        if (!(x >= area.left - 1 && x <= area.right + 1)) return;
+        ctx.beginPath();
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = THEME.muted;
+        ctx.moveTo(x, area.top);
+        ctx.lineTo(x, area.bottom);
+        ctx.stroke();
+        var el = (meta && meta.data) ? meta.data[p.index] : null;
+        if (el && !el.skip && isFinite(el.y)) {
+          ctx.beginPath();
+          ctx.setLineDash([]);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = THEME.warn || THEME.ink;
+          ctx.arc(el.x, el.y, 8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (p.note) {
+          ctx.setLineDash([]);
+          ctx.font = "500 10px 'IBM Plex Mono', monospace";
+          ctx.fillStyle = THEME.ink;
+          ctx.textBaseline = 'top';
+          var w = ctx.measureText(p.note).width;
+          var tx = Math.min(Math.max(x - w / 2, area.left + 2), area.right - w - 2);
+          ctx.fillText(p.note, tx, area.top + 2);
+        }
+      });
+      ctx.restore();
+    },
+  };
+  // QH2: mark `dates` (of `queue`) on the Queue health chart, or clear with an
+  // empty list. Line views: the plugin above, plus the row highlight's dimming
+  // of the other queues (a pinned queue wins, as it does for a row hover).
+  // Calendar view: the day cells are outlined. `allDates` is that queue's
+  // whole violation list -- the Monthly note counts from it.
+  function insQhMark_(queue, dates, allDates) {
+    var list = (dates || []).filter(Boolean);
+    var host = $('ins-qh-calendar');
+    if (host) {
+      host.querySelectorAll('.ins-cal-cell.is-viol-mark').forEach(function (c) { c.classList.remove('is-viol-mark'); });
+      if (list.length) {
+        host.querySelectorAll('.ins-cal-drill').forEach(function (c) {
+          if (list.indexOf(c.getAttribute('data-iso') || '') !== -1) c.classList.add('is-viol-mark');
+        });
+      }
+    }
+    var ch = insQhChartInstance;
+    if (!ch || !ch.data) return;
+    var st = ch.$qhView || {};
+    var points = list.length ? insQhMarkPoints_(list, !!st.daily, st.dailyLabels, st.monthKeys, allDates) : [];
+    if (!st.daily) {
+      points.forEach(function (p) { p.note = p.count + (p.count === 1 ? ' violation day' : ' violation days'); });
+    }
+    var idx = -1;
+    ch.data.datasets.forEach(function (ds, i) { if (ds.label === queue) idx = i; });
+    ch.$qhMarks = points.length ? { datasetIndex: idx, points: points } : null;
+    if (ch._spotlightStashed && !chartSpotlightHasPins_(ch)) {
+      if (points.length && idx >= 0) chartSpotlightApply_(ch, idx); else chartSpotlightClear_(ch);
+    } else {
+      ch.draw();
+    }
+  }
   function insQhResolveView_(view, metric, hasDaily, calendarOk) {
     if (view === 'calendar') return (metric === 'abandonedPct' && calendarOk) ? 'calendar' : 'monthly';
     if (view === 'daily') return hasDaily ? 'daily' : 'monthly';
@@ -4582,7 +4813,11 @@
     if (INS_QUEUE_METRICS_.indexOf(insQueueMetric) === -1) insQueueMetric = 'abandonedPct';
     const hasDaily = (qhTrend.dailyLabels || []).length > 1;
     const calendarOk = insCalendarEligible_(data, true);
-    const view = insQhResolveView_(insQhChartView, insQueueMetric, hasDaily, calendarOk);
+    // QH4: a view someone clicked wins; otherwise the window picks it.
+    const qhWin = data.meta || {};
+    const wantView = insQhViewPicked ? insQhChartView
+      : insQhAutoView_(insQhWindowDays_(qhWin.from, qhWin.to), hasDaily);
+    const view = insQhResolveView_(wantView, insQueueMetric, hasDaily, calendarOk);
     const daily = view === 'daily';
     const useCalendar = view === 'calendar';
     const showLabels = insQhShowLabels;
@@ -4649,7 +4884,13 @@
     const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
     const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
     const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : (isTime ? insSecsLabel_(v) : fmtNumber(v)); };
-    const qNames = Object.keys(perQueue);
+    // QH3: a queue with no calls anywhere in the span on screen is left off
+    // (line and legend). Colours stay keyed to the FULL list, so a queue keeps
+    // its colour whether or not a neighbour is drawn.
+    const qAllNames = Object.keys(perQueue);
+    const qCallsSrc = (qhTrend.metrics && qhTrend.metrics.totalCalls) || null;
+    const qNames = insQhChartQueues_(qAllNames,
+      qCallsSrc ? (daily ? qCallsSrc.dailyPerQueue : qCallsSrc.perQueue) : null);
     // Round 4 (owner): this tab read visually different from the team tabs
     // (thin flat multi-lines vs their filled single curve). A SINGLE-queue
     // dept -- the common case -- now renders in the same filled
@@ -4657,8 +4898,8 @@
     // comparative multi-line look (fills would occlude, the Overview-chart
     // convention) but with the same line weight/curve as the rest.
     const singleQ = qNames.length === 1;
-    const datasets = qNames.map(function (q, i) {
-      const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+    const datasets = qNames.map(function (q) {
+      const c = IR_CHART_COLORS[qAllNames.indexOf(q) % IR_CHART_COLORS.length];
       return singleQ
         ? { label: q, data: perQueue[q], borderColor: c,
             backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, c); },
@@ -4713,6 +4954,7 @@
     chartConfig = {
       type: 'line',
       data: { labels: labels, datasets: datasets },
+      plugins: [INS_QH_MARK_PLUGIN_],   // QH2: the violation-date marks
       options: {
         responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
@@ -4766,6 +5008,18 @@
     };
 
     insQhChartInstance = safeChart_(canvas.getContext('2d'), chartConfig);
+    if (insQhChartInstance) {
+      // QH2: what insQhMark_ needs to place a date on this chart's x axis.
+      // The month keys are read back from the axis labels THEMSELVES (the
+      // parser the point drill uses), so a mark can only land on the month
+      // the axis shows; a label that does not parse marks nothing.
+      insQhChartInstance.$qhView = { daily: daily,
+        dailyLabels: daily ? (qhTrend.dailyLabels || []) : [],
+        monthKeys: daily ? [] : (labels || []).map(function (l) {
+          const r = insTrendLabelToRange_(l, false);
+          return r ? r.from.slice(0, 7) : '';
+        }) };
+    }
     if (spotlightOpts && insQhChartInstance) {
       chartSpotlightStash_(insQhChartInstance, spotlightOpts);
       insQhChartInstance._spotlightStashed = true;
@@ -6421,6 +6675,7 @@
         cardsView:   insCardsView,
         cardsChartMetric: insCardsChartMetric,
         qhChartView: insQhChartView,             // MD4: monthly | daily | calendar
+        qhViewPicked: insQhViewPicked,           // QH4: true once a view was clicked
         qhShowLabels: insQhShowLabels,           // MD4
         trendScope: insTrendScopePref_,          // MD3: team | agent (the switch's choice, never a row's)
         trendAgentMetric: insTrendAgentMetric,   // MD3: the By agent metric
@@ -6463,15 +6718,17 @@
       // Trend metric falls back to Answered, and the Queue health section
       // opens once on that metric (its queueMetric field), in the view the
       // Trend chart was in.
-      if (prefs.qhChartView === 'monthly' || prefs.qhChartView === 'daily' || prefs.qhChartView === 'calendar') {
-        insQhChartView = prefs.qhChartView;
-      }
+      // QH4: the saved view applies only if it was CHOSEN (insQhPickedFromPrefs_).
+      const qhSaved = insQhPickedFromPrefs_(prefs);
+      insQhChartView = qhSaved.view;
+      insQhViewPicked = qhSaved.picked;
       insQhShowLabels = prefs.qhShowLabels === true;
       const qhHeal = insQhHealFromPrefs_(prefs);
       if (qhHeal) {
         prefs.trendMetric = 'answered';
         insQhChartView = qhHeal.view;
         insQhHealPending_ = true;
+        insQhViewPicked = qhHeal.view !== 'monthly';   // QH4: the old Monthly was the default, not a choice
       }
       if (prefs.trendMetric) {
         insActiveTrendMetric = prefs.trendMetric;

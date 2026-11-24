@@ -5609,13 +5609,30 @@
      half width rather than a single tall stack -- 6 cards read as 3 compact
      rows beside a 4-5 row table instead of towering over it. */
   .ins-qh-cols > .ins-qh-left { flex: 1 1 340px; min-width: 280px; max-width: 400px; }
-  .ins-qh-cols > .ins-qh-table-card { flex: 1 1 520px; min-width: min(340px, 100%); margin: 0; }   /* UD-2; MD4: 520 so every column shows beside the chart */
-  /* MD4: the queue trend chart sits beside the table and drops under it when
-     the row is too narrow for both. */
-  .ins-qh-cols > .ins-qh-chart-card { flex: 1 1 380px; min-width: min(340px, 100%); margin: 0; padding: 12px 14px; }
+  /* QH1 (owner 2026-11-24): the chart is STACKED above the table and both take
+     the section's full width, at every viewport -- side by side they shared
+     ~1,000 px beside the two sticky panels, so the chart was cramped and the
+     table scrolled sideways. The UD-2 phone floor stays on both. */
+  .ins-qh-cols > .ins-qh-table-card { flex: 1 1 100%; min-width: min(340px, 100%); margin: 0; }
+  .ins-qh-cols > .ins-qh-chart-card { flex: 1 1 100%; min-width: min(340px, 100%); margin: 0; padding: 12px 14px; }
   .ins-qh-chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
   .ins-qh-chart-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .ins-qh-chart-card .ins-qh-canvas-wrap { height: 260px; }
+  .ins-qh-chart-card .ins-qh-canvas-wrap { height: 240px; }   /* QH1: wide and short, so the chart and the collapsed rows share a view */
+  /* QH3 (owner 2026-11-24): queues with no calls this period sit behind one
+     fold row. Open / closed is a class on the tbody; !important because a
+     detail row's own show / hide is an inline display value. */
+  #ins-qh-tbody:not(.is-empty-open) > tr.ins-qh-empty { display: none !important; }
+  .ins-qh-empty-toggle {
+    font: inherit; color: var(--muted); background: none; text-align: left;
+    border: 0; padding: 0; cursor: pointer;
+  }
+  .ins-qh-empty-toggle:hover { color: var(--ink); }
+  /* QH2 (owner 2026-11-24): the "Violation dates" label marks every listed
+     day on the chart when hovered -- the dotted underline says it does
+     something -- and a marked day on the Calendar view gets an outline (a
+     shape, not only a colour). */
+  .ins-viol-label { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .ins-cal-cell.is-viol-mark { outline: 3px solid var(--warn); outline-offset: 1px; }
   /* A column header that charts its metric: it reads as the header it is,
      with the one on the chart marked by more than colour (underline). */
   .ins-qh-th-btn {
