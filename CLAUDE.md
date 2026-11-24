@@ -950,7 +950,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
   incl. the ONE trend chart with its Team total / By agent switch (MD3),
-  Queue health's own trend chart (MD4), the gap bars + IR drill-through) · Insights header dates (DELETED in M4 -- the dept
+  Queue health's own trend chart (MD4, QH1-QH4), the gap bars + IR drill-through) · Insights header dates (DELETED in M4 -- the dept
   controls row is the page's single date authority; `insSyncToDeptWindow_`),
   trend-at-bottom, the INSIGHTS REGION (the M1 merge + N1: the whole ex-page
   renders open-inline on My Department, generating with it) · Insights per-section FOLDS (replaced the
