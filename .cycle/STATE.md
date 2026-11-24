@@ -14,8 +14,8 @@ counter starts at 0 here because no earlier count was kept.)
 
 ## Open follow-on items
 (One line each: ID | where -- what | -> disposition. Rule: the FOLLOW-ON IDS step of the implement commands, since the 2026-11-23 command sync. Older follow-ons are still prose inside the entries below and carry no IDs.)
-- FO-260-1 | script-8-insights.html: the "queues with no calls" fold row keeps its open state on the tbody, so it stays open across a department switch within one session | -> next audit
-- FO-260-2 | script-8-insights.html: insRenderQhChart_'s partial-month marking pairs the queue chart's month labels with the team trend's month keys by equal LENGTH alone; a probe outside TZ=America/Chicago showed them one month apart at equal length (harness artifact; QH2's marks no longer depend on it) | -> next audit
+- FO-260-1 | script-8-insights.html: the "queues with no calls" fold row keeps its open state on the tbody, so it stays open across a department switch within one session | -> confirmed as F25 (Cycle 261)
+- FO-260-2 | script-8-insights.html: insRenderQhChart_'s partial-month marking pairs the queue chart's month labels with the team trend's month keys by equal LENGTH alone; a probe outside TZ=America/Chicago showed them one month apart at equal length (harness artifact; QH2's marks no longer depend on it) | -> confirmed as F26 (Cycle 261)
 
 ## OPEN NOW (read this first)
 - **2026-11-24 (3) -- FO-260-3 DONE (owner: "shorten the Daily axis ticks to Oct 26").** The Queue health chart's Daily axis ticks print `isoDateShort_(label)`; the labels stay ISO dates (the point drill and QH2's marks read them); Monthly keeps its partial-month tick. One unit test, one rendered check in `qhPass`. The tooltip's title still shows the ISO date (not asked for). Removed from Open follow-on items; FO-260-1 and FO-260-2 remain (next audit). PR 421 (QH1-QH4) merged as 86322ed.
