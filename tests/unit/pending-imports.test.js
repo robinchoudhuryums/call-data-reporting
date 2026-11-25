@@ -371,6 +371,50 @@ test('F7: Direct is rebuilt from the Call_Legs tab only when Direct Call History
   assert.equal(builds.length, 0, 'a date Direct already holds is not rebuilt');
 });
 
+// PCC-1 (broad-scan 2026-11-24, scan F1): the sheet holding the date is not
+// the date being whole -- the per-call `direct_calls` list has no sheet copy.
+test('PCC-1: a date the sheet holds but Neon lacks is rebuilt from the tab; a Neon miss keeps it owed', function () {
+  const builds = [], rows = [], seen = [];
+  h.state.props = { NEON_HOST: 'x' };
+  h.state.spreadsheet = directSS(true);
+  const ss = h.state.spreadsheet;
+  const dateObj = new Date(2026, 8, 23, 12, 0, 0);
+  const run = function (owed, neon, opts) {
+    builds.length = 0; rows.length = 0;
+    return withStubs({
+      checkHistoryForDate: function () { return true; },
+      dcNeonDirectOwed_: function (iso, o) { seen.push(!!(o && o.neonDown)); return owed; },
+      buildDirectCallFromRaw_: function () { builds.push(1); return { wrote: 4, neon: neon, meta: {} }; },
+      logPipelineHealthWithFallback_: function (s2, ev) { rows.push(ev); },
+    }, function () { return h.call('pendingImportDirectCatchUp_', ss, '2026-09-23', dateObj, opts); });
+  };
+  assert.equal(run({ owed: false, reason: 'whole' }, {}), true);
+  assert.equal(builds.length, 0, 'whole in Neon too: nothing to do');
+  assert.equal(run({ owed: true, reason: 'direct_calls has no rows (12 direct calls counted)' }, {}), true);
+  assert.equal(builds.length, 1, 'owed: rebuilt from the tab');
+  assert.match(rows[0].notes, /Neon is missing this date's Direct rows -- direct_calls has no rows/);
+  assert.equal(run({ owed: true, reason: 'x' }, { unreachable: true }), false,
+    'the rebuild could not reach Neon: still owed, so the prune keeps the tab');
+  assert.equal(rows[1].step, 'processIntegratedHistory:Direct:neon');
+  assert.match(rows[1].notes, /stays owed/);
+  assert.equal(run({ owed: true, unreachable: true, reason: 'not confirmed (Neon unreachable)' }, {}, { neonDown: true }), false);
+  assert.equal(builds.length, 0, 'Neon down: no rebuild is attempted');
+  assert.equal(seen[seen.length - 1], true, 'the caller\'s probe result is passed on, not re-probed');
+});
+
+test('PCC-1: the sheet-missing rebuild whose Neon write fails is no longer reported done', function () {
+  h.state.props = { NEON_HOST: 'x' };
+  h.state.spreadsheet = directSS(true);
+  withStubs({
+    checkHistoryForDate: function () { return false; },
+    buildDirectCallFromRaw_: function () { return { wrote: 4, neon: { error: 'timeout' }, meta: {} }; },
+    logPipelineHealthWithFallback_: function () {},
+  }, function () {
+    assert.equal(h.call('pendingImportDirectCatchUp_', h.state.spreadsheet, '2026-09-23', new Date(2026, 8, 23, 12)), false);
+  });
+  h.state.props = {};
+});
+
 test('F7: a Direct rebuild that throws is a FAILURE row and keeps the date pending', function () {
   const rows = [];
   h.state.spreadsheet = directSS(true);
@@ -469,7 +513,7 @@ function fakeCountConn(counts) {
   };
 }
 
-test('G1: the ledger reads the source tab, the six sheets and the six Neon counts (or says why not)', function () {
+test('G1: the ledger reads the source tab, the six sheets and the seven Neon counts (or says why not)', function () {
   h.state.props = {};
   h.state.spreadsheet = g1Workbook({ have: ['CDR Historical Data', 'DQE Historical Data'] });
   const off = JSON.parse(JSON.stringify(h.call('dateWholeLedger_', h.state.spreadsheet, G1_ISO)));
@@ -486,18 +530,27 @@ test('G1: the ledger reads the source tab, the six sheets and the six Neon count
   });
   withStubs({ getReachableNeonConn_: function () {
     return fakeCountConn({ call_history_dept: 4, qcd_history: 0, dqe_history: 9, direct_call_history: 'throw',
-                           inbound_calls: 12, outbound_calls: 3 });
+                           direct_calls: 7, inbound_calls: 12, outbound_calls: 3 });
   } }, function () {
     const l = JSON.parse(JSON.stringify(h.call('dateWholeLedger_', h.state.spreadsheet, G1_ISO)));
     assert.deepEqual(l.neon, { call_history_dept: 4, qcd_history: 0, dqe_history: 9, direct_call_history: null,
-                               inbound_calls: 12, outbound_calls: 3 });
+                               direct_calls: 7, inbound_calls: 12, outbound_calls: 3 });
+    assert.equal(l.directActivity, null, 'PCC-1: a sum that cannot be read is null, never 0');
+  });
+  withStubs({ getReachableNeonConn_: function () {
+    return fakeCountConn({ call_history_dept: 4, qcd_history: 1, dqe_history: 9, direct_call_history: 6,
+                           direct_calls: 0, inbound_calls: 12, outbound_calls: 3 });
+  } }, function () {
+    assert.equal(h.call('dateWholeLedger_', h.state.spreadsheet, G1_ISO).directActivity, 6,
+      'PCC-1: the counts\' direct calls are summed for the direct_calls verdict');
   });
 });
 
 test('G1: dateWholeOwed_ -- missing sheets, sheet-sourced Neon zeros, and per-call zeros only until the backfill ran', function () {
   const sheets = {};
   G1_ALL.forEach(function (n) { sheets[n] = true; });
-  const neon = { call_history_dept: 4, qcd_history: 2, dqe_history: 9, direct_call_history: 5, inbound_calls: 1, outbound_calls: 1 };
+  const neon = { call_history_dept: 4, qcd_history: 2, dqe_history: 9, direct_call_history: 5, direct_calls: 3,
+                 inbound_calls: 1, outbound_calls: 1 };
   const owed = function (l, o) { return JSON.parse(JSON.stringify(h.call('dateWholeOwed_', l, o))); };
   assert.deepEqual(owed({ source: true, sheets: sheets, neon: neon }), [], 'a whole date owes nothing');
   assert.deepEqual(owed({ source: true, sheets: Object.assign({}, sheets, { 'QCD Historical Data': false }),
@@ -514,6 +567,16 @@ test('G1: dateWholeOwed_ -- missing sheets, sheet-sourced Neon zeros, and per-ca
   assert.deepEqual(owed({ source: true, sheets: sheets, neon: Object.assign({}, neon, { inbound_calls: null }) }),
     ['neon: inbound_calls (could not count)']);
   assert.deepEqual(owed({ source: true, sheets: sheets, neon: null }), [], 'Neon off: only the sheets are judged');
+  // PCC-1: the per-call Direct list is owed only when the counts hold calls.
+  const noList = Object.assign({}, neon, { direct_calls: 0 });
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: noList, directActivity: 4 }), ['neon: direct_calls'],
+    'counts with calls on them and no per-call list: owed');
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: noList, directActivity: 0 }), [],
+    'a quiet day (no direct calls counted) owes no list');
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: noList, directActivity: null }), ['neon: direct_calls'],
+    'the sum unread: the counts holding rows decides');
+  assert.deepEqual(owed({ source: true, sheets: sheets, neon: noList, directActivity: 4 }, { perCallChecked: true }),
+    ['neon: direct_calls'], 'the inbound / outbound backfill does not write the Direct list');
 });
 
 test('G1: a date missing core sheets runs ONE non-force import that bypasses lastSheets, then both catch-ups', function () {

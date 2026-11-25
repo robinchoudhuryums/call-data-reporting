@@ -667,7 +667,8 @@ test('OFB-4: a day DQE had nothing to build (a rows:0 success on record) is stil
 test('OFB-4: Direct and the per-call capture get their catch-up; a tab is kept while either cannot finish', function () {
   h.state.props = { NEON_HOST: 'h' };
   const calls = [];
-  h.ctx.pendingImportDirectCatchUp_ = function (ss, iso) { calls.push('direct ' + iso); return iso !== '2026-06-02'; };
+  const downFlags = [];
+  h.ctx.pendingImportDirectCatchUp_ = function (ss, iso, d, o) { calls.push('direct ' + iso); downFlags.push(!!(o && o.neonDown)); return iso !== '2026-06-02'; };
   h.ctx.pendingImportPerCallCatchUp_ = function (iso) { calls.push('percall ' + iso); return iso !== '2026-06-03'; };
   h.ctx.getTargetSsId_ = function () { return 'target-id'; };
   h.state.spreadsheetsById['target-id'] = makeFakeSpreadsheet({ sheets: {} });
@@ -676,7 +677,7 @@ test('OFB-4: Direct and the per-call capture get their catch-up; a tab is kept w
     const out = prune([2026, 8, 31], ['Call_Legs_2026-06-01', 'Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
     assert.deepEqual(out.survivors, ['Call_Legs_2026-06-02', 'Call_Legs_2026-06-03']);
     assert.deepEqual(Array.from(out.result.derived), [
-      'Call_Legs_2026-06-02 (Direct Call History build failed)',
+      'Call_Legs_2026-06-02 (Direct not whole (Direct Call History or its Neon copy))',
       'Call_Legs_2026-06-03 (per-call capture not written (a write failed))',
     ]);
     assert.equal(calls.filter(function (c) { return /^direct/.test(c); }).length, 3, 'every tab about to go is checked');
@@ -692,6 +693,7 @@ test('OFB-4: Direct and the per-call capture get their catch-up; a tab is kept w
     assert.equal(probes, 1);
     assert.equal(calls.filter(function (c) { return /^percall/.test(c); }).length, 0);
     assert.match(Array.from(down.result.derived)[0], /per-call capture not confirmed \(Neon unreachable\)/);
+    assert.equal(downFlags[downFlags.length - 1], true, 'PCC-1: the Direct catch-up is told Neon is down, so it does not connect per tab');
     // Neon not configured: there is nothing to capture to, so the per-call check is skipped.
     h.state.props = {};
     calls.length = 0;

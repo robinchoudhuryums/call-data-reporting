@@ -780,6 +780,20 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       }
     }
 
+    // PCC-2 (broad-scan 2026-11-24, scan F36): on the BULK path the replacement
+    // rows are QUEUED before anything is deleted (the P-1 rule: every write
+    // that does not depend on the delete runs ahead of it). The queue used to
+    // run after the force block, so a Pending Archive append that threw left
+    // the date gone from all five sheets with nothing queued to replace it.
+    // Under force the post-delete "exists" flags are all false except a CSR
+    // the RB-6 header check kept, so the same skips are known here.
+    let bulkQueued = null;
+    if (isHistoricalBackfill) {
+      bulkQueued = queueToPendingArchive(targetSS, results, dateObj,
+        force ? false : existsInCDR, force ? false : existsInQPath, force ? false : existsInQCD,
+        force ? csrKeptForHeader : existsInCSR);
+    }
+
     if (force) {
       forceDeleted.qcd = !!existsInQCD;
       forceDeleted.csr = !!existsInCSR && !csrKeptForHeader;   // RB-6
@@ -842,7 +856,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       // and write directly to DQE Historical Data + Neon -- we already
       // wrote Raw Data for this date above (needsRawDataWrite) when
       // willBuildDQE was true, so the build has fresh data to consume.
-      const queued = queueToPendingArchive(targetSS, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR);
+      const queued = bulkQueued;   // PCC-2: queued above, before the force delete
       historyReport.push("- Queued for batch archive");
       // P8 (the S2-2 rule on the BULK path): QCD + CSR are dashboard-read and
       // were force-deleted above, but the bulk path QUEUES rows instead of
@@ -1428,6 +1442,17 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
 
   markProduced("CSR_TRANSFER");
 
+  // PCC-2 (scan F36): APPEND the fresh rows first, THEN delete the stale ones.
+  // After an earlier run already force-deleted the date, its queued rows are
+  // the only copy left, so deleting them before the append meant a failed
+  // append lost them -- against P-7's own "never delete without a
+  // replacement". The stale rows all sit at or above lastPendingRow and the
+  // new ones below it, so the bottom-up delete still hits the right rows.
+  if (rowsToAdd.length > 0) {
+    const nextRow = pendingSheet.getLastRow() + 1;
+    pendingSheet.getRange(nextRow, 1, rowsToAdd.length, 34).setValues(rowsToAdd);
+  }
+
   // P-7: fresh rows replace their type's stale queued rows for this date.
   // Delete bottom-up so earlier deletions don't shift later row numbers.
   const staleRows = [];
@@ -1439,11 +1464,6 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
              .forEach(function (rn) { pendingSheet.deleteRow(rn); });
     console.log('queueToPendingArchive: replaced ' + staleRows.length
       + ' stale queued row(s) for ' + dateStr + ' [' + producedTypes.join(', ') + '].');
-  }
-
-  if (rowsToAdd.length > 0) {
-    const nextRow = pendingSheet.getLastRow() + 1;
-    pendingSheet.getRange(nextRow, 1, rowsToAdd.length, 34).setValues(rowsToAdd);
   }
   // P8: counts by type ('CDR' / 'QPATH' / 'QCD' / 'CSR_TRANSFER') so the
   // bulk caller's loss guards can see a rebuild-to-zero at queue time.
@@ -2907,7 +2927,9 @@ if (!skipCDR && obcHD) {
                 durationMs: Date.now() - directStart,
                 notes: dateObj.toDateString() + ' | direct_call_history mirror '
                   + directNeonStr + (dres.neon && dres.neon.error ? (': ' + dres.neon.error) : '')
-                  + ' -- sheet wrote ' + dres.wrote + ' rows; re-import the date or run backfillDirectCallToNeon once fixed.',
+                  + ' -- sheet wrote ' + dres.wrote + ' rows. backfillDirectCallToNeon restores the COUNTS only;'
+                  + ' the per-call list (direct_calls) comes back from the Call_Legs tab -- CDR Tools -> Make a date whole,'
+                  + ' or the retention prune rebuilds it before the tab goes (PCC-1).',
               });
             } catch (logErr) { /* best-effort */ }
           }
@@ -3850,9 +3872,20 @@ function pendingImportDerivedCatchUp_(iso) {
 }
 
 /** F7: rebuild Direct Call History for `iso` when the sheet has no rows for it. */
-function pendingImportDirectCatchUp_(targetSS, iso, dateObj) {
+function pendingImportDirectCatchUp_(targetSS, iso, dateObj, opts) {
   if (typeof buildDirectCallFromRaw_ !== 'function') return true;
-  if (checkHistoryForDate(targetSS, 'Direct Call History', dateObj, 2)) return true;
+  // PCC-1 (broad-scan 2026-11-24, scan F1): the SHEET having the date is not
+  // the date being whole -- `direct_calls` has no sheet copy, so a Direct write
+  // that never reached Neon is rebuilt from the tab here too, while it exists.
+  // opts.neonDown: the prune already probed Neon and found it down.
+  let why = 'the import that wrote this date stopped before Direct';
+  if (checkHistoryForDate(targetSS, 'Direct Call History', dateObj, 2)) {
+    const neonState = (typeof dcNeonDirectOwed_ === 'function')
+      ? dcNeonDirectOwed_(iso, { neonDown: !!(opts && opts.neonDown) }) : { owed: false };
+    if (!neonState.owed) return true;
+    if (neonState.unreachable) return false;   // nothing can be rebuilt into Neon now; keep the date owed
+    why = 'Neon is missing this date\'s Direct rows -- ' + neonState.reason;
+  }
   const configSheet = targetSS.getSheetByName('DO NOT EDIT!');
   const legsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Call_Legs_' + iso);
   if (!configSheet || !legsSheet) return true;   // the daily block skips on the same terms
@@ -3868,7 +3901,7 @@ function pendingImportDirectCatchUp_(targetSS, iso, dateObj) {
     logPipelineHealthWithFallback_(targetSS, {
       step: 'processIntegratedHistory:Direct', status: 'success', rows: dres.wrote,
       durationMs: Date.now() - t0,
-      notes: dateObj.toDateString() + ' | catch-up (F7): the import that wrote this date stopped before Direct'
+      notes: dateObj.toDateString() + ' | catch-up (F7): ' + why
         + ' | neon=' + neonStr
         + directUnrosteredNote_(dres),   // DCA-6: must stay the LAST segment
     });
@@ -3879,10 +3912,13 @@ function pendingImportDirectCatchUp_(targetSS, iso, dateObj) {
         logPipelineHealthWithFallback_(targetSS, {
           step: 'processIntegratedHistory:Direct:neon', status: 'failure', rows: null,
           durationMs: Date.now() - t0,
-          notes: dateObj.toDateString() + ' | catch-up (F7): direct_call_history mirror ' + neonStr
+          notes: dateObj.toDateString() + ' | catch-up (F7): direct_call_history + direct_calls mirror ' + neonStr
             + (neon.error ? (': ' + neon.error) : '') + ' -- sheet wrote ' + dres.wrote
-            + ' rows; run backfillDirectCallToNeon once fixed.',
+            + ' rows; the date stays owed and is retried while its Call_Legs tab exists (PCC-1).',
         });
+        // PCC-1: the per-call list has no other source than the tab -- a Neon
+        // miss is NOT done, or the prune deletes the tab and loses it.
+        return false;
       }
     }
     return true;
@@ -3973,8 +4009,10 @@ var DATE_WHOLE_SHEETS_ = [
   ['CSR Transfer Historical Data', 3], ['DQE Historical Data', 2], ['Direct Call History', 2],
 ];
 var DATE_WHOLE_CORE_SHEETS_ = 5;   // the first five: what processNewImport's "already in history" checks
+// PCC-1: `direct_calls` (the per-call Direct list) has no sheet copy; it is
+// owed when `direct_call_history` counts calls for the date and it holds none.
 var DATE_WHOLE_NEON_TABLES_ = ['call_history_dept', 'qcd_history', 'dqe_history',
-  'direct_call_history', 'inbound_calls', 'outbound_calls'];
+  'direct_call_history', 'direct_calls', 'inbound_calls', 'outbound_calls'];
 
 /**
  * G1: the per-date ledger. { iso, source, sheets: {name: bool}, neon: {table:
@@ -4008,6 +4046,21 @@ function dateWholeLedger_(targetSS, iso) {
         console.warn('dateWholeLedger_: could not count ' + t + ' for ' + iso + ': ' + (te && te.message ? te.message : te));
       }
     });
+    // PCC-1: how many direct calls the counts hold -- a quiet day (0) owes no list.
+    out.directActivity = null;
+    try {
+      const st2 = conn.prepareStatement('SELECT COALESCE(sum(' + ['ib_int_answered', 'ib_int_missed_free',
+        'ib_int_missed_busy', 'ib_ext_answered', 'ib_ext_missed_free', 'ib_ext_missed_busy', 'ob_int_total',
+        'ob_ext_total'].map(function (c) { return 'COALESCE(' + c + ', 0)'; }).join(' + ')
+        + '), 0) AS a FROM direct_call_history WHERE call_date = ?::date');
+      st2.setQueryTimeout(30);
+      st2.setString(1, iso);
+      const rs2 = st2.executeQuery();
+      out.directActivity = rs2.next() ? Number(rs2.getString('a')) || 0 : 0;
+      rs2.close(); st2.close();
+    } catch (ae) {
+      console.warn('dateWholeLedger_: could not sum direct calls for ' + iso + ': ' + (ae && ae.message ? ae.message : ae));
+    }
   } finally {
     try { conn.close(); } catch (ce) { /* closed */ }
   }
@@ -4033,6 +4086,12 @@ function dateWholeOwed_(ledger, opts) {
       const n = ledger.neon[t];
       if (n === null || n === undefined) { owed.push('neon: ' + t + ' (could not count)'); return; }
       if (n > 0) return;
+      if (t === 'direct_calls') {   // PCC-1: owed only when the counts hold calls
+        const act = (ledger.directActivity === null || ledger.directActivity === undefined)
+          ? (ledger.neon.direct_call_history || 0) : ledger.directActivity;
+        if (act > 0) owed.push('neon: direct_calls');
+        return;
+      }
       if (fromSheet[t]) { if (ledger.sheets[fromSheet[t]] && !opts.deferred) owed.push('neon: ' + t); }
       else if (ledger.source && !opts.perCallChecked) owed.push('neon: ' + t + ' (or a quiet day)');
     });
@@ -5076,9 +5135,16 @@ function repairCsrTransferForRawDataDate() {
   if (!repairLock.tryLock(30000)) {
     throw new Error('repairCsrTransfer: an import is running (script lock busy) -- re-run when it finishes.');
   }
+  // PCC-3 (broad-scan 2026-11-24, scan F37): the script lock cannot hold off
+  // cdr-report's nightly sort (another project), which re-sorts this sheet --
+  // and this repair writes BY ROW POSITION. The CR-5 marker makes the sort
+  // defer while the repair runs; csrRepairApply_ re-verifies the rows it is
+  // about to write in case a sort was already under way.
+  bulkMarkerSet_(ss);
   try {
     return csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, split.strays);
   } finally {
+    bulkMarkerClear_(ss);
     repairLock.releaseLock();
   }
 }
@@ -5116,7 +5182,7 @@ function csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, strays) {
   var width = 18;   // A..R
   var vals = csrHD.getRange(2, 1, last - 1, width).getValues();
   var disp = csrHD.getRange(2, 1, last - 1, width).getDisplayValues();
-  var updated = 0, missing = [], totalCallsMismatch = [];
+  var updated = 0, missing = [], totalCallsMismatch = [], plan = [];
 
   for (var r = 0; r < vals.length; r++) {
     var rowDateIso = parseDateForNeon(String(disp[r][2] || '').trim());
@@ -5134,9 +5200,32 @@ function csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, strays) {
     // F (Total Calls) sits between E and G and is written back unchanged.
     var out = [rec.transPct, vals[r][5], rec.transferred];
     for (var q = 0; q < 11; q++) out.push(rec.queues[q] != null ? rec.queues[q] : 0);   // H..R
-    csrHD.getRange(r + 2, 5, 1, 14).setValues([out]);
-    updated++;
+    plan.push({ r: r, out: out });
   }
+
+  // PCC-3 (scan F37): re-verify, right before the first write, that every row
+  // about to be written still holds the date and agent it was planned for (and
+  // the sheet has not grown or shrunk) -- the CRT-7 pattern. A re-sort under
+  // the repair would otherwise land these figures on other agents' rows.
+  if (plan.length) {
+    if (csrHD.getLastRow() !== last) {
+      throw new Error('repairCsrTransfer: CSR Transfer Historical Data changed while the repair ran (row count '
+        + last + ' -> ' + csrHD.getLastRow() + ') -- NOTHING was written; re-run.');
+    }
+    var nowDate = csrHD.getRange(2, 3, last - 1, 1).getDisplayValues();
+    var nowAgent = csrHD.getRange(2, 4, last - 1, 1).getValues();
+    plan.forEach(function (p) {
+      if (String(nowDate[p.r][0]) !== String(disp[p.r][2]) || String(nowAgent[p.r][0]) !== String(vals[p.r][3])) {
+        throw new Error('repairCsrTransfer: CSR Transfer Historical Data changed while the repair ran (row '
+          + (p.r + 2) + ' no longer holds ' + vals[p.r][3] + ' on ' + disp[p.r][2] + ', e.g. the nightly sort) '
+          + '-- NOTHING was written; re-run.');
+      }
+    });
+  }
+  plan.forEach(function (p) {
+    csrHD.getRange(p.r + 2, 5, 1, 14).setValues([p.out]);
+    updated++;
+  });
 
   Logger.log('repairCsrTransfer: date=%s updated=%s rows; missing-in-recompute=%s; totalCalls-mismatch=%s; stray legs dropped=%s',
     rawDateIso, updated, JSON.stringify(missing), JSON.stringify(totalCallsMismatch), strays || 0);

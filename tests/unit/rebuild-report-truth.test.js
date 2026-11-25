@@ -136,6 +136,36 @@ test('RB-1: a bulk date whose DQE rebuild failed is reported ❌ and stays flagg
   assert.equal(b.h.state.props.bulkQueue, undefined, 'a completed run closes its queue');
 });
 
+// PCC-2 (broad-scan 2026-11-24, scan F36): on the bulk path the replacement
+// rows are queued BEFORE the force delete, so a queue that throws deletes nothing.
+test('PCC-2: a bulk date whose Pending Archive queue throws keeps its existing rows -- nothing is deleted', function () {
+  const b = bulkHarness();
+  b.h.ctx.processBatchArchive = function () { return { cdrCount: 0, qpathCount: 0, qcdCount: 0, csrCount: 0 }; };
+  const realQueue = b.h.ctx.queueToPendingArchive;
+  b.h.ctx.queueToPendingArchive = function (ss, results, dateObj) {
+    if (dateObj.getDate() === 9) throw new Error('Service Spreadsheets failed');
+    return realQueue.apply(null, arguments);
+  };
+  b.h.call('processBulkQueue');
+  const kept = b.target._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return /7\/9\/2026|2026-07-09/.test(String(r[1])) || (r[1] instanceof Date && r[1].getDate() === 9); });
+  assert.equal(kept.length, 1, 'the failed date\'s DQE row is still there');
+  assert.equal(kept[0][4], 9, 'and it is the ORIGINAL row, not a rebuild');
+  const fin = b.alerts[b.alerts.length - 1][1];
+  assert.match(fin, /2026-07-09/);
+  assert.ok(!/✅ 2026-07-09/.test(fin), 'the failed date is not reported a success');
+});
+
+test('PCC-2: the bulk queue runs ahead of the force delete, and P-7 appends before it deletes', function () {
+  const body = SRC.slice(SRC.indexOf('function processNewImport('), SRC.indexOf('function queueToPendingArchive('));
+  const q = body.indexOf('bulkQueued = queueToPendingArchive(');
+  const del = body.indexOf('if (force) {\n      forceDeleted.qcd');
+  assert.ok(q > 0 && del > 0 && q < del, 'the queue precedes the force-delete block');
+  const qfn = SRC.slice(SRC.indexOf('function queueToPendingArchive('), SRC.indexOf('PENDING ARCHIVE FUNCTIONS'));
+  assert.ok(qfn.indexOf('.setValues(rowsToAdd)') < qfn.indexOf('pendingSheet.deleteRow(rn)'),
+    'fresh rows are appended before the stale ones are deleted');
+});
+
 test('RB-1: the bulk branch returns PARTIAL for a failed Direct rebuild too, and the guard steps are failure-only on Health', function () {
   // The branch is mid-processNewImport, so the Direct half is pinned by source.
   assert.match(SRC, /bulkFailures\.push\('Direct Call History was NOT rebuilt: ' \+ dmsg\);/);

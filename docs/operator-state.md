@@ -701,7 +701,11 @@ When something looks wrong, before assuming a code bug, check:
     `DIRECT_UPSERT_SINCE` (YYYY-MM-DD date floor, so you mirror only the
     recently-rebuilt dates). Idempotent (re-run safe); reuses the same `NEON_*`
     props the inline mirror uses (#16). The daily import already mirrors Direct
-    inline, so this is ONLY for the bulk path. Recommended only after the busy
+    inline, so this is ONLY for the bulk path. **It restores the COUNTS only
+    (`direct_call_history`), never the per-call list (`direct_calls`, #90)**,
+    which comes back only from the date's Call_Legs tab: CDR Tools -> Make a
+    date whole (#56), `rebuildDirectCallHeldDates()`, or the retention prune,
+    which rebuilds it before the tab goes (PCC-1, #43). Recommended only after the busy
     carve-out numbers are spot-checked (the report stays admin-only while
     vetted, and this writes Direct history across all backfilled dates).
 27. Company holidays -- the `Company Holidays` SHEET (dashboard-managed,
@@ -1695,7 +1699,10 @@ When something looks wrong, before assuming a code bug, check:
     every check above is now looked at once more: DQE must hold the date, or
     Pipeline Health must show its newest DQE build for that date as a success
     (a rows:0 success is a day with nothing to build); Direct is rebuilt from
-    the tab if its sheet lacks the date; the per-call backfill is run for the
+    the tab if its sheet lacks the date -- or, since PCC-1 (2026-11-24), if
+    Neon lacks the date's `direct_call_history` rows, or holds counts with
+    calls on them but no `direct_calls` row (the per-call Direct list, whose
+    ONLY source is this tab); the per-call backfill is run for the
     date if Neon lacks it. The tab is deleted only when all three are whole,
     else it is kept and named in the row with what it owes ("KEPT N still owed
     something built from the tab"). **To clear one:** CDR Tools -> Make a date

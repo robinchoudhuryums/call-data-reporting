@@ -192,3 +192,56 @@ test('ADT-2: the summary counts the WHOLE day even when the list is capped', fun
   assert.ok(d.truncated && d.rows.length === 300, 'the list is capped (AGENT_DAY_MAX_CALLS_)');
   assert.equal(d.summary.in.total, 305);
 });
+
+// PCC-1 (broad-scan 2026-11-24, scan F1): is the date's Direct data whole in
+// NEON? The per-call `direct_calls` list has no sheet copy, so the prune, the
+// pending catch-up and Make a date whole ask this before a tab may go.
+function pccConn(h, a, e, opts) {
+  opts = opts || {};
+  return {
+    prepareStatement: function (sql) {
+      assert.match(sql, /FROM direct_call_history WHERE call_date = \?::date\) AS h/);
+      assert.match(sql, /FROM direct_calls WHERE call_date = \?::date\) AS e/);
+      return { setQueryTimeout: function () {}, setString: function () {},
+        executeQuery: function () {
+          if (opts.throws) throw new Error('relation "direct_calls" does not exist');
+          let first = true;
+          const v = { h: h, a: a, e: e };
+          return { next: function () { const r = first; first = false; return r; },
+                   getString: function (k) { return String(v[k]); }, close: function () {} };
+        }, close: function () {} };
+    },
+    close: function () { opts.closed = true; },
+  };
+}
+
+test('PCC-1: dcNeonDirectOwed_ -- owed when Neon lacks the counts, or the counts hold calls with no per-call list', function () {
+  const saved = imp.ctx.getReachableNeonConn_;
+  const owed = function (conn, o) {
+    imp.ctx.getReachableNeonConn_ = function () { return conn; };
+    return JSON.parse(JSON.stringify(imp.call('dcNeonDirectOwed_', '2026-11-20', o)));
+  };
+  try {
+    imp.state.props = {};
+    assert.equal(owed(null).owed, false, 'Neon not configured: nothing to write to, never owed');
+    imp.state.props = { NEON_HOST: 'x' };
+    assert.deepEqual(owed(null), { owed: true, unreachable: true, reason: 'not confirmed (Neon unreachable)' });
+    let probed = false;
+    imp.ctx.getReachableNeonConn_ = function () { probed = true; return null; };
+    assert.equal(imp.call('dcNeonDirectOwed_', '2026-11-20', { neonDown: true }).unreachable, true);
+    assert.equal(probed, false, 'the caller already probed: no second connect');
+    assert.match(owed(pccConn(0, 0, 0)).reason, /direct_call_history has no rows/);
+    assert.deepEqual(owed(pccConn(14, 37, 0)), { owed: true, reason: 'direct_calls has no rows (37 direct calls counted)' });
+    assert.deepEqual(owed(pccConn(14, 37, 41)), { owed: false, reason: 'whole' });
+    assert.deepEqual(owed(pccConn(14, 0, 0)), { owed: false, reason: 'whole' },
+      'a quiet day (counts all zero) owes no list -- or its tab would be kept forever');
+    const o = {};
+    const r = owed(pccConn(1, 1, 1, Object.assign(o, { throws: true })));
+    assert.equal(r.owed, true, 'a read that fails is not confirmed, so the tab is kept');
+    assert.match(r.reason, /could not read/);
+    assert.equal(o.closed, true, 'the connection is closed on every path');
+  } finally {
+    imp.ctx.getReachableNeonConn_ = saved;
+    imp.state.props = {};
+  }
+});

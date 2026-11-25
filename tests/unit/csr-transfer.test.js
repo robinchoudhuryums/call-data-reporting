@@ -359,6 +359,46 @@ test('ING-7: the CSR repair keys on the MAJORITY date, drops stray legs, and wri
   } finally { hw.state.lockBusy = false; }
 });
 
+// PCC-3 (broad-scan 2026-11-24, scan F37): the repair writes BY ROW POSITION,
+// and cdr-report's nightly sort (another project) re-sorts this sheet. It now
+// sets the CR-5 marker the sort defers on, and re-verifies its rows right
+// before the first write -- a moved row aborts with NOTHING written.
+test('PCC-3: the CSR repair sets the CR-5 marker and aborts, writing nothing, when its rows moved', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const hw = loadGas({ project: 'cdr-import', files: ['neonWrite.js', 'autoImport.js'] });
+  const raw = [['CALL ID', 'LEG', 'START'], ['1', '1', '03/09/2026 10:00:00'], ['2', '1', '03/09/2026 11:00:00']];
+  const hdr = ['Month', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred',
+    'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9', 'Q10', 'Q11'];
+  function csrRow(date, agent) { return ['March 2026', 'W10', date, agent, 0.5, 30, 9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]; }
+  const ss = makeFakeSpreadsheet({ sheets: {
+    'Raw Data': raw,
+    'CSR Transfer Historical Data': [hdr, csrRow('3/9/2026', 'Anna'), csrRow('3/9/2026', 'Ben')],
+  } });
+  hw.state.spreadsheet = ss;
+  const marks = [];
+  hw.ctx.bulkMarkerSet_ = function () { marks.push('set'); };
+  hw.ctx.bulkMarkerClear_ = function () { marks.push('clear'); };
+  const csr = ss.getSheetByName('CSR Transfer Historical Data');
+  hw.ctx.calcCsrReport = function () {
+    // A sort lands while the repair computes: Ben and Anna swap places.
+    const d = csr._data; const t = d[1]; d[1] = d[2]; d[2] = t;
+    return { agents: [['Anna']], transPct: [[0.1]], totalCalls: [[30]], totalTransferred: [[3]],
+             queues: [[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] };
+  };
+  // The repair reads the sheet AFTER the recompute, so swap again right before
+  // the re-verify read: wrap getLastRow, which the re-verify calls first.
+  let reads = 0;
+  const realLast = csr.getLastRow.bind(csr);
+  csr.getLastRow = function () {
+    reads++;
+    if (reads === 2) { const d = csr._data; const t = d[1]; d[1] = d[2]; d[2] = t; }
+    return realLast();
+  };
+  assert.throws(function () { hw.call('repairCsrTransferForRawDataDate'); }, /changed while the repair ran[\s\S]*NOTHING was written/);
+  assert.deepEqual(marks, ['set', 'clear'], 'the CR-5 marker is set for the repair and cleared after it, even on abort');
+  csr._data.slice(1).forEach(function (r) { assert.equal(r[6], 9, 'no row was written'); });
+});
+
 // ING-2 (broad-scan 2026-09-23): on a force re-import the five history sheets
 // are already cleared for the date when processIntegratedHistory runs; the
 // inline QCD Neon mirror used to run BEFORE the CSR (and DQE) sheet writes, so

@@ -1815,6 +1815,52 @@ function diagnoseDirectCallAttributionAllDates() { return diagnoseDirectCallAttr
  * re-imported (Operator State #56). Stops at a 4.5-minute budget and logs the
  * date to resume from. Writes only what the daily import writes.
  */
+/**
+ * PCC-1 (broad-scan 2026-11-24, scan F1): is the date's Direct data whole IN
+ * NEON? `direct_calls` (the per-call list behind the agent panel's Direct tab)
+ * has no sheet copy -- its only source is the Call_Legs tab, which #43 prunes
+ * at ~14 days -- so a daily Direct write that failed to reach Neon used to lose
+ * it for good: `backfillDirectCallToNeon` restores `direct_call_history` only,
+ * and every whole-date check read the SHEET. Owed when Neon holds no
+ * `direct_call_history` row for a date the sheet has, or holds counts with
+ * calls on them but no `direct_calls` row. A genuinely quiet day (counts all
+ * zero) is never owed, so its tab is never kept forever.
+ * Returns { owed, unreachable?, reason }. NEON_HOST unset -> not owed (nothing
+ * to write to). opts.neonDown: the caller already probed Neon and found it
+ * down -- no second connect. A read that fails is owed ("not confirmed"): a
+ * prune keeps the tab rather than guess.
+ */
+function dcNeonDirectOwed_(iso, opts) {
+  let configured = false;
+  try { configured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); } catch (pe) { configured = false; }
+  if (!configured) return { owed: false, reason: 'Neon not configured' };
+  if (opts && opts.neonDown) return { owed: true, unreachable: true, reason: 'not confirmed (Neon unreachable)' };
+  const conn = (typeof getReachableNeonConn_ === 'function') ? getReachableNeonConn_() : null;
+  if (!conn) return { owed: true, unreachable: true, reason: 'not confirmed (Neon unreachable)' };
+  try {
+    const act = ['ib_int_answered', 'ib_int_missed_free', 'ib_int_missed_busy', 'ib_ext_answered',
+      'ib_ext_missed_free', 'ib_ext_missed_busy', 'ob_int_total', 'ob_ext_total']
+      .map(function (c) { return 'COALESCE(' + c + ', 0)'; }).join(' + ');
+    const st = conn.prepareStatement(
+      'SELECT (SELECT count(*) FROM direct_call_history WHERE call_date = ?::date) AS h, '
+      + '(SELECT COALESCE(sum(' + act + '), 0) FROM direct_call_history WHERE call_date = ?::date) AS a, '
+      + '(SELECT count(*) FROM direct_calls WHERE call_date = ?::date) AS e');
+    try { st.setQueryTimeout(30); } catch (te) { /* best-effort */ }
+    st.setString(1, iso); st.setString(2, iso); st.setString(3, iso);
+    const rs = st.executeQuery();
+    const h = rs.next() ? Number(rs.getString('h')) || 0 : 0;
+    const a = Number(rs.getString('a')) || 0, e = Number(rs.getString('e')) || 0;
+    rs.close(); st.close();
+    if (!h) return { owed: true, reason: 'direct_call_history has no rows for the date' };
+    if (a > 0 && !e) return { owed: true, reason: 'direct_calls has no rows (' + a + ' direct calls counted)' };
+    return { owed: false, reason: 'whole' };
+  } catch (qe) {
+    return { owed: true, reason: 'not confirmed (could not read: ' + (qe && qe.message ? qe.message : qe) + ')' };
+  } finally {
+    try { conn.close(); } catch (ce) { /* closed */ }
+  }
+}
+
 function rebuildDirectCallHeldDates(fromIso) {
   const target = SpreadsheetApp.openById(getTargetSsId_());
   const configSheet = target.getSheetByName('DO NOT EDIT!');

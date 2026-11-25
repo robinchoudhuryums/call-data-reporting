@@ -156,29 +156,33 @@ function retentionDerivedOwed_(iso, historyIsos, memo) {
     if (outcome === 'failure') owed.push('DQE build failed');
     else if (outcome !== 'success') owed.push('no DQE rows and no DQE build on record');
   }
-  // 2. Direct Call History: rebuilt from the tab when the sheet lacks the date (F7's catch-up).
+  // Neon is probed ONCE per run (before Direct, which reads Neon too since
+  // PCC-1): while it is down every over-age tab is simply kept, without a
+  // failed backfill (and its failure row) per tab per night for the length of
+  // the outage. Skipped when Neon is not configured -- nothing to capture to.
+  if (memo.neonConfigured === undefined) {
+    memo.neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
+  }
+  if (memo.neonConfigured && memo.neonUp === undefined) {
+    memo.neonUp = true;
+    if (typeof getReachableNeonConn_ === 'function') {
+      var probe = null;
+      try { probe = getReachableNeonConn_(); } catch (e) { probe = null; }
+      memo.neonUp = !!probe;
+      if (probe) { try { probe.close(); } catch (e) { /* closed */ } }
+    }
+  }
+  // 2. Direct: the sheet rebuilt from the tab when it lacks the date (F7's
+  //    catch-up), and -- PCC-1 -- the Neon copy too, `direct_calls` above all,
+  //    whose only source is this tab.
   if (typeof pendingImportDirectCatchUp_ === 'function') {
     if (!memo.targetSS) memo.targetSS = SpreadsheetApp.openById(getTargetSsId_());
-    if (!pendingImportDirectCatchUp_(memo.targetSS, iso, dateObj)) owed.push('Direct Call History build failed');
+    if (!pendingImportDirectCatchUp_(memo.targetSS, iso, dateObj, { neonDown: memo.neonConfigured && !memo.neonUp })) {
+      owed.push('Direct not whole (Direct Call History or its Neon copy)');
+    }
   }
   // 3. Per-call capture: written when Neon lacks the date (PIPE-7's catch-up).
-  //    Skipped when Neon is not configured at all -- there is nothing to capture to.
   if (typeof pendingImportPerCallCatchUp_ === 'function') {
-    if (memo.neonConfigured === undefined) {
-      memo.neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
-    }
-    // Neon is probed ONCE per run: while it is down every over-age tab is
-    // simply kept, without a failed backfill (and its failure row) per tab
-    // per night for the length of the outage.
-    if (memo.neonConfigured && memo.neonUp === undefined) {
-      memo.neonUp = true;
-      if (typeof getReachableNeonConn_ === 'function') {
-        var probe = null;
-        try { probe = getReachableNeonConn_(); } catch (e) { probe = null; }
-        memo.neonUp = !!probe;
-        if (probe) { try { probe.close(); } catch (e) { /* closed */ } }
-      }
-    }
     if (memo.neonConfigured && !memo.neonUp) {
       owed.push('per-call capture not confirmed (Neon unreachable)');
     } else if (memo.neonConfigured && !pendingImportPerCallCatchUp_(iso)) {
